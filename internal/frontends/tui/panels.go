@@ -76,7 +76,7 @@ const (
 // renderWelcome is the empty state: two boxes side by side (start + recent)
 // with the full-width hint box under them. Left-aligned, not centred — the
 // content starts where the conversation will.
-func (m model) renderWelcome(width int) string {
+func (m model) renderWelcome(width int) []string {
 	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4))
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -103,7 +103,8 @@ func (m model) renderWelcome(width int) string {
 	// one greyness quieter than the content.
 	titled := strings.Replace(body, boxTopLeft(), titleStyle.Render(boxTopLeft()), 1)
 	_ = titled
-	return lipgloss.PlaceHorizontal(width, lipgloss.Left, body)
+	placed := lipgloss.PlaceHorizontal(width, lipgloss.Left, body)
+	return strings.Split(placed, "\n")
 }
 
 // boxTopLeft is the corner glyph a rounded border starts with, used to pin the

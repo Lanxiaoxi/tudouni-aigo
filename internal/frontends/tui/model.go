@@ -223,6 +223,13 @@ func (m *model) handleServerMessage(payload map[string]any) {
 		for _, item := range noticesOf(payload) {
 			m.appendLine(renderLine{segments: []seg{{text: item, role: "notice"}}}, "notice", "")
 		}
+		// The welcome screen's recent box needs the session list, and that list
+		// is async: ask for it **only in the empty state** — a resumed session
+		// never draws the welcome screen, so listing hundreds of files is a
+		// wasted read.
+		if !m.resumed {
+			m.client.ListSessions()
+		}
 
 	case protocol.OutSessionLoad:
 		m.restoreMessages(payload)
@@ -668,6 +675,31 @@ func (m *model) stick() {
 		return
 	}
 	m.scroll++
+}
+
+// welcomeVisible reports whether the empty state's screen is still up.
+//
+// It is **not** "the transcript is empty": the init notices are conversation
+// content and arrive seconds after start, and keying the screen off emptiness
+// would make it flash away before anyone reads it. The screen answers one
+// question — "has the conversation started" — and it comes down when the first
+// turn does, exactly like the original. A resumed session never shows it at
+// all: there is a conversation already.
+func (m model) welcomeVisible() bool {
+	if m.resumed || m.turnSeq > 0 {
+		return false
+	}
+	for index := range m.transcript {
+		item := m.transcript[index]
+		if item.turn != nil {
+			return false
+		}
+		switch item.kind {
+		case "user", "assistant", "streaming":
+			return false
+		}
+	}
+	return true
 }
 
 // spinnerFrame is the current quiet-mode spin glyph.

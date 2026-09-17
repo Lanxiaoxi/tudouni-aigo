@@ -186,9 +186,6 @@ func (m model) renderBody(available int) string {
 		return lipgloss.Place(m.width, available, lipgloss.Center, lipgloss.Center,
 			m.renderOverlay(m.width-8))
 	}
-	if len(m.transcript) == 0 {
-		return m.renderWelcome(m.width)
-	}
 	return m.renderBodySplit(available)
 }
 
@@ -210,12 +207,33 @@ func (m model) renderBodySplit(available int) string {
 func (m model) renderTranscript(width, height int) string {
 	width = maxInt(width-2, 20)
 	var rows []string
+
+	// The welcome screen is a **block in the log**, at the top: the init
+	// notices draw beneath it and stay there when the conversation starts.
+	// Removing it the moment anything arrives would make it flash — it is the
+	// conversation's cover page, not a splash.
+	if m.welcomeVisible() {
+		rows = append(rows, m.renderWelcome(width)...)
+		rows = append(rows, "")
+	}
 	for index := range m.transcript {
 		rows = append(rows, m.renderEntry(index, width)...)
 	}
 
 	if len(rows) == 0 {
 		rows = append(rows, "")
+	}
+	if m.welcomeVisible() {
+		// The cover page pins to the **top**: the init notices can be taller
+		// than it, and scrolling to the bottom would push the boxes' top edge
+		// off-screen — which reads as "this screen starts mid-way".
+		start := 0
+		visible := rows[:min(height, len(rows))]
+		_ = start
+		for len(visible) < height {
+			visible = append(visible, "")
+		}
+		return strings.Join(visible, "\n")
 	}
 	end := len(rows) - m.scroll
 	if end > len(rows) {
