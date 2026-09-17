@@ -22,17 +22,13 @@ type questionAsked struct{ request map[string]any }
 
 type tickMsg time.Time
 
-// line is one entry in the transcript.
-type line struct {
-	kind string // user / assistant / event / notice / error / answer
-	text string
-}
+type spinnerMsg time.Time
 
 // state is the panel snapshot, kept exactly as the runtime sent it.
 //
 // Nothing here is derived: "what does this combination mean" is the runtime's
-// judgement, and recomputing it in the interface would be a second definition that
-// drifts. It drifts by *missing a warning*, which is the one failure nobody notices.
+// judgement, and recomputing it in the interface would be a second definition
+// that drifts by *missing a warning* — the one failure nobody notices.
 type panelstate struct {
 	todos     []any
 	jobs      []any
@@ -51,9 +47,8 @@ type panelstate struct {
 	agentsMD  []any
 	skills    []any
 	// context is the last ledger payload `/context` (or a compaction) reported.
-	// It is nil until somebody asks, because the runtime only measures it on
-	// request — a status bar that showed zero before the first question would
-	// teach the reader that the number is meaningless.
+	// Nil until somebody asks: a status bar that showed zero before the first
+	// question would teach the reader the number is meaningless.
 	context map[string]any
 }
 
@@ -65,40 +60,65 @@ type model struct {
 	width  int
 	height int
 
-	transcript []line
-	input      string
+	// transcript holds the turns and standalone lines in arrival order. The
+	// turn structure is what makes a finished header rewritable and a thinking
+	// block foldable.
+	transcript []entry
+	// current is the turn being built, nil between turns.
+	current *turnData
+	turnSeq int
+
+	input string
 	// scroll is how many lines back from the bottom the transcript is drawn.
 	scroll int
 
-	// panel is the latest snapshot the runtime sent. It is stored and rendered as
-	// it arrived: "what does this combination mean" is the runtime's judgement, and
-	// re-deriving it here would be a second definition that drifts.
 	panel panelstate
-	// streamedText accumulates the text already on screen for this step, so the
-	// complete answer is not drawn a second time on top of it.
-	streamedText string
-	streamRunID  string
-	streamStep   int
+
+	// Streaming state for the current step.
+	streamedText  string
+	streamRunID   string
+	streamStep    int
+	thinkingChars int
+	thinkingLive  bool
 
 	busy bool
-	// activity is the runtime's own one-line description of what it is doing. It
-	// comes from the state reducer, never from a guess here.
+	// activity is the runtime's own one-line description. It comes from the
+	// state reducer, never from a guess here.
 	activity string
 
 	pendingPermission map[string]any
 	pendingQuestion   map[string]any
 	questionInput     string
 
-	notice       string
-	lastRefresh  time.Time
-	auditPath    string
-	windowTokens any
+	notice      string
+	lastRefresh time.Time
+	auditPath   string
+	sessionID   string
 
-	// Display preferences. They change what is drawn and nothing else, which is why
-	// they are not part of the panel state the runtime owns.
-	railHidden       bool
-	thinkingExpanded bool
-	quiet            bool
+	// Catalogues that arrive with init. The frontend does not hardcode effort
+	// levels or model lists: a copy here would drift the moment the runtime
+	// learned a new level.
+	modelCatalog  []any
+	effortLevels  []string
+	selectedModel string
+
+	// Overlay panel state.
+	overlay        overlay
+	sessionOptions []option
+	// pendingUserInput is the text submitted before run_started arrives, so the
+	// turn block can open with the line the user actually typed.
+	pendingUserInput string
+
+	// Spin frame counter for quiet mode. Frame numbers come from a clock so two
+	// things drawn at the same moment cannot each spin on their own.
+	spins int
+
+	// Display preferences. They change what is drawn and nothing else, which is
+	// why they are not part of the panel state the runtime owns.
+	railHidden bool
+	railOpened bool // whether the rail has been auto-opened once by todos
+	quiet      bool
+	theme      themeKey
 }
 
 func newModel(client *protocol.Client, bridge *bridge, options Options) model {
@@ -108,6 +128,7 @@ func newModel(client *protocol.Client, bridge *bridge, options Options) model {
 		options: options,
 		width:   100,
 		height:  30,
+		theme:   defaultTheme,
 	}
 }
 
@@ -119,6 +140,10 @@ func waitForTick() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
+func waitForSpinner() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg { return spinnerMsg(t) })
+}
+
 // Update is the whole interface's state machine.
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch typed := message.(type) {
@@ -128,15 +153,21 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		// The runtime has no timers by design, so a background job that finishes
-		// during a quiet moment would leave the panel claiming it is still running.
-		// The interface asks — but only while something is actually outstanding,
-		// and at a throttle. Turning this into a heartbeat would dilute the one
-		// reason it exists.
+		// during a quiet moment would leave the panel claiming it is still
+		// running. The interface asks — but only while something is outstanding,
+		// and at a throttle.
 		if outstanding(m.panel.jobs) && time.Since(m.lastRefresh) > 2*time.Second {
 			m.lastRefresh = time.Now()
 			m.client.RefreshState()
 		}
 		return m, waitForTick()
+
+	case spinnerMsg:
+		if m.busy && m.quiet {
+			m.spins++
+			return m, waitForSpinner()
+		}
+		return m, nil
 
 	case serverMessage:
 		m.handleServerMessage(typed.payload)
@@ -162,43 +193,33 @@ func (m *model) handleServerMessage(payload map[string]any) {
 	case protocol.OutInit:
 		if model, ok := protocol.String(payload, "model"); ok {
 			m.panel.model = model
+			m.selectedModel = model
 		}
 		m.panel.window, _ = payload["context_tokens"]
 		m.panel.thinking, _ = protocol.Bool(payload, "thinking")
 		m.panel.effort, _ = protocol.String(payload, "effort")
 		m.auditPath, _ = protocol.String(payload, "audit_path")
 		m.panel.autopilot, _ = protocol.Bool(payload, "autopilot")
-		if session, ok := protocol.String(payload, "session_id"); ok {
-			m.append("notice", i18n.T("init.session_id", "name", session,
-				"state", stateSuffix(payload)))
-		}
-		m.append("notice", i18n.T("init.return_hint"))
-		for _, item := range noticesOf(payload) {
-			m.append("notice", item)
-		}
-
-	case protocol.OutSessionLoad:
-		if messages, ok := payload["messages"].([]any); ok && len(messages) > 0 {
-			m.append("notice", i18n.Tn("session_load.restored", len(messages), "n", len(messages)))
-			for _, item := range messages {
-				record, ok := item.(map[string]any)
-				if !ok {
-					continue
-				}
-				role, _ := record["role"].(string)
-				text := textOf(record)
-				switch role {
-				case "user":
-					if text != "" {
-						m.append("user", text)
-					}
-				case "assistant":
-					if text != "" {
-						m.append("assistant", text)
-					}
+		m.modelCatalog, _ = payload["model_catalog"].([]any)
+		if levels, ok := payload["effort_levels"].([]any); ok {
+			for _, level := range levels {
+				if text, ok := level.(string); ok {
+					m.effortLevels = append(m.effortLevels, text)
 				}
 			}
 		}
+		if session, ok := protocol.String(payload, "session_id"); ok {
+			m.sessionID = session
+			m.appendLine(renderLine{segments: []seg{
+				{text: i18n.T("init.session_id", "name", session, "state", stateSuffix(payload)), role: "notice"},
+			}}, "notice", "")
+		}
+		for _, item := range noticesOf(payload) {
+			m.appendLine(renderLine{segments: []seg{{text: item, role: "notice"}}}, "notice", "")
+		}
+
+	case protocol.OutSessionLoad:
+		m.restoreMessages(payload)
 
 	case protocol.OutEvent:
 		m.handleEvent(payload)
@@ -210,11 +231,10 @@ func (m *model) handleServerMessage(payload map[string]any) {
 		runID, _ := protocol.String(payload, "run_id")
 		step, _ := protocol.Int(payload, "step")
 		if runID == m.streamRunID && step == m.streamStep {
-			// The text drawn for this step is thrown away entirely, not greyed out.
-			// Half-written text never enters the history, so keeping it would leave
-			// something on screen that a restored session cannot account for.
+			// Half-written text never enters the history, so keeping it on
+			// screen would leave something a restored session cannot account for.
 			m.streamedText = ""
-			m.dropTrailingAssistant()
+			m.dropStreamingAnswer()
 		}
 
 	case protocol.OutUI:
@@ -223,25 +243,14 @@ func (m *model) handleServerMessage(payload map[string]any) {
 	case protocol.OutNotice:
 		level, _ := protocol.String(payload, "level")
 		text, _ := protocol.String(payload, "text")
-		kind := "notice"
+		role := "notice"
 		if level == "warn" {
-			// A warning has to look different from a remark. They are the boundary
-			// between "something went wrong" and "just so you know".
-			kind = "error"
+			role = "warn"
 		}
-		m.append(kind, text)
+		m.appendLine(renderLine{segments: []seg{{text: text, role: role}}}, "notice", "")
 
 	case protocol.OutSessions:
-		m.append("notice", i18n.T("list.available"))
-		if items, ok := payload["items"].([]any); ok {
-			for _, item := range items {
-				row, ok := item.(map[string]any)
-				if !ok {
-					continue
-				}
-				m.append("notice", sessionRow(row))
-			}
-		}
+		m.openSessionPicker(payload)
 	}
 }
 
@@ -252,14 +261,49 @@ func stateSuffix(payload map[string]any) string {
 	return i18n.T("init.session_new")
 }
 
+// restoreMessages replays a loaded session into the transcript. Every message
+// becomes its own standalone entry: history has no turn boundaries worth
+// inventing, and the replay is for reading, not for interaction.
+func (m *model) restoreMessages(payload map[string]any) {
+	messages, _ := payload["messages"].([]any)
+	if len(messages) == 0 {
+		return
+	}
+	m.appendLine(renderLine{segments: []seg{
+		{text: i18n.Tn("session_load.restored", len(messages), "n", len(messages)), role: "rule"},
+	}}, "notice", "")
+	for _, item := range messages {
+		record, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := record["role"].(string)
+		text := textOf(record)
+		if text == "" || strings.HasPrefix(text, "[artifact ") {
+			continue
+		}
+		switch role {
+		case "user":
+			m.appendUser(text)
+		case "assistant":
+			m.appendAnswer(text)
+		}
+	}
+}
+
 func (m *model) handleEvent(payload map[string]any) {
 	kind, _ := protocol.String(payload, "kind")
 	switch kind {
 	case "run_started":
 		m.busy = true
 		m.activity = i18n.T("activity.preparing")
+		m.beginTurn(payload)
 
 	case "model_call":
+		if m.current == nil {
+			break
+		}
+		m.current.steps++
 		status, _ := protocol.String(payload, "status")
 		if status == "ok" {
 			m.activity = i18n.T("activity.thinking")
@@ -270,56 +314,135 @@ func (m *model) handleEvent(payload map[string]any) {
 			if hasBackoff {
 				tail = i18n.T("event.model_retry_wait", "backoff", backoff)
 			}
-			m.append("event", i18n.T("event.model_retry", "attempt", attempt, "tail", tail))
+			m.currentAppend(renderLine{segments: []seg{
+				{text: i18n.T("event.model_retry", "attempt", attempt, "tail", tail), role: "warn"},
+			}})
 			m.activity = i18n.T("activity.retrying")
 		}
-		// The thinking text arrives whole, after the model finished. The live copy
-		// came through delta(reasoning); drawing both is drawing the same thing
-		// twice, so this one is summarised.
+		// The thinking text arrives whole after the model finished. The live copy
+		// came through delta(reasoning); drawing both is drawing it twice.
 		if reasoning, ok := protocol.String(payload, "reasoning"); ok && reasoning != "" {
-			m.append("event", i18n.T("think.prefix_folded")+
-				i18n.Tn("think.folded_tail", 1, "chars", runewidth.StringWidth(reasoning)))
+			m.current.thinking = reasoning
+			m.current.thinkingRun, _ = protocol.String(payload, "run_id")
 		}
 
 	case "tool_call":
 		tool, _ := protocol.String(payload, "tool")
-		index, _ := protocol.Int(payload, "tool_index")
-		suffix := ""
-		if index > 0 {
-			suffix = i18n.T("activity.tool_call_index", "n", index+1)
+		risk, _ := protocol.String(payload, "risk")
+		arguments, _ := protocol.String(payload, "arguments")
+		callID, _ := protocol.String(payload, "call_id")
+		if m.current == nil {
+			break
 		}
-		m.append("event", "  · "+i18n.T("activity.tool_call", "tool", tool, "index", suffix))
-		m.activity = i18n.T("activity.tool_call", "tool", tool, "index", suffix)
+		if m.quiet {
+			line := toolBriefLine(tool, arguments, callID, risk)
+			m.current.lines = append(m.current.lines, line)
+		} else {
+			m.currentAppend(toolCallLine(tool, clipText(arguments, 120), payload["tool_index"], risk))
+		}
+		m.activity = i18n.T("activity.tool_call", "tool", tool, "index", "")
 
 	case "tool_result":
-		tool, _ := protocol.String(payload, "tool")
-		status, _ := protocol.String(payload, "status")
-		chars, _ := protocol.Int(payload, "chars")
-		verb := i18n.T("activity.result." + status)
-		if status == "ok" {
-			m.append("event", fmt.Sprintf("  · %s %s  %s", tool, verb,
-				i18n.Tn("tool.result_chars", chars, "chars", chars)))
-		} else {
-			m.append("event", fmt.Sprintf("  · %s %s", tool, verb))
+		if m.current == nil {
+			break
 		}
-		m.activity = i18n.T("activity.tool_result", "tool", tool, "verb", verb)
+		if m.quiet {
+			tail := toolBriefDoneLine(payload)
+			m.backfill(m.current, tail)
+		} else {
+			m.currentAppend(toolResultLine(payload["tool_index"], payload))
+		}
 
 	case "permission":
-		outcome, _ := protocol.String(payload, "outcome")
-		tool, _ := protocol.String(payload, "tool")
-		m.append("event", i18n.T("permission.line_prefix")+tool+" "+
-			i18n.T("activity.permission."+outcome))
+		if m.current != nil {
+			m.currentAppend(permissionLine(payload))
+		}
+
+	case "tool_batch":
+		n, _ := protocol.Int(payload, "n")
+		if m.current != nil {
+			m.currentAppend(renderLine{segments: []seg{
+				{text: i18n.Tn("event.tool_batch", int(n), "n", n) +
+					i18n.T("event.tool_batch_wall", "wall", msText(payload["wall_ms"])), role: "rule"},
+			}})
+		}
 
 	case "run_finished":
 		reason, _ := protocol.String(payload, "stop_reason")
-		if reason == "max_steps" {
-			m.append("error", i18n.T("turn.max_steps_warning"))
-		}
-		if reason == "cancelled" {
-			m.append("error", i18n.T("turn.cancelled_warning"))
-		}
+		m.finishTurn(reason)
 		m.activity = ""
 	}
+}
+
+// beginTurn opens a new transcript block for this run.
+func (m *model) beginTurn(payload map[string]any) {
+	m.turnSeq++
+	turn := &turnData{
+		index:     m.turnSeq,
+		runID:     stringOf(payload, "run_id"),
+		userInput: m.pendingUserInput,
+		startedAt: time.Now(),
+		outcome:   "answered",
+	}
+	m.pendingUserInput = ""
+	m.current = turn
+	m.transcript = append(m.transcript, entry{turn: turn})
+
+	// The rail auto-opens once when a task list first appears: "what it plans to
+	// do" is the one place a person can see whether it understood, and that is
+	// worth more than the 32 columns. After that, Ctrl+B rules.
+	if !m.railOpened && len(m.panel.todos) > 0 {
+		m.railOpened = true
+		m.railHidden = false
+	}
+}
+
+// finishTurn closes the current turn and rewrites its header in place.
+func (m *model) finishTurn(reason string) {
+	turn := m.current
+	m.current = nil
+	if turn == nil {
+		return
+	}
+	turn.finished = true
+	turn.outcome = "answered"
+	switch reason {
+	case "cancelled":
+		turn.outcome = "cancelled"
+	case "max_steps":
+		turn.outcome = "limited"
+		m.appendLine(renderLine{segments: []seg{
+			{text: i18n.T("turn.max_steps_warning"), role: "warn"},
+		}}, "notice", "")
+	case "failed":
+		turn.outcome = "failed"
+	}
+}
+
+func (m *model) currentAppend(line renderLine) {
+	if m.current == nil {
+		m.appendLine(line, "notice", "")
+		return
+	}
+	m.current.lines = append(m.current.lines, line)
+}
+
+// backfill finds the line with the same anchor and appends the tail. When the
+// anchor cannot be found the tail is drawn as its own line — worse than
+// attaching is an answer that never shows.
+func (m *model) backfill(turn *turnData, tail renderLine) {
+	if tail.anchor != "" {
+		for index := len(turn.lines) - 1; index >= 0; index-- {
+			if turn.lines[index].anchor == tail.anchor {
+				head := turn.lines[index]
+				head.segments = append(head.segments, seg{text: "   ", role: "rule"})
+				head.segments = append(head.segments, tail.segments...)
+				turn.lines[index] = head
+				return
+			}
+		}
+	}
+	turn.lines = append(turn.lines, tail)
 }
 
 func (m *model) handleDelta(payload map[string]any) {
@@ -331,14 +454,17 @@ func (m *model) handleDelta(payload map[string]any) {
 	if runID != m.streamRunID || step != m.streamStep {
 		m.streamRunID, m.streamStep = runID, step
 		m.streamedText = ""
+		m.thinkingChars = 0
 	}
-	if channel != protocol.DeltaText {
-		// Reasoning goes through its own channel and is folded; it never mixes
-		// into the answer.
-		return
+	switch channel {
+	case protocol.DeltaText:
+		m.streamedText += text
+		m.updateStreamingAnswer()
+
+	case protocol.DeltaReasoning:
+		m.thinkingChars += runewidth.StringWidth(text)
+		m.thinkingLive = true
 	}
-	m.streamedText += text
-	m.replaceTrailingAssistant(m.streamedText)
 }
 
 func (m *model) handleUI(payload map[string]any) {
@@ -346,42 +472,51 @@ func (m *model) handleUI(payload map[string]any) {
 	switch kind {
 	case protocol.UIState:
 		m.applyState(payload)
+		// A panel left open is **live**: it has to follow the facts it shows, or
+		// the highlight sits on a value that is no longer the current one.
+		m.reloadOverlayOptions()
 
 	case protocol.UIRunFinished:
 		m.busy = false
 		m.activity = ""
 		answer, _ := protocol.String(payload, "answer")
-		runID, _ := protocol.String(payload, "run_id")
-		// The complete answer is always sent, and the interface has to decide
-		// whether to draw it. The test is "did text actually reach the screen this
-		// turn", not "did I see a delta" — a turn that called tools and produced no
-		// text at all sends no delta, and the answer is exactly the thing to draw.
-		if runID != m.streamRunID || m.streamedText == "" {
-			if answer != "" {
-				m.append("assistant", answer)
-			}
+		// The test is "did text reach the screen this turn", not "did I see a
+		// delta": a turn that called tools and produced no text sends no delta,
+		// and the answer is exactly the thing to draw.
+		if answer != "" {
+			m.appendAnswer(answer)
 		}
 		m.streamedText = ""
 		m.streamRunID = ""
+		m.thinkingChars = 0
+		m.thinkingLive = false
 
 	case protocol.UIStatus:
 		m.renderStatus(payload)
 
 	case protocol.UITools:
-		m.append("answer", frontends.RenderTools(payload))
+		m.appendLine(renderLine{segments: []seg{
+			{text: frontends.RenderTools(payload), role: "rule"},
+		}}, "answer", "")
 
 	case protocol.UIContext:
-		m.append("answer", frontends.RenderContext(payload))
+		m.appendLine(renderLine{segments: []seg{
+			{text: frontends.RenderContext(payload), role: "rule"},
+		}}, "answer", "")
+		if contextPayload, ok := payload["context"].(map[string]any); ok {
+			m.panel.context = contextPayload
+		}
 
 	case protocol.UISkills:
-		m.append("answer", frontends.RenderSkills(payload))
+		m.appendLine(renderLine{segments: []seg{
+			{text: frontends.RenderSkills(payload), role: "rule"},
+		}}, "answer", "")
 
 	case protocol.UICompacted:
-		// The same sentence the line interface prints, from the same function:
-		// every figure in it comes from one compaction, and two renderings would
-		// let "how much was saved" drift between the two interfaces.
 		compaction, _ := payload["compaction"].(map[string]any)
-		m.append("answer", frontends.RenderCompaction(compaction))
+		m.appendLine(renderLine{segments: []seg{
+			{text: frontends.RenderCompaction(compaction), role: "rule"},
+		}}, "answer", "")
 		if contextPayload, ok := payload["context"].(map[string]any); ok {
 			m.panel.context = contextPayload
 		}
@@ -441,50 +576,86 @@ func (m *model) renderStatus(payload map[string]any) {
 	if status == nil {
 		return
 	}
-	m.append("notice", i18n.T("status.title"))
+	var rows []string
 	if session, ok := status["session"].(map[string]any); ok {
-		m.append("notice", fmt.Sprintf("  %s: %v · %s: %v",
-			i18n.T("status.kv.session"), session["id"], i18n.T("status.kv.size"),
+		rows = append(rows, fmt.Sprintf("  %s: %v · %s",
+			i18n.T("status.kv.session"), session["id"],
 			i18n.T("status.session.span",
 				"messages", i18n.Tn("status.session.messages", intOf(session["messages"])),
 				"steps", i18n.Tn("status.session.steps", intOf(session["steps"])))))
 	}
 	if counters, ok := status["counters"].(map[string]any); ok {
-		m.append("notice", fmt.Sprintf("  %s: %v runs · %v model calls · %v tool calls",
+		rows = append(rows, fmt.Sprintf("  %s: %v runs · %v model calls · %v tool calls",
 			i18n.T("status.kv.turns"), counters["runs"], counters["model_calls"], counters["tool_calls"]))
 	}
 	if usage, ok := status["usage"].(map[string]any); ok {
-		m.append("notice", fmt.Sprintf("  %s: %v",
-			i18n.T("status.kv.usage_total"), usage["prompt"]))
+		rows = append(rows, fmt.Sprintf("  %s: %v", i18n.T("status.kv.usage_total"), usage["prompt"]))
+	}
+	for _, row := range rows {
+		m.appendLine(renderLine{segments: []seg{{text: row, role: "notice"}}}, "notice", "")
 	}
 }
 
-// append adds one transcript entry and keeps the view pinned to the bottom.
-func (m *model) append(kind, text string) {
-	if strings.TrimSpace(text) == "" {
+// ── transcript helpers ────────────────────────────────────────────────────────
+
+// appendLine adds a standalone entry.
+func (m *model) appendLine(line renderLine, kind, text string) {
+	m.transcript = append(m.transcript, entry{line: line, kind: kind, text: text})
+	m.stick()
+}
+
+func (m *model) appendUser(text string) {
+	m.appendLine(renderLine{segments: []seg{{text: "> ", role: "user"}, {text: text, role: "user"}}}, "user", text)
+}
+
+// appendAnswer adds a finished assistant message; markdown is applied at draw
+// time so a window resize reflows it.
+func (m *model) appendAnswer(text string) {
+	m.appendLine(renderLine{}, "assistant", text)
+}
+
+// updateStreamingAnswer writes the live text into the trailing streaming entry.
+func (m *model) updateStreamingAnswer() {
+	if index := m.trailingStreaming(); index >= 0 {
+		m.transcript[index].text = m.streamedText
 		return
 	}
-	m.transcript = append(m.transcript, line{kind: kind, text: text})
+	m.transcript = append(m.transcript, entry{kind: "streaming", text: m.streamedText})
+	m.stick()
+}
+
+func (m *model) dropStreamingAnswer() {
+	if index := m.trailingStreaming(); index >= 0 {
+		m.transcript = append(m.transcript[:index], m.transcript[index+1:]...)
+	}
+}
+
+func (m *model) trailingStreaming() int {
+	if len(m.transcript) == 0 {
+		return -1
+	}
+	last := m.transcript[len(m.transcript)-1]
+	if last.kind == "streaming" {
+		return len(m.transcript) - 1
+	}
+	return -1
+}
+
+// stick keeps the view pinned to the bottom while it already is there.
+func (m *model) stick() {
 	if m.scroll == 0 {
-		// Already at the bottom: stay there.
 		return
 	}
 	m.scroll++
 }
 
-// replaceTrailingAssistant rewrites the last assistant entry as text streams in.
-func (m *model) replaceTrailingAssistant(text string) {
-	if len(m.transcript) > 0 && m.transcript[len(m.transcript)-1].kind == "assistant" {
-		m.transcript[len(m.transcript)-1].text = text
-		return
+// spinnerFrame is the current quiet-mode spin glyph.
+func (m model) spinnerFrame() string {
+	if !m.busy || !m.quiet {
+		return ""
 	}
-	m.transcript = append(m.transcript, line{kind: "assistant", text: text})
-}
-
-func (m *model) dropTrailingAssistant() {
-	if len(m.transcript) > 0 && m.transcript[len(m.transcript)-1].kind == "assistant" {
-		m.transcript = m.transcript[:len(m.transcript)-1]
-	}
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	return frames[m.spins%len(frames)]
 }
 
 func noticesOf(payload map[string]any) []string {
@@ -501,11 +672,6 @@ func noticesOf(payload map[string]any) []string {
 		}
 	}
 	return out
-}
-
-func sessionRow(row map[string]any) string {
-	return fmt.Sprintf("  %v  %v messages · %v steps   %v",
-		row["session_id"], row["messages"], row["steps"], row["preview"])
 }
 
 func textOf(record map[string]any) string {
@@ -542,14 +708,11 @@ func outstanding(jobs []any) bool {
 }
 
 func intOf(value any) int {
-	switch number := value.(type) {
-	case int:
-		return number
-	case float64:
-		return int(number)
-	case int64:
-		return int(number)
-	default:
-		return 0
-	}
+	number, _ := asInt(value)
+	return number
+}
+
+func stringOf(payload map[string]any, key string) string {
+	text, _ := protocol.String(payload, key)
+	return text
 }

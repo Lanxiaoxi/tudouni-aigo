@@ -124,6 +124,40 @@ var catalog = map[string]string{
 	"list.available":           "Available:",
 
 	// --- status bar: left segment (what the agent is doing) ---------------
+	// Pickers (v2.4): one panel, three commands.
+	"model.pick.title":  "Change the model",
+	"effort.pick.title": "Change the reasoning effort",
+	"theme.pick.title":  "Change the theme",
+	"picker.current":    "(current)",
+	"picker.footer":     "↑↓ move · Enter pick · Esc leave",
+	"picker.waiting":    "waiting for the runtime to apply {value}…",
+
+	// Command palette.
+	"palette.no_match": "(no command matches)",
+
+	// Welcome screen.
+	"welcome.start.title": "Start",
+	"welcome.start.body":  "Type below and press Enter. The directory you launched from is the workspace.",
+	"welcome.start.hint":  "--autopilot skips approvals; /quiet folds every step into one line.",
+	"welcome.recent.hint": "/resume opens the session picker.",
+	"welcome.hint.line1":  "Enter send · Shift+Enter newline · Esc interrupt",
+	"welcome.hint.line2":  "/ opens the command palette · Ctrl+B rail · Ctrl+T thinking",
+
+	// Session picker.
+	"resume.title": "Resume a session",
+	"resume.none":  "(no saved sessions yet)",
+
+	// MCP panel (v2.3).
+	"mcp.panel.title":   "MCP servers",
+	"mcp.panel.waiting": "waiting for the runtime to {action} {name}…",
+	"mcp.panel.footer":  "↑↓ move · Enter mount/unmount · Esc close",
+	"mcp.tools":         "{n} tools",
+
+	"rail.mcp.tools":         "{n} tools",
+	"rail.permissions.empty": "defaults apply — low risk runs without asking",
+
+	"help.themes": "Themes: /theme without arguments opens the picker — amber (default), deep clear, pink violet.",
+
 	"status.settled.answered":       "Answered",
 	"status.settled.limited":        "Step limit reached",
 	"status.settled.failed":         "This turn failed",

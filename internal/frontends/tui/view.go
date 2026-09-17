@@ -12,26 +12,16 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 )
 
-// The palette. One light theme and one dark, chosen by whether the terminal
-// reports a dark background — a hard-coded set of colours that reads well on one
-// background is unreadable on the other, and the person looking at it cannot tell
-// that the program chose wrong.
-var (
-	styleUser      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	styleAssistant = lipgloss.NewStyle()
-	styleEvent     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleNotice    = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	styleError     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
-	styleBar       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleTitle     = lipgloss.NewStyle().Bold(true)
-	styleDialog    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-)
+// Layout: top bar (chrome) / rail + transcript / status bar (chrome) /
+// input box with its two accent rules. The bars are the only chrome-coloured
+// surfaces; everything else is the terminal's or the theme's background, which
+// is what keeps the deep clear variant looking like one connected slab.
 
-// minRailWidth is where the rail stops being worth its columns. Below it the rail
-// is dropped entirely rather than squeezed: a panel showing half of every field is
-// worse than no panel.
-const minRailWidth = 80
-const railWidth = 28
+// minRailWidth is where the rail stops being worth its columns. Below it the
+// rail is dropped rather than squeezed: half of every field is worse than none.
+const minRailWidth = 100
+
+const inputHeight = 3 // two editable lines + the caret row the input occupies
 
 // View draws the whole screen.
 func (m model) View() string {
@@ -46,40 +36,58 @@ func (m model) View() string {
 	top := m.renderTopBar()
 	status := m.renderStatusBar()
 	prompt := m.renderInput()
-
-	// The dialogs take over the body: an approval request is the only thing that
-	// matters while it is up, and drawing the transcript behind it would only make
-	// the decision harder to read.
-	body := ""
-	switch {
-	case m.pendingPermission != nil:
-		body = m.renderPermissionDialog()
-	case m.pendingQuestion != nil:
-		body = m.renderQuestionDialog()
-	default:
-		body = m.renderBody(height - 4)
+	bodyHeight := height - lipgloss.Height(top) - lipgloss.Height(status) - lipgloss.Height(prompt)
+	if bodyHeight < 3 {
+		bodyHeight = 3
 	}
-
+	body := m.renderBody(bodyHeight)
 	return strings.Join([]string{top, body, status, prompt}, "\n")
 }
 
+func (m model) bodyHeight() int {
+	return m.height - 5
+}
+
+// chromeStyle paints a full-width bar in the theme's chrome role.
+func chromeStyle(width int) lipgloss.Style {
+	style := lipgloss.NewStyle().Width(width)
+	if !currentTheme.clearRoles["chrome"] {
+		style = style.Background(lipgloss.Color(currentTheme.chrome))
+	}
+	return style
+}
+
 func (m model) renderTopBar() string {
-	name := i18n.T("session.bar.unnamed")
-	if session := m.panel.model; session != "" {
-		name = session
+	name := m.sessionID
+	if name == "" {
+		name = i18n.T("session.bar.unnamed")
 	}
 	left := i18n.T("session.bar.session", "name", name)
-	if m.options.SessionID != "" {
-		left = i18n.T("session.bar.session", "name", m.options.SessionID)
-	}
 	right := i18n.T("session.bar.rail_hint")
-	return spread(left, right, m.width, styleBar)
+	text := chromeStyle(m.width).Render(spread(left, right, m.width))
+	return text
 }
 
 func (m model) renderBody(available int) string {
-	if available < 3 {
-		available = 3
+	if m.pendingPermission != nil {
+		return lipgloss.Place(m.width, available, lipgloss.Center, lipgloss.Center,
+			m.renderPermissionDialog())
 	}
+	if m.pendingQuestion != nil {
+		return lipgloss.Place(m.width, available, lipgloss.Center, lipgloss.Center,
+			m.renderQuestionDialog())
+	}
+	if m.overlay.kind != overlayNone {
+		return lipgloss.Place(m.width, available, lipgloss.Center, lipgloss.Center,
+			m.renderOverlay(m.width-8))
+	}
+	if len(m.transcript) == 0 {
+		return m.renderWelcome(m.width)
+	}
+	return m.renderBodySplit(available)
+}
+
+func (m model) renderBodySplit(available int) string {
 	showRail := !m.railHidden && m.width >= minRailWidth
 	if !showRail {
 		return m.renderTranscript(m.width, available)
@@ -90,38 +98,20 @@ func (m model) renderBody(available int) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, rail, " ", transcript)
 }
 
-// renderTranscript draws the conversation.
+// renderTranscript draws the conversation, newest at the bottom.
 //
-// Wrapping is done in cells, not runes: a Chinese character occupies two columns,
-// and counting characters instead would push every line past the right edge — which
-// looks like a bug in the content rather than in the layout.
+// Wrapping is done in cells, not runes: a CJK character occupies two columns,
+// and counting characters would push every line past the right edge.
 func (m model) renderTranscript(width, height int) string {
+	width = maxInt(width-2, 20)
 	var rows []string
-	for _, entry := range m.transcript {
-		prefix := "  "
-		style := styleAssistant
-		switch entry.kind {
-		case "user":
-			prefix = "> "
-			style = styleUser
-		case "event":
-			style = styleEvent
-		case "notice":
-			style = styleNotice
-		case "error":
-			style = styleError
-		}
-		for index, physical := range strings.Split(entry.text, "\n") {
-			head := prefix
-			if index > 0 {
-				head = "  "
-			}
-			rows = append(rows, style.Render(head)+wrapCells(physical, width-2))
-		}
+	for index := range m.transcript {
+		rows = append(rows, m.renderEntry(index, width)...)
 	}
 
-	// The scroll offset counts lines back from the bottom, so the newest line is
-	// always where the eye already is.
+	if len(rows) == 0 {
+		rows = append(rows, "")
+	}
 	end := len(rows) - m.scroll
 	if end > len(rows) {
 		end = len(rows)
@@ -134,199 +124,136 @@ func (m model) renderTranscript(width, height int) string {
 		start = 0
 	}
 	visible := rows[start:end]
-
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
 	return strings.Join(visible, "\n")
 }
 
-// renderRail draws the six blocks that describe the run.
-func (m model) renderRail(width, height int) string {
-	var builder strings.Builder
-	block := func(title string, rows []string, empty, hint string) {
-		builder.WriteString(styleTitle.Render(title) + "\n")
-		if len(rows) == 0 {
-			builder.WriteString(styleBar.Render("  "+empty) + "\n")
-			if hint != "" {
-				builder.WriteString(styleBar.Render("  "+hint) + "\n")
+// renderEntry draws one transcript entry as physical lines.
+func (m model) renderEntry(index int, width int) []string {
+	item := m.transcript[index]
+	switch {
+	case item.turn != nil:
+		return m.renderTurn(item.turn, width)
+	case item.kind == "assistant":
+		// The finished answer is markdown. A `● ` marks it as the agent's voice
+		// the way `> ` marks the user's.
+		lines := renderMarkdown(item.text, width-3)
+		out := make([]string, 0, len(lines))
+		for lineIndex, line := range lines {
+			if lineIndex == 0 {
+				out = append(out, currentTheme.styleFor("answer").Render("● ")+line)
+			} else {
+				out = append(out, "  "+line)
 			}
+		}
+		return append(out, "")
+	case item.kind == "streaming":
+		return []string{currentTheme.styleFor("answer").Render("● ") +
+			currentTheme.styleFor("answer").Render(wrapCells(m.streamedText, width-3)...)}
+	case item.kind == "user":
+		return wrapCells(renderOne(item.line), width)
+	default:
+		out := wrapCells(renderOne(item.line), width)
+		return append(out, "")
+	}
+}
+
+// renderTurn draws one turn block: header with its rule, the user line, the
+// event lines, the thinking block, and (during streaming) the live text.
+func (m model) renderTurn(turn *turnData, width int) []string {
+	var out []string
+	out = append(out, m.renderTurnHeader(turn, width)...)
+
+	if turn.userInput != "" {
+		for lineIndex, line := range wrapCells(turn.userInput, width-4) {
+			if lineIndex == 0 {
+				out = append(out, currentTheme.styleFor("user").Render("  > ")+line)
+			} else {
+				out = append(out, "    "+line)
+			}
+		}
+	}
+	for _, line := range turn.lines {
+		out = append(out, wrapCells(renderOne(line), width)...)
+	}
+
+	// The thinking block: one folded line by default, the quote block when this
+	// turn is expanded. Both paths share the same constructors.
+	if turn.thinking != "" {
+		chars := runewidth.StringWidth(turn.thinking)
+		if turn.expanded {
+			out = append(out, renderOne(thinkingFolded(turn, chars, "")))
+			out = append(out, thinkingBody(turn.thinking, width)...)
 		} else {
-			for _, row := range rows {
-				builder.WriteString("  " + wrapCells(row, width-3) + "\n")
-			}
+			out = append(out, renderOne(thinkingFolded(turn, chars, "")))
 		}
-		builder.WriteString("\n")
+	} else if m.thinkingLive && m.thinkingChars > 0 && turn.runID == m.streamRunID {
+		// Streaming: the spin frame and the live count — only while something
+		// is actually running, and only in quiet mode where nothing else moves.
+		out = append(out, renderOne(thinkingFolded(turn, m.thinkingChars, m.spinnerFrame())))
 	}
-
-	block(i18n.T("rail.tasks"), todoRows(m.panel.todos),
-		i18n.T("rail.tasks.empty"), i18n.T("rail.tasks.empty_hint"))
-
-	block(i18n.T("rail.jobs"), jobRows(m.panel.jobs),
-		i18n.T("rail.jobs.empty"), i18n.T("rail.jobs.empty_hint"))
-
-	block(i18n.T("rail.skills"), skillRows(m.panel.skills),
-		i18n.T("rail.skills.empty"), i18n.T("rail.skills.empty_hint"))
-
-	block(i18n.T("rail.mcp"), mcpRows(m.panel.mcp),
-		i18n.T("rail.mcp.empty"), i18n.T("rail.mcp.empty_hint"))
-
-	block(i18n.T("rail.permissions"), m.permissionRows(), "", "")
-
-	sessionRows := []string{
-		i18n.T("status.session.span",
-			"messages", i18n.Tn("status.session.messages", m.panel.messages),
-			"steps", i18n.Tn("status.session.steps", m.panel.steps)),
-	}
-	if m.panel.model != "" {
-		sessionRows = append(sessionRows, m.panel.model)
-	}
-	if !m.panel.thinking {
-		sessionRows = append(sessionRows, i18n.T("rail.session.thinking_off"))
-	}
-	block(i18n.T("rail.session"), sessionRows,
-		i18n.T("rail.session.empty"), i18n.T("rail.session.empty_hint"))
-
-	lines := strings.Split(strings.TrimRight(builder.String(), "\n"), "\n")
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-	return strings.Join(lines, "\n")
+	out = append(out, "")
+	return out
 }
 
-func todoRows(todos []any) []string {
-	var rows []string
-	for _, item := range todos {
-		row, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		status, _ := row["status"].(string)
-		content, _ := row["content"].(string)
-		mark := "[ ]"
-		switch status {
-		case "in_progress":
-			mark = "[~]"
-		case "completed":
-			mark = "[x]"
-		}
-		rows = append(rows, mark+" "+content)
-	}
-	return rows
-}
-
-func jobRows(jobs []any) []string {
-	var rows []string
-	for _, item := range jobs {
-		row, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		state, _ := row["state"].(string)
-		id, _ := row["id"].(string)
-		seconds := intOf(row["seconds"])
-		switch state {
-		case "running":
-			rows = append(rows, fmt.Sprintf("#%s "+i18n.T("rail.job.running"), id, secondsText(seconds)))
-		case "uncollected":
-			rows = append(rows, fmt.Sprintf("#%s "+i18n.T("rail.job.uncollected"), id, row["exit_code"]))
-		default:
-			rows = append(rows, fmt.Sprintf("#%s "+i18n.T("rail.job.done"), id, row["exit_code"]))
+// renderTurnHeader draws `Turn 1 ──── running · step 1`. The rule is hairline —
+// present but quiet; the state on the right is the part that changes.
+func (m model) renderTurnHeader(turn *turnData, width int) []string {
+	header := turnHeader(turn)
+	left := header.segments[0]
+	right := ""
+	rightRole := "rule"
+	if len(header.segments) > 1 {
+		rightRole = header.segments[1].role
+		for _, part := range header.segments[1:] {
+			right += part.text
 		}
 	}
-	return rows
-}
-
-func skillRows(skills []any) []string {
-	var rows []string
-	for _, item := range skills {
-		row, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := row["name"].(string)
-		if name != "" {
-			rows = append(rows, name)
-		}
+	leftWidth := runewidth.StringWidth(left.text)
+	rightWidth := runewidth.StringWidth(right)
+	rule := 0
+	if width > leftWidth+rightWidth+6 {
+		rule = width - leftWidth - rightWidth - 6
 	}
-	return rows
-}
-
-func mcpRows(servers []any) []string {
-	var rows []string
-	for _, item := range servers {
-		row, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := row["name"].(string)
-		state, _ := row["state"].(string)
-		rows = append(rows, fmt.Sprintf("%s (%s)", name, state))
+	ruleText := ""
+	if rule > 0 {
+		ruleText = " " + strings.Repeat("─", rule) + " "
 	}
-	return rows
-}
-
-// permissionRows renders the risk levels with the disposition the runtime computed.
-//
-// The disposition is not derived here: which levels run without asking is the
-// policy's judgement, and re-deriving it would drift by *showing the wrong thing on
-// the one line that says whether you will be asked*.
-func (m model) permissionRows() []string {
-	var rows []string
-	for _, item := range m.panel.riskScope {
-		row, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		risk, _ := row["risk"].(string)
-		disposition, _ := row["disposition"].(string)
-		text := i18n.T("rail.permission.ask")
-		if disposition == "auto" {
-			text = i18n.T("rail.permission.auto")
-		}
-		rows = append(rows, fmt.Sprintf("%-7s %s", risk, text))
-	}
-	for _, item := range m.panel.granted {
-		if name, ok := item.(string); ok {
-			rows = append(rows, name+" "+i18n.T("rail.permission.granted"))
-		}
-	}
-	for _, item := range m.panel.denied {
-		if name, ok := item.(string); ok {
-			rows = append(rows, i18n.T("rail.permission.denied")+name)
-		}
-	}
-	return rows
+	return wrapCells(currentTheme.styleFor(left.role).Render(left.text)+
+		currentTheme.styleFor("rule").Render(ruleText)+
+		currentTheme.styleFor(rightRole).Render(right), width)
 }
 
 func (m model) renderStatusBar() string {
 	left := i18n.T("status.idle")
+	if len(m.transcript) == 0 && !m.busy {
+		left = i18n.T("status.idle.new")
+	}
 	switch {
+	case m.busy && m.quiet && m.spinnerFrame() != "":
+		left = m.spinnerFrame() + " " + m.activity
 	case m.busy && m.activity != "":
-		left = m.activity
+		left = "● " + m.activity
 	case m.busy:
-		left = i18n.T("turn.running")
+		left = "● " + i18n.T("turn.running")
 	}
 
 	parts := []string{}
 	if m.panel.autopilot {
-		parts = append(parts, i18n.T("status.autopilot.on"))
+		parts = append(parts, i18n.T("status.autopilot.on_short"))
 	}
-	parts = append(parts, contextText(m.panel))
 	if m.quiet {
 		parts = append(parts, i18n.T("status.quiet"))
 	}
+	parts = append(parts, contextText(m.panel))
 	right := strings.Join(parts, " · ")
-	return spread(left, right, m.width, styleBar)
+	return chromeStyle(m.width).Render(spread(left, right, m.width))
 }
 
-// contextText is the status bar's context segment.
-//
-// It reports the estimate against the **usable budget**, not the raw window: the
-// budget is what a turn can actually spend (window minus the reply reserve minus
-// headroom), and a ratio against the raw window would advertise headroom that
-// does not exist. When the window is unknown it degrades to usage only — a wrong
-// percentage is worse than none, because it gets believed.
+// contextText reports the estimate against the usable budget. When the window
+// is unknown it degrades to usage only — a wrong percentage gets believed.
 func contextText(s panelstate) string {
 	if s.context == nil {
 		return i18n.T("status.context.none")
@@ -336,47 +263,72 @@ func contextText(s panelstate) string {
 	limit := intOf(stats["limit_tokens"])
 
 	if limit <= 0 {
-		return i18n.T("status.context.used", "used", state.TokensText(&used))
+		return i18n.T("status.context.used", "used", stateTokensText(used))
 	}
 	percent := fmt.Sprintf("%.0f", float64(used)/float64(limit)*100)
 	return i18n.T("status.context.percent",
-		"used", state.TokensText(&used),
-		"total", state.TokensText(&limit),
+		"used", stateTokensText(used),
+		"total", stateTokensText(limit),
 		"percent", percent)
 }
 
+// stateTokensText formats a token count for humans (14.1k / 1.0M).
+func stateTokensText(n int) string {
+	return state.TokensText(&n)
+}
+
+// renderInput is the two-line input with its accent rules — the only
+// high-contrast border on the screen, because this is where the eye should be.
 func (m model) renderInput() string {
-	// Shift+Enter inserts a newline, so the prompt shows the last physical line
-	// while the buffer keeps them all.
+	ruleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.accent))
+	textStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink))
+	placeholderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4))
+	hint := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4))
+
+	rule := ruleStyle.Render(strings.Repeat("─", maxInt(m.width-2, 4)))
+	inner := maxInt(m.width-4, 10)
 	lines := strings.Split(m.input, "\n")
-	last := lines[len(lines)-1]
-	if m.input == "" {
-		return styleBar.Render("> ") + styleBar.Render(i18n.T("input.placeholder"))
+	for len(lines) < 2 {
+		lines = append(lines, "")
 	}
-	return "> " + last
+	first, second := lines[len(lines)-2], lines[len(lines)-1]
+	first = clipText(first, inner)
+	second = clipText(second, inner)
+
+	var body string
+	if m.input == "" {
+		body = placeholderStyle.Render(i18n.T("input.placeholder"))
+	} else {
+		caret := ""
+		if len(lines) > 2 {
+			caret = hint.Render(fmt.Sprintf("  ↑+%d ", len(lines)-2))
+		}
+		body = textStyle.Render(first) + "\n" + textStyle.Render(second) + caret
+	}
+	return "\n" + rule + "\n" + " " + body + "\n" + rule
 }
 
 // renderPermissionDialog draws one approval request.
 //
-// Four details in here are not cosmetic:
-//
-//   - the arguments are printed **whole**. They are the material for the decision,
-//     and a truncated shell command hides the half that matters;
-//   - the hint lines from the runtime are reproduced verbatim. They contain facts
-//     this program cannot reconstruct — what exactly gets remembered, and that a
-//     trust group is a snapshot;
-//   - a key that the runtime did not offer is not shown. Offering "always allow"
-//     when there is nothing to remember produces a key that appears to work and
-//     changes nothing;
-//   - Escape denies. It is the same direction as an unreadable input, and there is
-//     no third state the runtime could move to anyway.
+//   - the arguments are printed **whole** — they are the material for the
+//     decision, and a truncated shell command hides the half that matters;
+//   - the hint lines are reproduced verbatim: they contain facts this program
+//     cannot reconstruct;
+//   - a key the runtime did not offer is not shown.
 func (m model) renderPermissionDialog() string {
 	request := m.pendingPermission
 	risk, _ := protocol.String(request, "risk")
 
-	var builder strings.Builder
-	builder.WriteString(styleError.Render(i18n.T("permission_dialog.head")) + "\n\n")
+	head := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.danger)).Bold(true)
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(currentTheme.danger)).
+		Background(lipgloss.Color(currentTheme.elevated)).
+		Padding(0, 1).
+		Width(min(m.width-8, 96))
 
+	var builder strings.Builder
+	builder.WriteString(head.Render(i18n.T("permission_dialog.head")) + "\n")
 	kind := i18n.T("permission_dialog.kind_builtin")
 	if protocol.BoolOr(request, "external", false) {
 		kind = i18n.T("permission_dialog.kind_external")
@@ -385,7 +337,8 @@ func (m model) renderPermissionDialog() string {
 
 	arguments, _ := request["arguments"].(map[string]any)
 	if len(arguments) == 0 {
-		builder.WriteString(styleBar.Render(i18n.T("permission_dialog.no_args")) + "\n")
+		builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink3)).
+			Render(i18n.T("permission_dialog.no_args")) + "\n")
 	} else {
 		names := make([]string, 0, len(arguments))
 		for name := range arguments {
@@ -411,9 +364,10 @@ func (m model) renderPermissionDialog() string {
 	if request["remember"] != nil {
 		builder.WriteString("   " + i18n.T("permission_dialog.always"))
 	}
-	builder.WriteString("\n\n" + styleBar.Render(i18n.T("permission_dialog.footer")))
+	builder.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4)).
+		Render(i18n.T("permission_dialog.footer")))
 
-	return styleDialog.Width(min(m.width-4, 96)).Render(builder.String())
+	return box.Render(builder.String())
 }
 
 func (m model) renderQuestionDialog() string {
@@ -421,16 +375,26 @@ func (m model) renderQuestionDialog() string {
 	question, _ := protocol.String(request, "question")
 	header, _ := protocol.String(request, "header")
 
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(currentTheme.accent)).
+		Background(lipgloss.Color(currentTheme.elevated)).
+		Padding(0, 1).
+		Width(min(m.width-8, 96))
+
 	var builder strings.Builder
-	builder.WriteString(styleTitle.Render(i18n.T("question_dialog.head")) + "\n\n")
+	builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.accent)).Bold(true).
+		Render(i18n.T("question_dialog.head")) + "\n")
 	if header != "" {
-		builder.WriteString(styleTitle.Render(header) + "\n")
+		builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4)).Bold(true).
+			Render(header) + "\n")
 	}
 	builder.WriteString(question + "\n\n")
 
 	options, _ := request["options"].([]any)
 	if len(options) == 0 {
-		builder.WriteString(styleBar.Render(i18n.T("question_dialog.no_options")) + "\n")
+		builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink3)).
+			Render(i18n.T("question_dialog.no_options")) + "\n")
 	} else {
 		for index, item := range options {
 			text, _ := item.(string)
@@ -438,10 +402,10 @@ func (m model) renderQuestionDialog() string {
 		}
 	}
 	builder.WriteString("\n> " + m.questionInput + "\n\n")
-	builder.WriteString(styleBar.Render(i18n.T("question_dialog.skip")) + "\n")
-	builder.WriteString(styleBar.Render(i18n.T("question_dialog.footer2")))
+	builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4)).
+		Render(i18n.T("question_dialog.skip") + "\n" + i18n.T("question_dialog.footer2")))
 
-	return styleDialog.Width(min(m.width-4, 96)).Render(builder.String())
+	return box.Render(builder.String())
 }
 
 func renderArgument(value any) string {
@@ -455,37 +419,38 @@ func renderArgument(value any) string {
 	}
 }
 
-// spread puts one string on the left and one on the right of a line.
-//
-// The padding is measured in cells, so a Chinese session id or a Chinese
-// placeholder does not push the right half out of alignment.
-func spread(left, right string, width int, style lipgloss.Style) string {
+// spread puts one string on the left and one on the right of a line, measured
+// in cells so a CJK session id does not push the right half out of alignment.
+func spread(left, right string, width int) string {
 	leftWidth := runewidth.StringWidth(left)
 	rightWidth := runewidth.StringWidth(right)
 	padding := width - leftWidth - rightWidth
 	if padding < 1 {
-		return style.Render(left)
+		return left
 	}
-	return left + strings.Repeat(" ", padding) + style.Render(right)
+	return left + strings.Repeat(" ", padding) + right
 }
 
 // wrapCells wraps text at a number of terminal cells.
-func wrapCells(text string, width int) string {
+func wrapCells(text string, width int) []string {
 	if width <= 1 {
-		return text
+		return []string{text}
 	}
-	var out strings.Builder
+	var out []string
+	var current strings.Builder
 	column := 0
 	for _, char := range text {
 		cellWidth := runewidth.RuneWidth(char)
 		if column+cellWidth > width {
-			out.WriteRune('\n')
+			out = append(out, current.String())
+			current.Reset()
 			column = 0
 		}
-		out.WriteRune(char)
+		current.WriteRune(char)
 		column += cellWidth
 	}
-	return out.String()
+	out = append(out, current.String())
+	return out
 }
 
 func secondsText(seconds int) string {
