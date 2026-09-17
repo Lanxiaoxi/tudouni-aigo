@@ -839,7 +839,12 @@ func (m model) renderPermissionDialog() string {
 		Background(lipgloss.Color(currentTheme.elevated)).
 		Padding(0, 1).
 		Width(boxWidth)
-	inner := boxWidth - 4
+	// `Width()` includes the padding and the border is added on top, so a box built
+	// with Padding(0,1) has boxWidth-2 usable columns. Getting this wrong by two
+	// makes lipgloss reflow the rows, and its wrap does not agree with this
+	// program's about ANSI escapes — which is how a highlighted row ends up
+	// spanning two lines.
+	inner := boxWidth - 2
 
 	var builder strings.Builder
 	// Head: the alarm word on the left, the risk as a chip at the right-hand end.
@@ -982,7 +987,9 @@ func (m model) renderQuestionDialog() string {
 		Background(lipgloss.Color(currentTheme.elevated)).
 		Padding(0, 1).
 		Width(boxWidth)
-	inner := boxWidth - 4
+	// As in the approval dialog: `Width()` includes the padding, the border is added
+	// on top, so Padding(0,1) leaves boxWidth-2 usable columns.
+	inner := boxWidth - 2
 
 	var builder strings.Builder
 	builder.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.accent)).Bold(true).

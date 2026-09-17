@@ -439,15 +439,63 @@ func (m model) renderOverlay(width int) string {
 	return ""
 }
 
+// overlayFrameWidth is the widest a panel gets, and overlayInner the width its
+// rows have to fit.
+//
+// The distinction is the whole of a bug that was reported from a real terminal:
+// `Width()` in lipgloss **includes** the padding, and the border is added on top,
+// so a 76-wide panel has 72 columns for its rows. Rows padded to the *available*
+// width instead (up to 112) do not overflow — the frame reflows them, and a styled
+// row measures wider than it looks, so the wrap lands early and the selected row's
+// background ends up spanning two or three lines. In a colourless terminal none of
+// that happens and the panel looks perfect, which is why the sandbox render was
+// clean while the screen was not.
+const overlayMaxWidth = 76
+
+func overlayFrameWidth(width int) int {
+	if width > overlayMaxWidth {
+		return overlayMaxWidth
+	}
+	return width
+}
+
+func overlayInner(width int) int {
+	if inner := overlayFrameWidth(width) - 4; inner > 8 {
+		return inner
+	}
+	return 8
+}
+
+// panelBody wraps every row to the panel's inner width and joins them.
+//
+// It is always this program's wrapper, never the frame's: `wrapCells` counts ANSI
+// escapes as zero width, and the frame's does not. Handing the frame only rows
+// that already fit is what keeps the panel's geometry the panel's own.
+func panelBody(rows []string, inner int) string {
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, wrapCells(row, inner)...)
+	}
+	return strings.Join(out, "\n")
+}
+
+// highlightRows wraps one row and paints every physical line as a rectangle, so a
+// selected row that is long enough to wrap stays a block instead of a ragged edge.
+func highlightRows(row string, inner int, paint func(string) string) []string {
+	physical := wrapCells(row, inner)
+	out := make([]string, 0, len(physical))
+	for _, line := range physical {
+		out = append(out, paint(line))
+	}
+	return out
+}
+
 // overlayFrame is the shared modal shape: 76 columns, the elevated background,
 // a round hairline border. Hairline, not accent — every panel framed in the
 // interaction colour would make the frame shout, and a modal already owns the
 // screen by being on top.
 func overlayFrame(width int, title, badge, body string) string {
-	frameWidth := width
-	if frameWidth > 76 {
-		frameWidth = 76
-	}
+	frameWidth := overlayFrameWidth(width)
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(currentTheme.hairline)).
@@ -526,13 +574,14 @@ func windowRows(count, cursor, limit int) (int, int) {
 func (m model) renderCommandPalette(width int) string {
 	rows := m.filteredCommands()
 	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
-	body := &strings.Builder{}
-	body.WriteString(currentTheme.styleFor("rule").Render(i18n.T("palette.hint")) + "\n")
+	inner := overlayInner(width)
+	var body []string
+	body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("palette.hint")), inner)...)
 	if first > 0 {
-		body.WriteString(currentTheme.styleFor("rule").Render(fmt.Sprintf("  ↑ %d more", first)) + "\n")
+		body = append(body, currentTheme.styleFor("rule").Render(fmt.Sprintf("  ↑ %d more", first)))
 	}
 	if len(rows) == 0 {
-		body.WriteString(currentTheme.styleFor("rule").Render("  "+i18n.T("palette.no_match")) + "\n")
+		body = append(body, currentTheme.styleFor("rule").Render("  "+i18n.T("palette.no_match")))
 	}
 	nameWidth := 0
 	for _, command := range commands() {
@@ -540,6 +589,9 @@ func (m model) renderCommandPalette(width int) string {
 			nameWidth = len(command.name)
 		}
 	}
+	highlight := lipgloss.NewStyle().
+		Background(lipgloss.Color(currentTheme.accentSoft)).
+		Width(inner)
 	for index := first; index < last; index++ {
 		command := rows[index]
 		row := fmt.Sprintf("  %-*s  ", nameWidth, command.name)
@@ -548,20 +600,20 @@ func (m model) renderCommandPalette(width int) string {
 			// The palette highlights with the **soft** accent, not the reverse
 			// video the pickers use: here the cursor means "typing continues from
 			// here", not "Enter commits this one".
-			body.WriteString(lipgloss.NewStyle().
-				Background(lipgloss.Color(currentTheme.accentSoft)).
-				Width(width).Render(row) + "\n")
+			body = append(body, highlightRows(row, inner,
+				func(line string) string { return highlight.Render(line) })...)
 			continue
 		}
-		body.WriteString(currentTheme.styleFor("answer").Render(
-			fmt.Sprintf("  %-*s  ", nameWidth, command.name)) +
-			currentTheme.styleFor("rule").Render(command.hint) + "\n")
+		body = append(body, wrapCells(currentTheme.styleFor("answer").Render(
+			fmt.Sprintf("  %-*s  ", nameWidth, command.name))+
+			currentTheme.styleFor("rule").Render(command.hint), inner)...)
 	}
 	if last < len(rows) {
-		body.WriteString(currentTheme.styleFor("rule").Render(
-			fmt.Sprintf("  ↓ %d more", len(rows)-last)) + "\n")
+		body = append(body, currentTheme.styleFor("rule").Render(
+			fmt.Sprintf("  ↓ %d more", len(rows)-last)))
 	}
-	return overlayFrame(width, i18n.T("palette.title"), "", strings.TrimRight(body.String(), "\n"))
+	return overlayFrame(width, i18n.T("palette.title"), "",
+		panelBody(body, inner))
 }
 
 // filteredCommands is the candidates for the current line.
@@ -605,35 +657,37 @@ func (m model) paletteArgument() string {
 func (m model) renderOptionPicker(width int) string {
 	rows := m.overlay.options
 	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
-	body := &strings.Builder{}
+	inner := overlayInner(width)
+	var body []string
 	for index := first; index < last; index++ {
 		opt := rows[index]
 		isCurrent := opt.note == i18n.T("picker.current")
-		row := currentRow("  "+opt.row, isCurrent, width)
+		row := currentRow("  "+opt.row, isCurrent, inner)
 		if index == m.overlay.cursor {
-			body.WriteString(selectedRow(row, width-2) + "\n")
+			body = append(body, highlightRows(row, inner,
+				func(line string) string { return selectedRow(line, inner) })...)
 		} else {
-			body.WriteString(row + "\n")
+			body = append(body, wrapCells(row, inner)...)
 		}
 	}
 	// The note belongs to the row under the cursor and is drawn once, below the
 	// list: repeating it under every row is a paragraph per candidate.
 	if m.overlay.cursor >= 0 && m.overlay.cursor < len(rows) {
 		if note := optionNote(rows[m.overlay.cursor]); note != "" {
-			body.WriteString(currentTheme.styleFor("rule").Render("  "+note) + "\n")
+			body = append(body, wrapCells(currentTheme.styleFor("rule").Render("  "+note), inner)...)
 		}
 	}
 	if m.overlay.waiting != "" {
 		// The runtime has not spoken yet. Drawing the new value before the
 		// runtime confirms it is drawing a lie — the panel stays open and says so.
-		body.WriteString(currentTheme.styleFor("warn").Render("  "+m.overlay.waiting) + "\n")
+		body = append(body, wrapCells(currentTheme.styleFor("warn").Render("  "+m.overlay.waiting), inner)...)
 	}
-	body.WriteString(currentTheme.styleFor("rule").Render(i18n.T("option.footer")) + "\n")
+	body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("option.footer")), inner)...)
 	badge := ""
 	if len(rows) > 0 {
 		badge = i18n.Tn("option.count", len(rows), "n", len(rows))
 	}
-	return overlayFrame(width, m.overlay.title, badge, strings.TrimRight(body.String(), "\n"))
+	return overlayFrame(width, m.overlay.title, badge, panelBody(body, inner))
 }
 
 // optionNote is the row's explanation, with the "(current)" marker stripped —
@@ -649,11 +703,12 @@ func optionNote(opt option) string {
 // mounted, and tried-and-failed are three different situations, and the third
 // one has to say why.
 func (m model) renderMCPPanel(width int) string {
-	body := &strings.Builder{}
 	rows := m.mcpPanelRows()
 	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
+	inner := overlayInner(width)
+	var body []string
 	if len(rows) == 0 {
-		body.WriteString(currentTheme.styleFor("rule").Render(i18n.T("mcp_dialog.empty")) + "\n")
+		body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("mcp_dialog.empty")), inner)...)
 	}
 	nameWidth := 0
 	for _, row := range rows {
@@ -665,21 +720,22 @@ func (m model) renderMCPPanel(width int) string {
 		row := rows[index]
 		text := row.text(nameWidth)
 		if index == m.overlay.cursor {
-			body.WriteString(selectedRow(text, width-2) + "\n")
+			body = append(body, highlightRows(text, inner,
+				func(line string) string { return selectedRow(line, inner) })...)
 		} else {
-			body.WriteString(text + "\n")
+			body = append(body, wrapCells(text, inner)...)
 		}
 	}
 	if m.overlay.waiting != "" {
-		body.WriteString(currentTheme.styleFor("warn").Render(m.overlay.waiting) + "\n")
+		body = append(body, wrapCells(currentTheme.styleFor("warn").Render(m.overlay.waiting), inner)...)
 	}
-	body.WriteString(currentTheme.styleFor("rule").Render(i18n.T("mcp_dialog.footer")) + "\n")
+	body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("mcp_dialog.footer")), inner)...)
 	loaded, total := mcpTally(m.panel.mcp)
 	badge := ""
 	if total > 0 {
 		badge = i18n.T("mcp_dialog.running", "loaded", loaded, "total", total)
 	}
-	return overlayFrame(width, i18n.T("mcp_dialog.head"), badge, strings.TrimRight(body.String(), "\n"))
+	return overlayFrame(width, i18n.T("mcp_dialog.head"), badge, panelBody(body, inner))
 }
 
 type mcpRow struct {
@@ -748,26 +804,28 @@ func (m model) mcpPanelRows() []mcpRow {
 // The current session is marked: `/resume` on the session you are already in is a
 // no-op, and without the mark that no-op looks like a broken panel.
 func (m model) renderSessionPicker(width int) string {
-	body := &strings.Builder{}
 	rows := m.sessionOptions
 	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
+	inner := overlayInner(width)
+	var body []string
 	if len(rows) == 0 {
-		body.WriteString(currentTheme.styleFor("rule").Render(i18n.T("session_dialog.empty")) + "\n")
+		body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("session_dialog.empty")), inner)...)
 	}
 	for index := first; index < last; index++ {
 		opt := rows[index]
-		line := currentRow(opt.row, opt.value == m.sessionID, width)
+		line := currentRow(opt.row, opt.value == m.sessionID, inner)
 		if index == m.overlay.cursor {
-			body.WriteString(selectedRow(line, width-2) + "\n")
+			body = append(body, highlightRows(line, inner,
+				func(text string) string { return selectedRow(text, inner) })...)
 		} else {
-			body.WriteString(line + "\n")
+			body = append(body, wrapCells(line, inner)...)
 		}
 		if index == m.overlay.cursor && opt.note != "" {
-			body.WriteString(currentTheme.styleFor("rule").Render("  "+opt.note) + "\n")
+			body = append(body, wrapCells(currentTheme.styleFor("rule").Render("  "+opt.note), inner)...)
 		}
 	}
-	body.WriteString(currentTheme.styleFor("rule").Render(i18n.T("session_dialog.footer")) + "\n")
-	return overlayFrame(width, i18n.T("session_dialog.head"), "", strings.TrimRight(body.String(), "\n"))
+	body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("session_dialog.footer")), inner)...)
+	return overlayFrame(width, i18n.T("session_dialog.head"), "", panelBody(body, inner))
 }
 
 // renderSkillsPanel is the `Ctrl+S` list: everything this workspace offers, with
@@ -777,11 +835,12 @@ func (m model) renderSessionPicker(width int) string {
 // opened, read and dismissed — and because the rail's skills block answers a
 // different question ("which ones has this session read").
 func (m model) renderSkillsPanel(width int) string {
-	body := &strings.Builder{}
 	rows := m.skillRows
 	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
+	inner := overlayInner(width)
+	var body []string
 	if len(rows) == 0 {
-		body.WriteString(currentTheme.styleFor("rule").Render(i18n.T("skills.empty")) + "\n")
+		body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("skills.empty")), inner)...)
 	}
 	nameWidth := 0
 	for _, row := range rows {
@@ -798,16 +857,17 @@ func (m model) renderSkillsPanel(width int) string {
 		line := currentTheme.styleFor(role).Render(mark) +
 			currentTheme.styleFor("skill").Render(fmt.Sprintf("%-*s", nameWidth, row.name))
 		if row.description != "" {
-			line += currentTheme.styleFor("rule").Render("   " + clipText(row.description, width-nameWidth-8))
+			line += currentTheme.styleFor("rule").Render("   " + row.description)
 		}
 		if index == m.overlay.cursor {
-			body.WriteString(selectedRow(line, width-2) + "\n")
+			body = append(body, highlightRows(line, inner,
+				func(text string) string { return selectedRow(text, inner) })...)
 		} else {
-			body.WriteString(line + "\n")
+			body = append(body, wrapCells(line, inner)...)
 		}
 	}
-	body.WriteString(currentTheme.styleFor("rule").Render(i18n.T("skills.footer")) + "\n")
-	return overlayFrame(width, i18n.T("skills.title"), "", strings.TrimRight(body.String(), "\n"))
+	body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("skills.footer")), inner)...)
+	return overlayFrame(width, i18n.T("skills.title"), "", panelBody(body, inner))
 }
 
 // skillRow is one line of the skills panel.
