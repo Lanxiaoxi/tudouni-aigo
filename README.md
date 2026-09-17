@@ -43,14 +43,40 @@ tells you where it put it.
 ## Building
 
 ```
-make build            # for this machine
+make build            # for this machine, with the version compiled in
 make test             # the whole suite
-make release-assets   # cross-compile every supported target
-make release          # …and zip each one with the files it needs beside it
+make release          # build, verify and archive every shipped platform
 ```
 
 `CGO_ENABLED=0` throughout: a static binary has no libc to match, which is what
 makes "unpack it and run it" true.
+
+The version is **compiled into the binary** with `-ldflags`. It is not a file next
+to it, because a file can be newer than the binary it describes — replacing the
+executable has silently failed before, the old binary went on reporting the new
+version, and the one question `--version` exists to answer was answered wrongly.
+The string comes from `VERSION`, or `$TUDOUNI_VERSION`, or `git describe`.
+
+### Releasing
+
+`make release` runs `tools/release`, which for each platform builds the binary,
+stages what has to sit beside it, **verifies the result**, and writes
+`dist/tudouni-<version>-<triple>.zip`. The archive is the whole download: unpack
+it, run `install.ps1` / `install.sh`, done.
+
+Two platforms ship, both x86_64: the ones with a vendored ripgrep is exactly the
+ones that can ship, because a package without it produces a program whose `grep`
+tool is silently missing. Adding a platform means vendoring its ripgrep first.
+
+The verification is the point, not a formality. A release package's characteristic
+failure is not "it will not start" — it is "it starts and one feature is quietly
+absent", and that is invisible in the source tree where the tests run. So the
+release step re-opens the archive it just wrote, checks what landed in it, runs
+the binary (`--help`, `--version`, `--runtime-stdio`), and reads the runtime's
+startup notices to confirm the vendored ripgrep was found. It also checks the
+installers' storage form: `install.ps1` must carry a UTF-8 BOM (without one,
+PowerShell 5.1 mis-decodes it and fails to parse) and `install.sh` must be LF and
+BOM-free (otherwise the kernel cannot find its interpreter).
 
 ## What travels with the code
 
@@ -68,6 +94,13 @@ an error — it produces a program that starts and is quietly missing a feature:
 `go build` output already carries them. The ripgrep builds stay on disk because
 they are executables that get run, and a test covering all four lives in
 `internal/paths/paths_test.go`.
+
+`prompts/` is on that list for a second reason worth knowing: its **presence** is
+how the program recognises its own directory (`paths.PackageDir`), and the vendored
+ripgrep is then looked up relative to that directory. So a package that carries the
+binary and `tools/` but not `prompts/` resolves its root to the working directory
+instead, does not find ripgrep, and drops `grep` — with one line on stderr to say
+so. `tools/release` checks for the directory rather than assuming it.
 
 ## Layout
 

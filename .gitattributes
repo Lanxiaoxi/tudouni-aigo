@@ -1,0 +1,15 @@
+# Line endings: **do not depend on the platform's default.**
+#
+# This repository is checked out with `core.autocrlf=true` on Windows, so the
+# default for a text file is CRLF. That is harmless for almost everything here —
+# but not for the shell script that ships to users: CRLF makes its first line
+# `#!/bin/sh\r`, which is "bad interpreter: No such file or directory" on Linux,
+# and which looks identical in a Windows editor. A classic "breaks only on someone
+# else's machine".
+*.sh text eol=lf
+
+# `install.ps1` works with either line ending, so it is not pinned — but it **must
+# carry a UTF-8 BOM** (without one, Windows PowerShell 5.1 decodes the Chinese
+# comments with the system code page and then fails to parse the script). A BOM is
+# not something version control can guarantee, so `go run ./tools/release` checks
+# for it before packaging.

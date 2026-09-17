@@ -1,56 +1,31 @@
 // Package version reports which build this is.
 //
-// The version string comes from a stamp file that the build writes next to the
-// resources. The stamp exists because the built artifact does not carry a build
-// manifest, and "did I actually install the new build?" is a question the user
-// has to be able to answer.
+// The version is **compiled into the binary** by the build, through
+//
+//	go build -ldflags "-X github.com/Lanxiaoxi/tudouni-aigo/internal/version.Version=0.1.0"
+//
+// It used to be read from a `_version.txt` file sitting next to the executable,
+// and that was wrong in a way worth recording: a file on disk can be newer than
+// the binary it is supposed to describe. Replacing the executable silently failed
+// once (the copy reported success and did not happen), the old binary printed the
+// new version anyway, and the answer to "did I install the new build?" — the one
+// question this package exists for — was a confident lie. A string inside the
+// binary cannot disagree with the binary.
+//
+// A plain `go build` with no flags reports "dev", which is honest: that binary
+// did not come from the build, so it has no version.
 package version
 
-import (
-	"os"
-	"path/filepath"
-	"strings"
-
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
-)
-
-// StampFileName is the file the build writes the version into.
-const StampFileName = "_version.txt"
-
-// Unknown is what we say when no stamp was found.
-const Unknown = "unknown"
-
-// Fallback is compiled in so a plain `go build` still reports something usable.
-var Fallback = "dev"
+// Version is set by the build through -ldflags -X. Nothing assigns to it at run
+// time; the variable exists so the linker has somewhere to write.
+var Version = "dev"
 
 // Current returns the version string of this build.
 func Current() string {
-	if v := readStamp(); v != "" {
-		return v
+	if Version == "" {
+		return "dev"
 	}
-	if Fallback != "" {
-		return Fallback
-	}
-	return Unknown
-}
-
-func readStamp() string {
-	candidates := []string{
-		filepath.Join(paths.PackageDir(), StampFileName),
-	}
-	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), StampFileName))
-	}
-	for _, path := range candidates {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if text := strings.TrimSpace(string(raw)); text != "" {
-			return text
-		}
-	}
-	return ""
+	return Version
 }
 
 // Describe returns the one-line identification used by --version.

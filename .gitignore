@@ -10,9 +10,6 @@
 tools/vendor/rg/**/rg
 tools/vendor/rg/**/rg.exe
 
-# Version stamp written by the build, not source.
-/_version.txt
-
 # The Python project this was rewritten from: reference material, not source.
 /old_code/
 

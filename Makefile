@@ -1,37 +1,30 @@
 # Build and release for tudouni.
 #
 # One binary, zero runtime dependencies: everything the program needs at run time
-# is either compiled in or vendored next to it, so a release is `go build` plus a
+# is either compiled in or vendored next to it, so a release is a build plus a
 # copy. There is no interpreter to install and no virtual environment to get wrong.
 #
-# The version stamp is written next to the resources rather than compiled in, for
-# the same reason the Python build wrote one: the answer to "did I actually install
-# the new build?" has to be available to the person who ran the installer, and a
-# stamp they can read is better than a number only the maintainer knows.
+# **Every recipe goes through the Go tool, not through shell utilities.** That is
+# not indirection for its own sake: `mkdir -p`, `rm -rf` and `$(shell cat ...)` are
+# POSIX, this repository is developed on Windows, and a Makefile that works in Git
+# Bash but dies in cmd is a Makefile whose commands nobody can remember the
+# PowerShell equivalent of. `go run ./tools/release` runs in any shell, and it is
+# also the one place that knows how a binary gets built with its version in it.
+#
+# The version is **compiled into the binary** with -ldflags. It is not a file next
+# to it, because a file can be newer than the binary it describes: replacing the
+# executable has silently failed before, the old binary went on reporting the new
+# version, and the one question `--version` exists to answer was answered wrongly.
 
 GO ?= go
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-DIST := dist
-STAMP := _version.txt
 
-# Everything that gets cross-compiled. Each entry is GOOS/GOARCH.
-TARGETS := \
-	windows/amd64 \
-	windows/arm64 \
-	linux/amd64 \
-	linux/arm64 \
-	darwin/amd64 \
-	darwin/arm64
-
-.PHONY: all build test vet fmt clean release release-assets
+.PHONY: all build test vet fmt release clean
 
 all: test build
 
-## build: compile for this machine, writing the version stamp first.
+## build: compile for this machine, with the version compiled in.
 build:
-	@printf '%s\n' "$(VERSION)" > $(STAMP)
-	$(GO) build -trimpath -o $(DIST)/tudouni$(shell $(GO) env GOEXE) ./cmd/tudouni
-	@echo "built $(DIST)/tudouni$(shell $(GO) env GOEXE) $(VERSION)"
+	$(GO) run ./tools/release --local
 
 ## test: run the whole test suite.
 test:
@@ -41,46 +34,16 @@ vet:
 	$(GO) vet ./...
 
 fmt:
-	gofmt -w cmd internal prompts
+	$(GO) fmt ./...
 
-## release-assets: cross-compile every target.
+## release: build, verify and archive every shipped platform.
 #
-# CGO is off deliberately: a static binary has no libc to match, which is what
-# makes "download it and run it" true on a machine that has nothing installed.
-release-assets:
-	@printf '%s\n' "$(VERSION)" > $(STAMP)
-	@mkdir -p $(DIST)
-	@for target in $(TARGETS); do \
-		os=$${target%/*}; arch=$${target#*/}; \
-		name=tudouni-$$os-$$arch; \
-		if [ "$$os" = "windows" ]; then name=$$name.exe; fi; \
-		echo "  $$os/$$arch -> $(DIST)/$$name"; \
-		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -trimpath \
-			-o $(DIST)/$$name ./cmd/tudouni || exit 1; \
-	done
-	@echo "done $(VERSION)"
-
-## release: build every target and zip each one with the files it needs beside it.
-#
-# The archive carries the four categories that travel with the code. Any of them
-# missing produces a program that starts and is quietly missing a feature, which is
-# why they are copied explicitly rather than assumed.
-release: release-assets
-	@for target in $(TARGETS); do \
-		os=$${target%/*}; arch=$${target#*/}; \
-		name=tudouni-$$os-$$arch; \
-		exe=$$name; if [ "$$os" = "windows" ]; then exe=$$name.exe; fi; \
-		stage=$(DIST)/$$name; \
-		rm -rf $$stage; mkdir -p $$stage; \
-		cp $(DIST)/$$exe $$stage/; \
-		cp $(STAMP) $$stage/; \
-		cp -r prompts protocol config.example.json $$stage/; \
-		mkdir -p $$stage/tools/vendor; cp -r tools/vendor/rg $$stage/tools/vendor/; \
-		cp README.md $$stage/ 2>/dev/null || true; \
-		(cd $(DIST) && zip -qr $$name.zip $$name); \
-		rm -rf $$stage; \
-		echo "  $(DIST)/$$name.zip"; \
-	done
+# It is a Go program rather than a shell loop because the packaging step has to do
+# things a shell does badly: open the archive it just wrote and check what is in
+# it, run the binary, and read the runtime's startup notices to confirm the
+# vendored ripgrep was found. See tools/release.
+release:
+	$(GO) run ./tools/release
 
 clean:
-	rm -rf $(DIST) $(STAMP)
+	$(GO) run ./tools/release --clean
