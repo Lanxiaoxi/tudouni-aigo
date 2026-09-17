@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/frontends"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 )
@@ -49,6 +50,11 @@ type panelstate struct {
 	prefixes  []any
 	agentsMD  []any
 	skills    []any
+	// context is the last ledger payload `/context` (or a compaction) reported.
+	// It is nil until somebody asks, because the runtime only measures it on
+	// request — a status bar that showed zero before the first question would
+	// teach the reader that the number is meaningless.
+	context map[string]any
 }
 
 type model struct {
@@ -360,6 +366,22 @@ func (m *model) handleUI(payload map[string]any) {
 
 	case protocol.UIStatus:
 		m.renderStatus(payload)
+
+	case protocol.UITools:
+		m.append("answer", frontends.RenderTools(payload))
+
+	case protocol.UIContext:
+		m.append("answer", frontends.RenderContext(payload))
+
+	case protocol.UICompacted:
+		// The same sentence the line interface prints, from the same function:
+		// every figure in it comes from one compaction, and two renderings would
+		// let "how much was saved" drift between the two interfaces.
+		compaction, _ := payload["compaction"].(map[string]any)
+		m.append("answer", frontends.RenderCompaction(compaction))
+		if contextPayload, ok := payload["context"].(map[string]any); ok {
+			m.panel.context = contextPayload
+		}
 	}
 }
 

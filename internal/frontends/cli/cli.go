@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/frontends"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/runtime"
@@ -214,17 +215,19 @@ func handleCommand(current protocol.Runtime, line string, out io.Writer) (bool, 
 		fmt.Fprintln(out, renderStatus(current.StatusMessage()))
 
 	case "/tools":
-		fmt.Fprintln(out, renderTools(current.ToolsMessage()))
+		fmt.Fprintln(out, frontends.RenderTools(current.ToolsMessage()))
 
 	case "/context":
-		fmt.Fprintln(out, renderContext(current.ContextMessage()))
+		fmt.Fprintln(out, frontends.RenderContext(current.ContextMessage()))
 
 	case "/compact":
-		if _, err := current.Compact(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		result, err := current.Compact()
+		if err != nil {
+			fmt.Fprintln(out, i18n.T("channels.compact.failed", "problem", err.Error()))
 			return false, ""
 		}
-		fmt.Fprintln(out, i18n.T("cmd.compact.waiting"))
+		compaction, _ := result["compaction"].(map[string]any)
+		fmt.Fprintln(out, frontends.RenderCompaction(compaction))
 
 	case "/model":
 		if len(arguments) == 0 {
@@ -361,47 +364,6 @@ func renderStatus(message map[string]any) string {
 			i18n.T("status.kv.turns"), counters["runs"], counters["model_calls"], counters["tool_calls"])
 	}
 	return strings.TrimRight(builder.String(), "\n")
-}
-
-func renderTools(message map[string]any) string {
-	tools, _ := message["tools"].([]any)
-	if len(tools) == 0 {
-		return i18n.T("tools.none")
-	}
-	var builder strings.Builder
-	for _, item := range tools {
-		row, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		disposition, _ := row["disposition"].(string)
-		fmt.Fprintf(&builder, "  %-18s %-7s %s\n", row["name"], row["risk"], dispositionText(disposition))
-	}
-	prefixes, _ := message["granted_prefixes"].([]string)
-	if len(prefixes) > 0 {
-		builder.WriteString(i18n.T("tools.prefixes", "rules", strings.Join(prefixes, ", ")) + "\n")
-	}
-	builder.WriteString(i18n.T("tools.footer"))
-	return builder.String()
-}
-
-func dispositionText(disposition string) string {
-	switch disposition {
-	case "auto":
-		return i18n.T("tools.disposition.auto")
-	case "deny":
-		return i18n.T("tools.disposition.deny")
-	default:
-		return i18n.T("tools.disposition.ask")
-	}
-}
-
-func renderContext(message map[string]any) string {
-	context, _ := message["context"].(map[string]any)
-	if context == nil || !truthy(context["active"]) {
-		return i18n.T("context.none")
-	}
-	return i18n.T("context.title")
 }
 
 func truthy(value any) bool {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 )
 
 // The palette. One light theme and one dark, chosen by whether the terminal
@@ -319,11 +320,29 @@ func (m model) renderStatusBar() string {
 	return spread(left, right, m.width, styleBar)
 }
 
+// contextText is the status bar's context segment.
+//
+// It reports the estimate against the **usable budget**, not the raw window: the
+// budget is what a turn can actually spend (window minus the reply reserve minus
+// headroom), and a ratio against the raw window would advertise headroom that
+// does not exist. When the window is unknown it degrades to usage only — a wrong
+// percentage is worse than none, because it gets believed.
 func contextText(s panelstate) string {
-	if s.window == nil {
+	if s.context == nil {
 		return i18n.T("status.context.none")
 	}
-	return i18n.T("status.context.plain", "used", "—", "total", fmt.Sprintf("%v", s.window))
+	stats, _ := s.context["context"].(map[string]any)
+	used := intOf(stats["estimated_tokens"])
+	limit := intOf(stats["limit_tokens"])
+
+	if limit <= 0 {
+		return i18n.T("status.context.used", "used", state.TokensText(&used))
+	}
+	percent := fmt.Sprintf("%.0f", float64(used)/float64(limit)*100)
+	return i18n.T("status.context.percent",
+		"used", state.TokensText(&used),
+		"total", state.TokensText(&limit),
+		"percent", percent)
 }
 
 func (m model) renderInput() string {

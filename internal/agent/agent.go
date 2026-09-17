@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -98,13 +99,17 @@ type Config struct {
 	ShouldStop func() bool
 	Clock      func() float64
 
-	// PreparePayload lets the context layer degrade items before a request goes
-	// out, and reports what it changed.
-	PreparePayload func(messages []map[string]any) ([]map[string]any, []map[string]any)
-	// ShouldCompact is consulted before each step; true means the history is over
-	// its budget and the turn should compact before continuing.
-	ShouldCompact func() bool
-	Compact       func() (map[string]any, error)
+	// Context is the artifact store, budget and ledger for this session. It is
+	// optional, and "no context" is a real state (tests, one-shot use): without
+	// it, tool results stay inline in history and no artifact is written — the
+	// behaviour from before the layer existed.
+	//
+	// It is injected rather than built here because the agent does not know where
+	// the workspace is or what the session id is.
+	Context *context.Manager
+	// Processor turns one tool execution into artifacts. It travels with Context:
+	// without a store to collect into, it has nowhere to put anything.
+	Processor *context.ToolResultProcessor
 }
 
 // Agent runs one session's turns.
@@ -119,6 +124,16 @@ type Agent struct {
 	step      int
 	startedAt time.Time
 	toolsUsed []string
+
+	// compacting is the re-entrancy guard. The interface can ask for a manual
+	// compaction from another goroutine while a turn is running, and two
+	// summaries generated against two different boundaries would leave the
+	// summary and the boundary disagreeing — the model would read a summary of a
+	// stretch that is not the stretch it replaces.
+	//
+	// It is "try and skip" rather than a lock: compacting is not urgent, and
+	// making the interface wait would freeze it.
+	compacting bool
 }
 
 // New builds an agent.
@@ -157,6 +172,23 @@ func (a *Agent) Run(userInput string) (string, error) {
 		a.Session.Append(a.Model.Notice(""))
 	}
 	a.Session.Append(map[string]any{"role": "user", "content": userInput})
+
+	// The context is aligned with history before anything is written down, and
+	// the order of these two steps matters:
+	//
+	//  1. MarkContextMessages gives the system prompt and the **first** user
+	//     message their band and pinned flag — judged by position, which can only
+	//     be computed with the whole history in hand;
+	//  2. Session.Context points at the manager's state, because the write path
+	//     reads the Session and must not know that a manager exists.
+	//
+	// Aligning before the checkpoint means the first write already carries the
+	// full context state, so being killed mid-turn still restores to "what really
+	// happened".
+	if a.Context != nil {
+		a.MarkContextMessages()
+		a.Session.Context = a.Context.State
+	}
 
 	if a.OnCheckpoint != nil {
 		a.OnCheckpoint()
@@ -201,11 +233,34 @@ func (a *Agent) loop() (string, error) {
 			return "", RunCancelled{}
 		}
 
-		if a.ShouldCompact != nil && a.Compact != nil && a.ShouldCompact() {
-			if _, err := a.Compact(); err == nil {
-				if a.OnCheckpoint != nil {
-					a.OnCheckpoint()
-				}
+		// History compaction: the last resort before degradation.
+		//
+		// The position is the one place it cannot move from — the top of the
+		// loop, after the previous step's tool results are all appended and the
+		// checkpoint is written, so the message list is consistent. The summary
+		// has to read exactly that, and the fold boundary has to cut on a whole
+		// turn boundary.
+		//
+		// The test answers "is it time to consider it"; whether it can actually
+		// be done is up to FoldPoint inside, which returns honestly when the
+		// history is too short or folding would gain nothing.
+		//
+		// **The first step has to measure fresh.** LastEstimate was computed on
+		// the previous step, and on this turn's first step it is still whatever
+		// the previous Run left — which for a restored long session is zero, or a
+		// number from before the last tool ran. So "over the line" could never be
+		// true on the first step of a turn. The cost is one extra scan of the
+		// history; what it buys is compacting immediately after reattaching to a
+		// long session.
+		//
+		// A failed compaction never affects the turn: degradation still covers it.
+		if a.Context != nil {
+			over := a.Context.ShouldCompact()
+			if !over && a.step == 0 {
+				over = a.RefreshEstimate() && a.Context.ShouldCompact()
+			}
+			if over {
+				a.compact(a.step+1, true)
 			}
 		}
 
@@ -225,6 +280,15 @@ func (a *Agent) loop() (string, error) {
 			a.finish(reason)
 			return "", err
 		}
+
+		// Calibrate the budget against the provider's measured input tokens.
+		//
+		// Here rather than at the end of the turn: response.Usage is the only
+		// measurement available, and "should the next step degrade" depends on it.
+		// Without it the estimator can only guess — and the direction of the
+		// error decides the consequence: too high degrades for nothing, too low
+		// fails the request.
+		a.calibrate(response.Usage)
 
 		assistant := assistantMessage(response)
 		a.Session.Append(assistant)
@@ -264,15 +328,7 @@ func (a *Agent) loop() (string, error) {
 }
 
 func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
-	payload := a.payload()
-	if a.PreparePayload != nil {
-		degraded, changes := a.PreparePayload(payload)
-		payload = degraded
-		if len(changes) > 0 {
-			a.emit(audit.Event(audit.KindContextDegraded, a.Session.SessionID, a.runID, a.step,
-				map[string]any{"changes": changes}))
-		}
-	}
+	payload := a.Payload()
 
 	options := model.CompleteOptions{}
 
@@ -329,25 +385,6 @@ func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
 	}
 
 	return CallWithRetry(a.Chat, payload, a.toolSchemas(), options, hooks)
-}
-
-// payload builds what actually goes to the model: the session's messages, plus a
-// trailing note.
-//
-// The note carries the task list, the loaded skills and the background-job
-// warning. It is appended here and never written into the session, for the same
-// reason in all three cases: it is working memory for this run, not something
-// either party said, and putting it in the history would make the conversation
-// unreadable while growing it every step.
-func (a *Agent) payload() []map[string]any {
-	out := make([]map[string]any, len(a.Session.Messages))
-	copy(out, a.Session.Messages)
-	if a.Notes != nil {
-		if note := strings.TrimSpace(a.Notes()); note != "" {
-			out = append(out, map[string]any{"role": "user", "content": note})
-		}
-	}
-	return out
 }
 
 func (a *Agent) toolSchemas() []map[string]any {
@@ -714,11 +751,59 @@ const (
 // It is a method rather than a free function because the status and the text are
 // two halves of the same fact, and letting a caller pass one without the other is
 // how a denied call ends up looking like a successful one in the history.
+//
+// With a context, the body goes into the artifact store and the message carries
+// only a reference; without one, the body stays inline, which is the behaviour
+// from before the layer existed.
+//
+// **Not one tool_call_id may go missing.** The provider requires a result for
+// every tool_calls entry, and a missing one is a 400 that reads like "context too
+// long". So every path through here returns a complete tool message, including
+// the one where storing the artifact failed.
 func (a *Agent) toolMessage(item *prepared) map[string]any {
-	return map[string]any{
+	inline := map[string]any{
 		"role":         "tool",
 		"tool_call_id": item.call.ID,
 		"content":      item.result,
+	}
+
+	if a.Context == nil {
+		return inline
+	}
+
+	processor := a.Processor
+	if processor == nil {
+		processor = context.DefaultProcessor()
+	}
+
+	execution := context.ToolExecution{
+		Tool:      item.call.Name,
+		Arguments: item.arguments,
+		Text:      item.result,
+		Audit:     item.audit,
+		Status:    item.status,
+	}
+	artifacts, err := processor.Process(a.Context.Store, execution)
+	if err != nil || len(artifacts) == 0 {
+		// Falling back to inline text rather than to a reference: an artifact
+		// that failed to store would leave history pointing at nothing, and the
+		// model would never see this result again. Sending the body inline is
+		// what happens without a context at all, so it is a known-good shape.
+		if err != nil {
+			a.reportToStderr(fmt.Sprintf("artifact store failed for %s: %v", item.call.Name, err))
+		}
+		return inline
+	}
+
+	artifact := artifacts[0]
+	a.Context.Add(artifact.ID, context.AddOptions{Quiet: true})
+	return map[string]any{
+		"role":         "tool",
+		"tool_call_id": item.call.ID,
+		"content":      context.BuildReference(artifact.ID, artifact.Chars, item.call.Name),
+		// The explicit id field: a program should not be finding an artifact by
+		// parsing a sentence meant for a person.
+		"artifact_id": artifact.ID,
 	}
 }
 

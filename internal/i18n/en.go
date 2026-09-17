@@ -511,6 +511,7 @@ var catalog = map[string]string{
 
 	// --- startup notices the runtime sends --------------------------------
 	"notice.context.missing_window":     "[context] model {model} is not in the catalog (or its context_window is not configured), so the summary reports usage without a percentage; add that line and it will.",
+	"notice.context.missing_body":       "[context] the body of {id} is no longer on disk (the artifact directory was deleted, or the session was restored from a copy that carried only the index). The session opens; wherever that content was needed the model is told to read it again.",
 	"notice.web.no_key":                 "[web] No search key is configured, so web_search is not registered (fetch_web is unaffected). To enable it, put this in the \"web\" section of {path}: \"tavily_api_key\": \"tvly-...\"",
 	"notice.grep.unsupported_platform":  "[search] this platform ({platform}) is not in the grep engine's support list (only x86_64 Windows / Linux so far), so grep is not registered (text search falls back to shell, which asks for approval every time). Supporting it takes two steps, see tools/vendor/rg/README.md.",
 	"notice.grep.missing_binary":        "[search] tools/vendor/rg/ is missing the {triple} ripgrep build, so grep is not registered (text search falls back to shell, which asks for approval every time). Put that build there to get grep back.",
