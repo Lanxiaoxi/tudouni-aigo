@@ -202,6 +202,28 @@ func TestThePermissionDialogDoesNotReflow(t *testing.T) {
 	}
 }
 
+// TestASelectedRowAlwaysSetsItsInk — the accent background is the one surface a
+// theme may not hand to the terminal.
+//
+// A transparent palette stores "do not paint" in its `bg`, and `lipgloss.Color`
+// drops that sentinel without a word: the selected row came out as
+// terminal-default ink on the accent. On a dark terminal that is light text on
+// amber — the palette's least readable pair, in the row the cursor is sitting on.
+func TestASelectedRowAlwaysSetsItsInk(t *testing.T) {
+	withColour(t)
+	t.Cleanup(func() { setTheme(defaultTheme) })
+	for _, key := range themeOrder {
+		setTheme(key)
+		row := selectedRow("2  A-T2  石墨琥珀 · 深透明", 40)
+		if !strings.Contains(row, "\x1b[38;2;") {
+			t.Errorf("%s: the selected row names no foreground: %q", key, row)
+		}
+		if strings.Contains(row, ansiDefault) {
+			t.Errorf("%s: the do-not-paint sentinel reached the renderer: %q", key, row)
+		}
+	}
+}
+
 func i18nTitle(key string) string {
 	return i18n.T(key)
 }

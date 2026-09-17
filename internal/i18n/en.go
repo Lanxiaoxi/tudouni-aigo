@@ -156,7 +156,7 @@ var catalog = map[string]string{
 	"rail.mcp.tools":         "{n} tools",
 	"rail.permissions.empty": "defaults apply — low risk runs without asking",
 
-	"help.themes": "Themes: /theme without arguments opens the picker — amber (default), deep clear, pink violet.",
+	"help.themes": "Themes: /theme without arguments opens the picker — deep clear (default), amber, pink violet.",
 
 	// Time-ago stamps (the welcome screen's recent list).
 	"ago.now":     "just now",

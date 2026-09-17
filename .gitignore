@@ -13,11 +13,8 @@ tools/vendor/rg/**/rg.exe
 # The Python project this was rewritten from: reference material, not source.
 /old_code/
 
-# Scratch space used while extracting the rewrite spec, and the
-# end-to-end harness's working directory.
-/.rewrite-spec/
+# The end-to-end harness's working directory.
 /.e2e/
-/.demo/
 
 # Editor / OS noise
 .idea/

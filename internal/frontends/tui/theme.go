@@ -11,8 +11,8 @@ import (
 // The palette layer: **three themes, pure data**.
 //
 // The original had thirteen; the ones kept here are the three that were actually
-// named: `A` (the default the user picked), `A-T2` (the deep clear variant the
-// user asked for on top of it) and `P3` (the only light palette). The rest were
+// named: `A` (the plain slab), `A-T2` (the deep clear variant of it — **the
+// default**) and `P3` (the only light palette). The rest were
 // never settled on, and a palette nobody looks at is a liability — nine hand-
 // written hex values each.
 //
@@ -32,12 +32,16 @@ import (
 type themeKey string
 
 const (
-	themeAmber      themeKey = "A"    // 石墨琥珀, the default
-	themeDeepClear  themeKey = "A-T2" // 石墨琥珀 · 深透明
+	themeAmber      themeKey = "A"    // 石墨琥珀, the painted slab
+	themeDeepClear  themeKey = "A-T2" // 石墨琥珀 · 深透明, the default
 	themePinkViolet themeKey = "P3"   // 粉紫, the only light one
 )
 
-const defaultTheme = themeAmber
+// defaultTheme is the deep clear variant: the terminal's own background shows
+// through the bars and the welcome boxes, so the interface sits on whatever
+// colour the user's terminal already has instead of painting a slab over it.
+// `--theme amber` gets the opaque one back; nothing else changes.
+const defaultTheme = themeDeepClear
 
 // ansiDefault is not a colour — it is "do not paint". The terminal's own
 // background shows through wherever it is used. Bubble Tea has no special value

@@ -167,7 +167,7 @@ func parse(argv []string) (options, error) {
 	flags.IntVar(&opts.maxSteps, "max-steps", runtime.DefaultMaxSteps(), "how many model calls one turn may take")
 	flags.BoolVar(&opts.showVer, "version", false, "print the version and exit")
 	flags.BoolVar(&opts.ericai, "ericai", false, "check the EricAI token at start-up and refresh it when it is near expiry")
-	flags.StringVar(&opts.theme, "theme", "", "start-up theme: amber (default), deep clear, pink violet — /theme changes it later")
+	flags.StringVar(&opts.theme, "theme", "", "start-up theme: deep clear (default), amber, pink violet — /theme changes it later")
 	flags.BoolVar(&opts.quiet, "quiet", false, "start in quiet mode: one line per tool call — /quiet toggles it later")
 
 	if err := flags.Parse(argv); err != nil {
@@ -196,7 +196,7 @@ func usageText() string {
 		"  --history         print a session's messages",
 		"  --autopilot       do not ask for approval",
 		"  --ericai          refresh the EricAI token at start-up when it is near expiry",
-		"  --theme <name>    start-up theme: amber (default), deep clear, pink violet",
+		"  --theme <name>    start-up theme: deep clear (default), amber, pink violet",
 		"  --quiet           start in quiet mode: one line per tool call",
 		"  --stream/--no-stream",
 		"  --debug           print what goes to the model",

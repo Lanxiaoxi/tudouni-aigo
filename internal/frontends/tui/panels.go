@@ -545,7 +545,16 @@ func currentRow(row string, isCurrent bool, width int) string {
 // It is always the palette's own background, light theme included: the accent is
 // a mid-tone, and the light theme's `surface` is close enough to it that the
 // label drops below a readable contrast.
+//
+// A transparent palette has no background of its own — its `bg` is the "do not
+// paint" sentinel, and `lipgloss.Color` silently drops it, which leaves the
+// selected row as accent-on-terminal-default: light ink on amber, unreadable on
+// a dark terminal. The colour to print on the accent is then the one the palette
+// is transparent *in front of*.
 func (t theme) darkColor() string {
+	if t.bg == ansiDefault {
+		return originalBgOf(t.palette)
+	}
 	return t.bg
 }
 
