@@ -286,6 +286,13 @@ func stringMap(value any, where, section string) (map[string]string, error) {
 	return out, nil
 }
 
+// ReadJSONObject reads the config file's raw top-level object, preserving every
+// key it carries. It is exported for the ericai writer, whose contract is to
+// change one field and leave the rest byte-equivalent.
+func ReadJSONObject(path string) (map[string]any, error) {
+	return readJSONObject(path)
+}
+
 func readJSONObject(path string) (map[string]any, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

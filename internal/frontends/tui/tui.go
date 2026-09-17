@@ -33,6 +33,10 @@ type Options struct {
 	Stream    bool
 	Debug     bool
 	MaxSteps  int
+	// Theme and Quiet are display preferences set at start-up (--theme, --quiet)
+	// and changeable in-session (/theme, /quiet). They never reach the runtime.
+	Theme string
+	Quiet bool
 }
 
 // Run starts the interface and returns the process exit code.

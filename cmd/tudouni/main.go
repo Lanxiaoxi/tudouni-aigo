@@ -51,6 +51,9 @@ type options struct {
 	maxSteps      int
 	showVer       bool
 	helpRequested bool
+	ericai        bool
+	theme         string
+	quiet         bool
 }
 
 func run(argv []string) int {
@@ -79,6 +82,13 @@ func run(argv []string) int {
 	}
 	if opts.showAudit || opts.showHist {
 		return showAudit(opts.session, opts.showHist)
+	}
+
+	// The token check happens before any interface starts, because its whole
+	// purpose is to keep a stale JWT from surfacing mid-session. It prints its
+	// own verdict to stderr and never blocks start-up.
+	if opts.ericai {
+		fmt.Fprintln(os.Stderr, runtime.EnsureEricAI())
 	}
 
 	// The workspace check runs before anything else can go wrong. read_file needs
@@ -111,6 +121,8 @@ func run(argv []string) int {
 			Stream:    opts.stream,
 			Debug:     opts.debug,
 			MaxSteps:  opts.maxSteps,
+			Theme:     opts.theme,
+			Quiet:     opts.quiet,
 		})
 	}
 	if opts.stdio {
@@ -154,6 +166,9 @@ func parse(argv []string) (options, error) {
 	flags.BoolVar(&opts.debug, "debug", false, "print what goes to the model")
 	flags.IntVar(&opts.maxSteps, "max-steps", runtime.DefaultMaxSteps(), "how many model calls one turn may take")
 	flags.BoolVar(&opts.showVer, "version", false, "print the version and exit")
+	flags.BoolVar(&opts.ericai, "ericai", false, "check the EricAI token at start-up and refresh it when it is near expiry")
+	flags.StringVar(&opts.theme, "theme", "", "start-up theme: amber (default), deep clear, pink violet — /theme changes it later")
+	flags.BoolVar(&opts.quiet, "quiet", false, "start in quiet mode: one line per tool call — /quiet toggles it later")
 
 	if err := flags.Parse(argv); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -180,6 +195,9 @@ func usageText() string {
 		"  --audit           print a session's audit log",
 		"  --history         print a session's messages",
 		"  --autopilot       do not ask for approval",
+		"  --ericai          refresh the EricAI token at start-up when it is near expiry",
+		"  --theme <name>    start-up theme: amber (default), deep clear, pink violet",
+		"  --quiet           start in quiet mode: one line per tool call",
 		"  --stream/--no-stream",
 		"  --debug           print what goes to the model",
 		"  --max-steps <n>   how many model calls one turn may take",
