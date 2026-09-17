@@ -17,6 +17,13 @@ import (
 // an overlay panel, then the editor. The ordering is the safety property: a
 // keystroke meant for a dialog must never land in the input line and leave as a
 // message.
+//
+// The editor is reached through `handleEditorKey`, and **nothing inside the
+// editor may call back into this function**: the palette's filter is the input
+// line, so the palette forwards typing to the editor, and routing that through
+// here re-entered the palette branch for ever. Go does not catch that; it dies
+// with "fatal error: stack overflow", which is what typing any letter into the
+// command palette used to do.
 func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.pendingPermission != nil {
 		return m.handlePermissionKey(key)
@@ -27,7 +34,12 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay.kind != overlayNone {
 		return m.handleOverlayKey(key)
 	}
+	return m.handleEditorKey(key)
+}
 
+// handleEditorKey is the input line: the careted editor plus the interface-level
+// keys that belong to it (quit, interrupt, the rail, the panels).
+func (m model) handleEditorKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.Type {
 	case tea.KeyCtrlC:
 		return m, tea.Quit
@@ -613,7 +625,11 @@ func (m model) handleOverlayKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.commitOverlay()
 		}
 		// Everything else is editing, and the palette follows the line.
-		next, cmd := m.handleKey(key)
+		//
+		// This goes to `handleEditorKey`, **not** to `handleKey`: `handleKey`
+		// dispatches on the overlay being open, and the palette is the overlay, so
+		// that path is an infinite loop.
+		next, cmd := m.handleEditorKey(key)
 		after := next.(model)
 		after.overlay.cursor = 0
 		return after, cmd

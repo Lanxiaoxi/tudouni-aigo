@@ -83,7 +83,6 @@ func (m model) railBlocks() []railBlock {
 // instead threw away the task list — with its title and its progress bar — which
 // is the one block the rail opens itself for.
 func (m model) renderRail(width, height int) string {
-	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.railBar))
 	// The title carries no bold: every block shouting would mean nothing shouts.
 	// It is the same grey as the body — it says "what this block is called", and
 	// the count rides right next to it so the eye reads them together.
@@ -103,19 +102,35 @@ func (m model) renderRail(width, height int) string {
 		if block.count != "" {
 			head += titleStyle.Render(" · " + block.count)
 		}
+		// Every row sits one cell off the bar, the title included: that gutter is
+		// the block's padding in the original, and it is what makes the bar read as
+		// a frame around the block rather than as a prefix on the first word.
+		// Content and empty states share it — they used to differ, which showed up
+		// as the empty state indented one cell deeper than the rows that replace it.
+		bar := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.railBar))
+		row := func(text string) string { return bar.Render("▌") + " " + text }
 		var lines []string
-		// The colour bar spans the whole block, not just its title: it is what
-		// says where one block ends and the next begins.
-		lines = append(lines, bar.Render("▌")+head)
+		// The title is clipped rather than wrapped: it is a heading, and a heading
+		// on two lines reads as two rows of content.
+		lines = append(lines, row(clipStyled(head, width-2)))
 		if len(block.rows) == 0 {
-			lines = append(lines, emptyStyle.Render("  "+block.empty))
-			if block.hint != "" {
-				lines = append(lines, emptyStyle.Render("  "+block.hint))
+			// The empty state wraps like any other row. It is two sentences of
+			// English in a 32-column column, and drawing them unwrapped pushed them
+			// past the rail's own background — which also shifted the **whole
+			// conversation** right, because the two halves are joined side by side
+			// and the widest rail row is what sets the column.
+			for _, sentence := range []string{block.empty, block.hint} {
+				if sentence == "" {
+					continue
+				}
+				for _, physical := range wrapCells(emptyStyle.Render(sentence), width-2) {
+					lines = append(lines, row(physical))
+				}
 			}
 		} else {
-			for _, row := range block.rows {
-				for _, physical := range wrapCells(row, width-2) {
-					lines = append(lines, bar.Render("▌")+physical)
+			for _, content := range block.rows {
+				for _, physical := range wrapCells(content, width-2) {
+					lines = append(lines, row(physical))
 				}
 			}
 		}
