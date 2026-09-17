@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"
+	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
@@ -53,10 +55,14 @@ type turnData struct {
 	userInput string
 	lines     []renderLine
 
-	steps       int
-	startedAt   time.Time
+	steps     int
+	startedAt time.Time
+	// duration is the runtime's own measurement, frozen when the turn ends.
+	// Drawing `time.Since(startedAt)` instead would keep a finished turn's
+	// duration climbing for as long as the screen is left open.
+	duration    time.Duration
 	finished    bool
-	outcome     string // answered / cancelled / max_steps / failed
+	outcome     string // a stop_reason: answered / max_steps / cancelled / model_error / model_fatal
 	thinking    string // the model's reasoning, whole, once the step is done
 	thinkingRun string
 	expanded    bool // Ctrl+T state for this turn's thinking block
@@ -65,10 +71,11 @@ type turnData struct {
 // entry is one thing in the transcript: a turn, or a standalone line (a notice,
 // an error, a rendered panel answer) that belongs to no turn.
 type entry struct {
-	turn *turnData
-	line renderLine
-	kind string // for standalone lines: user / assistant / notice / error / answer
-	text string // raw text for markdown-rendered entries
+	turn  *turnData
+	line  renderLine
+	lines []renderLine
+	kind  string // for standalone lines: user / assistant / notice / error / answer
+	text  string // raw text for markdown-rendered entries
 }
 
 // ── roles → colours ───────────────────────────────────────────────────────────
@@ -76,6 +83,16 @@ type entry struct {
 // Colour carries the hierarchy the terminal cannot get from font sizes: body
 // text (ink), process lines (ink3), block titles and key hints (ink4). The risk
 // suffix leans on the same three-colour code the rest of the interface uses.
+//
+// The mapping is the original's, role for role. Two of them are load-bearing
+// rather than cosmetic:
+//
+//   - `rule` is ink4, the quietest ink. It draws the separator rules, the panel
+//     footers and the key hints — all "structure" rather than content — and at
+//     ink3 they competed with the process lines they are supposed to sit under.
+//   - `waiting` is accent and bold, because accent is reserved for exactly one
+//     thing: "this is where you act". Painting it in `warn` made "an approval is
+//     waiting" the same colour as "something went wrong".
 
 func (t theme) styleFor(role string) lipgloss.Style {
 	base := lipgloss.NewStyle()
@@ -84,16 +101,20 @@ func (t theme) styleFor(role string) lipgloss.Style {
 		return base.Foreground(lipgloss.Color(t.ink)).Bold(true)
 	case "answer":
 		return base.Foreground(lipgloss.Color(t.ink2))
-	case "process", "rule":
+	case "process":
 		return base.Foreground(lipgloss.Color(t.ink3))
-	case "tool":
+	case "rule":
+		return base.Foreground(lipgloss.Color(t.ink4))
+	case "tool", "tool_brief", "tool_brief_done":
 		return base.Foreground(lipgloss.Color(t.accent))
 	case "result":
 		return base.Foreground(lipgloss.Color(t.ok))
 	case "denied":
 		return base.Foreground(lipgloss.Color(t.danger))
-	case "warn", "waiting":
+	case "warn":
 		return base.Foreground(lipgloss.Color(t.warn))
+	case "waiting":
+		return base.Foreground(lipgloss.Color(t.accent)).Bold(true)
 	case "notice":
 		return base.Foreground(lipgloss.Color(t.ink3))
 	case "error":
@@ -105,19 +126,26 @@ func (t theme) styleFor(role string) lipgloss.Style {
 	case "think_head":
 		return base.Foreground(lipgloss.Color(t.ink4))
 	case "think_body":
-		return base.Foreground(lipgloss.Color(t.ink2))
+		return base.Foreground(lipgloss.Color(t.ink3))
 	case "quote":
 		// The bar is the boundary, not the words: the theme's line colour keeps
 		// it one step quieter than the text it frames.
 		return base.Foreground(lipgloss.Color(t.line))
 	case "turn_start":
-		return base.Foreground(lipgloss.Color(t.accent)).Bold(true)
+		return base.Foreground(lipgloss.Color(t.ink3)).Bold(true)
 	case "turn_end":
-		return base.Foreground(lipgloss.Color(t.ink3))
+		return base.Foreground(lipgloss.Color(t.ink3)).Bold(true)
 	case "skill":
 		return base.Foreground(lipgloss.Color(t.skill))
+	case "caret":
+		// The caret is a reversed cell: reverse video carries its own contrast
+		// under every theme, so no palette needs a hand-tuned caret colour.
+		return base.Reverse(true)
 	default:
-		return base
+		// An unknown role falls back to the process ink rather than to the
+		// terminal's own foreground: a line with no colour at all reads as a
+		// rendering bug, and it is the one fallback nobody would notice.
+		return base.Foreground(lipgloss.Color(t.ink3))
 	}
 }
 
@@ -147,9 +175,11 @@ func toolCallLine(tool string, arguments string, index any, risk string) renderL
 	}}
 	switch risk {
 	case "medium":
-		line.segments = append(line.segments, seg{text: " " + i18n.T("risk.medium"), role: "risk_medium"})
+		// The template already carries the three spaces that separate the risk
+		// word from the call; adding one here made it four.
+		line.segments = append(line.segments, seg{text: i18n.T("risk.medium"), role: "risk_medium"})
 	case "high":
-		line.segments = append(line.segments, seg{text: " " + i18n.T("risk.high"), role: "risk_high"})
+		line.segments = append(line.segments, seg{text: i18n.T("risk.high"), role: "risk_high"})
 	}
 	return line
 }
@@ -230,25 +260,35 @@ func toolBriefDoneLine(message map[string]any) renderLine {
 	return renderLine{segments: parts, anchor: callID, role: "tool_brief_done"}
 }
 
+// silentOutcome reports whether an approval event means "it ran without asking".
+//
+// Quiet mode drops these four entirely: the point of the mode is one line per
+// item, and a release that required no decision is not an item. The other four
+// outcomes stay — `approved` because a person pressed a key and that leaves a
+// trace worth keeping, and the three refusals because the screen has to say why
+// the turn stopped there.
+func silentOutcome(message map[string]any) bool {
+	switch outcome, _ := protocol.String(message, "outcome"); outcome {
+	case "auto_allowed", "autopilot", "rule_allowed", "command_allowed":
+		return true
+	}
+	return false
+}
+
 // permissionLine is `  · permission shell → approved (looked for 2.4s · remembered …)`.
 func permissionLine(message map[string]any) renderLine {
 	outcome, _ := protocol.String(message, "outcome")
 	tool, _ := protocol.String(message, "tool")
 	var extras []string
-	if rule, ok := message["rule"].([]any); ok && len(rule) > 0 {
-		words := make([]string, 0, len(rule))
-		for _, item := range rule {
-			words = append(words, fmt.Sprint(item))
-		}
-		extras = append(extras, i18n.T("permission.rule_hit", "rule", strings.Join(words, " ")))
+	// The rule travels as one formatted string ("git add *"), not as the list the
+	// gate matched on — accept both shapes so neither producer can silently drop
+	// the line that says *why* a command was released without asking.
+	if rule := wordsOf(message["rule"]); len(rule) > 0 {
+		extras = append(extras, i18n.T("permission.rule_hit", "rule", strings.Join(rule, " ")))
 	}
-	if remembered, ok := message["remembered"].([]any); ok && len(remembered) > 0 {
-		parts := make([]string, 0, len(remembered))
-		for _, item := range remembered {
-			parts = append(parts, fmt.Sprint(item))
-		}
+	if remembered := wordsOf(message["remembered"]); len(remembered) > 0 {
 		extras = append(extras, i18n.T("permission.remembered",
-			"remembered", strings.Join(parts, i18n.T("list.separator"))))
+			"remembered", strings.Join(remembered, i18n.T("list.separator"))))
 	}
 	if waited, ok := protocol.Int(message, "waited_ms"); ok && waited > 0 {
 		extras = append(extras, i18n.T("permission.waited", "duration", msText(waited)))
@@ -271,41 +311,108 @@ func permissionLine(message map[string]any) renderLine {
 	}}
 }
 
+// wordsOf reads a field that may arrive as one string or as a list of them.
+func wordsOf(value any) []string {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case string:
+		if typed == "" {
+			return nil
+		}
+		return []string{typed}
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, fmt.Sprint(item))
+		}
+		return out
+	case []string:
+		return typed
+	default:
+		return []string{fmt.Sprint(typed)}
+	}
+}
+
 // turnHeader is the turn separator: `Turn 1   running · step 1`. Exactly two
 // stretches — the horizontal rule between them is drawn by the layout at the
 // real width, and the split point has to be a structural fact, not a guess at
 // the first space.
 func turnHeader(turn *turnData) renderLine {
 	if turn.finished {
-		outcome := i18n.T("status.settled." + turn.outcome)
+		outcome := stopReasonText(turn.outcome)
 		body := i18n.T("turn.state.other", "n", turn.steps,
-			"duration", durationText(time.Since(turn.startedAt)), "outcome", outcome)
+			"duration", durationText(turn.duration), "outcome", outcome)
 		if turn.steps == 1 {
 			body = i18n.T("turn.state.one", "n", turn.steps,
-				"duration", durationText(time.Since(turn.startedAt)), "outcome", outcome)
+				"duration", durationText(turn.duration), "outcome", outcome)
 		}
 		return renderLine{segments: []seg{
-			{text: i18n.T("turn.head", "index", turn.index), role: "turn_start"},
-			{text: "   " + body, role: "turn_end"},
+			{text: i18n.T("turn.head", "index", turn.index), role: "turn_end"},
+			{text: " " + body, role: "rule"},
 		}}
 	}
 	return renderLine{segments: []seg{
 		{text: i18n.T("turn.head", "index", turn.index), role: "turn_start"},
-		{text: "   " + i18n.T("turn.running"), role: "waiting"},
+		{text: " " + i18n.T("turn.running"), role: "waiting"},
 	}}
+}
+
+// stopReasonText is the wording for how a turn ended.
+//
+// An unrecognised reason prints itself: when an older interface meets a runtime
+// that learned a new enum, `auto_something` on screen is searchable and
+// "unknown" is not.
+func stopReasonText(reason string) string {
+	if text, ok := i18n.Lookup("stop." + reason); ok {
+		return text
+	}
+	if reason == "" {
+		return "?"
+	}
+	return reason
+}
+
+// modelLine is `  · model 1.2s  context 12.4k tokens (cache hit 10.1k · 88%)`.
+//
+// It is the only place the cost of one step is visible while the turn runs, and
+// the cache figure is the one number that explains why two identical-looking
+// turns differ in cost.
+func modelLine(payload map[string]any) renderLine {
+	parts := []seg{{text: i18n.T("event.model_prefix"), role: "process"}}
+	if span, ok := protocol.Int(payload, "duration_ms"); ok {
+		parts = append(parts, seg{text: msText(span), role: "process"})
+	}
+	if tokens, ok := protocol.Int(payload, "prompt_tokens"); ok {
+		parts = append(parts, seg{text: i18n.T("event.context_tokens", "tokens", stateTokensText(tokens)), role: "process"})
+	}
+	if cached, ok := protocol.Int(payload, "cached_tokens"); ok {
+		percent := "—"
+		if prompt, okPrompt := protocol.Int(payload, "prompt_tokens"); okPrompt && prompt > 0 {
+			percent = fmt.Sprintf("%.0f", float64(cached)/float64(prompt)*100)
+		}
+		parts = append(parts, seg{text: i18n.T("event.cache_hit",
+			"cached", stateTokensText(cached), "percent", percent), role: "rule"})
+	}
+	return renderLine{segments: parts}
 }
 
 // thinkingFolded is `  ▸ Thinking (1,284 chars · Ctrl+T to expand)`. In quiet
 // mode, while the model is streaming, the spin frame and the live character count
 // replace the static tail.
 func thinkingFolded(turn *turnData, chars int, spin string) renderLine {
-	tail := fmt.Sprintf(" (%s · Ctrl+T)", countText(chars))
 	if spin != "" {
-		tail = fmt.Sprintf(" %s %s", spin, countText(chars))
+		// Quiet mode: the frame and the live count are the only moving things on a
+		// screen where nothing else does.
+		return renderLine{segments: []seg{
+			{text: i18n.T("think.prefix_folded"), role: "think_head"},
+			{text: " " + spin, role: "waiting"},
+			{text: i18n.Tn("think.live_chars", chars, "chars", countText(chars)), role: "rule"},
+		}}
 	}
 	return renderLine{segments: []seg{
 		{text: i18n.T("think.prefix_folded"), role: "think_head"},
-		{text: tail, role: "rule"},
+		{text: i18n.Tn("think.folded_tail", chars, "chars", countText(chars)), role: "rule"},
 	}}
 }
 
@@ -315,6 +422,61 @@ func thinkingFolded(turn *turnData, chars int, spin string) renderLine {
 func thinkingStreamHead() renderLine {
 	return renderLine{segments: []seg{
 		{text: i18n.T("think.prefix_folded"), role: "think_head"},
+	}}
+}
+
+// thinkingExpandedHead is the block head once the block is open. The glyph
+// changes direction and the tail says how to close it again — leaving the folded
+// wording on an expanded block made Ctrl+T look like it had done nothing.
+func thinkingExpandedHead(chars int) renderLine {
+	return renderLine{segments: []seg{
+		{text: i18n.T("think.prefix_expanded"), role: "think_head"},
+		{text: i18n.T("think.expanded_tail"), role: "rule"},
+	}}
+}
+
+// waitingLine is `  · waiting for your approval   [y] allow   [n] deny …`.
+//
+// It goes into the log **before** the modal covers the screen: the modal is the
+// place the decision is made, and this line is the record that the turn stopped
+// there — which is what someone scrolling back is looking for when they wonder
+// why a turn took four minutes.
+func waitingLine(request map[string]any) renderLine {
+	parts := []seg{
+		{text: i18n.T("waiting.prompt"), role: "waiting"},
+		{text: i18n.T("waiting.allow"), role: "rule"},
+		{text: i18n.T("waiting.deny"), role: "rule"},
+	}
+	if request["remember"] != nil {
+		parts = append(parts, seg{text: i18n.T("waiting.always"), role: "rule"})
+	}
+	if allowAll, _ := request["allow_trust_all"].(bool); allowAll {
+		parts = append(parts, seg{text: i18n.T("waiting.allow_all"), role: "rule"})
+	}
+	parts = append(parts, seg{text: i18n.T("waiting.escape"), role: "rule"})
+	return renderLine{segments: parts}
+}
+
+// deniedLine is the extra row under a refusal. The result line already says
+// "✗", and the mark alone does not say whether the tool ran and failed or never
+// ran at all — which is the difference between "fix the tool" and "change the
+// policy".
+func deniedLine() renderLine {
+	return renderLine{segments: []seg{
+		{text: i18n.T("event.denied"), role: "denied"},
+	}}
+}
+
+// batchLine is the one line a parallel batch leaves behind: how many calls went
+// out together and how long the batch took.
+func batchLine(payload map[string]any) renderLine {
+	n, _ := protocol.Int(payload, "calls")
+	// The wall clock goes in as a number: the template already ends in "ms", so
+	// pre-formatting it produced "1.2sms" past a second.
+	return renderLine{segments: []seg{
+		{text: "  · ", role: "process"},
+		{text: i18n.Tn("event.tool_batch", int(n), "n", n), role: "process"},
+		{text: i18n.T("event.tool_batch_wall", "wall", intOf(payload["wall_ms"])), role: "rule"},
 	}}
 }
 
@@ -355,15 +517,11 @@ var markdownCache = struct {
 }{}
 
 func markdownRenderer(width int) *glamour.TermRenderer {
-	style := glamour.WithStandardStyle("dark")
-	if !currentTheme.dark {
-		style = glamour.WithStandardStyle("light")
-	}
 	if markdownCache.value != nil && markdownCache.key == currentTheme.key && markdownCache.width == width {
 		return markdownCache.value
 	}
 	renderer, err := glamour.NewTermRenderer(
-		style,
+		glamour.WithStyles(markdownStyle(currentTheme)),
 		glamour.WithWordWrap(maxInt(width-4, 40)),
 	)
 	if err != nil {
@@ -375,6 +533,67 @@ func markdownRenderer(width int) *glamour.TermRenderer {
 		value *glamour.TermRenderer
 	}{currentTheme.key, width, renderer}
 	return renderer
+}
+
+// markdownStyle is the answer's typography, taken from the theme rather than from
+// the renderer's own defaults.
+//
+// Two of these are not cosmetic:
+//
+//   - **the document margin is zero.** The renderer's default indents every line
+//     by two cells, which lands on top of this screen's `│ ` bar and pushes the
+//     body out of line with the tool lines above it. The original's stylesheet
+//     sets that alignment explicitly.
+//   - **h2-h6 lose their `## ` prefixes.** The renderer's default writes the
+//     literal hashes, so a document written with headings reads as markup instead
+//     of as headings.
+func markdownStyle(t theme) ansi.StyleConfig {
+	style := styles.DarkStyleConfig
+	if !t.dark {
+		style = styles.LightStyleConfig
+	}
+	zero := uint(0)
+	style.Document.Margin = &zero
+	style.Document.Color = &t.ink2
+	style.Document.BlockPrefix = ""
+	style.Document.BlockSuffix = ""
+
+	// Headings: the theme's brightest ink, bold, no markup characters.
+	bold := true
+	for _, heading := range []*ansi.StyleBlock{
+		&style.Heading, &style.H1, &style.H2, &style.H3,
+		&style.H4, &style.H5, &style.H6,
+	} {
+		heading.Prefix = ""
+		heading.Suffix = ""
+		heading.Color = &t.ink
+		heading.Bold = &bold
+		heading.BlockSuffix = ""
+	}
+
+	// Code: the same sunken background the thinking block uses, so "this is
+	// quoted material" is one idea on this screen rather than three.
+	style.Code.Color = &t.ink
+	style.Code.BackgroundColor = &t.sunk
+	style.CodeBlock.Color = &t.ink
+	style.CodeBlock.BackgroundColor = &t.sunk
+
+	// The rest of the palette, so nothing in the answer is a colour the theme has
+	// never heard of.
+	style.Link.Color = &t.accent
+	style.LinkText.Color = &t.accent
+	style.Item.Color = &t.ink4
+	style.Enumeration.Color = &t.ink2
+	style.BlockQuote.Color = &t.ink3
+	style.BlockQuote.BackgroundColor = &t.sunk
+	style.Strong.Color = &t.ink
+	style.Emph.Color = &t.ink2
+	style.Strikethrough.Color = &t.ink3
+	style.HorizontalRule.Color = &t.hairline
+	style.Table.Color = &t.ink2
+	style.DefinitionTerm.Color = &t.ink
+	style.DefinitionDescription.Color = &t.ink3
+	return style
 }
 
 // renderMarkdown formats one finished answer. Failure falls back to the plain
@@ -475,12 +694,17 @@ func countText(n int) string {
 }
 
 func outcomeText(outcome string) string {
-	key := "activity.permission." + outcome
-	value := i18n.T(key)
-	if value == key {
-		return outcome
+	// The wording lives under `outcome.*`, one key per value the gate can report.
+	// Building the key from the value is right; looking it up in the wrong
+	// namespace was not — it produced `⟪activity.permission.auto_allowed⟫` for
+	// every outcome except the four that happened to exist there.
+	if text, ok := i18n.Lookup("outcome." + outcome); ok {
+		return text
 	}
-	return value
+	if outcome == "" {
+		return "?"
+	}
+	return outcome
 }
 
 // toolBrief picks the argument that names what this call is about. The table is
@@ -494,40 +718,120 @@ func toolBrief(tool string, arguments string) string {
 		"load_skill": "name", "fetch_web": "url", "web_search": "query",
 		"ask_user": "question", "todo_write": "todos", "get_current_time": "",
 	}
-	fallbackOrder := []string{"path", "command", "pattern", "query", "url", "name", "question"}
+	// `file` and `prompt` are here because the table ages: a tool the interface
+	// has never heard of still names its subject with one of these.
+	fallbackOrder := []string{"path", "file", "command", "pattern", "query", "url", "name", "question", "prompt"}
 
 	parsed := map[string]any{}
 	_ = jsonUnmarshalObject(arguments, &parsed)
 	if len(parsed) == 0 {
 		// The payload was truncated on the wire (a write_file content is routinely
 		// thousands of characters). Grep the literal `"key": "value"` spelling.
-		for _, key := range append([]string{briefKeys[tool]}, fallbackOrder...) {
-			if key == "" {
-				continue
-			}
-			if value, ok := grepJSONString(arguments, key); ok {
-				return clipText(value, 60)
-			}
-		}
-		return clipText(arguments, 60)
+		return briefFromPreview(tool, arguments, briefKeys, fallbackOrder)
 	}
 
-	if key, known := briefKeys[tool]; known {
+	if key, known := briefKeys[tool]; known && key != "" {
 		if value, ok := parsed[key]; ok {
-			return clipText(fmt.Sprint(value), 60)
+			return briefValue(tool, value)
 		}
 	}
 	for _, key := range fallbackOrder {
 		if value, ok := parsed[key]; ok {
-			return clipText(fmt.Sprint(value), 60)
+			return briefValue(tool, value)
 		}
 	}
-	for _, key := range sortedKeys(parsed) {
+	// No preferred key matched: the first string in document order is still the
+	// most likely subject. Taking the alphabetically first one instead picked
+	// `content` over `path` on a tool this table had never seen.
+	for _, key := range orderedKeys(arguments) {
 		if text, ok := parsed[key].(string); ok && text != "" {
-			return clipText(text, 60)
+			return briefValue(tool, text)
 		}
 	}
 	return clipText(arguments, 60)
+}
+
+// briefValue turns one argument into the few words that fit on the line.
+//
+// The types matter: a list printed with Go's own formatting is a bracketed dump,
+// and a bare true/false is not what a person writes. `todo_write` in particular
+// carries a list of tasks, and "3 tasks" is the whole information content of that
+// call.
+func briefValue(tool string, value any) string {
+	switch typed := value.(type) {
+	case string:
+		return clipBrief(typed)
+	case []any:
+		if tool == "todo_write" {
+			return i18n.Tn("brief.todo_items", len(typed), "n", len(typed))
+		}
+		return i18n.Tn("brief.items", len(typed), "n", len(typed))
+	case bool:
+		if typed {
+			return i18n.T("brief.yes")
+		}
+		return i18n.T("brief.no")
+	case nil:
+		return ""
+	default:
+		return clipBrief(fmt.Sprint(typed))
+	}
+}
+
+// clipBrief flattens to one line and cuts to the brief limit.
+//
+// Flattening collapses every whitespace run, not just newlines: the value is a
+// path or a command, and a run of spaces in the middle of it is noise that pushes
+// the end of the line off the screen.
+func clipBrief(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if runewidth.StringWidth(text) <= 60 {
+		return text
+	}
+	return runewidth.Truncate(text, 59, "…")
+}
+
+// briefFromPreview recovers a value from a payload that was truncated on the wire
+// and therefore will not parse.
+func briefFromPreview(tool, arguments string, briefKeys map[string]string, fallbackOrder []string) string {
+	preferred := briefKeys[tool]
+	wanted := map[string]bool{}
+	for _, key := range fallbackOrder {
+		wanted[key] = true
+	}
+	if preferred != "" {
+		wanted[preferred] = true
+	}
+	// Scan left to right and take the first key the table asks for. Probing each
+	// key in turn instead would find `content` before `path` whenever the payload
+	// happens to contain both, and it would miss any key the table does not list.
+	first := ""
+	for _, match := range jsonStringPairs(arguments) {
+		if wanted[match[0]] {
+			return briefValue(tool, match[1])
+		}
+		if first == "" {
+			first = briefValue(tool, match[1])
+		}
+	}
+	if first != "" {
+		return first
+	}
+	return clipBrief(arguments)
+}
+
+// orderedKeys lists the parsed object's keys in the order they appear in the
+// payload, which is the order the tool wrote them.
+func orderedKeys(arguments string) []string {
+	var keys []string
+	seen := map[string]bool{}
+	for _, match := range jsonStringPairs(arguments) {
+		if !seen[match[0]] {
+			seen[match[0]] = true
+			keys = append(keys, match[0])
+		}
+	}
+	return keys
 }
 
 func clipText(text string, width int) string {

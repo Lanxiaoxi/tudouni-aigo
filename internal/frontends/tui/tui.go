@@ -59,6 +59,12 @@ func Run(options Options) int {
 	if options.Debug {
 		arguments = append(arguments, "--debug")
 	}
+	// The limit has to travel with the child, not just sit on the status bar:
+	// showing "up to 5 steps" over a runtime allowed forty is a number the user
+	// cannot act on.
+	if options.MaxSteps > 0 {
+		arguments = append(arguments, "--max-steps", fmt.Sprint(options.MaxSteps))
+	}
 
 	if err := client.Start(arguments); err != nil {
 		fmt.Fprintln(os.Stderr, "cannot start the runtime:", err)

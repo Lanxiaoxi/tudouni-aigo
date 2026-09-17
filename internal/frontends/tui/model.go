@@ -46,6 +46,16 @@ type panelstate struct {
 	prefixes  []any
 	agentsMD  []any
 	skills    []any
+	// promptTokens / cachedTokens are the last completed model call's usage. The
+	// status bar's cache-hit figure and the rail's context line both read them, and
+	// both are "the last request actually sent" — not an estimate, and not the
+	// whole session's total (that one is money, and it lives in `/status`).
+	promptTokens *int
+	cachedTokens *int
+	// toolInfo is `init.tools` keyed by name: risk, parallel_safe, interactive.
+	// The approval dialog needs the last two to warn that a tool cannot run
+	// alongside others or will take over the input.
+	toolInfo map[string]map[string]any
 	// context is the last ledger payload `/context` (or a compaction) reported.
 	// Nil until somebody asks: a status bar that showed zero before the first
 	// question would teach the reader the number is meaningless.
@@ -69,6 +79,10 @@ type model struct {
 	turnSeq int
 
 	input string
+	// inputCursor is the caret's position, as a rune index into input. Without
+	// it the box could only append and delete-from-the-end, which makes fixing a
+	// typo in the middle of a sentence impossible.
+	inputCursor int
 	// scroll is how many lines back from the bottom the transcript is drawn.
 	scroll int
 
@@ -92,11 +106,27 @@ type model struct {
 	pendingPermission map[string]any
 	pendingQuestion   map[string]any
 	questionInput     string
+	// questionCursor is the highlighted option in the question panel. It exists
+	// because Enter takes the highlight: with no highlight, Enter would have to
+	// either guess or mean "skip", and "Enter skips" is the one thing the original
+	// forbids.
+	questionCursor int
 
 	notice      string
 	lastRefresh time.Time
 	auditPath   string
 	sessionID   string
+	// maxSteps is the runtime's own limit, taken from `init`. The session bar
+	// shows it and the runtime enforces it, so reading it here is what keeps the
+	// two from being different numbers.
+	maxSteps int
+
+	// booting is true until the first `init` arrives; bootSlow is the same state
+	// after the runtime has been silent long enough that "still starting" is no
+	// longer a plausible thing to say.
+	booting  bool
+	bootAt   time.Time
+	bootSlow bool
 
 	// Catalogues that arrive with init. The frontend does not hardcode effort
 	// levels or model lists: a copy here would drift the moment the runtime
@@ -104,6 +134,10 @@ type model struct {
 	modelCatalog  []any
 	effortLevels  []string
 	selectedModel string
+	// skillRows is the catalogue `/skills` reported, which the skills panel reads.
+	// It is kept apart from panel.skills: that one is **what this session has
+	// loaded**, and "what is available" is a different list.
+	skillRows []skillRow
 
 	// Overlay panel state.
 	overlay        overlay
@@ -112,9 +146,14 @@ type model struct {
 	// turn block can open with the line the user actually typed.
 	pendingUserInput string
 
-	// Spin frame counter for quiet mode. Frame numbers come from a clock so two
-	// things drawn at the same moment cannot each spin on their own.
-	spins int
+	// Spin frame state for quiet mode. The frame number is read off the clock, so
+	// two things drawn at the same moment cannot each spin on their own.
+	spinning bool
+
+	// autopilotWanted is the value `/autopilot` asked for, held until the runtime's
+	// own snapshot agrees with it. Nil when nothing is pending, which is what keeps
+	// the opening snapshot from being echoed back as if the user had asked.
+	autopilotWanted *bool
 
 	// Display preferences. They change what is drawn and nothing else, which is
 	// why they are not part of the panel state the runtime owns.
@@ -123,9 +162,14 @@ type model struct {
 	// itself once when a task list first appears — "what it plans to do" is the
 	// one place to see whether it understood — and Ctrl+B rules after that.
 	railHidden bool
-	railOpened bool // whether the rail has been auto-opened once by todos
-	quiet      bool
-	theme      themeKey
+	// railTodosSeen is the edge detector for the auto-open: "the task list went
+	// from empty to non-empty". railPinned records that the user has taken the
+	// decision into their own hands with Ctrl+B, after which the interface stops
+	// opening the rail for them.
+	railTodosSeen bool
+	railPinned    bool
+	quiet         bool
+	theme         themeKey
 }
 
 func newModel(client *protocol.Client, bridge *bridge, options Options) model {
@@ -137,6 +181,10 @@ func newModel(client *protocol.Client, bridge *bridge, options Options) model {
 			theme = key
 		}
 	}
+	// **Apply it, don't just remember it.** Every renderer reads the package-level
+	// `currentTheme`, so resolving the flag into the struct alone left `--theme`
+	// inert: the field was written twice in the session and read nowhere.
+	setTheme(theme)
 	return model{
 		client:  client,
 		bridge:  bridge,
@@ -145,6 +193,12 @@ func newModel(client *protocol.Client, bridge *bridge, options Options) model {
 		height:  30,
 		theme:   theme,
 		quiet:   options.Quiet,
+		// Nothing has talked back yet. The status bar says so until `init` lands:
+		// "the child process started" is not the same fact as "the runtime is
+		// ready", and a bar claiming idle over a runtime that never answered is the
+		// one lie that line must not tell.
+		booting: true,
+		bootAt:  time.Now(),
 		// The rail starts hidden: 32 columns is 28% of a 116-column terminal,
 		// and the summary line answers the same questions for one row. It opens
 		// itself once when a task list first appears — "what it plans to do" is
@@ -162,7 +216,28 @@ func waitForTick() tea.Cmd {
 }
 
 func waitForSpinner() tea.Cmd {
-	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg { return spinnerMsg(t) })
+	return tea.Tick(spinnerInterval, func(t time.Time) tea.Msg { return spinnerMsg(t) })
+}
+
+// spinnerInterval is how often the quiet-mode frame is redrawn. The frame itself
+// comes from the clock (see spinnerFrame), so this only has to be fast enough
+// that the next frame is not visibly late.
+const spinnerInterval = 120 * time.Millisecond
+
+// bootSlowAfter is when "starting" stops being credible.
+const bootSlowAfter = 10 * time.Second
+
+// ensureSpinner starts the quiet-mode frame chain if it is not already running.
+//
+// The chain used to be started from inside its own tick handler, which meant it
+// never started at all: `Init` did not begin it and nothing else did either, so
+// the "one thing moving on screen" in quiet mode was frozen on frame 0.
+func (m *model) ensureSpinner() tea.Cmd {
+	if !m.busy || !m.quiet || m.spinning {
+		return nil
+	}
+	m.spinning = true
+	return waitForSpinner()
 }
 
 // Update is the whole interface's state machine.
@@ -173,6 +248,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		// Silence needs a clock: "still starting" is a claim with an expiry, and
+		// the screen has to stop making it once the runtime has been quiet long
+		// enough that the reader should go look at stderr.
+		if m.booting && !m.bootSlow && time.Since(m.bootAt) >= bootSlowAfter {
+			m.bootSlow = true
+		}
 		// The runtime has no timers by design, so a background job that finishes
 		// during a quiet moment would leave the panel claiming it is still
 		// running. The interface asks — but only while something is outstanding,
@@ -185,16 +266,21 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 	case spinnerMsg:
 		if m.busy && m.quiet {
-			m.spins++
 			return m, waitForSpinner()
 		}
+		m.spinning = false
 		return m, nil
 
 	case serverMessage:
 		m.handleServerMessage(typed.payload)
-		return m, nil
+		return m, m.ensureSpinner()
 
 	case permissionAsked:
+		// The log gets the line **before** the modal is drawn: the modal is where
+		// the decision happens, and this line is the record that the turn stopped
+		// there — which is what someone scrolling back is looking for when they
+		// wonder why a turn took four minutes.
+		m.currentAppend(waitingLine(typed.request))
 		m.pendingPermission = typed.request
 		return m, nil
 
@@ -221,8 +307,18 @@ func (m *model) handleServerMessage(payload map[string]any) {
 		m.panel.effort, _ = protocol.String(payload, "effort")
 		m.auditPath, _ = protocol.String(payload, "audit_path")
 		m.panel.autopilot, _ = protocol.Bool(payload, "autopilot")
+		// The runtime's own limit, not the flag: they can differ (the child is
+		// assembled from its own arguments) and the number on screen has to be the
+		// one being enforced.
+		if steps, ok := protocol.Int(payload, "max_steps"); ok && steps > 0 {
+			m.maxSteps = steps
+		}
+		if rows, ok := payload["tools"].([]any); ok {
+			m.panel.toolInfo = toolInfoOf(rows)
+		}
 		m.modelCatalog, _ = payload["model_catalog"].([]any)
 		if levels, ok := payload["effort_levels"].([]any); ok {
+			m.effortLevels = m.effortLevels[:0]
 			for _, level := range levels {
 				if text, ok := level.(string); ok {
 					m.effortLevels = append(m.effortLevels, text)
@@ -232,20 +328,47 @@ func (m *model) handleServerMessage(payload map[string]any) {
 		if resumed, ok := protocol.Bool(payload, "resumed"); ok {
 			m.resumed = resumed
 		}
-		if session, ok := protocol.String(payload, "session_id"); ok {
-			m.sessionID = session
-			m.appendLine(renderLine{segments: []seg{
-				{text: i18n.T("init.session_id", "name", session, "state", stateSuffix(payload)), role: "notice"},
-			}}, "notice", "")
+		session, _ := protocol.String(payload, "session_id")
+		// **A switch is a new screen.** Deciding it here rather than at the moment
+		// the user typed `/new` is deliberate: a switch can fail (a broken
+		// permissions file, an MCP server that will not start) and when it fails the
+		// runtime keeps the old session. Clearing the screen first would leave the
+		// user staring at an empty interface next to a "could not switch" notice,
+		// while the conversation they had is still there.
+		if m.sessionID != "" && session != "" && session != m.sessionID {
+			m.resetForSession()
 		}
+		m.sessionID = session
+		m.booting = false
+		m.bootSlow = false
+		m.appendLine(renderLine{segments: []seg{
+			{text: i18n.T("init.session_id", "name", session, "state", stateSuffix(payload)), role: "rule"},
+		}}, "notice", "")
 		for _, item := range noticesOf(payload) {
-			m.appendLine(renderLine{segments: []seg{{text: item, role: "notice"}}}, "notice", "")
+			// The rail already shows permissions / loaded skills / tasks / the model
+			// as standing facts. Copying them into the log as well makes the empty
+			// state read like a log file — and the model line in particular would
+			// scroll away, while the rail's Session block is where "is the model I
+			// picked still in effect" is answered at any time.
+			if redundantNotice(item.code) {
+				continue
+			}
+			role := "rule"
+			if item.level == "warn" {
+				role = "warn"
+			}
+			m.appendLine(renderLine{segments: []seg{{text: item.text, role: role}}}, "notice", "")
+		}
+		if !m.resumed {
+			m.appendLine(renderLine{segments: []seg{
+				{text: i18n.T("init.return_hint"), role: "rule"},
+			}}, "notice", "")
 		}
 		// The welcome screen's recent box needs the session list, and that list
 		// is async: ask for it **only in the empty state** — a resumed session
 		// never draws the welcome screen, so listing hundreds of files is a
 		// wasted read.
-		if !m.resumed {
+		if !m.resumed && m.client != nil {
 			m.client.ListSessions()
 		}
 
@@ -276,11 +399,22 @@ func (m *model) handleServerMessage(payload map[string]any) {
 	case protocol.OutNotice:
 		level, _ := protocol.String(payload, "level")
 		text, _ := protocol.String(payload, "text")
+		code, _ := protocol.String(payload, "code")
 		role := "notice"
 		if level == "warn" {
 			role = "warn"
 		}
-		m.appendLine(renderLine{segments: []seg{{text: text, role: role}}}, "notice", "")
+		// The level prefix is not decoration: `notice` is a channel that carries
+		// both "here is a fact" and "something is wrong", and without the word the
+		// two read identically on screen.
+		m.appendLine(renderLine{segments: []seg{
+			{text: "[" + level + "] " + text, role: role},
+		}}, "notice", "")
+		// A panel that asked the runtime a question has to close the loop: the
+		// answer only the runtime knows (whether that route has a key, whether the
+		// server came up) arrives as this notice, and the panel stays up showing
+		// "waiting…" until it is written down.
+		m.settleOverlay(code, text)
 
 	case protocol.OutSessions:
 		if items, ok := payload["items"].([]any); ok {
@@ -303,6 +437,78 @@ func stateSuffix(payload map[string]any) string {
 		return i18n.T("session.bar.resumed")
 	}
 	return i18n.T("init.session_new")
+}
+
+// noticeRecord is one line of `init.notices`.
+type noticeRecord struct {
+	code  string
+	level string
+	text  string
+}
+
+// redundantNotice reports whether a notice says something the context rail
+// already shows as a standing fact.
+//
+// The code is the machine-readable category the protocol carries for exactly this
+// question; guessing from the text would break the moment the wording changed.
+// Everything else still prints: the `mcp` "workspace mcp.json ignored" line, the
+// `web` missing-key line and the `autopilot` warning have no other outlet, and
+// dropping them would turn "says it loudly" into "nobody hears it".
+func redundantNotice(code string) bool {
+	switch code {
+	case "permissions", "skills", "todos", "model":
+		return true
+	}
+	return false
+}
+
+// toolInfoOf indexes `init.tools` by name. The approval dialog reads
+// parallel_safe / interactive off this, and this is the only place they arrive.
+func toolInfoOf(rows []any) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(rows))
+	for _, item := range rows {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := row["name"].(string)
+		if name != "" {
+			out[name] = row
+		}
+	}
+	return out
+}
+
+// resetForSession empties the screen for a session switch: the log, the turn
+// counter, the scroll position and every piece of live streaming state belong to
+// the conversation that is going away.
+func (m *model) resetForSession() {
+	m.transcript = nil
+	m.current = nil
+	m.turnSeq = 0
+	m.scroll = 0
+	m.streamedText = ""
+	m.streamRunID = ""
+	m.streamStep = 0
+	m.thinkingText = ""
+	m.thinkingChars = 0
+	m.thinkingLive = false
+	m.busy = false
+	m.activity = ""
+	m.pendingUserInput = ""
+	m.pendingPermission = nil
+	m.pendingQuestion = nil
+	m.questionInput = ""
+	m.overlay = overlay{}
+	m.recentSessions = nil
+	m.railTodosSeen = false
+	m.railPinned = false
+	// A new session starts on the empty state, so the rail goes back to its
+	// default instead of staying however the previous session left it.
+	m.railHidden = true
+	// Panel facts are per-session. Leaving them up would attribute the previous
+	// session's task list and risk scope to the new one until its first snapshot.
+	m.panel = panelstate{toolInfo: m.panel.toolInfo}
 }
 
 // restoreMessages replays a loaded session into the transcript. Every message
@@ -351,6 +557,21 @@ func (m *model) handleEvent(payload map[string]any) {
 		status, _ := protocol.String(payload, "status")
 		if status == "ok" {
 			m.activity = i18n.T("activity.thinking")
+			// The one line that answers "what did that step cost": how long it
+			// took, how much context went out, and how much of it was served from
+			// the cache. It is drawn only for a successful call — a failed one
+			// already has its own line below.
+			m.currentAppend(modelLine(payload))
+			if prompt, ok := protocol.Int(payload, "prompt_tokens"); ok {
+				m.panel.promptTokens = &prompt
+			} else {
+				m.panel.promptTokens = nil
+			}
+			if cached, ok := protocol.Int(payload, "cached_tokens"); ok {
+				m.panel.cachedTokens = &cached
+			} else {
+				m.panel.cachedTokens = nil
+			}
 		} else {
 			attempt, _ := protocol.Int(payload, "attempt")
 			backoff, hasBackoff := protocol.Int(payload, "backoff_ms")
@@ -372,12 +593,16 @@ func (m *model) handleEvent(payload map[string]any) {
 
 	case "tool_call":
 		tool, _ := protocol.String(payload, "tool")
-		risk, _ := protocol.String(payload, "risk")
 		arguments, _ := protocol.String(payload, "arguments")
 		callID, _ := protocol.String(payload, "call_id")
 		if m.current == nil {
 			break
 		}
+		// The risk is looked up per tool rather than read off the event: the audit
+		// record for a call does not carry it (only the permission record does),
+		// and the risk suffix is the whole reason a MEDIUM or HIGH call is allowed
+		// to look different from the other twenty on screen.
+		risk := m.toolRisk(tool)
 		if m.quiet {
 			line := toolBriefLine(tool, arguments, callID, risk)
 			m.current.lines = append(m.current.lines, line)
@@ -396,24 +621,33 @@ func (m *model) handleEvent(payload map[string]any) {
 		} else {
 			m.currentAppend(toolResultLine(payload["tool_index"], payload))
 		}
+		// A refusal needs its own row: "✗" says the call produced no output, but
+		// not whether the tool ran and failed or never ran at all — which is the
+		// difference between "fix the tool" and "change the policy".
+		if status, _ := protocol.String(payload, "status"); status == "denied" {
+			m.currentAppend(deniedLine())
+		}
 
 	case "permission":
-		if m.current != nil {
-			m.currentAppend(permissionLine(payload))
+		if m.current == nil {
+			break
 		}
+		// Quiet mode drops the four outcomes that mean "it ran without asking".
+		// The judgement reads `outcome` only — never the presence of `rule`, which
+		// exists for one of the four and would let the other three through.
+		if m.quiet && silentOutcome(payload) {
+			break
+		}
+		m.currentAppend(permissionLine(payload))
 
 	case "tool_batch":
-		n, _ := protocol.Int(payload, "n")
 		if m.current != nil {
-			m.currentAppend(renderLine{segments: []seg{
-				{text: i18n.Tn("event.tool_batch", int(n), "n", n) +
-					i18n.T("event.tool_batch_wall", "wall", msText(payload["wall_ms"])), role: "rule"},
-			}})
+			m.currentAppend(batchLine(payload))
 		}
-
 	case "run_finished":
 		reason, _ := protocol.String(payload, "stop_reason")
-		m.finishTurn(reason)
+		duration, _ := protocol.Int(payload, "duration_ms")
+		m.finishTurn(reason, duration)
 		m.activity = ""
 	}
 }
@@ -432,35 +666,71 @@ func (m *model) beginTurn(payload map[string]any) {
 	m.current = turn
 	m.transcript = append(m.transcript, entry{turn: turn})
 
-	// The rail auto-opens once when a task list first appears: "what it plans to
-	// do" is the one place a person can see whether it understood, and that is
-	// worth more than the 32 columns. After that, Ctrl+B rules.
-	if !m.railOpened && len(m.panel.todos) > 0 {
-		m.railOpened = true
-		m.railHidden = false
+	// The rail auto-opens when a task list first appears: "what it plans to do" is
+	// the one place a person can see whether it understood, and that is worth more
+	// than the 32 columns. It is an **edge**, not a level: keyed on "there are
+	// todos" the answer would still be yes on the next snapshot, and a user who
+	// had just pressed Ctrl+B to fold the rail would have it shoved back 50ms
+	// later, which makes that key look broken. Going back to empty re-arms it.
+	if len(m.panel.todos) > 0 {
+		if !m.railTodosSeen {
+			m.railTodosSeen = true
+			if !m.railPinned {
+				m.railHidden = false
+			}
+		}
+	} else {
+		m.railTodosSeen = false
 	}
 }
 
 // finishTurn closes the current turn and rewrites its header in place.
-func (m *model) finishTurn(reason string) {
+//
+// The `stop_reason` is mapped through the same table the original used, and the
+// mapping is the whole point of the field: "answered", "hit the step limit",
+// "you stopped it" and "the model failed" are four different things to do next,
+// and the one that must never be confused with the first is the last — a turn
+// that died on a model error and reads "Answered" is the failure the separate
+// StepLimitExceeded type existed to prevent.
+func (m *model) finishTurn(reason string, durationMS int) {
 	turn := m.current
 	m.current = nil
 	if turn == nil {
 		return
 	}
 	turn.finished = true
-	turn.outcome = "answered"
+	turn.outcome = reason
+	if turn.outcome == "" {
+		turn.outcome = "answered"
+	}
+	// Frozen here, from the runtime's own number: reading the clock at draw time
+	// would keep a finished turn's duration climbing for as long as the screen is
+	// left open.
+	turn.duration = time.Duration(durationMS) * time.Millisecond
 	switch reason {
-	case "cancelled":
-		turn.outcome = "cancelled"
 	case "max_steps":
-		turn.outcome = "limited"
 		m.appendLine(renderLine{segments: []seg{
 			{text: i18n.T("turn.max_steps_warning"), role: "warn"},
 		}}, "notice", "")
-	case "failed":
-		turn.outcome = "failed"
+	case "cancelled":
+		m.appendLine(renderLine{segments: []seg{
+			{text: i18n.T("turn.cancelled_warning"), role: "warn"},
+		}}, "notice", "")
 	}
+}
+
+// toolRisk is what the approval policy thinks of this tool, from `init.tools`.
+//
+// The registry is the only thing that knows, and it sends the answer once at
+// startup; a call event does not repeat it. Preferring the event when present
+// keeps this working if the runtime ever starts sending it.
+func (m model) toolRisk(tool string) string {
+	if row, ok := m.panel.toolInfo[tool]; ok {
+		if risk, ok := row["risk"].(string); ok {
+			return risk
+		}
+	}
+	return ""
 }
 
 func (m *model) currentAppend(line renderLine) {
@@ -471,22 +741,52 @@ func (m *model) currentAppend(line renderLine) {
 	m.current.lines = append(m.current.lines, line)
 }
 
+// appendLines adds a block of pre-rendered rows as one entry.
+func (m *model) appendLines(lines []renderLine) {
+	if len(lines) == 0 {
+		return
+	}
+	m.transcript = append(m.transcript, entry{lines: lines, kind: "answer"})
+	m.stick()
+}
+
 // backfill finds the line with the same anchor and appends the tail. When the
 // anchor cannot be found the tail is drawn as its own line — worse than
 // attaching is an answer that never shows.
+//
+// The **direction of the roles** is part of the contract: a result tail may only
+// rewrite a call line that is still waiting for one. Without that guard a
+// replayed `tool_result` (a resumed session, a retried step) appends a second
+// "✓ 8 chars" to a line that already has one, and two identical tails read as
+// "the tool ran twice".
 func (m *model) backfill(turn *turnData, tail renderLine) {
 	if tail.anchor != "" {
 		for index := len(turn.lines) - 1; index >= 0; index-- {
-			if turn.lines[index].anchor == tail.anchor {
-				head := turn.lines[index]
-				head.segments = append(head.segments, seg{text: "   ", role: "rule"})
-				head.segments = append(head.segments, tail.segments...)
-				turn.lines[index] = head
+			if turn.lines[index].anchor != tail.anchor {
+				continue
+			}
+			if turn.lines[index].role != anchoredTarget(tail.role) {
+				// Already carries its tail: draw nothing rather than a duplicate.
 				return
 			}
+			head := turn.lines[index]
+			head.segments = append(head.segments, seg{text: "   ", role: "rule"})
+			head.segments = append(head.segments, tail.segments...)
+			head.role = tail.role
+			turn.lines[index] = head
+			return
 		}
 	}
 	turn.lines = append(turn.lines, tail)
+}
+
+// anchoredTarget is the line role a tail is allowed to rewrite.
+func anchoredTarget(tailRole string) string {
+	switch tailRole {
+	case "tool_brief_done":
+		return "tool_brief"
+	}
+	return tailRole
 }
 
 func (m *model) handleDelta(payload map[string]any) {
@@ -520,11 +820,17 @@ func (m *model) handleUI(payload map[string]any) {
 		// A panel left open is **live**: it has to follow the facts it shows, or
 		// the highlight sits on a value that is no longer the current one.
 		m.reloadOverlayOptions()
+		m.reportAutopilot()
 
 	case protocol.UIRunFinished:
 		m.busy = false
 		m.activity = ""
 		answer, _ := protocol.String(payload, "answer")
+		// **First take the live copy down, then draw the answer.** The two are the
+		// same text: leaving the streaming block up and appending the finished
+		// answer after it draws the same paragraph twice, once as raw text and once
+		// as markdown.
+		m.dropStreamingAnswer()
 		// The test is "did text reach the screen this turn", not "did I see a
 		// delta": a turn that called tools and produced no text sends no delta,
 		// and the answer is exactly the thing to draw.
@@ -533,40 +839,74 @@ func (m *model) handleUI(payload map[string]any) {
 		}
 		m.streamedText = ""
 		m.streamRunID = ""
+		m.streamStep = 0
 		m.thinkingChars = 0
 		m.thinkingText = ""
 		m.thinkingLive = false
 
+	case protocol.UIMCP:
+		// `/mcp`'s reply. Two things at once, deliberately:
+		//   1. leave a trace in the log — the summary plus the runtime's own
+		//      sentences, because "what did I just press and what happened" is what
+		//      the log is for, and the panel is gone once Esc is pressed;
+		//   2. settle the panel — any snapshot coming back means "the thing you
+		//      were waiting for is over", without guessing which snapshot it was.
+		for _, line := range mcpTraceLines(payload) {
+			m.appendLine(line, "notice", "")
+		}
+		if servers, ok := payload["mcp_servers"].([]any); ok {
+			m.panel.mcp = servers
+		}
+		m.settleOverlay("mcp", "")
+
 	case protocol.UIStatus:
-		m.renderStatus(payload)
+		m.appendLines(m.statusScreen(payload))
 
 	case protocol.UITools:
-		m.appendLine(renderLine{segments: []seg{
-			{text: frontends.RenderTools(payload), role: "rule"},
-		}}, "answer", "")
+		m.appendLines(m.toolsScreen(payload))
 
 	case protocol.UIContext:
 		m.appendLine(renderLine{segments: []seg{
 			{text: frontends.RenderContext(payload), role: "rule"},
 		}}, "answer", "")
-		if contextPayload, ok := payload["context"].(map[string]any); ok {
-			m.panel.context = contextPayload
-		}
 
 	case protocol.UISkills:
-		m.appendLine(renderLine{segments: []seg{
-			{text: frontends.RenderSkills(payload), role: "rule"},
-		}}, "answer", "")
+		m.appendSkills(payload)
 
 	case protocol.UICompacted:
 		compaction, _ := payload["compaction"].(map[string]any)
 		m.appendLine(renderLine{segments: []seg{
 			{text: frontends.RenderCompaction(compaction), role: "rule"},
 		}}, "answer", "")
-		if contextPayload, ok := payload["context"].(map[string]any); ok {
-			m.panel.context = contextPayload
-		}
+		// The ledger follows the sentence: after a compaction the first question
+		// is "how much is left now", and making the user ask again with /context
+		// is handing back something the screen already knows.
+		m.appendLine(renderLine{segments: []seg{
+			{text: frontends.RenderContext(payload), role: "rule"},
+		}}, "answer", "")
 	}
+}
+
+// reportAutopilot echoes `/autopilot` once the runtime has confirmed the value.
+//
+// Two rules, both consequences of "never update optimistically":
+//
+//   - it speaks only while this interface is waiting for the value. The opening
+//     snapshot carries `autopilot` too (true when started with `--autopilot`), and
+//     repeating that is noise — the runtime already said it in a notice;
+//   - it reports what the runtime says, not what was asked for. A request an older
+//     runtime ignored must not produce "switched on", because this is the cell
+//     that answers "will it ask me next".
+func (m *model) reportAutopilot() {
+	if m.autopilotWanted == nil || m.panel.autopilot != *m.autopilotWanted {
+		return
+	}
+	m.autopilotWanted = nil
+	key, role := "autopilot.report_off", "rule"
+	if m.panel.autopilot {
+		key, role = "autopilot.report_on", "warn"
+	}
+	m.appendLine(renderLine{segments: []seg{{text: i18n.T(key), role: role}}}, "notice", "")
 }
 
 func (m *model) applyState(payload map[string]any) {
@@ -608,6 +948,9 @@ func (m *model) applyState(payload map[string]any) {
 	}
 	if value, ok := payload["denied_tools"].([]any); ok {
 		m.panel.denied = value
+	}
+	if value, ok := payload["granted_prefixes"].([]any); ok {
+		m.panel.prefixes = value
 	}
 	if value, ok := payload["agents_md"].([]any); ok {
 		m.panel.agentsMD = value
@@ -721,26 +1064,93 @@ func (m model) welcomeVisible() bool {
 }
 
 // spinnerFrame is the current quiet-mode spin glyph.
+//
+// The frame is read off the clock rather than counted per repaint: two things
+// drawn at the same instant (the status mark and a folded thinking line) must
+// show the same frame, and a counter that advances per message would drift with
+// however many messages happened to arrive. The original derived it the same way.
 func (m model) spinnerFrame() string {
 	if !m.busy || !m.quiet {
 		return ""
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	return frames[m.spins%len(frames)]
+	step := time.Now().UnixNano() / int64(spinnerSeconds*float64(time.Second))
+	return frames[int(step%int64(len(frames)))]
 }
 
-func noticesOf(payload map[string]any) []string {
-	items, _ := payload["notices"].([]any)
+// spinnerSeconds is one frame's dwell time. Fast enough to read as motion, slow
+// enough not to flicker.
+const spinnerSeconds = 0.09
+
+// mcpTraceLines is what `/mcp` leaves in the conversation log.
+//
+// The full list is deliberately **not** repeated here: it is already on the panel
+// and as a standing block in the rail, and a third copy would scroll away — which
+// is exactly the thing "which servers do I have mounted" should never do. What
+// the log keeps is the one-line tally plus the runtime's own sentences, because
+// those carry the reason a server did not come up and only the runtime knows it.
+func mcpTraceLines(payload map[string]any) []renderLine {
+	rows, _ := payload["mcp_servers"].([]any)
+	notes := stringList(payload["mcp_notes"])
+	if len(rows) == 0 && len(notes) == 0 {
+		return nil
+	}
+	loaded := 0
+	for _, item := range rows {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if state, _ := row["state"].(string); state == "loaded" {
+			loaded++
+		}
+	}
+	out := []renderLine{{segments: []seg{
+		{text: i18n.T("mcp.summary", "running", loaded, "total", len(rows)), role: "rule"},
+	}}}
+	for _, note := range notes {
+		// The runtime writes the sentence; it also decides whether it is bad news.
+		// It sends no flag for that, so this is the one place that reads the text.
+		role := "process"
+		if strings.Contains(note, "not connected") || strings.Contains(note, "did not connect") {
+			role = "warn"
+		}
+		out = append(out, renderLine{segments: []seg{{text: note, role: role}}})
+	}
+	return out
+}
+
+func stringList(value any) []string {
+	items, ok := value.([]any)
+	if !ok {
+		if direct, ok := value.([]string); ok {
+			return direct
+		}
+		return nil
+	}
 	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, fmt.Sprint(item))
+	}
+	return out
+}
+
+func noticesOf(payload map[string]any) []noticeRecord {
+	items, _ := payload["notices"].([]any)
+	out := make([]noticeRecord, 0, len(items))
 	for _, item := range items {
 		row, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
 		text, _ := row["text"].(string)
-		if text != "" {
-			out = append(out, text)
+		if text == "" {
+			continue
 		}
+		record := noticeRecord{text: text}
+		record.code, _ = row["code"].(string)
+		record.level, _ = row["level"].(string)
+		out = append(out, record)
 	}
 	return out
 }
@@ -793,6 +1203,22 @@ func outstanding(jobs []any) bool {
 		}
 	}
 	return false
+}
+
+// uncollectedJobs counts the jobs that finished without their result being read.
+// It is the one background state that needs a person to do something.
+func uncollectedJobs(jobs []any) int {
+	n := 0
+	for _, item := range jobs {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if state, _ := row["state"].(string); state == "uncollected" {
+			n++
+		}
+	}
+	return n
 }
 
 func intOf(value any) int {

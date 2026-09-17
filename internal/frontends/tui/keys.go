@@ -38,12 +38,22 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.appendLine(renderLine{segments: []seg{
 				{text: i18n.T("escape.interrupting"), role: "warn"},
 			}}, "notice", "")
+			return m, nil
 		}
+		// Idle, Esc does nothing — and says so. A key that silently does nothing
+		// is indistinguishable from an interface that has stopped responding.
+		m.appendLine(renderLine{segments: []seg{
+			{text: i18n.T("escape.idle"), role: "rule"},
+		}}, "notice", "")
 		return m, nil
 
 	case tea.KeyCtrlB:
-		// The rail toggle is a display preference, not a mode.
+		// The rail toggle is a display preference, not a mode. Pressing it also
+		// **pins** the choice: from here on the interface stops opening the rail on
+		// its own, or a task list arriving would shove back what the user just
+		// folded.
 		m.railHidden = !m.railHidden
+		m.railPinned = true
 		return m, nil
 
 	case tea.KeyCtrlK:
@@ -53,8 +63,10 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openCommandPalette()
 
 	case tea.KeyCtrlS:
-		// The skills list is a lookup, so it goes to the transcript where it
-		// can be scrolled back — the same reasoning as /status and /tools.
+		// The skills list is a lookup, so it opens as a panel — instantly, before
+		// the runtime has answered: an empty frame beats a dead keypress while the
+		// list is read off disk.
+		m.overlay = overlay{kind: overlaySkills, title: i18n.T("skills.title")}
 		m.client.ListSkills()
 		return m, nil
 
@@ -62,31 +74,92 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.toggleThinking()
 
 	case tea.KeyUp:
-		m.scroll += 3
+		// Three meanings, one key, and each is the only sensible one at the time:
+		// move the caret inside the box, and fall through to the transcript once
+		// the caret is already on the top row. That is what the original's
+		// PromptArea does, and it keeps Up from being a dead key in a box that
+		// has text in it.
+		if !m.atFirstRow(m.inputInnerWidth()) {
+			m.moveCaretRow(m.inputInnerWidth(), -1)
+			return m, nil
+		}
+		m.scroll += 1
 		return m, nil
 
 	case tea.KeyDown:
-		if m.scroll > 0 {
-			m.scroll -= 3
+		if !m.atLastRow(m.inputInnerWidth()) {
+			m.moveCaretRow(m.inputInnerWidth(), 1)
+			return m, nil
 		}
+		if m.scroll > 0 {
+			m.scroll -= 1
+		}
+		return m, nil
+
+	case tea.KeyLeft:
+		m.moveCaret(-1)
+		return m, nil
+
+	case tea.KeyRight:
+		m.moveCaret(1)
+		return m, nil
+
+	case tea.KeyCtrlLeft:
+		m.moveCaretWord(-1)
+		return m, nil
+
+	case tea.KeyCtrlRight:
+		m.moveCaretWord(1)
+		return m, nil
+
+	case tea.KeyHome, tea.KeyCtrlA:
+		m.moveCaretLineStart()
+		return m, nil
+
+	case tea.KeyEnd, tea.KeyCtrlE:
+		m.moveCaretLineEnd()
+		return m, nil
+
+	case tea.KeyDelete:
+		m.deleteForward()
+		return m, nil
+
+	case tea.KeyCtrlW:
+		m.deleteWordBack()
+		return m, nil
+
+	case tea.KeyCtrlU:
+		m.deleteToLineStart()
+		return m, nil
+
+	case tea.KeyCtrlJ:
+		// A newline inside the prompt. Shift+Enter is what the original uses, but
+		// Bubble Tea v1 cannot see it: a terminal sends the same byte for Enter and
+		// Shift+Enter unless it speaks the kitty keyboard protocol, and this
+		// version does not request it. Ctrl+J and Alt+Enter are what a terminal
+		// can actually deliver, so those are what the copy advertises.
+		m.insertText("\n")
 		return m, nil
 
 	case tea.KeyEnter:
+		if key.Alt {
+			m.insertText("\n")
+			return m, nil
+		}
 		return m.submit()
 
 	case tea.KeyBackspace:
-		if m.input != "" {
-			runes := []rune(m.input)
-			m.input = string(runes[:len(runes)-1])
-		}
+		m.backspace()
 		return m, nil
 
 	case tea.KeySpace:
-		m.input += " "
+		m.insertText(" ")
 		return m, nil
 
 	case tea.KeyRunes:
-		m.input += string(key.Runes)
+		// A paste arrives as one KeyRunes message carrying the whole chunk,
+		// newlines included, so it has to go in verbatim.
+		m.insertText(string(key.Runes))
 		// `/` at the start of an empty line opens the palette; typing after it
 		// filters. Opening on the keystroke means the palette never loses the
 		// first letter.
@@ -98,10 +171,39 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// inputInnerWidth is the editable width inside the box, matching renderInput.
+func (m model) inputInnerWidth() int {
+	return maxInt(m.width-6, 10)
+}
+
+// moveCaretWord moves the caret one word left or right, stopping at whitespace
+// boundaries — Ctrl+Left/Right in every shell.
+func (m *model) moveCaretWord(delta int) {
+	runes, cursor := m.runesOf()
+	position := cursor
+	if delta < 0 {
+		for position > 0 && runes[position-1] == ' ' {
+			position--
+		}
+		for position > 0 && runes[position-1] != ' ' {
+			position--
+		}
+	} else {
+		for position < len(runes) && runes[position] != ' ' {
+			position++
+		}
+		for position < len(runes) && runes[position] == ' ' {
+			position++
+		}
+	}
+	m.inputCursor = position
+}
+
 // submit sends the input line, unless it is a command.
 func (m model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input)
 	m.input = ""
+	m.inputCursor = 0
 	if text == "" {
 		return m, nil
 	}
@@ -117,7 +219,7 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 	m.streamedText = ""
 	m.thinkingChars = 0
 	m.client.UserMessage(text)
-	return m, nil
+	return m, m.ensureSpinner()
 }
 
 // runCommand handles the slash commands.
@@ -145,7 +247,10 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 			// No argument: the picker. The panel opens **now**, empty, and the
 			// runtime's list fills it — an empty frame beats a dead keypress
 			// while the runtime reads the directory.
-			m.overlay = overlay{kind: overlaySessions, title: i18n.T("resume.title")}
+			m.overlay = overlay{kind: overlaySessions, title: i18n.T("session_dialog.head")}
+			m.appendLine(renderLine{segments: []seg{
+				{text: i18n.T("resume.loading"), role: "rule"},
+			}}, "notice", "")
 			m.client.ListSessions()
 			return m, nil
 		}
@@ -186,7 +291,7 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 				}}, "notice", "")
 				return m, nil
 			}
-			return m, m.openOptionPicker(i18n.T("model.pick.title"), m.modelOptions(), false)
+			return m, m.openOptionPicker(i18n.T("model.pick.title"), m.modelOptions(), pickerStartNext)
 		}
 		m.client.SetModel(arguments[0])
 		return m, nil
@@ -216,51 +321,86 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 				}}, "notice", "")
 				return m, nil
 			}
-			return m, m.openOptionPicker(i18n.T("effort.pick.title"), m.effortOptions(), false)
+			return m, m.openOptionPicker(i18n.T("effort.pick.title"), m.effortOptions(), pickerStartCurrent)
 		}
 		m.client.SetEffort(arguments[0])
 		return m, nil
 
 	case "/theme":
 		if len(arguments) == 0 {
-			return m, m.openOptionPicker(i18n.T("theme.pick.title"), pickerThemeOptions(), true)
+			return m, m.openOptionPicker(i18n.T("theme.pick.title"), pickerThemeOptions(), pickerStartCurrent)
 		}
 		key, ok := resolveTheme(arguments[0])
 		if !ok {
+			// The template names the value that was not recognised; binding it
+			// under the wrong placeholder printed a literal `{name}` and threw the
+			// typed word away.
 			m.appendLine(renderLine{segments: []seg{
-				{text: i18n.T("theme.unknown", "query", arguments[0], "list", themeListing()), role: "warn"},
+				{text: i18n.T("theme.unknown", "name", arguments[0]), role: "warn"},
+				{text: "  " + themeListing(), role: "rule"},
 			}}, "notice", "")
 			return m, nil
 		}
 		setTheme(key)
 		m.theme = key
-		return m, nil
+		return m, m.echoTheme(key)
 
 	case "/autopilot":
-		m.client.SetAutopilot(!m.panel.autopilot)
+		// Ask for the opposite, and say nothing yet: the runtime owns this fact,
+		// and the echo comes from the snapshot it sends back (reportAutopilot).
+		want := !m.panel.autopilot
+		m.autopilotWanted = &want
+		m.client.SetAutopilot(want)
 		return m, nil
 
 	case "/mcp":
 		if len(arguments) >= 2 {
-			m.client.MCP(arguments[0], arguments[1:])
+			// Validate locally as well as remotely: the runtime rejects an unknown
+			// action with a notice, and a mistyped action that looks like it was
+			// accepted is worse than one that never left.
+			action := strings.ToLower(arguments[0])
+			if action != "load" && action != "unload" {
+				m.appendLine(renderLine{segments: []seg{
+					{text: i18n.T("cmd.mcp.unknown", "rest", arguments[0]), role: "warn"},
+				}}, "notice", "")
+				return m, nil
+			}
+			m.client.MCP(action, arguments[1:])
 			m.appendLine(renderLine{segments: []seg{
-				{text: i18n.T("mcp.pending", "action", arguments[0], "name", arguments[1]), role: "notice"},
+				{text: i18n.T("mcp.pending", "action", action, "name", arguments[1]), role: "notice"},
 			}}, "notice", "")
 			return m, nil
 		}
-		m.overlay = overlay{kind: overlayMCP, staysOpen: true,
-			title: i18n.T("mcp.panel.title")}
+		m.overlay = overlay{kind: overlayMCP, stayOpen: true,
+			title: i18n.T("mcp_dialog.head")}
 		m.client.MCP("list", nil)
 		return m, nil
 
 	case "/skills":
+		m.overlay = overlay{kind: overlaySkills, title: i18n.T("skills.title")}
 		m.client.ListSkills()
 		return m, nil
 
 	case "/quiet":
 		// A display preference, so it takes effect **now** and tells you so — no
-		// protocol message, because there is nothing to confirm.
-		m.quiet = !m.quiet
+		// protocol message, because there is nothing to confirm. `on` and `off`
+		// are accepted as well as the bare toggle: `/quiet off` that quietly
+		// toggles *on* is a command that does the opposite of what it says.
+		want := !m.quiet
+		if len(arguments) > 0 {
+			switch arguments[0] {
+			case "on":
+				want = true
+			case "off":
+				want = false
+			default:
+				m.appendLine(renderLine{segments: []seg{
+					{text: i18n.T("cmd.quiet.unknown", "rest", arguments[0]), role: "warn"},
+				}}, "notice", "")
+				return m, nil
+			}
+		}
+		m.quiet = want
 		word := i18n.T("quiet.off")
 		note := i18n.T("quiet.off_note")
 		if m.quiet {
@@ -268,9 +408,22 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 			note = i18n.T("quiet.on_note")
 		}
 		m.appendLine(renderLine{segments: []seg{
-			{text: i18n.T("quiet.name") + word + note, role: "notice"},
+			{text: i18n.T("quiet.name"), role: "rule"},
+			{text: word, role: "waiting"},
+			{text: note, role: "rule"},
 		}}, "notice", "")
-		return m, nil
+		if m.quiet {
+			// The switch only changes how things are drawn from here on: the turns
+			// already on screen were drawn the old way, and the original has no
+			// per-turn event log to redraw them from. Saying so stops the switch
+			// from looking broken.
+			m.appendLine(renderLine{segments: []seg{
+				{text: i18n.T("quiet.on_extra"), role: "rule"},
+			}}, "notice", "")
+		}
+		// Turning quiet on mid-turn has to start the frame chain, or the spinner
+		// would sit on frame zero until some other message happened to arrive.
+		return m, m.ensureSpinner()
 
 	case "/audit":
 		m.appendLine(renderLine{segments: []seg{
@@ -281,29 +434,63 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 
 	m.appendLine(renderLine{segments: []seg{
 		{text: i18n.T("cmd.unknown", "name", name), role: "warn"},
+		{text: "  " + strings.Join(slashCommands(), "  "), role: "rule"},
 	}}, "notice", "")
 	return m, nil
 }
 
+// showHelp is the command and key reference.
+//
+// Every command is listed with its one-line description, and the keys below it
+// include the ones the welcome card has no room for. A help screen that lists
+// bare names makes the reader guess what they do — which is what the palette is
+// for, and this is the same information in a form that stays on screen.
 func (m model) showHelp() (tea.Model, tea.Cmd) {
-	m.appendLine(renderLine{segments: []seg{
-		{text: i18n.T("help.commands_title"), role: "turn_start"},
-		{text: "  " + strings.Join(commandNames(), "  "), role: "rule"},
-		{text: i18n.T("help.keys_title"), role: "turn_start"},
-		{text: "  Enter  " + i18n.T("hint.enter") +
-			"   Shift+Enter  " + i18n.T("hint.shift_enter") +
-			"   Esc  " + i18n.T("hint.escape") +
-			"   Ctrl+B  " + i18n.T("hint.rail") +
-			"   Ctrl+T  " + i18n.T("hint.thinking"), role: "rule"},
+	lines := []renderLine{{segments: []seg{
+		{text: i18n.T("help.commands_title"), role: "rule"},
+	}}}
+	nameWidth := 0
+	for _, command := range commands() {
+		if len(command.name) > nameWidth {
+			nameWidth = len(command.name)
+		}
+	}
+	for _, command := range commands() {
+		segs := []seg{
+			{text: "  " + fmt.Sprintf("%-*s", nameWidth, command.name), role: "process"},
+			{text: "  " + command.hint, role: "rule"},
+		}
+		if command.detail != "" {
+			segs = append(segs, seg{text: "  —  " + command.detail, role: "rule"})
+		}
+		lines = append(lines, renderLine{segments: segs})
+	}
+	lines = append(lines, renderLine{segments: []seg{
+		{text: i18n.T("help.keys_title"), role: "rule"},
+	}})
+	for _, pair := range append(hintPairs(false), hintPairs(true)[:2]...) {
+		lines = append(lines, renderLine{segments: []seg{
+			{text: "  " + fmt.Sprintf("%-11s", pair[0]), role: "process"},
+			{text: pair[1], role: "rule"},
+		}})
+	}
+	lines = append(lines, renderLine{segments: []seg{
+		{text: "  " + fmt.Sprintf("%-11s", "Ctrl+J") + i18n.T("hint.newline_key"), role: "rule"},
+	}})
+	lines = append(lines, renderLine{segments: []seg{
 		{text: i18n.T("help.themes"), role: "rule"},
-	}}, "notice", "")
+	}})
+	m.appendLines(lines)
 	return m, nil
 }
 
-func commandNames() []string {
-	return []string{"/new", "/resume", "/status", "/tools", "/context", "/compact",
-		"/model", "/thinking", "/effort", "/theme", "/mcp", "/skills", "/autopilot",
-		"/quiet", "/audit", "/help", "/exit"}
+// slashCommands returns the command names, for the "unknown command" line.
+func slashCommands() []string {
+	names := make([]string, 0, len(commands()))
+	for _, command := range commands() {
+		names = append(names, command.name)
+	}
+	return names
 }
 
 func onOff(value bool) string {
@@ -313,6 +500,23 @@ func onOff(value bool) string {
 	return "off"
 }
 
+// echoTheme says out loud that the palette changed, and that it changed nothing
+// outside this run.
+//
+// A switch that only changes colours gives no evidence it did anything — the
+// whole screen shifts, which the eye reads as "something happened" but not as
+// "which one did I land on". The name is the answer to that, and "this run only"
+// is the answer to "did I just write that to my config".
+func (m *model) echoTheme(key themeKey) tea.Cmd {
+	value := themes[key]
+	m.appendLine(renderLine{segments: []seg{
+		{text: i18n.T("theme.switched"), role: "rule"},
+		{text: string(key) + " " + value.name, role: "turn_start"},
+		{text: i18n.T("theme.only_this_run"), role: "rule"},
+	}}, "notice", "")
+	return nil
+}
+
 // ── overlays ──────────────────────────────────────────────────────────────────
 
 func (m *model) openCommandPalette() tea.Cmd {
@@ -320,11 +524,31 @@ func (m *model) openCommandPalette() tea.Cmd {
 	return nil
 }
 
-func (m *model) openOptionPicker(title string, options []option, closesOnPick bool) tea.Cmd {
+// pickerStart says where a picker's cursor lands when it opens.
+type pickerStart int
+
+const (
+	// pickerStartCurrent: on the value in effect. Right for a list whose point is
+	// "what am I on" (theme, effort) — Enter there is a harmless no-op.
+	pickerStartCurrent pickerStart = iota
+	// pickerStartNext: on the entry after it. Right for `/model`, which is opened
+	// in order to change something; landing on the current row makes Enter a
+	// no-op that reads as a hang.
+	pickerStartNext
+)
+
+func (m *model) openOptionPicker(title string, options []option, start pickerStart) tea.Cmd {
 	cursor := 0
+	current := -1
 	for index, opt := range options {
 		if opt.note == i18n.T("picker.current") {
-			cursor = index
+			current = index
+		}
+	}
+	if current >= 0 {
+		cursor = current
+		if start == pickerStartNext && len(options) > 1 {
+			cursor = (current + 1) % len(options)
 		}
 	}
 	m.overlay = overlay{kind: overlayOptions, title: title, options: options, cursor: cursor}
@@ -341,19 +565,59 @@ func (m *model) openSessionPicker(payload map[string]any) {
 		}
 		id, _ := row["session_id"].(string)
 		preview, _ := row["preview"].(string)
-		messages, _ := asInt(row["messages"])
-		options = append(options, option{
-			value: id,
-			row:   fmt.Sprintf("%s  %s", id, clipText(preview, 40)),
-			note:  i18n.Tn("status.session.messages", messages),
-		})
+		if preview == "" {
+			// A session nobody has spoken in shows a placeholder rather than a
+			// blank: an empty row reads as a rendering fault.
+			preview = i18n.T("session.row.untitled")
+		}
+		messages, steps := intOf(row["messages"]), intOf(row["steps"])
+		line := fmt.Sprintf("%-22s %s · %s   %s", id,
+			i18n.Tn("status.session.messages", messages, "n", messages),
+			i18n.Tn("status.session.steps", steps, "n", steps),
+			clipText(preview, 40))
+		if todos := intOf(row["todos"]); todos > 0 {
+			line += i18n.T("session.row.todos", "todos", todos)
+		}
+		options = append(options, option{value: id, row: line})
 	}
 	m.sessionOptions = options
-	m.overlay = overlay{kind: overlaySessions, title: i18n.T("resume.title"), options: options}
+	m.overlay = overlay{kind: overlaySessions, title: i18n.T("session_dialog.head"), options: options}
 }
 
 // handleOverlayKey routes keys while a panel is up.
+//
+// The command palette is the exception to "the overlay owns the keyboard": its
+// filter **is** the input line, so typing goes to the editor and the palette
+// re-filters from it. That is what lets `/resume 2026` narrow the list and carry
+// the argument in one gesture — with a private filter buffer the space key had
+// nowhere to go and the argument could never be typed at all.
 func (m model) handleOverlayKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.overlay.kind == overlayCommand {
+		switch key.Type {
+		case tea.KeyEsc:
+			// Esc leaves the palette and clears the line: the line exists to hold
+			// the command, and half a command with no list is not useful.
+			m.overlay = overlay{}
+			m.input = ""
+			m.inputCursor = 0
+			return m, nil
+		case tea.KeyCtrlC:
+			return m, tea.Quit
+		case tea.KeyUp:
+			m.moveCursor(-1)
+			return m, nil
+		case tea.KeyDown:
+			m.moveCursor(1)
+			return m, nil
+		case tea.KeyEnter:
+			return m.commitOverlay()
+		}
+		// Everything else is editing, and the palette follows the line.
+		next, cmd := m.handleKey(key)
+		after := next.(model)
+		after.overlay.cursor = 0
+		return after, cmd
+	}
 	switch key.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
 		if key.Type == tea.KeyCtrlC {
@@ -370,32 +634,29 @@ func (m model) handleOverlayKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(1)
 		return m, nil
 
-	case tea.KeyEnter:
+	case tea.KeyEnter, tea.KeySpace:
+		// Space toggles as well as Enter: the original's server panel takes
+		// either, and a switch that ignores the key everybody tries second reads
+		// as unresponsive.
 		return m.commitOverlay()
 
-	case tea.KeyBackspace:
-		if m.overlay.kind == overlayCommand && m.overlay.filter != "" {
-			runes := []rune(m.overlay.filter)
-			m.overlay.filter = string(runes[:len(runes)-1])
-			m.overlay.cursor = 0
-		}
-		return m, nil
-
-	case tea.KeyRunes, tea.KeySpace:
-		if m.overlay.kind == overlayCommand {
-			m.overlay.filter += string(key.Runes)
-			m.overlay.cursor = 0
-			return m, nil
-		}
+	case tea.KeyRunes:
 		// A picker honours the number keys: pressing the row number is picking
-		// that row, which is faster than walking down a 13-item list.
-		if m.overlay.kind == overlayOptions {
-			if index, ok := parseNumber(string(key.Runes)); ok &&
-				index >= 1 && index <= len(m.overlay.options) {
-				m.overlay.cursor = index - 1
-				return m.commitOverlay()
+		// that row, which is faster than walking down a long list.
+		if index, ok := parseNumber(string(key.Runes)); ok {
+			if m.overlay.kind == overlayOptions || m.overlay.kind == overlaySessions ||
+				m.overlay.kind == overlayMCP || m.overlay.kind == overlaySkills {
+				if index >= 1 && index <= m.overlayCount() {
+					m.overlay.cursor = index - 1
+					return m.commitOverlay()
+				}
 			}
 		}
+		if string(key.Runes) == "q" {
+			m.overlay = overlay{}
+			return m, nil
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -422,6 +683,8 @@ func (m model) overlayCount() int {
 		return len(m.overlay.options)
 	case overlayMCP:
 		return len(m.mcpPanelRows())
+	case overlaySkills:
+		return len(m.skillRows)
 	}
 	return 0
 }
@@ -440,9 +703,16 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		picked := rows[m.overlay.cursor]
+		// The argument comes from the line the user typed, not from the panel: the
+		// panel is a list of candidates and must not invent parameters.
+		argument := m.paletteArgument()
 		m.overlay = overlay{}
 		m.input = ""
-		return m.runCommand(picked)
+		m.inputCursor = 0
+		if argument != "" {
+			return m.runCommand(picked.name + " " + argument)
+		}
+		return m.runCommand(picked.name)
 
 	case overlayOptions:
 		if m.overlay.cursor >= len(m.overlay.options) {
@@ -455,6 +725,8 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 			if key, ok := resolveTheme(picked.value); ok {
 				setTheme(key)
 				m.theme = key
+				m.overlay = overlay{}
+				return m, m.echoTheme(key)
 			}
 			m.overlay = overlay{}
 			return m, nil
@@ -475,11 +747,12 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		row := rows[m.overlay.cursor]
+		// A failed server re-presses as load, which is the retry.
 		action := "load"
 		if row.state == "loaded" {
 			action = "unload"
 		}
-		m.overlay.waiting = i18n.T("mcp.panel.waiting", "action", action, "name", row.name)
+		m.overlay.waiting = i18n.T("mcp_dialog.pending", "name", row.name)
 		m.client.MCP(action, []string{row.name})
 		return m, nil
 
@@ -493,6 +766,12 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 		m.appendLine(renderLine{segments: []seg{
 			{text: i18n.T("switch.to_session", "name", picked.value), role: "notice"},
 		}}, "notice", "")
+		return m, nil
+
+	case overlaySkills:
+		// The list is a lookup: closing on the first key is the only action that
+		// makes sense, and leaving it up after Enter would look like a selection.
+		m.overlay = overlay{}
 		return m, nil
 	}
 	return m, nil
@@ -512,10 +791,36 @@ func (m *model) reloadOverlayOptions() {
 	case i18n.T("effort.pick.title"):
 		m.overlay.options = m.effortOptions()
 	}
-	// The waiting note is cleared only when a notice about the change arrives;
-	// applyState alone does not settle the panel.
+	// The waiting note is cleared only when the runtime's answer arrives; a
+	// snapshot alone does not settle the panel.
 }
 
+// settleOverlay writes the runtime's verdict onto a panel that asked for one.
+//
+// Only the model and effort notices settle the picker: other notices (the
+// startup lines, a warning about something else entirely) arrive while a panel
+// happens to be open, and letting those close it would be "pushed aside while
+// choosing". The sentence is reproduced verbatim because it carries facts this
+// program cannot reconstruct — which route lacked a key, which value is still
+// pending — and the panel stays up so it can be read before Esc.
+func (m *model) settleOverlay(code, text string) {
+	switch code {
+	case "model", "effort":
+		if m.overlay.kind == overlayOptions {
+			m.overlay.waiting = text
+		}
+	case "mcp":
+		if m.overlay.kind == overlayMCP {
+			m.overlay.waiting = ""
+		}
+	}
+}
+
+// modelOptions is the `/model` catalogue.
+//
+// The initial cursor is the **next entry after the current one**: the panel is
+// opened to change something, and the row it lands on should not be the row
+// already in effect — Enter on that row is a no-op that looks like a hang.
 func (m model) modelOptions() []option {
 	options := make([]option, 0, len(m.modelCatalog))
 	for _, item := range m.modelCatalog {
@@ -578,7 +883,11 @@ func (m model) handlePermissionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	request := m.pendingPermission
 	id, _ := protocol.String(request, "id")
 
-	hasRemember := request["remember"] != nil
+	// `t` exists only when the runtime offered something to remember. A key that
+	// silently allows everything is exactly what the runtime refuses to offer, so
+	// this must follow the request rather than its own idea of what is safe.
+	rememberHint, _ := protocol.String(request, "remember_hint")
+	hasRemember := rememberHint != ""
 	hasTrustAll, _ := request["allow_trust_all"].(bool)
 
 	decide := func(decision string) (tea.Model, tea.Cmd) {
@@ -611,22 +920,46 @@ func (m model) handlePermissionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleQuestionKey answers a question.
 //
-// Enter is the easiest key in the interface, so it cannot mean "yes" here. The
-// first option is reached with `1` or by typing; Enter on an empty line skips.
+// The cursor is a real selection: `↑↓` move it, a digit takes that row, and Enter
+// takes the highlighted one. Enter is the easiest key in the interface, so it
+// must never mean "skip" — that would turn a keystroke nobody thought about into
+// an answer nobody gave. Skipping is Esc, which is also what the panel says.
+//
+// A typed line still wins over the highlight, because a question may have no
+// options at all and the runtime accepts a free-text answer.
 func (m model) handleQuestionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	request := m.pendingQuestion
 	id, _ := protocol.String(request, "id")
+	options, _ := request["options"].([]any)
 
 	finish := func(status, text string) (tea.Model, tea.Cmd) {
 		m.pendingQuestion = nil
 		m.questionInput = ""
+		m.questionCursor = 0
 		m.client.AnswerQuestion(id, status, text)
 		return m, nil
+	}
+	choose := func(index int) (tea.Model, tea.Cmd) {
+		if index < 0 || index >= len(options) {
+			return m, nil
+		}
+		text, _ := options[index].(string)
+		return finish(protocol.QuestionAnswered, text)
 	}
 
 	switch key.Type {
 	case tea.KeyEsc, tea.KeyCtrlC:
 		return finish(protocol.QuestionSkipped, "")
+	case tea.KeyUp:
+		if m.questionCursor > 0 {
+			m.questionCursor--
+		}
+		return m, nil
+	case tea.KeyDown:
+		if m.questionCursor < len(options)-1 {
+			m.questionCursor++
+		}
+		return m, nil
 	case tea.KeyBackspace:
 		if m.questionInput != "" {
 			runes := []rune(m.questionInput)
@@ -634,18 +967,23 @@ func (m model) handleQuestionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyEnter:
-		if strings.TrimSpace(m.questionInput) == "" {
+		if text := strings.TrimSpace(m.questionInput); text != "" {
+			return finish(protocol.QuestionAnswered, text)
+		}
+		if len(options) == 0 {
+			// Nothing to choose and nothing typed: the only honest answer is to
+			// send it back unanswered rather than invent one.
 			return finish(protocol.QuestionSkipped, "")
 		}
-		options, _ := request["options"].([]any)
-		if index, ok := parseNumber(m.questionInput); ok && index >= 1 && index <= len(options) {
-			if text, ok := options[index-1].(string); ok {
-				return finish(protocol.QuestionAnswered, text)
-			}
+		return choose(m.questionIndex())
+	case tea.KeyRunes:
+		if index, ok := parseNumber(string(key.Runes)); ok && len(options) > 0 {
+			return choose(index - 1)
 		}
-		return finish(protocol.QuestionAnswered, m.questionInput)
-	case tea.KeyRunes, tea.KeySpace:
 		m.questionInput += string(key.Runes)
+		return m, nil
+	case tea.KeySpace:
+		m.questionInput += " "
 		return m, nil
 	}
 	return m, nil

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -90,17 +91,22 @@ type theme struct {
 // Not HSL: interpolating two near-neutral colours through HSL takes a detour
 // around the colour wheel that shows up as an unexpected tint. RGB interpolation
 // is predictable, and predictable is what a test can bite.
+//
+// The rounding is Python's `round()`, i.e. half to even. Truncation toward zero
+// is *not* the same thing: for a negative delta it rounds up instead of down and
+// lands one step lighter on every channel. That is invisible on screen and it
+// makes the derived layer disagree with the palette it was derived from — which
+// is exactly what a golden table is for.
 func blend(base, toward string, amount float64) string {
 	a, errA := parseHex(base)
 	b, errB := parseHex(toward)
 	if errA != nil || errB != nil {
 		return base
 	}
-	mix := func(x, y int) int { return x + int(float64(y-x)*amount+0.5) }
-	r := mix(a[0], b[0])
-	g := mix(a[1], b[1])
-	bl := mix(a[2], b[2])
-	return fmt.Sprintf("#%02X%02X%02X", clampByte(r), clampByte(g), clampByte(bl))
+	mix := func(x, y int) int {
+		return clampByte(int(math.RoundToEven(float64(x) + float64(y-x)*amount)))
+	}
+	return fmt.Sprintf("#%02X%02X%02X", mix(a[0], b[0]), mix(a[1], b[1]), mix(a[2], b[2]))
 }
 
 func parseHex(value string) ([3]int, error) {

@@ -243,22 +243,25 @@ var catalog = map[string]string{
 	"brief.no":                "no",
 
 	// --- the context rail -------------------------------------------------
-	"rail.jobs":                         "Background jobs",
-	"rail.jobs.empty":                   "No background jobs",
-	"rail.jobs.empty_hint":              "Jobs started by shell_background show up here",
-	"rail.job.running":                  "running {span}",
-	"rail.job.uncollected":              "finished (exit {code}) · result not collected",
-	"rail.job.killed":                   "collected",
-	"rail.job.done":                     "finished (exit {code}) · collected",
-	"rail.tasks":                        "Tasks",
-	"rail.tasks.empty":                  "No tasks yet",
-	"rail.tasks.empty_hint":             "Tasks the agent creates show up here",
-	"rail.skills":                       "Loaded skills",
-	"rail.skills.empty":                 "No skills loaded",
-	"rail.skills.empty_hint":            "Anything load_skill reads stays loaded",
-	"rail.permissions":                  "Permissions",
-	"rail.permission.auto":              "auto",
-	"rail.permission.ask":               "ask",
+	"rail.jobs":              "Background jobs",
+	"rail.jobs.empty":        "No background jobs",
+	"rail.jobs.empty_hint":   "Jobs started by shell_background show up here",
+	"rail.job.running":       "running {span}",
+	"rail.job.uncollected":   "finished (exit {code}) · result not collected",
+	"rail.job.killed":        "collected",
+	"rail.job.done":          "finished (exit {code}) · collected",
+	"rail.tasks":             "Tasks",
+	"rail.tasks.empty":       "No tasks yet",
+	"rail.tasks.empty_hint":  "Tasks the agent creates show up here",
+	"rail.skills":            "Loaded skills",
+	"rail.skills.empty":      "No skills loaded",
+	"rail.skills.empty_hint": "Anything load_skill reads stays loaded",
+	"rail.permissions":       "Permissions",
+	"rail.permission.auto":   "auto",
+	"rail.permission.ask":    "ask",
+	// The third disposition a policy can report. The original deliberately shows
+	// the raw word here rather than inventing a label, so this is the raw word.
+	"rail.permission.deny":              "deny",
 	"rail.permission.granted":           "always allowed",
 	"rail.permission.prefixes":          "command rules",
 	"rail.permission.denied":            "denied outright ",
@@ -426,7 +429,12 @@ var catalog = map[string]string{
 	"hint.skills_short":   "Skills",
 	"hint.palette_short":  "Palette",
 	"hint.shift_enter":    "Newline in the input (Enter sends)",
-	"hint.arrows":         "Pick a candidate in panels / move the cursor / scroll the log",
+	// The key that actually inserts a newline. Shift+Enter is what the original
+	// used, but a terminal only distinguishes it when it speaks the kitty
+	// keyboard protocol, which the terminal layer here does not request — so the
+	// interface advertises the key it can actually receive.
+	"hint.newline_key": "Newline in the input (Enter sends)",
+	"hint.arrows":      "Pick a candidate in panels / move the cursor / scroll the log",
 
 	// --- the welcome screen ------------------------------------------------
 	"welcome.back":         "Welcome back, {name}",
@@ -504,7 +512,11 @@ var catalog = map[string]string{
 	"bindings.escape":    "Interrupt / close",
 
 	// --- the input line and the opening lines -----------------------------
-	"input.placeholder":           "Say something and press Enter (/ for commands, /resume to switch session, Shift+Enter for a newline)",
+	// The input line's newline key. Shift+Enter is what the original used, and a
+	// terminal only distinguishes it when it speaks the kitty keyboard protocol —
+	// which the terminal layer here does not request. The copy names the key that
+	// actually works rather than the one that used to.
+	"input.placeholder":           "Say something and press Enter (/ for commands, /resume to switch session, Ctrl+J for a newline)",
 	"init.session_new":            " (new)",
 	"init.session_id":             "(session {name}{state})",
 	"init.return_hint":            "To come back to this session: /resume (pick it from the list; ● marks the current one)",
