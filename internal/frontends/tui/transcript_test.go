@@ -158,6 +158,35 @@ func TestTurnHeaderIsTwoSegmentsThenOne(t *testing.T) {
 
 // ── thinking block ────────────────────────────────────────────────────────────
 
+func TestWrapCellsTreatsEscapeSequencesAsZeroWidth(t *testing.T) {
+	// The real-screen bug: a styled row wrapped as if the SGR body were
+	// printable, breaking early and, when the break landed inside a sequence,
+	// leaving `8;2;131;121;104m` on screen as text. The wrapped form must keep
+	// the sequence intact and count only visible cells.
+	style := "\x1b[38;2;131;121;104m"
+	line := style + "auto" + "\x1b[0m"
+	lines := wrapCells(line, 30)
+	if len(lines) != 1 {
+		t.Fatalf("a short styled line must not wrap, got %d lines", len(lines))
+	}
+	if !strings.Contains(lines[0], style+"auto") {
+		t.Fatalf("the sequence was broken: %q", lines[0])
+	}
+
+	// A long styled row wraps at the **visible** width, and both physical lines
+	// carry the sequence state: the escape passes through wherever it lands.
+	long := style + strings.Repeat("ab", 40) + "\x1b[0m"
+	wrapped := wrapCells(long, 10)
+	if len(wrapped) != int(80/10) {
+		t.Fatalf("80 visible cells at width 10 = 8 lines, got %d", len(wrapped))
+	}
+	for _, physical := range wrapped {
+		if strings.Contains(physical, "8;2;131") && !strings.Contains(physical, "\x1b[") {
+			t.Fatalf("a sequence tail leaked as text: %q", physical)
+		}
+	}
+}
+
 func TestThinkingBodyQuotesEveryLine(t *testing.T) {
 	lines := thinkingBody("first\nsecond", 40)
 	if len(lines) != 2 {
