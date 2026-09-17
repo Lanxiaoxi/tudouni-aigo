@@ -1,0 +1,35 @@
+# Build output
+/dist/
+/build/
+*.test
+*.out
+
+# The vendored ripgrep builds are executables that must be committed: the whole
+# point of vendoring them is that the archive works on a machine with nothing
+# installed. They are re-included below.
+tools/vendor/rg/**/rg
+tools/vendor/rg/**/rg.exe
+
+# Version stamp written by the build, not source.
+/_version.txt
+
+# The Python project this was rewritten from: reference material, not source.
+/old_code/
+
+# Scratch space used while extracting the rewrite spec, and the
+# end-to-end harness's working directory.
+/.rewrite-spec/
+/.e2e/
+
+# Editor / OS noise
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Session state, never committed
+.tudouni/
+
+# Keep the vendored engines even though they look like build output.
+!tools/vendor/rg/x86_64-pc-windows-msvc/rg.exe
+!tools/vendor/rg/x86_64-unknown-linux-musl/rg

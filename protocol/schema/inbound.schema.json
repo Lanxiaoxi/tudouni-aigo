@@ -1,0 +1,280 @@
+{
+  "$comment": "人机交互消息：前端 → runtime。",
+  "user_message": {
+    "summary": "用户说了一句话，跑一个回合。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "user_message"},
+      "text": {"type": "string", "doc": "用户说的话，原样进会话历史。"}
+    },
+    "required": ["v", "t", "text"]
+  },
+  "session_switch": {
+    "summary": "**原地换一个会话**：runtime 收掉当前 runtime、按这个 id 重新装配，然后重发 init / session_load / state。进程不动，所以前端不用重启。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "session_switch"},
+      "session_id": {
+        "type": "string",
+        "nullable": true,
+        "doc": [
+          "要切到哪个会话。**null/缺省 = 新会话**（id 由 runtime 分配）。",
+          "给了 id 而那个会话文件不存在时**也算新会话** —— 和 `--session` 是同一条语义"
+        ]
+      }
+    },
+    "required": ["v", "t"]
+  },
+  "session_list": {
+    "summary": "请 runtime 回一份会话清单（出站的 `sessions`）。界面用它做选会话的面板。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "session_list"}
+    },
+    "required": ["v", "t"]
+  },
+  "interrupt": {
+    "summary": "**中断当前这一轮。** 不是收摊，也不是取消已经发出去的那一步。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "interrupt"}
+    },
+    "required": ["v", "t"]
+  },
+  "set_autopilot": {
+    "summary": "**运行中开关 autopilot**（TUI 的 `/autopilot`）。开了之后需要审批的工具直接执行（审计里每次放行记 outcome=autopilot），关掉就恢复逐条询问。工作区边界、控制面写入、拒绝名单不受它影响。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "set_autopilot"},
+      "on": {
+        "type": "boolean",
+        "doc": [
+          "true = 开（不再问审批），false = 关。**它是绝对状态，不是开关动作** ——",
+          "重发同一条是幂等的，而界面不需要知道 runtime 现在是什么状态。",
+          "runtime 处理后回一条 `ui` / `kind=state` 快照（带 autopilot 字段），",
+          "界面以那条为准 —— 不许自己在发出去的时候就改显示。"
+        ]
+      }
+    },
+    "required": ["v", "t", "on"]
+  },
+  "set_model": {
+    "summary": "**换这个会话用哪个模型**（TUI 的 `/model`）。模型名必须在 runtime 那份目录里（`init.model_catalog`），不在就拒绝并回一条 notice。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "set_model"},
+      "model": {
+        "type": "string",
+        "doc": [
+          "要换成哪个模型（目录里的 id）。**它必须是一个精确的名字，不做模糊匹配** ——",
+          "名字打错一个字就换到另一个模型上（或者被静默忽略），而账单上才看得出来。",
+          "runtime 处理后回一条 `ui` / `kind=state`（带 model 字段）加一条 notice：",
+          "界面以 state 那条为准，不在发请求的时候就改显示。",
+          "**一轮正跑着的时候换，本轮不受影响**：那句话留到下一轮开头（见 state/model.py 的 SessionModel）。"
+        ]
+      }
+    },
+    "required": ["v", "t", "model"]
+  },
+  "set_thinking": {
+    "summary": "**开关思考模式**（TUI 的 `/thinking`）。默认是开（端点的默认行为就是开）。关掉之后模型不再先想一段：答案更快、更便宜，而在需要推理的活上更差。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "set_thinking"},
+      "on": {
+        "type": "boolean",
+        "doc": [
+          "true = 开，false = 关。**它是绝对状态，不是开关动作**（和 set_autopilot 同一条：",
+          "重发同一条幂等，界面不必先知道现在是什么）。**只认真正的 true** —— 猜错的",
+          "两个方向代价不对称（该开没开只是维持现状，不该开却开了是答案质量悄悄变差）。",
+          "**它是布尔，不是 \"on\"/\"off\" 两个字**：认哪些词算开是前端的事（CLI 那边折算",
+          "成这里的布尔），协议上只有这一个形状。",
+          "**它不动强度**：`/effort` 设过的那个记着，再打开时还是它。"
+        ]
+      }
+    },
+    "required": ["v", "t", "on"]
+  },
+  "set_effort": {
+    "summary": "**改思考强度**（TUI 的 `/effort`）。想得越久越贵、通常也越准。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "set_effort"},
+      "effort": {
+        "type": "string",
+        "doc": [
+          "强度。**runtime 只认 `low` / `high` / `max`**（端点还接受 minimal/medium/",
+          "xhigh/ultra，但它们折算之后分别是这三档，所以不列出来）；认不出来的回一条",
+          "`notice`，什么都不改。`none` 不在里面 —— 那是关掉思考，走 set_thinking。",
+          "思考关着时**照样接受**（记下来，等下次打开用）—— 不逼用户记住先开才能设。"
+        ]
+      }
+    },
+    "required": ["v", "t", "effort"]
+  },
+  "status": {
+    "summary": "请 runtime 回一份当前状态（出站的 `ui` / `kind=status`）。TUI 的 `/status`、CLI 的 `/status` 用它。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "status"}
+    },
+    "required": ["v", "t"]
+  },
+  "tools": {
+    "summary": "请 runtime 回一份工具清单（出站的 `ui` / `kind=tools`）。TUI 的 `/tools`、CLI 的 `/tools` 用它。**按需发**：那份清单几十行，不该挂在每一次状态快照上。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "tools"}
+    },
+    "required": ["v", "t"]
+  },
+  "compact": {
+    "summary": "**压一次历史**（TUI 与 CLI 的 `/compact`）。答案是出站的 `ui` / `kind=compacted`。",
+    "doc": [
+      "把较早的详细历史换成一份结构化的工作记忆（摘要），而最近的对话原样保留 ——",
+      "摘要是一份 Artifact（`type=summary`），原始历史**一条都不动**（磁盘上仍然完整，",
+      "`--history` 也照旧读得到）。",
+      "",
+      "它**不产生任何用户消息**，但副作用比「说一句话」大：会调一次模型写摘要、",
+      "会把一段历史折起来、会改会话的持久化状态。所以它跑在一条独立线程上，而且会",
+      "**先等当前这一轮跑完** —— 压缩必须切在一个完整的回合边界上（tool_calls 和",
+      "tool_result 是从中间切不得的）。",
+      "",
+      "压缩是**可用性优化，不是这一轮的目的**：没有可折的区间、摘要那次调用失败、",
+      "或者 Context 没装配，一律由答案里的 `status` 如实说明，**不报错、不改任何状态**。",
+      "自动触发那条路走的是同一个实现（到预算上限的 90% 时，在回合的每一步之前看一眼）。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "compact"}
+    },
+    "required": ["v", "t"]
+  },
+  "context": {
+    "summary": "请 runtime 回一份 Context 的账（出站的 `ui` / `kind=context`）。TUI 与 CLI 的 `/context` 用它。",
+    "doc": [
+      "它回答的是「模型看得见多少东西、有多少被预算压掉了、历史压到哪了」——",
+      "和 `/status` 那一屏分开，因为这几个数是会被反复盯着的（压缩刚跑完、",
+      "或者怀疑上下文快满的时候），混进那一大屏里反而看不见。",
+      "**按需发**：它要遍历 Context 的那些条目。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "context"}
+    },
+    "required": ["v", "t"]
+  },
+"mcp": {
+  "summary": "看/改 MCP server 的挂载情况（TUI 与 CLI 的 `/mcp`）。答案是出站的 `ui` / `kind=mcp`（一份**全量**清单）。",
+  "doc": [
+    "三个动作共用一条消息，因为它们的回包**完全相同**（一份全量清单）：",
+    "  * `list`   —— 只看。`servers` 这一格忽略。",
+    "  * `load`   —— 连上 `servers` 里点的那些（本地起子进程 / 远程建连接，都要握手并列工具），",
+    "               然后注册进工具注册表。`servers` 为空则什么都不做。",
+    "  * `unload` —— 摘掉它们的工具并断开。**不改配置文件**：`mcp.json` 里那一行还在，",
+    "               下次启动仍然会加载。",
+    "**不做 `all` 这种批量写法**：一次一个，和面板里按一次开关是同一件事。",
+    "`servers` 里的名字必须是清单里已经有的（runtime 按名字找；找不到回一条 notice，",
+    "并把清单一起回给前端 —— 打错名字的下一步就是看着清单重打）。",
+    "**它只由人按键触发**：前端不许在启动、回合结束或收到别的消息时自己发一条 ——",
+    "那会让「配置自己变宽」成为可能，而 `mcp.json` 只读用户级正是要防这件事。",
+    "生效时机：runtime **先等当前这一轮跑完**再改（和 `/new` 同一条语义），",
+    "所以正在执行的那一次工具调用不会被半路抽走。"
+  ],
+  "fields": {
+    "v": {
+      "type": "integer",
+      "const": 1
+    },
+    "t": {
+      "type": "string",
+      "const": "mcp"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "list",
+        "load",
+        "unload"
+      ],
+      "doc": "要做什么。**认不出来的值不当成 `list`**（那会让一次打错的加载看起来像成功），runtime 回一条 notice。"
+    },
+    "servers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "doc": "要动哪几个 server（按 `mcp.json` 里那个名字）。`action=list` 时忽略；`load`/`unload` 时可以是空数组。"
+    }
+  },
+  "required": [
+    "v",
+    "t",
+    "action"
+  ]
+},
+  "refresh_state": {
+    "summary": "请 runtime 回一份面板快照（出站的 `ui` / `kind=state`）。**空消息，没有参数。**",
+    "doc": [
+      "它存在的理由只有一个：**后台任务会在没人在看的时候改变状态**。",
+      "`ui(state)` 本来只在几条固定的时候发（开场、每次 tool_result、回合收尾、",
+      "几条命令之后），而这些时刻全都由**交互**触发 —— 一段没人说话的安静时间里，",
+      "一条两分钟的命令跑完了，面板却还写着「在跑」。",
+      "",
+      "所以这是**前端主动来问一次**，而不是给 runtime 加一个定时器或者监视线程",
+      "（后台任务那套东西刻意做到「零后台线程」，见 tools/builtin/jobs.py）。",
+      "前端只在**自己知道有东西悬着**的时候发它（TUI：`state.jobs` 里有",
+      "`running` / `uncollected`），而且要有节流 —— 它不该变成一个心跳。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "refresh_state"}
+    },
+    "required": ["v", "t"]
+  },
+  "shutdown": {
+    "summary": "收摊。**当前这一轮会跑完**，不是打断它。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "shutdown"}
+    },
+    "required": ["v", "t"]
+  },
+  "permission_response": {
+    "summary": "对一条 permission_request 的回答。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "permission_response"},
+      "id": {"type": "string", "doc": "要回应的那条 permission_request 的 id"},
+      "decision": {
+        "type": "string",
+        "enum": ["allow", "deny", "always", "always_group"],
+        "doc": [
+          "allow 批准这一次；deny 拒绝（gate 记 user_denied）；",
+          "always 记住'这个工具以后别再问'（或一条命令前缀，粒度由 runtime 定）；",
+          "always_group 放行这一组工具（目前只有'MCP 的同一个 server'）——",
+          "**它只对这条请求有效**，靠 id 查 runtime 手里那份名额，前端不许自己带名单。"
+        ]
+      }
+    },
+    "required": ["v", "t", "id", "decision"]
+  },
+  "question_response": {
+    "summary": "对一条 question_request 的回答。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "question_response"},
+      "id": {"type": "string", "doc": "要回应的那条 question_request 的 id"},
+      "text": {"type": "string", "doc": "用户的答案；skipped 时是空串"},
+      "status": {
+        "type": "string",
+        "enum": ["answered", "skipped"],
+        "doc": [
+          "只有这两种是**前端**能回的。第三种 unavailable（没有人可问）由 runtime",
+          "自己产生，前端永远不会回它 —— 见 tools/builtin/ask.py 那三个常量的分工。"
+        ]
+      }
+    },
+    "required": ["v", "t", "id", "status"]
+  }
+}
