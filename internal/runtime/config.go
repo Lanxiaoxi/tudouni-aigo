@@ -320,8 +320,9 @@ type WebConfig struct {
 	TavilyBaseURL string
 }
 
-// DefaultTavilyBaseURL is where search requests go unless the config says otherwise.
-const DefaultTavilyBaseURL = "https://api.tavily.com/v1"
+// DefaultTavilyBaseURL is where search requests go unless the config says
+// otherwise. `/search` is appended to it, so this is the host alone.
+const DefaultTavilyBaseURL = "https://api.tavily.com"
 
 // LoadWebConfig reads the `web` section.
 func LoadWebConfig() (WebConfig, error) {

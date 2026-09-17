@@ -310,12 +310,32 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	jobs, jobTools := builtin.NewJobs(workspace)
 	runtimeValue.Jobs = jobs
 
+	// The network tools. fetch_web needs no key and is always there; web_search
+	// needs one, and without a key it is **not registered at all** rather than
+	// registered and apologising — a tool the model can see but that never works
+	// costs a round trip every time it is tried, and teaches it that tools lie.
+	extra := append([]tools.Tool{}, jobTools...)
+	extra = append(extra, builtin.NewFetchWeb(runtimeValue.httpClient))
+	hasFetch := true
+
+	hasSearch := false
+	if tool, ok := builtin.NewWebSearch(runtimeValue.WebCfg.TavilyAPIKey,
+		runtimeValue.WebCfg.TavilyBaseURL, runtimeValue.httpClient); ok {
+		extra = append(extra, tool)
+		hasSearch = true
+	} else {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "web",
+			i18n.T("notice.web.no_key", "path", paths.ExampleConfigPath())))
+	}
+
 	registry, err := builtin.CreateRegistry(builtin.Assembly{
 		Workspace:    workspace,
 		TodoMetadata: session.Metadata,
 		Questioner:   questionerOf(options.Channels),
 		HasJobs:      true,
-		Extra:        jobTools,
+		HasWebFetch:  hasFetch,
+		HasWebSearch: hasSearch,
+		Extra:        extra,
 	})
 	if err != nil {
 		jobs.Close()

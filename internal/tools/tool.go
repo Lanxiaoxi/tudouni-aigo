@@ -90,7 +90,22 @@ func (t Tool) OpenAISchema() map[string]any {
 }
 
 // Execute validates the arguments and runs the handler.
-func (t Tool) Execute(arguments map[string]any) (Result, error) {
+func (t Tool) Execute(arguments map[string]any) (result Result, err error) {
+	// A panic inside a handler is a bug, and it must not take the session with it.
+	//
+	// Go panics are not errors: without this, one bad regex or one out-of-range
+	// index in one tool ends the whole conversation — the process exits, the
+	// session is left mid-turn, and the person gets a stack trace instead of an
+	// answer. Recovering here turns it into what every other tool failure is: a
+	// sentence for the model, an audit record, and a turn that carries on with the
+	// rest of the batch.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = Result{}
+			err = fmt.Errorf("tool %s panicked: %v", t.Name, recovered)
+		}
+	}()
+
 	validated, err := Validate(t.Parameters(), arguments)
 	if err != nil {
 		return Result{}, &InvalidArgumentsError{Msg: err.Error()}
@@ -98,7 +113,7 @@ func (t Tool) Execute(arguments map[string]any) (Result, error) {
 	if t.Handler == nil {
 		return Result{}, fmt.Errorf("tool %s has no handler", t.Name)
 	}
-	result, err := t.Handler(validated)
+	result, err = t.Handler(validated)
 	if err != nil {
 		return Result{}, err
 	}
