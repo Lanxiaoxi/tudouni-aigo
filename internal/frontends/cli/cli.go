@@ -264,7 +264,7 @@ func handleCommand(current protocol.Runtime, line string, out io.Writer) (bool, 
 		fmt.Fprintln(out, i18n.T("autopilot.report_on"))
 
 	case "/skills":
-		fmt.Fprintln(out, i18n.T("skills.empty"))
+		fmt.Fprintln(out, frontends.RenderSkills(current.SkillsMessage()))
 
 	case "/audit":
 		fmt.Fprintln(out, i18n.T("cmd.audit.line", "path", runtime.RuntimeDir()+"/logs"))

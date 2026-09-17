@@ -27,6 +27,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/runtime"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
 )
@@ -273,9 +274,27 @@ func checkWorkspace() error {
 }
 
 func showSkills() int {
-	fmt.Println(i18n.T("skills.empty"))
-	fmt.Println(i18n.T("skills.scan_dirs"))
-	fmt.Println(i18n.T("skills.scan_none"))
+	catalog := skills.NewLoader().Reload()
+
+	if len(catalog.Skills) == 0 {
+		fmt.Println(i18n.T("skills.empty"))
+	} else {
+		fmt.Println(i18n.T("skills.title"))
+		for _, line := range skills.CatalogEntries(catalog) {
+			fmt.Println("  " + line)
+		}
+	}
+	// Provenance always prints: the user-level directories sit outside the
+	// workspace, so nobody thinks to look there — and a shadowed copy is worse,
+	// because it exists on disk and does not count.
+	for _, line := range skills.SourceLines(catalog) {
+		fmt.Println(line)
+	}
+	// Problems are data, not errors: one malformed file must not stop the scan,
+	// and it must not be silent either.
+	for _, problem := range catalog.Problems {
+		fmt.Fprintln(os.Stderr, skills.RenderProblem(problem))
+	}
 	return 0
 }
 

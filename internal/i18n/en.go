@@ -628,6 +628,7 @@ var catalog = map[string]string{
 	"channels.run_failed":             "[turn failed] {problem}",
 	"channels.status.no_session":      "[status] no session yet.",
 	"channels.tools.no_session":       "[tools] no session yet.",
+	"channels.skills.no_session":      "[skills] no session yet.",
 	"channels.compact.no_session":     "[compact] no session yet.",
 	"channels.compact.failed":         "[compact] failed (nothing was changed): {problem}",
 	"channels.compact.no_context":     "[compact] this runtime has no context management, nothing to compact.",

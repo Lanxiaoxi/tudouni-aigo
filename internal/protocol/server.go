@@ -24,6 +24,7 @@ type Runtime interface {
 	StatusMessage() map[string]any
 	ToolsMessage() map[string]any
 	ContextMessage() map[string]any
+	SkillsMessage() map[string]any
 	MCPMessage(action string, servers []string) (map[string]any, []string)
 	Compact() (map[string]any, error)
 	SessionSummaries() []map[string]any
@@ -271,6 +272,18 @@ func (s *Server) Dispatch(message map[string]any) bool {
 		payload["v"] = VERSION
 		payload["t"] = OutUI
 		payload["kind"] = UIContext
+		s.Send(payload)
+
+	case InSkills:
+		runtime := s.current()
+		if runtime == nil {
+			s.notice("warn", "skills", i18n.T("channels.skills.no_session"))
+			return true
+		}
+		payload := runtime.SkillsMessage()
+		payload["v"] = VERSION
+		payload["t"] = OutUI
+		payload["kind"] = UISkills
 		s.Send(payload)
 
 	case InCompact:

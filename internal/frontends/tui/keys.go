@@ -193,7 +193,7 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "/skills":
-		m.append("notice", i18n.T("skills.footer"))
+		m.client.ListSkills()
 		return m, nil
 
 	case "/quiet":

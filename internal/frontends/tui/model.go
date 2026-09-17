@@ -373,6 +373,9 @@ func (m *model) handleUI(payload map[string]any) {
 	case protocol.UIContext:
 		m.append("answer", frontends.RenderContext(payload))
 
+	case protocol.UISkills:
+		m.append("answer", frontends.RenderSkills(payload))
+
 	case protocol.UICompacted:
 		// The same sentence the line interface prints, from the same function:
 		// every figure in it comes from one compaction, and two renderings would

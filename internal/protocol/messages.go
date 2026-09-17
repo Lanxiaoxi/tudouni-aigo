@@ -55,6 +55,7 @@ const (
 	InMCP                = "mcp"
 	InCompact            = "compact"
 	InContext            = "context"
+	InSkills             = "skills"
 	InRefreshState       = "refresh_state"
 	InShutdown           = "shutdown"
 )
@@ -88,6 +89,7 @@ const (
 	UITools       = "tools"
 	UIMCP         = "mcp"
 	UIContext     = "context"
+	UISkills      = "skills"
 	UICompacted   = "compacted"
 	UIRunFinished = "run_finished"
 )

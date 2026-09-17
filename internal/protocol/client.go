@@ -192,6 +192,9 @@ func (c *Client) AskContext() { c.Send(map[string]any{"t": InContext}) }
 // Compact asks for the history to be folded once.
 func (c *Client) Compact() { c.Send(map[string]any{"t": InCompact}) }
 
+// ListSkills asks for this session's skill catalogue.
+func (c *Client) ListSkills() { c.Send(map[string]any{"t": InSkills}) }
+
 // MCP asks about or changes MCP mounts.
 func (c *Client) MCP(action string, servers []string) {
 	message := map[string]any{"t": InMCP, "action": action}

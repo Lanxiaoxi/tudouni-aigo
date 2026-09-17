@@ -16,6 +16,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
@@ -210,6 +211,8 @@ type Runtime struct {
 	// ContextValue is the session's context ledger: which artifacts are in play,
 	// at what level, and what has been folded away.
 	ContextValue *context.Manager
+	// Skills is the loaded-skill board, which the payload tail renders from.
+	Skills *builtin.SkillBoard
 
 	notices    []map[string]any
 	mcpNames   []string
@@ -310,6 +313,12 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	jobs, jobTools := builtin.NewJobs(workspace)
 	runtimeValue.Jobs = jobs
 
+	// Skills are scanned from disk, never from a path the model supplies. The
+	// user-level directories live outside the workspace, and write_file cannot
+	// reach them either, so for that half "only a person can change a skill" is
+	// guaranteed by the operating system.
+	skillLoader := skills.NewLoader()
+
 	// The network tools. fetch_web needs no key and is always there; web_search
 	// needs one, and without a key it is **not registered at all** rather than
 	// registered and apologising — a tool the model can see but that never works
@@ -329,19 +338,22 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	}
 
 	registry, err := builtin.CreateRegistry(builtin.Assembly{
-		Workspace:    workspace,
-		TodoMetadata: session.Metadata,
-		Questioner:   questionerOf(options.Channels),
-		HasJobs:      true,
-		HasWebFetch:  hasFetch,
-		HasWebSearch: hasSearch,
-		Extra:        extra,
+		Workspace:     workspace,
+		TodoMetadata:  session.Metadata,
+		Questioner:    questionerOf(options.Channels),
+		HasJobs:       true,
+		HasWebFetch:   hasFetch,
+		HasWebSearch:  hasSearch,
+		SkillLoader:   skillLoader,
+		SkillMetadata: session.Metadata,
+		Extra:         extra,
 	})
 	if err != nil {
 		jobs.Close()
 		return nil, err
 	}
 	runtimeValue.Tools = registry.Tools
+	runtimeValue.Skills = registry.Skills
 
 	for _, name := range registry.Missing {
 		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
@@ -558,6 +570,20 @@ func (r *Runtime) notes() string {
 	var parts []string
 	if r.Jobs != nil {
 		if note := r.Jobs.Note(); note != "" {
+			parts = append(parts, note)
+		}
+	}
+	// The skill catalogue goes out every round rather than into the system prompt.
+	// The prompt is written once when the session is created, and skills can be
+	// added at any time — so a restored session would be permanently blind to
+	// every skill added since. The cost is about thirty tokens per skill per
+	// round, and the tail sits outside the cached prefix anyway.
+	if r.Skills != nil {
+		catalog := r.Skills.Catalog()
+		if part := skills.CatalogPart(r.SessionValue.Metadata, catalog); part != "" {
+			parts = append(parts, part)
+		}
+		if note := r.Skills.Note(); note != "" {
 			parts = append(parts, note)
 		}
 	}
@@ -811,6 +837,67 @@ func (r *Runtime) contextPayload() map[string]any {
 		}
 	}
 	return payload
+}
+
+// SkillsMessage implements protocol.Runtime.
+//
+// It lists what **this session** can load, not what a fresh scan would find: the
+// board rescans on read, so a skill added while the session is open appears here
+// and is immediately loadable. A catalogue that shows a skill the loader cannot
+// find is the one state this must never be in.
+func (r *Runtime) SkillsMessage() map[string]any {
+	empty := map[string]any{
+		"skills": []any{}, "active": []any{}, "roots": []any{},
+		"problems": []any{}, "shadowed": []any{},
+	}
+	if r.Skills == nil || r.SessionValue == nil {
+		return empty
+	}
+	catalog := r.Skills.Catalog()
+
+	rows := make([]any, 0, len(catalog.Skills))
+	for _, skill := range catalog.Skills {
+		shadowed := make([]any, 0)
+		for _, path := range skill.Shadowed() {
+			shadowed = append(shadowed, path)
+		}
+		rows = append(rows, map[string]any{
+			"name":        skill.Name,
+			"description": skill.Description,
+			"path":        skill.Path,
+			"shadowed":    shadowed,
+		})
+	}
+
+	active := make([]any, 0)
+	for _, name := range skills.ActiveNames(r.SessionValue.Metadata) {
+		active = append(active, name)
+	}
+
+	roots := make([]any, 0, len(catalog.Roots))
+	for _, root := range catalog.Roots {
+		roots = append(roots, root)
+	}
+
+	// Problems are rendered here rather than sent as codes: the sentence belongs to
+	// the interface's language, and every front end would otherwise carry a copy of
+	// the same switch.
+	problems := make([]any, 0, len(catalog.Problems))
+	for _, problem := range catalog.Problems {
+		problems = append(problems, skills.RenderProblem(problem))
+	}
+	shadowedLines := make([]any, 0, len(catalog.Shadowed))
+	for _, problem := range catalog.Shadowed {
+		shadowedLines = append(shadowedLines, skills.RenderProblem(problem))
+	}
+
+	return map[string]any{
+		"skills":   rows,
+		"active":   active,
+		"roots":    roots,
+		"problems": problems,
+		"shadowed": shadowedLines,
+	}
 }
 
 // MCPMessage implements protocol.Runtime.

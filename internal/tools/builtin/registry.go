@@ -3,6 +3,7 @@ package builtin
 import (
 	"fmt"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
@@ -30,6 +31,13 @@ type Assembly struct {
 	HasWebFetch  bool
 	HasWebSearch bool
 
+	// SkillLoader scans the skill directories. Nil means no skill tool: a schema
+	// sent every round that can only ever answer "there is nothing here" costs the
+	// model a round trip for nothing.
+	SkillLoader *skills.Loader
+	// SkillMetadata is the session metadata the loaded-skill list is bound to.
+	SkillMetadata map[string]any
+
 	// Extra holds the tools built by the assembly layer — background jobs, the
 	// network tools, the skill loader. They live elsewhere because they own
 	// resources (process handles, HTTP clients, a directory scan) that this file
@@ -40,6 +48,11 @@ type Assembly struct {
 // Result is the registry plus the reasons some tools are missing.
 type Result struct {
 	Tools *tools.Registry
+	// Skills is the board bound to this session, so the runtime can render the
+	// loaded bodies into the payload tail. It is the **same** board the tool
+	// writes through — two boards over one metadata map would work, and would also
+	// mean two objects claiming to be the answer to "what is loaded".
+	Skills *SkillBoard
 	// Missing names tools that were not registered, for the startup notices.
 	// "The file is right there but does nothing" is the worst failure shape, and a
 	// missing ripgrep build or search key is exactly that.
@@ -89,6 +102,19 @@ func CreateRegistry(assembly Assembly) (*Result, error) {
 		}
 	} else {
 		result.Missing = append(result.Missing, "grep")
+	}
+
+	if assembly.SkillLoader != nil {
+		// Registered only when there is something to load. A skill directory that
+		// does not exist is not a configuration error — skills are optional, and
+		// absent means "this capability is not here".
+		if catalog := assembly.SkillLoader.Reload(); len(catalog.Skills) > 0 {
+			board := NewSkillBoard(assembly.SkillMetadata, assembly.SkillLoader)
+			if err := registry.Register(NewLoadSkill(board)); err != nil {
+				return nil, err
+			}
+			result.Skills = board
+		}
 	}
 
 	for _, tool := range assembly.Extra {

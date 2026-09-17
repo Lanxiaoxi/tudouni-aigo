@@ -85,11 +85,21 @@ const PromptsDirName = "prompts"
 
 // UserConfigDir returns ~/.tudouni. The config file and mcp.json live here.
 func UserConfigDir() string {
+	return filepath.Join(HomeDir(), RuntimeDirName)
+}
+
+// HomeDir is the user's home directory.
+//
+// It is separate from UserConfigDir because not everything that follows the person
+// lives inside this program's own directory: the shared skill locations are
+// `~/.skills` and `~/.agents/skills`, which belong to other tools as much as to
+// this one.
+func HomeDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return RuntimeDirName
+		return "."
 	}
-	return filepath.Join(home, RuntimeDirName)
+	return home
 }
 
 // WorkspaceDir returns the current working directory.

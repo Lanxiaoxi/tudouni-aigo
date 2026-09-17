@@ -162,6 +162,74 @@ func RenderTools(message map[string]any) string {
 	return builder.String()
 }
 
+// RenderSkills is the `/skills` listing.
+//
+// The path travels with every name because "where did this one come from" is the
+// only question the list is consulted for that a name cannot answer — there are six
+// possible directories, and whether the file somebody just edited is the one in
+// effect depends entirely on which.
+//
+// The scanned directories always print, even when nothing was found: the
+// user-level ones sit outside the workspace, so nobody thinks to look there unless
+// they are named. And shadowed copies are printed because they are the worst of the
+// three — the file exists on disk and does not count, so silence means somebody
+// edits a file that never takes effect.
+func RenderSkills(message map[string]any) string {
+	var lines []string
+
+	rows, _ := message["skills"].([]any)
+	if len(rows) == 0 {
+		lines = append(lines, i18n.T("skills.empty"))
+	} else {
+		lines = append(lines, i18n.T("skills.title"))
+		for _, item := range rows {
+			row, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("  %s（%s）", textOr(row["name"]), textOr(row["path"])))
+		}
+	}
+
+	if active := stringList(message["active"]); len(active) > 0 {
+		lines = append(lines, i18n.T("skills.active_label")+strings.Join(active, "、"))
+	}
+
+	roots := stringList(message["roots"])
+	if len(roots) > 0 {
+		lines = append(lines, i18n.T("skills.scan_dirs"))
+		for _, root := range roots {
+			lines = append(lines, "    "+root)
+		}
+	} else {
+		lines = append(lines, i18n.T("skills.scan_dirs"), i18n.T("skills.scan_none"))
+	}
+
+	for _, problem := range stringList(message["problems"]) {
+		lines = append(lines, problem)
+	}
+	for _, item := range stringList(message["shadowed"]) {
+		lines = append(lines, i18n.T("skills.shadowed_line", "item", item))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func stringList(value any) []string {
+	items, ok := value.([]any)
+	if !ok {
+		if direct, ok := value.([]string); ok {
+			return direct
+		}
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		out = append(out, fmt.Sprint(item))
+	}
+	return out
+}
+
 func dispositionText(disposition string) string {
 	switch disposition {
 	case "auto":
