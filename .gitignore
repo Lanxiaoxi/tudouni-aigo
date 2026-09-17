@@ -20,6 +20,7 @@ tools/vendor/rg/**/rg.exe
 # end-to-end harness's working directory.
 /.rewrite-spec/
 /.e2e/
+/.demo/
 
 # Editor / OS noise
 .idea/
@@ -29,6 +30,9 @@ Thumbs.db
 
 # Session state, never committed
 .tudouni/
+
+# Assistant working notes kept next to the project, not part of it.
+/.workbuddy/
 
 # Keep the vendored engines even though they look like build output.
 !tools/vendor/rg/x86_64-pc-windows-msvc/rg.exe

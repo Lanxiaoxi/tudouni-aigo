@@ -25,10 +25,20 @@ import (
 // Required names are listed separately so the two never have to be kept in sync by
 // hand.
 func ObjectSchema(properties map[string]any, required ...string) map[string]any {
+	if properties == nil {
+		properties = map[string]any{}
+	}
+	// The copy is not decoration. A nil slice marshals to `null`, and a provider
+	// that validates the schema answers `"required": null` with a 400 naming one
+	// arbitrary tool — the request never reaches the model, and the message
+	// points at whichever function happened to be checked first rather than at
+	// the one that is wrong. Empty has to leave here as `[]`.
+	names := make([]string, 0, len(required))
+	names = append(names, required...)
 	return map[string]any{
 		"type":                 "object",
 		"properties":           properties,
-		"required":             required,
+		"required":             names,
 		"additionalProperties": false,
 	}
 }
@@ -38,6 +48,7 @@ func EmptySchema() map[string]any {
 	return map[string]any{
 		"type":                 "object",
 		"properties":           map[string]any{},
+		"required":             []string{},
 		"additionalProperties": false,
 	}
 }
