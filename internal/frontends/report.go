@@ -215,6 +215,50 @@ func RenderSkills(message map[string]any) string {
 	return strings.Join(lines, "\n")
 }
 
+// RenderMCP is the `/mcp` panel.
+//
+// The state is on every row because that is the only question the list is consulted
+// for — which servers are running, and which are merely configured. A server that is
+// listed but not mounted is the normal state, not a problem: nothing is mounted at
+// start-up, because starting a program on this machine is a decision a person makes.
+func RenderMCP(message map[string]any) string {
+	rows, _ := message["mcp"].([]any)
+	if len(rows) == 0 {
+		return i18n.T("mcp.host.no_servers", "file", "mcp.json")
+	}
+
+	running := numberOr(message["mcp_running"])
+	var lines []string
+	lines = append(lines, i18n.T("mcp.summary", "running", running, "total", len(rows)))
+
+	for _, item := range rows {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := textOr(row["name"])
+		state := textOr(row["state"])
+		count := numberOr(row["tools"])
+
+		status := i18n.T("mcp.not_loaded")
+		if state == "loaded" {
+			key := "mcp.tools.one"
+			if count != 1 {
+				key = "mcp.tools.other"
+			}
+			status = i18n.T(key, "n", count)
+		}
+		where := textOr(row["where"])
+		if where != "" {
+			// Remote servers report the host and nothing more: a URL can carry a
+			// token, and this string is drawn on a screen.
+			status += "  " + where
+		}
+		lines = append(lines, fmt.Sprintf("  %-16s %s", name, status))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func stringList(value any) []string {
 	items, ok := value.([]any)
 	if !ok {

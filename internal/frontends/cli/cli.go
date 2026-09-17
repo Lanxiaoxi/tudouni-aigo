@@ -270,16 +270,17 @@ func handleCommand(current protocol.Runtime, line string, out io.Writer) (bool, 
 		fmt.Fprintln(out, i18n.T("cmd.audit.line", "path", runtime.RuntimeDir()+"/logs"))
 
 	case "/mcp":
+		action := "list"
+		var names []string
 		if len(arguments) >= 2 {
-			_, notes := current.MCPMessage(arguments[0], arguments[1:])
-			for _, note := range notes {
-				fmt.Fprintln(out, note)
-			}
-			return false, ""
+			action, names = arguments[0], arguments[1:]
 		}
-		_, notes := current.MCPMessage("list", nil)
+		panel, notes := current.MCPMessage(action, names)
 		for _, note := range notes {
 			fmt.Fprintln(out, note)
+		}
+		if panel != nil {
+			fmt.Fprintln(out, frontends.RenderMCP(panel))
 		}
 
 	default:

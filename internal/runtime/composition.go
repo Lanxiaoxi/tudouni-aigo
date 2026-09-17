@@ -213,6 +213,9 @@ type Runtime struct {
 	ContextValue *context.Manager
 	// Skills is the loaded-skill board, which the payload tail renders from.
 	Skills *builtin.SkillBoard
+	// mcpMounts is the servers currently up. Empty at start-up: mounting is a
+	// decision a person makes, not a consequence of a config file existing.
+	mcpMounts map[string]*mcpMount
 
 	notices    []map[string]any
 	mcpNames   []string
@@ -354,6 +357,13 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	}
 	runtimeValue.Tools = registry.Tools
 	runtimeValue.Skills = registry.Skills
+
+	// Configured servers are announced but **not mounted**: a server is a program
+	// that runs on this machine with this user's privileges, so starting one is a
+	// decision a person makes rather than a consequence of a config file existing.
+	if line := mcpNotice(mcpSpecs); line != "" {
+		runtimeValue.notices = append(runtimeValue.notices, notice("info", "mcp", line))
+	}
 
 	for _, name := range registry.Missing {
 		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
@@ -623,6 +633,11 @@ func (r *Runtime) Close() error {
 		if err := r.Jobs.Close(); err != nil {
 			warn("%s", i18n.T("close.jobs_failed", "problem", err.Error()))
 		}
+	}
+	// A mounted server is a child process. Leaving children behind on exit is how
+	// ports and file handles stay held after the window is closed.
+	for _, problem := range r.CloseMcp() {
+		warn("%s", problem)
 	}
 	return nil
 }
@@ -898,13 +913,6 @@ func (r *Runtime) SkillsMessage() map[string]any {
 		"problems": problems,
 		"shadowed": shadowedLines,
 	}
-}
-
-// MCPMessage implements protocol.Runtime.
-func (r *Runtime) MCPMessage(action string, servers []string) (map[string]any, []string) {
-	// No MCP host is assembled in this build, so the panel says so instead of
-	// showing an empty list that would read as "everything is unmounted".
-	return nil, []string{i18n.T("channels.mcp.no_host")}
 }
 
 // Compact implements protocol.Runtime.
