@@ -106,6 +106,10 @@ func (t theme) styleFor(role string) lipgloss.Style {
 		return base.Foreground(lipgloss.Color(t.ink4))
 	case "think_body":
 		return base.Foreground(lipgloss.Color(t.ink2))
+	case "quote":
+		// The bar is the boundary, not the words: the theme's line colour keeps
+		// it one step quieter than the text it frames.
+		return base.Foreground(lipgloss.Color(t.line))
 	case "turn_start":
 		return base.Foreground(lipgloss.Color(t.accent)).Bold(true)
 	case "turn_end":
@@ -305,6 +309,15 @@ func thinkingFolded(turn *turnData, chars int, spin string) renderLine {
 	}}
 }
 
+// thinkingStreamHead is the block head of a reasoning chunk that is still
+// growing: `  ▸ Thinking`. In normal (non-quiet) mode the body spreads out under
+// it and is rewritten whole on every chunk; quiet mode keeps it folded instead.
+func thinkingStreamHead() renderLine {
+	return renderLine{segments: []seg{
+		{text: i18n.T("think.prefix_folded"), role: "think_head"},
+	}}
+}
+
 // thinkingBody renders the reasoning text as a quote block: the sunken
 // background bounds it and the vertical bar marks the edge. Both paths — first
 // paint and Ctrl+T expand — go through this one constructor, so folding a block
@@ -313,13 +326,17 @@ func thinkingBody(text string, width int) []string {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(currentTheme.ink2)).
-		Background(lipgloss.Color(currentTheme.sunk))
+	background := lipgloss.NewStyle().Background(lipgloss.Color(currentTheme.sunk))
+	body := currentTheme.styleFor("think_body")
+	bar := currentTheme.styleFor("quote")
 	var out []string
 	for _, raw := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		for _, physical := range wrapCells(raw, maxInt(width-6, 20)) {
-			out = append(out, style.Render("  │ ")+style.Render(physical))
+			// Two halves make the block: the sunken background bounds it and the
+			// vertical bar marks the edge. The bar carries its own role — the
+			// line colour, one step quieter than the words it frames.
+			out = append(out, background.Render(
+				bar.Render("  │ ")+body.Render(physical)))
 		}
 	}
 	return out

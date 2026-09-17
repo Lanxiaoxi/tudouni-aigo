@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // The palette layer: **three themes, pure data**.
@@ -218,6 +220,12 @@ func setTheme(key themeKey) bool {
 	}
 	currentTheme = themes[key]
 	return true
+}
+
+// styleMark is the one-off colour for a status mark whose colour follows the
+// phase instead of a fixed role.
+func (t theme) styleMark(hex string) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(hex))
 }
 
 // resolveTheme maps what the user typed to a theme key.

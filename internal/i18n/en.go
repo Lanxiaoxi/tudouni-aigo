@@ -158,6 +158,22 @@ var catalog = map[string]string{
 
 	"help.themes": "Themes: /theme without arguments opens the picker — amber (default), deep clear, pink violet.",
 
+	// Time-ago stamps (the welcome screen's recent list).
+	"ago.now":     "just now",
+	"ago.minutes": "{n} min ago",
+	"ago.hours":   "{n} h ago",
+	"ago.days":    "{n} d ago",
+
+	// The welcome screen's motto rotates by day.
+	"welcome.motto.0": "Ask for the working slice, not the finished thing.",
+	"welcome.motto.1": "A tool you can rerun is worth three you can inspect.",
+	"welcome.motto.2": "Small sessions fold; long ones drift.",
+	"welcome.motto.3": "The audit log is the conversation that does not lie.",
+	"welcome.motto.4": "Approvals are cheap. Undoing is not.",
+	"welcome.motto.5": "Read the file before you edit it. Every time.",
+	"welcome.motto.6": "If the plan has one step, it does not need a list.",
+	"welcome.motto.7": "Interrupt early. The model does not mind.",
+
 	"status.settled.answered":       "Answered",
 	"status.settled.limited":        "Step limit reached",
 	"status.settled.failed":         "This turn failed",

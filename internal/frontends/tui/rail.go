@@ -63,8 +63,10 @@ func (m model) railBlocks() []railBlock {
 // renderRail draws the rail at the given width.
 func (m model) renderRail(width, height int) string {
 	bar := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.railBar))
-	titleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(currentTheme.ink4)).Bold(true)
+	// The title carries no bold: every block shouting would mean nothing shouts.
+	// It is the same grey as the body — it says "what this block is called",
+	// and the count rides right next to it so the eye reads them together.
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4))
 	badge := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4))
 	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4))
 
@@ -103,15 +105,26 @@ func (m model) renderRail(width, height int) string {
 
 func (m model) sessionRows() []string {
 	var rows []string
-	rows = append(rows, i18n.T("status.session.span",
-		"messages", i18n.Tn("status.session.messages", m.panel.messages),
-		"steps", i18n.Tn("status.session.steps", m.panel.steps)))
+	// The session id leads: everything below answers "which conversation is
+	// this", and a timestamp is the handle /resume takes.
+	id := m.sessionID
+	if id == "" {
+		id = i18n.T("session.bar.unnamed")
+	}
+	rows = append(rows, currentTheme.styleFor("process").Render(id))
 	if m.panel.model != "" {
 		modelRow := m.panel.model
 		if m.panel.window != nil {
 			modelRow += "  " + windowText(m.panel.window)
 		}
 		rows = append(rows, modelRow)
+	}
+	rows = append(rows, i18n.T("status.session.span",
+		"messages", i18n.Tn("status.session.messages", m.panel.messages),
+		"steps", i18n.Tn("status.session.steps", m.panel.steps)))
+	if m.auditPath != "" {
+		rows = append(rows, currentTheme.styleFor("rule").Render(
+			clipText(i18n.T("status.audit", "path", m.auditPath), railWidth-4)))
 	}
 	// Thinking-off is the one state worth a standing line: on is what the
 	// endpoint does by default, and a default does not need a row.
@@ -124,8 +137,24 @@ func (m model) sessionRows() []string {
 	return rows
 }
 
+// todoRows opens with the progress bar — one cell per task, compressed past
+// twenty — because the question this block answers is "how much is left", and a
+// fixed ten-cell bar turns that into a division problem.
 func todoRows(todos []any) []string {
 	var rows []string
+	done := 0
+	for _, item := range todos {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if status, _ := row["status"].(string); status == "completed" {
+			done++
+		}
+	}
+	if len(todos) > 0 {
+		rows = append(rows, progressBar(done, len(todos)))
+	}
 	for _, item := range todos {
 		row, ok := item.(map[string]any)
 		if !ok {
@@ -133,19 +162,66 @@ func todoRows(todos []any) []string {
 		}
 		status, _ := row["status"].(string)
 		content, _ := row["content"].(string)
-		// The three marks are shapes first and colours second: a monochrome
-		// terminal still distinguishes "todo" from "doing" from "done".
-		mark, role := "[ ]", "rule"
+		// Shape first, colour second: a monochrome terminal still tells "todo"
+		// from "doing" from "done".
+		mark, role := "○", "process"
 		switch status {
 		case "in_progress":
-			mark, role = "▸", "tool"
+			mark, role = "◐", "waiting"
 		case "completed":
-			mark, role = "✓", "result"
+			mark, role = "✓", "answer"
 		}
 		styled := currentTheme.styleFor(role).Render(mark + " ")
-		rows = append(rows, styled+currentTheme.styleFor("answer").Render(content))
+		rows = append(rows, styled+currentTheme.styleFor("process").Render(content))
 	}
 	return rows
+}
+
+// progressBar is one glyph per task. The filled cells are the answer's colour
+// when there is something done and the quiet grey when there is not — a bar of
+// hollow cells is not worth highlighting.
+func progressBar(done, total int) string {
+	const maxWidth = 20
+	cells := total
+	if cells > maxWidth {
+		cells = maxWidth
+	}
+	filled := 0
+	if total > 0 {
+		filled = done * cells / total
+	}
+	text := strings.Repeat("▰", filled) + strings.Repeat("▱", cells-filled)
+	if total > maxWidth {
+		text += fmt.Sprintf(" +%d", total-maxWidth)
+	}
+	role := "rule"
+	if done > 0 {
+		role = "answer"
+	}
+	return currentTheme.styleFor(role).Render(text)
+}
+
+// railTodoSummary is the rail summary's task half: the count and what is live.
+func railTodoSummary(todos []any) string {
+	if len(todos) == 0 {
+		return ""
+	}
+	done := 0
+	doing := ""
+	for _, item := range todos {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		status, _ := row["status"].(string)
+		if status == "completed" {
+			done++
+		}
+		if status == "in_progress" && doing == "" {
+			doing, _ = row["content"].(string)
+		}
+	}
+	return i18n.Tn("rail.summary.tasks", len(todos), "done", done, "total", len(todos))
 }
 
 func jobRows(jobs []any) []string {
@@ -158,20 +234,23 @@ func jobRows(jobs []any) []string {
 		state, _ := row["state"].(string)
 		command, _ := row["command"].(string)
 		seconds, _ := row["seconds"].(int)
-		// One mark shape for the two live states, another for the two dead ones.
-		mark, role := "◐", "tool"
+		// Four states, four shapes — they answer four different questions. The
+		// one that gets the eye is **uncollected**: the command finished and you
+		// do not know whether it succeeded, which is exactly where backgrounding
+		// silently goes wrong.
+		mark, role := "·", "rule"
 		tail := ""
 		switch state {
 		case "running":
-			tail = i18n.T("rail.job.running", "duration", secondsText(seconds))
+			mark, role = "◐", "process"
+			tail = i18n.T("rail.job.running", "span", secondsText(seconds))
 		case "uncollected":
+			mark, role = "✓", "waiting"
 			tail = i18n.T("rail.job.uncollected", "code", row["exit_code"])
-			mark, role = "◐", "warn"
 		case "killed":
-			mark, role = "✗", "denied"
+			mark, role = "—", "rule"
 			tail = i18n.T("rail.job.killed")
 		default:
-			mark, role = "✓", "result"
 			tail = i18n.T("rail.job.done", "code", row["exit_code"])
 		}
 		styled := currentTheme.styleFor(role).Render(mark + " ")
@@ -215,10 +294,26 @@ func mcpRows(servers []any) []string {
 			// answers "what is configured but not mounted".
 			continue
 		}
-		rows = append(rows, currentTheme.styleFor("tool").Render("● ")+name+"  "+
+		rows = append(rows, currentTheme.styleFor("answer").Render("● ")+
+			currentTheme.styleFor("process").Render(name)+
 			currentTheme.styleFor("rule").Render(i18n.T("rail.mcp.tools", "n", tools)))
 	}
 	return rows
+}
+
+// mcpTally splits the server list into (running, configured).
+func mcpTally(servers []any) (int, int) {
+	running := 0
+	for _, item := range servers {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if state, _ := row["state"].(string); state == "loaded" {
+			running++
+		}
+	}
+	return running, len(servers)
 }
 
 func mcpCount(servers []any) string {
@@ -253,9 +348,11 @@ func jobCount(jobs []any) string {
 	return fmt.Sprintf("%d / %d", outstanding, len(jobs))
 }
 
-// permissionRows shows only the non-default dispositions — the same rule that
-// keeps "thinking on" off the rail. A line that says "low → auto" for every
-// low-risk tool teaches the reader to stop reading the block.
+// permissionRows lists all three risk levels with the disposition the runtime
+// computed — the interface does not know "low is the default", that is the
+// config's knowledge, and deriving it here would be a second definition. The
+// colour lands on medium and high only: low is the norm, and colouring the norm
+// colours nothing.
 func (m model) permissionRows() []string {
 	var rows []string
 	for _, item := range m.panel.riskScope {
@@ -265,14 +362,14 @@ func (m model) permissionRows() []string {
 		}
 		risk, _ := row["risk"].(string)
 		disposition, _ := row["disposition"].(string)
-		if disposition == "auto" && risk == "low" {
-			continue
-		}
 		role := "rule"
-		if disposition != "auto" {
-			role = "warn"
+		switch risk {
+		case "high":
+			role = "risk_high"
+		case "medium":
+			role = "risk_medium"
 		}
-		rows = append(rows, currentTheme.styleFor("rule").Render(fmt.Sprintf("%-7s", risk))+" "+
+		rows = append(rows, currentTheme.styleFor("process").Render(fmt.Sprintf("%-7s", risk))+
 			currentTheme.styleFor(role).Render(i18n.T("rail.permission."+disposition)))
 	}
 	for _, item := range m.panel.granted {

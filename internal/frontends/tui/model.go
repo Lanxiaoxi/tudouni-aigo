@@ -75,11 +75,14 @@ type model struct {
 	panel panelstate
 
 	// Streaming state for the current step.
-	streamedText  string
-	streamRunID   string
-	streamStep    int
-	thinkingChars int
-	thinkingLive  bool
+	streamedText   string
+	streamRunID    string
+	streamStep     int
+	thinkingChars  int
+	thinkingText   string
+	thinkingLive   bool
+	resumed        bool
+	recentSessions []map[string]any
 
 	busy bool
 	// activity is the runtime's own one-line description. It comes from the
@@ -208,6 +211,9 @@ func (m *model) handleServerMessage(payload map[string]any) {
 				}
 			}
 		}
+		if resumed, ok := protocol.Bool(payload, "resumed"); ok {
+			m.resumed = resumed
+		}
 		if session, ok := protocol.String(payload, "session_id"); ok {
 			m.sessionID = session
 			m.appendLine(renderLine{segments: []seg{
@@ -234,6 +240,8 @@ func (m *model) handleServerMessage(payload map[string]any) {
 			// Half-written text never enters the history, so keeping it on
 			// screen would leave something a restored session cannot account for.
 			m.streamedText = ""
+			m.thinkingText = ""
+			m.thinkingChars = 0
 			m.dropStreamingAnswer()
 		}
 
@@ -250,7 +258,18 @@ func (m *model) handleServerMessage(payload map[string]any) {
 		m.appendLine(renderLine{segments: []seg{{text: text, role: role}}}, "notice", "")
 
 	case protocol.OutSessions:
-		m.openSessionPicker(payload)
+		if items, ok := payload["items"].([]any); ok {
+			rows := make([]map[string]any, 0, len(items))
+			for _, item := range items {
+				if row, ok := item.(map[string]any); ok {
+					rows = append(rows, row)
+				}
+			}
+			m.recentSessions = rows
+		}
+		if m.overlay.kind == overlaySessions {
+			m.openSessionPicker(payload)
+		}
 	}
 }
 
@@ -463,6 +482,7 @@ func (m *model) handleDelta(payload map[string]any) {
 
 	case protocol.DeltaReasoning:
 		m.thinkingChars += runewidth.StringWidth(text)
+		m.thinkingText += text
 		m.thinkingLive = true
 	}
 }
@@ -489,6 +509,7 @@ func (m *model) handleUI(payload map[string]any) {
 		m.streamedText = ""
 		m.streamRunID = ""
 		m.thinkingChars = 0
+		m.thinkingText = ""
 		m.thinkingLive = false
 
 	case protocol.UIStatus:
@@ -691,6 +712,23 @@ func textOf(record map[string]any) string {
 	default:
 		return ""
 	}
+}
+
+// outstandingJobs counts the jobs that still need attention: running, or
+// finished with their result uncollected.
+func outstandingJobs(jobs []any) int {
+	n := 0
+	for _, item := range jobs {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch state, _ := row["state"].(string); state {
+		case "running", "uncollected":
+			n++
+		}
+	}
+	return n
 }
 
 func outstanding(jobs []any) bool {

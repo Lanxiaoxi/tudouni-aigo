@@ -46,6 +46,18 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.railHidden = !m.railHidden
 		return m, nil
 
+	case tea.KeyCtrlK:
+		// The palette's named key. `/` still opens it — muscle memory from the
+		// line interface — but the hint bars advertise this one, because a key
+		// chord works while the input line already has text in it.
+		return m, m.openCommandPalette()
+
+	case tea.KeyCtrlS:
+		// The skills list is a lookup, so it goes to the transcript where it
+		// can be scrolled back — the same reasoning as /status and /tools.
+		m.client.ListSkills()
+		return m, nil
+
 	case tea.KeyCtrlT:
 		return m, m.toggleThinking()
 
@@ -130,8 +142,10 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 
 	case "/resume":
 		if len(arguments) == 0 {
-			// No argument: the picker. The runtime's list arrives as
-			// t:"sessions" and opens the panel from there.
+			// No argument: the picker. The panel opens **now**, empty, and the
+			// runtime's list fills it — an empty frame beats a dead keypress
+			// while the runtime reads the directory.
+			m.overlay = overlay{kind: overlaySessions, title: i18n.T("resume.title")}
 			m.client.ListSessions()
 			return m, nil
 		}

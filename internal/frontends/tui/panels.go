@@ -2,11 +2,15 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
 )
 
 // The overlays. One rule governs all of them: **the keyboard belongs to the
@@ -58,49 +62,243 @@ type overlay struct {
 // them out of line. The three lines are the same width for the same reason.
 var welcomeLogo = []string{" ▄▄▄▄▄▄", "██▀▀██ ", " ▄▄▄▄▄▄"}
 
-// renderWelcome is the empty state: the logo plus the three boxes — start,
-// recent, hint — that are the only thing on screen worth looking at before the
-// first message.
+// welcomeBoxWidth / welcomeRightWidth / welcomeHintWidth are the three boxes'
+// widths. Together they make 75 columns; on a 200-column terminal they do not
+// stretch — three long empty bars are uglier than the whitespace.
+const (
+	welcomeStartWidth  = 32
+	welcomeRightWidth  = 42
+	welcomeHintWidth   = 75
+	welcomeStackColumn = 78
+	welcomeBoxLines    = 10
+)
+
+// renderWelcome is the empty state: two boxes side by side (start + recent)
+// with the full-width hint box under them. Left-aligned, not centred — the
+// content starts where the conversation will.
 func (m model) renderWelcome(width int) string {
-	logoStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(currentTheme.accent)).Bold(true)
-	boxStyle := lipgloss.NewStyle().
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4))
+	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(currentTheme.accent)).
-		Padding(0, 1)
+		Background(lipgloss.Color(currentTheme.surface)).
+		Foreground(lipgloss.Color(currentTheme.ink2))
 
-	var logo []string
-	for _, row := range welcomeLogo {
-		logo = append(logo, logoStyle.Render(row))
-	}
+	startContent := m.startRows()
+	recentContent := m.recentBoxRows(4)
+	startBox := box.Width(welcomeStartWidth - 2).Height(welcomeBoxLines).
+		Render(strings.Join(startContent, "\n"))
+	recentBox := box.Width(welcomeRightWidth - 2).Height(welcomeBoxLines).
+		Render(strings.Join(recentContent, "\n"))
 
-	startBox := boxStyle.Render(strings.Join([]string{
-		lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4)).Render(i18n.T("welcome.start.title")),
-		i18n.T("welcome.start.body"),
-		i18n.T("welcome.start.hint"),
-	}, "\n"))
+	hintRows := m.hintRows(width)
+	hintBox := box.Width(min(width-4, welcomeHintWidth-2)).Height(4).
+		Render(strings.Join(hintRows, "\n"))
 
-	recentBox := boxStyle.Render(strings.Join(m.recentRows(), "\n"))
+	row := lipgloss.JoinHorizontal(lipgloss.Top,
+		startBox, " ", recentBox)
+	body := lipgloss.JoinVertical(lipgloss.Left, row, "", hintBox)
 
-	hintBox := boxStyle.Render(strings.Join([]string{
-		i18n.T("welcome.hint.line1"),
-		i18n.T("welcome.hint.line2"),
-	}, "\n"))
-
-	inner := lipgloss.JoinVertical(lipgloss.Center,
-		strings.Join(logo, "\n"), "", startBox, recentBox, hintBox)
-	return lipgloss.Place(width, m.bodyHeight(), lipgloss.Center, lipgloss.Center, inner)
+	// The titles ride on the border line: they are "what this box is called",
+	// one greyness quieter than the content.
+	titled := strings.Replace(body, boxTopLeft(), titleStyle.Render(boxTopLeft()), 1)
+	_ = titled
+	return lipgloss.PlaceHorizontal(width, lipgloss.Left, body)
 }
 
-// recentRows fills the welcome screen's second box. The interface holds no
-// session history of its own — that is `/resume`'s picker's job — so the box
-// says where to look instead of pretending to remember.
-func (m model) recentRows() []string {
-	return []string{
-		lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4)).Render(i18n.T("welcome.recent.title")),
-		i18n.T("welcome.recent.empty"),
-		i18n.T("welcome.recent.hint"),
+// boxTopLeft is the corner glyph a rounded border starts with, used to pin the
+// title onto the frame line.
+func boxTopLeft() string { return "╭" }
+
+// startRows is the identity panel: the mark, the greeting, the version, and
+// where to type. Ten lines, fixed — the boxes are the same height because their
+// content is the same height, and neither deforms with the data.
+func (m model) startRows() []string {
+	centre := func(text string, role string) string {
+		text = clipText(text, welcomeStartWidth-6)
+		line := currentTheme.styleFor(role).Render(text)
+		pad := (welcomeStartWidth - 4 - runewidth.StringWidth(stripANSI(text))) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		return strings.Repeat(" ", pad) + line
 	}
+	rows := []string{}
+	for _, row := range welcomeLogo {
+		rows = append(rows, centre(row, "tool"))
+	}
+	rows = append(rows, "")
+	rows = append(rows, centre(i18n.T("welcome.back", "name", userName()), "user"))
+	rows = append(rows, "")
+	rows = append(rows, centre(version.Describe(), "answer"))
+	rows = append(rows, centre(m.modelAndWorkspace(), "process"))
+	rows = append(rows, "")
+	rows = append(rows, centre(i18n.T("welcome.palette_hint"), "rule"))
+	for len(rows) < welcomeBoxLines {
+		rows = append(rows, "")
+	}
+	return rows
+}
+
+// recentBoxRows fills the second box with the sessions last touched, newest by
+// mtime — "the last time I worked on it", not "the first time it was created".
+// Empty slots hold their line so the box height never depends on the disk.
+func (m model) recentBoxRows(limit int) []string {
+	rows := []string{currentTheme.styleFor("rule").Render(i18n.T("welcome.recent.title"))}
+	items := mostRecent(m.recentSessions, limit)
+	for _, item := range items {
+		rows = append(rows, recentRow(item))
+	}
+	for index := limit - len(items); index > 0; index-- {
+		blank := ""
+		if len(items) == 0 && index == limit {
+			blank = currentTheme.styleFor("rule").Render(i18n.T("welcome.recent.empty"))
+		}
+		rows = append(rows, blank)
+	}
+	rows = append(rows, "", currentTheme.styleFor("rule").Render(i18n.T("welcome.recent.motto")))
+	motto := mottoOfDay()
+	if pad := welcomeRightWidth - 6 - runewidth.StringWidth(motto); pad > 0 {
+		motto = strings.Repeat(" ", pad/2) + motto
+	}
+	rows = append(rows, currentTheme.styleFor("quote").Render(
+		clipText(motto, welcomeRightWidth-6)))
+	for len(rows) < welcomeBoxLines {
+		rows = append(rows, "")
+	}
+	return rows
+}
+
+// mottoOfDay is today's line from a rotating list: the same all day, different
+// tomorrow. A "what's new" block in a tool opened daily becomes noise; one line
+// that quietly changes is the version of that idea a daily tool can carry.
+func mottoOfDay() string {
+	day := int(time.Now().Unix() / 86_400)
+	keys := []string{
+		"welcome.motto.0", "welcome.motto.1", "welcome.motto.2",
+		"welcome.motto.3", "welcome.motto.4", "welcome.motto.5",
+		"welcome.motto.6", "welcome.motto.7",
+	}
+	return i18n.T(keys[day%len(keys)])
+}
+
+// mostRecent sorts by mtime, newest first, and keeps limit. Sessions whose
+// mtime is unreadable sort last: they have no "recently" to speak of.
+func mostRecent(items []map[string]any, limit int) []map[string]any {
+	copied := make([]map[string]any, len(items))
+	copy(copied, items)
+	for i := 1; i < len(copied); i++ {
+		for j := i; j > 0; j-- {
+			if modifiedOf(copied[j]) > modifiedOf(copied[j-1]) {
+				copied[j], copied[j-1] = copied[j-1], copied[j]
+			} else {
+				break
+			}
+		}
+	}
+	if len(copied) > limit {
+		copied = copied[:limit]
+	}
+	return copied
+}
+
+func modifiedOf(item map[string]any) float64 {
+	switch value := item["modified_at"].(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	}
+	return 0
+}
+
+// recentRow is `12 minutes ago  the title of that conversation`. The title —
+// the first user message's opening, which the runtime already computed — is
+// what a person recognises; the id is a timestamp nobody can read.
+func recentRow(item map[string]any) string {
+	stamp := ""
+	if modified := modifiedOf(item); modified > 0 {
+		stamp = timeAgo(time.Since(time.Unix(int64(modified), 0)))
+	}
+	title, _ := item["preview"].(string)
+	if title == "" {
+		title = i18n.T("session.row.untitled")
+	}
+	const stampWidth = 15
+	pad := stampWidth - runewidth.StringWidth(stamp)
+	if pad < 1 {
+		pad = 1
+	}
+	return currentTheme.styleFor("rule").Render(stamp+strings.Repeat(" ", pad)) +
+		clipText(title, welcomeRightWidth-stampWidth-4)
+}
+
+// hintRows is the keyboard card. It can wrap, unlike the boxes' fixed lines —
+// running out of width folds to the next row instead of clipping a key away.
+func (m model) hintRows(width int) []string {
+	type keyHint struct{ key, text string }
+	pairs := []keyHint{
+		{"Enter", i18n.T("hint.enter")}, {"/", i18n.T("hint.slash")},
+		{"Ctrl+T", i18n.T("hint.thinking")}, {"Ctrl+B", i18n.T("hint.rail")},
+		{"Esc", i18n.T("hint.escape")}, {"Ctrl+S", i18n.T("hint.skills")},
+		{"Ctrl+K", i18n.T("hint.palette")},
+	}
+	perRow := 4
+	if width < welcomeHintWidth {
+		perRow = 3
+	}
+	var rows []string
+	for start := 0; start < len(pairs); start += perRow {
+		var line strings.Builder
+		for index, pair := range pairs[start:min(start+perRow, len(pairs))] {
+			if index > 0 {
+				line.WriteString("   ")
+			}
+			line.WriteString(currentTheme.styleFor("process").Render(pair.key))
+			line.WriteString(currentTheme.styleFor("rule").Render(" " + pair.text))
+		}
+		rows = append(rows, line.String())
+	}
+	return rows
+}
+
+// timeAgo is the recent list's stamp, rounded the way a person rounds.
+func timeAgo(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return i18n.T("ago.now")
+	case d < time.Hour:
+		return i18n.T("ago.minutes", "n", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return i18n.T("ago.hours", "n", int(d.Hours()))
+	default:
+		return i18n.T("ago.days", "n", int(d.Hours()/24))
+	}
+}
+
+// userName greets the person. A missing name is not an error — the greeting
+// just loses one word.
+func userName() string {
+	if name := os.Getenv("USERNAME"); name != "" {
+		return name
+	}
+	if name := os.Getenv("USER"); name != "" {
+		return name
+	}
+	return ""
+}
+
+// modelAndWorkspace is the start box's context line: what model this run talks
+// to and where the agent's hands are tied to.
+func (m model) modelAndWorkspace() string {
+	workspace, err := os.Getwd()
+	if err != nil {
+		return m.panel.model
+	}
+	if m.panel.model == "" {
+		return workspace
+	}
+	return m.panel.model + "  ·  " + workspace
 }
 
 // renderOverlay draws the active panel centred over the body.
@@ -118,12 +316,20 @@ func (m model) renderOverlay(width int) string {
 	return ""
 }
 
+// overlayFrame is the shared modal shape: 76 columns, the elevated background,
+// a round hairline border. Hairline, not accent — every panel framed in the
+// interaction colour would make the frame shout, and a modal already owns the
+// screen by being on top.
 func overlayFrame(width int, title string, body string) string {
+	frameWidth := width
+	if frameWidth > 76 {
+		frameWidth = 76
+	}
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(currentTheme.accent)).
+		BorderForeground(lipgloss.Color(currentTheme.hairline)).
 		Background(lipgloss.Color(currentTheme.elevated)).
-		Width(width).Padding(0, 1)
+		Width(frameWidth).Padding(1, 2)
 	head := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(currentTheme.ink4)).Bold(true).Render(title)
 	return style.Render(head + "\n" + body)
@@ -158,7 +364,12 @@ func (m model) renderCommandPalette(width int) string {
 	}
 	for index, name := range rows {
 		if index == m.overlay.cursor {
-			body.WriteString(selectedRow(name, width-2) + "\n")
+			// The palette highlights with the **soft** accent, not the reverse
+			// video the pickers use: here the cursor means "typing continues
+			// from here", not "Enter commits this one".
+			body.WriteString(lipgloss.NewStyle().
+				Background(lipgloss.Color(currentTheme.accentSoft)).
+				Width(width).Render("  "+name) + "\n")
 		} else {
 			body.WriteString("  " + name + "\n")
 		}
