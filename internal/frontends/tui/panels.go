@@ -92,7 +92,7 @@ func (m model) renderWelcome(width int) []string {
 		Render(strings.Join(recentContent, "\n"))
 
 	hintRows := m.hintRows(width)
-	hintBox := box.Width(min(width-4, welcomeHintWidth-2)).Height(4).
+	hintBox := box.Width(min(width-4, welcomeHintWidth-2)).Height(len(hintRows)).
 		Render(strings.Join(hintRows, "\n"))
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top,
@@ -158,12 +158,13 @@ func (m model) recentBoxRows(limit int) []string {
 		rows = append(rows, blank)
 	}
 	rows = append(rows, "", currentTheme.styleFor("rule").Render(i18n.T("welcome.recent.motto")))
-	motto := mottoOfDay()
+	// Clip first, then centre on the clipped width — centring on the unclipped
+	// width overflows the box and paints across the frame.
+	motto := clipText(mottoOfDay(), welcomeRightWidth-8)
 	if pad := welcomeRightWidth - 6 - runewidth.StringWidth(motto); pad > 0 {
 		motto = strings.Repeat(" ", pad/2) + motto
 	}
-	rows = append(rows, currentTheme.styleFor("quote").Render(
-		clipText(motto, welcomeRightWidth-6)))
+	rows = append(rows, currentTheme.styleFor("quote").Render(motto))
 	for len(rows) < welcomeBoxLines {
 		rows = append(rows, "")
 	}
@@ -231,7 +232,7 @@ func recentRow(item map[string]any) string {
 		pad = 1
 	}
 	return currentTheme.styleFor("rule").Render(stamp+strings.Repeat(" ", pad)) +
-		clipText(title, welcomeRightWidth-stampWidth-4)
+		clipText(title, welcomeRightWidth-stampWidth-6)
 }
 
 // hintRows is the keyboard card. It can wrap, unlike the boxes' fixed lines —

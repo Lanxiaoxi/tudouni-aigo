@@ -638,6 +638,13 @@ func spreadStyled(left, right string, width int) string {
 }
 
 // wrapCells wraps text at a number of terminal cells.
+//
+// ANSI escape sequences pass through untouched and cost **zero** columns. This
+// is not an optimisation — it is the difference between a wrapped line and
+// mangled output: a sequence broken mid-way leaves the tail (`8;2;131;121;104m`)
+// as visible text, and every count that treated the sequence as printable width
+// wrapped lines far too early. Styled rows are the norm here, so the escape
+// handling lives in the one wrapper everything goes through.
 func wrapCells(text string, width int) []string {
 	if width <= 1 {
 		return []string{text}
@@ -645,7 +652,20 @@ func wrapCells(text string, width int) []string {
 	var out []string
 	var current strings.Builder
 	column := 0
+	inEscape := false
 	for _, char := range text {
+		if inEscape {
+			current.WriteRune(char)
+			if char == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		if char == '\x1b' {
+			inEscape = true
+			current.WriteRune(char)
+			continue
+		}
 		cellWidth := runewidth.RuneWidth(char)
 		if column+cellWidth > width {
 			out = append(out, current.String())

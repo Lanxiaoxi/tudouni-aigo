@@ -118,6 +118,10 @@ type model struct {
 
 	// Display preferences. They change what is drawn and nothing else, which is
 	// why they are not part of the panel state the runtime owns.
+	// The rail starts **hidden**: 32 columns is 28% of a 116-column terminal,
+	// and the summary line answers the same questions for one row. It opens
+	// itself once when a task list first appears — "what it plans to do" is the
+	// one place to see whether it understood — and Ctrl+B rules after that.
 	railHidden bool
 	railOpened bool // whether the rail has been auto-opened once by todos
 	quiet      bool
@@ -125,13 +129,27 @@ type model struct {
 }
 
 func newModel(client *protocol.Client, bridge *bridge, options Options) model {
+	theme := defaultTheme
+	if options.Theme != "" {
+		// An unknown --theme value falls back to the default: a palette nobody
+		// recognised must not keep the interface from starting.
+		if key, ok := resolveTheme(options.Theme); ok {
+			theme = key
+		}
+	}
 	return model{
 		client:  client,
 		bridge:  bridge,
 		options: options,
 		width:   100,
 		height:  30,
-		theme:   defaultTheme,
+		theme:   theme,
+		quiet:   options.Quiet,
+		// The rail starts hidden: 32 columns is 28% of a 116-column terminal,
+		// and the summary line answers the same questions for one row. It opens
+		// itself once when a task list first appears — "what it plans to do" is
+		// the one place to see whether it understood — and Ctrl+B rules after.
+		railHidden: true,
 	}
 }
 
