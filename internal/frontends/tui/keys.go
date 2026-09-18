@@ -231,7 +231,12 @@ func (m model) submit() (tea.Model, tea.Cmd) {
 		return m.runCommand(text)
 	}
 
-	m.appendUser(text)
+	// **No line here.** The turn block draws the line the user typed, out of
+	// `pendingUserInput` → `turn.userInput` (`view.go:418`), and that is the only
+	// place the original draws it (`view_state.py:919-923`). Appending a flat-log
+	// echo as well put the same sentence on screen twice: once at the left margin
+	// the moment Enter was pressed, once indented under the turn's header when
+	// `run_started` came back.
 	m.busy = true
 	m.pendingUserInput = text
 	m.activity = i18n.T("activity.preparing")

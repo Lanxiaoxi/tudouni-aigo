@@ -8,6 +8,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 )
 
 // The tests here pin the things a rendering change can silently break: the
@@ -199,6 +200,65 @@ func TestTheStreamedAnswerIsDrawnOnce(t *testing.T) {
 	}
 	if strings.Contains(body.String(), "  ● \n") {
 		t.Fatalf("an empty streaming marker was left behind:\n%s", body.String())
+	}
+}
+
+// TestTheUserLineIsDrawnOnce is the same rule for the line the *user* typed, which
+// had two possible authors: the flat-log echo `submit` used to append, and the turn
+// block's own `  > ` line (`view.go:418`, the only place the original draws it —
+// `view_state.py:919-923`). Both were live at once, so every turn printed the
+// sentence twice: once at the left margin on Enter, once indented under the header.
+func TestTheUserLineIsDrawnOnce(t *testing.T) {
+	m := filledModel(120, 36)
+	// nil stdin: `Send` writes nowhere, which is all a front end test needs.
+	m.client = protocol.NewClient(nil)
+	m.input = "当前工作区目录是什么"
+
+	next, _ := m.submit()
+	m = next.(model)
+	m.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
+
+	var body strings.Builder
+	for index := range m.transcript {
+		for _, row := range m.renderEntry(index, 90) {
+			body.WriteString(stripANSI(row))
+			body.WriteString("\n")
+		}
+	}
+	if count := strings.Count(body.String(), "当前工作区目录是什么"); count != 1 {
+		t.Fatalf("the user line appears %d times:\n%s", count, body.String())
+	}
+	// The survivor is the turn's own copy — indented under its header, in the
+	// turn, which is what makes the header own the text it summarises.
+	if !strings.Contains(body.String(), "  > 当前工作区目录是什么") {
+		t.Fatalf("the turn block lost the line the user typed:\n%s", body.String())
+	}
+}
+
+// TestRestoredUserMessagesCarryNoPrefix: history is drawn the way the original
+// draws it (`app.py:1195-1198` — the content alone). A `> ` marker that appears in
+// replay and never in a live turn reads as a turn that never closed.
+func TestRestoredUserMessagesCarryNoPrefix(t *testing.T) {
+	m := testModel()
+	m.restoreMessages(map[string]any{"messages": []any{
+		map[string]any{"role": "user", "content": "第一句"},
+		map[string]any{"role": "assistant", "content": "答案"},
+	}})
+
+	var restored string
+	for index := range m.transcript {
+		if m.transcript[index].kind == "user" {
+			restored = stripANSI(strings.Join(m.renderEntry(index, 90), "\n"))
+		}
+	}
+	if restored == "" {
+		t.Fatal("the restored user message never reached the transcript")
+	}
+	if strings.Contains(restored, ">") {
+		t.Fatalf("a restored user line carries a live-turn marker: %q", restored)
+	}
+	if !strings.Contains(restored, "第一句") {
+		t.Fatalf("the restored line lost its text: %q", restored)
 	}
 }
 

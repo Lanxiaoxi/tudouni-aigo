@@ -1002,8 +1002,15 @@ func (m *model) appendLine(line renderLine, kind, text string) {
 	m.stick()
 }
 
+// appendUser adds one **restored** user message. Replay only: a live turn draws
+// the line the user typed inside its own block (`view.go:418`), so echoing it here
+// as well is that sentence twice on screen.
+//
+// It carries no `> ` marker either, because the original's replay draws the
+// content alone (`app.py:1195-1198`). A marker that appears in restored history
+// and nowhere else reads as a turn that never closed.
 func (m *model) appendUser(text string) {
-	m.appendLine(renderLine{segments: []seg{{text: "> ", role: "user"}, {text: text, role: "user"}}}, "user", text)
+	m.appendLine(renderLine{segments: []seg{{text: text, role: "user"}}}, "user", text)
 }
 
 // runIDOf reads the run a `ui` message refers to.

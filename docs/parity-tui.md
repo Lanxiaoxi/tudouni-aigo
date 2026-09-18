@@ -415,6 +415,9 @@ no counterexample for the label-trimming rules the Python code computes per lang
 * **Turn block**: header rewritten from "running" to "N steps · 4.2s · Answered", duration frozen from
   the event, every stop reason distinguishable, `max_steps`/`cancelled` extra warning lines
   (`view_state.py:997-1024`, `1443-1466` ↔ `transcript.go:341-359`, `model.go:695-720`).
+* **The user line is drawn once**, inside the turn block, when `run_started` arrives — `submit` appends
+  no flat-log echo (`view_state.py:919-923`, `app.py:1517-1543` ↔ `view.go:418-426`, `keys.go:222-247`);
+  restored history draws the content with no `> ` marker (`app.py:1195-1198` ↔ `model.go:1005-1013`).
 * **Thinking**: folded by default with a frontend-computed character count, `Ctrl+T` toggles, the
   expanded head quotes the block (`view_state.py:1044-1114` ↔ `transcript.go:400-436`, `view.go:418-438`).
 * **Streaming**: plain text while streaming, markdown once finished, the live copy removed before the
