@@ -3,6 +3,34 @@
 对照 `docs/parity-review.md` 的问题清单，逐条记录已修项、对应测试、以及原版出处。
 每一项都遵循同一条规矩：**修的同时把原版那条测试搬成 Go 测试**（见 `docs/parity-test-map.md`）。
 
+## 3.10.1 —— TUI 的审批跑到终端上了（用户实测发现）
+
+- **现象**（用户截图）：TUI 里模型调 `write_file` 时，审批**没有**弹面板，而是以
+  `[审批] 工具 write_file  风险 medium` / `[审批] 是否执行？[y/N/t]` 的形式打在了终端上，
+  打在被备用屏覆盖的底层终端里；而界面自己的状态栏还写着 `running · step 1`。
+- **根因**：`Server.Channels()` —— 那个负责把审批/提问发成协议消息的东西 —— **全仓库没有任何
+  调用者**。`protocol.Main` 传给 opener 的 `RuntimeHooks` 只有 `ShouldStop` / `OnDelta` /
+  `OnEvent` 三项，于是 `openRuntime` 无从知道"我的前端是管道另一头"，一律走
+  `cli.Channels(opts.autopilot)` —— 即在**它自己所在的那个终端**上打印提示并读 stdin。
+  而那个 stdin 是前端持有的管道：**没人能回答它**，所以那一轮永远走不完。
+  `cmd/tudouni/main.go` 那行注释原本就写着"在 `--runtime-stdio` 模式下协议服务器会替换它们"
+  —— 注释说的是设计意图，代码没有实现它。
+- **改动**：
+  - `RuntimeHooks` 新增 `Channels`，注释写明"没有它，opener 无从知道前端是谁，会退回它碰巧
+    所在的终端"；
+  - `protocol/serve.go` 的 opener 传入 `server.Channels()`；
+  - `cmd/tudouni/main.go` 的 `openRuntime` 改为**优先用 hooks 给的 channels**，只在没有时
+    才退回 `cli.Channels`。回退仍然保留，因为行式 REPL 与测试确实是在进程内问人。
+- **测试**：`internal/protocol/channels_test.go`（新文件）：
+  `TestTheServersChannelsAskOverTheProtocol` 与 `TestTheServersChannelsAskQuestionsOverTheProtocol`
+  —— 在内存管道上起一个 server，用它的 channels 发一次审批/一次提问，断言
+  **线上真的出现 `permission_request` / `question_request`**，回一个答案之后 asker 返回。
+  这正是"这条路的证据在线上，而不在终端上"。
+- **验证**：`go vet` 干净；全量测试通过；构建出的二进制跑 `--tui` 时 **stderr 为 0 字节**
+  （修复前那一层会打印审批提示）。
+- **用户可直接复测**：`make build` 后 `dist\tudouni.exe --tui`，让它写一个文件，
+  应当弹出面板而不是终端提示。
+
 ## 3.10.0 —— 把配置模板放进发布产物
 
 上一轮（3.8.0）修 B11 时走的是"把模板编进二进制"这条路，并保留磁盘优先作为兜底。

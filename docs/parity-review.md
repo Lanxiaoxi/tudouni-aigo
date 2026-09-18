@@ -126,7 +126,7 @@ TUI 侧 9 条已修（`Ctrl+B` 在覆盖层里失效、调色板行数上限写�
 | `docs/parity-agent.md` | agent 循环、模型适配、流式、重试、装配明细 |
 | `docs/parity-tools.md` | 工具系统与 16 个内置工具明细（含逐工具 parity 表） |
 | `docs/parity-test-map.md` | 原版测试 → Go 测试的搬迁清单 |
-| `VERSION` | 3.10.0 |
+| `VERSION` | 3.10.1 |
 
 ---
 

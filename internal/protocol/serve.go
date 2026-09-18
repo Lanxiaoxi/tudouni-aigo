@@ -6,11 +6,12 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 )
 
-// RuntimeHooks are the three directions a runtime needs from its front end: when
-// to stop, where a stream increment goes, and where an audit record goes.
+// RuntimeHooks are the directions a runtime needs from its front end: when to stop,
+// where a stream increment goes, where an audit record goes, and **how to reach a
+// person**.
 //
-// They are passed to the opener rather than reached for, so the runtime never has
-// to name the protocol layer — and neither package ends up importing the other.
+// They are passed to the opener rather than reached for, so the runtime never has to
+// name the protocol layer — and neither package ends up importing the other.
 type RuntimeHooks struct {
 	ShouldStop func() bool
 	OnDelta    func(text, reasoning string, reset bool)
@@ -18,6 +19,16 @@ type RuntimeHooks struct {
 	// writes it down on its own side, which is what makes "the audit log is the
 	// protocol" true at the byte level.
 	OnEvent func(record map[string]any)
+	// Channels is how this runtime asks the person on the **other side of the
+	// protocol** for an approval or an answer.
+	//
+	// It is a hook like the other three and for the same reason: without it the
+	// opener has no way to ask "who is my front end" and falls back to the terminal
+	// it happens to be running on. That failure is not a missing feature — it is a
+	// front end that draws an approval panel while the prompt for that same approval
+	// is printed underneath it, on stderr, by a process whose stdin nobody is
+	// reading. See `openRuntime` in cmd/tudouni.
+	Channels Channels
 }
 
 // RuntimeOpener builds a runtime for one session.
@@ -51,6 +62,10 @@ func Main(opener RuntimeOpener, summaries func() []map[string]any,
 			ShouldStop: server.ShouldStop,
 			OnDelta:    server.OnDelta,
 			OnEvent:    server.OnEvent,
+			// The whole point of this mode: the person is on the other end of the
+			// pipe, so an approval has to travel as a message rather than be printed
+			// at whatever terminal this child happens to share.
+			Channels: server.Channels(),
 		})
 	}
 	server.bootstrap.Factory = open

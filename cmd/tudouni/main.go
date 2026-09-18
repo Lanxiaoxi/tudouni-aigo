@@ -263,9 +263,19 @@ func openRuntime(booted runtime.Booted, sessionID string,
 		return nil, err
 	}
 
-	// The two channels the runtime uses to reach a person. In `--runtime-stdio`
-	// mode the protocol server replaces them; here they are the terminal itself.
-	channels := cli.Channels(opts.autopilot)
+	// The two channels the runtime uses to reach a person.
+	//
+	// **They come from the front end when there is one.** `--runtime-stdio` puts the
+	// front end on the other end of a pipe, so the approval and the question have to
+	// travel as protocol messages; only the in-process front ends ask on this
+	// terminal. Getting this wrong is not "a missing feature": the TUI draws its
+	// approval panel while the child prints the same prompt on stderr underneath it,
+	// and waits on a stdin that is a pipe the front end owns — so the prompt can
+	// never be answered and the turn never finishes.
+	channels := hooks.Channels
+	if channels.AskerFactory == nil || channels.Questioner == nil {
+		channels = cli.Channels(opts.autopilot)
+	}
 
 	value, err := runtime.OpenRuntime(runtime.Options{
 		Booted:      booted,
