@@ -436,7 +436,10 @@ func listSessions() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	ids := booted.Store.ListIDs()
+	// Delegated subagents keep their sessions in the same store, and they are not
+	// sessions a person resumes: each one belongs to a task that is already over.
+	// The list is what somebody picks from, so it shows the sessions they started.
+	ids := booted.Store.ListParentIDs()
 	if len(ids) == 0 {
 		fmt.Println(i18n.T("sessions.list.empty"))
 		return 0

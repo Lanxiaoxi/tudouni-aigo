@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,6 +49,22 @@ const (
 // permissive pattern would be a path-traversal hole.
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
+// ChildSessionPrefix marks the session of a delegated subagent.
+//
+// The prefix lives here, next to the pattern that decides what a file name may
+// look like, because it is a naming rule rather than a subagent concept: what it
+// buys is that a child session can be told apart from a person's session by
+// **name alone**, without opening every file in the directory to read its
+// metadata. Subagent sessions share this store — that is what makes a delegation
+// auditable afterwards — so something has to distinguish them, and the third
+// place that would otherwise need to know is the one that drifts.
+const ChildSessionPrefix = "sub-"
+
+// IsChildSessionID reports whether a session id names a delegated subagent.
+func IsChildSessionID(id string) bool {
+	return strings.HasPrefix(id, ChildSessionPrefix)
+}
+
 // IsValidSessionID reports whether an id may be used as a file name.
 func IsValidSessionID(id string) bool {
 	return sessionIDPattern.MatchString(id)
@@ -59,6 +76,18 @@ type SessionStore struct {
 	// watermark records how much of each session has already been written, so
 	// a save writes only what is new. Cleared on write failure: a failed write
 	// must not convince the next one that the data is already on disk.
+	//
+	// The mutex guards this map, and it is not theoretical. A delegated subagent
+	// writes its own session from inside the parent's turn — the child's
+	// checkpoints run while the parent is mid-step — so two goroutines reach
+	// `Save` with two different session ids and one map between them. A read and a
+	// write of a Go map at the same time is not a lost update, it is a crash.
+	//
+	// It is held across the whole save rather than only around the map. A store
+	// save happens between whole steps, so the contention is a mutex acquisition
+	// per step against a file write; serialising it costs nothing measurable and
+	// removes the need to reason about which parts of the body touch the map.
+	mu        sync.Mutex
 	watermark map[string]*watermark
 }
 
@@ -101,6 +130,10 @@ func (s *SessionStore) Exists(id string) bool {
 }
 
 // ListIDs returns the ids of every session file, sorted.
+//
+// It includes delegated subagents. A caller that is offering sessions for a
+// person to pick should use ListParentIDs instead: a child session belongs to a
+// task that is already over, and it is not something anybody resumes.
 func (s *SessionStore) ListIDs() []string {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -119,6 +152,23 @@ func (s *SessionStore) ListIDs() []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// ListParentIDs returns the ids of sessions that are not delegated subagents.
+//
+// The filter is by name, which is the whole reason child sessions are named the
+// way they are: deciding it by metadata would mean opening every session file in
+// the directory — including the subagent ones — before the picker could draw
+// anything.
+func (s *SessionStore) ListParentIDs() []string {
+	ids := s.ListIDs()
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !IsChildSessionID(id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // NewSessionID mints an id from the current time.
@@ -151,6 +201,11 @@ func (s *SessionStore) NewSessionIDAt(now time.Time) string {
 // are appended as `msg` records; a changed context version appends a `ctx`
 // record.
 func (s *SessionStore) Save(session *Session) error {
+	// Serialised for the whole body; see the field comment. Two sessions being
+	// saved at once is the normal case once delegation exists, not an edge.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	path, err := s.Path(session.SessionID)
 	if err != nil {
 		return err

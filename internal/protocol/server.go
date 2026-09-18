@@ -683,8 +683,36 @@ func (s *Server) switchSession(message map[string]any) {
 // more, not a field less. That is what makes "the audit log is the protocol" true
 // at the byte level, and it means whatever `--audit` can show, a front end can
 // show too.
+//
+// The one addition is `child`, and it is added rather than inferred because the
+// alternative is every front end re-deriving the same rule.
+//
+// **`child` means "this record came from a delegated agent", and the runtime says
+// so with `child_origin`.** It is not the same as "this record mentions a
+// subagent": the parent's own `tool_result` for a subagent call carries
+// `subagent_id` so an interface can connect the two, and it is still the parent's
+// own result — the thing that ends the parent's tool call and gets drawn in the
+// parent's transcript. Classifying by `subagent_id` would delete the delegation's
+// answer from the only place it is shown.
+//
+// The distinction is made by the runtime rather than here because telling a
+// child's session id from the parent's is a question about sessions, and this
+// layer deliberately knows nothing about what a session is.
 func (s *Server) OnEvent(record map[string]any) {
 	kind, _ := record["kind"].(string)
+
+	// A child's record is forwarded and otherwise ignored. It must not touch
+	// `lastStep` or `callID`: `lastStep` decides which streaming block a delta
+	// belongs to, and `callID` is what an approval request names as the call it is
+	// about. Letting a child's tool call land in either would make the parent's
+	// next delta attach to the wrong step and its next approval prompt name a call
+	// the user never made — both are wrong in a way that reads as a runtime bug
+	// rather than as a bookkeeping mistake.
+	if child, _ := record["child_origin"].(bool); child {
+		s.forwardChild(record, kind)
+		return
+	}
+
 	s.stateLock.Lock()
 	switch kind {
 	case "run_started":
@@ -704,6 +732,12 @@ func (s *Server) OnEvent(record map[string]any) {
 
 	envelope := map[string]any{"v": VERSION, "t": OutEvent, "kind": kind}
 	for key, value := range record {
+		// `child_origin` is the runtime's note to this layer and does not travel:
+		// `child` is what a front end reads, and two spellings of one fact is how
+		// they end up disagreeing.
+		if key == childOriginKey {
+			continue
+		}
 		if _, taken := envelope[key]; taken && key != "kind" {
 			continue
 		}
@@ -716,9 +750,60 @@ func (s *Server) OnEvent(record map[string]any) {
 		// background board is polled here. Keying this off the tool name would make
 		// the protocol layer know about specific tools — the exact coupling the
 		// interface exists to prevent.
+		//
+		// It is also the snapshot that retires a delegation's row: the parent's
+		// `subagent` call ending is a tool result like any other, so the badge is
+		// cleared by the same rule that refreshes every other panel.
+		s.Send(s.stateMessage(false))
+	}
+
+	// A delegation starting or finishing changes what the interfaces should show,
+	// and neither moment produces a tool result of its own — the parent's `subagent`
+	// call is still running when it starts, and when it finishes the row is already
+	// gone. Without this the badge would only ever be drawn after the delegation was
+	// over, which is the one time it is useless.
+	//
+	// **These two records arrive on this path, not the child's.** They are the
+	// parent's own account of having delegated: their `run_id` is the parent's turn
+	// and their `session_id` is the parent's session. Putting this in `forwardChild`
+	// reads correctly and does nothing, because that branch never sees these kinds.
+	//
+	// It hears about the two transitions rather than about every child event, so a
+	// subagent that makes forty tool calls sends one extra snapshot, not forty.
+	if kind == "delegation_started" || kind == "delegation_finished" {
+		if notifier, ok := s.current().(interface{ OnDelegationChanged() }); ok {
+			notifier.OnDelegationChanged()
+		}
 		s.Send(s.stateMessage(false))
 	}
 }
+
+// forwardChild sends one delegated agent's record to the front end.
+//
+// The record goes out unmodified apart from the `child` marker, so "the audit log
+// is the protocol" survives: everything `--audit <child id>` can show, a front end
+// can show, including the child's own step numbers — which is the point, since
+// those numbers belong to the child's loop and mean nothing in the parent's.
+func (s *Server) forwardChild(record map[string]any, kind string) {
+	envelope := map[string]any{"v": VERSION, "t": OutEvent, "kind": kind, "child": true}
+	for key, value := range record {
+		if key == childOriginKey {
+			continue
+		}
+		if _, taken := envelope[key]; taken && key != "kind" && key != "child" {
+			continue
+		}
+		envelope[key] = value
+	}
+	s.Send(envelope)
+}
+
+// childOriginKey is how the runtime marks a record as a delegated agent's.
+//
+// It is a private convention between the runtime and this layer rather than a
+// protocol field: it never crosses the wire, so a front end cannot come to depend
+// on it, and this package never has to learn what a session id looks like.
+const childOriginKey = "child_origin"
 
 // OnDelta forwards one stream increment.
 //

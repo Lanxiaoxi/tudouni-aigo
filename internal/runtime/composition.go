@@ -21,6 +21,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/subagent"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
@@ -96,6 +97,12 @@ const PreviewChars = 40
 // SessionListLimit bounds how many sessions the picker shows.
 const SessionListLimit = 50
 
+// subagentMaxDepth is how deep delegation may go: the top-level agent is depth 0,
+// so a value of 3 permits three nested levels. It is a constant rather than a
+// config field because the number is a budget on the session's own account, and a
+// setting nobody asked for is a setting nobody will find.
+const subagentMaxDepth = subagent.DefaultMaxDepth
+
 // SessionSummaries lists saved sessions, newest first.
 //
 // The order is by **creation time**, not by id. `--session demo` is not a
@@ -103,7 +110,11 @@ const SessionListLimit = 50
 // question the list answers is "which one was I working on", and that is almost
 // always the most recent.
 func SessionSummaries(store *state.SessionStore, limit int) []map[string]any {
-	ids := store.ListIDs()
+	// Delegated agents share this store, and their sessions are not sessions
+	// anybody resumes: one belongs to a task that is already over, and picking it
+	// opens a transcript whose other half is the parent. They are told apart by
+	// name, so drawing the picker never has to open one.
+	ids := store.ListParentIDs()
 	type entry struct {
 		created  float64
 		modified *float64
@@ -217,17 +228,20 @@ type Runtime struct {
 	Memory         *security.Memory
 	Agent          *agent.Agent
 	Jobs           *builtin.JobBoard
-	Chat           model.ChatModel
-	WebCfg         WebConfig
-	McpCfg         []McpServerSpec
-	Permissions    PermissionConfig
-	Autopilot      bool
-	Debug          bool
-	Stream         bool
-	MaxSteps       int
-	Resumed        bool
-	ModelState     *state.SessionModel
-	Catalog        state.Registry
+	// Subagents is the tally of delegations in flight. Nil when delegation is
+	// unavailable, which is also the panel's "there are none".
+	Subagents   *subagent.Board
+	Chat        model.ChatModel
+	WebCfg      WebConfig
+	McpCfg      []McpServerSpec
+	Permissions PermissionConfig
+	Autopilot   bool
+	Debug       bool
+	Stream      bool
+	MaxSteps    int
+	Resumed     bool
+	ModelState  *state.SessionModel
+	Catalog     state.Registry
 
 	// ContextValue is the session's context ledger: which artifacts are in play,
 	// at what level, and what has been folded away.
@@ -424,6 +438,54 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	}
 	runtimeValue.Tools = registry.Tools
 	runtimeValue.Skills = registry.Skills
+
+	// Delegation, registered after the registry exists because a subagent needs a
+	// **copy of the parent's whole tool set** to work from — and that set is only
+	// assembled by this point. The tool is built here rather than inside the
+	// registry because it needs the chat client, the catalogue and the resolver:
+	// assembly, which `internal/tools/builtin` has no business knowing about.
+	//
+	// The child's payload tail carries the loaded-skill bodies and nothing else.
+	// The task list and the skill catalogue are the parent's working memory, and
+	// handing them to a child invites it to update a plan it is not running.
+	//
+	// The board is created before the tool because the tool announces itself to it.
+	// A tool built without one still delegates; nothing on screen would say so.
+	runtimeValue.Subagents = subagent.NewBoard(security.PerfClock)
+	if subagentTool, ok := subagent.Build(subagent.Config{
+		Chat:       runtimeValue.Chat,
+		Store:      options.Booted.Store,
+		Logs:       options.Booted.Logs,
+		Catalog:    catalog,
+		Resolver:   runtimeValue,
+		Parent:     session,
+		Tools:      registry.Tools,
+		Policy:     runtimeValue.Policy,
+		Memory:     memory,
+		Notes:      notesFrom(runtimeValue.Skills),
+		OnEvent:    runtimeValue.onEvent,
+		Board:      runtimeValue.Subagents,
+		ShouldStop: options.ShouldStop,
+		Warn:       func(text string) { warn("%s", text) },
+		MaxDepth:   subagentMaxDepth,
+		MaxSteps:   runtimeValue.MaxSteps,
+		Thinking:   modelState.Thinking(),
+		Effort:     modelState.Effort(),
+		Debug:      options.Debug,
+		Clock:      security.PerfClock,
+	}); ok {
+		if err := registry.Tools.Register(subagentTool); err != nil {
+			jobs.Close()
+			return nil, err
+		}
+		runtimeValue.notices = append(runtimeValue.notices, notice("info", "subagent",
+			i18n.T("notice.subagent.enabled", "tool", subagentTool.Name, "depth", subagentMaxDepth)))
+	} else {
+		// No tool, so nothing can delegate and a board would be a list that is
+		// empty forever. Nil is the state the panel renderer already reads as
+		// "there are none", so this is one fewer shape to handle downstream.
+		runtimeValue.Subagents = nil
+	}
 
 	// Configured servers are announced but **not mounted**: a server is a program
 	// that runs on this machine with this user's privileges, so starting one is a
@@ -751,6 +813,129 @@ func resolveModel(modelState *state.SessionModel, catalog state.Registry) (strin
 	return "", state.Provider{}, errorf("no usable model route")
 }
 
+// ResolveChild builds the chat client a delegated subagent runs on.
+//
+// It implements subagent.RouteResolver. The interface lives in the subagent
+// package and the implementation lives here because resolving a route means
+// knowing the catalogue and which keys are usable — assembly, which the subagent
+// package deliberately does not do.
+//
+// The default is the route this session is **currently** on, not the one it
+// started on: a user who switched models mid-session and then delegated would
+// otherwise get the old model answering, with nothing on screen saying so.
+func (r *Runtime) ResolveChild(route subagent.Route, parentModel, parentProvider string) (subagent.ChildChat, error) {
+	// A selection built from the request, so the existing resolution rules apply
+	// unchanged: an explicit `provider` is a hard constraint, and a bare model
+	// name is looked up across the catalogue. Reimplementing that here is how the
+	// `/model` command and delegation would end up disagreeing about what a given
+	// model name means.
+	selection := state.Selection{
+		Model:    firstNonEmpty(route.Model, parentModel),
+		Provider: firstNonEmpty(route.Provider, parentProvider),
+		Thinking: r.ModelState.Thinking(),
+		Effort:   firstNonEmpty(route.Effort, r.ModelState.Effort()),
+	}
+	metadata := map[string]any{}
+	state.StoreSelection(metadata, selection, 0)
+	if _, ok := state.LoadSelection(metadata); !ok {
+		return subagent.ChildChat{}, errorf("no model named for the subagent")
+	}
+
+	modelState := state.NewSessionModel(metadata, selection.Model, selection.Provider)
+	chosen, provider, err := resolveModel(modelState, r.Catalog)
+	if err != nil {
+		return subagent.ChildChat{}, err
+	}
+	// The key has to be present, and this is the one check the store cannot make:
+	// a route with no key is in the catalogue but cannot answer, and a subagent
+	// built on it would fail on its first model call with a message about
+	// credentials rather than about the delegation.
+	if provider.APIKey == "" {
+		return subagent.ChildChat{}, fmt.Errorf("route %s has no API key", provider.Name)
+	}
+
+	thinking, effort := modelState.Thinking(), modelState.Effort()
+	if route.Effort == "" {
+		// An explicit reasoning level for the child would need `reasoning_effort`
+		// handling on the request path, which the parent's own `/model` command
+		// already covers. Until a caller can actually set ChildEffort, the
+		// session's level is the honest answer — and it is the predictable one,
+		// since changing a route here would otherwise silently change how hard the
+		// model thinks.
+		effort = r.ModelState.Effort()
+	}
+
+	return subagent.ChildChat{
+		Chat: model.New(model.Options{
+			APIKey:   provider.APIKey,
+			BaseURL:  provider.BaseURL,
+			Model:    chosen,
+			Provider: provider.Name,
+			Verify:   provider.Verify,
+			Thinking: thinking,
+			Effort:   effort,
+		}),
+		Model:    chosen,
+		Provider: provider,
+	}, nil
+}
+
+// notesFrom is the payload tail a delegated subagent gets: the bodies of the
+// skills that are loaded, and nothing else.
+//
+// The parent's own tail (see notes below) carries four parts, and three of them
+// are deliberately withheld from a child. The task list is the parent's stated
+// plan and a child has its own task — showing it the parent's list invites it to
+// mark steps done that it never ran. The skill *catalogue* is a menu for
+// choosing, and which skill to use was the parent's decision, already made before
+// it delegated. The background-job warning is about this session's processes, and
+// a child cannot delegate at all.
+func notesFrom(skills *builtin.SkillBoard) func() string {
+	if skills == nil {
+		return nil
+	}
+	return skills.Note
+}
+
+// firstNonEmpty returns the first value that is not blank.
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// OnDelegationChanged reports that a subagent started or finished.
+//
+// It is the seam the protocol server uses to push a fresh snapshot at the two
+// moments a delegation changes what the screen should say. It takes no arguments
+// because the state itself is read back through `StateMessage` — handing the
+// payload through here would give the runtime a second definition of what a
+// snapshot is.
+//
+// The body is empty on purpose: the board is already up to date by the time this
+// is called (the delegation announced itself before the event went out), so there
+// is nothing for the runtime to do. The method exists so the server can ask "may
+// I tell somebody about this" without knowing what a board is.
+func (r *Runtime) OnDelegationChanged() {}
+
+// subagentPanel renders the delegations in flight for a front end.
+//
+// A nil board and an empty board both produce an empty list, never nil: a front
+// end that has to tell "there are none" apart from "the runtime did not say" is
+// a front end with a second definition of the panel's shape, and the first bug it
+// produces is a crash on the empty case.
+func (r *Runtime) subagentPanel() []any {
+	rows := r.Subagents.Panel()
+	out := make([]any, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row)
+	}
+	return out
+}
+
 // openContext assembles the context system for one session.
 //
 // Three things happen here that are individually easy to get wrong:
@@ -839,13 +1024,37 @@ func (r *Runtime) contextHandle() any {
 // Context is the session's context ledger, or nil when the layer is off.
 func (r *Runtime) Context() *context.Manager { return r.ContextValue }
 
+// auditRecord is the record as it is written to the log.
+//
+// `child_origin` is dropped, and dropping it is what keeps "the audit log is the
+// protocol" true at the byte level: it is a note from this program to its own
+// protocol layer, and a reader of the log has no use for it — a child's records
+// are in the child's own file, so which file a line came from already answers the
+// question it asks.
+//
+// The map is copied only when there is something to drop, because this runs once
+// per event on every turn and the common case is a record with nothing to remove.
+func auditRecord(record map[string]any) map[string]any {
+	if _, present := record[subagent.ChildOriginKey]; !present {
+		return record
+	}
+	trimmed := make(map[string]any, len(record))
+	for key, value := range record {
+		if key == subagent.ChildOriginKey {
+			continue
+		}
+		trimmed[key] = value
+	}
+	return trimmed
+}
+
 func (r *Runtime) onEvent(record map[string]any) {
-	// Audit first, protocol second — in that order, so a front end that dies
+	// The audit first, protocol second — in that order, so a front end that dies
 	// mid-turn cannot cost the record. And a failed audit write is swallowed: an
 	// observation failure must never damage what is being observed, and the caller
 	// here is sometimes holding a half-written message list.
 	if r.Logs != nil {
-		if err := r.Logs.Write(record); err != nil {
+		if err := r.Logs.Write(auditRecord(record)); err != nil {
 			warn("audit write failed: %v", err)
 		}
 	}
@@ -890,6 +1099,17 @@ func (r *Runtime) notes() string {
 	}
 	if r.Jobs != nil {
 		if note := r.Jobs.Note(); note != "" {
+			parts = append(parts, note)
+		}
+	}
+	// Delegations go after the jobs, which is the same ordering rule: the nearer
+	// the end of the payload, the more expensive it is to miss. A job that is
+	// still running is a command whose result does not exist yet; a delegation in
+	// flight is work the parent itself is blocked on, so it is the least likely of
+	// the two to be misread — but it is also the only evidence that the work was
+	// ever started, which is what a resumed session needs.
+	if r.Subagents != nil {
+		if note := r.Subagents.Note(); note != "" {
 			parts = append(parts, note)
 		}
 	}
@@ -981,6 +1201,7 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		"todos":            r.todos(),
 		"skills":           []any{},
 		"jobs":             panelOf(r.Jobs),
+		"subagents":        r.subagentPanel(),
 		"messages":         len(r.Messages()),
 		"steps":            r.SessionValue.StepCount(),
 		"model":            r.Chat.ModelName(),

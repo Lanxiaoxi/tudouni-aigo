@@ -544,6 +544,15 @@ func (m model) renderStatusBar() string {
 		right += currentTheme.styleFor("rule").Render("  ·  ") +
 			currentTheme.styleFor(role).Render(badge)
 	}
+	if badge := m.subagentsBadge(narrow); badge != "" {
+		// Always the accent, never the warn ink: a running delegation is a normal
+		// part of a turn rather than a state somebody has to act on. The jobs badge
+		// earns the warning colour because an uncollected result means a command
+		// may have failed silently; a subagent's answer has already been handed to
+		// the model by the time the row disappears, so there is nothing to chase.
+		right += currentTheme.styleFor("rule").Render("  ·  ") +
+			currentTheme.styleFor("accent").Render(badge)
+	}
 	right += currentTheme.styleFor("rule").Render("  ·  " + m.statusRight(narrow))
 	return chromeRow(spreadStyled(left, right, m.width), m.width)
 }
@@ -831,6 +840,40 @@ func (m model) jobsBadge(narrow bool) string {
 	text := i18n.Tn("status.jobs.running", outstanding, "n", outstanding)
 	if !narrow && uncollectedJobs(m.panel.jobs) > 0 {
 		text += i18n.T("status.jobs.uncollected", "n", uncollectedJobs(m.panel.jobs))
+	}
+	return text
+}
+
+// subagentsBadge is the status bar's delegation cell.
+//
+// It says what the subagent is **doing** when it can, because "1 subagent" on its
+// own is not actionable: a delegation that has been reading files for two seconds
+// and one that has been thinking for ninety look identical, and only the second is
+// worth wondering about. The activity comes from the child's own events via
+// observeChild, so the cell is as specific as the child's last report.
+//
+// Unlike the jobs cell there is no all-done wording: a delegation removes its row
+// the moment it settles, so an empty cell already means "none", and a "collected"
+// cell would be permanently absent rather than occasionally informative.
+func (m model) subagentsBadge(narrow bool) string {
+	if len(m.panel.subagents) == 0 {
+		return ""
+	}
+	text := i18n.Tn("status.subagents.running", len(m.panel.subagents), "n", len(m.panel.subagents))
+	// The detail is dropped on a narrow terminal: the elapsed seconds and the
+	// tool name are worth more than the count, but not worth pushing the model
+	// name off the right-hand edge.
+	if narrow {
+		return text
+	}
+	if first, ok := m.panel.subagents[0].(map[string]any); ok {
+		if activity, _ := first["activity"].(string); activity != "" {
+			text += i18n.T("status.subagents.doing", "what", activity)
+			return text
+		}
+		if label, _ := first["label"].(string); label != "" {
+			text += i18n.T("status.subagents.doing", "what", label)
+		}
 	}
 	return text
 }

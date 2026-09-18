@@ -186,6 +186,34 @@ func (r *Registry) Get(name string) (Tool, bool) {
 	return tool, ok
 }
 
+// Clone copies the registry, optionally leaving some tools out.
+//
+// It exists for a second agent that must run the same tool set minus a few
+// entries — a delegated subagent is the case: it gets the parent's tools except
+// the one that would let it delegate again.
+//
+// A copy rather than a shared pointer with Unregister calls is the whole point.
+// Unregister edits in place, so a subagent built on the parent's registry would
+// take the delegating tool away from the parent the moment the child was
+// assembled, and two children running at once would be editing one map. The
+// handlers themselves are still shared values — a Tool is a name, a schema and a
+// function, and nothing in it is per-agent.
+func (r *Registry) Clone(exclude ...string) *Registry {
+	skip := make(map[string]bool, len(exclude))
+	for _, name := range exclude {
+		skip[name] = true
+	}
+	clone := NewRegistry()
+	for _, name := range r.order {
+		if skip[name] {
+			continue
+		}
+		clone.tools[name] = r.tools[name]
+		clone.order = append(clone.order, name)
+	}
+	return clone
+}
+
 // Unregister removes one tool.
 func (r *Registry) Unregister(name string) {
 	if _, ok := r.tools[name]; !ok {

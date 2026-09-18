@@ -78,6 +78,67 @@ func TestRegistrationEnforcesTheThreeInvariants(t *testing.T) {
 	}
 }
 
+// TestCloneLeavesTheOriginalAlone is the property a delegated subagent depends
+// on.
+//
+// The clone exists so a child can run every tool of its parent except the one
+// that would let it delegate again. If Clone shared the map, or if the caller's
+// next Unregister landed on the parent, the parent would lose the tool the moment
+// it built a child — and two children running at once would be editing one map.
+func TestCloneLeavesTheOriginalAlone(t *testing.T) {
+	registry := NewRegistry()
+	for _, name := range []string{"read_file", "write_file", "subagent"} {
+		if err := registry.Register(Tool{Name: name, Risk: security.RiskLow}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	clone := registry.Clone("subagent")
+
+	if _, found := clone.Get("subagent"); found {
+		t.Error("the excluded tool is still in the clone")
+	}
+	for _, name := range []string{"read_file", "write_file"} {
+		if _, found := clone.Get(name); !found {
+			t.Errorf("the clone lost %s", name)
+		}
+	}
+	if clone.Len() != 2 {
+		t.Errorf("clone has %d tools, want 2", clone.Len())
+	}
+	// The parent keeps everything, including the tool the clone dropped.
+	if registry.Len() != 3 {
+		t.Fatalf("the parent registry has %d tools, want 3", registry.Len())
+	}
+	if _, found := registry.Get("subagent"); !found {
+		t.Error("cloning removed the excluded tool from the parent too")
+	}
+
+	// Mutating the clone must not reach the parent.
+	clone.Unregister("read_file")
+	if _, found := registry.Get("read_file"); !found {
+		t.Error("unregistering from the clone removed the tool from the parent")
+	}
+	clone.MustRegister(Tool{Name: "extra", Risk: security.RiskLow})
+	if _, found := registry.Get("extra"); found {
+		t.Error("registering on the clone added the tool to the parent")
+	}
+
+	// The order has to survive: the schema the model sees is sorted, and a clone
+	// that came back in map order would make two runs differ for no reason.
+	clone = registry.Clone()
+	want := registry.Names()
+	got := clone.Names()
+	if len(got) != len(want) {
+		t.Fatalf("clone has names %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("clone has names %v, want %v", got, want)
+		}
+	}
+}
+
 func TestRiskIsNotInTheSchemaTheModelSees(t *testing.T) {
 	tool := Tool{
 		Name: "shell", Description: "run", Risk: security.RiskHigh,

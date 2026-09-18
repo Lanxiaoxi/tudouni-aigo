@@ -30,8 +30,13 @@ type spinnerMsg time.Time
 // judgement, and recomputing it in the interface would be a second definition
 // that drifts by *missing a warning* — the one failure nobody notices.
 type panelstate struct {
-	todos     []any
-	jobs      []any
+	todos []any
+	jobs  []any
+	// subagents is the delegations in flight, as the runtime reports them. It is
+	// the same shape as `jobs` and for the same reason: the interface draws what
+	// it is told rather than counting start and finish events itself, so the badge
+	// cannot outlive the thing it describes.
+	subagents []any
 	mcp       []any
 	riskScope []any
 	messages  int
@@ -567,6 +572,24 @@ func (m *model) restoreMessages(payload map[string]any) {
 
 func (m *model) handleEvent(payload map[string]any) {
 	kind, _ := protocol.String(payload, "kind")
+
+	// A delegated agent's record never reaches the cases below. It carries its own
+	// step numbers and its own tool calls, and drawing them into the parent's
+	// transcript would interleave two conversations: the parent's turn would appear
+	// to have made steps it never made, and a child's `read_file` would show up in
+	// the parent's turn as though the parent had asked for it. The `child` marker
+	// is set by the runtime, which is the only end that can tell the two apart.
+	//
+	// The one thing it *is* used for is keeping the running tally current between
+	// the runtime's snapshots. The snapshot is what the badge is drawn from, so
+	// this is an optimisation of the display's freshness, never its source of
+	// truth — if it were dropped entirely the badge would still be correct, just
+	// coarser.
+	if child, _ := payload["child"].(bool); child {
+		m.observeChild(payload, kind)
+		return
+	}
+
 	switch kind {
 	case "run_started":
 		m.busy = true
@@ -943,12 +966,54 @@ func (m *model) reportAutopilot() {
 	m.appendLine(renderLine{segments: []seg{{text: i18n.T(key), role: role}}}, "notice", "")
 }
 
+// observeChild updates the running-delegation row from a child's own record.
+//
+// Only the `activity` field is touched, and only for the row already in the list:
+// the runtime's snapshot owns everything else on it (label, model, depth, start
+// time, the counts). Updating the counters here as well would be a second
+// implementation of arithmetic the runtime already does, and the two would drift
+// by exactly the events that arrive out of order.
+func (m *model) observeChild(payload map[string]any, kind string) {
+	id, _ := protocol.String(payload, "subagent_id")
+	if id == "" {
+		return
+	}
+	activity := ""
+	switch kind {
+	case "tool_call":
+		// The tool's name is what makes the row worth reading: "subagent" alone
+		// does not say whether it is searching, reading or writing.
+		activity, _ = protocol.String(payload, "tool")
+	case "tool_result":
+		// Cleared, not left standing. A tool name that stays after the call
+		// returned reads as "still doing that", which is the wrong answer while
+		// the child is deciding what to do next.
+		activity = ""
+	default:
+		return
+	}
+
+	for _, item := range m.panel.subagents {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if rowID, _ := row["id"].(string); rowID == id {
+			row["activity"] = activity
+			return
+		}
+	}
+}
+
 func (m *model) applyState(payload map[string]any) {
 	if value, ok := payload["todos"].([]any); ok {
 		m.panel.todos = value
 	}
 	if value, ok := payload["jobs"].([]any); ok {
 		m.panel.jobs = value
+	}
+	if value, ok := payload["subagents"].([]any); ok {
+		m.panel.subagents = value
 	}
 	if value, ok := payload["mcp"].([]any); ok {
 		m.panel.mcp = value
