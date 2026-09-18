@@ -290,6 +290,26 @@ func paintRow(row string, width int, colour string) string {
 	return strings.Join(parts, "")
 }
 
+// padRows pads every row of a block out to width, so a block placed after it in a
+// horizontal join starts at the same column on every row.
+func padRows(block string, width int) string {
+	rows := strings.Split(block, "\n")
+	for index, row := range rows {
+		if visible := runewidth.StringWidth(stripANSI(row)); visible < width {
+			rows[index] = row + strings.Repeat(" ", width-visible)
+		}
+	}
+	return strings.Join(rows, "\n")
+}
+
+// renderBodySplit draws the conversation and, when the rail is up, the rail beside
+// it. **The rail is docked right**, which is the one place this port departs from
+// the original's layout on purpose: Python puts the context column on the left
+// (`app.py` CSS `#rail`, and the `Horizontal` at `app.py:639-641` yields
+// rail-then-log). The conversation is what the eye is on, so it keeps the left
+// margin and the panel stays out of the column the text starts at — a request from
+// the user, not a parity finding. The rail's own width, its six blocks, the
+// narrow-screen drop rule and the collapsed summary are untouched by it.
 func (m model) renderBodySplit(available int) string {
 	showRail := !m.railHidden && m.width >= minRailWidth
 	if !showRail {
@@ -297,9 +317,14 @@ func (m model) renderBodySplit(available int) string {
 	}
 	transcriptWidth := m.width - railWidth - 1
 	rail := m.renderRail(railWidth, available)
-	transcript := m.renderTranscript(transcriptWidth, available)
+	// The transcript is padded to its full width **because the rail follows it**:
+	// `JoinHorizontal` pads a block to its own widest row, so one short row would
+	// let the rail slide left and leave background between it and the edge. With
+	// the rail first — the original's order — that leftover landed on the outside
+	// and nobody could see it.
+	transcript := padRows(m.renderTranscript(transcriptWidth, available), transcriptWidth)
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		paintBackground(rail, railWidth, currentTheme.rail), " ", transcript)
+		transcript, " ", paintBackground(rail, railWidth, currentTheme.rail))
 }
 
 // renderTranscript draws the conversation, newest at the bottom.

@@ -480,6 +480,17 @@ no counterexample for the label-trimming rules the Python code computes per lang
 
 ---
 
+## Deliberate departures (decided, not gaps)
+
+* **The rail is docked right.** The original puts the context column on the left
+  (`app.py` CSS `#rail` with its `border-right`, and the `Horizontal` at
+  `app.py:639-641` yields rail-then-log); Go joins transcript-then-rail
+  (`view.go:305-328`). Requested by the user: the conversation owns the left margin.
+  Everything else about the rail — 32 cells, the six blocks in order, the
+  `width < 100` drop rule, the collapsed one-line summary — is unchanged.
+
+---
+
 ## Quick severity index
 
 | # | Severity | One line |

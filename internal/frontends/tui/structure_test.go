@@ -104,6 +104,37 @@ func TestScreenNeverExceedsTheTerminal(t *testing.T) {
 	}
 }
 
+// TestTheRailIsDockedRight pins the one deliberate departure from the original's
+// layout: the context rail is the right-hand column, so the conversation keeps the
+// left margin. It is asserted on the rendered body rather than on the join call,
+// because what can silently break is the padding — a transcript block that is not
+// padded to its full width lets the rail slide left on the short rows.
+func TestTheRailIsDockedRight(t *testing.T) {
+	withColour(t)
+	m := filledModel(120, 40)
+	m.railHidden = false
+
+	bars, header := 0, 0
+	for _, row := range strings.Split(m.renderBodySplit(30), "\n") {
+		plain := stripANSI(row)
+		if at := strings.Index(plain, "▌"); at >= 0 {
+			if column := runewidth.StringWidth(plain[:at]); column < m.width-railWidth {
+				t.Errorf("a rail block bar sits at column %d, left of the rail: %q", column, plain)
+			}
+			bars++
+		}
+		if strings.HasPrefix(plain, "Turn 1") {
+			header++
+		}
+	}
+	if bars == 0 {
+		t.Fatal("no rail block bar was drawn: the rail is missing from the body")
+	}
+	if header == 0 {
+		t.Fatal("the transcript no longer starts at the left margin")
+	}
+}
+
 // TestMultiLineEntryCountsItsRows is the same invariant at the level of one entry:
 // a report with newlines in it occupies as many rows as it has lines.
 func TestMultiLineEntryCountsItsRows(t *testing.T) {

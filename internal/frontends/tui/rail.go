@@ -9,7 +9,11 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 )
 
-// The rail: the left column that holds what the run is doing.
+// The rail: the context column that holds what the run is doing.
+//
+// It is **docked right** (see `renderBodySplit`) — the one deliberate departure
+// from the original's layout, which docks this column on the left. The blocks
+// themselves are the original's, cell for cell.
 //
 // Six blocks, each introduced by a colour bar. The bar is the rail_bar role — a
 // **softened** version of the theme's line colour, because one full-strength
@@ -116,9 +120,10 @@ func (m model) renderRail(width, height int) string {
 		if len(block.rows) == 0 {
 			// The empty state wraps like any other row. It is two sentences of
 			// English in a 32-column column, and drawing them unwrapped pushed them
-			// past the rail's own background — which also shifted the **whole
-			// conversation** right, because the two halves are joined side by side
-			// and the widest rail row is what sets the column.
+			// past the rail's own background — and, since the two halves are joined
+			// side by side, past the screen's right edge with them: the rail is the
+			// last block in that join, so an over-wide row widens the frame instead
+			// of sliding the conversation over.
 			for _, sentence := range []string{block.empty, block.hint} {
 				if sentence == "" {
 					continue
