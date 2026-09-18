@@ -16,6 +16,11 @@ tools/vendor/rg/**/rg.exe
 # The end-to-end harness's working directory.
 /.e2e/
 
+# Scratch workspaces used to drive the interface by hand while working on it.
+# They are somebody's test session, not part of the program.
+/.demo/
+/hello/
+
 # Editor / OS noise
 .idea/
 .vscode/
@@ -25,9 +30,9 @@ Thumbs.db
 # Session state, never committed
 .tudouni/
 
-# Assistant working notes kept next to the project, not part of it.
-/.workbuddy/
-
 # Keep the vendored engines even though they look like build output.
 !tools/vendor/rg/x86_64-pc-windows-msvc/rg.exe
 !tools/vendor/rg/x86_64-unknown-linux-musl/rg
+
+# The Python project this was rewritten from, kept on disk as reference material.
+tudouni-ai/
