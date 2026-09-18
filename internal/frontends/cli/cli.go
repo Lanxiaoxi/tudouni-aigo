@@ -301,6 +301,14 @@ func reportTurn(diag io.Writer, current protocol.Runtime) {
 	if line := current.JobsProgressLine(); line != "" {
 		fmt.Fprintln(diag, i18n.T("stats.jobs", "line", line))
 	}
+	// The goal goes after the task list because it is the more durable fact: the
+	// list is this turn's plan, and the goal is what the plan is for. It is
+	// reported every turn on purpose — a session that has quietly started
+	// continuing on its own has to say so in the transcript, and a panel is only
+	// read by somebody who already suspects.
+	if line := current.GoalLine(); line != "" {
+		fmt.Fprintln(diag, i18n.T("stats.goal", "line", line))
+	}
 	if body := current.StatsLine(); body != "" {
 		fmt.Fprintln(diag, i18n.T("stats.line",
 			"name", current.SessionID(),

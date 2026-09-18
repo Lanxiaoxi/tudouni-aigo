@@ -16,6 +16,11 @@ tools/vendor/rg/**/rg.exe
 # The end-to-end harness's working directory.
 /.e2e/
 
+# A Go build cache pointed inside the workspace, for environments where the
+# default one (under the user's home) is not writable. It is build output and
+# thousands of files, so it must never be staged.
+/.tmp-gocache/
+
 # Scratch workspaces used to drive the interface by hand while working on it.
 # They are somebody's test session, not part of the program.
 /.demo/

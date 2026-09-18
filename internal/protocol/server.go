@@ -39,6 +39,17 @@ type Runtime interface {
 	// process still running on somebody's machine — which is why the line terminal
 	// re-states it every round.
 	JobsProgressLine() string
+	// GoalLine is the one-line report of the session's long-running goal, or "".
+	//
+	// It is here rather than only in the panel snapshot because a goal changes what
+	// the session *is*: after a turn that created, completed or paused one, the
+	// person needs to be told in the transcript. A panel is read when somebody
+	// looks at it; this line arrives.
+	GoalLine() string
+	// GoalPanel is the goal as a panel payload: flat, JSON-safe, and always
+	// present (a session with no goal reports the empty shape rather than omitting
+	// the key, so a front end has one case to draw rather than two).
+	GoalPanel() map[string]any
 	StateMessage(withCatalog bool) map[string]any
 	StatusMessage() map[string]any
 	ToolsMessage() map[string]any
@@ -115,6 +126,66 @@ type Server struct {
 
 	turnMu   sync.Mutex
 	turnDone chan struct{}
+
+	// goalRound is the reserved round the running (or next) turn is running. It is
+	// written before the turn's goroutine starts and read by it, which is safe for
+	// the same reason `turnDone` is: both happen under turnMu, and turnMu is held
+	// for the whole handover.
+	goalRound GoalRound
+}
+
+// GoalRound is one reserved automatic round, as this layer needs to see it.
+//
+// It is an interface rather than a struct so that the protocol layer keeps knowing
+// nothing about how a goal is stored: the driver builds the thing, the server
+// carries it, and the runtime decides whether it is still valid. Nothing here reads
+// its contents, which is what keeps "what a round is" from having two definitions.
+type GoalRound interface {
+	GoalID() string
+	Revision() int
+	Round() int
+	Messages() []map[string]any
+}
+
+// GoalRoundRunner is what a runtime must provide for automatic continuation.
+//
+// It is optional — a runtime that does not implement it simply never continues,
+// which is the behaviour of every build before this one — and `StartGoalRound`
+// reports whether a turn actually ran, so a reservation that went stale while it
+// waited costs nothing.
+type GoalRoundRunner interface {
+	StartGoalRound(round GoalRound) (answer string, started bool, err error)
+}
+
+// GoalArmer is what a runtime must provide for a goal created during a turn to
+// start running.
+//
+// It is a separate optional interface from the scheduler because the two are
+// different questions asked at the same instant: "should this session continue?"
+// is the scheduler's, and "is this session allowed to?" is this one's. Collapsing
+// them would hide the rule that only a person's turn may grant the authorization.
+type GoalArmer interface {
+	ArmFromTurn()
+}
+
+// GoalCommander is what a runtime must provide to accept a goal command.
+//
+// Optional like the rest of the goal surface: a runtime that does not implement it
+// answers the command with a notice saying so, which is better than a command that
+// appears to work.
+type GoalCommander interface {
+	GoalCommand(action string) (map[string]any, error)
+}
+
+// GoalRoundScheduler is what a runtime must provide to be asked whether another
+// round is allowed once a turn has finished.
+//
+// `ObserveTurn` is given the finished turn's outcome and the server's own queue
+// function, and returns the decision it made. The runtime owns the arming state,
+// the round budget and the audit record; the server owns the two things it knows
+// better — when a turn finished, and how to start one.
+type GoalRoundScheduler interface {
+	ObserveTurn(outcome error, stopped bool, queue func(GoalRound) bool) string
 }
 
 // NewServer builds a server.
@@ -311,6 +382,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 	case InMCP:
 		s.handleMCP(message)
 
+	case InGoal:
+		s.handleGoal(message)
+
 	case InRefreshState:
 		s.Send(s.stateMessage(false))
 
@@ -333,7 +407,26 @@ func (s *Server) joinTurn() {
 	<-done
 }
 
+// startTurn begins a turn started by a person.
 func (s *Server) startTurn(text string) {
+	s.startTurnWith(text, nil)
+}
+
+// startGoalTurn begins a turn the goal driver reserved.
+//
+// It goes through the same function as a person's turn on purpose: an automatic
+// round has to wait for whatever is running, and it must not be a second
+// scheduler. The reservation travels with the turn so the runtime can refuse it
+// when the turn actually starts — the queue is where a goal edit, a pause, or a
+// person's message can land in between.
+func (s *Server) startGoalTurn(round GoalRound) bool {
+	if round == nil {
+		return false
+	}
+	return s.startTurnWith("", round)
+}
+
+func (s *Server) startTurnWith(text string, round GoalRound) bool {
 	// Wait for the previous turn: two turns must never interleave, because the
 	// message list is only consistent between steps.
 	s.joinTurn()
@@ -346,13 +439,15 @@ func (s *Server) startTurn(text string) {
 	done := make(chan struct{})
 	s.turnMu.Lock()
 	s.turnDone = done
+	s.goalRound = round
 	s.turnMu.Unlock()
 
 	runtime := s.current()
 	if runtime == nil {
+		s.clearGoalRound()
 		close(done)
 		s.notice("warn", "session", i18n.T("channels.model.no_session"))
-		return
+		return false
 	}
 
 	// The turn runs on its own goroutine so the read loop keeps turning. That is
@@ -363,12 +458,64 @@ func (s *Server) startTurn(text string) {
 		defer close(done)
 		s.runTurn(runtime, text)
 	}()
+	return true
+}
+
+// clearGoalRound drops the reservation the next turn would have run.
+func (s *Server) clearGoalRound() {
+	s.turnMu.Lock()
+	s.goalRound = nil
+	s.turnMu.Unlock()
+}
+
+func (s *Server) pendingGoalRound() GoalRound {
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
+	return s.goalRound
 }
 
 func (s *Server) runTurn(runtime Runtime, text string) {
 	runtime.ClearStop()
 
+	// A reserved round takes the path that composes its own opening message. A
+	// stale reservation means no turn ran, and then there is nothing to report —
+	// falling through to `RunTurn("")` would ask the model to answer an empty
+	// question, which is a real turn spent on nothing.
+	if round := s.pendingGoalRound(); round != nil {
+		answer, err, ran := s.runGoalRound(runtime, round)
+		if !ran {
+			return
+		}
+		s.finishTurn(runtime, answer, err)
+		return
+	}
+
 	answer, err := runtime.RunTurn(text)
+	s.finishTurn(runtime, answer, err)
+}
+
+// runGoalRound runs one reserved round, or reports that it was refused.
+func (s *Server) runGoalRound(runtime Runtime, round GoalRound) (string, error, bool) {
+	s.clearGoalRound()
+	runner, ok := runtime.(GoalRoundRunner)
+	if !ok {
+		return "", nil, false
+	}
+	answer, started, err := runner.StartGoalRound(round)
+	if !started {
+		return "", nil, false
+	}
+	return answer, err, true
+}
+
+// finishTurn reports a finished turn and then asks the goal driver whether another
+// round is allowed.
+//
+// The order matters and it is the whole reason the hook is here rather than in the
+// agent: by this point the answer has been sent, the session file holds the turn,
+// the message list is consistent, and no other turn is running. That is the only
+// instant at which "is this session finished?" has a well-defined answer.
+func (s *Server) finishTurn(runtime Runtime, answer string, err error) {
 	if err != nil {
 		if _, cancelled := err.(interface{ Error() string }); cancelled && isCancel(err) {
 			s.notice("warn", "cancelled", i18n.T("channels.run_failed", "problem", err.Error()))
@@ -392,6 +539,68 @@ func (s *Server) runTurn(runtime Runtime, text string) {
 	// One more snapshot to close the turn: the task list may have changed on the
 	// last step, and the panel should not be a turn behind.
 	s.Send(s.stateMessage(false))
+
+	// A reserved round is queued on its **own** goroutine, and it waits for this
+	// turn's `done` first. Calling back into `startTurn` from here would deadlock:
+	// that path begins with `joinTurn`, which waits for the very `done` this
+	// function has not closed yet.
+	scheduler, ok := runtime.(GoalRoundScheduler)
+	if !ok {
+		return
+	}
+	// **Before** the driver is asked, and this order is the whole point: a goal the
+	// model created during a turn a person started becomes armed here, and the
+	// driver then sees an armed, active goal and continues it. Asking the driver
+	// first would mean every goal created this way was refused once for not being
+	// armed yet — a round silently not taken, and the session stopping for no
+	// reason the log explains.
+	if armer, ok := runtime.(GoalArmer); ok {
+		armer.ArmFromTurn()
+	}
+	round := s.reservedGoalRound(scheduler, err)
+	if round == nil {
+		return
+	}
+	done := s.currentTurnDone()
+	go func() {
+		<-done
+		s.startGoalTurn(round)
+	}()
+}
+
+// reservedGoalRound asks the runtime whether another round is allowed, and returns
+// the reservation if it is.
+//
+// `stopped` is this server's own flag rather than the runtime's, because the
+// question is "did somebody ask to stop **during this turn**" — and this flag is
+// cleared at the start of every turn precisely so it can answer that. A stop inside
+// a round has to turn continuation off, not merely end the round: an interrupt that
+// is followed by another round is an interrupt that does not work.
+func (s *Server) reservedGoalRound(scheduler GoalRoundScheduler, outcome error) GoalRound {
+	var reserved GoalRound
+	scheduler.ObserveTurn(outcome, s.ShouldStop(), func(round GoalRound) bool {
+		if reserved != nil {
+			// One at a time. A runtime that asked twice would be building a queue
+			// it has no way to drain.
+			return false
+		}
+		reserved = round
+		return true
+	})
+	if reserved == nil {
+		// The loop stopped. It may also have disarmed the goal, and the status
+		// snapshot already sent was built before that decision — so one more goes
+		// out, or the interface keeps reporting a session as ready to continue
+		// after it has stopped. A queued round sends its own snapshots instead.
+		s.Send(s.stateMessage(false))
+	}
+	return reserved
+}
+
+func (s *Server) currentTurnDone() <-chan struct{} {
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
+	return s.turnDone
 }
 
 // RequestStop asks the current turn to stop at its next safe point.
@@ -569,6 +778,85 @@ func (s *Server) startCompact() {
 		s.Send(payload)
 		s.Send(s.stateMessage(false))
 	}()
+}
+
+// handleGoal performs a command about the session's goal.
+//
+// The command is the person's half of the goal feature, and it is deliberately a
+// command rather than a message to the model: a goal the model created for itself
+// has to be stoppable without asking that model to stop it, and "ask the model to
+// run update_goal(pause)" is not a control, it is a suggestion.
+//
+// An empty action is a read, which is what `/goal` on its own means. Every branch
+// ends by sending a fresh panel snapshot, so the rail and the transcript never
+// disagree about whether the goal is still running.
+func (s *Server) handleGoal(message map[string]any) {
+	runtime := s.current()
+	if runtime == nil {
+		s.notice("warn", "goal", i18n.T("channels.goal.no_session"))
+		return
+	}
+
+	action, _ := String(message, "action")
+	if action == "" {
+		s.Send(s.stateMessage(false))
+		s.notice("info", "goal", goalStateText(runtime.GoalPanel()))
+		return
+	}
+	switch action {
+	case GoalPause, GoalResume, GoalClear:
+	default:
+		// Not silently treated as a read: a mistyped pause would then look like it
+		// worked, and the goal would keep running.
+		s.notice("warn", "goal", i18n.T("channels.goal.unknown_action",
+			"action", action, "actions", strings.Join(GoalActions, ", ")))
+		return
+	}
+
+	commander, ok := runtime.(GoalCommander)
+	if !ok {
+		// An older runtime: the command is understood by the protocol and not by the
+		// thing behind it. Saying so beats a silent no-op.
+		s.notice("warn", "goal", i18n.T("channels.goal.unsupported"))
+		return
+	}
+	panel, err := commander.GoalCommand(action)
+	if err != nil {
+		s.notice("warn", "goal", i18n.T("channels.goal.refused", "problem", err.Error()))
+		s.Send(s.stateMessage(false))
+		return
+	}
+	s.Send(s.stateMessage(false))
+	s.notice("info", "goal", goalActionText(action, panel))
+}
+
+// goalActionText says what the command did, in the terms the person used.
+func goalActionText(action string, panel map[string]any) string {
+	if action == GoalClear {
+		return i18n.T("channels.goal.cleared")
+	}
+	return goalStateText(panel)
+}
+
+// goalStateText is the one-line report of where the goal stands.
+//
+// `armed` is stated separately from the phase because they answer different
+// questions and can differ: a resumed session's active goal is not armed, and a
+// person reading "active" alone would expect work to continue.
+func goalStateText(panel map[string]any) string {
+	objective, _ := panel["objective"].(string)
+	if objective == "" {
+		return i18n.T("channels.goal.none")
+	}
+	phase, _ := panel["phase"].(string)
+	rounds, _ := panel["rounds_text"].(string)
+	armed, _ := panel["armed"].(bool)
+	state := i18n.T("channels.goal.paused_state")
+	if armed {
+		state = i18n.T("channels.goal.armed_state")
+	}
+	return i18n.T("channels.goal.state",
+		"objective", objective, "phase", phase, "rounds", rounds, "state", state)
 }
 
 func (s *Server) handleMCP(message map[string]any) {

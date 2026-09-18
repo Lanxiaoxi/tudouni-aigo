@@ -17,6 +17,7 @@ type fakeRuntime struct {
 	stats  string
 	todos  string
 	jobs   string
+	goal   string
 }
 
 func (f *fakeRuntime) SessionID() string          { return "test" }
@@ -43,6 +44,8 @@ func (f *fakeRuntime) Close() error                       { return nil }
 func (f *fakeRuntime) StatsLine() string                  { return f.stats }
 func (f *fakeRuntime) ProgressLine() string               { return f.todos }
 func (f *fakeRuntime) JobsProgressLine() string           { return f.jobs }
+func (f *fakeRuntime) GoalLine() string                   { return f.goal }
+func (f *fakeRuntime) GoalPanel() map[string]any          { return map[string]any{"objective": ""} }
 func (f *fakeRuntime) MCPMessage(string, []string) (map[string]any, []string) {
 	return nil, nil
 }

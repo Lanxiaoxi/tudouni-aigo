@@ -56,6 +56,7 @@ const (
 	InCompact            = "compact"
 	InContext            = "context"
 	InSkills             = "skills"
+	InGoal               = "goal"
 	InRefreshState       = "refresh_state"
 	InShutdown           = "shutdown"
 )
@@ -104,6 +105,25 @@ var Decisions = []string{"allow", "deny", "always", "always_group"}
 // Actions the `mcp` message accepts.
 var MCPActions = []string{"list", "load", "unload"}
 
+// GoalActions are the commands a person may give about the session's goal.
+//
+// They are the human half of the goal tools, and the reason they exist as commands
+// at all: a goal the model created for itself has to be visible and stoppable
+// without the person having to ask a model to stop it. `clear` in particular is
+// only ever a command — the tools cannot delete another person's goal.
+//
+// The spellings live here rather than being re-exported from the state package: the
+// wire vocabulary is this package's business, and a protocol constant that aliased
+// a storage one would move the day somebody renamed a field.
+const (
+	GoalPause  = "pause"
+	GoalResume = "resume"
+	GoalClear  = "clear"
+)
+
+// GoalActions is the wire's own list, for the error message that names them.
+var GoalActions = []string{GoalPause, GoalResume, GoalClear}
+
 // Answers a front end may return for a question. The third value the runtime
 // can produce — `unavailable`, nobody to ask — is never sent by a front end.
 const (
@@ -136,6 +156,7 @@ var RequiredKeys = map[string][]string{
 	InMCP:                {"v", "t", "action"},
 	InCompact:            {"v", "t"},
 	InContext:            {"v", "t"},
+	InGoal:               {"v", "t", "action"},
 	InRefreshState:       {"v", "t"},
 	InShutdown:           {"v", "t"},
 }

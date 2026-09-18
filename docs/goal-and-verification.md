@@ -181,6 +181,110 @@ internal/frontends/*            改动  /goal 命令与面板（可选，后置�
 
 ---
 
+## 八、第一批的落地记录（3.14.0）
+
+已实现，与上面的设计一致：
+
+| 文件 | 内容 |
+| --- | --- |
+| `internal/state/goal.go` | goal 块（`phase`/`revision`/`rounds`/`max_rounds`/blocker）、`LoadGoal`/`SaveGoal`/`FoldGoal`、`CreateGoal`/`ApplyGoalChange`/`AdmitGoalRound`、`AuthorizedBy`、`GoalText`/`GoalRoundPrompt`、`GoalError` 稳定错误码 |
+| `internal/tools/builtin/goal.go` | `get_goal` / `create_goal` / `update_goal`，各自的 schema、拒绝文本与 audit 字段 |
+| `internal/state/session.go` | `IsHumanTurn()` —— 区分「用户发起的轮次」与「自动续行」 |
+| `internal/runtime/composition.go` | 注册三个工具；goal 段进入 payload 尾部（在任务列表之前）；`activation()` 里写死「resume 后一律 disarmed」 |
+
+### 这批实际定下来的四条不变量
+
+1. **`rounds` 只能由 `AdmitGoalRound` 推进**，任何工具参数都碰不到它；`rounds > max_rounds` 的块在读取时被拒绝（宁可退化成「没有 goal」，也不接受自相矛盾的状态）。
+2. **准入会推进 `revision`。** 这是预留能被安全持有的原因：在「驱动器决定排队」和「提示词进入历史」之间发生的任何变更，都会让预留失效而不是被它覆盖。
+3. **`activation` 不进 goal 块。** 它是进程内授权，`Resumed` 恒为 disarmed。测试 `TestActivationIsNotInTheStoredBlock` 与 `TestAResumedSessionIsNeverArmed` 把这条钉住。
+4. **自动续行不能自我授权。** goal round 提示词同时带 `RuntimeNoteKey` 与 `GoalRoundKey`：前者让 `UserInputs()` 不把它当人话，后者让 `IsHumanTurn()` 判定为非人类轮次，于是 `create/edit/pause/resume` 在续行里一律被拒。
+
+### 与本文档正文的一处偏差
+
+正文第五节说「Lint 与激活状态分离，`activation` 是活的观察值」——这一点实现了；但**没有任何东西会 arm**。`Runtime.goalActivated` 是一个没有写入者的字段，`activation()` 因此恒为 `disarmed`，payload 尾部每轮都会告诉模型「续行未启用」。这是诚实的：这批构建确实不能自己继续，模型不该以为它会。
+
+### 第二批要改动的确切位置
+
+- `protocol/server.go` 的 `runTurn`：在 `Send(UIRunFinished)` 与最后一次 `Send(stateMessage)` 之后、`close(done)` 之前，是唯一「上一轮已落盘、下一轮未开始」的点，驱动器挂这里。
+- `startTurn` 需要能标注「这一轮是自动续行」，并让 `agent.Run` 走一个会追加 `state.GoalRoundPrompt(...)` 的分支（而不是把文本当用户输入追加）。
+- `Runtime.goalActivated` 与 `activation()` 已经准备好：`/goal resume` 与驱动器的 arm 路径只需要写入它。
+- 轮次提示词的形状已经定死（`state.GoalRoundPrompt`），所以第二批不用回头改历史解析。
+
+---
+
+## 九、第二批的落地记录（3.15.0）
+
+驱动器接通了。范围按上一节收敛为三件事：**空闲判定、预留/准入、取消即 disarm**；blocker 连续轮计数与 UI 命令留到下一批。
+
+| 文件 | 内容 |
+| --- | --- |
+| `internal/runtime/goal_driver.go` | `Driver`：`Observe` / `reserve` / `Admit` / `advance`，`Decision` 与稳定的 `Reason*` 码，`Runtime.ObserveTurn` 适配器 |
+| `internal/runtime/goal_round.go` | `GoalArmed` / `SetGoalArmed` / `StartGoalRound` / `Checkpoint`，以及 `ErrGoalNotArmed` |
+| `internal/protocol/server.go` | `GoalRound` / `GoalRoundRunner` / `GoalRoundScheduler` 三个可选接口；`startGoalTurn`；`finishTurn` 与 `reservedGoalRound` |
+| `internal/agent/agent.go` | `RunMessages`：`Run` 与自动续行共用同一条装配路径 |
+| `internal/audit/jsonl.go` | `KindGoalRound`：排队、开始、拒绝/解除武装各一条 |
+
+### 这批定下来的五条不变量
+
+1. **只有一个瞬时点可以决定续行。** 就是 `finishTurn` 里那一次调用：答案已发出、会话已落盘、消息列表一致、没有别的轮次在跑。没有 ticker，没有第二个 goroutine。
+2. **预留不消费，准入才消费。** `reserve()` 只在内存里占号；`AdmitGoalRound` 是唯一推进 `rounds` 的地方，且它会同时推进 `revision` —— 因此在「决定排队」与「提示词进入历史」之间发生的任何变更都会让预留失效。拒绝的预留不消耗编号。
+3. **`StepLimitExceeded` 是「继续」，其余错误是「停手」。** 步数用尽表示这一轮的步数预算花完了、会话完整；把续行建立在「轮次预算」上的长任务，第一轮撞上步数上限就会死。这个判断必须**在 disarm 之前**做（第一版写反了，被测试抓住）。
+4. **取消即解除武装。** 用服务器自己的 stop 标志判断「这一轮期间有没有人要求停」——它在每轮开始被清空，正好能回答这个问题。停轮次但保留武装，等于 Ctrl+C 不起作用。
+5. **resume 后无法武装。** `SetGoalArmed(true)` 在 `Resumed` 上直接失败（不报错，就是不生效），所以每个读者——工具、payload 尾、驱动器——看到的是同一个 false。
+
+### 一个必须绕开的死锁
+
+排队回调运行在**已结束那一轮自己的 goroutine** 里，而那一轮的完成信号是 `close(turnDone)`，它发生在 `runTurn` 返回之后。所以从回调里直接调回 `startTurn` 会等待一个自己负责关闭的 channel：会话挂在那里，目标续了一轮但没有任何东西跑起来。实现改为：决定同步做，排队交给一个先 `<-turnDone` 再启动的 goroutine。`TestAnAutomaticRoundRunsAfterTheTurnSettles` 就是为这个写的，它会在顺序写错时挂住。
+
+### 这批仍然没有的东西
+
+- **没有 UI 命令。** `/goal` 与 `/goal resume` 未实现，所以目前武装一个 goal 的唯一路径是测试。第三批之前要先补上，否则这个功能对人不可用。
+- **blocker 连续轮计数未做。** 现在 `blocked` 完全由模型调用 `update_goal` 决定。
+- **CLI 路径不续行。** `internal/frontends/cli/cli.go` 自己循环调 `RunTurn`，不经过协议服务器，所以那个入口不会自动续行；它也不因此变坏，只是不续。
+
+---
+
+## 十、第三批的落地记录（4.0.0）：让 agent 自己设置 goal
+
+这一批的起点是一个观察：**在 DSH 里 goal 是 agent 自己建的**，用户从没打过任何命令。去实现里确证，DSH 的系统提示词写的是：
+
+> "create_goal **may infer goal intent from a direct human request in any language**; do not create a goal for routine single-turn work. … After session resume or fork, an active goal is disarmed: **when a human asks to continue or resume in any wording or language, use update_goal action resume to rearm it**."
+
+「人直接发起」是**权限闸门**，不是**触发器**。对照下来，第二版实现有两处偏差让它实际上做不到：
+
+1. **工具描述写保守了**：我写的是「只在用户**明确要求**长期任务时才用」，DSH 是「**可以推断**」。措辞把「推断」降级成了「等指令」。
+2. **武装路径被堵死**：`goalActivated` 恒为 false、没有写入者，我原计划等 `/goal resume`。于是就算模型建了 goal，它也永远不会续行 —— 机制允许，下游关着。
+
+### 这一批改了什么
+
+| 文件 | 内容 |
+| --- | --- |
+| `internal/runtime/goal_round.go` | `ArmFromTurn`（人发起的轮次结束时武装）、`GoalCommand`（人的 pause/resume/clear）、`GoalPanel` |
+| `internal/state/goal.go` | `GoalAction`、`GoalSnapshot`、`NoGoalSnapshot`、`GoalAction*` 常量 |
+| `internal/protocol/server.go` | `InGoal` 的处理、`GoalArmer` / `GoalCommander` 两个可选接口、`finishTurn` 里**先武装后问驱动器** |
+| `internal/protocol/{messages,client}.go` | `InGoal`、`GoalPause/Resume/Clear`、`Client.Goal` |
+| `internal/tools/builtin/goal.go` | `create_goal` 的描述改成 DSH 的语义：可推断、不要为单步琐事建 |
+| `prompts/system.zh.md` | 新增「长期目标（goal）」一节（DSH 是把这段注册进系统提示词的，我照做） |
+| `internal/runtime/composition.go` | `GoalLine`、goal 进 `StateMessage`、CLI 每轮回显 |
+| `internal/frontends/tui/` | `/goal` 命令、rail 的 Goal 块、`panelstate.goal` |
+
+### 定下来的三条
+
+1. **创建与武装是两件事，而且分在两个包。** 工具层负责把 goal 写下来；「这个会话要不要继续」是本进程的决定，只在 `finishTurn` 里做一次，条件是**整个轮次已结束 + goal 是 active + 这一轮是人发起的**。模型不能在自己的轮次里武装自己 —— 否则它在决定自己跑多久，轮次预算就不再约束任何东西。
+2. **一次授权产生一轮。** 刚跑完的如果是一轮自动续行，驱动器就 disarm 而不是再排一轮；再要继续需要用户再说一句话，或者模型在人的轮次里 `update_goal(resume)`。没有这条，一次武装会连着把预算跑完而没人在场。
+
+   这一条是我第一版写反的：我原来判的是「如果是人发起的轮次就停」，正好把方向搞反了——那会让**人在场时反而不许继续**，功能等于不存在。测试 `TestADriverContinuesAfterAHumanTurn` 与 `TestADriverDoesNotChainAutomaticRounds` 现在把两个方向都钉住。
+
+3. **`armed` 与 `phase` 必须在两个地方分开出现**：payload 尾（`GoalText`）与面板（`GoalSnapshot`）。一个 active 的 goal 可以是不续行的（resume 之后、预算用尽之后），只报 phase 会让人等一个永远不会开始的工作。
+
+### 仍然没有的东西
+
+- **blocker 连续轮计数**：`blocked` 仍完全由模型决定。
+- **CLI 路径不续行**：`cli.go` 自己循环，不经过协议服务器；它现在会每轮回显 goal 一行，但不会自动续。
+- **没有验证层**：第三批之后，「完成」仍然是模型自报加提示词约束，和 DSH 一样。证据门（本文档第三、四节）还没做，而且按正文建议，应该在真实使用一段时间、有了可证伪的指标之后再上。
+
+---
+
 ## 七、一句话结论
 
 设计里最核心的那句判断是对的，而且比 DSH 现在的实现更完整：

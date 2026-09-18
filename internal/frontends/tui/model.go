@@ -65,6 +65,11 @@ type panelstate struct {
 	// Nil until somebody asks: a status bar that showed zero before the first
 	// question would teach the reader the number is meaningless.
 	context map[string]any
+	// goal is the session's long-running objective, as the runtime reports it.
+	// Always present once the first snapshot has arrived: the runtime sends the
+	// empty shape rather than omitting the key, so "no goal" and "nothing said
+	// yet" are told apart by whether the map is nil, not by its contents.
+	goal map[string]any
 }
 
 type model struct {
@@ -1056,6 +1061,9 @@ func (m *model) applyState(payload map[string]any) {
 	}
 	if value, ok := payload["skills"].([]any); ok {
 		m.panel.skills = value
+	}
+	if value, ok := payload["goal"].(map[string]any); ok {
+		m.panel.goal = value
 	}
 }
 

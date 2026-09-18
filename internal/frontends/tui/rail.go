@@ -41,6 +41,14 @@ type railBlock struct {
 func (m model) railBlocks() []railBlock {
 	return []railBlock{
 		{
+			title: i18n.T("rail.goal"),
+			// The badge is the round counter, which is the one number that answers
+			// "how much longer can this go on by itself".
+			count: goalCount(m.panel.goal),
+			rows:  goalRows(m.panel.goal),
+			empty: i18n.T("rail.goal.empty"), hint: i18n.T("rail.goal.empty_hint"),
+		},
+		{
 			title: i18n.T("rail.tasks"),
 			count: todoCount(m.panel.todos),
 			rows:  todoRows(m.panel.todos),
@@ -291,6 +299,55 @@ func todoRows(todos []any) []string {
 		rows = append(rows, styled+currentTheme.styleFor("process").Render(content))
 	}
 	return rows
+}
+
+// goalRows is the goal block: the objective, the round counter, and whether it is
+// still running.
+//
+// The "not continuing" line is the reason this block exists at all. A goal can be
+// active and disarmed — after a resume, after a pause, after the round budget ran
+// out — and a panel that showed only the phase would leave a person waiting for
+// work that is never going to start.
+func goalRows(goal map[string]any) []string {
+	objective, _ := goal["objective"].(string)
+	if goal == nil || objective == "" {
+		return nil
+	}
+	process := currentTheme.styleFor("process")
+	rows := []string{process.Render(objective)}
+
+	phase, _ := goal["phase"].(string)
+	rounds, _ := goal["rounds_text"].(string)
+	rows = append(rows, currentTheme.styleFor("rule").Render(
+		i18n.T("rail.goal.line", "phase", phase, "rounds", rounds)))
+
+	armed, _ := goal["armed"].(bool)
+	role := "waiting"
+	text := i18n.T("rail.goal.disarmed")
+	if armed {
+		role = "answer"
+		text = i18n.T("rail.goal.armed")
+	}
+	rows = append(rows, currentTheme.styleFor(role).Render(text))
+
+	if message, _ := goal["blocked_message"].(string); message != "" {
+		rows = append(rows, currentTheme.styleFor("warn").Render(message))
+	}
+	return rows
+}
+
+// goalCount is the badge beside the Goal title: the round counter, or "" when
+// there is no goal.
+func goalCount(goal map[string]any) string {
+	if goal == nil {
+		return ""
+	}
+	objective, _ := goal["objective"].(string)
+	if objective == "" {
+		return ""
+	}
+	rounds, _ := goal["rounds_text"].(string)
+	return rounds
 }
 
 func todoDone(todos []any) int {

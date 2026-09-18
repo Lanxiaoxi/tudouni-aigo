@@ -204,6 +204,18 @@ func (c *Client) MCP(action string, servers []string) {
 	c.Send(message)
 }
 
+// Goal sends a command about the session's goal.
+//
+// An empty action asks for the current state and changes nothing, which is what
+// `/goal` with no argument means.
+func (c *Client) Goal(action string) {
+	message := map[string]any{"t": InGoal}
+	if action != "" {
+		message["action"] = action
+	}
+	c.Send(message)
+}
+
 // RefreshState asks for a fresh panel snapshot.
 //
 // It is sent only when the interface knows something is outstanding, and throttled

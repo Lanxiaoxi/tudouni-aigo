@@ -427,6 +427,23 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 		m.client.ListSkills()
 		return m, nil
 
+	case "/goal":
+		// The runtime answers every shape of this command with a notice and a fresh
+		// snapshot, so the interface prints nothing itself: it has no idea what the
+		// goal is, and a locally rendered guess would be a second answer to a
+		// question only the runtime can answer.
+		//
+		// Any word other than the three actions is sent as-is rather than rejected
+		// here. The protocol's list is the one list of valid actions, and a front
+		// end that validated them too would be a second place for the two to
+		// disagree — while the cost of letting the runtime refuse is one notice.
+		action := ""
+		if len(arguments) > 0 {
+			action = strings.ToLower(strings.TrimSpace(arguments[0]))
+		}
+		m.client.Goal(action)
+		return m, nil
+
 	case "/quiet":
 		// A display preference, so it takes effect **now** and tells you so — no
 		// protocol message, because there is nothing to confirm. `on` and `off`

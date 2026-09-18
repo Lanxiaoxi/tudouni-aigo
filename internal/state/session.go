@@ -87,6 +87,47 @@ func (s *Session) UserInputs() []string {
 // RuntimeNoteKey marks a user-role message the runtime inserted itself.
 const RuntimeNoteKey = "__runtime_note"
 
+// IsHumanTurn reports whether the turn in progress was started by a person.
+//
+// It is what tells "the model is steering" apart from "the model is driving", and
+// the goal tools depend on it: starting, redefining, pausing and resuming a goal
+// are things only a person may ask for.
+//
+// The rule is a backwards scan, and **the details are the whole function**:
+//
+//   - Tool results are skipped. A tool call is always issued from an assistant
+//     message, so the current turn's results sit after the message that explains
+//     why the turn started; stopping at the first one would answer "not human" for
+//     every turn that used a tool before reaching for a goal tool.
+//   - Assistant messages are skipped **for the same reason, one step further
+//     out**. The model's own narration is not evidence about who asked.
+//   - A runtime note ends the scan as "not human". This is what makes an autonomous
+//     goal round answer false, and it is the reason round prompts carry
+//     RuntimeNoteKey at all: without it a round could authorize its own successor,
+//     and the round budget would stop meaning anything.
+//   - Anything else decides it (and only a user message can be anything else in
+//     practice — but the default is "not human", because the one thing this
+//     function must never do is grant authority it cannot prove).
+//
+// A turn where the user's message is followed by assistant output and then by a
+// goal tool call therefore answers true. That is correct: the person asked, and the
+// model is one step into answering.
+func (s *Session) IsHumanTurn() bool {
+	for index := len(s.Messages) - 1; index >= 0; index-- {
+		message := s.Messages[index]
+		role, _ := message["role"].(string)
+		switch role {
+		case "tool", "assistant":
+			continue
+		}
+		if isRuntimeNote(message) {
+			return false
+		}
+		return role == "user"
+	}
+	return false
+}
+
 func isRuntimeNote(message map[string]any) bool {
 	value, _ := message[RuntimeNoteKey].(bool)
 	return value

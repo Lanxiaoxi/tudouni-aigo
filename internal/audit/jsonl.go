@@ -31,6 +31,14 @@ const (
 	KindDeltaReset       = "delta_reset"
 	KindContextDegraded  = "context_degraded"
 	KindContextCompacted = "context_compacted"
+	// KindGoalRound records the driver's decision about one automatic round:
+	// queued, or skipped with the reason and the disarm that followed.
+	//
+	// It is a separate kind from a goal *change* on purpose. "The model redefined
+	// the objective" and "the loop decided to keep going" are answers to different
+	// questions, and merging them would make "--audit" unable to say whether an
+	// autonomous loop ever actually ran.
+	KindGoalRound = "goal_round"
 )
 
 // Event builds one audit record with the fields every record carries.

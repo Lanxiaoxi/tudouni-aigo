@@ -45,6 +45,7 @@ func commands() []commandInfo {
 		{"/thinking", true},
 		{"/effort", true},
 		{"/mcp", true},
+		{"/goal", true},
 	}
 	out := make([]commandInfo, 0, len(table))
 	for _, row := range table {
@@ -63,7 +64,7 @@ func commands() []commandInfo {
 
 // filterCommands narrows the palette by what has been typed so far.
 //
-// Prefix matching, not fuzzy: with seventeen commands, fuzzy matching makes "I
+// Prefix matching, not fuzzy: with eighteen commands, fuzzy matching makes "I
 // mistyped" and "it guessed right" look identical, and the list is short enough
 // that a prefix is never more than two keystrokes away.
 func filterCommands(query string) []commandInfo {

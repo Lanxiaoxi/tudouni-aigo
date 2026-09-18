@@ -318,6 +318,12 @@ func (*stubRuntime) Close() error                       { return nil }
 func (*stubRuntime) StatsLine() string                  { return "" }
 func (*stubRuntime) ProgressLine() string               { return "" }
 func (*stubRuntime) JobsProgressLine() string           { return "" }
+func (*stubRuntime) GoalLine() string                   { return "" }
+
+// The empty shape, not nil: the real runtime always sends a goal key, and a stub
+// that sent nil would hide the "absent versus empty" mistake this interface's
+// comment warns about.
+func (*stubRuntime) GoalPanel() map[string]any { return map[string]any{"objective": ""} }
 func (*stubRuntime) MCPMessage(string, []string) (map[string]any, []string) {
 	return map[string]any{}, nil
 }

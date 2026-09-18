@@ -171,6 +171,28 @@ func (a *Agent) Autopilot() bool { return a.autopilot }
 
 // Run executes one turn and returns the answer.
 func (a *Agent) Run(userInput string) (string, error) {
+	return a.RunMessages([]map[string]any{{"role": "user", "content": userInput}})
+}
+
+// RunMessages executes one turn whose opening messages the runtime composed.
+//
+// It exists for the automatic goal round, whose opening message is not something a
+// person typed: it is the runtime's own `<goal_round>` block, marked so nothing
+// downstream reads it as user input. Everything else about the turn is identical to
+// `Run` — and it has to be, which is why the two share this function instead of one
+// calling the other with a synthesized string. A round that took a different path
+// through the loop would be a second kind of turn, and the second kind is where the
+// invariants get forgotten: paired tool calls, a checkpoint between whole steps, and
+// compaction only at the top of the loop with the message list consistent.
+//
+// An empty list is refused rather than tolerated. A turn with no opening message
+// asks the model to continue a conversation nobody started, and the answer would be
+// indistinguishable from a real one.
+func (a *Agent) RunMessages(messages []map[string]any) (string, error) {
+	if len(messages) == 0 {
+		return "", RunCancelled{}
+	}
+
 	a.runID = fmt.Sprintf("run-%d", time.Now().UnixNano())
 	a.step = 0
 	a.toolsUsed = a.toolsUsed[:0]
@@ -183,7 +205,9 @@ func (a *Agent) Run(userInput string) (string, error) {
 	if a.Model != nil && a.Model.NoticeNeeded() {
 		a.Session.Append(a.Model.Notice(""))
 	}
-	a.Session.Append(map[string]any{"role": "user", "content": userInput})
+	for _, message := range messages {
+		a.Session.Append(message)
+	}
 
 	// The context is aligned with history before anything is written down, and
 	// the order of these two steps matters:

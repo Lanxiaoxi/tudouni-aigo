@@ -593,6 +593,65 @@ var catalog = map[string]string{
 	"jobs.progress.line":              "{parts} ({ids}) — details: job_list",
 	"skills.active_label":             "Loaded skills: ",
 
+	// --- the long-running goal --------------------------------------------
+	//
+	// These sentences are read by the model rather than by a person, which is why
+	// they say what to do next instead of what went wrong: a refusal the model
+	// cannot act on is a refusal that repeats.
+	"goal.created":                    "Goal created: {objective} (round budget {rounds}).",
+	"goal.updated":                    "Goal updated ({action}).",
+	"goal.completed":                  "Goal marked complete.",
+	"goal.blocked":                    "Goal marked blocked: {reason}",
+	"goal.none":                       "There is no goal in this session ({turn}). goal: null",
+	"goal.read":                       "The current goal ({turn}):",
+	"goal.limit_reached":              "The round budget is spent, so no further round will start on its own. Raise max_goal_rounds with action=edit if the work should continue.",
+	"goal.turn.human":                 "this turn was started by the user, so create/edit/pause/resume are allowed",
+	"goal.turn.autonomous":            "this turn is an automatic continuation, so only complete and blocked are allowed",
+	"goal.refused":                    "Goal change refused ({code}).",
+	"goal.refused.exists":             "This session already has a goal. Read it with get_goal, or complete or clear the current one before starting another.",
+	"goal.refused.not_found":          "There is no goal in this session; nothing to change.",
+	"goal.refused.stale":              "goal_id or revision is not the current one — the goal changed since you read it. Call get_goal and use the id and revision it returns now.",
+	"goal.refused.phase":              "The goal is in a phase where that change does not apply. Read it with get_goal first.",
+	"goal.refused.round":              "That is not the next round number. Round numbers belong to the runtime, not to you.",
+	"goal.refused.round_limit":        "The goal has spent its round budget, so it cannot run another round. Raise max_goal_rounds with action=edit if the work should continue.",
+	"goal.refused.invalid_op":         "Unknown action. Use one of: edit, pause, resume, complete, blocked.",
+	"goal.refused.invalid_edit":       "edit needs a new objective or a new max_goal_rounds, and the new budget cannot be below the rounds already spent.",
+	"goal.refused.invalid_block":      "blocked needs blocked_reason: say concretely what is in the way (which step, which tool, which error).",
+	"goal.refused.invalid_objective":  "The objective must be non-empty and no longer than the limit. Say in one sentence what counts as done.",
+	"goal.refused.invalid_max_rounds": "max_goal_rounds must be a positive number within the ceiling.",
+	"goal.refused.not_human":          "Only the user can create, redefine, pause or resume a goal. You may read it and you may complete or block it from inside a round — if the user should decide something, ask them with ask_user.",
+
+	// --- the goal as a person sees it -------------------------------------
+	//
+	// `goal.line` is re-stated after every turn by the line terminal, so it has to
+	// read at a glance and it has to carry the one thing a phase name cannot: a
+	// goal can be active and still not running, because a resumed session is never
+	// armed.
+	"goal.line":          "goal [{phase} {rounds}] {objective}",
+	"goal.line.disarmed": "  (not continuing — `/goal resume` to restart it)",
+	"stats.goal":         "goal: {line}",
+
+	// --- what `/goal` answers ---------------------------------------------
+	"cmd.goal.hint":                "Show or control this session's long-running goal",
+	"cmd.goal.detail":              "`/goal` shows it; `/goal pause|resume|clear` stops, restarts or removes it",
+	"channels.goal.no_session":     "no session is loaded, so there is no goal to report",
+	"channels.goal.none":           "no goal in this session",
+	"channels.goal.state":          "goal: {objective} [{phase} {rounds}] — {state}",
+	"channels.goal.armed_state":    "continuing on its own",
+	"channels.goal.paused_state":   "not continuing",
+	"channels.goal.cleared":        "goal cleared",
+	"channels.goal.unknown_action": "unknown goal action {action} (expected one of: {actions})",
+	"channels.goal.unsupported":    "this runtime does not accept goal commands",
+	"channels.goal.refused":        "the goal command was refused: {problem}",
+
+	// --- the rail's goal block --------------------------------------------
+	"rail.goal":            "Goal",
+	"rail.goal.empty":      "No goal",
+	"rail.goal.empty_hint": "a long-running objective appears here",
+	"rail.goal.line":       "{phase} · {rounds}",
+	"rail.goal.armed":      "continuing on its own",
+	"rail.goal.disarmed":   "paused — `/goal resume`",
+
 	// --- what pressing t / a will remember ---------------------------------
 	"asker.remember.high":      "every future call runs directly; you will no longer see what it does",
 	"asker.remember.default":   "this tool will not ask again",

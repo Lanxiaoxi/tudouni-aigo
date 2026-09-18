@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
@@ -248,6 +249,28 @@ type Runtime struct {
 	ContextValue *context.Manager
 	// Skills is the loaded-skill board, which the payload tail renders from.
 	Skills *builtin.SkillBoard
+	// Goal is the session's long-running objective: the board the goal tools write
+	// through and the payload tail reads. It is always present — a session with no
+	// goal is the normal state, not a missing feature, and the tools have to exist
+	// for one ever to be created.
+	Goal *builtin.GoalBoard
+	// goalActivated is whether this process may start autonomous rounds for the
+	// goal. It is **not** restored from the session file, and there is no field for
+	// it in the goal block: an authorization read back from disk is an
+	// authorization nobody granted in this process.
+	//
+	// It is guarded by goalMu, and it has two writers: the driver disarms it
+	// whenever a turn does not finish normally, and the command surface arms it
+	// when a person asks for continuation. Both run on the session's own goroutine
+	// — turns never overlap — but the lock is what makes "read it and act on it"
+	// safe to reason about without depending on that.
+	goalMu        sync.Mutex
+	goalActivated bool
+	// Driver decides whether the goal gets another round after a turn ends. It is
+	// built with the runtime so that a session switch builds a new one; a driver
+	// carried across sessions would hold a reservation for a goal that is no longer
+	// loaded.
+	Driver *Driver
 	// mcpMounts is the servers currently up. Empty at start-up: mounting is a
 	// decision a person makes, not a consequence of a config file existing.
 	mcpMounts map[string]*mcpMount
@@ -410,6 +433,20 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	extra := append([]tools.Tool{}, jobTools...)
 	extra = append(extra, builtin.NewFetchWeb(runtimeValue.httpClient))
 	hasFetch := true
+
+	// The goal tools. Their commit goes straight to the session store rather than
+	// waiting for the next step boundary: a goal change is a decision about what
+	// the session is for, and losing it to a Ctrl+C that lands a second later
+	// would leave the model and the file disagreeing about which job is running.
+	goalTools := builtin.NewGoalTools(session.Metadata, session, runtimeValue.checkpoint)
+	runtimeValue.Goal = goalTools.Board
+	extra = append(extra, goalTools.All...)
+
+	// The driver is built here and not armed. A resumed session must never begin
+	// autonomous work on its own, and "built unarmed" is the only version of that
+	// rule a future change cannot forget to apply: there is no path from loading a
+	// session to an armed goal.
+	runtimeValue.Driver = NewDriver(runtimeValue)
 
 	hasSearch := false
 	if tool, ok := builtin.NewWebSearch(runtimeValue.WebCfg.TavilyAPIKey,
@@ -711,6 +748,28 @@ func (r *Runtime) JobsProgressLine() string {
 	return r.Jobs.ProgressLine()
 }
 
+// GoalLine implements protocol.Runtime: the goal as one line for the transcript,
+// or "" when this session has none.
+//
+// "" for no goal, rather than a line saying there is none: the line terminal
+// re-states this after every turn, and a sentence about the absence of a goal is a
+// sentence that would appear in every session that never had one. The `/goal`
+// command answers the question explicitly for anybody who asks it.
+func (r *Runtime) GoalLine() string {
+	goal, ok := state.LoadGoal(r.SessionValue.Metadata)
+	if !ok {
+		return ""
+	}
+	line := i18n.T("goal.line",
+		"objective", goal.Objective,
+		"phase", string(goal.Phase),
+		"rounds", goal.RoundsText())
+	if !r.GoalArmed() {
+		line += i18n.T("goal.line.disarmed")
+	}
+	return line
+}
+
 // lastTurnMs is the wall time of the most recent turn, and whether there is one.
 //
 // Paired **by run_id**, not taken as the last `run_finished` line: when a turn dies
@@ -997,6 +1056,14 @@ func openContext(session *state.Session, chat model.ChatModel, catalog state.Reg
 	return manager, context.DefaultProcessor(), missing, nil
 }
 
+// Checkpoint writes the session down. It is the public name for what the agent
+// calls between whole steps, and it exists because the goal layer has two more
+// writers of session state: the goal tools, which commit a decision about what the
+// session is for, and the driver, which commits a spent round number. Both need
+// that write to happen before they return rather than at the next step boundary,
+// and both live outside this file.
+func (r *Runtime) Checkpoint() { r.checkpoint() }
+
 func (r *Runtime) checkpoint() {
 	if r.Store == nil || r.SessionValue == nil {
 		return
@@ -1065,16 +1132,24 @@ func (r *Runtime) onEvent(record map[string]any) {
 
 // notes is the trailing block appended to every request payload.
 //
-// Four parts, in this order: the skill catalogue, the loaded skill bodies, the task
-// list, and the background-job warning. None of them enters the session's messages:
-// all four are this run's working memory, not something either party said.
+// Six parts, in this order: the skill catalogue, the loaded skill bodies, the
+// goal, the task list, the background-job warning, and the delegations in flight.
+// None of them enters the session's messages: all six are this run's working
+// memory, not something either party said.
 //
-// **The background jobs go last on purpose.** That one is the only part where not
-// reading it causes an error — treating a command that is still running as one that
-// succeeded is the single silent mistake this feature makes possible — and the end
-// of the payload sits closest to the token the model is about to generate, which is
+// **The order is by how costly it is to miss.** The catalogue is a menu; the goal
+// and the task list are what the model is doing and why; the jobs and the
+// delegations are the two places where not reading the notice causes an error
+// (treating a command that is still running as one that succeeded), and the end of
+// the payload sits closest to the token the model is about to generate — which is
 // also the most expensive and the only position that should differ between two
 // consecutive requests.
+//
+// The goal goes **above** the task list because it is the more durable of the two:
+// a task list is this turn's plan and the goal is what the plan is for, so a model
+// reading them in that order reads "why, then what". It also has to be in the tail
+// rather than left in the history for the same reason the list does — the history
+// holds N stale copies, and compaction is what folds the oldest of them away first.
 func (r *Runtime) notes() string {
 	var parts []string
 	// The skill catalogue goes out every round rather than into the system prompt.
@@ -1089,6 +1164,14 @@ func (r *Runtime) notes() string {
 		}
 		if note := r.Skills.Note(); note != "" {
 			parts = append(parts, note)
+		}
+	}
+	// The goal, if this session has one. It is rendered from the same board the
+	// goal tools write through, so the model cannot be told one thing here and
+	// another thing by get_goal.
+	if r.Goal != nil {
+		if goal, ok := state.LoadGoal(r.SessionValue.Metadata); ok {
+			parts = append(parts, state.GoalText(goal, r.activation()))
 		}
 	}
 	// The task list the model maintains itself. It has to be here rather than left
@@ -1117,6 +1200,21 @@ func (r *Runtime) notes() string {
 }
 
 // --- protocol.Runtime -------------------------------------------------------
+
+// activation reads the live authorization for the goal.
+//
+// A resumed session always answers "disarmed". That is the rule the design turns
+// on: reopening a session must never resume autonomous work, because the person
+// who asked for it is not necessarily the person now looking at the screen. The
+// check is written as a direct test of Resumed rather than left to the field's
+// zero value, so that a later change arming goals during assembly has to decide
+// about this case explicitly instead of inheriting it.
+func (r *Runtime) activation() state.Activation {
+	if r.Resumed || !r.goalActivated {
+		return state.ActivationDisarmed
+	}
+	return state.ActivationArmed
+}
 
 // SessionID implements protocol.Runtime.
 func (r *Runtime) SessionID() string { return r.SessionIDValue }
@@ -1217,6 +1315,10 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		"risk_scope":       r.riskScope(),
 		"agents_md":        agentsMDRows(r.SessionValue),
 		"mcp":              []any{},
+		// Always present, in both the "there is one" and "there is not" shapes: a
+		// front end with two cases to draw has two places to get the empty one
+		// wrong.
+		"goal": r.GoalPanel(),
 	}
 	// Empty lists go out as `[]`, never as `null`. A front end that has to tell
 	// "there are none" apart from "the runtime did not say" is a front end with a
