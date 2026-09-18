@@ -164,6 +164,29 @@ func (m model) renderWelcomeBox(width, contentLines int, title string, content [
 	return strings.Join(rows, "\n")
 }
 
+// panelBackground is the surface a **modal** is painted on.
+//
+// It never answers with the "do not paint" sentinel, and that is the whole point.
+// `elevated` and `sunk` are derived from the palette and are therefore opaque even
+// for a transparent theme — so a modal whose own background was transparent while
+// its head line was `elevated` and its argument block was `sunk` came out as **three
+// surfaces in one rectangle**: terminal-coloured body, one lighter band and one
+// darker band. On a real screen that reads as a patchwork rather than as a panel,
+// and the light/dark bands no longer mean anything because there is nothing for them
+// to be lighter or darker *than*.
+//
+// So the modal keeps an opaque card. The deep clear variant's bargain is about the
+// bars and the welcome screen — surfaces whose entire job is to be a slab, and which
+// have nothing on top of them — and a panel with structure inside it is not one of
+// those. The colour is the shade the palette is transparent *in front of*, the same
+// rule `darkColor` follows for text on an accent background.
+func panelBackground() string {
+	if currentTheme.elevated == "" || currentTheme.elevated == ansiDefault {
+		return originalBgOf(currentTheme.palette)
+	}
+	return currentTheme.elevated
+}
+
 // boxTopLine is `╭─ Start ─────────────╮`, painted in the frame's colours.
 func boxTopLine(width int, title string) string {
 	const corner = "╭"
@@ -500,10 +523,11 @@ func highlightRows(row string, inner int, paint func(string) string) []string {
 // screen by being on top.
 func overlayFrame(width int, title, badge, body string) string {
 	frameWidth := overlayFrameWidth(width)
+	background := panelBackground()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(currentTheme.hairline)).
-		Background(lipgloss.Color(currentTheme.elevated)).
+		Background(lipgloss.Color(background)).
 		Width(frameWidth).Padding(1, 2)
 	head := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(currentTheme.ink4)).Bold(true).Render(title)
@@ -518,7 +542,11 @@ func overlayFrame(width int, title, badge, body string) string {
 		}
 		head += currentTheme.styleFor("rule").Render(badge)
 	}
-	return style.Render(head + "\n" + body)
+	// Every row is painted on the frame's background before lipgloss pads it: a
+	// background only covers the cells that exist, so a row of plain text leaves the
+	// cells to its right on whatever is underneath — which is how a panel ends up
+	// looking like it is missing a strip.
+	return style.Render(paintBackground(head+"\n"+body, frameWidth-4, background))
 }
 
 // selectedRow is the visual anchor for "the cursor is here": a block glyph for

@@ -856,10 +856,11 @@ func (m model) renderPermissionDialog() string {
 
 	head := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.danger)).Bold(true)
 	boxWidth := min(m.width-8, 96)
+	background := panelBackground()
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(currentTheme.danger)).
-		Background(lipgloss.Color(currentTheme.elevated)).
+		Background(lipgloss.Color(background)).
 		Padding(0, 1).
 		Width(boxWidth)
 	// `Width()` includes the padding and the border is added on top, so a box built
@@ -956,7 +957,11 @@ func (m model) renderPermissionDialog() string {
 	builder.WriteString("\n" + currentTheme.styleFor("rule").
 		Render(i18n.T("permission_dialog.footer")))
 
-	return box.Render(builder.String())
+	// Every row is painted on the card's background before it is handed to the box:
+	// leaving the body transparent and relying on the box's own background is what
+	// produced a panel made of three surfaces, because `elevated` and `sunk` stay
+	// opaque even when the theme does not.
+	return box.Render(paintBackground(builder.String(), inner, background))
 }
 
 // permissionHint is `t = <consequence>`. The consequence sentence comes from the
@@ -1004,10 +1009,11 @@ func (m model) renderQuestionDialog() string {
 	header, _ := protocol.String(request, "header")
 
 	boxWidth := min(m.width-8, 96)
+	background := panelBackground()
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(currentTheme.accent)).
-		Background(lipgloss.Color(currentTheme.elevated)).
+		Background(lipgloss.Color(background)).
 		Padding(0, 1).
 		Width(boxWidth)
 	// As in the approval dialog: `Width()` includes the padding, the border is added
@@ -1054,7 +1060,8 @@ func (m model) renderQuestionDialog() string {
 	builder.WriteString("\n" + currentTheme.styleFor("rule").
 		Render(i18n.T("question_dialog.footer1")+"\n"+i18n.T("question_dialog.footer2")))
 
-	return box.Render(builder.String())
+	// Painted for the same reason as the approval card: see panelBackground.
+	return box.Render(paintBackground(builder.String(), inner, background))
 }
 
 func renderArgument(value any) string {
