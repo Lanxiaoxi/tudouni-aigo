@@ -656,7 +656,7 @@ func (m *model) openOptionPicker(title string, options []option, start pickerSta
 	cursor := 0
 	current := -1
 	for index, opt := range options {
-		if opt.note == i18n.T("picker.current") {
+		if opt.current {
 			current = index
 		}
 	}
@@ -995,17 +995,20 @@ func (m model) modelOptions() []option {
 			rowText += "  " + summary
 		}
 
+		// The note is assembled in reading order — label, then window — and the
+		// "(current)" marker is not part of it: that is `current`, drawn as the dot
+		// on the row. Prefixing the note with it is what used to make the dot
+		// disappear on every row that had a window or a label to show.
 		note := ""
-		if name == m.panel.model {
-			note = i18n.T("picker.current")
-		}
 		if window, ok := row["window"]; ok && window != nil {
-			note = windowText(window) + "  " + note
+			note = windowText(window)
 		}
 		if label != "" && label != id {
-			note = label + "  " + note
+			note = strings.TrimSpace(label + "  " + note)
 		}
-		options = append(options, option{value: name, row: rowText, note: strings.TrimSpace(note)})
+		options = append(options, option{
+			value: name, row: rowText, note: note, current: name == m.panel.model,
+		})
 	}
 	// Retired names go in their own list after the live ones, and **cannot be
 	// chosen**: they are recognised, not selectable (the endpoint retired the model
@@ -1032,11 +1035,9 @@ func (m model) modelOptions() []option {
 func (m model) effortOptions() []option {
 	options := make([]option, 0, len(m.effortLevels))
 	for _, level := range m.effortLevels {
-		note := ""
-		if level == m.panel.effort {
-			note = i18n.T("picker.current")
-		}
-		options = append(options, option{value: level, row: level, note: note})
+		options = append(options, option{
+			value: level, row: level, current: level == m.panel.effort,
+		})
 	}
 	return options
 }

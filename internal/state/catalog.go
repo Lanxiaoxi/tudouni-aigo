@@ -255,7 +255,7 @@ func Load(path string) (Registry, error) {
 	var providers []Provider
 	source := cfg.Path
 
-	for _, name := range sortedKeys(cfg.Providers) {
+	for _, name := range providerNames(cfg) {
 		item := cfg.Providers[name]
 		where := i18nText("catalog.where.provider", "file", baseName(source), "name", name)
 
@@ -404,6 +404,36 @@ func modelsFrom(raw any, provider, where string) ([]ModelRef, error) {
 		})
 	}
 	return out, nil
+}
+
+// providerNames lists the route names to build the catalogue from, in the order
+// the document declares them.
+//
+// That order is load-bearing rather than cosmetic: the first usable route is the
+// default route, and the same order is what the `/model` list shows, so it is how
+// a person states which route they mean to be on. Inferring it by sorting would
+// make the alphabet the decision-maker.
+//
+// A name the ordered pass did not report still gets visited — the catalogue
+// omitting a configured route would be a worse failure than showing it in the
+// wrong place, and a route that reaches the list is one the user can at least
+// select or complain about.
+func providerNames(cfg config.UserConfig) []string {
+	names := make([]string, 0, len(cfg.Providers))
+	seen := map[string]bool{}
+	for _, name := range cfg.ProviderOrder {
+		if _, known := cfg.Providers[name]; !known || seen[name] {
+			continue
+		}
+		names = append(names, name)
+		seen[name] = true
+	}
+	for _, name := range sortedKeys(cfg.Providers) {
+		if !seen[name] {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func textField(raw map[string]any, key, where string) (string, error) {

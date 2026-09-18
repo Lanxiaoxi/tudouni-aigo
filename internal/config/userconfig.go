@@ -90,6 +90,15 @@ type UserConfig struct {
 	// Providers is the raw `providers` section. This package does not interpret
 	// it; the model catalog does.
 	Providers map[string]any
+	// ProviderOrder is the route names in the order the file lists them.
+	//
+	// It sits beside the map rather than inside its type because the order is a
+	// decision the user made and then cannot see: a Go map has none, and `range`
+	// over one is randomised on purpose. The catalogue takes the **first usable
+	// route** as the default, so losing this order silently hands the default to
+	// whichever name sorts first — a change nobody asked for, and one that
+	// nothing reports.
+	ProviderOrder []string
 	// Web is the raw `web` section, flattened to string values.
 	Web map[string]string
 	// UI is the raw `ui` section. Retained only so UiLanguageIgnored can say
@@ -199,7 +208,7 @@ func Read(path string) (UserConfig, error) {
 		return UserConfig{Path: target, LegacyEnvPath: legacyEnvPath()}, nil
 	}
 
-	raw, err := readJSONObject(target)
+	raw, text, err := readJSONDocument(target)
 	if err != nil {
 		return UserConfig{}, err
 	}
@@ -219,6 +228,7 @@ func Read(path string) (UserConfig, error) {
 	}
 
 	providers := map[string]any{}
+	order := []string{}
 	if value, ok := raw["providers"]; ok && value != nil {
 		object, ok := value.(map[string]any)
 		if !ok {
@@ -226,6 +236,7 @@ func Read(path string) (UserConfig, error) {
 				"\"providers\" in %s must be an object (route name → route config)", target)
 		}
 		providers = object
+		order = sectionKeyOrder(text, "providers")
 	}
 
 	web, err := stringMap(raw["web"], target, "web")
@@ -239,7 +250,7 @@ func Read(path string) (UserConfig, error) {
 
 	return UserConfig{
 		Path: target, Found: true,
-		Providers: providers, Web: web, UI: ui,
+		Providers: providers, ProviderOrder: order, Web: web, UI: ui,
 		LegacyEnvPath: legacyEnvPath(),
 	}, nil
 }
@@ -293,13 +304,24 @@ func ReadJSONObject(path string) (map[string]any, error) {
 }
 
 func readJSONObject(path string) (map[string]any, error) {
+	object, _, err := readJSONDocument(path)
+	return object, err
+}
+
+// readJSONDocument returns the decoded object **and the text it came from**.
+//
+// The text is handed back because one thing the decoded object cannot answer is
+// the order of its keys — see `sectionKeyOrder`. Reading the file a second time
+// to recover it would work and would also be a second chance to read a different
+// file than the one that was validated.
+func readJSONDocument(path string) (map[string]any, string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, errorf("%s", i18n.T("config.error.unreadable", "path", path, "error", err.Error()))
+		return nil, "", errorf("%s", i18n.T("config.error.unreadable", "path", path, "error", err.Error()))
 	}
 	text := stripBOM(raw)
 	if !isValidUTF8(text) {
-		return nil, errorf("%s", i18n.T("config.error.not_utf8", "path", path))
+		return nil, "", errorf("%s", i18n.T("config.error.not_utf8", "path", path))
 	}
 
 	var value any
@@ -307,15 +329,77 @@ func readJSONObject(path string) (map[string]any, error) {
 	decoder.UseNumber()
 	if err := decoder.Decode(&value); err != nil {
 		line, column, message := describeJSONError(text, err)
-		return nil, errorf("%s", i18n.T("config.error.bad_json",
+		return nil, "", errorf("%s", i18n.T("config.error.bad_json",
 			"path", path, "line", line, "column", column, "message", message))
 	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil, errorf("%s", i18n.T("config.error.not_object",
+		return nil, "", errorf("%s", i18n.T("config.error.not_object",
 			"path", path, "kind", jsonKindName(value)))
 	}
-	return object, nil
+	return object, text, nil
+}
+
+// sectionKeyOrder returns the keys of one top-level object, in the order the
+// document lists them.
+//
+// The order is a fact the user wrote down — it decides which route is the
+// default — so it has to be read out of the document rather than inferred from
+// the decoded map, which has no order at all. Sorting the names instead is the
+// bug this function exists to prevent: the default route would quietly become
+// whichever name sorts first.
+//
+// A failure here is not worth refusing the whole file over. The document has
+// already been parsed and validated by the time this runs, so the only way to
+// get here with an error is a decoder quirk; an empty result sends the caller
+// back to the sorted names, which is exactly the old behaviour.
+func sectionKeyOrder(text, section string) []string {
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.UseNumber()
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil
+	}
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return nil
+		}
+		key, _ := keyToken.(string)
+		if key != section {
+			// Skip this value whole. `Decode` reads one value of any shape, which
+			// is what makes this cheaper than walking nested objects by hand.
+			var skip json.RawMessage
+			if err := decoder.Decode(&skip); err != nil {
+				return nil
+			}
+			continue
+		}
+		return objectKeyOrder(decoder)
+	}
+	return nil
+}
+
+// objectKeyOrder walks the object the decoder is sitting on, collecting its keys.
+func objectKeyOrder(decoder *json.Decoder) []string {
+	token, err := decoder.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil
+	}
+	var out []string
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return nil
+		}
+		if key, ok := keyToken.(string); ok {
+			out = append(out, key)
+		}
+		var skip json.RawMessage
+		if err := decoder.Decode(&skip); err != nil {
+			return nil
+		}
+	}
+	return out
 }
 
 // describeJSONError turns encoding/json's offset into a line and column.

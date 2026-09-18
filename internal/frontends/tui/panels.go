@@ -30,10 +30,19 @@ const (
 
 // option is one row of a picker. The value is what goes back on the wire; the
 // row and the note are what a person reads.
+//
+// `current` is a field and not a word inside `note` because the note is display
+// text. The model rows build theirs out of the label and the context window, so a
+// marker stored in there can only be found by an exact match — and that match
+// stops matching the moment a row carries a window, which is precisely the
+// configuration that has the most to show. The dot then vanishes, the cursor
+// stops skipping the row in effect, and Enter on it is the no-op the skip was
+// there to avoid.
 type option struct {
-	value string
-	row   string
-	note  string
+	value   string
+	row     string
+	note    string
+	current bool
 }
 
 // overlay is the active floating panel.
@@ -702,7 +711,7 @@ func (m model) renderOptionPicker(width int) string {
 	var body []string
 	for index := first; index < last; index++ {
 		opt := rows[index]
-		isCurrent := opt.note == i18n.T("picker.current")
+		isCurrent := opt.current
 		row := currentRow("  "+opt.row, isCurrent, inner)
 		if index == m.overlay.cursor {
 			body = append(body, highlightRows(row, inner,
@@ -731,11 +740,12 @@ func (m model) renderOptionPicker(width int) string {
 	return overlayFrame(width, m.overlay.title, badge, panelBody(body, inner))
 }
 
-// optionNote is the row's explanation, with the "(current)" marker stripped —
-// the marker is drawn as the dot, and repeating it as text says it twice.
+// optionNote is the row's explanation. Nothing is stripped from it any more: the
+// "(current)" marker is `option.current` now, and the dot on the row is how it is
+// drawn — text that is also state had to be found by exact match, and stopped
+// being found as soon as the row carried anything else.
 func optionNote(opt option) string {
-	note := strings.TrimSpace(strings.TrimSuffix(opt.note, i18n.T("picker.current")))
-	return strings.TrimSpace(note)
+	return strings.TrimSpace(opt.note)
 }
 
 // renderMCPPanel lists the configured servers and what they are doing.
@@ -963,11 +973,9 @@ func pickerThemeOptions() []option {
 	for index, key := range themeOrder {
 		value := themes[key]
 		row := fmt.Sprintf("%d  %-5s %s", index+1, key, value.name)
-		note := value.source
-		if key == currentTheme.key {
-			note = i18n.T("picker.current") + "  " + note
-		}
-		options = append(options, option{value: string(key), row: row, note: note})
+		options = append(options, option{
+			value: string(key), row: row, note: value.source, current: key == currentTheme.key,
+		})
 	}
 	return options
 }
