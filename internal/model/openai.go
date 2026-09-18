@@ -124,6 +124,35 @@ func (m *OpenAICompatible) SwitchModel(name string) bool {
 	return true
 }
 
+// apiKeyOf is the key this adapter currently sends.
+//
+// It exists so the runtime can tell "the same route, a different model" from
+// "another route", which is the same test the previous generation made. The key is
+// the identifier that matters: two routes can share a base_url and differ only in
+// which tenant they bill.
+func (m *OpenAICompatible) apiKeyOf() string { return m.apiKey }
+
+// Install moves to another route: key, endpoint, model name and route name.
+//
+// The HTTP client is deliberately kept. It never carried the key — that goes in a
+// per-request header — and its connection pool is worth reusing. An implementation
+// whose credentials live inside the client would rebuild it here instead.
+func (m *OpenAICompatible) Install(apiKey, baseURL, model, provider string) bool {
+	if strings.TrimSpace(model) == "" {
+		return false
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		return false
+	}
+	m.apiKey = apiKey
+	m.baseURL = strings.TrimRight(baseURL, "/")
+	m.model = strings.TrimSpace(model)
+	if provider != "" {
+		m.provider = provider
+	}
+	return true
+}
+
 // SetReasoning updates the two thinking knobs.
 func (m *OpenAICompatible) SetReasoning(thinking bool, effort string) {
 	m.thinking = thinking
@@ -137,12 +166,17 @@ func (m *OpenAICompatible) SetReasoning(thinking bool, effort string) {
 // body is itself observable in the audit.
 func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[string]any, options CompleteOptions) (ModelResponse, error) {
 	if options.OnDelta == nil {
-		return m.completeOnce(messages, tools, nil)
+		return m.completeOnce(messages, tools, nil, options.ShouldStop)
 	}
 
-	response, err := m.completeOnce(messages, tools, options.OnDelta)
+	response, err := m.completeOnce(messages, tools, options.OnDelta, options.ShouldStop)
 	if err == nil {
 		return response, nil
+	}
+	// A cancelled turn is not a failure to retry. Retrying it would send the
+	// request again after the user asked for it to stop.
+	if IsCancelled(err) {
+		return ModelResponse{}, err
 	}
 
 	// A gateway that rejects `stream_options` cannot report usage while streaming.
@@ -157,7 +191,7 @@ func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[strin
 	if options.OnAttemptStarted != nil {
 		options.OnAttemptStarted()
 	}
-	return m.completeOnce(messages, tools, options.OnDelta)
+	return m.completeOnce(messages, tools, options.OnDelta, options.ShouldStop)
 }
 
 // streamOptionsRejection marks a 400 that is specifically about stream_options.
@@ -170,7 +204,7 @@ func isStreamOptionsRejection(err error) bool {
 	return ok
 }
 
-func (m *OpenAICompatible) completeOnce(messages []map[string]any, tools []map[string]any, sink DeltaSink) (ModelResponse, error) {
+func (m *OpenAICompatible) completeOnce(messages []map[string]any, tools []map[string]any, sink DeltaSink, shouldStop func() bool) (ModelResponse, error) {
 	body := m.requestBody(messages, tools, sink != nil)
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -204,7 +238,7 @@ func (m *OpenAICompatible) completeOnce(messages []map[string]any, tools []map[s
 	if sink == nil {
 		return parseUnaryResponse(response.Body)
 	}
-	return parseStream(response.Body, sink)
+	return parseStreamWithStop(response.Body, sink, shouldStop)
 }
 
 func (m *OpenAICompatible) requestBody(messages []map[string]any, tools []map[string]any, stream bool) map[string]any {
@@ -217,9 +251,7 @@ func (m *OpenAICompatible) requestBody(messages []map[string]any, tools []map[st
 	}
 	// The thinking knobs are read on every call, which is what makes "it takes
 	// effect on the next request" true.
-	for key, value := range state.RequestFields(m.thinking, m.effort) {
-		body[key] = value
-	}
+	applyRequestFields(body, state.RequestFields(m.thinking, m.effort))
 	if stream {
 		body["stream"] = true
 		if streamOptionsSupported(m.baseURL, m.model) {
@@ -227,6 +259,36 @@ func (m *OpenAICompatible) requestBody(messages []map[string]any, tools []map[st
 		}
 	}
 	return body
+}
+
+// applyRequestFields merges the thinking knobs into a raw request body the way
+// the OpenAI SDK does, and the difference is not cosmetic.
+//
+// `state.RequestFields` describes the parameters the way the previous generation
+// wrote them: in SDK terms. Over there the dict goes to
+// `chat.completions.create(**fields)`, and the SDK treats `extra_body` as an
+// **escape hatch** — it merges that object into the top level of the JSON it
+// sends, which is the only way to reach a field the SDK has no type for. So the
+// wire body carries a top-level `thinking`, and the endpoint never sees the string
+// "extra_body".
+//
+// This package writes the JSON itself, so there is no SDK to do that merge. Copying
+// the fields across verbatim would put a literal `extra_body` object on the wire
+// and no `thinking` at all: `/thinking off` would reach the endpoint as nothing,
+// thinking would stay on and keep being billed, and a strict gateway would reject
+// the unknown parameter outright.
+func applyRequestFields(body, fields map[string]any) {
+	for key, value := range fields {
+		if key != "extra_body" {
+			body[key] = value
+			continue
+		}
+		if extra, ok := value.(map[string]any); ok {
+			for nestedKey, nestedValue := range extra {
+				body[nestedKey] = nestedValue
+			}
+		}
+	}
 }
 
 func parseUnaryResponse(reader io.Reader) (ModelResponse, error) {

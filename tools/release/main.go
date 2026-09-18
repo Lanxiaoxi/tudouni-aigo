@@ -107,11 +107,12 @@ func run(argv []string) error {
 	host, haveHost := release.HostTarget()
 	for _, target := range targets {
 		layout := release.Layout{
-			Root:       filepath.Join(root, "dist", release.StageDirName(version, target)),
-			Target:     target,
-			Binary:     filepath.Join(root, "dist", release.StageDirName(version, target), target.BinaryName()),
-			PromptsDir: filepath.Join(root, "dist", release.StageDirName(version, target), "prompts"),
-			RgBinary:   filepath.Join(root, "dist", release.StageDirName(version, target), "tools", "vendor", "rg", target.Triple, target.RgName()),
+			Root:          filepath.Join(root, "dist", release.StageDirName(version, target)),
+			Target:        target,
+			Binary:        filepath.Join(root, "dist", release.StageDirName(version, target), target.BinaryName()),
+			PromptsDir:    filepath.Join(root, "dist", release.StageDirName(version, target), "prompts"),
+			RgBinary:      filepath.Join(root, "dist", release.StageDirName(version, target), "tools", "vendor", "rg", target.Triple, target.RgName()),
+			ExampleConfig: filepath.Join(root, "dist", release.StageDirName(version, target), "config.example.json"),
 		}
 		if !*skipBuild {
 			if err := buildTarget(root, version, target, layout.Binary); err != nil {
@@ -239,6 +240,15 @@ func stageTarget(root string, target release.Target, layout release.Layout) erro
 	}
 	if err := copyDir(filepath.Join(root, "prompts"), layout.PromptsDir); err != nil {
 		return err
+	}
+	// The configuration template ships as a file, and the previous generation's
+	// packaging list says why: the four things that travel with the code are exactly
+	// the four whose absence produces "it starts and one feature is missing". Its
+	// bytes are compiled in as well, so this copy is what a person opens rather than
+	// what keeps the program working — which is the strongest reason to check for it
+	// rather than assume it: a missing template would be invisible.
+	if err := copyFile(filepath.Join(root, "config.example.json"), layout.ExampleConfig, 0o644); err != nil {
+		return fmt.Errorf("config.example.json is missing from the repository root: %w", err)
 	}
 	sourceRg := filepath.Join(root, "tools", "vendor", "rg", target.Triple, target.RgName())
 	if err := copyFile(sourceRg, layout.RgBinary, 0o755); err != nil {

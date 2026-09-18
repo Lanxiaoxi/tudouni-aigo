@@ -60,9 +60,19 @@ type turnData struct {
 	// duration is the runtime's own measurement, frozen when the turn ends.
 	// Drawing `time.Since(startedAt)` instead would keep a finished turn's
 	// duration climbing for as long as the screen is left open.
-	duration    time.Duration
-	finished    bool
-	outcome     string // a stop_reason: answered / max_steps / cancelled / model_error / model_fatal
+	duration time.Duration
+	finished bool
+	outcome  string // a stop_reason: answered / max_steps / cancelled / model_error / model_fatal
+	// answer is the turn's final text, attached **by run_id** when the runtime
+	// reports the turn finished.
+	//
+	// It belongs to the turn rather than the transcript for a reason the protocol
+	// states outright: the `ui(run_finished)` message and the events of the turn
+	// are separate messages whose **order is not guaranteed**. Appending the answer
+	// where it arrives draws it after a turn that started later, and even in the
+	// normal order it ends up a sibling of the block instead of inside it — so the
+	// header saying "Answered" no longer owns the answer it is summarising.
+	answer      string
 	thinking    string // the model's reasoning, whole, once the step is done
 	thinkingRun string
 	expanded    bool // Ctrl+T state for this turn's thinking block
@@ -484,22 +494,28 @@ func batchLine(payload map[string]any) renderLine {
 // background bounds it and the vertical bar marks the edge. Both paths — first
 // paint and Ctrl+T expand — go through this one constructor, so folding a block
 // twice cannot grow two different shapes.
+//
+// **The text is flattened to one paragraph before wrapping.** A reasoning channel
+// that emits one word per line (they all do — the delimiter is not a sentence
+// break) would otherwise draw a 400-character thought as 100 quoted rows, which
+// pushes the answer off the screen. Wrapping comes after the flattening, so the
+// block still respects the width; what it no longer respects is a newline that was
+// never a paragraph break to begin with.
 func thinkingBody(text string, width int) []string {
-	if strings.TrimSpace(text) == "" {
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(text, "\n", " ")), " ")
+	if flat == "" {
 		return nil
 	}
 	background := lipgloss.NewStyle().Background(lipgloss.Color(currentTheme.sunk))
 	body := currentTheme.styleFor("think_body")
 	bar := currentTheme.styleFor("quote")
 	var out []string
-	for _, raw := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-		for _, physical := range wrapCells(raw, maxInt(width-6, 20)) {
-			// Two halves make the block: the sunken background bounds it and the
-			// vertical bar marks the edge. The bar carries its own role — the
-			// line colour, one step quieter than the words it frames.
-			out = append(out, background.Render(
-				bar.Render("  │ ")+body.Render(physical)))
-		}
+	for _, physical := range wrapCells(flat, maxInt(width-6, 20)) {
+		// Two halves make the block: the sunken background bounds it and the
+		// vertical bar marks the edge. The bar carries its own role — the
+		// line colour, one step quieter than the words it frames.
+		out = append(out, background.Render(
+			bar.Render("  │ ")+body.Render(physical)))
 	}
 	return out
 }
@@ -661,10 +677,14 @@ func maxInt(a, b int) int {
 }
 
 // msText renders milliseconds, seconds over a second.
+//
+// A result event with no `duration_ms` prints an em dash, not `0ms`: a measurement
+// that was never taken is not a measurement of zero, and `0ms` on a tool line reads
+// as "this was instant" — a claim the interface cannot make.
 func msText(value any) string {
 	ms, ok := asInt(value)
 	if !ok || ms <= 0 {
-		return "0ms"
+		return "—"
 	}
 	if ms < 1000 {
 		return fmt.Sprintf("%dms", ms)

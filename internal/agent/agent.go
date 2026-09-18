@@ -27,7 +27,19 @@ const (
 	// decide; the audit only needs to say roughly what happened, and write_file
 	// arguments can be megabytes.
 	AuditPreviewLimit = 200
+	// DebugPreviewLimit truncates the `--debug` previews on stderr. It is longer
+	// than the audit's because it is read by a person watching a session rather
+	// than skimmed later, and still bounded because a tool result can be megabytes.
+	DebugPreviewLimit = 400
 )
+
+// presenceText renders "is there content" for the debug lines.
+func presenceText(present bool) string {
+	if present {
+		return "有"
+	}
+	return "无"
+}
 
 // RunCancelled means the user asked to stop this turn.
 //
@@ -290,6 +302,12 @@ func (a *Agent) loop() (string, error) {
 		// fails the request.
 		a.calibrate(response.Usage)
 
+		a.debug(fmt.Sprintf("   ← 模型返回  content=%s  tool_calls=%d",
+			presenceText(response.Content != nil && *response.Content != ""), len(response.ToolCalls)))
+		if response.Content != nil && *response.Content != "" {
+			a.debugLazy(func() string { return "      content: " + preview(*response.Content, DebugPreviewLimit) })
+		}
+
 		assistant := assistantMessage(response)
 		a.Session.Append(assistant)
 
@@ -305,6 +323,11 @@ func (a *Agent) loop() (string, error) {
 			return answer, nil
 		}
 
+		// The tools of **this step**, not of the whole turn. The list is cleared at
+		// the top of every step because it ends up in StepLimitExceeded, and that
+		// message has one job: to say which tools the turn was stuck on. Accumulated
+		// over 120 steps it is a hundred names and no clue.
+		a.toolsUsed = a.toolsUsed[:0]
 		if err := a.runBatch(response.ToolCalls); err != nil {
 			if isCancelled(err) {
 				a.finish(StopCancelled)
@@ -331,6 +354,11 @@ func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
 	payload := a.Payload()
 
 	options := model.CompleteOptions{}
+	if a.ShouldStop != nil {
+		// Handed to the adapter as well: a stream in flight has to be dropped at
+		// the next chunk, not at the next step boundary. See CompleteOptions.
+		options.ShouldStop = a.ShouldStop
+	}
 
 	// The relay sends increments only when somebody is listening. A stream nobody
 	// reads costs the same and delivers less, and whether `stream` appears in the
@@ -345,6 +373,7 @@ func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
 
 	var streamed bool
 	hooks := RetryHooks{
+		ShouldStop: a.ShouldStop,
 		BeforeEach: func() {
 			if streamed {
 				if a.OnDelta != nil {
@@ -428,6 +457,9 @@ func (a *Agent) reportAttempt(attempt Attempt) {
 	if attempt.BackoffMs != nil {
 		data["backoff_ms"] = *attempt.BackoffMs
 	}
+	if attempt.Status != "ok" {
+		a.debug(fmt.Sprintf("   ↻ 模型调用失败（第 %d 次），准备重试", attempt.Number))
+	}
 	if response := attempt.Response; response != nil {
 		data["tool_calls"] = len(response.ToolCalls)
 		if response.Usage != nil {
@@ -495,15 +527,24 @@ type prepared struct {
 //
 // The whole batch is prepared first — parsed, looked up, approved — and only then
 // executed. Two consequences follow from that order, and both are wanted: the
-// approvals happen on this goroutine in the model's order, so a person sees the
-// questions in a predictable sequence; and nothing starts running before the last
-// question has been answered.
+// runBatch decides whether one step's calls can run together, and runs them.
+//
+// The parallel path prepares the **whole batch first** — parsed, looked up, approved
+// — and only then executes. That order is what a concurrent batch needs: nothing may
+// start before the last question has been answered, because a person's yes to the
+// third call must not be given while the first two are already writing files.
+//
+// The serial path is the opposite on purpose: **report → decide → run → report, one
+// call at a time**. A person asked about call *n+1* has to be able to see the result
+// of call *n* first — that result is part of what they are judging with, and the
+// previous generation states it as a rule. It also keeps the audit interleaved the
+// way a reader expects: call, permission, result, call, permission, result.
 func (a *Agent) runBatch(calls []model.ToolCall) error {
 	batch := make([]prepared, 0, len(calls))
 	parallel := len(calls) > 1
 
 	for index, call := range calls {
-		item := a.prepare(index, call)
+		item := a.inspect(index, call)
 		if item.tool.Name != "" {
 			a.toolsUsed = append(a.toolsUsed, item.tool.Name)
 			if !item.tool.ParallelSafe || item.tool.Interactive {
@@ -516,20 +557,29 @@ func (a *Agent) runBatch(calls []model.ToolCall) error {
 	}
 
 	if parallel {
+		for i := range batch {
+			a.approve(&batch[i])
+		}
 		a.runParallel(batch)
+		// A call that never ran still produced a result as far as the audit is
+		// concerned: the model asked for it, and "it was refused" or "its arguments
+		// were invalid" is the outcome. Recording only the executions would leave
+		// the log showing a tool_call with nothing after it, which reads like a
+		// crash.
+		for i := range batch {
+			if batch[i].failure != "" {
+				a.reportToolResult(&batch[i], 0, false)
+			}
+		}
 	} else {
 		for i := range batch {
+			// Adjacent, always: the question about this call comes after the
+			// previous call's result has been shown.
+			a.approve(&batch[i])
 			a.runOne(&batch[i])
-		}
-	}
-
-	// A call that never ran still produced a result as far as the audit is
-	// concerned: the model asked for it, and "it was refused" or "its arguments
-	// were invalid" is the outcome. Recording only the executions would leave the
-	// log showing a tool_call with nothing after it, which reads like a crash.
-	for i := range batch {
-		if batch[i].failure != "" {
-			a.reportToolResult(&batch[i], 0, false)
+			if batch[i].failure != "" {
+				a.reportToolResult(&batch[i], 0, false)
+			}
 		}
 	}
 
@@ -542,21 +592,15 @@ func (a *Agent) runBatch(calls []model.ToolCall) error {
 	return nil
 }
 
-func (a *Agent) prepare(index int, call model.ToolCall) prepared {
+// inspect resolves one call: which tool, which arguments, and whether they are even
+// well formed. It reports the call so the log has the request even when nothing runs.
+func (a *Agent) inspect(index int, call model.ToolCall) prepared {
 	item := prepared{index: index, call: call, audit: map[string]any{}, status: statusOK}
-
-	fail := func(kind, text string) prepared {
-		item.failureKind = kind
-		item.failure = text
-		item.result = text
-		item.status = kind
-		return item
-	}
 
 	tool, known := a.Tools.Get(call.Name)
 	if !known {
 		a.reportToolCall(item, false)
-		return fail(statusInvalidArgs, "没有这个工具："+call.Name+"。请改用已注册的工具。")
+		return failPrepared(item, statusInvalidArgs, "没有这个工具："+call.Name+"。请改用已注册的工具。")
 	}
 	item.tool = tool
 
@@ -564,28 +608,44 @@ func (a *Agent) prepare(index int, call model.ToolCall) prepared {
 	if strings.TrimSpace(call.Arguments) != "" {
 		if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
 			a.reportToolCall(item, false)
-			return fail(statusInvalidArgs, "参数不是合法 JSON："+err.Error())
+			return failPrepared(item, statusInvalidArgs, "参数不是合法 JSON："+err.Error())
 		}
 	}
 	item.arguments = arguments
-
 	a.reportToolCall(item, false)
+	return item
+}
 
+// approve asks the permission gate and validates the arguments, in that order.
+func (a *Agent) approve(item *prepared) {
+	if item.failure != "" {
+		return
+	}
 	// Permission. The verdict is recorded whether or not anybody was asked,
 	// because "why did this not ask" is a question the log has to answer.
-	verdict := security.Check(tool.Name, tool.Risk, arguments, a.Policy, a.Ask, a.Memory, a.Clock, a.autopilot)
-	a.reportPermission(tool, arguments, verdict)
+	verdict := security.Check(item.tool.Name, item.tool.Risk, item.arguments,
+		a.Policy, a.Ask, a.Memory, a.Clock, a.autopilot)
+	a.reportPermission(item.tool, item.arguments, verdict)
 
 	if verdict.Denial != "" {
-		return fail("denied", verdict.Denial)
+		*item = failPrepared(*item, "denied", verdict.Denial)
+		return
 	}
 
 	// Validation runs before execution so a schema rejection is reported as
 	// invalid arguments rather than as the tool failing to run — the model can fix
 	// the first and cannot fix the second.
-	if _, err := tools.Validate(tool.Parameters(), arguments); err != nil {
-		return fail(statusInvalidArgs, "参数不合法："+err.Error())
+	if _, err := tools.Validate(item.tool.Parameters(), item.arguments); err != nil {
+		*item = failPrepared(*item, statusInvalidArgs, "参数不合法："+err.Error())
 	}
+}
+
+// failPrepared marks a call that will not run, with the text the model gets back.
+func failPrepared(item prepared, kind, text string) prepared {
+	item.failureKind = kind
+	item.failure = text
+	item.result = text
+	item.status = kind
 	return item
 }
 
@@ -639,6 +699,13 @@ func (a *Agent) reportToolResult(item *prepared, durationMs int, ok bool) {
 		}
 		data[key] = value
 	}
+	// Lazy, and this line is where the saving is largest: a tool result is routinely
+	// hundreds of thousands of characters (read_file does not paginate), and
+	// preview() scans the whole thing.
+	a.debugLazy(func() string {
+		return fmt.Sprintf("   ← 工具结果 (%d 字符): %s",
+			len([]rune(item.result)), preview(item.result, DebugPreviewLimit))
+	})
 	a.emit(audit.Event(audit.KindToolResult, a.Session.SessionID, a.runID, a.step, data))
 }
 
@@ -685,6 +752,11 @@ func (a *Agent) reportToolCall(item prepared, parallel bool) {
 	if parallel {
 		data["parallel"] = true
 	}
+	// Lazy: a `write_file` argument carries the whole file, and preview() walks it.
+	a.debugLazy(func() string {
+		return fmt.Sprintf("   → 工具调用 %s(%s)", item.call.Name,
+			preview(item.call.Arguments, 120))
+	})
 	a.emit(audit.Event(audit.KindToolCall, a.Session.SessionID, a.runID, a.step, data))
 }
 
@@ -710,6 +782,9 @@ func (a *Agent) reportPermission(tool tools.Tool, arguments map[string]any, resu
 		if err == nil {
 			data["rule"] = formatted
 		}
+	}
+	if prefix, ok := debugOutcomePrefix[result.Outcome]; ok {
+		a.debug(prefix + " " + tool.Name)
 	}
 	a.emit(audit.Event(audit.KindPermission, a.Session.SessionID, a.runID, a.step, data))
 }
@@ -818,4 +893,57 @@ func SetStderrSink(sink func(string)) {
 	}
 }
 
-func (a *Agent) reportToStderr(text string) { reportToStderrHook(text) }
+func (a *Agent) reportToStderr(text string) { reportToStderrHook("[warn] " + text) }
+
+// debug prints one line of the intermediate process to stderr.
+//
+// stderr and not stdout: the turn's answer is this program's output and can be
+// piped somewhere, while what happened on the way is diagnostics. It is off unless
+// `--debug` asked for it.
+func (a *Agent) debug(text string) {
+	if !a.Debug {
+		return
+	}
+	reportToStderrHook("[debug] " + text)
+}
+
+// debugLazy is debug for a message that costs something to build.
+//
+// The cost is the reason it takes a function instead of a string, and the cost is
+// real rather than theoretical: preview() walks the whole text to flatten newlines
+// before truncating it, so a single 8 MB `read_file` result costs about 10ms of
+// scanning — on every tool call, in every session, whether or not debug is on. With
+// a closure, that scan only happens when somebody is going to read the line.
+func (a *Agent) debugLazy(build func() string) {
+	if !a.Debug {
+		return
+	}
+	reportToStderrHook("[debug] " + build())
+}
+
+// preview flattens multi-line text into one line and marks the real length when it
+// truncates. Flattening is lossless — a newline becomes a literal `\n` — so nothing
+// can be hidden by it.
+func preview(text string, limit int) string {
+	flat := strings.ReplaceAll(text, "\n", "\\n")
+	if limit <= 0 || len([]rune(flat)) <= limit {
+		return flat
+	}
+	runes := []rune(flat)
+	return string(runes[:limit]) + fmt.Sprintf("…(共 %d 字符)", len(runes))
+}
+
+// debugOutcomePrefix names each permission outcome for the debug line.
+//
+// Every route in and out is spelled out, because "why was this not asked about" is
+// the question the line exists to answer and the outcome vocabulary is the answer.
+var debugOutcomePrefix = map[string]string{
+	security.OutcomeAutoAllowed:    "   ✓ 自动放行（等级在名单里）",
+	security.OutcomeAutopilot:      "   ✓ 自动放行（autopilot）",
+	security.OutcomeRuleAllowed:    "   ✓ 自动放行（按过 t）",
+	security.OutcomeCommandAllowed: "   ✓ 自动放行（命中命令规则）",
+	security.OutcomeApproved:       "   ✓ 用户批准",
+	security.OutcomeUserDenied:     "   ✗ 用户拒绝",
+	security.OutcomePolicyDenied:   "   ✗ 权限拒绝（策略禁止）",
+	security.OutcomeNoAsker:        "   ✗ 需要审批但未配置 asker，按拒绝处理",
+}

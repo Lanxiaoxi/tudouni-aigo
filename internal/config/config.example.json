@@ -1,0 +1,41 @@
+{
+  "$comment": [
+    "Per-machine configuration. **It follows the person** — moving to another",
+    "directory to do work should not change your keys.",
+    "",
+    "The file that takes effect is ~/.tudouni/config.json; the copy with the same",
+    "name in the repository is only the thing that gets copied.",
+    "",
+    "**There is exactly one source of configuration**: this file. No environment",
+    "variables, no .env. To change something, change this file.",
+    "",
+    "providers: **the key is the route name**, and the order is the order of the",
+    "/model list — that is, you decide which one is the default by ordering them:",
+    "the first route that has a key is the default route. A route gives three things:",
+    "    base_url    where requests go",
+    "    api_key     the key goes right here (there is no second way to write it)",
+    "    models      what is on that route; omit it and the route cannot be selected",
+    "",
+    "  If you do not know context_window, delete the whole line: then the interface",
+    "  reports usage without a percentage. A wrong percentage is worse than none —",
+    "  it gets treated as true.",
+    "",
+    "web: the keys for web search. Leave them out and web_search is not registered",
+    "(fetch_web is unaffected; a missing key there is not an error)."
+  ],
+
+  "providers": {
+    "deepseek": {
+      "base_url": "https://api.deepseek.com",
+      "api_key": "",
+      "models": [
+        {"id": "deepseek-flash", "context_window": 1000000},
+        {"id": "deepseek-v4-pro", "context_window": 1000000}
+      ]
+    }
+  },
+
+  "web": {
+    "tavily_api_key": ""
+  }
+}

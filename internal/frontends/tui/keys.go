@@ -8,7 +8,6 @@ import (
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 )
 
 // handleKey routes one keystroke.
@@ -60,18 +59,26 @@ func (m model) handleEditorKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyCtrlB:
-		// The rail toggle is a display preference, not a mode. Pressing it also
-		// **pins** the choice: from here on the interface stops opening the rail on
-		// its own, or a task list arriving would shove back what the user just
-		// folded.
-		m.railHidden = !m.railHidden
-		m.railPinned = true
+		// The rail toggle is a display preference, not a mode, and it is bound at the
+		// **window** level in the original, so it fires whatever is on top. Pressing
+		// it also **pins** the choice: from here on the interface stops opening the
+		// rail on its own, or a task list arriving would shove back what the user
+		// just folded.
+		m.toggleRail()
 		return m, nil
 
 	case tea.KeyCtrlK:
 		// The palette's named key. `/` still opens it — muscle memory from the
 		// line interface — but the hint bars advertise this one, because a key
 		// chord works while the input line already has text in it.
+		//
+		// With an empty line it inserts the `/`: the panel is about to be used to
+		// type a command, and the line is where the command goes. Leaving it blank
+		// shows the same list but hides where to type.
+		if strings.TrimSpace(m.input) == "" {
+			m.input = "/"
+			m.inputCursor = 1
+		}
 		return m, m.openCommandPalette()
 
 	case tea.KeyCtrlS:
@@ -239,6 +246,8 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 	fields := strings.Fields(text)
 	name := fields[0]
 	arguments := fields[1:]
+	// The raw remainder, for messages that quote back what was typed.
+	rest := strings.TrimSpace(strings.TrimPrefix(text, name))
 
 	switch name {
 	case "/exit", "/quit":
@@ -248,10 +257,11 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 		return m.showHelp()
 
 	case "/new":
+		// **No line here.** The `init` that comes back already prints the session's
+		// identity, and printing one now as well produces the same sentence twice.
+		// Waiting for the init also means the line is confirmation that the switch
+		// happened rather than a claim that it was asked for.
 		m.client.SwitchSession("")
-		m.appendLine(renderLine{segments: []seg{
-			{text: i18n.T("switch.new_session"), role: "notice"},
-		}}, "notice", "")
 		return m, nil
 
 	case "/resume":
@@ -266,10 +276,9 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 			m.client.ListSessions()
 			return m, nil
 		}
+		// The same reasoning as `/new`: the arriving `init` names the session, and
+		// it is the only statement that is true once the switch has actually landed.
 		m.client.SwitchSession(arguments[0])
-		m.appendLine(renderLine{segments: []seg{
-			{text: i18n.T("switch.to_session", "name", arguments[0]), role: "notice"},
-		}}, "notice", "")
 		return m, nil
 
 	case "/status":
@@ -297,10 +306,7 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 				// No catalogue on this protocol: the plain-text fallback. A picker
 				// with zero options looks like the interface is broken, when it is
 				// really the runtime speaking an older shape.
-				m.appendLine(renderLine{segments: []seg{
-					{text: i18n.T("model.current", "name", m.panel.model), role: "notice"},
-					{text: i18n.T("model.howto"), role: "rule"},
-				}}, "notice", "")
+				m.appendModelList()
 				return m, nil
 			}
 			return m, m.openOptionPicker(i18n.T("model.pick.title"), m.modelOptions(), pickerStartNext)
@@ -310,27 +316,41 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 
 	case "/thinking":
 		if len(arguments) == 0 {
+			// Three lines, not one: the state, the effort (which survives thinking
+			// being off, and that is the next thing the user wonders about), and how
+			// to change it.
 			m.appendLine(renderLine{segments: []seg{
 				{text: i18n.T("thinking.mode", "state", i18n.T("thinking."+onOff(m.panel.thinking))), role: "notice"},
 			}}, "notice", "")
+			m.appendLine(renderLine{segments: []seg{
+				{text: i18n.T("thinking.effort", "effort", m.panel.effort) +
+					thinkingEffortNote(m.panel.thinking), role: "rule"},
+			}}, "notice", "")
+			m.appendLine(renderLine{segments: []seg{
+				{text: i18n.T("thinking.howto"), role: "rule"},
+			}}, "notice", "")
 			return m, nil
 		}
-		on, known := state.ResolveThinking(arguments[0])
-		if !known {
+		// **Only the literal `on` and `off`.** The protocol takes those two words
+		// and nothing else, and the previous generation refused the aliases here on
+		// purpose: the interface and the runtime must not drift about which
+		// spellings count. `state.ResolveThinking` is the *runtime's* vocabulary
+		// (it also answers `开`, `true`, `enabled`, …); using it here would make the
+		// TUI accept eleven words and send one of two.
+		word := strings.ToLower(strings.TrimSpace(arguments[0]))
+		if word != "on" && word != "off" {
 			m.appendLine(renderLine{segments: []seg{
 				{text: i18n.T("cmd.thinking.unknown", "rest", arguments[0]), role: "warn"},
 			}}, "notice", "")
 			return m, nil
 		}
-		m.client.SetThinking(on)
+		m.client.SetThinking(word == "on")
 		return m, nil
 
 	case "/effort":
 		if len(arguments) == 0 {
 			if len(m.effortLevels) == 0 {
-				m.appendLine(renderLine{segments: []seg{
-					{text: i18n.T("effort.current", "effort", m.panel.effort), role: "notice"},
-				}}, "notice", "")
+				m.appendEffortList()
 				return m, nil
 			}
 			return m, m.openOptionPicker(i18n.T("effort.pick.title"), m.effortOptions(), pickerStartCurrent)
@@ -366,22 +386,31 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "/mcp":
+		// Two accepted shapes: no argument opens the panel, and
+		// `load|unload <name>` goes straight through for somebody who already knows
+		// which server they want.
+		//
+		// Anything else **still opens the panel**. That is the point of the branch:
+		// after a typo, "what can I do here" is the next question, and the panel is
+		// the cheapest answer to it. Leaving the user with one line of text and no
+		// way forward is the failure this exists to avoid.
 		if len(arguments) >= 2 {
-			// Validate locally as well as remotely: the runtime rejects an unknown
-			// action with a notice, and a mistyped action that looks like it was
-			// accepted is worse than one that never left.
 			action := strings.ToLower(arguments[0])
-			if action != "load" && action != "unload" {
+			if action == "load" || action == "unload" {
+				m.client.MCP(action, arguments[1:])
 				m.appendLine(renderLine{segments: []seg{
-					{text: i18n.T("cmd.mcp.unknown", "rest", arguments[0]), role: "warn"},
+					{text: i18n.T("mcp.pending", "action", action, "name", arguments[1]), role: "notice"},
 				}}, "notice", "")
 				return m, nil
 			}
-			m.client.MCP(action, arguments[1:])
 			m.appendLine(renderLine{segments: []seg{
-				{text: i18n.T("mcp.pending", "action", action, "name", arguments[1]), role: "notice"},
+				{text: i18n.T("cmd.mcp.unknown", "rest", rest), role: "warn"},
 			}}, "notice", "")
-			return m, nil
+		} else if len(arguments) == 1 {
+			// A lone word — most often `load` with the name forgotten.
+			m.appendLine(renderLine{segments: []seg{
+				{text: i18n.T("cmd.mcp.unknown", "rest", rest), role: "warn"},
+			}}, "notice", "")
 		}
 		m.overlay = overlay{kind: overlayMCP, stayOpen: true,
 			title: i18n.T("mcp_dialog.head")}
@@ -400,7 +429,10 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 		// toggles *on* is a command that does the opposite of what it says.
 		want := !m.quiet
 		if len(arguments) > 0 {
-			switch arguments[0] {
+			// Lowercased, like the previous generation: `/quiet OFF` and `/quiet Off`
+			// both mean the same thing to a person, and a command that works in one
+			// spelling and warns in another reads as a bug in the interface.
+			switch strings.ToLower(arguments[0]) {
 			case "on":
 				want = true
 			case "off":
@@ -468,24 +500,34 @@ func (m model) showHelp() (tea.Model, tea.Cmd) {
 		}
 	}
 	for _, command := range commands() {
-		segs := []seg{
+		lines = append(lines, renderLine{segments: []seg{
 			{text: "  " + fmt.Sprintf("%-*s", nameWidth, command.name), role: "process"},
 			{text: "  " + command.hint, role: "rule"},
-		}
+		}})
+		// The detail goes on its **own indented line**. It is a sentence, not a
+		// second column: appended to the row it pushes the row past the panel's
+		// inner width, and the border re-flows it — which is how one help entry
+		// turns into three lines with the highlight smeared down them.
 		if command.detail != "" {
-			segs = append(segs, seg{text: "  —  " + command.detail, role: "rule"})
+			lines = append(lines, renderLine{segments: []seg{
+				{text: strings.Repeat(" ", nameWidth+4) + command.detail, role: "rule"},
+			}})
 		}
-		lines = append(lines, renderLine{segments: segs})
 	}
 	lines = append(lines, renderLine{segments: []seg{
 		{text: i18n.T("help.keys_title"), role: "rule"},
 	}})
-	for _, pair := range append(hintPairs(false), hintPairs(true)[:2]...) {
+	for _, pair := range hintPairs(false) {
 		lines = append(lines, renderLine{segments: []seg{
 			{text: "  " + fmt.Sprintf("%-11s", pair[0]), role: "process"},
 			{text: pair[1], role: "rule"},
 		}})
 	}
+	// The arrow-key line is separate from the pairs above because it has no single
+	// key on the left: it is three behaviours behind one pair of keys.
+	lines = append(lines, renderLine{segments: []seg{
+		{text: "  " + fmt.Sprintf("%-11s", "↑ ↓") + i18n.T("hint.arrows"), role: "rule"},
+	}})
 	lines = append(lines, renderLine{segments: []seg{
 		{text: "  " + fmt.Sprintf("%-11s", "Ctrl+J") + i18n.T("hint.newline_key"), role: "rule"},
 	}})
@@ -503,6 +545,62 @@ func slashCommands() []string {
 		names = append(names, command.name)
 	}
 	return names
+}
+
+// toggleRail folds or unfolds the context rail, and pins the choice.
+func (m *model) toggleRail() {
+	m.railHidden = !m.railHidden
+	m.railPinned = true
+}
+
+// thinkingEffortNote says whether the effort level is in force.
+//
+// With thinking off the level is still remembered — that is the whole point of
+// keeping the two knobs apart — and saying so is the answer to "did I just lose the
+// level I set".
+func thinkingEffortNote(thinking bool) string {
+	if thinking {
+		return ""
+	}
+	return i18n.T("thinking.effort_off_note")
+}
+
+// appendModelList is the `/model` fallback for a runtime that sent no catalogue.
+//
+// A picker with zero options reads as a broken interface, so this route exists; it
+// says what it does know rather than the single current name, because "which models
+// can I choose" is the question the command was typed to answer.
+func (m *model) appendModelList() {
+	m.appendLine(renderLine{segments: []seg{
+		{text: i18n.T("model.current", "name", m.panel.model), role: "notice"},
+	}}, "notice", "")
+	m.appendLine(renderLine{segments: []seg{
+		{text: i18n.T("model.no_catalog"), role: "warn"},
+	}}, "notice", "")
+	m.appendLine(renderLine{segments: []seg{
+		{text: i18n.T("model.howto"), role: "rule"},
+	}}, "notice", "")
+}
+
+// appendEffortList is the `/effort` fallback: the current level, then how to change it.
+func (m *model) appendEffortList() {
+	text := i18n.T("effort.current", "effort", m.panel.effort)
+	if !m.panel.thinking {
+		text += i18n.T("effort.off_note")
+	}
+	m.appendLine(renderLine{segments: []seg{{text: text, role: "notice"}}}, "notice", "")
+	if len(m.effortLevels) == 0 {
+		m.appendLine(renderLine{segments: []seg{
+			{text: i18n.T("effort.no_catalog"), role: "warn"},
+		}}, "notice", "")
+		m.appendLine(renderLine{segments: []seg{
+			{text: i18n.T("effort.howto_bare"), role: "rule"},
+		}}, "notice", "")
+		return
+	}
+	m.appendLine(renderLine{segments: []seg{
+		{text: i18n.T("effort.howto", "levels", strings.Join(m.effortLevels, " / ")), role: "rule"},
+	}}, "notice", "")
 }
 
 func onOff(value bool) string {
@@ -587,7 +685,12 @@ func (m *model) openSessionPicker(payload map[string]any) {
 			i18n.Tn("status.session.messages", messages, "n", messages),
 			i18n.Tn("status.session.steps", steps, "n", steps),
 			clipText(preview, 40))
-		if todos := intOf(row["todos"]); todos > 0 {
+		// The runtime sends `todos` as the **pre-rendered progress line**, e.g.
+		// `2/5 done, current: write the tests` — not a count. Reading it as an int
+		// yields zero for every session, so the suffix silently never appeared and
+		// "which session still has work in it" was unanswerable. That is the stated
+		// reason the field is on this row at all.
+		if todos, _ := row["todos"].(string); todos != "" {
 			line += i18n.T("session.row.todos", "todos", todos)
 		}
 		options = append(options, option{value: id, row: line})
@@ -606,6 +709,11 @@ func (m *model) openSessionPicker(payload map[string]any) {
 func (m model) handleOverlayKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay.kind == overlayCommand {
 		switch key.Type {
+		case tea.KeyCtrlB:
+			// Bound at the window level in the original, so it works with a panel
+			// open. Requiring Esc first is a key that looks broken.
+			m.toggleRail()
+			return m, nil
 		case tea.KeyEsc:
 			// Esc leaves the palette and clears the line: the line exists to hold
 			// the command, and half a command with no list is not useful.
@@ -635,6 +743,12 @@ func (m model) handleOverlayKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return after, cmd
 	}
 	switch key.Type {
+	case tea.KeyCtrlB:
+		// The rail toggle belongs to the window, not to whichever panel happens to
+		// be open: requiring Esc first makes the key look broken.
+		m.toggleRail()
+		return m, nil
+
 	case tea.KeyEsc, tea.KeyCtrlC:
 		if key.Type == tea.KeyCtrlC {
 			return m, tea.Quit
@@ -716,7 +830,21 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 	case overlayCommand:
 		rows := m.filteredCommands()
 		if m.overlay.cursor >= len(rows) {
-			return m, nil
+			// Nothing matched, so there is no row to run — but Enter still has to do
+			// **something**. The typed line is a command as far as the user is
+			// concerned, so it goes through the normal dispatch, which answers
+			// "no such command" and lists them. Swallowing the key leaves the line
+			// sitting there with no feedback at all.
+			typed := strings.TrimSpace(m.input)
+			m.overlay = overlay{}
+			if typed == "" {
+				m.input = ""
+				m.inputCursor = 0
+				return m, nil
+			}
+			m.input = ""
+			m.inputCursor = 0
+			return m.runCommand(typed)
 		}
 		picked := rows[m.overlay.cursor]
 		// The argument comes from the line the user typed, not from the panel: the
@@ -838,7 +966,7 @@ func (m *model) settleOverlay(code, text string) {
 // opened to change something, and the row it lands on should not be the row
 // already in effect — Enter on that row is a no-op that looks like a hang.
 func (m model) modelOptions() []option {
-	options := make([]option, 0, len(m.modelCatalog))
+	options := make([]option, 0, len(m.modelCatalog)+len(m.modelAliases))
 	for _, item := range m.modelCatalog {
 		row, ok := item.(map[string]any)
 		if !ok {
@@ -846,19 +974,52 @@ func (m model) modelOptions() []option {
 		}
 		id, _ := row["id"].(string)
 		provider, _ := row["provider"].(string)
-		window, _ := row["context_window"]
 		name := id
 		if provider != "" {
 			name = provider + "/" + id
 		}
+
+		// The row carries what the model is **for**, not just its name. Two routes
+		// can serve the same id, and the only thing that tells them apart is the
+		// route in front of it; the summary and the label are what the catalogue
+		// author wrote to say which one this is.
+		summary, _ := row["summary"].(string)
+		label, _ := row["label"].(string)
+		rowText := name
+		if summary != "" {
+			rowText += "  " + summary
+		}
+
 		note := ""
 		if name == m.panel.model {
 			note = i18n.T("picker.current")
 		}
-		if window != nil {
+		if window, ok := row["window"]; ok && window != nil {
 			note = windowText(window) + "  " + note
 		}
-		options = append(options, option{value: name, row: name, note: strings.TrimSpace(note)})
+		if label != "" && label != id {
+			note = label + "  " + note
+		}
+		options = append(options, option{value: name, row: rowText, note: strings.TrimSpace(note)})
+	}
+	// Retired names go in their own list after the live ones, and **cannot be
+	// chosen**: they are recognised, not selectable (the endpoint retired the model
+	// and a newer one serves the requests). Putting them in the main list would
+	// offer two rows with the same effect and no way to tell which is which.
+	for _, item := range m.modelAliases {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := row["id"].(string)
+		of, _ := row["of"].(string)
+		if id == "" {
+			continue
+		}
+		options = append(options, option{
+			row:  i18n.T("model.aliases", "old", id, "new", of),
+			note: i18n.T("picker.alias"),
+		})
 	}
 	return options
 }

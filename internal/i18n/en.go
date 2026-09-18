@@ -129,6 +129,7 @@ var catalog = map[string]string{
 	"effort.pick.title": "Change the reasoning effort",
 	"theme.pick.title":  "Change the theme",
 	"picker.current":    "(current)",
+	"picker.alias":      "(a retired name — it is recognised, not selectable)",
 	"picker.footer":     "↑↓ move · Enter pick · Esc leave",
 	"picker.waiting":    "waiting for the runtime to apply {value}…",
 
@@ -291,6 +292,7 @@ var catalog = map[string]string{
 	"rail.summary.skills.other":         "{n} skills",
 	"rail.summary.asking":               "{risks} ask",
 	"rail.summary.all_auto":             "all auto-approved",
+	"rail.summary.autopilot":            "autopilot on",
 
 	// --- the /status screen ----------------------------------------------
 	"status.title":             "Status",
@@ -337,6 +339,32 @@ var catalog = map[string]string{
 	"status.run.ask":           "ask each time",
 	"status.tools.count":       "{n} tools (/tools for the list)",
 
+	// --- the line the REPL prints after every turn -------------------------
+	"stats.usage":             "cumulative input {prompt} tokens (cached {cached}, hit rate {hit_rate})",
+	"stats.turn":              "this turn {value}",
+	"stats.context.ratio":     "context {used}/{window} ({percent}%)",
+	"stats.context.used_only": "context {used}",
+	"stats.line":              "\n(session {name}: {messages} messages, {steps} steps; {body}.)\n",
+	"stats.todos":             "[tasks] {line}",
+	"stats.jobs":              "[background] {line}",
+
+	// --- the block that closes `--audit` -----------------------------------
+	"audit.header":              "Audit trail of session {name}: {n} records",
+	"audit.no_records":          "Session {name} has no audit records ({dir})",
+	"audit.summary.model":       "Model calls {calls} ({ok} succeeded)  input {prompt} tokens (cached {cached} / miss {miss}, hit rate {hit_rate})  output {completion} tokens",
+	"audit.summary.tools_none":  "Tool calls {calls}",
+	"audit.summary.tools":       "Tool calls {calls}  {statuses}",
+	"audit.summary.stops":       "Turn endings  {reasons}",
+	"audit.summary.cost_tip":    "Note: uncached input is where the cost is (it is about 50x the price of a cache hit), so \"how big a file was read\" decides the bill more than \"how many turns were chatted\".",
+	"audit.timing.line":         "Time  {parts}",
+	"audit.timing.model":        "model {value}",
+	"audit.timing.tool":         "tools {value}",
+	"audit.timing.saved":        "(parallel saved {value})",
+	"audit.timing.approval":     "waiting for approval {value}",
+	"audit.timing.human":        "waiting for an answer {value}",
+	"audit.timing.backoff":      "retry backoff {value}",
+	"audit.timing.unattributed": "unattributed {value}",
+	"audit.timing.run":          "turn total {value}",
 	// --- MCP ---------------------------------------------------------------
 	"rail.mcp":             "Background MCP",
 	"rail.mcp.empty":       "No MCP server is mounted",
@@ -369,6 +397,7 @@ var catalog = map[string]string{
 
 	// --- the /tools screen -------------------------------------------------
 	"tools.none":             "No tool was registered this run (this happens when an engine or a key is missing; the startup lines say why)",
+	"tools.header":           "Available tools",
 	"tools.disposition.auto": "auto",
 	"tools.disposition.ask":  "needs approval",
 	"tools.disposition.deny": "denied",
@@ -585,23 +614,26 @@ var catalog = map[string]string{
 	"notice.jobs.no_job_object":         "[background] the guarantee that \"closing the window also collects the background jobs\" was not established ({problem}). A normal exit still cleans up, but **killing this process can orphan background commands**.",
 	"notice.tools.header":               "Registered tools:",
 	"notice.tools.row":                  "  - {name} risk={risk}",
-	"notice.permissions.unknown_tools":  "[permissions] these tools in {file} are not registered, so their rules do nothing: {names}",
-	"notice.permissions.levels":         "[permissions] auto-approved by level: {levels}; never asked by name: {named}",
-	"notice.permissions.deny":           "[permissions] denied outright: {names}",
-	"notice.permissions.rules":          "[permissions] command rules (allowed by prefix) {rules}",
-	"notice.permissions.none":           "(none)",
-	"notice.model.session":              "[model] this session uses {route} ({base_url}) — /model switches, /status shows the current one.",
-	"notice.reasoning.session":          "[thinking] this session: {summary} (the default is on · {default}) — /thinking toggles it, /effort changes the strength.",
-	"notice.todos":                      "[tasks] {line}",
-	"notice.skills.available":           "[skills] {n} available: {names}",
-	"notice.skills.shadowed":            "[skills] shadowed by name: {item}",
-	"notice.skills.problem":             "[skills] {problem}",
-	"notice.skills.active":              "[skills] {line}",
-	"notice.autopilot":                  "[permissions] autopilot: no approval is asked, tools that need it run directly; you will not be asked questions either — a model calling ask_user gets \"nobody answered\" and is told to decide on its own and state its assumptions (the deny list, workspace boundaries and control-plane writes still apply)",
+	// --- what the line REPL says about flags it cannot honour --------------
+	"notice.cli.no_stream":             "[streaming] the line REPL cannot write character by character (it does not go through the protocol's delta channel); use --tui to watch it arrive. Continuing with --no-stream, so stdout stays one whole answer.",
+	"notice.cli.quiet_tui_only":        "[quiet] --quiet only affects the TUI (--tui): it changes how that interface draws, and the line REPL's output is one line per thing already.",
+	"notice.permissions.unknown_tools": "[permissions] these tools in {file} are not registered, so their rules do nothing: {names}",
+	"notice.permissions.levels":        "[permissions] auto-approved by level: {levels}; never asked by name: {named}",
+	"notice.permissions.deny":          "[permissions] denied outright: {names}",
+	"notice.permissions.rules":         "[permissions] command rules (allowed by prefix) {rules}",
+	"notice.permissions.none":          "(none)",
+	"notice.model.session":             "[model] this session uses {route} ({base_url}) — /model switches, /status shows the current one.",
+	"notice.reasoning.session":         "[thinking] this session: {summary} (the default is on · {default}) — /thinking toggles it, /effort changes the strength.",
+	"notice.todos":                     "[tasks] {line}",
+	"notice.skills.available":          "[skills] {n} available: {names}",
+	"notice.skills.shadowed":           "[skills] shadowed by name: {item}",
+	"notice.skills.problem":            "[skills] {problem}",
+	"notice.skills.active":             "[skills] {line}",
+	"notice.autopilot":                 "[permissions] autopilot: no approval is asked, tools that need it run directly; you will not be asked questions either — a model calling ask_user gets \"nobody answered\" and is told to decide on its own and state its assumptions (the deny list, workspace boundaries and control-plane writes still apply)",
 
 	// --- the runtime's replies to /model, /thinking and /effort ----------
 	"model.select.no_name":          "No model name given. /model without an argument lists them.",
-	"model.select.no_route":         "No such route: {route} — /model without an argument lists the models.",
+	"model.select.no_route":         "No such route: {route} — the routes are: {names}",
 	"model.select.route_empty":      "route {route} declares no models.",
 	"model.select.ambiguous":        "{name} exists on more than one route ({names}) — write it out: /model provider/model",
 	"model.select.unknown":          "The catalog has no such model: {name} — /model without an argument lists them. Available: {known}",
@@ -793,6 +825,31 @@ var catalog = map[string]string{
 	"skills.scan_dirs":                    "  scanned directories (low to high priority):",
 	"skills.scan_none":                    "    (none of them exists)",
 	"skills.shadowed_line":                "  [shadowed] {item}",
+
+	// --- the output of `--list`, `--skills` and `--history` ----------------
+	//
+	// Note what is **not** here: the column widths and the row layout. Padding is
+	// decided in Go, because this catalogue's `T` does not understand `{name:20}` —
+	// it would leave the placeholder on screen verbatim, which is how the skills
+	// listing read "  {name:20} body {chars:>6} chars" the first time it was written.
+	"sessions.list.header":   "Saved sessions: {n} ({dir}):",
+	"sessions.list.todos":    "; tasks {line}",
+	"sessions.list.empty":    "No saved sessions in this directory yet.",
+	"sessions.list.row":      "{name}  {messages} messages, {steps} steps{todos}",
+	"skills.dirs.header":     "Skill directories (low to high priority — personal overrides project; ✓ = exists):",
+	"skills.dirs.row":        "  {mark} {path}",
+	"skills.empty.howto":     "No skills. To add one, create <name>/SKILL.md in any directory above and start it with name and description (the format is in the README's \"Skills\" section).",
+	"skills.available":       "Available skills: {n}",
+	"skills.row.body":        "body {chars} chars  declared tools: {tools}",
+	"skills.row.no_tools":    "(none declared)",
+	"skills.line.skipped":    "  [skipped] {item}",
+	"history.header":         "Session {name}: {messages} messages, {steps} steps",
+	"history.entry":          "{preview}",
+	"history.tool_call":      "→ call {name}({arguments})",
+	"history.tool_result":    "← {preview}",
+	"history.artifact.gone":  "(Artifact {id}: the body is no longer on disk)",
+	"history.artifact.note":  "(Artifact {id}: {chars} chars{suffix}, body at {content_ref})",
+	"history.artifact.blind": "(Artifact {id}: the index cannot be read)",
 
 	// --- the checks that run before startup --------------------------------
 	"check.workspace.home":       "{here} is your home directory",

@@ -103,8 +103,14 @@ type Problem struct {
 type Catalog struct {
 	Skills   []Skill
 	Problems []Problem
-	// Roots are the directories actually scanned, lowest priority first.
+	// Roots are every directory that was **looked at**, lowest priority first. It
+	// includes the ones that do not exist, because "where could I put a skill" is
+	// answered by the directories that are not there yet.
 	Roots []string
+	// Existing is the subset of Roots that is actually on disk. It is what the
+	// `✓` in `--skills` means, and without it that mark is a lie: every candidate
+	// directory would appear to exist.
+	Existing []string
 	// Shadowed records names that lost to a higher-priority copy.
 	Shadowed []Problem
 }
@@ -177,6 +183,7 @@ func (l *Loader) Reload() Catalog {
 		if err != nil {
 			continue
 		}
+		catalog.Existing = append(catalog.Existing, root)
 		names := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			if entry.IsDir() {
@@ -236,6 +243,11 @@ func (l *Loader) Reload() Catalog {
 				},
 			})
 		}
+	}
+	// The scan walks highest-priority-first; the reported list is lowest-first, to
+	// match Roots, which is the order a reader compares the two against.
+	for left, right := 0, len(catalog.Existing)-1; left < right; left, right = left+1, right-1 {
+		catalog.Existing[left], catalog.Existing[right] = catalog.Existing[right], catalog.Existing[left]
 	}
 	return catalog
 }

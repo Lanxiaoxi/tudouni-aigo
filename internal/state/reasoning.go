@@ -100,6 +100,14 @@ func ThinkingText(value bool) string {
 // thinking is off, only the disabled marker is sent and no `reasoning_effort`
 // goes out at all. Sending both would be asking the endpoint to reconcile a
 // contradiction, and whichever way it resolves it, the bill shows it.
+//
+// **`extra_body` is a channel, not a field name.** It is how a caller says
+// "this key does not fit the typed request object, merge it into the body" — the
+// OpenAI SDK does exactly that, which is why the previous generation could write
+// `thinking` here even though the SDK has no type for it. A caller that builds
+// the JSON itself must do the same merge; `model.applyRequestFields` is the one
+// place that does. Writing the map across verbatim sends the literal string
+// "extra_body" to the endpoint and no `thinking` at all.
 func RequestFields(thinking bool, effort string) map[string]any {
 	if thinking {
 		return map[string]any{

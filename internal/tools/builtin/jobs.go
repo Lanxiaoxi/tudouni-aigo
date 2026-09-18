@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/process"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
@@ -137,12 +138,35 @@ type JobBoard struct {
 	Leftovers int
 }
 
-// NewJobBoard opens the board and prunes what the last session left behind.
+// jobsDirName is the directory under `<workspace>/.tudouni` that holds job output.
+const jobsDirName = "jobs"
+
+// NewJobBoard opens the board and prunes what the last run of **this session** left
+// behind.
+//
+// The directory is per session, and that is load-bearing rather than tidy. Job ids
+// restart at 1 for every board, so two sessions in one workspace would both write
+// `<workspace>/.tudouni/jobs/1.out` — the second session would overwrite the
+// first's output, `job_output` would read back another session's text, and the
+// prune below (which clears the directory it owns) would delete a live job's output
+// out from under it. The shown path carries the session segment for the same
+// reason: it is what a person types to look at the file themselves.
 func NewJobBoard(clock func() float64) *JobBoard {
+	return NewJobBoardForSession("", clock)
+}
+
+// NewJobBoardForSession opens the board for one session.
+//
+// An empty session id keeps the old shared location. It exists only so a test can
+// build a board without inventing an id; every real caller passes one.
+func NewJobBoardForSession(sessionID string, clock func() float64) *JobBoard {
 	if clock == nil {
 		clock = security.PerfClock
 	}
-	dir := filepath.Join(paths.WorkspaceRuntimeDir(), "jobs")
+	dir := filepath.Join(paths.WorkspaceRuntimeDir(), jobsDirName)
+	if sessionID != "" {
+		dir = filepath.Join(dir, sessionID)
+	}
 	board := &JobBoard{dir: dir, clock: clock}
 	board.Leftovers = board.prune()
 	return board
@@ -171,6 +195,64 @@ func (b *JobBoard) prune() int {
 	return count
 }
 
+// liveJobs lists the ids of jobs that are actually running.
+//
+// The live cap and the record cap are two different questions and must not share a
+// list. "Six things are running" is a statement about this machine; "six results
+// were never fetched" is a statement about the model's bookkeeping. Merging them
+// produces a refusal that says "6 个后台任务在跑" about six processes that ended
+// hours ago, and the model cannot tell the two situations apart.
+func (b *JobBoard) liveJobs() []string {
+	var live []string
+	for _, job := range b.jobs {
+		if job.Running() {
+			live = append(live, job.ID)
+		}
+	}
+	return live
+}
+
+// outstandingJobs counts the jobs whose result nobody has seen yet: still running,
+// or finished and never collected.
+func (b *JobBoard) outstandingJobs() int {
+	count := 0
+	for _, job := range b.jobs {
+		if job.Outstanding() {
+			count++
+		}
+	}
+	return count
+}
+
+// uncollectedJobs lists the ids of finished jobs whose result was never fetched.
+func (b *JobBoard) uncollectedJobs() []string {
+	var out []string
+	for _, job := range b.jobs {
+		if !job.Running() && !job.Collected() {
+			out = append(out, job.ID)
+		}
+	}
+	return out
+}
+
+// makeRoom frees the records whose information already reached the session
+// history.
+//
+// Collected records are the only ones that may go: their result is in the
+// conversation, so dropping the record loses nothing the model can still ask for.
+// A running job and a finished-but-uncollected job are both still "somebody has to
+// act", and dropping either would hide work — which is the failure this whole
+// module exists to prevent.
+func (b *JobBoard) makeRoom() {
+	kept := make([]*Job, 0, len(b.jobs))
+	for _, job := range b.jobs {
+		if !job.Collected() {
+			kept = append(kept, job)
+		}
+	}
+	b.jobs = kept
+}
+
 // Start launches a command in the background.
 func (b *JobBoard) Start(command string) (tools.Result, error) {
 	b.mu.Lock()
@@ -178,14 +260,7 @@ func (b *JobBoard) Start(command string) (tools.Result, error) {
 		b.mu.Unlock()
 		return tools.TextResult("这次会话已经在收尾了，起不了新的后台任务。"), nil
 	}
-	var live []string
-	for _, job := range b.jobs {
-		if job.Running() {
-			live = append(live, job.ID+"（在跑）")
-		} else if !job.Collected() {
-			live = append(live, job.ID+"（结果还没收）")
-		}
-	}
+	live := b.liveJobs()
 	if len(live) >= MaxLiveJobs {
 		b.mu.Unlock()
 		return tools.TextResult(fmt.Sprintf(
@@ -193,12 +268,21 @@ func (b *JobBoard) Start(command string) (tools.Result, error) {
 				"先 job_output 收掉一个、或者 job_kill 收掉不再需要的，再起新的。",
 			MaxLiveJobs, strings.Join(live, "、"))), nil
 	}
+	// The record cap counts *records*, and a record is only held onto while it
+	// still owes something. Collected ones make room first, so the advice below is
+	// true: after collecting, the next start succeeds.
+	b.makeRoom()
 	if len(b.jobs) >= MaxJobs {
+		uncollected := b.uncollectedJobs()
+		detail := "现在没有在跑的，也没有等收结果的"
+		if len(uncollected) > 0 {
+			detail = "结果是还没收的是 " + strings.Join(uncollected, "、")
+		}
 		b.mu.Unlock()
 		return tools.TextResult(fmt.Sprintf(
-			"开不了新任务：同时留着的任务最多 %d 个，而现在这 %d 个都还没收场 —— %s。\n"+
+			"开不了新任务：同时留着的任务最多 %d 个 —— %s。\n"+
 				"先用 job_output 把它们的结果收掉（收完的记录会让位），不再需要的用 job_kill 收掉。",
-			MaxJobs, len(b.jobs), strings.Join(live, "、"))), nil
+			MaxJobs, detail)), nil
 	}
 	b.counter++
 	id := strconv.Itoa(b.counter)
@@ -279,7 +363,14 @@ func (b *JobBoard) Output(jobID string, wait bool, waitSeconds int) tools.Result
 	killed := job.killed
 	reason := job.reason
 	exitCode := job.exitCode
-	job.collected = true
+	// **Only a real ending counts as "collected".** A partial read is not a result:
+	// the job is still running, so nobody has seen whether it worked. Marking it
+	// collected here would drop it out of both `job_list` and the payload-tail
+	// reminder, and "it finished and nobody ever saw the exit code" is the one
+	// silent failure this whole module is built to prevent.
+	if !stillRunning {
+		job.collected = true
+	}
 	job.mu.Unlock()
 
 	head := "--- 输出 ---"
@@ -306,9 +397,13 @@ func (b *JobBoard) Output(jobID string, wait bool, waitSeconds int) tools.Result
 		status = fmt.Sprintf("已结束（退出码 %s，跑了 %s）", exitCodeText(exitCode), durationText(job.Duration()))
 	}
 
+	auditStatus := "running"
+	if !stillRunning {
+		auditStatus = "collected"
+	}
 	return tools.Result{
 		Text:  status + "\n" + head + "\n" + body,
-		Audit: map[string]any{"job_id": jobID, "job_status": job.State()},
+		Audit: map[string]any{"job_id": jobID, "job_status": auditStatus},
 	}
 }
 
@@ -355,6 +450,41 @@ func (b *JobBoard) Kill(jobID string) tools.Result {
 			jobID),
 		Audit: map[string]any{"job_id": jobID, "job_status": JobKilled},
 	}
+}
+
+// ProgressLine is the one-line, **human** view: `2 running, 1 result not collected`
+// plus the ids. It returns "" when there is nothing to say.
+//
+// It is separate from `Note` for the same reason the task list keeps two renderings:
+// the model wants "which ones, what commands, which do I need to collect", while a
+// person wants "is anything still hanging on my machine" at a glance. Merging them
+// makes each side pay tokens for the other.
+//
+// It is one notch more important than the task list's line: a stale task list is
+// stale information, while an uncollected job is a process that is still running.
+func (b *JobBoard) ProgressLine() string {
+	if b == nil {
+		return ""
+	}
+	b.mu.Lock()
+	running := b.liveJobs()
+	uncollected := b.uncollectedJobs()
+	b.mu.Unlock()
+
+	if len(running) == 0 && len(uncollected) == 0 {
+		return ""
+	}
+	var parts []string
+	if len(running) > 0 {
+		parts = append(parts, i18n.Tn("jobs.progress.running", len(running)))
+	}
+	if len(uncollected) > 0 {
+		parts = append(parts, i18n.Tn("jobs.progress.uncollected", len(uncollected)))
+	}
+	ids := append(append([]string{}, running...), uncollected...)
+	return i18n.T("jobs.progress.line",
+		"parts", strings.Join(parts, "、"),
+		"ids", strings.Join(ids, "、"))
 }
 
 // List renders the state of every job.
@@ -540,9 +670,9 @@ func jobShownPath(full string) string {
 	return filepath.ToSlash(relative)
 }
 
-// NewJobs builds the board and its four tools.
-func NewJobs(workspace *tools.Workspace) (*JobBoard, []tools.Tool) {
-	board := NewJobBoard(nil)
+// NewJobs builds the board and its four tools for one session.
+func NewJobs(workspace *tools.Workspace, sessionID string) (*JobBoard, []tools.Tool) {
+	board := NewJobBoardForSession(sessionID, nil)
 
 	background := tools.Tool{
 		Name: "shell_background",

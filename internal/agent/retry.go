@@ -37,7 +37,7 @@ type Attempt struct {
 	BackoffMs  *int
 }
 
-// RetryHooks are the two moments the loop above needs to know about.
+// RetryHooks are the moments the loop above needs to know about.
 type RetryHooks struct {
 	// BeforeEach runs before every attempt, including the first.
 	//
@@ -52,6 +52,13 @@ type RetryHooks struct {
 	OnRetry func(backoffMs int)
 	// OnAttempt records the outcome of every attempt.
 	OnAttempt func(Attempt)
+	// ShouldStop abandons the call between attempts, and is handed to the adapter
+	// as well so a stream in flight can be dropped.
+	//
+	// It has to be consulted **between** attempts too, not only during the model
+	// call: a user who presses stop during a backoff would otherwise wait out the
+	// delay and then see the request go again.
+	ShouldStop func() bool
 	// Sleep is injected so tests do not spend real time waiting.
 	Sleep func(d time.Duration)
 }
@@ -76,6 +83,9 @@ func CallWithRetry(
 
 	var lastErr error
 	for number := 1; number <= MaxAttempts; number++ {
+		if hooks.ShouldStop != nil && hooks.ShouldStop() {
+			return model.ModelResponse{}, RunCancelled{}
+		}
 		if hooks.BeforeEach != nil {
 			hooks.BeforeEach()
 		}
@@ -90,6 +100,11 @@ func CallWithRetry(
 				hooks.OnAttempt(Attempt{Number: number, Status: "ok", DurationMs: durationMs, Response: &copied})
 			}
 			return response, nil
+		}
+		// A cancelled turn is not a failure: nothing was learned about the model,
+		// and retrying would send the request the user just asked to abandon.
+		if model.IsCancelled(err) {
+			return model.ModelResponse{}, RunCancelled{}
 		}
 
 		fatal := model.IsFatal(err)

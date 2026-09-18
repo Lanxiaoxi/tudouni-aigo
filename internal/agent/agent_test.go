@@ -17,12 +17,13 @@ import (
 // loop does with a given answer — a real model would make them flaky and would not
 // make them stronger.
 type fakeModel struct {
-	script   []model.ModelResponse
-	errs     []error
-	calls    int
-	switched bool
-	thinking bool
-	effort   string
+	script    []model.ModelResponse
+	errs      []error
+	calls     int
+	switched  bool
+	installed bool
+	thinking  bool
+	effort    string
 }
 
 func (f *fakeModel) Complete(messages []map[string]any, toolSchemas []map[string]any,
@@ -41,6 +42,14 @@ func (f *fakeModel) Complete(messages []map[string]any, toolSchemas []map[string
 
 func (f *fakeModel) SwitchModel(name string) bool { f.switched = true; return true }
 
+// Install is the route change. The fake records it separately from SwitchModel so
+// a test can tell "the model was renamed" from "the key and the endpoint moved",
+// which are different capabilities with different costs.
+func (f *fakeModel) Install(apiKey, baseURL, model, provider string) bool {
+	f.installed = true
+	return true
+}
+
 func (f *fakeModel) SetReasoning(thinking bool, effort string) {
 	f.thinking, f.effort = thinking, effort
 }
@@ -58,6 +67,11 @@ type harness struct {
 	events  []map[string]any
 	saves   int
 	tools   *tools.Registry
+	// eventHook lets a test watch the event stream in real time. The buffer above
+	// can only be read after the turn, which is not good enough for a question
+	// about **ordering** — "how many results had been emitted by the time this
+	// approval happened" is exactly that kind of question.
+	eventHook func(record map[string]any)
 }
 
 func newHarness(t *testing.T, chat model.ChatModel, ask security.AskFunc) *harness {
@@ -125,7 +139,12 @@ func newHarness(t *testing.T, chat model.ChatModel, ask security.AskFunc) *harne
 			h.saves++
 			h.checkConsistency(t)
 		},
-		OnEvent: func(record map[string]any) { h.events = append(h.events, record) },
+		OnEvent: func(record map[string]any) {
+			h.events = append(h.events, record)
+			if h.eventHook != nil {
+				h.eventHook(record)
+			}
+		},
 	})
 	return h
 }

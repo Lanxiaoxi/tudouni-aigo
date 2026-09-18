@@ -66,10 +66,14 @@ type overlay struct {
 	stayOpen bool
 }
 
-// maxOverlayRows is how many list rows a panel shows before it scrolls. The
-// original derived its cap from the command count for exactly this reason: with a
-// hard cap of 12, the last four commands existed but were unreachable.
-const maxOverlayRows = 18
+// maxOverlayRows is how many list rows a panel shows before it scrolls.
+//
+// It is **derived from the command count**, not written down. A literal was tried
+// before and broke the way a literal always breaks here: the list grew past it and
+// the extra commands existed, ran, and were not on screen — the palette's whole job
+// is "here is everything you can type", and a scrolling cap silently makes that
+// false. The +3 is headroom for the hint row, the "more" markers and the border.
+func maxOverlayRows() int { return len(commands()) + 3 }
 
 // welcomeLogo is the three-line mark. Half- and full-block characters only:
 // they are exactly one cell wide in every monospace font, where graphic
@@ -582,7 +586,7 @@ func windowRows(count, cursor, limit int) (int, int) {
 // is a list of names that assumes you already know what they do.
 func (m model) renderCommandPalette(width int) string {
 	rows := m.filteredCommands()
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
+	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
 	inner := overlayInner(width)
 	var body []string
 	body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("palette.hint")), inner)...)
@@ -665,7 +669,7 @@ func (m model) paletteArgument() string {
 // I on" unanswerable without reading the notes.
 func (m model) renderOptionPicker(width int) string {
 	rows := m.overlay.options
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
+	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
 	inner := overlayInner(width)
 	var body []string
 	for index := first; index < last; index++ {
@@ -713,7 +717,7 @@ func optionNote(opt option) string {
 // one has to say why.
 func (m model) renderMCPPanel(width int) string {
 	rows := m.mcpPanelRows()
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
+	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
 	inner := overlayInner(width)
 	var body []string
 	if len(rows) == 0 {
@@ -814,7 +818,7 @@ func (m model) mcpPanelRows() []mcpRow {
 // no-op, and without the mark that no-op looks like a broken panel.
 func (m model) renderSessionPicker(width int) string {
 	rows := m.sessionOptions
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
+	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
 	inner := overlayInner(width)
 	var body []string
 	if len(rows) == 0 {
@@ -845,7 +849,7 @@ func (m model) renderSessionPicker(width int) string {
 // different question ("which ones has this session read").
 func (m model) renderSkillsPanel(width int) string {
 	rows := m.skillRows
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows)
+	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
 	inner := overlayInner(width)
 	var body []string
 	if len(rows) == 0 {

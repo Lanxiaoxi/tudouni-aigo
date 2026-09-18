@@ -100,8 +100,8 @@ type UserConfig struct {
 	LegacyEnvPath string
 }
 
-// ExampleFile returns the template that travels with the code.
-func ExampleFile() string { return paths.ExampleConfigPath() }
+// ExampleFile returns the template's location for a message that has to name a
+// path. See example.go: the bytes are always available even when no file is.
 
 // ConfigFile returns which file to read.
 //
@@ -135,10 +135,9 @@ func Scaffold() string {
 		return ""
 	}
 	target := filepath.Join(paths.UserConfigDir(), ConfigFileName)
-	source := ExampleFile()
+	raw := ExampleBytes()
 
-	raw, err := os.ReadFile(source)
-	if err != nil {
+	if len(raw) == 0 {
 		return ""
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {

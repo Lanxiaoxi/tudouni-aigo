@@ -17,18 +17,22 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/config"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/frontends/cli"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/frontends/tui"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/runtime"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
 )
 
@@ -46,6 +50,7 @@ type options struct {
 	showHist      bool
 	autopilot     bool
 	stream        bool
+	streamSet     bool
 	noStream      bool
 	debug         bool
 	maxSteps      int
@@ -115,10 +120,27 @@ func run(argv []string) int {
 	}
 
 	if opts.tui {
+		// **Before the alternate screen takes over.** The TUI's parent does not
+		// assemble a runtime — the real one is the `--runtime-stdio` child — but a
+		// configuration problem has to be reported on an ordinary terminal: the
+		// alternate screen has no scrollback, so the child's error would arrive as a
+		// truncated, unscrollable mess over a dead interface. Asking here is what
+		// makes that sentence readable.
+		if err := runtime.PreflightCheck(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		// The TUI streams unless told otherwise. `--no-stream` wins over `--stream`
+		// (a contradictory command line resolves toward the quieter behaviour, which
+		// is the one that cannot surprise anybody).
+		tuiStream := true
+		if opts.noStream {
+			tuiStream = false
+		}
 		return tui.Run(tui.Options{
 			SessionID: opts.session,
 			Autopilot: opts.autopilot,
-			Stream:    opts.stream,
+			Stream:    tuiStream,
 			Debug:     opts.debug,
 			MaxSteps:  opts.maxSteps,
 			Theme:     opts.theme,
@@ -133,6 +155,17 @@ func run(argv []string) int {
 		}, opts.session, opts.autopilot, opts.stream, opts.debug)
 	}
 
+	// The line REPL cannot stream, and saying so beats silently eating the flag: to
+	// someone who typed `--stream`, "the argument was quietly dropped" and "that
+	// argument does not exist" look exactly alike, and next time they will conclude
+	// the model does not support it.
+	if opts.stream {
+		fmt.Fprintln(os.Stderr, i18n.T("notice.cli.no_stream"))
+	}
+	if opts.quiet {
+		fmt.Fprintln(os.Stderr, i18n.T("notice.cli.quiet_tui_only"))
+	}
+
 	return cli.Run(cli.Options{
 		Booted:    booted,
 		SessionID: opts.session,
@@ -140,6 +173,7 @@ func run(argv []string) int {
 		Stream:    opts.stream,
 		Debug:     opts.debug,
 		MaxSteps:  opts.maxSteps,
+		Err:       os.Stderr,
 		Open: func(sessionID string, hooks protocol.RuntimeHooks) (protocol.Runtime, error) {
 			return openRuntime(booted, sessionID, hooks, opts)
 		},
@@ -147,7 +181,7 @@ func run(argv []string) int {
 }
 
 func parse(argv []string) (options, error) {
-	opts := options{stream: true, maxSteps: runtime.DefaultMaxSteps()}
+	opts := options{maxSteps: runtime.DefaultMaxSteps()}
 
 	flags := flag.NewFlagSet("tudouni", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -161,7 +195,10 @@ func parse(argv []string) (options, error) {
 	flags.BoolVar(&opts.showAudit, "audit", false, "print the audit log of a session and exit")
 	flags.BoolVar(&opts.showHist, "history", false, "print a session's messages and exit")
 	flags.BoolVar(&opts.autopilot, "autopilot", false, "do not ask for approval (the audit records every release)")
-	flags.BoolVar(&opts.stream, "stream", true, "stream the answer as it is written")
+	// The two stream flags default to **off**, and the asymmetry is deliberate: the
+	// line REPL must hand back one whole answer so that `tudouni > chat.txt` stays a
+	// clean transcript, while `--tui` streams unless told otherwise (see below).
+	flags.BoolVar(&opts.stream, "stream", false, "stream the answer as it is written")
 	flags.BoolVar(&opts.noStream, "no-stream", false, "do not stream")
 	flags.BoolVar(&opts.debug, "debug", false, "print what goes to the model")
 	flags.IntVar(&opts.maxSteps, "max-steps", runtime.DefaultMaxSteps(), "how many model calls one turn may take")
@@ -178,6 +215,13 @@ func parse(argv []string) (options, error) {
 		}
 		return opts, err
 	}
+	// The two stream flags have to stay distinguishable: `--stream` explicitly asked
+	// for streaming, and the line REPL cannot deliver it (see the notice in Run).
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "stream" {
+			opts.streamSet = true
+		}
+	})
 	return opts, nil
 }
 
@@ -291,45 +335,144 @@ func checkWorkspace() error {
 	return errors.New(i18n.T("check.workspace.refused", "what", what))
 }
 
+// showSkills prints what this workspace offers and why some file did not make it.
+//
+// Two things, matching the two things a person can act on:
+//
+//   - the skills that were recognised — name, body size, declared tools, and that
+//     one-line description. The description is **the only thing the model has** for
+//     judging when to use the skill, so whether it is any good is visible here and
+//     nowhere else;
+//   - the ones that were skipped, each with its file and its specific fault. This is
+//     the most valuable half: a file with broken frontmatter produces no symptom
+//     from start-up to shutdown — it is simply **absent** from the list the model
+//     sees, and if it is not reported here nobody ever learns which file to fix.
+//
+// The body size is worth showing because it decides the cost of every later request
+// (the body is spliced into each one): "is this skill worth 3000 characters" is a
+// question skill authors actually ask.
 func showSkills() int {
-	catalog := skills.NewLoader().Reload()
+	loader := skills.NewLoader()
+	catalog := loader.Reload()
+
+	// Directories lowest priority first, with the ones that **actually exist**
+	// marked: the user-level directories sit outside the workspace, so nobody thinks
+	// to look there — and "which of them is missing" is exactly the answer to "where
+	// do I create one".
+	fmt.Println(i18n.T("skills.dirs.header"))
+	scanned := map[string]bool{}
+	for _, root := range catalog.Existing {
+		scanned[root] = true
+	}
+	for _, root := range loader.Roots {
+		mark := " "
+		if scanned[root] {
+			mark = "✓"
+		}
+		fmt.Println(i18n.T("skills.dirs.row", "mark", mark, "path", root))
+	}
 
 	if len(catalog.Skills) == 0 {
-		fmt.Println(i18n.T("skills.empty"))
+		fmt.Println()
+		fmt.Println(i18n.T("skills.empty.howto"))
 	} else {
-		fmt.Println(i18n.T("skills.title"))
-		for _, line := range skills.CatalogEntries(catalog) {
-			fmt.Println("  " + line)
+		fmt.Println()
+		fmt.Println(i18n.T("skills.available", "n", len(catalog.Skills)))
+		nameWidth, charsWidth := 0, 0
+		for _, skill := range catalog.Skills {
+			if len(skill.Name) > nameWidth {
+				nameWidth = len(skill.Name)
+			}
+			if width := len(strconv.Itoa(skill.BodyChars())); width > charsWidth {
+				charsWidth = width
+			}
+		}
+		for _, skill := range catalog.Skills {
+			declared := i18n.T("skills.row.no_tools")
+			if len(skill.AllowedTools) > 0 {
+				declared = strings.Join(skill.AllowedTools, i18n.T("list.separator"))
+			}
+			fmt.Printf("  %-*s  %s\n", nameWidth, skill.Name,
+				i18n.T("skills.row.body",
+					"chars", fmt.Sprintf("%*d", charsWidth, skill.BodyChars()),
+					"tools", declared))
+			pad := strings.Repeat(" ", nameWidth+2)
+			fmt.Printf("  %s%s\n", pad, skill.Description)
+			fmt.Printf("  %s%s\n", pad, skill.Path)
 		}
 	}
-	// Provenance always prints: the user-level directories sit outside the
-	// workspace, so nobody thinks to look there — and a shadowed copy is worse,
-	// because it exists on disk and does not count.
-	for _, line := range skills.SourceLines(catalog) {
-		fmt.Println(line)
+
+	for _, item := range catalog.Shadowed {
+		fmt.Println(i18n.T("skills.line.skipped", "item", skills.RenderProblem(item)))
 	}
-	// Problems are data, not errors: one malformed file must not stop the scan,
-	// and it must not be silent either.
+	// Problems go to stdout here, not stderr: they are part of what this command
+	// was asked to print, and splitting one list across two streams makes `--skills`
+	// useless the moment somebody redirects it.
 	for _, problem := range catalog.Problems {
-		fmt.Fprintln(os.Stderr, skills.RenderProblem(problem))
+		fmt.Println(i18n.T("skills.line.skipped", "item", skills.RenderProblem(problem)))
 	}
 	return 0
 }
 
+// listSessions prints the saved sessions, newest first.
+//
+// The task column is why this command exists in the shape it does: the list lives in
+// the session file, so "which session still has work left in it" is a fact you get
+// by reading one file — and it is one of the things somebody actually wants to know
+// when picking a session to resume.
 func listSessions() int {
 	booted, err := runtime.Boot()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	rows := runtime.SessionSummaries(booted.Store, runtime.SessionListLimit)
-	if len(rows) == 0 {
-		fmt.Println(i18n.T("session_dialog.empty"))
+	ids := booted.Store.ListIDs()
+	if len(ids) == 0 {
+		fmt.Println(i18n.T("sessions.list.empty"))
 		return 0
 	}
+	fmt.Println(i18n.T("sessions.list.header", "n", len(ids), "dir", booted.Store.Dir()))
+
+	type sessionRow struct {
+		id     string
+		loaded bool
+		count  int
+		steps  int
+		todos  string
+	}
+	rows := make([]sessionRow, 0, len(ids))
+	nameWidth, countWidth := 0, 0
+	for _, id := range ids {
+		row := sessionRow{id: id}
+		if session, err := booted.Store.Load(id); err == nil {
+			row.loaded = true
+			row.count = len(session.Messages)
+			row.steps = session.StepCount()
+			if line := builtin.NewTodoBoard(session.Metadata).ProgressLine(); line != "" {
+				row.todos = i18n.T("sessions.list.todos", "line", line)
+			}
+		}
+		if len(id) > nameWidth {
+			nameWidth = len(id)
+		}
+		if width := len(strconv.Itoa(row.count)); width > countWidth {
+			countWidth = width
+		}
+		rows = append(rows, row)
+	}
+
 	for _, row := range rows {
-		fmt.Printf("%s  messages=%v steps=%v  %s\n",
-			row["session_id"], row["messages"], row["steps"], row["preview"])
+		// A file that cannot be read stays on the list, named but bare: dropping it
+		// would hide a real problem, and "why is one session gone" has no answer then.
+		if !row.loaded {
+			fmt.Println("  " + row.id)
+			continue
+		}
+		fmt.Println("  " + i18n.T("sessions.list.row",
+			"name", fmt.Sprintf("%-*s", nameWidth, row.id),
+			"messages", fmt.Sprintf("%*d", countWidth, row.count),
+			"steps", row.steps,
+			"todos", row.todos))
 	}
 	return 0
 }
@@ -351,11 +494,7 @@ func showAudit(sessionID string, history bool) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
 		}
-		for _, message := range session.Messages {
-			role, _ := message["role"].(string)
-			text, _ := state.MessageText(message)
-			fmt.Printf("--- %s ---\n%s\n", role, text)
-		}
+		printHistory(session)
 		return 0
 	}
 
@@ -365,11 +504,139 @@ func showAudit(sessionID string, history bool) int {
 		return 2
 	}
 	if len(records) == 0 {
-		fmt.Println("no audit records for this session")
+		fmt.Println(i18n.T("audit.no_records", "name", sessionID, "dir", booted.Logs.Dir()))
 		return 0
 	}
+	fmt.Println(i18n.T("audit.header", "name", sessionID, "n", len(records)))
+	fmt.Println(strings.Repeat("-", 78))
 	for _, record := range records {
 		fmt.Println(audit.FormatLine(record))
 	}
+	fmt.Println(audit.Summarize(records))
 	return 0
+}
+
+// printHistory prints what happened in a session, one row per message.
+//
+// Bodies are previews only: history can hold hundreds of thousands of characters of
+// file content, and this command is for "what happened", not "print those megabytes
+// again".
+//
+// A tool message whose body became an Artifact holds only a reference
+// (`[artifact art_xxx · 12480 chars · read_file]`), which on its own is unreadable —
+// so the artifact note says what that reference points at: how big it is, which file
+// or URL it came from, and whether the body is still there. It reads the **index on
+// disk**, never the body, which is the whole point of the reference.
+//
+// An unreadable index degrades to one sentence rather than failing: `--history` is a
+// troubleshooting command, and it must not fall over because a different directory
+// is missing.
+func printHistory(session *state.Session) {
+	fmt.Println(i18n.T("history.header",
+		"name", session.SessionID,
+		"messages", len(session.Messages),
+		"steps", session.StepCount()))
+	fmt.Println(strings.Repeat("-", 72))
+
+	store := context.OpenArtifactStore(paths.SessionArtifactsDir(session.SessionID), nil)
+	indexFailed := false
+	if problems := store.Load(); len(problems) > 0 {
+		indexFailed = true
+	}
+
+	for index, message := range session.Messages {
+		role, _ := message["role"].(string)
+		content, _ := message["content"].(string)
+		preview := clipFlat(content, historyPreviewChars)
+		prefix := fmt.Sprintf("%3d %-9s ", index, role)
+
+		switch role {
+		case "assistant":
+			if preview != "" {
+				fmt.Println(prefix + preview)
+			}
+			for _, call := range toolCallsOf(message) {
+				fmt.Println(prefix + i18n.T("history.tool_call",
+					"name", call.Name,
+					"arguments", clipFlat(call.Arguments, historyArgsChars)))
+			}
+		case "tool":
+			fmt.Println(prefix + i18n.T("history.tool_result", "preview", preview))
+			if detail := artifactNote(store, indexFailed, message); detail != "" {
+				fmt.Println(strings.Repeat(" ", len(prefix)) + "  " + detail)
+			}
+		default:
+			fmt.Println(prefix + i18n.T("history.entry", "preview", preview))
+		}
+	}
+}
+
+// Limits on the previews. 76 characters is about one terminal line with the index
+// and role columns in front of it.
+const (
+	historyPreviewChars = 76
+	historyArgsChars    = 64
+)
+
+// artifactNote is the one-line summary of the artifact a tool message points at.
+func artifactNote(store *context.ArtifactStore, indexFailed bool, message map[string]any) string {
+	artifactID := context.ArtifactIDOf(message)
+	if artifactID == "" {
+		return ""
+	}
+	if indexFailed {
+		return i18n.T("history.artifact.blind", "id", artifactID)
+	}
+	artifact, ok := store.Get(artifactID)
+	if !ok {
+		return i18n.T("history.artifact.gone", "id", artifactID)
+	}
+	where := ""
+	if metadata := artifact.Metadata; metadata != nil {
+		if path, _ := metadata["path"].(string); path != "" {
+			where = path
+		}
+		if lines, ok := metadata["lines"]; ok && where != "" {
+			where += fmt.Sprintf(", %v lines", lines)
+		}
+	}
+	suffix := ""
+	if where != "" {
+		suffix = ", " + where
+	}
+	return i18n.T("history.artifact.note",
+		"id", artifactID, "chars", artifact.Chars,
+		"suffix", suffix, "content_ref", artifact.ContentRef)
+}
+
+// clipFlat flattens a body to one line and shortens it, so a single long value
+// cannot take over the screen. Flattening is lossless: a newline becomes `\n`.
+func clipFlat(text string, limit int) string {
+	flat := strings.ReplaceAll(text, "\n", "\\n")
+	runes := []rune(flat)
+	if limit <= 0 || len(runes) <= limit {
+		return flat
+	}
+	return string(runes[:limit])
+}
+
+// toolCallsOf reads the tool calls out of an assistant message.
+func toolCallsOf(message map[string]any) []model.ToolCall {
+	raw, _ := message["tool_calls"].([]any)
+	out := make([]model.ToolCall, 0, len(raw))
+	for _, item := range raw {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		function, _ := entry["function"].(map[string]any)
+		call := model.ToolCall{}
+		call.ID, _ = entry["id"].(string)
+		call.Name, _ = function["name"].(string)
+		call.Arguments, _ = function["arguments"].(string)
+		if call.Name != "" {
+			out = append(out, call)
+		}
+	}
+	return out
 }

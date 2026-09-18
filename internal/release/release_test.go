@@ -82,20 +82,21 @@ func TestCheckLayoutReportsEveryMissingPiece(t *testing.T) {
 	root := t.TempDir()
 	target := Targets[0]
 	layout := Layout{
-		Root:       root,
-		Target:     target,
-		Binary:     filepath.Join(root, target.BinaryName()),
-		PromptsDir: filepath.Join(root, "prompts"),
-		RgBinary:   filepath.Join(root, "tools", "vendor", "rg", target.Triple, target.RgName()),
+		Root:          root,
+		Target:        target,
+		Binary:        filepath.Join(root, target.BinaryName()),
+		PromptsDir:    filepath.Join(root, "prompts"),
+		RgBinary:      filepath.Join(root, "tools", "vendor", "rg", target.Triple, target.RgName()),
+		ExampleConfig: filepath.Join(root, "config.example.json"),
 	}
 
 	missing := layout.CheckLayout()
-	// Everything is absent: the binary, the prompts directory, ripgrep and the
-	// three files that travel with the package.
-	if len(missing) != 6 {
-		t.Fatalf("expected 6 missing entries, got %d: %v", len(missing), missing)
+	// Everything is absent: the binary, the prompts directory, ripgrep, the
+	// configuration template and the three files that travel with the package.
+	if len(missing) != 7 {
+		t.Fatalf("expected 7 missing entries, got %d: %v", len(missing), missing)
 	}
-	for _, label := range []string{"executable", "prompts", "ripgrep", "install.ps1", "install.sh", "README.txt"} {
+	for _, label := range []string{"executable", "prompts", "ripgrep", "config.example.json", "install.ps1", "install.sh", "README.txt"} {
 		found := false
 		for _, entry := range missing {
 			if strings.Contains(entry, label) {
@@ -120,7 +121,7 @@ func TestCheckLayoutReportsEveryMissingPiece(t *testing.T) {
 	if err := os.MkdirAll(layout.PromptsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"install.ps1", "install.sh", "README.txt"} {
+	for _, name := range []string{"install.ps1", "install.sh", "README.txt", "config.example.json"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -142,11 +143,12 @@ func TestZipRoundTripsAndRefusesSource(t *testing.T) {
 	root := t.TempDir()
 	target := Targets[1]
 	layout := Layout{
-		Root:       root,
-		Target:     target,
-		Binary:     filepath.Join(root, target.BinaryName()),
-		PromptsDir: filepath.Join(root, "prompts"),
-		RgBinary:   filepath.Join(root, "tools", "vendor", "rg", target.Triple, target.RgName()),
+		Root:          root,
+		Target:        target,
+		Binary:        filepath.Join(root, target.BinaryName()),
+		PromptsDir:    filepath.Join(root, "prompts"),
+		RgBinary:      filepath.Join(root, "tools", "vendor", "rg", target.Triple, target.RgName()),
+		ExampleConfig: filepath.Join(root, "config.example.json"),
 	}
 	if err := os.MkdirAll(layout.PromptsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -165,7 +167,7 @@ func TestZipRoundTripsAndRefusesSource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"install.ps1", "install.sh", "README.txt"} {
+	for _, name := range []string{"install.ps1", "install.sh", "README.txt", "config.example.json"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -190,7 +192,8 @@ func TestZipRoundTripsAndRefusesSource(t *testing.T) {
 			t.Errorf("a zip entry uses a backslash: %q — it unpacks on Linux as one file", name)
 		}
 	}
-	for _, want := range []string{"tudouni", "prompts/system.zh.md", "install.ps1", "install.sh", "README.txt",
+	for _, want := range []string{"tudouni", "prompts/system.zh.md", "config.example.json",
+		"install.ps1", "install.sh", "README.txt",
 		"tools/vendor/rg/" + target.Triple + "/rg"} {
 		if !have[want] {
 			t.Errorf("%s is missing from the archive: %v", want, names)

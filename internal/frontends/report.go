@@ -145,14 +145,28 @@ func RenderTools(message map[string]any) string {
 	if len(tools) == 0 {
 		return i18n.T("tools.none")
 	}
+	// The name column is measured from the rows, not written down: a fixed width
+	// breaks silently the day a longer tool name is added, and the symptom is a name
+	// running into its risk level.
+	width := 0
+	for _, item := range tools {
+		if row, ok := item.(map[string]any); ok {
+			if name, _ := row["name"].(string); len(name) > width {
+				width = len(name)
+			}
+		}
+	}
+
 	var builder strings.Builder
+	builder.WriteString(i18n.T("tools.header") + "\n")
 	for _, item := range tools {
 		row, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
 		disposition, _ := row["disposition"].(string)
-		fmt.Fprintf(&builder, "  %-18s %-7s %s\n", row["name"], row["risk"], dispositionText(disposition))
+		fmt.Fprintf(&builder, "  %-*s  %-7s%s%s\n",
+			width, row["name"], row["risk"], dispositionText(disposition), toolMarks(row))
 	}
 	prefixes, _ := message["granted_prefixes"].([]string)
 	if len(prefixes) > 0 {
@@ -160,6 +174,37 @@ func RenderTools(message map[string]any) string {
 	}
 	builder.WriteString(i18n.T("tools.footer"))
 	return builder.String()
+}
+
+// toolMarks is the trailing `· you pressed t、external` column.
+//
+// The marks say what the risk and disposition columns cannot: that a tool came from
+// an external server, that it takes over the input, that it cannot run alongside
+// another. `interactive` and `parallel_safe` are mutually exclusive by construction
+// (a tool that asks a person cannot be launched concurrently), so they share a slot.
+func toolMarks(row map[string]any) string {
+	var marks []string
+	if flagOf(row["granted"]) {
+		marks = append(marks, i18n.T("tools.mark.granted"))
+	}
+	if flagOf(row["external"]) {
+		marks = append(marks, i18n.T("tools.mark.external"))
+	}
+	if flagOf(row["interactive"]) {
+		marks = append(marks, i18n.T("tools.mark.interactive"))
+	} else if flagOf(row["parallel_safe"]) {
+		marks = append(marks, i18n.T("tools.mark.parallel"))
+	}
+	if len(marks) == 0 {
+		return ""
+	}
+	return "  ·  " + strings.Join(marks, i18n.T("list.separator"))
+}
+
+// flagOf reads a boolean out of a message field, treating anything else as false.
+func flagOf(value any) bool {
+	flag, _ := value.(bool)
+	return flag
 }
 
 // RenderSkills is the `/skills` listing.

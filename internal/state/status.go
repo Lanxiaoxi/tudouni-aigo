@@ -100,11 +100,16 @@ func HitRate(prompt, cached int) string {
 	return fmt.Sprintf("%.0f%%", float64(cached)/float64(prompt)*100)
 }
 
-// TokensText is the short form of a token count (2.0k / 1.0M).
+// TokensText is the short form of a token count (2.0k / 1M).
 //
 // Deliberately not imported from the interface code: this is the ledger, that is
-// layout. They agree on the shape because three different renderings of one
-// number would read as three different numbers.
+// layout. They agree on the shape because three different renderings of one number
+// would read as three different numbers.
+//
+// An integral value in the millions drops the decimal: `1M`, not `1.0M`. The two say
+// the same thing, and the second is one character wider on a status bar where every
+// column is fought over — while `1.5M` keeps its digit because that one carries
+// information.
 func TokensText(count *int) string {
 	if count == nil {
 		return "—"
@@ -112,9 +117,17 @@ func TokensText(count *int) string {
 	value := *count
 	switch {
 	case value >= 1_000_000:
-		return strconv.FormatFloat(float64(value)/1_000_000, 'f', 1, 64) + "M"
+		millions := float64(value) / 1_000_000
+		if millions == float64(int64(millions)) {
+			return strconv.FormatInt(int64(millions), 10) + "M"
+		}
+		return strconv.FormatFloat(millions, 'f', 1, 64) + "M"
 	case value >= 1_000:
-		return strconv.FormatFloat(float64(value)/1_000, 'f', 1, 64) + "k"
+		thousands := float64(value) / 1_000
+		if thousands == float64(int64(thousands)) && value%1_000 == 0 {
+			return strconv.FormatInt(int64(thousands), 10) + "k"
+		}
+		return strconv.FormatFloat(thousands, 'f', 1, 64) + "k"
 	default:
 		return strconv.Itoa(value)
 	}

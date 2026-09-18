@@ -20,6 +20,25 @@ type Runtime interface {
 	Messages() []map[string]any
 	// InitFields are the handshake fields this runtime contributes.
 	InitFields() map[string]any
+	// StatsLine is the one-line report the line REPL prints after each turn:
+	// cumulative usage, this turn's duration, and how full the context is.
+	//
+	// It comes from the runtime rather than being assembled by the front end
+	// because every number in it is counted from the audit log — the same log
+	// `--audit` reads — and two places counting the same fact is how they stop
+	// agreeing.
+	StatsLine() string
+	// ProgressLine is the human's one-line view of the task list, or "" when there
+	// is none. The model takes a different view of the same list: it wants what is
+	// left and what is in progress, a person wants "2/5 done" at a glance.
+	ProgressLine() string
+	// JobsProgressLine is the same idea for the background jobs: "2 running, 1
+	// result not collected" plus the ids, or "".
+	//
+	// It is one notch more important than the task line — an uncollected job is a
+	// process still running on somebody's machine — which is why the line terminal
+	// re-states it every round.
+	JobsProgressLine() string
 	StateMessage(withCatalog bool) map[string]any
 	StatusMessage() map[string]any
 	ToolsMessage() map[string]any

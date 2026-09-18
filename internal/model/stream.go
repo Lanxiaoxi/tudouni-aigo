@@ -23,11 +23,24 @@ import (
 //     accumulates;
 //   - a placeholder chunk carrying only an id and nothing else is dropped.
 func parseStream(reader io.Reader, sink DeltaSink) (ModelResponse, error) {
+	return parseStreamWithStop(reader, sink, nil)
+}
+
+// parseStreamWithStop is parseStream with a chance to give up.
+//
+// The check runs once per chunk, which is the finest granularity available without
+// asking the transport to interrupt a read: chunks arrive many times a second, so
+// the user's wait after pressing stop is bounded by one packet rather than by the
+// rest of the answer.
+func parseStreamWithStop(reader io.Reader, sink DeltaSink, shouldStop func() bool) (ModelResponse, error) {
 	accumulator := newStreamAccumulator()
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
 
 	for scanner.Scan() {
+		if shouldStop != nil && shouldStop() {
+			return ModelResponse{}, CancelledError{}
+		}
 		line := strings.TrimRight(scanner.Text(), "\r")
 		if line == "" || strings.HasPrefix(line, ":") {
 			// Blank keep-alive lines and comments carry nothing.

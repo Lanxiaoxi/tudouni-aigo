@@ -119,6 +119,31 @@ type CompleteOptions struct {
 	// interface drop the half-written text of the previous attempt before the
 	// next one restates the whole thing.
 	OnAttemptStarted func()
+	// ShouldStop is consulted while a stream is being read. A true answer abandons
+	// the turn immediately and returns CancelledError.
+	//
+	// It exists because "stop" has to mean stop. Without it the flag set by the
+	// front end would only be noticed at the next step boundary, so pressing Esc
+	// during a streamed answer still made the user wait out the whole thing —
+	// seconds to tens of seconds, which is exactly the cost streaming was bought
+	// to remove. A stream is where the user's attention is, so it is where the
+	// check has to be.
+	ShouldStop func() bool
+}
+
+// CancelledError means the front end asked to abandon this turn mid-flight.
+//
+// A distinct type rather than a wrapped TransientError: "the user changed their
+// mind" must not be retried, must not be recorded as a model failure, and must not
+// end up in the audit as an error.
+type CancelledError struct{}
+
+func (CancelledError) Error() string { return "the turn was cancelled" }
+
+// IsCancelled reports whether an error is the user abandoning the turn.
+func IsCancelled(err error) bool {
+	var cancelled CancelledError
+	return errors.As(err, &cancelled)
 }
 
 // ChatModel is what the agent talks to.
@@ -129,6 +154,22 @@ type ChatModel interface {
 	// SwitchModel changes the model for subsequent requests. It returns false when
 	// this adapter cannot do that mid-session.
 	SwitchModel(name string) bool
+	// Install moves to another **route**: the key, the endpoint and the model name
+	// together. It returns false when this adapter cannot.
+	//
+	// It is a separate capability from SwitchModel because the cost is different:
+	// that one changes a single request field, this one changes the credentials and
+	// the endpoint, which for most implementations means rebuilding the client. An
+	// adapter that cannot rename a model certainly cannot do this.
+	//
+	// Renaming a model across routes with SwitchModel alone produces the worst
+	// shape of bug there is: the interface, the session record and the audit all
+	// say the new route, while the request still goes to the old endpoint on the
+	// old key. Nothing anywhere reports the divergence.
+	//
+	// The contract matches SwitchModel's: the next request uses the new route, and
+	// one already in flight is unaffected.
+	Install(apiKey, baseURL, model, provider string) bool
 	// SetReasoning updates the two thinking knobs for subsequent requests.
 	SetReasoning(thinking bool, effort string)
 	// ModelName is the model currently in use.

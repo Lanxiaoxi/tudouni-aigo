@@ -150,21 +150,24 @@ func (b *TodoBoard) Write(args map[string]any) tools.Result {
 
 // loadTodos reads the list defensively: one malformed entry discards the whole
 // list rather than handing the model a silently partial one.
+//
+// **Two shapes have to be accepted, and getting this wrong fails silently.** A list
+// that was just written by `todo_write` is a `[]map[string]any` in memory; the same
+// list read back from a saved session file went through JSON and is a `[]any`. A
+// reader that only accepts one of them answers "there is no list" for half the
+// sessions — which is exactly how the task list stopped appearing in the payload
+// tail and in the `/resume` rows.
 func loadTodos(metadata map[string]any) []todoEntry {
 	raw, ok := metadata[TodosKey]
 	if !ok {
 		return nil
 	}
-	list, ok := raw.([]any)
-	if !ok {
+	list := todoEntriesOf(raw)
+	if list == nil {
 		return nil
 	}
 	out := make([]todoEntry, 0, len(list))
-	for _, entry := range list {
-		m, ok := entry.(map[string]any)
-		if !ok {
-			return nil
-		}
+	for _, m := range list {
 		content, _ := m["content"].(string)
 		status, _ := m["status"].(string)
 		if status != Pending && status != InProgress && status != Completed {
@@ -176,6 +179,26 @@ func loadTodos(metadata map[string]any) []todoEntry {
 		out = append(out, todoEntry{Content: content, Status: status})
 	}
 	return out
+}
+
+// todoEntriesOf normalises the in-memory shape and the JSON shape to one list.
+func todoEntriesOf(raw any) []map[string]any {
+	switch value := raw.(type) {
+	case []map[string]any:
+		return value
+	case []any:
+		out := make([]map[string]any, 0, len(value))
+		for _, entry := range value {
+			m, ok := entry.(map[string]any)
+			if !ok {
+				return nil
+			}
+			out = append(out, m)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 // ackTodo does not echo the list back — the model just sent it in the assistant
@@ -236,6 +259,38 @@ func statusLabel(status string) string {
 	default:
 		return status
 	}
+}
+
+// Note renders the current task list as the block appended to the end of **this
+// request**. It returns "" when there is no list.
+//
+// The model sees it every round rather than looking up the most recent copy in the
+// history. N updates leave N stale copies behind, and "the last one that looks
+// right" is not a reliable way to know the current state — more to the point, the
+// list has to be in front of the model **at the moment it decides**, which is the
+// payload tail, not thirty steps ago.
+//
+// It is the **model's** view and is kept separate from `ProgressLine`, which is the
+// human's: the model wants "what is left, what is in progress", a person wants
+// "2/5 done" at a glance. Merging them makes both sides pay tokens for the other.
+//
+// Like the rest of the payload tail it never enters `session.messages`: something
+// that changes every round must not be persisted, and must not dilute the derived
+// rule "one assistant message = one step".
+func (b *TodoBoard) Note() string {
+	if b == nil || b.Metadata == nil {
+		return ""
+	}
+	items := loadTodos(b.Metadata)
+	if len(items) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(items)+1)
+	lines = append(lines, "## 当前任务（你自己维护的列表）")
+	for _, item := range items {
+		lines = append(lines, fmt.Sprintf("- [%s] %s", statusLabel(item.Status), item.Content))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func allCompleted(items []TodoItem) bool {

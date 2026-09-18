@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/mcp"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 )
 
 // Mounting and unmounting MCP servers at runtime.
@@ -75,6 +76,35 @@ func (r *Runtime) MCPMessage(action string, servers []string) (map[string]any, [
 		}
 	}
 	return r.mcpPanel(specs), notes
+}
+
+// McpTrustGroup answers the `a` key at an approval: which group does this tool
+// belong to?
+//
+// The group is "every tool this server contributed, **as of now**". Two details
+// matter and both are deliberate:
+//
+//   - it reads the mounts that are running right now, so a server that was just
+//     unloaded no longer offers "this whole server" — otherwise the prompt would say
+//     "all 12 tools of server github run without asking" while three of them no
+//     longer exist;
+//   - it is a snapshot of names rather than "anything from this server, ever". A
+//     server that ships a `delete_everything` tool tomorrow must ask about it; a
+//     release that widened itself is exactly what "trust the whole server" must not
+//     mean.
+//
+// A tool name cannot belong to two mounts: registration refuses a clash rather than
+// letting the second server overwrite the first (see mcpLoad).
+func (r *Runtime) McpTrustGroup(toolName string) (security.TrustGroup, bool) {
+	for name, mount := range r.mcpMounts {
+		for _, registered := range mount.tools {
+			if registered != toolName {
+				continue
+			}
+			return security.TrustGroup{Label: name, Tools: append([]string{}, mount.tools...)}, true
+		}
+	}
+	return security.TrustGroup{}, false
 }
 
 // mcpLoad brings one server up and registers its tools.

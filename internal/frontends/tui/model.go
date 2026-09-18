@@ -131,7 +131,11 @@ type model struct {
 	// Catalogues that arrive with init. The frontend does not hardcode effort
 	// levels or model lists: a copy here would drift the moment the runtime
 	// learned a new level.
-	modelCatalog  []any
+	modelCatalog []any
+	// modelAliases are the retired names the catalogue still recognises. They are
+	// listed apart from the models because they are not choices: the endpoint
+	// retired them and a newer model serves the requests.
+	modelAliases  []any
 	effortLevels  []string
 	selectedModel string
 	// skillRows is the catalogue `/skills` reported, which the skills panel reads.
@@ -208,7 +212,12 @@ func newModel(client *protocol.Client, bridge *bridge, options Options) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(waitForTick(), tea.WindowSize())
+	// The frame chain starts here, not on the first server message: the boot window
+	// is exactly the stretch that needs it (nothing has arrived yet), and waiting for
+	// a message to begin means the one state that needs motion is the one state
+	// without it.
+	m.spinning = true
+	return tea.Batch(waitForTick(), tea.WindowSize(), waitForSpinner())
 }
 
 func waitForTick() tea.Cmd {
@@ -227,13 +236,20 @@ const spinnerInterval = 120 * time.Millisecond
 // bootSlowAfter is when "starting" stops being credible.
 const bootSlowAfter = 10 * time.Second
 
-// ensureSpinner starts the quiet-mode frame chain if it is not already running.
+// ensureSpinner starts the frame chain if it is not already running.
 //
-// The chain used to be started from inside its own tick handler, which meant it
-// never started at all: `Init` did not begin it and nothing else did either, so
-// the "one thing moving on screen" in quiet mode was frozen on frame 0.
+// Two states need it, for the same reason: something is happening and the screen
+// would otherwise look frozen.
+//
+//   - **quiet mode during a turn.** The chain used to be started from inside its own
+//     tick handler, which meant it never started at all: `Init` did not begin it and
+//     nothing else did either, so the "one thing moving on screen" was frozen on
+//     frame 0.
+//   - **the boot window**, before `init` arrives. That is about two seconds with
+//     nothing else on screen, and `test_tui_boot.py` says it plainly: a canvas where
+//     nothing moves looks like a hang.
 func (m *model) ensureSpinner() tea.Cmd {
-	if !m.busy || !m.quiet || m.spinning {
+	if m.spinning || !m.spinnerNeeded() {
 		return nil
 	}
 	m.spinning = true
@@ -265,7 +281,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForTick()
 
 	case spinnerMsg:
-		if m.busy && m.quiet {
+		if m.spinnerNeeded() {
 			return m, waitForSpinner()
 		}
 		m.spinning = false
@@ -317,6 +333,14 @@ func (m *model) handleServerMessage(payload map[string]any) {
 			m.panel.toolInfo = toolInfoOf(rows)
 		}
 		m.modelCatalog, _ = payload["model_catalog"].([]any)
+		// The catalogue arrives as `{models, aliases}` from the state snapshot but as
+		// a bare list from init. Both shapes are read, because a front end that only
+		// understood one of them would silently lose either the model list or the
+		// retired names depending on which message it was looking at.
+		if object, ok := payload["model_catalog"].(map[string]any); ok {
+			m.modelCatalog, _ = object["models"].([]any)
+			m.modelAliases, _ = object["aliases"].([]any)
+		}
 		if levels, ok := payload["effort_levels"].([]any); ok {
 			m.effortLevels = m.effortLevels[:0]
 			for _, level := range levels {
@@ -668,16 +692,26 @@ func (m *model) beginTurn(payload map[string]any) {
 
 	// The rail auto-opens when a task list first appears: "what it plans to do" is
 	// the one place a person can see whether it understood, and that is worth more
-	// than the 32 columns. It is an **edge**, not a level: keyed on "there are
-	// todos" the answer would still be yes on the next snapshot, and a user who
-	// had just pressed Ctrl+B to fold the rail would have it shoved back 50ms
-	// later, which makes that key look broken. Going back to empty re-arms it.
+	// than the 32 columns.
+	//
+	// It is an **edge, not a level**, and that distinction is load-bearing: keyed on
+	// "there are todos" the answer would still be yes on the next snapshot 50ms
+	// later, so a user who had just pressed Ctrl+B to fold the rail would have it
+	// shoved back — making that key look broken. Seeing the list once per
+	// appearance, then listening to the user; going back to empty re-arms it. A
+	// **content** update (one task turning completed) does not re-open it either:
+	// `todo_write` is called many times in a long task, and re-opening every time
+	// would be a panel that keeps popping itself open.
+	//
+	// A manual collapse is respected for everything **except** this one event.
+	// Deliberate: when the user folded the rail there was no task list, so "the
+	// model just wrote one down" is new information they have not seen. That is why
+	// there is no `railPinned` test here — adding one silently removes the feature
+	// for anybody who has ever pressed Ctrl+B.
 	if len(m.panel.todos) > 0 {
 		if !m.railTodosSeen {
 			m.railTodosSeen = true
-			if !m.railPinned {
-				m.railHidden = false
-			}
+			m.railHidden = false
 		}
 	} else {
 		m.railTodosSeen = false
@@ -835,7 +869,7 @@ func (m *model) handleUI(payload map[string]any) {
 		// delta": a turn that called tools and produced no text sends no delta,
 		// and the answer is exactly the thing to draw.
 		if answer != "" {
-			m.appendAnswer(answer)
+			m.attachAnswer(m.runIDOf(payload), answer)
 		}
 		m.streamedText = ""
 		m.streamRunID = ""
@@ -960,31 +994,6 @@ func (m *model) applyState(payload map[string]any) {
 	}
 }
 
-func (m *model) renderStatus(payload map[string]any) {
-	status, _ := payload["status"].(map[string]any)
-	if status == nil {
-		return
-	}
-	var rows []string
-	if session, ok := status["session"].(map[string]any); ok {
-		rows = append(rows, fmt.Sprintf("  %s: %v · %s",
-			i18n.T("status.kv.session"), session["id"],
-			i18n.T("status.session.span",
-				"messages", i18n.Tn("status.session.messages", intOf(session["messages"])),
-				"steps", i18n.Tn("status.session.steps", intOf(session["steps"])))))
-	}
-	if counters, ok := status["counters"].(map[string]any); ok {
-		rows = append(rows, fmt.Sprintf("  %s: %v runs · %v model calls · %v tool calls",
-			i18n.T("status.kv.turns"), counters["runs"], counters["model_calls"], counters["tool_calls"]))
-	}
-	if usage, ok := status["usage"].(map[string]any); ok {
-		rows = append(rows, fmt.Sprintf("  %s: %v", i18n.T("status.kv.usage_total"), usage["prompt"]))
-	}
-	for _, row := range rows {
-		m.appendLine(renderLine{segments: []seg{{text: row, role: "notice"}}}, "notice", "")
-	}
-}
-
 // ── transcript helpers ────────────────────────────────────────────────────────
 
 // appendLine adds a standalone entry.
@@ -995,6 +1004,47 @@ func (m *model) appendLine(line renderLine, kind, text string) {
 
 func (m *model) appendUser(text string) {
 	m.appendLine(renderLine{segments: []seg{{text: "> ", role: "user"}, {text: text, role: "user"}}}, "user", text)
+}
+
+// runIDOf reads the run a `ui` message refers to.
+func (m *model) runIDOf(payload map[string]any) string {
+	runID, _ := protocol.String(payload, "run_id")
+	return runID
+}
+
+// attachAnswer hangs the finished answer on the turn it belongs to.
+// **By run_id, never by arrival order.** The protocol is explicit that
+// `ui(run_finished)` and the turn's events are separate messages that may arrive in
+// either order; an answer appended where it lands is drawn after a turn that started
+// later, and the header that says "Answered" no longer owns the text it summarises.
+//
+// A run id nobody knows about (a message for a turn this front end never saw start)
+// falls back to the open turn, and then to a standalone entry — losing the answer
+// altogether would be worse than losing its position.
+func (m *model) attachAnswer(runID, answer string) {
+	if turn := m.turnFor(runID); turn != nil {
+		turn.answer = answer
+		return
+	}
+	if m.current != nil {
+		m.current.answer = answer
+		return
+	}
+	m.appendAnswer(answer)
+}
+
+// turnFor finds the turn with this run id, newest first.
+func (m *model) turnFor(runID string) *turnData {
+	if runID == "" {
+		return nil
+	}
+	for index := len(m.transcript) - 1; index >= 0; index-- {
+		turn := m.transcript[index].turn
+		if turn != nil && turn.runID == runID {
+			return turn
+		}
+	}
+	return nil
 }
 
 // appendAnswer adds a finished assistant message; markdown is applied at draw
@@ -1063,14 +1113,31 @@ func (m model) welcomeVisible() bool {
 	return true
 }
 
-// spinnerFrame is the current quiet-mode spin glyph.
+// spinnerNeeded is whether a frame chain should be running at all.
+//
+// **Not while a person is being asked something.** An approval or a question stops
+// the agent dead: the only thing that moves is the modal, and a spinner next to it
+// says "still working" about a turn that is waiting for *you*. That is the one
+// moment where an animated mark is actively misleading, and the original turned it
+// off for exactly that reason.
+func (m model) spinnerNeeded() bool {
+	if m.pendingPermission != nil || m.pendingQuestion != nil {
+		return false
+	}
+	if m.booting {
+		return true
+	}
+	return m.busy && m.quiet
+}
+
+// spinnerFrame is the current spin glyph.
 //
 // The frame is read off the clock rather than counted per repaint: two things
 // drawn at the same instant (the status mark and a folded thinking line) must
 // show the same frame, and a counter that advances per message would drift with
 // however many messages happened to arrive. The original derived it the same way.
 func (m model) spinnerFrame() string {
-	if !m.busy || !m.quiet {
+	if !m.spinnerNeeded() {
 		return ""
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}

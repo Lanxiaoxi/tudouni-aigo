@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/process"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
@@ -22,6 +25,24 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
 )
+
+// hostTriple maps this machine onto the ripgrep release triple whose build is
+// vendored under `tools/vendor/rg/`.
+//
+// It is a deliberate second table rather than a use of `internal/release`'s
+// `Targets`: that package builds archives and must not be imported by the runtime
+// (and the runtime must not depend on a build-time concern). The two agree on the
+// strings, and `paths` looks the binary up by exactly this name.
+func hostTriple() (string, bool) {
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "windows/amd64":
+		return "x86_64-pc-windows-msvc", true
+	case "linux/amd64":
+		return "x86_64-unknown-linux-musl", true
+	default:
+		return "", false
+	}
+}
 
 // Booted is what stage one produced: everything that needs the disk and nothing
 // that needs a model.
@@ -228,6 +249,39 @@ type Runtime struct {
 	OnEventHook func(record map[string]any)
 }
 
+// PreflightCheck reports what the user has to fix before anything can run.
+//
+// It exists for one caller and one reason: the TUI. Its parent process does not
+// assemble a runtime (the real one lives in the `--runtime-stdio` child), but it
+// **has to ask this question before entering the alternate screen**. The alternate
+// screen has no scrollback, so a child process's configuration error printed after
+// `tea.WithAltScreen()` is a truncated, unscrollable mess — the user is left inside a
+// full-screen interface looking at a dead runtime with no readable reason. Asking
+// first means the sentence lands on an ordinary terminal, where it can be read and
+// scrolled.
+//
+// A nil return means "nothing to report"; it is not a promise that a turn will
+// succeed.
+func PreflightCheck() error {
+	catalog, err := state.Load(catalogPath())
+	if err != nil {
+		return err
+	}
+	if !catalog.Usable() {
+		return &NoModelError{Catalog: catalog}
+	}
+	if _, err := LoadPermissions(); err != nil {
+		return err
+	}
+	if _, err := LoadWebConfig(); err != nil {
+		return err
+	}
+	if _, _, err := LoadMcpServers(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // OpenRuntime assembles a runtime.
 //
 // The order matters and is not arbitrary: the catalogue has to be read before a
@@ -306,6 +360,19 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		runtimeValue.MaxSteps = agent.DefaultMaxSteps
 	}
 
+	// [context] The "xx / yy" in the usage line needs a yy, and the endpoint does not
+	// report a window — it comes from the catalogue. With no entry there is no
+	// denominator, so the interface reports usage without a percentage; a wrong
+	// percentage is worse than none, because it gets believed. Saying so beats
+	// leaving somebody to wonder why the ratio vanished.
+	if _, ok := catalog.Find(chat.ModelName(), chat.ProviderName()); !ok {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "context",
+			i18n.T("notice.context.missing_window", "model", chat.ModelName())))
+	} else if window := runtimeValue.modelWindow(); window == nil {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "context",
+			i18n.T("notice.context.missing_window", "model", chat.ModelName())))
+	}
+
 	memory, err := MemoryFromPermissions()
 	if err != nil {
 		return nil, err
@@ -313,7 +380,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	memory.Sink = func(text string) { warn(text) }
 	runtimeValue.Memory = memory
 
-	jobs, jobTools := builtin.NewJobs(workspace)
+	jobs, jobTools := builtin.NewJobs(workspace, session.SessionID)
 	runtimeValue.Jobs = jobs
 
 	// Skills are scanned from disk, never from a path the model supplies. The
@@ -365,14 +432,55 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		runtimeValue.notices = append(runtimeValue.notices, notice("info", "mcp", line))
 	}
 
-	for _, name := range registry.Missing {
-		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
-			i18n.T("notice.grep.missing_binary", "triple", name)))
+	for range registry.Missing {
+		// **The two branches have to stay separate.** "This platform is not
+		// supported" and "it is supported but the file is gone" are different
+		// problems with different remedies — one needs a line of code, the other
+		// needs one command. Merging them into "the engine is missing" sends the
+		// first person off to re-run a fetch script, and the script cannot possibly
+		// fix it. That is the worst kind of wrong answer: it costs an afternoon and
+		// the problem is exactly where it was.
+		if triple, ok := hostTriple(); ok {
+			runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
+				i18n.T("notice.grep.missing_binary", "triple", triple)))
+		} else {
+			runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
+				i18n.T("notice.grep.unsupported_platform", "platform", runtime.GOOS+"/"+runtime.GOARCH)))
+		}
+	}
+
+	// [MCP] A workspace-level mcp.json is deliberately **not** read: `command` in
+	// that file is code executed at start-up, and a file inside the workspace can
+	// arrive with a cloned repository. Its existence therefore means somebody wrote
+	// a server list in the old place where it does nothing — the same symptom as a
+	// malformed skill file, and just as silent.
+	if info, err := os.Stat(filepath.Join(paths.WorkspaceRuntimeDir(), "mcp.json")); err == nil && !info.IsDir() {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "mcp",
+			i18n.T("notice.mcp.ignored_workspace_file",
+				"path", filepath.Join(paths.WorkspaceRuntimeDir(), "mcp.json"),
+				"file", MCPFile())))
+	}
+
+	// [config] Notes the catalogue collected while reading — today that is the
+	// leftover `.env`. It is worth a line of its own: a `.env` holds **keys**, and
+	// "I filled in a key and it says it found none" is the only symptom it has.
+	for _, line := range catalog.Notes {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "config", line))
+	}
+	// [catalog] What is wrong with each route. Reported here rather than only in the
+	// "no model at all" error, because one unusable route among three is not a
+	// reason to refuse to start — it is a reason to say so.
+	for _, line := range catalog.Problems {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "catalog", line))
 	}
 
 	asker := security.AskFunc(nil)
 	if options.Channels.AskerFactory != nil {
-		asker = options.Channels.AskerFactory(memory, nil)
+		// The trust-group lookup is what makes the `a` key at an approval mean
+		// "release this server's tools, as they are right now". Passing nil here is
+		// not a smaller version of the feature — it removes the key entirely, and
+		// the person is left approving an external server's tools one at a time.
+		asker = options.Channels.AskerFactory(memory, runtimeValue.McpTrustGroup)
 	}
 
 	// The context system. Assembled after the tools (the store is rooted at this
@@ -389,6 +497,41 @@ func OpenRuntime(options Options) (*Runtime, error) {
 			i18n.T("notice.context.missing_body", "id", artifactID)))
 	}
 
+	// [background] Two lines, and they have to stay separate: their remedies are
+	// completely different.
+	//
+	// The first: a previous process left jobs behind. That session did not end
+	// cleanly (the window was closed, or the process was killed), so those commands
+	// **may still be running**, and this session can neither see nor control them.
+	// It deliberately does not try: doing so would mean killing the pids it wrote
+	// down, and pids are reused — killing the wrong one is far worse than leaving a
+	// few orphans. So the notice asks the person to look, rather than performing an
+	// action this program cannot honestly stand behind.
+	if jobs.Leftovers > 0 {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "jobs",
+			i18n.T("notice.jobs.leftovers", "n", jobs.Leftovers)))
+	}
+	// The second: the kernel-level sweep is unavailable, so the guarantee a person
+	// believes they have — "closing this also collects the background jobs" — is
+	// weaker than they think. A silent downgrade of a guarantee is a lie of
+	// omission. Losing it does not mean commands will leak: a normal exit, an
+	// exception and Ctrl+C all still run close().
+	if problem, ok := process.JobObjectProblem(); ok {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "jobs",
+			i18n.T("notice.jobs.no_job_object", "problem", problem)))
+	}
+
+	// The registered-tools table, and **it goes to stdout**: it is the one start-up
+	// line that is part of the session's own output rather than a diagnostic. What
+	// the model can actually call is the answer to "why did it not do the obvious
+	// thing", and a person reading a transcript wants it there.
+	//
+	// It is built from the registry itself, so a tool that failed to register — a
+	// missing ripgrep build, a missing search key — is visibly absent rather than
+	// silently listed.
+	runtimeValue.notices = append(runtimeValue.notices, outNotice("info", "tools",
+		i18n.T("notice.tools.header")+"\n"+renderRegisteredTools(registry.Tools)))
+
 	runtimeValue.Agent = agent.New(agent.Config{
 		Chat:         chat,
 		Tools:        registry.Tools,
@@ -402,7 +545,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		Debug:        options.Debug,
 		Clock:        security.PerfClock,
 		ShouldStop:   options.ShouldStop,
-		OnDelta:      options.OnDelta,
+		OnDelta:      deltaSink(options),
 		OnCheckpoint: runtimeValue.checkpoint,
 		OnEvent:      runtimeValue.onEvent,
 		Notes:        runtimeValue.notes,
@@ -411,6 +554,146 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	})
 	runtimeValue.OnEventHook = options.OnEventHook
 	return runtimeValue, nil
+}
+
+// deltaSink decides whether stream increments go anywhere.
+//
+// `--no-stream` has to be honoured **here**, not only in the request body. The
+// switch means "deliver the answer in one piece", and a front end that still
+// received deltas would draw it growing word by word while `init.stream` and the
+// status bar both said streaming was off — the interface and its own report
+// disagreeing about the most visible thing on the screen.
+//
+// Nil is the honest signal: the agent asks the adapter for a stream only when
+// somebody is listening, so this also keeps `stream` out of the request body.
+func deltaSink(options Options) func(text, reasoning string, reset bool) {
+	if !options.Stream {
+		return nil
+	}
+	return options.OnDelta
+}
+
+// StatsLine implements protocol.Runtime.
+//
+// One line, three facts, all of them counted from the audit log rather than tracked
+// separately: a running total in memory would be a second source for the same fact,
+// and the two would drift in a way nobody can see. It is the same log `--audit`
+// reads, so the two reports agree.
+//
+// It is **deliberately cumulative** for tokens and steps, because that matches
+// "how much has this cost", which is what the reader is asking. The one exception is
+// the duration, and its label says so: "this turn" is a different question from
+// "this session", and mixing the two would make neither answerable.
+func (r *Runtime) StatsLine() string {
+	var events []map[string]any
+	if r.Logs != nil {
+		events, _ = r.Logs.Read(r.SessionIDValue)
+	}
+	summary := state.Summarize(events)
+	usage, _ := summary["usage"].(map[string]any)
+	prompt := intPtr(usage["prompt"])
+
+	var builder strings.Builder
+	// No successful model call yet (an auth failure on the first turn, say): there
+	// is nothing to report, and a line reading "hit rate —" is noise.
+	if prompt != nil && *prompt > 0 {
+		cached := intPtr(usage["cached"])
+		builder.WriteString(i18n.T("stats.usage",
+			"prompt", *prompt,
+			"cached", deref(cached),
+			"hit_rate", state.HitRate(*prompt, deref(cached))))
+	}
+	if ms, ok := lastTurnMs(events); ok {
+		builder.WriteString(i18n.T("stats.turn", "value", msText(int(ms))))
+	}
+	// Two facts about the context figure, both stated in the README: it is what the
+	// **last request** actually sent, not "now" (the next one adds this turn's answer
+	// and tool results, so it is a lower bound), and it includes the cached part —
+	// the window question wants the total, the money question wants the miss, and the
+	// miss is already on this line as the hit rate.
+	if used := intPtr(summary["last_prompt_tokens"]); used != nil {
+		if window := intPtr(r.modelWindow()); window != nil && *window > 0 {
+			// Above 100% is reported as it is, never clamped: that turn could not
+			// go out, and smoothing the only clue makes it read as "just barely fit".
+			percent := float64(*used) / float64(*window) * 100
+			builder.WriteString(i18n.T("stats.context.ratio",
+				"used", state.TokensText(used), "window", state.TokensText(window),
+				"percent", fmt.Sprintf("%.1f", percent)))
+		} else {
+			builder.WriteString(i18n.T("stats.context.used_only", "used", state.TokensText(used)))
+		}
+	}
+	return builder.String()
+}
+
+// deref reads a nullable count as a plain number, for the cases where the caller has
+// already established that "absent" and "zero" mean the same thing.
+func deref(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+// ProgressLine implements protocol.Runtime.
+func (r *Runtime) ProgressLine() string {
+	return builtin.NewTodoBoard(r.SessionValue.Metadata).ProgressLine()
+}
+
+// JobsProgressLine implements protocol.Runtime: the human's one-line view of the
+// background jobs, or "" when there is nothing hanging.
+func (r *Runtime) JobsProgressLine() string {
+	if r.Jobs == nil {
+		return ""
+	}
+	return r.Jobs.ProgressLine()
+}
+
+// lastTurnMs is the wall time of the most recent turn, and whether there is one.
+//
+// Paired **by run_id**, not taken as the last `run_finished` line: when a turn dies
+// before it finishes (Ctrl+C, a killed process) the last such line belongs to the
+// *previous* turn, and reporting it as "this turn" gives a number that is completely
+// unrelated and completely plausible.
+func lastTurnMs(events []map[string]any) (int64, bool) {
+	runID := ""
+	for _, event := range events {
+		if stringOf(event["kind"]) == "run_started" {
+			runID = stringOf(event["run_id"])
+		}
+	}
+	if runID == "" {
+		return 0, false
+	}
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if stringOf(event["kind"]) != "run_finished" || stringOf(event["run_id"]) != runID {
+			continue
+		}
+		if value := intPtr(event["duration_ms"]); value != nil {
+			return int64(*value), true
+		}
+		return 0, false
+	}
+	return 0, false
+}
+
+// msText is a duration as a person reads it. Kept in step with the audit report's
+// own rendering: one number shown two ways reads as two numbers.
+func msText(ms int) string {
+	switch {
+	case ms >= 60_000:
+		return fmt.Sprintf("%dm%02ds", ms/60_000, (ms%60_000)/1000)
+	case ms >= 1_000:
+		return fmt.Sprintf("%.1fs", float64(ms)/1000)
+	default:
+		return fmt.Sprintf("%dms", ms)
+	}
+}
+
+func stringOf(value any) string {
+	text, _ := value.(string)
+	return text
 }
 
 // NoModelError means no usable route is configured. It carries the catalogue so the
@@ -573,16 +856,18 @@ func (r *Runtime) onEvent(record map[string]any) {
 
 // notes is the trailing block appended to every request payload.
 //
-// It carries the task list and the background-job warning, and it never enters the
-// session's messages: both are this run's working memory, not something either
-// party said.
+// Four parts, in this order: the skill catalogue, the loaded skill bodies, the task
+// list, and the background-job warning. None of them enters the session's messages:
+// all four are this run's working memory, not something either party said.
+//
+// **The background jobs go last on purpose.** That one is the only part where not
+// reading it causes an error — treating a command that is still running as one that
+// succeeded is the single silent mistake this feature makes possible — and the end
+// of the payload sits closest to the token the model is about to generate, which is
+// also the most expensive and the only position that should differ between two
+// consecutive requests.
 func (r *Runtime) notes() string {
 	var parts []string
-	if r.Jobs != nil {
-		if note := r.Jobs.Note(); note != "" {
-			parts = append(parts, note)
-		}
-	}
 	// The skill catalogue goes out every round rather than into the system prompt.
 	// The prompt is written once when the session is created, and skills can be
 	// added at any time — so a restored session would be permanently blind to
@@ -594,6 +879,17 @@ func (r *Runtime) notes() string {
 			parts = append(parts, part)
 		}
 		if note := r.Skills.Note(); note != "" {
+			parts = append(parts, note)
+		}
+	}
+	// The task list the model maintains itself. It has to be here rather than left
+	// in the history: the whole point of the list is to be in front of the model
+	// when it decides what to do next, and the history holds N stale copies.
+	if note := builtin.NewTodoBoard(r.SessionValue.Metadata).Note(); note != "" {
+		parts = append(parts, note)
+	}
+	if r.Jobs != nil {
+		if note := r.Jobs.Note(); note != "" {
 			parts = append(parts, note)
 		}
 	}
@@ -739,13 +1035,30 @@ func (r *Runtime) StatusMessage() map[string]any {
 		startedAt = "started: resumed"
 	}
 
+	// A status screen must be answerable before anything has run — that is exactly
+	// when somebody wants to look at it. Each of these is a nil-safe read rather
+	// than an invariant, so building the payload can never be the thing that fails.
+	autopilot := false
+	if r.Agent != nil {
+		autopilot = r.Agent.Autopilot()
+	}
+	messages, steps := 0, 0
+	if r.SessionValue != nil {
+		messages = len(r.SessionValue.Messages)
+		steps = r.SessionValue.StepCount()
+	}
+	toolCount := 0
+	if r.Tools != nil {
+		toolCount = r.Tools.Len()
+	}
+
 	status := map[string]any{
 		"session": map[string]any{
 			"id":        r.SessionIDValue,
 			"resumed":   r.Resumed,
 			"workspace": paths.WorkspaceDir(),
-			"messages":  len(r.Messages()),
-			"steps":     r.SessionValue.StepCount(),
+			"messages":  messages,
+			"steps":     steps,
 		},
 		"model": map[string]any{
 			"provider":  r.Chat.ProviderName(),
@@ -755,18 +1068,36 @@ func (r *Runtime) StatusMessage() map[string]any {
 			"since":     r.ModelState.SelectedSince(),
 			"window":    window,
 			"base_url":  r.Chat.BaseURL(),
-			"reasoning": r.ModelState.Effort(),
+			// The two thinking knobs are session-level settings, exactly like the
+			// model, so they live in the same group: "what is it using" means who,
+			// which route, whether it thinks, and how hard.
+			//
+			// It is an **object**, not the effort string. A front end reading
+			// `reasoning["thinking"]` off a string gets nothing, falls back to its
+			// own default, and reports "thinking: on" for a session where it is off.
+			"reasoning": map[string]any{
+				"thinking": r.ModelState.Thinking(),
+				"effort":   r.ModelState.Effort(),
+			},
 		},
 		"counters": counters,
 		"usage":    usage,
+		// The context ledger travels with the status screen rather than only with
+		// `/context`: "how much can it see, and how much did the budget drop" is
+		// part of the question `/status` exists to answer. Nil means this runtime
+		// has no context layer, which is a different statement from a zero row.
+		"context": r.contextLedger(),
 		"meta": map[string]any{
 			"max_steps":   r.MaxSteps,
 			"stream":      r.Stream,
-			"autopilot":   r.Agent.Autopilot(),
-			"tool_count":  r.Tools.Len(),
+			"autopilot":   autopilot,
+			"tool_count":  toolCount,
 			"audit_path":  r.auditPath(),
 			"permissions": r.nonDefaultPermissions(),
 			"started":     startedAt,
+			// Which file the catalogue came from. It is a fact rather than
+			// decoration: it is the answer to "why did my edit not take effect".
+			"catalog": r.Catalog.Source,
 		},
 	}
 	return map[string]any{
@@ -818,6 +1149,18 @@ func (r *Runtime) ContextMessage() map[string]any {
 		return map[string]any{}
 	}
 	return map[string]any{"context": r.contextPayload()}
+}
+
+// contextLedger is the context layer's own numbers, or nil when there is none.
+//
+// Nil rather than an empty object: an empty object makes a front end print a row
+// of zeroes, which reads as "the context system is on and did nothing". "There is
+// no context management here" is a different and true statement.
+func (r *Runtime) contextLedger() any {
+	if r.ContextValue == nil {
+		return nil
+	}
+	return r.ContextValue.Stats()
 }
 
 func (r *Runtime) contextPayload() map[string]any {
@@ -939,16 +1282,56 @@ func (r *Runtime) SessionSummaries() []map[string]any {
 }
 
 // SetModel implements protocol.Runtime.
+//
+// Name resolution, in this order and for this reason:
+//
+//  1. `provider/model` splits on the slash;
+//  2. a bare name that is **a route** resolves to that route's first model — checked
+//     *before* the model lookup, because a route whose name happens to equal a model
+//     name (`/model flash`) would otherwise switch models when the user meant the
+//     route. The two differ on the bill;
+//  3. otherwise it is a model id, and an id that exists on two routes is refused
+//     rather than guessed: the two answers differ in billing and in compliance.
+//
+// A model that is already the current one answers "already" rather than reporting a
+// switch — the interface echoes that sentence verbatim, and "switched to X from X"
+// reads like something happened.
 func (r *Runtime) SetModel(name string) (bool, string) {
 	catalog := r.Catalog
-	ref, ok := catalog.Find(name, "")
+
+	wanted := strings.TrimSpace(name)
+	providerName := ""
+	if split := strings.Index(wanted, "/"); split >= 0 {
+		providerName = strings.TrimSpace(wanted[:split])
+		wanted = strings.TrimSpace(wanted[split+1:])
+	}
+
+	if wanted == "" && providerName != "" {
+		found, ok := catalog.ProviderByName(providerName)
+		if !ok {
+			return false, i18n.T("model.select.no_route", "route", providerName, "names", strings.Join(routeNames(catalog), ", "))
+		}
+		if len(found.Models) == 0 {
+			return false, i18n.T("model.select.route_empty", "route", providerName)
+		}
+		wanted = found.Models[0].ID
+	} else if providerName == "" {
+		if found, ok := catalog.ProviderByName(wanted); ok {
+			if len(found.Models) == 0 {
+				return false, i18n.T("model.select.route_empty", "route", wanted)
+			}
+			providerName, wanted = wanted, found.Models[0].ID
+		}
+	}
+
+	ref, ok := catalog.Find(wanted, providerName)
 	if !ok {
-		if hits := catalog.Ambiguous(name); len(hits) > 1 {
+		if hits := catalog.Ambiguous(wanted); len(hits) > 1 {
 			var names []string
 			for _, hit := range hits {
-				names = append(names, hit.Provider)
+				names = append(names, hit.Qualified())
 			}
-			return false, i18n.T("model.select.ambiguous", "name", name, "names", strings.Join(names, ", "))
+			return false, i18n.T("model.select.ambiguous", "name", wanted, "names", strings.Join(names, ", "))
 		}
 		var known []string
 		for _, model := range catalog.Models() {
@@ -957,18 +1340,34 @@ func (r *Runtime) SetModel(name string) (bool, string) {
 		if len(known) == 0 {
 			known = []string{i18n.T("model.select.none_known")}
 		}
-		return false, i18n.T("model.select.unknown", "name", name, "known", strings.Join(known, ", "))
+		return false, i18n.T("model.select.unknown", "name", wanted, "known", strings.Join(known, ", "))
 	}
+
 	route, ok := catalog.ProviderByName(ref.Provider)
-	if !ok || !route.Usable() {
+	if !ok {
+		return false, i18n.T("model.select.route_gone", "route", ref.Provider)
+	}
+	if !route.Usable() {
 		return false, i18n.T("model.select.no_key", "route", ref.Provider, "path", r.Catalog.Source)
 	}
+
+	if r.ModelState.Selected() == ref.ID && r.ModelState.SelectedProvider() == ref.Provider {
+		return true, i18n.T("model.select.already", "name", ref.Qualified())
+	}
+
 	previous := r.ModelState.RouteName()
 
 	// The adapter has to accept the change before the session records it. Recording
 	// first would leave the session claiming a model the client is not using, and
 	// nothing anywhere would report the divergence.
-	if !r.Chat.SwitchModel(ref.ID) {
+	//
+	// **Same route or another route is a real distinction.** Renaming the model on
+	// the same route only changes one request field; moving to another route changes
+	// the key and the endpoint, which is what `Install` is for. Using `SwitchModel`
+	// for both is the worst shape of bug available here: the interface, the session
+	// and the audit all say the new route while the request keeps going to the old
+	// endpoint on the old key.
+	if !r.switchChat(ref, route) {
 		return false, i18n.T("model.select.no_switch", "kind", fmt.Sprintf("%T", r.Chat), "path", r.Catalog.Source)
 	}
 	r.ModelState.SelectRoute(ref.Provider, ref.ID, 0)
@@ -977,7 +1376,46 @@ func (r *Runtime) SetModel(name string) (bool, string) {
 	if previous == "" {
 		previous = i18n.T("model.select.unknown_previous")
 	}
-	return true, i18n.T("model.select.switched", "name", ref.ID, "previous", previous)
+	return true, i18n.T("model.select.switched", "name", ref.Qualified(), "previous", previous)
+}
+
+// switchChat moves the adapter onto one catalogue entry, choosing the cheap path
+// when it can.
+func (r *Runtime) switchChat(ref state.ModelRef, route state.Provider) bool {
+	if r.sameRoute(route) {
+		return r.Chat.SwitchModel(ref.ID)
+	}
+	// Another route: the key and the endpoint have to move as well. An adapter that
+	// cannot do that is refused rather than renamed, because renaming alone leaves
+	// the request going to the old endpoint on the old key while `/status` and the
+	// session record both say the new route.
+	return r.Chat.Install(route.APIKey, route.BaseURL, ref.ID, ref.Provider)
+}
+
+// sameRoute reports whether the adapter is already pointed at this route.
+//
+// The test is the previous generation's: same provider name, and the key the
+// adapter is actually sending is the key this route declares. The key is the
+// identifier that matters — two routes can share a base_url and differ only in
+// which tenant they bill.
+func (r *Runtime) sameRoute(route state.Provider) bool {
+	if r.Chat.ProviderName() != route.Name {
+		return false
+	}
+	if holder, ok := r.Chat.(interface{ apiKeyOf() string }); ok {
+		return holder.apiKeyOf() == route.APIKey
+	}
+	return true
+}
+
+// routeNames lists the configured route names, for a "no such route" message that
+// tells the user what there is.
+func routeNames(catalog state.Registry) []string {
+	out := make([]string, 0, len(catalog.Providers))
+	for _, provider := range catalog.Providers {
+		out = append(out, provider.Name)
+	}
+	return out
 }
 
 // SetThinking implements protocol.Runtime.
@@ -1090,8 +1528,35 @@ func (r *Runtime) auditPath() string {
 	return path
 }
 
+// notice builds one start-up line.
+//
+// `stream` says where it belongs: "err" for diagnostics, "out" for the one thing
+// that is part of the session's own output. The distinction is not cosmetic — the
+// line REPL's stdout is a documented contract (`tudouni > chat.txt` has to contain
+// the conversation and nothing else), so a notice that lands on the wrong stream
+// either pollutes the transcript or hides a warning where nobody reads it.
 func notice(level, code, text string) map[string]any {
-	return map[string]any{"level": level, "code": code, "text": text}
+	return map[string]any{"level": level, "code": code, "text": text, "stream": "err"}
+}
+
+// outNotice is a notice that belongs on stdout. There is exactly one kind — the
+// list of registered tools — and it is there because the previous generation put it
+// there and the ordering of the start-up output is a contract too.
+func outNotice(level, code, text string) map[string]any {
+	return map[string]any{"level": level, "code": code, "text": text, "stream": "out"}
+}
+
+// renderRegisteredTools is the one-row-per-tool part of the start-up table.
+//
+// Sorted by the registry already, so two runs of the same build produce the same
+// text — a diff of two sessions means something only if the constant part really is
+// constant.
+func renderRegisteredTools(registry *tools.Registry) string {
+	rows := make([]string, 0, registry.Len())
+	for _, tool := range registry.All() {
+		rows = append(rows, i18n.T("notice.tools.row", "name", tool.Name, "risk", string(tool.Risk)))
+	}
+	return strings.Join(rows, "\n")
 }
 
 func panelOf(jobs *builtin.JobBoard) []any {
@@ -1152,6 +1617,24 @@ func intOrNil(value any) any {
 		return number
 	case float64:
 		return int(number)
+	default:
+		return nil
+	}
+}
+
+// intPtr reads a nullable number out of an audit record or a summary map. The
+// pointer matters: "no reading yet" and "zero" are different facts, and a stats line
+// that prints 0 for both tells the reader something false.
+func intPtr(value any) *int {
+	switch number := value.(type) {
+	case int:
+		return &number
+	case int64:
+		converted := int(number)
+		return &converted
+	case float64:
+		converted := int(number)
+		return &converted
 	default:
 		return nil
 	}

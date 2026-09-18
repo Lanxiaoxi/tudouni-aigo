@@ -192,6 +192,13 @@ func (m model) renderRailSummary() string {
 	if permission := m.permissionSummary(); permission != "" {
 		parts = append(parts, permission)
 	}
+	// The autopilot state is part of the summary because the summary is defined as
+	// "say what collapsing hid", and one of the things it hid is whether the next
+	// risky call will ask. Leaving it out makes the collapsed line silently answer
+	// "yes" to a question it never addresses.
+	if m.panel.autopilot {
+		parts = append(parts, i18n.T("rail.summary.autopilot"))
+	}
 	// One line, clipped at the edge: the original's summary is a single row with
 	// `nowrap` + `clip`, and a summary that wraps to a second row would move the
 	// status bar and the input box down for the sake of an aside.
@@ -359,12 +366,7 @@ func (m model) renderEntry(index int, width int) []string {
 		// the same colour family as the input rules and the turn rules, because
 		// "structural lines" are one family on this screen. The bar is what says
 		// "this is the agent speaking" now that the body is a block, not lines.
-		lines := renderMarkdown(item.text, width-3)
-		out := make([]string, 0, len(lines))
-		for _, line := range lines {
-			out = append(out, currentTheme.styleFor("tool").Render("│ ")+line)
-		}
-		return append(out, "")
+		return append(m.renderAnswerBlock(item.text, width), "")
 	case item.kind == "streaming":
 		// While it streams, the head `● ` sits on its own line and the body
 		// stays plain text: re-flowing markdown on every delta stutters on
@@ -394,6 +396,19 @@ func (m model) renderEntry(index int, width int) []string {
 	}
 }
 
+// renderAnswerBlock draws one finished answer: markdown, with an accent bar down
+// the left. Shared by the standalone path and the in-turn path so an answer cannot
+// look like two different things depending on where it landed.
+func (m model) renderAnswerBlock(text string, width int) []string {
+	lines := renderMarkdown(text, width-3)
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, "")
+	for _, line := range lines {
+		out = append(out, currentTheme.styleFor("tool").Render("│ ")+line)
+	}
+	return out
+}
+
 // renderTurn draws one turn block: header with its rule, the user line, the
 // event lines, the thinking block, and (during streaming) the live text.
 func (m model) renderTurn(turn *turnData, width int) []string {
@@ -411,6 +426,14 @@ func (m model) renderTurn(turn *turnData, width int) []string {
 	}
 	for _, line := range turn.lines {
 		out = append(out, wrapCells(renderOne(line), width)...)
+	}
+
+	// The finished answer, **inside the turn that produced it**. Same framing as a
+	// standalone answer (markdown, accent bar on the left); only the position
+	// differs, and the position is the point — the header saying "Answered" owns
+	// the text it is summarising.
+	if turn.answer != "" {
+		out = append(out, m.renderAnswerBlock(turn.answer, width)...)
 	}
 
 	// The thinking block: one folded line by default, the quote block when this

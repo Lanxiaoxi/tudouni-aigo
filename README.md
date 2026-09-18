@@ -92,8 +92,11 @@ an error — it produces a program that starts and is quietly missing a feature:
 
 `prompts/`, `protocol/schema/` and `config.example.json` are compiled in, so a
 `go build` output already carries them. The ripgrep builds stay on disk because
-they are executables that get run, and a test covering all four lives in
-`internal/paths/paths_test.go`.
+they are executables that get run. `config.example.json` also **ships as a file**
+next to the binary: its bytes being compiled in is what keeps the first-run message
+from naming a file that is not there, and the copy on disk is what a person actually
+opens. `tools/release` checks for it in the staged tree, and a test covering all four
+lives in `internal/paths/paths_test.go`.
 
 `prompts/` is on that list for a second reason worth knowing: its **presence** is
 how the program recognises its own directory (`paths.PackageDir`), and the vendored

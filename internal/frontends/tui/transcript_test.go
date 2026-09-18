@@ -187,15 +187,34 @@ func TestWrapCellsTreatsEscapeSequencesAsZeroWidth(t *testing.T) {
 	}
 }
 
-func TestThinkingBodyQuotesEveryLine(t *testing.T) {
-	lines := thinkingBody("first\nsecond", 40)
-	if len(lines) != 2 {
-		t.Fatalf("expected two physical lines, got %d", len(lines))
+// TestThinkingBodyFlattensBeforeWrapping replaces an earlier assertion that the
+// block kept one row per source line. That assertion was the bug written down: a
+// reasoning channel emits one word per line, so a 400-character thought drew as 100
+// quoted rows and pushed the answer off the screen. The original's `thinking_body`
+// flattens first for exactly this reason, and its docstring records the symptom.
+func TestThinkingBodyFlattensBeforeWrapping(t *testing.T) {
+	lines := thinkingBody("The\nuser\nsays\n", 60)
+	if len(lines) != 1 {
+		t.Fatalf("one sentence drew as %d rows, want 1: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "The user says") {
+		t.Fatalf("the words were not rejoined: %q", lines[0])
 	}
 	for _, line := range lines {
 		if !strings.Contains(line, "│") {
 			t.Fatal("the quote block lost its vertical bar")
 		}
+	}
+}
+
+// TestThinkingBodyStillWrapsALongParagraph is the other half: flattening must not
+// mean one endless row. The wrap comes after it, so the block still respects the
+// width.
+func TestThinkingBodyStillWrapsALongParagraph(t *testing.T) {
+	words := strings.Repeat("word ", 60)
+	lines := thinkingBody(words, 40)
+	if len(lines) < 2 {
+		t.Fatalf("a long thought drew as %d rows; it was not wrapped", len(lines))
 	}
 }
 

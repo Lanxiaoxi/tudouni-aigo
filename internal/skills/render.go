@@ -104,7 +104,14 @@ func CatalogEntries(catalog Catalog) []string {
 func SourceLines(catalog Catalog) []string {
 	lines := []string{i18n.T("skills.scan_dirs")}
 	for _, root := range catalog.Roots {
-		lines = append(lines, "    "+root)
+		mark := " "
+		for _, existing := range catalog.Existing {
+			if existing == root {
+				mark = "✓"
+				break
+			}
+		}
+		lines = append(lines, "    "+mark+" "+root)
 	}
 	if len(catalog.Roots) == 0 {
 		lines = append(lines, i18n.T("skills.scan_none"))

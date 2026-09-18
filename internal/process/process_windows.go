@@ -75,8 +75,13 @@ func ensureJobObject() (windows.Handle, bool) {
 // TerminateTree kills the child and its descendants via taskkill /T. Restricted
 // environments may deny taskkill (Access denied), so a direct kill is attempted
 // as a backstop.
+//
+// A nil command is a no-op rather than a panic: the caller walks a list of jobs
+// collected under a lock, and "there is nothing to kill here" is a legal state of
+// that list. Dereferencing it would turn shutdown into a crash, which is the worst
+// possible moment for one.
 func TerminateTree(cmd *exec.Cmd) {
-	if cmd.Process == nil {
+	if cmd == nil || cmd.Process == nil {
 		return
 	}
 	_ = exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(cmd.Process.Pid)).Run()

@@ -106,6 +106,12 @@ type Layout struct {
 	Binary     string
 	PromptsDir string
 	RgBinary   string
+	// ExampleConfig is the configuration template. Its bytes are compiled in, so a
+	// package without it still works — which is exactly why it belongs on the
+	// required list: "it starts and one thing is missing" is this package's
+	// characteristic failure, and a template is the first thing a new user is told
+	// to open.
+	ExampleConfig string
 }
 
 // RequiredFiles lists what must exist in a staged package, relative to its root.
@@ -118,6 +124,7 @@ func (l Layout) RequiredFiles() map[string]string {
 		"the executable":        l.Binary,
 		"the prompts directory": l.PromptsDir,
 		"the vendored ripgrep":  l.RgBinary,
+		"config.example.json":   l.ExampleConfig,
 		"install.ps1":           filepath.Join(l.Root, "install.ps1"),
 		"install.sh":            filepath.Join(l.Root, "install.sh"),
 		"README.txt":            filepath.Join(l.Root, "README.txt"),
