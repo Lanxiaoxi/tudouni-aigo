@@ -47,52 +47,64 @@ type Options struct {
 }
 
 // Channels builds the two things a runtime may ask a person about, answered on the
-// terminal.
+// streams it is given.
 //
 // The approval function is `security.CLIAsker`, so the line REPL and the TUI ask
 // the same questions with the same wording; only the way the answer is collected
 // differs.
-func Channels(autopilot bool) protocol.Channels {
-	memory, err := runtime.MemoryFromPermissions()
-	if err != nil {
-		memory = security.NewMemory(nil, nil, runtime.PermissionFile(), runtime.SaveApprovals)
-	}
-	memory.Sink = func(text string) { fmt.Fprintln(os.Stderr, text) }
-
-	asker := security.CLIAsker(security.CLIOptions{
-		In:     os.Stdin,
-		Prompt: os.Stderr,
-		Memory: memory,
-	})
-	if autopilot {
-		asker = security.AlwaysAllow
-	}
-
+//
+// `in` and `diag` are parameters rather than `os.Stdin` / `os.Stderr` read inside,
+// for the reason every other injected dependency in this program is: a test has to be
+// able to answer an approval without a terminal, and an embedder has to be able to
+// put the conversation somewhere other than the process's own descriptors. Both are
+// diagnostics, never stdout — stdout carries the agent's answer, and
+// `tudouni > chat.txt` has to stay clean.
+//
+// **The memory the runtime hands to the factory is the one used**, and that is the
+// whole correction here. This function used to build a second one of its own, so
+// pressing `t` wrote the rule into an object the permission gate never looked at: the
+// same tool went on asking, and the audit's "what did this approval remember" was
+// always empty. The rule reached the configuration file either way, which is exactly
+// what made it hard to notice — it worked on the *next* run.
+func Channels(autopilot bool, in io.Reader, diag io.Writer) protocol.Channels {
 	return protocol.Channels{
 		Questioner: func(args protocol.AskUserArgs) protocol.Answer {
-			return askOnTerminal(args)
+			return askOnTerminal(args, in, diag)
 		},
-		AskerFactory: func(_ *security.Memory, trust security.TrustGroupLookup) security.AskFunc {
-			return asker
+		AskerFactory: func(memory *security.Memory, trust security.TrustGroupLookup) security.AskFunc {
+			if autopilot {
+				return security.AlwaysAllow
+			}
+			return security.CLIAsker(security.CLIOptions{
+				In:     in,
+				Prompt: diag,
+				Memory: memory,
+				// The trust-group lookup is what makes the `a` key offer "release this
+				// server's tools, as they are right now". Dropping it did not shrink the
+				// feature — it removed the key, and the person was left approving an
+				// external server's tools one at a time.
+				TrustGroup: trust,
+			})
 		},
 	}
 }
 
-// askOnTerminal asks a question on stderr and reads the answer from stdin.
+// askOnTerminal asks a question on the diagnostic stream and reads the answer from
+// the input stream.
 //
-// The question goes to stderr because stdout carries the result: mixing the two
-// pollutes it, most visibly when the output is redirected to a file.
-func askOnTerminal(args protocol.AskUserArgs) protocol.Answer {
+// The question goes to the diagnostic stream because stdout carries the result:
+// mixing the two pollutes it, most visibly when the output is redirected to a file.
+func askOnTerminal(args protocol.AskUserArgs, in io.Reader, diag io.Writer) protocol.Answer {
 	if args.Header != "" {
-		fmt.Fprintf(os.Stderr, "[提问] %s\n", args.Header)
+		fmt.Fprintf(diag, "[提问] %s\n", args.Header)
 	}
-	fmt.Fprintf(os.Stderr, "[提问] %s\n", args.Question)
+	fmt.Fprintf(diag, "[提问] %s\n", args.Question)
 	for index, option := range args.Options {
-		fmt.Fprintf(os.Stderr, "  %d) %s\n", index+1, option)
+		fmt.Fprintf(diag, "  %d) %s\n", index+1, option)
 	}
-	fmt.Fprint(os.Stderr, "[提问] 回答（回车=跳过）：")
+	fmt.Fprint(diag, "[提问] 回答（回车=跳过）：")
 
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')
 	if err != nil && line == "" {
 		// Nobody to ask is a different thing from an empty answer, and the model is
@@ -163,12 +175,20 @@ func isExitWord(text string) bool {
 
 // Run drives the REPL until the user leaves.
 //
-// **stdout carries the conversation and nothing else.** The prompt, the version
-// line, the notices and every answer to a `/` command go to stderr, because
-// `tudouni > chat.txt` is a documented contract: the file has to contain what the
-// user asked and what the model answered, not the plumbing around it. Mixing them
-// is the kind of thing that looks harmless on a terminal and ruins the only way to
-// keep a transcript.
+// **stdout carries the conversation, the version line and the audit path — nothing
+// else.** The prompt, the notices, the tool table's diagnostics and every answer to a
+// `/` command go to stderr, because `tudouni > chat.txt` is a documented contract: the
+// file has to contain what the user asked and what the model answered, not the
+// plumbing around it.
+//
+// The two lines that stay on stdout are a departure from the previous generation,
+// which printed both on stderr (`docs/parity-cli.md` records it as a MINOR
+// difference). They are kept here on purpose: the audit path is the one piece of
+// start-up output a person copies out of the file afterwards, and it sits directly
+// under the session id, which has never been on stderr. Changing it now would move
+// the first two lines of every saved transcript for no gain. What matters either way
+// is that each notice is dispatched by its own `stream` field rather than by habit —
+// see `emitNotices`.
 func Run(options Options) int {
 	in := options.In
 	if in == nil {

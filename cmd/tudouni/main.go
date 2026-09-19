@@ -272,9 +272,22 @@ func openRuntime(booted runtime.Booted, sessionID string,
 	// approval panel while the child prints the same prompt on stderr underneath it,
 	// and waits on a stdin that is a pipe the front end owns — so the prompt can
 	// never be answered and the turn never finishes.
+	//
+	// That is why the fallback below is **not** the terminal one in stdio mode. It
+	// used to be, which made a missing field in the protocol layer's own supply into
+	// exactly the failure described above: an asker reading the front end's pipe as if
+	// it were a person's keyboard, swallowing protocol lines as approvals. An empty
+	// `Channels` fails closed instead — `security.Check` refuses anything needing
+	// approval when there is no way to ask — which is the direction that cannot be
+	// wrong. `serve.go` supplies both, so this branch is a second line of defence
+	// rather than a path anything takes.
 	channels := hooks.Channels
-	if channels.AskerFactory == nil || channels.Questioner == nil {
-		channels = cli.Channels(opts.autopilot)
+	switch {
+	case channels.AskerFactory != nil && channels.Questioner != nil:
+	case opts.stdio:
+		channels = protocol.Channels{}
+	default:
+		channels = cli.Channels(opts.autopilot, os.Stdin, os.Stderr)
 	}
 
 	value, err := runtime.OpenRuntime(runtime.Options{
