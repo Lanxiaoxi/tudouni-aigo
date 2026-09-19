@@ -151,8 +151,7 @@ var catalog = map[string]string{
 	"mcp.panel.footer":  "↑↓ move · Enter mount/unmount · Esc close",
 	"mcp.tools":         "{n} tools",
 
-	"rail.mcp.tools":         "{n} tools",
-	"rail.permissions.empty": "defaults apply — low risk runs without asking",
+	"rail.mcp.tools": "{n} tools",
 
 	"help.themes": "Themes: /theme without arguments opens the picker — deep clear (default), amber, pink violet.",
 
@@ -172,21 +171,21 @@ var catalog = map[string]string{
 	"welcome.motto.6": "If the plan has one step, it does not need a list.",
 	"welcome.motto.7": "Interrupt early. The model does not mind.",
 
-	"status.settled.answered":        "Answered",
-	"status.settled.limited":         "Step limit reached",
-	"status.settled.failed":          "This turn failed",
-	"status.settled.cancelled":       "Interrupted",
-	"status.idle":                    "Idle",
-	"status.idle.new":                "Idle · starts after your first message",
-	"status.boot.starting":           "Starting the runtime…",
-	"status.boot.slow":               "No response from the runtime yet (see terminal stderr)",
-	"status.step":                    "step {step} / {total}",
-	"status.context.none":            "context  —",
-	"status.context.plain":           "context {used} / {total}",
-	"status.context.percent":         "context {used} / {total} ({percent}%)",
-	"status.context.used":            "context {used}",
-	"status.hit":                     "cache hit {percent}%",
-	"status.hit.none":                "cache hit  —",
+	"status.settled.answered":  "Answered",
+	"status.settled.limited":   "Step limit reached",
+	"status.settled.failed":    "This turn failed",
+	"status.settled.cancelled": "Interrupted",
+	"status.idle":              "Idle",
+	"status.idle.new":          "Idle · starts after your first message",
+	"status.boot.starting":     "Starting the runtime…",
+	"status.boot.slow":         "No response from the runtime yet (see terminal stderr)",
+	"status.step":              "step {step} / {total}",
+	"status.context.none":      "context  —",
+	"status.context.plain":     "context {used} / {total}",
+	"status.context.percent":   "context {used} / {total} ({percent}%)",
+	"status.context.used":      "context {used}",
+	"status.hit":               "cache hit {percent}%",
+	"status.hit.none":          "cache hit  —",
 	// The average output rate. "avg" is in the wording on purpose: the figure is
 	// completion tokens over the whole call, prompt processing included, so it
 	// sits below what the model actually decodes — a label promising the decode
@@ -195,7 +194,7 @@ var catalog = map[string]string{
 	// There is no `status.rate.none`: when there is nothing to divide, the bar
 	// leaves the whole segment out rather than drawing a dash in it, so no text
 	// is needed for that case. See the status bar's own outputRateText.
-	"status.rate": "avg {rate} tok/s",
+	"status.rate":                    "avg {rate} tok/s",
 	"status.turn":                    "this turn {duration}",
 	"status.session.messages.one":    "{n} message",
 	"status.session.messages.other":  "{n} messages",
@@ -254,32 +253,22 @@ var catalog = map[string]string{
 	"brief.no":                "no",
 
 	// --- the context rail -------------------------------------------------
-	"rail.jobs":              "Background jobs",
-	"rail.jobs.empty":        "No background jobs",
-	"rail.jobs.empty_hint":   "Jobs started by shell_background show up here",
-	"rail.job.running":       "running {span}",
-	"rail.job.uncollected":   "finished (exit {code}) · result not collected",
-	"rail.job.killed":        "collected",
-	"rail.job.done":          "finished (exit {code}) · collected",
-	"rail.tasks":             "Tasks",
-	"rail.tasks.empty":       "No tasks yet",
-	"rail.tasks.empty_hint":  "Tasks the agent creates show up here",
-	"rail.skills":            "Loaded skills",
-	"rail.skills.empty":      "No skills loaded",
-	"rail.skills.empty_hint": "Anything load_skill reads stays loaded",
-	"rail.permissions":       "Permissions",
-	"rail.permission.auto":   "auto",
-	"rail.permission.ask":    "ask",
-	// The third disposition a policy can report. The original deliberately shows
-	// the raw word here rather than inventing a label, so this is the raw word.
-	"rail.permission.deny":              "deny",
-	"rail.permission.granted":           "always allowed",
-	"rail.permission.prefixes":          "command rules",
-	"rail.permission.denied":            "denied outright ",
-	"rail.permission.by_level":          "by risk level (runtime reported no scope)",
+	"rail.jobs":                         "Background jobs",
+	"rail.jobs.empty":                   "No background jobs",
+	"rail.jobs.empty_hint":              "started by shell_background",
+	"rail.job.running":                  "running {span}",
+	"rail.job.uncollected":              "finished (exit {code}) · result not collected",
+	"rail.job.killed":                   "collected",
+	"rail.job.done":                     "finished (exit {code}) · collected",
+	"rail.tasks":                        "Tasks",
+	"rail.tasks.empty":                  "No tasks yet",
+	"rail.tasks.empty_hint":             "what the agent plans to do",
+	"rail.skills":                       "Loaded skills",
+	"rail.skills.empty":                 "No skills loaded",
+	"rail.skills.empty_hint":            "what load_skill has read",
 	"rail.session":                      "Session",
 	"rail.session.empty":                "No session yet",
-	"rail.session.empty_hint":           "The file appears after your first message",
+	"rail.session.empty_hint":           "appears after your first message",
 	"rail.session.thinking_off":         "thinking off",
 	"rail.session.effort":               "  effort {effort}",
 	"rail.session.messages.one":         "{n} message",
@@ -355,7 +344,7 @@ var catalog = map[string]string{
 	"status.tools.count":       "{n} tools (/tools for the list)",
 
 	// --- the line the REPL prints after every turn -------------------------
-	"stats.usage":             "cumulative input {prompt} tokens (cached {cached}, hit rate {hit_rate})",
+	"stats.usage": "cumulative input {prompt} tokens (cached {cached}, hit rate {hit_rate})",
 	// The output rate on the REPL's per-turn line. Same figure, same wording as
 	// the status bar's, because it is the same ledger read twice.
 	"stats.rate":              " · output {completion} tokens (avg {rate} tok/s)",
@@ -386,7 +375,7 @@ var catalog = map[string]string{
 	// --- MCP ---------------------------------------------------------------
 	"rail.mcp":             "Background MCP",
 	"rail.mcp.empty":       "No MCP server is mounted",
-	"rail.mcp.empty_hint":  "/mcp lists them and mounts them one by one",
+	"rail.mcp.empty_hint":  "/mcp mounts them",
 	"rail.mcp.tools.one":   "  {n} tool",
 	"rail.mcp.tools.other": "  {n} tools",
 	"mcp.tools.one":        "{n} tool",
@@ -663,7 +652,7 @@ var catalog = map[string]string{
 	// --- the rail's goal block --------------------------------------------
 	"rail.goal":            "Goal",
 	"rail.goal.empty":      "No goal",
-	"rail.goal.empty_hint": "a long-running objective appears here",
+	"rail.goal.empty_hint": "a goal it keeps resuming",
 	"rail.goal.line":       "{phase} · {rounds}",
 	"rail.goal.armed":      "continuing on its own",
 	"rail.goal.disarmed":   "paused — `/goal resume`",

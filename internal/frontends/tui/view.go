@@ -463,15 +463,16 @@ func (m model) renderTurn(turn *turnData, width int) []string {
 
 	// The thinking block: one folded line by default, the quote block when this
 	// turn is expanded. Both paths share the same constructors.
-	if turn.thinking != "" {
-		chars := runewidth.StringWidth(turn.thinking)
-		if turn.expanded {
-			out = append(out, renderOne(thinkingExpandedHead(chars)))
-			out = append(out, thinkingBody(turn.thinking, width)...)
-		} else {
-			out = append(out, renderOne(thinkingFolded(turn, chars, "")))
-		}
-	} else if m.thinkingLive && m.thinkingText != "" && turn.runID == m.streamRunID {
+	//
+	// **The live block is checked first, and that order is load-bearing.** A turn
+	// that has made one tool call already has a finalized `turn.thinking` — the
+	// reasoning of its **previous** step — and while the model thinks about the
+	// next one the live copy is the only thing describing the present. Ranking the
+	// finalized text above it left the panel showing the last step's thoughts with
+	// a frozen counter, which reads as "it is stuck" rather than "it is thinking".
+	// The live copy is dropped the moment its step's whole reasoning arrives, so
+	// the two branches are never both current — only ever one step apart.
+	if m.thinkingLive && m.thinkingText != "" && turn.runID == m.streamRunID {
 		if m.quiet {
 			// Quiet mode folds it: one line, the spin frame and the live count
 			// — the only thing moving on a screen where nothing else does.
@@ -482,6 +483,14 @@ func (m model) renderTurn(turn *turnData, width int) []string {
 			// lay 400 characters over 100 lines.
 			out = append(out, renderOne(thinkingStreamHead()))
 			out = append(out, thinkingBody(m.thinkingText, width)...)
+		}
+	} else if turn.thinking != "" {
+		chars := runewidth.StringWidth(turn.thinking)
+		if turn.expanded {
+			out = append(out, renderOne(thinkingExpandedHead(chars)))
+			out = append(out, thinkingBody(turn.thinking, width)...)
+		} else {
+			out = append(out, renderOne(thinkingFolded(turn, chars, "")))
 		}
 	}
 	out = append(out, "")

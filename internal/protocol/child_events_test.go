@@ -150,10 +150,10 @@ func TestTheOriginMarkerDoesNotCrossTheWire(t *testing.T) {
 
 // TestAChildsStepDoesNotAdvanceTheParentsStep is the other half.
 //
-// `lastStep` decides which streaming block a delta belongs to. A child's loop
-// counts its own steps from one, so a child event landing there would make the
-// parent's next delta attach to a step the parent never reached — and the answer
-// would be drawn in the wrong place in the transcript.
+// `lastStep` is what the server reports as "the step of the most recent audit
+// record". A child's loop counts its own steps from one, so a child event landing
+// there would let a record the parent never made decide what the parent's own
+// bookkeeping says — and `tool_result` snapshots are read off that number too.
 func TestAChildsStepDoesNotAdvanceTheParentsStep(t *testing.T) {
 	var out strings.Builder
 	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
@@ -289,6 +289,64 @@ func TestADelegationTransitionAsksForASnapshot(t *testing.T) {
 	}
 	if countStateSnapshots(childMessages) != 0 {
 		t.Error("a child's ordinary step cost a state snapshot")
+	}
+}
+
+// TestTheDeltaCarriesTheStepTheRuntimeSupplied is the regression for a step
+// number that made two consecutive steps indistinguishable.
+//
+// The server used to derive a delta's step as "the last record's step plus one".
+// A step's own `model_call` record is written **after** that step's chunks, so
+// during step 2's stream the most recent record is step 1's own and the sum is 2
+// — but during step 1's stream the most recent record was step 0's and the sum
+// was also 2. Both steps shipped `step: 2`, and a front end that groups a
+// streaming block by that number accumulated the whole turn into one block.
+//
+// The runtime knows which step it is on, so it now says so and this layer only
+// forwards it. The step below deliberately does not match `lastStep` in either
+// direction: a value that happens to equal the old arithmetic would pass whether
+// or not the field is being forwarded at all.
+func TestTheDeltaCarriesTheStepTheRuntimeSupplied(t *testing.T) {
+	var out strings.Builder
+	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
+	server.Attach(&stubRuntime{})
+
+	server.OnEvent(map[string]any{"kind": "run_started", "session_id": "parent", "run_id": "r1", "step": 0})
+	server.OnEvent(map[string]any{"kind": "model_call", "session_id": "parent", "run_id": "r1", "step": 6, "status": "ok"})
+	server.OnDelta(7, "hello", "thinking", false)
+
+	var deltas []map[string]any
+	for _, message := range sentMessages(t, &out) {
+		if TypeOf(message) == OutDelta {
+			deltas = append(deltas, message)
+		}
+	}
+	if len(deltas) != 2 {
+		t.Fatalf("one increment sent %d delta messages, want one per channel", len(deltas))
+	}
+	for _, delta := range deltas {
+		if step, _ := Int(delta, "step"); step != 7 {
+			t.Errorf("delta step = %v, want the 7 the runtime supplied (lastStep was 6)", delta["step"])
+		}
+		if runID, _ := delta["run_id"].(string); runID != "r1" {
+			t.Errorf("delta run_id = %v, want the run the record carried", delta["run_id"])
+		}
+	}
+
+	// And the reset, which goes down the same path: it names the block it clears.
+	server.OnDelta(7, "", "", true)
+	resets := 0
+	for _, message := range sentMessages(t, &out) {
+		if TypeOf(message) != OutDeltaReset {
+			continue
+		}
+		resets++
+		if step, _ := Int(message, "step"); step != 7 {
+			t.Errorf("delta_reset step = %v, want 7", message["step"])
+		}
+	}
+	if resets != 1 {
+		t.Errorf("sent %d delta_reset messages, want 1", resets)
 	}
 }
 

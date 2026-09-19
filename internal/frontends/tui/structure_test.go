@@ -457,14 +457,6 @@ func filledModel(width, height int) model {
 	}
 	m.panel.mcp = []any{map[string]any{"name": "kb", "state": "loaded", "tools": 3}}
 	m.panel.agentsMD = []any{map[string]any{"path": "AGENT.md", "lines": 42}}
-	m.panel.riskScope = []any{
-		map[string]any{"risk": "low", "disposition": "auto"},
-		map[string]any{"risk": "medium", "disposition": "ask"},
-		map[string]any{"risk": "high", "disposition": "deny"},
-	}
-	m.panel.granted = []any{"fetch_web"}
-	m.panel.prefixes = []any{"go test"}
-	m.panel.denied = []any{"shell"}
 	m.panel.toolInfo = map[string]map[string]any{
 		"shell": {"risk": "high", "parallel_safe": true},
 	}

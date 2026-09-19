@@ -116,10 +116,10 @@ func Has(key string) bool {
 // Lookup returns a key's template without reporting a miss.
 //
 // It exists for the places that build a key out of a value they did not choose —
-// `outcome.<event outcome>`, `rail.permission.<disposition>`, `stop.<stop reason>`.
-// Those call sites have a real fallback (print the raw value), and T's
-// unmissable marker is the wrong answer there: the raw value is searchable and
-// the marker is not. Use T everywhere the key is a literal.
+// `outcome.<event outcome>`, `stop.<stop reason>`. Those call sites have a real
+// fallback (print the raw value), and T's unmissable marker is the wrong answer
+// there: the raw value is searchable and the marker is not. Use T everywhere the
+// key is a literal.
 func Lookup(key string) (string, bool) {
 	text, ok := catalog[key]
 	return text, ok

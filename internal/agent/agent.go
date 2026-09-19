@@ -102,7 +102,17 @@ type Config struct {
 	OnEvent func(map[string]any)
 	// OnDelta reports a stream increment. reset=true means "throw away what you
 	// have drawn for this step".
-	OnDelta func(text, reasoning string, reset bool)
+	//
+	// The step is the **user-facing step number** (1-based), and it is passed
+	// rather than inferred because this is the only end that knows it. A front end
+	// uses it to tell one streaming block from the next: chunks of one step and of
+	// the next travel the same channel with no other field to separate them, and a
+	// block that cannot be told apart stops being updated. Deriving it from the
+	// last recorded event instead is off by one exactly when the first step ends:
+	// a step's `model_call` record is written **after** that step's chunks, and it
+	// carries the loop's 0-based counter, so the second step's chunks come out with
+	// the same number the first step's did.
+	OnDelta func(step int, text, reasoning string, reset bool)
 	// Notes returns text to append to the request payload only. It never enters
 	// the session's message list: the task list and the background-job warning
 	// belong to this run's working memory, not to the conversation.
@@ -387,8 +397,13 @@ func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
 	// The relay sends increments only when somebody is listening. A stream nobody
 	// reads costs the same and delivers less, and whether `stream` appears in the
 	// request body is itself observable in the audit.
+	//
+	// `a.step+1` is captured per call rather than read inside the closure: the
+	// chunks of this call all belong to the step the loop is on **now**, and the
+	// loop's counter moves on as soon as the step ends.
+	step := a.step + 1
 	if a.OnDelta != nil {
-		options.OnDelta = func(text, reasoning string) { a.OnDelta(text, reasoning, false) }
+		options.OnDelta = func(text, reasoning string) { a.OnDelta(step, text, reasoning, false) }
 		// Each attempt may restate the whole answer, so the copy already on the
 		// screen is thrown away first. This is the interface half of delta_reset;
 		// the audit half is emitted only when text actually went out.
@@ -401,7 +416,7 @@ func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
 		BeforeEach: func() {
 			if streamed {
 				if a.OnDelta != nil {
-					a.OnDelta("", "", true)
+					a.OnDelta(step, "", "", true)
 				}
 				a.emit(audit.Event(audit.KindDeltaReset, a.Session.SessionID, a.runID, a.step, nil))
 				streamed = false
@@ -423,7 +438,7 @@ func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
 		hooks.BeforeEach = func() {
 			if streamed {
 				if a.OnDelta != nil {
-					a.OnDelta("", "", true)
+					a.OnDelta(step, "", "", true)
 				}
 				a.emit(audit.Event(audit.KindDeltaReset, a.Session.SessionID, a.runID, a.step, nil))
 				streamed = false

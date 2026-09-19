@@ -14,7 +14,9 @@ import (
 // name the protocol layer — and neither package ends up importing the other.
 type RuntimeHooks struct {
 	ShouldStop func() bool
-	OnDelta    func(text, reasoning string, reset bool)
+	// OnDelta carries the step the increment belongs to, supplied by the runtime
+	// that issued the call. See Server.OnDelta for why it is not derived here.
+	OnDelta func(step int, text, reasoning string, reset bool)
 	// OnEvent receives one audit record. The server forwards it unchanged and also
 	// writes it down on its own side, which is what makes "the audit log is the
 	// protocol" true at the byte level.

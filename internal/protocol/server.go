@@ -1095,15 +1095,30 @@ const childOriginKey = "child_origin"
 
 // OnDelta forwards one stream increment.
 //
-// The step number is the last event's step **plus one**, and the reason is worth
-// writing down: `model_call` is recorded after the call returns, so when the first
-// delta arrives the most recent event is still the previous step's. The current
-// block therefore belongs to one step later. The same arithmetic holds for every
-// step of the turn.
-func (s *Server) OnDelta(text, reasoning string, reset bool) {
+// The step is the caller's, not this layer's, and that is the point: a delta's
+// step answers "which streaming block is this chunk part of", and the only end
+// that knows is the loop that issued the call.
+//
+// It used to be derived here as the last record's step plus one, on the reading
+// that `model_call` is written after the call returns so the current block belongs
+// one step later. That holds for the first step and breaks at the second: the
+// record written for step 0 carries step 0, so while step 1 streams the most
+// recent record is step 0's and `lastStep+1` yields 1 — the same number step 0's
+// chunks were given, when the most recent record was `run_started` (step 0) and
+// the sum was also 1. From step 2 on the numbers advance again. So exactly one
+// boundary was wrong, and it is the one a front end crosses first: a block keyed
+// on `step` never learns that step 1 has begun.
+//
+// Measured, not inferred: see docs/protocol.md 3.8 for the table.
+//
+// `lastStep` keeps its own meaning — the step of the most recent audit record —
+// and is no longer read from here.
+//
+// `lastStep` keeps its own meaning — the step of the most recent audit record —
+// and is no longer read from here.
+func (s *Server) OnDelta(step int, text, reasoning string, reset bool) {
 	s.stateLock.Lock()
 	runID := s.lastRunID
-	step := s.lastStep + 1
 	s.stateLock.Unlock()
 
 	sessionID := ""

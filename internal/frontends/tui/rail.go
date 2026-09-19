@@ -20,12 +20,19 @@ import (
 // stroke per block competes with the body text for attention, and an anchor is
 // supposed to be the quiet layer. The eye counts the segments by walking the bar.
 //
-// The block order is **not** interchangeable. The first four are the order the
-// design fixed (tasks / skills / permissions / session); jobs and MCP were
-// appended because they are the two blocks that stand for something *alive* on
-// this machine, and they belong together at the end. Moving one of them into the
-// middle shifts every block below it, and "which block is where" is the muscle
-// memory a person builds between two glances.
+// There is no Permissions block. It listed low/medium/high against the
+// disposition the runtime computed, and that is the same fact the status bar's
+// permission chip already carries — one fact drawn twice, in the column that has
+// the least room to spare. The granted / command-rule / denied rows that used to
+// ride in the same block are gone with it: those are policy, `/tools` is where
+// the policy is read.
+//
+// The block order is **not** interchangeable. It is the order the design fixed
+// (goal / tasks / skills / session); jobs and MCP were appended because they are
+// the two blocks that stand for something *alive* on this machine, and they
+// belong together at the end. Moving one of them into the middle shifts every
+// block below it, and "which block is where" is the muscle memory a person
+// builds between two glances.
 
 const railWidth = 32
 
@@ -62,11 +69,6 @@ func (m model) railBlocks() []railBlock {
 			count: fmt.Sprintf("%d", len(m.panel.skills)),
 			rows:  skillRows(m.panel.skills),
 			empty: i18n.T("rail.skills.empty"), hint: i18n.T("rail.skills.empty_hint"),
-		},
-		{
-			title: i18n.T("rail.permissions"),
-			rows:  m.permissionRows(),
-			empty: i18n.T("rail.permissions.empty"), hint: "",
 		},
 		{
 			title: i18n.T("rail.session"),
@@ -530,55 +532,6 @@ func jobCount(jobs []any) string {
 		}
 	}
 	return fmt.Sprintf("%d / %d", outstanding, len(jobs))
-}
-
-// permissionRows lists all three risk levels with the disposition the runtime
-// computed — the interface does not know "low is the default", that is the
-// config's knowledge, and deriving it here would be a second definition. The
-// colour lands on medium and high only: low is the norm, and colouring the norm
-// colours nothing.
-//
-// The three remembered-exception rows carry a label rather than a bare colour:
-// they are the user's own exceptions, not risks, and painting them in the risk
-// colour would leave the two lines that *are* risks standing out less.
-func (m model) permissionRows() []string {
-	var rows []string
-	for _, item := range m.panel.riskScope {
-		row, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		risk, _ := row["risk"].(string)
-		disposition, _ := row["disposition"].(string)
-		role := "rule"
-		switch risk {
-		case "high":
-			role = "risk_high"
-		case "medium":
-			role = "risk_medium"
-		}
-		// An unrecognised disposition prints itself: `auto_something` is
-		// searchable, and a marker is not.
-		word := i18n.LookupOr("rail.permission."+disposition, disposition)
-		rows = append(rows, currentTheme.styleFor("process").Render(fmt.Sprintf("%-7s", risk))+
-			currentTheme.styleFor(role).Render(word))
-	}
-	if names := stringList(m.panel.granted); len(names) > 0 {
-		rows = append(rows, currentTheme.styleFor("rule").Render(i18n.T("rail.permission.granted"))+
-			currentTheme.styleFor("process").Render(" "+strings.Join(names, i18n.T("list.separator"))))
-	}
-	if rules := stringList(m.panel.prefixes); len(rules) > 0 {
-		rows = append(rows, currentTheme.styleFor("rule").Render(i18n.T("rail.permission.prefixes"))+
-			currentTheme.styleFor("process").Render(" "+strings.Join(rules, i18n.T("list.separator"))))
-	}
-	if names := stringList(m.panel.denied); len(names) > 0 {
-		rows = append(rows, currentTheme.styleFor("denied").Render(i18n.T("rail.permission.denied")+
-			strings.Join(names, i18n.T("list.separator"))))
-	}
-	if len(rows) == 0 {
-		rows = append(rows, currentTheme.styleFor("rule").Render(i18n.T("rail.permission.by_level")))
-	}
-	return rows
 }
 
 func windowText(window any) string {

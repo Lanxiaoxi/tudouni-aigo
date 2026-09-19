@@ -29,7 +29,14 @@ const VERSION = 1
 // 2 added `delta` and `delta_reset`. An older front end needs no change: it
 // ignores the two unknown message kinds, and the complete answer still arrives
 // in `ui(run_finished).answer`.
-const PROTOCOL = 2
+//
+// 3 corrects the `step` a `delta` carries. It used to be inferred here as "the
+// last record's step plus one", which gave a turn's **first two** steps the same
+// number — so a front end that groups a streaming block by that number never
+// learned that the second step had begun. The field keeps its name, type and
+// meaning; only its value is now right, which is why a front end written against
+// 2 still parses every message it receives.
+const PROTOCOL = 3
 
 // Message keys used by every envelope.
 const (

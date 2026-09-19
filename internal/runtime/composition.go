@@ -210,8 +210,10 @@ type Options struct {
 
 	// ShouldStop is the per-turn cancellation flag.
 	ShouldStop func() bool
-	// OnDelta reports stream increments.
-	OnDelta func(text, reasoning string, reset bool)
+	// OnDelta reports stream increments. The step is the runtime's own, because a
+	// front end cannot derive which step is streaming from the audit stream: a
+	// step's `model_call` record is written after that step's chunks.
+	OnDelta func(step int, text, reasoning string, reset bool)
 	// OnEventHook receives every audit record after it has been written down. The
 	// protocol server subscribes here; without it the audit log would be the only
 	// way to see what happened, and a front end would have nothing to draw.
@@ -664,7 +666,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 //
 // Nil is the honest signal: the agent asks the adapter for a stream only when
 // somebody is listening, so this also keeps `stream` out of the request body.
-func deltaSink(options Options) func(text, reasoning string, reset bool) {
+func deltaSink(options Options) func(step int, text, reasoning string, reset bool) {
 	if !options.Stream {
 		return nil
 	}

@@ -51,19 +51,23 @@ TextArea built-ins (Ctrl+A/E/W/U, Home/End, Delete, Ctrl+Left/Right): inherited.
 
 Python `rail_blocks` / `_*_block`: `view_state.py:1780-2085`. Go `railBlocks`: `rail.go:37-530`.
 
-Block order (both): Tasks · Loaded skills · Permissions · Session · Background jobs · MCP.
+Block order: Goal · Tasks · Loaded skills · Session · Background jobs · MCP.
+Python had **Permissions** between Loaded skills and Session; Go no longer draws that block
+at all — see the row below.
 
 | block | rows (Python) | Go |
 |---|---|---|
+| Goal | — (Python has no goal block) | `rail.go:52-55` — objective, phase/rounds line, armed/disarmed, blocked message |
 | Tasks | progress bar (one cell per task, `+N` past 20) + one row per todo with `✓/◐/○/·`; badge `done / total`; two-line empty state | `rail.go:261-313` — same, badge omitted when empty (matches Python's `""`) |
 | Loaded skills | one row per name (`ROLE_SKILL`); badge is a literal `"0"` | `rail.go:389-402` — same |
-| Permissions | one row per risk level, disposition word from the runtime, colour only on medium/high; granted-tools row, granted-prefixes row, denied-tools row, else "reported by level" | `rail.go:482-520` — same, with `LookupOr` fallback so an unknown disposition prints itself |
+| Permissions | one row per risk level, disposition word from the runtime, colour only on medium/high; granted-tools row, granted-prefixes row, denied-tools row, else "reported by level" | **removed.** The risk table duplicated the status bar's permission chip (it is the same `risk_scope` payload, and those two single-line places are where the fact is read); the granted / command-rule / denied rows went with it and `/tools` is where that policy is read. The i18n keys and `panelstate.granted/prefixes/denied` went too. |
 | Session | id; model + window; thinking-off row (with effort); size; context figure; audit dir; one row per AGENT.md with `!`/`…` | `rail.go:160-256` — same; **no provider line anywhere** (Go never reads `init.provider`) |
 | Background jobs | four state marks, `n / m` badge counts outstanding, only `uncollected` in the waiting colour | `rail.go:350-387`, `rail.go:455-471` — same |
 | MCP | only `loaded` rows with the tool count, badge `running / configured`; empty state says nothing is mounted | `rail.go:404-451` — same |
 
 Collapse behaviour: `Ctrl+B` toggles + pins; auto-open on the todos edge
-(Python `view_state.py:2121-2159` ↔ Go `model.go:669-684`) — **Go also requires `!railPinned`** (M2).
+(Python `view_state.py:2121-2159` ↔ Go `noteTaskList`, `model.go` — called from **both**
+`beginTurn` and the state snapshot, because the list only ever appears mid-turn).
 
 Narrow degradation: rail hidden below 100 columns and the one-line summary shows only below
 120 columns on both (`view.go:24`, `view.go:50-52` ↔ `app.py:848-856`).
@@ -101,7 +105,9 @@ Divergences: no spinner during boot (M8); the frame keeps animating while a dial
 
 ## F. What Python's `view_state.py` computes that Go does not
 
-* `should_auto_open` — present in Go but **gated on `railPinned`** (M2).
+* `should_auto_open` — present in Go as `noteTaskList`, called from the state snapshot (the
+  todos edge is only observable there) as well as `beginTurn`. The `railPinned` gate M2
+  described is gone.
 * `rail_summary` — present, minus the autopilot segment (M10).
 * `tokens_text`'s integer trimming (m1) and `ms_text`'s `—` for a missing duration
   (`view_state.py:268-271` → Go's `msText` returns `"0ms"` for a nil/zero duration,

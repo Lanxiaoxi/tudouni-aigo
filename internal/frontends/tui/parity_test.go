@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 )
 
 func testModel() model {
@@ -121,6 +123,241 @@ func TestTheRailDoesNotReopenOnAContentUpdate(t *testing.T) {
 
 	if !m.railHidden {
 		t.Error("a content update re-opened the rail the user had folded")
+	}
+}
+
+// TestTheRailOpensOnATaskListThatArrivesMidTurn is the regression for a check
+// that always ran too early.
+//
+// The task list does not exist when a turn starts. `run_started` arrives first
+// and `todo_write` is called one or more steps later, so `beginTurn` — where the
+// edge was tested — only ever saw an empty list, and the rail never opened itself
+// for the one thing it opens itself for. The list reaches the panel through the
+// state snapshot that follows the tool result, which is where it is now noticed.
+func TestTheRailOpensOnATaskListThatArrivesMidTurn(t *testing.T) {
+	m := testModel()
+	m.railHidden = true
+	m.railPinned = true
+
+	m.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
+	if !m.railHidden {
+		t.Fatal("the rail opened before there was anything to show")
+	}
+
+	m.handleUI(map[string]any{
+		"kind":  protocol.UIState,
+		"todos": []any{map[string]any{"status": "in_progress", "content": "read the code"}},
+	})
+	if m.railHidden {
+		t.Error("the rail stayed folded when the task list arrived mid-turn")
+	}
+}
+
+// TestAMidTurnTaskListStillRespectsACollapse: the edge, not the level. Once the
+// list has been seen, a later `todo_write` in the same turn is a content update —
+// `todo_write` is called many times in a long task, and re-opening on every one
+// would be a panel that keeps popping itself open.
+func TestAMidTurnTaskListStillRespectsACollapse(t *testing.T) {
+	m := testModel()
+	m.railHidden = true
+	m.railPinned = true
+
+	state := func(status, content string) map[string]any {
+		return map[string]any{
+			"kind":  protocol.UIState,
+			"todos": []any{map[string]any{"status": status, "content": content}},
+		}
+	}
+	m.handleUI(state("pending", "first"))
+	if m.railHidden {
+		t.Fatal("the first task list did not open the rail")
+	}
+
+	m.railHidden = true
+	m.handleUI(state("completed", "first"))
+	if !m.railHidden {
+		t.Error("a mid-turn content update re-opened the rail the user had folded")
+	}
+}
+
+// TestEachStepsThinkingCountsFromZero is the regression for a live counter that
+// never restarted.
+//
+// The step a `delta` carries identifies its **streaming block**, and the block is
+// what `thinkingChars` measures: "how much has this step thought so far". When
+// two consecutive steps shipped the same number, the difference was never noticed,
+// the counter accumulated across the whole turn, and the moment `model_call`
+// finalized a step's reasoning the number on screen stopped moving — it was
+// showing a previous step's static total while the live chunks added to a count
+// nothing drew.
+func TestEachStepsThinkingCountsFromZero(t *testing.T) {
+	m := testModel()
+	m.quiet = true
+	m.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
+
+	// Step 1 thinks 11 cells.
+	m.handleDelta(map[string]any{"channel": "reasoning", "text": "aaaa bbbb c", "run_id": "r1", "step": 1})
+	if m.thinkingChars != 11 {
+		t.Fatalf("step 1 counted %d cells, want 11", m.thinkingChars)
+	}
+	if !m.thinkingLive {
+		t.Fatal("a reasoning chunk did not start a live block")
+	}
+
+	// Step 2 is a different block: it starts from zero, and keeps only its own text
+	// — not step 1's 11 cells plus its own.
+	m.handleDelta(map[string]any{"channel": "reasoning", "text": "ddd", "run_id": "r1", "step": 2})
+	if m.thinkingChars != 3 {
+		t.Errorf("step 2 counted %d cells, want 3 (its own, not the turn's running total)", m.thinkingChars)
+	}
+	if m.thinkingText != "ddd" {
+		t.Errorf("step 2's live text = %q, want only its own chunks", m.thinkingText)
+	}
+
+	// What the screen actually shows. The counter is only worth resetting if the
+	// line drawn reads it — step 1's finalized reasoning must not outrank the block
+	// that is still being written.
+	screen := stripANSI(m.View())
+	if !strings.Contains(screen, "3 chars") {
+		t.Errorf("the live line does not show step 2's own 3 cells:\n%s", screen)
+	}
+	if strings.Contains(screen, "11 chars") {
+		t.Errorf("the live line still shows step 1's total:\n%s", screen)
+	}
+
+	// A second chunk of the same step still accumulates: the reset is per step,
+	// not per chunk.
+	m.handleDelta(map[string]any{"channel": "reasoning", "text": "ee", "run_id": "r1", "step": 2})
+	if m.thinkingChars != 5 {
+		t.Errorf("a second chunk of step 2 counted %d cells, want 5", m.thinkingChars)
+	}
+	if screen := stripANSI(m.View()); !strings.Contains(screen, "5 chars") {
+		t.Errorf("the drawn line did not follow the second chunk:\n%s", screen)
+	}
+}
+
+// TestTheLiveThinkingOutranksThePreviousStepsReasoning: the ordering between the
+// two thinking branches, pinned on its own because it is the half a counter test
+// cannot see.
+//
+// A turn that has made one tool call already has a finalized `turn.thinking` —
+// step 1's reasoning — and while step 2 streams, the live copy is the only thing
+// describing the present. Rendering the finalized one first left the panel
+// showing stale thoughts with a frozen count, which is exactly the "it is stuck"
+// reading this interface is built to avoid.
+func TestTheLiveThinkingOutranksThePreviousStepsReasoning(t *testing.T) {
+	m := filledModel(120, 40)
+	m.current = nil
+	m.transcript = nil
+	m.turnSeq = 0
+	m.quiet = true
+	m.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
+
+	// Step 1 finishes and its reasoning is finalized. Quiet mode folds the block, so
+	// what the line carries is the finalized character count — 24 cells — with no
+	// spinner, because nothing is being written any more.
+	m.handleDelta(map[string]any{"channel": "reasoning", "text": "step one thoughts", "run_id": "r1", "step": 1})
+	m.handleEvent(map[string]any{
+		"kind": "model_call", "run_id": "r1", "step": 1, "status": "ok",
+		"duration_ms": 900, "reasoning": "step one whole reasoning", "tool_calls": 1,
+	})
+	screen := stripANSI(m.View())
+	if !strings.Contains(screen, "24 chars") {
+		t.Fatalf("the finalized reasoning is not on screen after its step ended:\n%s", screen)
+	}
+	if strings.Contains(screen, "Ctrl+T") == false {
+		t.Errorf("the finalized line lost its expand hint:\n%s", screen)
+	}
+
+	// Step 2 starts thinking: the live block takes the line, not the old text.
+	m.handleDelta(map[string]any{"channel": "reasoning", "text": "now step two", "run_id": "r1", "step": 2})
+	screen = stripANSI(m.View())
+	if strings.Contains(screen, "24 chars") {
+		t.Errorf("the previous step's finalized reasoning outranked the live block:\n%s", screen)
+	}
+	if !strings.Contains(screen, "12 chars") {
+		t.Errorf("the live block is not drawn with its own count:\n%s", screen)
+	}
+	// The spinner is the part that says "and it is still going". Its frame is read
+	// off the clock, so pinning one glyph would fail at random — ask for the frame
+	// the model would draw and look for that one.
+	if frame := m.spinnerFrame(); frame == "" {
+		t.Error("a live thinking line is drawn with no spinner frame available")
+	} else if !strings.Contains(screen, frame) {
+		t.Errorf("the live line carries no spinner (%q):\n%s", frame, screen)
+	}
+}
+
+// TestTheFinalizedThinkingReplacesTheLiveCopy is the second half of the same bug.
+//
+// `model_call` carries the step's reasoning whole, and `view.go` draws that
+// version — it wins the branch. Leaving the live copy standing therefore meant
+// two things at once: the screen showed the previous step's reasoning while the
+// model was thinking about the next one, and the live counter went on counting a
+// block that was no longer drawn. Dropping the live copy when the whole one
+// arrives is what the nearby comment always claimed happened.
+func TestTheFinalizedThinkingReplacesTheLiveCopy(t *testing.T) {
+	m := testModel()
+	m.quiet = true
+	m.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
+
+	m.handleDelta(map[string]any{"channel": "reasoning", "text": "thinking about it", "run_id": "r1", "step": 1})
+	if !m.thinkingLive {
+		t.Fatal("a reasoning chunk did not start a live block")
+	}
+
+	m.handleEvent(map[string]any{
+		"kind": "model_call", "run_id": "r1", "step": 1, "status": "ok",
+		"duration_ms": 900, "prompt_tokens": 10, "cached_tokens": 5,
+		"reasoning": "the whole reasoning", "tool_calls": 1,
+	})
+	if m.thinkingLive {
+		t.Error("the live block outlived the whole reasoning that replaced it")
+	}
+	if m.thinkingChars != 0 {
+		t.Errorf("the live counter kept %d cells after being replaced", m.thinkingChars)
+	}
+	if m.current.thinking != "the whole reasoning" {
+		t.Errorf("turn.thinking = %q, want the reasoning the call carried", m.current.thinking)
+	}
+
+	// A gateway that reports no `reasoning` on a step leaves nothing to replace
+	// the live text with, so it must stay on screen: it is the only copy.
+	m2 := testModel()
+	m2.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
+	m2.handleDelta(map[string]any{"channel": "reasoning", "text": "thought, unreported", "run_id": "r1", "step": 1})
+	m2.handleEvent(map[string]any{
+		"kind": "model_call", "run_id": "r1", "step": 1, "status": "ok",
+		"duration_ms": 900, "tool_calls": 1,
+	})
+	if !m2.thinkingLive || m2.thinkingText == "" {
+		t.Error("a step with no reported reasoning dropped the only copy of its thinking")
+	}
+}
+
+// TestARetryDropsTheHalfWrittenStep: `delta_reset` names the block it clears, and
+// a retry restates the whole step — so the counters start from zero rather than
+// being added to the attempt that was thrown away.
+func TestARetryDropsTheHalfWrittenStep(t *testing.T) {
+	m := testModel()
+	m.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
+
+	m.handleDelta(map[string]any{"channel": "reasoning", "text": "aaaa", "run_id": "r1", "step": 1})
+	m.handleDelta(map[string]any{"channel": "text", "text": "partial answer", "run_id": "r1", "step": 1})
+	if m.thinkingChars != 4 || m.streamedText == "" {
+		t.Fatalf("the first attempt did not stream: chars=%d text=%q", m.thinkingChars, m.streamedText)
+	}
+
+	m.handleServerMessage(map[string]any{"t": protocol.OutDeltaReset, "run_id": "r1", "step": 1})
+	if m.thinkingChars != 0 || m.thinkingText != "" || m.streamedText != "" {
+		t.Errorf("the reset left the thrown-away attempt on screen: chars=%d thinking=%q text=%q",
+			m.thinkingChars, m.thinkingText, m.streamedText)
+	}
+
+	// And the retry's own chunks count from zero, not from the abandoned copy.
+	m.handleDelta(map[string]any{"channel": "reasoning", "text": "bb", "run_id": "r1", "step": 1})
+	if m.thinkingChars != 2 {
+		t.Errorf("the retry counted %d cells, want its own 2", m.thinkingChars)
 	}
 }
 

@@ -38,6 +38,11 @@ type panelstate struct {
 	// cannot outlive the thing it describes.
 	subagents []any
 	mcp       []any
+	// riskScope is the runtime's permission judgement, one row per risk level. It
+	// is read by the status bar's permission chip and by the folded rail's summary
+	// — both of which answer "will the next risky call ask me". There is no longer
+	// a Permissions **block** in the rail; the fact itself is still needed by the
+	// two places that state it in one line.
 	riskScope []any
 	messages  int
 	steps     int
@@ -46,9 +51,6 @@ type panelstate struct {
 	autopilot bool
 	thinking  bool
 	effort    string
-	granted   []any
-	denied    []any
-	prefixes  []any
 	agentsMD  []any
 	skills    []any
 	// promptTokens / cachedTokens are the last completed model call's usage. The
@@ -432,10 +434,7 @@ func (m *model) handleServerMessage(payload map[string]any) {
 		if runID == m.streamRunID && step == m.streamStep {
 			// Half-written text never enters the history, so keeping it on
 			// screen would leave something a restored session cannot account for.
-			m.streamedText = ""
-			m.thinkingText = ""
-			m.thinkingChars = 0
-			m.dropStreamingAnswer()
+			m.dropStepStream()
 		}
 
 	case protocol.OutUI:
@@ -663,9 +662,20 @@ func (m *model) handleEvent(payload map[string]any) {
 		}
 		// The thinking text arrives whole after the model finished. The live copy
 		// came through delta(reasoning); drawing both is drawing it twice.
+		//
+		// The live copy is dropped **only when the whole one replaces it**. The
+		// comment above used to state the rule and the code did not follow it: the
+		// live block was left standing, so `view.go` drew the finalized text (it
+		// wins the branch) while `thinkingChars` went on counting a block nobody
+		// could see. A turn whose gateway reports no `reasoning` on some steps has
+		// the opposite need — there is nothing to replace the live text with, and
+		// dropping it would blank the only copy of what the model thought.
 		if reasoning, ok := protocol.String(payload, "reasoning"); ok && reasoning != "" {
 			m.current.thinking = reasoning
 			m.current.thinkingRun, _ = protocol.String(payload, "run_id")
+			m.thinkingText = ""
+			m.thinkingChars = 0
+			m.thinkingLive = false
 		}
 
 	case "tool_call":
@@ -761,14 +771,31 @@ func (m *model) beginTurn(payload map[string]any) {
 	// model just wrote one down" is new information they have not seen. That is why
 	// there is no `railPinned` test here — adding one silently removes the feature
 	// for anybody who has ever pressed Ctrl+B.
+	m.noteTaskList()
+}
+
+// noteTaskList updates the "a task list just appeared" edge and opens the rail on
+// it.
+//
+// It is called from **two** places, and that is the whole point. A turn's task
+// list is not there when the turn starts: `run_started` arrives first, and the
+// list only reaches the panel when the state snapshot that follows `todo_write`
+// comes back — which is one or more steps later, mid-turn. Checking this only in
+// `beginTurn` meant the check always ran against an empty list, so the rail never
+// opened itself for the one thing it opens itself for.
+//
+// The edge, not the level: `todo_write` is called many times in a long task, and
+// re-opening on every call would be a panel that keeps popping itself open. An
+// **empty** list re-arms it, so a later appearance counts as new.
+func (m *model) noteTaskList() {
 	if len(m.panel.todos) > 0 {
 		if !m.railTodosSeen {
 			m.railTodosSeen = true
 			m.railHidden = false
 		}
-	} else {
-		m.railTodosSeen = false
+		return
 	}
+	m.railTodosSeen = false
 }
 
 // finishTurn closes the current turn and rewrites its header in place.
@@ -882,10 +909,13 @@ func (m *model) handleDelta(payload map[string]any) {
 	runID, _ := protocol.String(payload, "run_id")
 	step, _ := protocol.Int(payload, "step")
 
+	// The step is the streaming block's identity, so either half changing means
+	// these chunks belong somewhere else. The runtime supplies the step itself and
+	// it advances once per model call: a derived number used to repeat for a turn's
+	// first two steps, which is why this branch never fired there.
 	if runID != m.streamRunID || step != m.streamStep {
 		m.streamRunID, m.streamStep = runID, step
-		m.streamedText = ""
-		m.thinkingChars = 0
+		m.dropStepStream()
 	}
 	switch channel {
 	case protocol.DeltaText:
@@ -897,6 +927,25 @@ func (m *model) handleDelta(payload map[string]any) {
 		m.thinkingText += text
 		m.thinkingLive = true
 	}
+}
+
+// dropStepStream throws away the half-written text of one step.
+//
+// All four fields go together, and that is the whole point: they are one fact —
+// "what this step has streamed so far" — and clearing a subset leaves the screen
+// describing a step that has already been replaced. Clearing only the counter
+// (which is what this did) left `thinkingText` holding the previous step's
+// reasoning, so the next step's chunks were appended to it and the live block
+// showed two steps concatenated.
+//
+// The step number a delta carries is the identity of the block, so "the step
+// changed" and "a retry restated this step" both land here.
+func (m *model) dropStepStream() {
+	m.streamedText = ""
+	m.thinkingText = ""
+	m.thinkingChars = 0
+	m.thinkingLive = false
+	m.dropStreamingAnswer()
 }
 
 func (m *model) handleUI(payload map[string]any) {
@@ -1035,6 +1084,10 @@ func (m *model) observeChild(payload map[string]any, kind string) {
 func (m *model) applyState(payload map[string]any) {
 	if value, ok := payload["todos"].([]any); ok {
 		m.panel.todos = value
+		// This is where a task list actually appears: the snapshot follows the
+		// `todo_write` result, so it is the first moment the panel can know. The
+		// call in `beginTurn` only ever sees an empty list — see noteTaskList.
+		m.noteTaskList()
 	}
 	if value, ok := payload["jobs"].([]any); ok {
 		m.panel.jobs = value
@@ -1068,15 +1121,6 @@ func (m *model) applyState(payload map[string]any) {
 	}
 	if value, ok := protocol.String(payload, "effort"); ok {
 		m.panel.effort = value
-	}
-	if value, ok := payload["granted_tools"].([]any); ok {
-		m.panel.granted = value
-	}
-	if value, ok := payload["denied_tools"].([]any); ok {
-		m.panel.denied = value
-	}
-	if value, ok := payload["granted_prefixes"].([]any); ok {
-		m.panel.prefixes = value
 	}
 	if value, ok := payload["agents_md"].([]any); ok {
 		m.panel.agentsMD = value

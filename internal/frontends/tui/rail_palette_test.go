@@ -18,9 +18,8 @@ import (
 // The screen-level invariant test could not see this, because the whole line
 // stayed under the terminal width while the rail part was too wide.
 func TestRailRowsNeverExceedTheRail(t *testing.T) {
-	// Both empty states: their sentences are the longest text the rail ever draws
-	// ("Tasks the agent creates show up here", "Anything load_skill reads stays
-	// loaded"), and they used to bypass the wrapper entirely.
+	// Both empty states: their sentences are the longest text the rail ever
+	// draws, and they used to bypass the wrapper entirely.
 	empty := model{width: 120, height: 40, theme: defaultTheme}
 	for _, rendered := range []string{
 		empty.renderRail(railWidth, 40),
@@ -37,16 +36,22 @@ func TestRailRowsNeverExceedTheRail(t *testing.T) {
 
 // TestRailEmptyStateWrapsItsSentences — wrapping, not clipping: the hint is the
 // only thing telling a new user what the block is for.
+//
+// The hints are now short enough to fit one row each (the rail's content budget
+// is 28 cells — 32 minus the 3-cell bar gutter and the wrap margin), so this
+// pins that every block's empty state reaches the screen whole rather than being
+// cut off. A hint that silently drops its last word is worse than no hint.
 func TestRailEmptyStateWrapsItsSentences(t *testing.T) {
 	m := model{width: 120, height: 40, theme: defaultTheme}
 	rendered := stripANSI(m.renderRail(railWidth, 40))
-	for _, phrase := range []string{"Tasks the agent creates", "load_skill reads stays"} {
-		if !strings.Contains(rendered, phrase) {
-			continue // the sentence may break at a different word; the width test is the real rule
+	for _, text := range []string{
+		"No goal", "a goal it keeps resuming",
+		"No tasks yet", "what the agent plans to do",
+		"No skills loaded", "what load_skill has read",
+	} {
+		if !strings.Contains(rendered, text) {
+			t.Errorf("the empty state lost %q:\n%s", text, rendered)
 		}
-	}
-	if !strings.Contains(rendered, "No tasks yet") || !strings.Contains(rendered, "No skills loaded") {
-		t.Fatalf("the empty state lost its text:\n%s", rendered)
 	}
 }
 
