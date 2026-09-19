@@ -34,6 +34,12 @@ type Client struct {
 	writeMu sync.Mutex
 	done    chan struct{}
 	code    int
+
+	// exitMu guards the two fields below, which the wait goroutine writes while the
+	// interface reads them.
+	exitMu  sync.Mutex
+	stopped bool
+	codeSet bool
 }
 
 // NewClient prepares a client. Call Start to launch the runtime.
@@ -51,6 +57,16 @@ func NewClient(hooks Hooks) *Client {
 //  2. `--runtime-stdio`, which is the mode that speaks this protocol;
 //  3. the working directory is inherited, which is what makes the workspace the
 //     directory the user started in.
+//
+// The child's **stderr is drained and dropped**, and that is the fourth detail
+// rather than an oversight. This client is used by full-screen front ends that own
+// the terminal: `command.Stderr = os.Stderr` handed the child the same file
+// descriptor the interface draws on, so every diagnostic it wrote landed inside the
+// alternate screen and was erased by the next redraw — visible as corrupt frames,
+// useless as a diagnostic. What a person must see travels as a notice instead (the
+// runtime turns its own records into one), and the child's exit code still reaches
+// them through runtimeExited: a runtime that dies at startup no longer does so
+// silently.
 func (c *Client) Start(arguments []string) error {
 	executable, err := os.Executable()
 	if err != nil {
@@ -58,7 +74,6 @@ func (c *Client) Start(arguments []string) error {
 	}
 	argv := append([]string{executable, "--runtime-stdio"}, arguments...)
 	command := exec.Command(argv[0], argv[1:]...)
-	command.Stderr = os.Stderr
 	command.Env = os.Environ()
 
 	stdin, err := command.StdinPipe()
@@ -69,9 +84,27 @@ func (c *Client) Start(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if err := command.Start(); err != nil {
+	// A pipe rather than io.Discard, and that distinction is the point: io.Discard
+	// gives the child a closed descriptor, and a process that writes to a closed
+	// stderr can fail in ways that have nothing to do with its own work. A pipe
+	// keeps stderr usable and gives this side somewhere to read from, so the child
+	// can never block on a full diagnostic buffer either.
+	diagnostics, sink, err := os.Pipe()
+	if err != nil {
 		return err
 	}
+	command.Stderr = sink
+	if err := command.Start(); err != nil {
+		_ = diagnostics.Close()
+		_ = sink.Close()
+		return err
+	}
+	// The parent's copy of the write end has to go, or the read end below sees no
+	// end of stream: the drain would sit there for the life of the process holding a
+	// descriptor per runtime.
+	_ = sink.Close()
+	go drain(diagnostics)
+
 	c.command = command
 	c.stdin = stdin
 
@@ -85,9 +118,51 @@ func (c *Client) Start(arguments []string) error {
 		}
 		c.code = code
 		c.writeMu.Unlock()
+
+		c.exitMu.Lock()
+		c.codeSet = true
+		stopped := c.stopped
+		c.exitMu.Unlock()
+
 		close(c.done)
+		// Told, not just recorded: a runtime that died is something the interface has
+		// to be able to say. When the front end asked for the shutdown this is the
+		// ordinary end of a session and there is nothing to report.
+		//
+		// The message goes through `OnMessage` so that a front end needs to know only
+		// one callback to be told everything; the exit code is read back with
+		// RuntimeExited, which is why this carries no payload of its own.
+		if !stopped && c.hooks != nil {
+			c.hooks.OnMessage(map[string]any{"v": VERSION, "t": OutRuntimeExited})
+		}
 	}()
 	return nil
+}
+
+// drain reads a child's diagnostics to the end, discarding them.
+//
+// Discarding is deliberate and so is reading them at all: the bytes are what the
+// child would otherwise block on, and what they say has already been re-routed
+// through the places a person can actually see it — the audit log, and the notice
+// channel. See Start.
+func drain(reader io.Reader) {
+	_, _ = io.Copy(io.Discard, reader)
+	if closer, ok := reader.(io.Closer); ok {
+		_ = closer.Close()
+	}
+}
+
+// RuntimeExited reports how the runtime process ended, and whether that ending was
+// the front end's own request.
+//
+// `stopped` is true only after Shutdown asked the runtime to finish, which is what
+// separates "the session is over" from "the runtime died": an exit code alone cannot
+// tell them apart, because a runtime that ends because its stdin closed also leaves
+// with zero.
+func (c *Client) RuntimeExited() (code int, stopped bool, ok bool) {
+	c.exitMu.Lock()
+	defer c.exitMu.Unlock()
+	return c.code, c.stopped, c.codeSet
 }
 
 func (c *Client) readLoop(stdout io.Reader) {
@@ -228,7 +303,15 @@ func (c *Client) RefreshState() { c.Send(map[string]any{"t": InRefreshState}) }
 // The current turn finishes first; this does not interrupt it. Interrupting would
 // leave an assistant message with tool_calls and no results behind, and that makes
 // the session permanently unsendable.
-func (c *Client) Shutdown() { c.Send(map[string]any{"t": InShutdown}) }
+//
+// It also records that the ending was asked for, which is what keeps RuntimeExited
+// from reporting an ordinary exit as a death.
+func (c *Client) Shutdown() {
+	c.exitMu.Lock()
+	c.stopped = true
+	c.exitMu.Unlock()
+	c.Send(map[string]any{"t": InShutdown})
+}
 
 // Wait blocks until the runtime exits, up to the timeout, then kills it.
 func (c *Client) Wait(timeout time.Duration) int {
@@ -268,26 +351,6 @@ func (c *Client) Kill() {
 // solve here — the streams are bytes and the protocol is UTF-8 — but keeping the
 // function makes the launch contract explicit and greppable.
 func ChildEnv(base []string) []string { return base }
-
-// DefaultArguments are the flags this build passes to its own runtime child.
-func DefaultArguments(sessionID string, stream, autopilot, debug bool) []string {
-	var out []string
-	if sessionID != "" {
-		out = append(out, "--session", sessionID)
-	}
-	if stream {
-		out = append(out, "--stream")
-	} else {
-		out = append(out, "--no-stream")
-	}
-	if autopilot {
-		out = append(out, "--autopilot")
-	}
-	if debug {
-		out = append(out, "--debug")
-	}
-	return out
-}
 
 // ParseSessionID pulls the session id out of a `--session` style argument list.
 func ParseSessionID(arguments []string) string {

@@ -203,6 +203,9 @@ type model struct {
 	railPinned    bool
 	quiet         bool
 	theme         themeKey
+	// runtimeGone records that this interface has already said the runtime ended.
+	// One line is a report; two would read as two deaths.
+	runtimeGone bool
 }
 
 func newModel(client *protocol.Client, bridge *bridge, options Options) model {
@@ -298,7 +301,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		// Silence needs a clock: "still starting" is a claim with an expiry, and
 		// the screen has to stop making it once the runtime has been quiet long
-		// enough that the reader should go look at stderr.
+		// enough that the wait itself is the news.
+		//
+		// It is no longer "go look at stderr": the runtime's stderr is drained rather
+		// than inherited (see `protocol.Client.Start`), so a runtime that died is
+		// reported in the transcript by `noteRuntimeGone` and a runtime that is merely
+		// slow leaves nothing on stderr to look at.
 		if m.booting && !m.bootSlow && time.Since(m.bootAt) >= bootSlowAfter {
 			m.bootSlow = true
 		}
@@ -341,6 +349,53 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(typed)
 	}
 	return m, nil
+}
+
+// noteRuntimeGone says that the process behind this interface has ended.
+//
+// It exists because the runtime's stderr no longer reaches the terminal (see
+// Client.Start): the child's diagnostics are drained and dropped, so "it died at
+// start-up" used to be a stray line under a dead screen and would now be nothing at
+// all. The exit code is the one fact the client can still supply, and a session that
+// stops taking input without saying why is the failure this line prevents.
+//
+// Reported once. The client sends the message once, but a second runtime exit — a
+// switch that failed, a restart — should not be able to stack two of these.
+func (m *model) noteRuntimeGone() {
+	if m.runtimeGone {
+		return
+	}
+	m.runtimeGone = true
+	if m.client == nil {
+		// No client means no exit code to tell a crash from an ending. This happens in
+		// tests that build a model by hand, and an interface with no runtime behind it
+		// at all should say the plainer of the two sentences rather than guess at a
+		// number.
+		m.appendLine(renderLine{segments: []seg{
+			{text: i18n.T("runtime.exited.ordered"), role: "notice"},
+		}}, "notice", "")
+		return
+	}
+	code, stopped, ok := m.client.RuntimeExited()
+	if !ok || stopped {
+		// Nothing to report: the exit was asked for, so this is the ordinary end of
+		// a session and the command that asked for it already said so.
+		return
+	}
+	text := i18n.T("runtime.exited.unexpected", "code", code)
+	role := "warn"
+	detail := i18n.T("runtime.exited.detail")
+	if code == 0 {
+		// A clean exit nobody asked for is still an ending, but it is not a crash:
+		// painting it in the warning colour would make the two indistinguishable.
+		text = i18n.T("runtime.exited.ordered")
+		role = "notice"
+		detail = ""
+	}
+	m.appendLine(renderLine{segments: []seg{
+		{text: text, role: role},
+		{text: detail, role: "rule"},
+	}}, "notice", "")
 }
 
 func (m *model) handleServerMessage(payload map[string]any) {
@@ -433,6 +488,13 @@ func (m *model) handleServerMessage(payload map[string]any) {
 
 	case protocol.OutEvent:
 		m.handleEvent(payload)
+
+	// The one message that does not come from the runtime: the client sends it when
+	// the process behind this session has ended. It carries nothing — the exit code
+	// is read back from the client — and it is the only evidence left that a runtime
+	// died at start-up, now that its stderr is drained rather than inherited.
+	case protocol.OutRuntimeExited:
+		m.noteRuntimeGone()
 
 	case protocol.OutDelta:
 		m.handleDelta(payload)

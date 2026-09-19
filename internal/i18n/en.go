@@ -118,6 +118,16 @@ var catalog = map[string]string{
 	"turn.max_steps_warning": "  ! Step limit reached — this turn did **not** wrap up; the session is fine, you can keep going.",
 	"turn.cancelled_warning": "  ! Stopped at your request (it stopped between two steps; the session is intact).",
 
+	// --- the runtime process ending ----------------------------------------
+	//
+	// These are drawn when the process behind this interface is gone. The exit code
+	// is the only evidence the client can still produce, because the child's stderr
+	// is drained rather than inherited: see `protocol.Client.Start`. "Ordered" and
+	// "unexpected" are separate sentences because only one of them is a failure.
+	"runtime.exited.ordered":    "  ! The runtime has ended. This transcript is saved; start a new session to keep going.",
+	"runtime.exited.unexpected": " ! The runtime exited unexpectedly (code {code}); nothing else will answer in this session.",
+	"runtime.exited.detail":     " The session and the audit log are on disk — `tudouni --audit <id>` reads what it managed to record before it went.",
+
 	// --- the separator when joining a list --------------------------------
 	"list.separator":           ", ",
 	"list.separator_semicolon": "; ",
@@ -682,8 +692,14 @@ var catalog = map[string]string{
 	"notice.jobs.leftovers":             "[background] the previous session left the output of {n} background jobs behind; they have been cleaned up. That session did not exit cleanly (window closed, or the process was killed), so **those commands may still be running** and they are outside this session's control — check yourself if a port or the CPU does not add up.",
 	"notice.jobs.no_job_object":         "[background] the guarantee that \"closing the window also collects the background jobs\" was not established ({problem}). A normal exit still cleans up, but **killing this process can orphan background commands**.",
 	"notice.subagent.enabled":           "[subagent] {tool} is registered: the model may hand a self-contained task to a fresh agent, up to {depth} levels deep. A subagent cannot ask for approval — anything it is not allowed to do on its own is refused — and its whole transcript is saved as its own session beside this one.",
-	"notice.tools.header":               "Registered tools:",
-	"notice.tools.row":                  "  - {name} risk={risk}",
+	// The two lines a delegation reports about itself while it runs. They are
+	// notices rather than stderr diagnostics because the runtime's stderr is the
+	// terminal the front end is drawing on: the same sentence written there would be
+	// erased by the next redraw.
+	"notice.subagent.started":     "[subagent] {id} is running on {provider}/{model} (depth {depth}) — its own steps stay in its own session; only its final answer comes back to this one.",
+	"notice.subagent.save_failed": "[subagent] {id} finished, but its own session could not be written down, so the transcript behind its answer is gone: {problem}",
+	"notice.tools.header":         "Registered tools:",
+	"notice.tools.row":            "  - {name} risk={risk}",
 	// --- what the line REPL says about flags it cannot honour --------------
 	"notice.cli.no_stream":             "[streaming] the line REPL cannot write character by character (it does not go through the protocol's delta channel); use --tui to watch it arrive. Continuing with --no-stream, so stdout stays one whole answer.",
 	"notice.cli.quiet_tui_only":        "[quiet] --quiet only affects the TUI (--tui): it changes how that interface draws, and the line REPL's output is one line per thing already.",
@@ -794,6 +810,7 @@ var catalog = map[string]string{
 	"channels.session.switch_failed":  "[session] could not switch (the current session is unchanged): {problem}",
 	"channels.session.close_failed":   "error closing the previous session's runtime: {problem}",
 	"channels.run_failed":             "[turn failed] {problem}",
+	"channels.runtime.open_failed":    "[start-up] the runtime could not be assembled, so no session was opened: {problem}",
 	"channels.status.no_session":      "[status] no session yet.",
 	"channels.tools.no_session":       "[tools] no session yet.",
 	"channels.skills.no_session":      "[skills] no session yet.",

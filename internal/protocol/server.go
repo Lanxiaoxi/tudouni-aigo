@@ -648,6 +648,29 @@ func (s *Server) notice(level, code, text string) {
 	})
 }
 
+// openFailureNotice carries the reason a runtime could not be assembled out of this
+// process, for `Main` to send before it exits.
+//
+// Without it the reason exists only on stderr — and the front end that started this
+// process as its child deliberately does not inherit that stream any more (see
+// Client.Start), because the stream is the terminal it is drawing on. The result was
+// the worst of both: a full-screen interface showing nothing, and a user with a bare
+// exit code where the sentence explaining the failure used to be.
+//
+// It cannot be told to the server's own `Main` through the runtime, because there is
+// no runtime: the opener is what failed. Hence the channel below, which `Main` wires
+// once at start-up. It is deliberately not a general back channel — the field lives
+// nowhere else in this layer.
+var openFailureNotice func(level, code, text string)
+
+// OpenFailureNotice points the pre-runtime failure reporter at a transport.
+//
+// It is exported so the entry point can wire it without this package knowing how a
+// runtime is opened. Process-wide, like the one failure it reports.
+func OpenFailureNotice(report func(level, code, text string)) {
+	openFailureNotice = report
+}
+
 // emitOpening sends the three messages every session starts with.
 //
 // It is one method because it runs in two places — at startup and after a
@@ -1064,7 +1087,55 @@ func (s *Server) OnEvent(record map[string]any) {
 		}
 		s.Send(s.stateMessage(false))
 	}
+
+	// The delegation's own two facts that a person needs and the badge does not
+	// carry: which route the child resolved to, and a child transcript that could not
+	// be written down.
+	//
+	// They arrive as audit records because of where the tool that produces them runs.
+	// The runtime is the front end's child process, so its stderr *is* the terminal
+	// the interface is drawing on: a line written there lands in the alternate screen
+	// and is erased by the next redraw, which makes it invisible rather than loud —
+	// the opposite of what a failure needs. Turning the record into a notice puts it
+	// in the transcript, where it stays, and leaves the audit log as the record of
+	// the same fact.
+	//
+	// This is the path these kinds actually travel: they are the parent's own
+	// account of having delegated, so `session_id` is the parent's session and they
+	// are not marked as a child's. A notice in `forwardChild` would read correctly
+	// and never fire.
+	switch kind {
+	case subagentStartedKind:
+		id, _ := String(record, "subagent_id")
+		provider, _ := String(record, "provider")
+		model, _ := String(record, "model")
+		// An absent depth renders as nothing rather than as zero: depth 0 is the
+		// top-level agent, so "depth 0" in a notice about a child would be a wrong
+		// answer rather than a missing one.
+		depth := ""
+		if number, ok := Int(record, "depth"); ok {
+			depth = itoa(number)
+		}
+		s.notice("info", "subagent", i18n.T("notice.subagent.started",
+			"id", id, "provider", provider, "model", model, "depth", depth))
+	case subagentProblemKind:
+		id, _ := String(record, "subagent_id")
+		reason, _ := String(record, "reason")
+		s.notice("warn", "subagent", i18n.T("notice.subagent.save_failed",
+			"id", id, "problem", reason))
+	}
 }
+
+// The two record kinds the delegation tool reports about itself.
+//
+// They are spelled here rather than imported from `internal/subagent` on purpose:
+// this layer must not learn how a runtime is assembled, and the day the tool lives
+// in another process the strings are what crosses. The package that emits them owns
+// the canonical constants and says why they are records instead of stderr lines.
+const (
+	subagentStartedKind = "subagent_started"
+	subagentProblemKind = "subagent_problem"
+)
 
 // forwardChild sends one delegated agent's record to the front end.
 //

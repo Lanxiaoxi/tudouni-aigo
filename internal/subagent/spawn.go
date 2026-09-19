@@ -44,7 +44,21 @@ func (t *Tool) spawn(task string) (tools.Result, error) {
 		return tools.TextResult(fmt.Sprintf("委派失败：%v。请把这一步自己做完，或在最终答复里说明为什么需要子 agent。", err)), nil
 	}
 	chosen, route, chat := resolved.Model, resolved.Provider, resolved.Chat
-	t.warn(fmt.Sprintf("subagent %s: running with %s/%s", childID, route.Name, chosen))
+	// Reported through the audit hook, not to stderr: see KindSubagentStarted. The
+	// board below carries the same model for the status bar, but a *front end* that
+	// was never told still has no way to answer "which route did my subagent run on".
+	//
+	// `run_id` is empty for the same reason the delegation's own two records below
+	// leave it empty: the tool has the parent's session and no turn identifier, and
+	// the child's id is a session where a run belongs. An empty field is a fact the
+	// reader can see; the child's id in that slot would be one they would have to
+	// disbelieve.
+	t.emit(audit.Event(KindSubagentStarted, t.parentID(), "", 0, map[string]any{
+		"subagent_id": childID,
+		"depth":       childDepth,
+		"model":       chosen,
+		"provider":    route.Name,
+	}))
 
 	session := t.newChildSession(childID, childDepth)
 	// The resolved route is written into the child's own session record rather
@@ -320,12 +334,25 @@ func (t *Tool) parentID() string {
 // the middle of the parent's turn, and a child whose session could not be saved
 // is a diagnostic, not a reason to fail the delegation. The child's answer still
 // reaches the parent, which is what the parent asked for.
+//
+// Swallowed is not the same as unsaid. The failure goes out as a record, which the
+// protocol layer turns into a warning the interface draws: the parent's answer
+// arriving intact is exactly why nothing else would ever mention that the child's
+// transcript is missing.
 func (t *Tool) checkpointChild(session *state.Session) {
 	if t.Store == nil {
 		return
 	}
 	if err := t.Store.Save(session); err != nil {
-		t.warn(fmt.Sprintf("subagent %s: could not save the child session: %v", session.SessionID, err))
+		// An audit record rather than a stderr line, for the reason spawn states: the
+		// front end owns the screen this would otherwise be written across. The
+		// parent's own turn goes on either way — a child whose session could not be
+		// saved still answered — so this is the only place the loss is recorded.
+		t.emit(audit.Event(KindSubagentProblem, t.parentID(), "", 0, map[string]any{
+			"subagent_id": session.SessionID,
+			"problem":     "save_failed",
+			"reason":      err.Error(),
+		}))
 	}
 }
 

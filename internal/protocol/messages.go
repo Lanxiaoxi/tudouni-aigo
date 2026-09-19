@@ -80,6 +80,12 @@ const (
 	OutQuestionRequest   = "question_request"
 	OutDelta             = "delta"
 	OutDeltaReset        = "delta_reset"
+	// OutRuntimeExited is the client's own message, not the runtime's: it is what a
+	// front end is told when the process behind the protocol has ended without being
+	// asked to. It carries the exit code, and it exists because the runtime's stderr
+	// no longer reaches the terminal (see Client.Start) — so the one failure that
+	// used to be visible as a stray line has to be said out loud instead.
+	OutRuntimeExited = "runtime_exited"
 )
 
 // Channels a delta can arrive on. They must be routed by this field: both

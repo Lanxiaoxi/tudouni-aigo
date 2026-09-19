@@ -17,6 +17,28 @@ import (
 const (
 	KindDelegationStarted  = "delegation_started"
 	KindDelegationFinished = "delegation_finished"
+
+	// KindSubagentStarted reports **which route the child actually resolved to**.
+	//
+	// It exists because that fact is not visible anywhere else: the delegation's own
+	// two lifecycle records carry the model, not the provider, and the status bar
+	// shows the parent's route — so a child that ran somewhere else is a fact a
+	// person can only learn from a log.
+	//
+	// It travels as an audit record rather than as a line on stderr because of where
+	// this tool runs. The runtime is a child process of the front end, its stderr is
+	// the terminal the front end is drawing on, and a delegated agent is by
+	// definition something that happens while that screen is up — so a stderr line
+	// here is a line written into a full-screen interface, erased by the next
+	// redraw. The protocol layer turns this kind into a notice the interface can
+	// draw; `--audit` reads the same record afterwards.
+	KindSubagentStarted = "subagent_started"
+
+	// KindSubagentProblem reports that the child's own session could not be written
+	// down. It is the one failure of a delegation that leaves no other trace: the
+	// parent still gets the child's answer, so nothing else on the parent's side
+	// records that the child's transcript is gone.
+	KindSubagentProblem = "subagent_problem"
 )
 
 // ChildOriginKey marks an audit record as having come from a delegated agent.

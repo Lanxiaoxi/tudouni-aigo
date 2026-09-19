@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -105,8 +106,12 @@ func (f *fakeResolver) ResolveChild(route Route, parentModel, parentProvider str
 
 // harness is one built tool plus what a test needs to inspect what it did.
 type harness struct {
-	tool     tools.Tool
-	parent   *state.Session
+	tool   tools.Tool
+	parent *state.Session
+	// store is the child-session store the tool was built with. It is kept so a test
+	// can make a write fail on purpose: "the child's transcript could not be saved"
+	// is a failure that leaves no other trace, and the only way to reach it is to
+	// break the sink the tool already holds.
 	store    *state.SessionStore
 	logs     *audit.JsonlSink
 	resolver *fakeResolver
@@ -326,6 +331,98 @@ func TestTheChildsEventsAreForwardedWithItsID(t *testing.T) {
 	if !started || !finished {
 		t.Errorf("the delegation itself was not recorded on the parent's own stream (started=%v finished=%v)",
 			started, finished)
+	}
+}
+
+// TestTheChildsRouteIsReportedWhereTheFrontEndRuns is the regression for the line
+// this used to write to stderr.
+//
+// The tool runs inside a runtime that a full-screen front end started as its child
+// process, so the runtime's stderr **is** that interface's terminal: the line landed
+// in the alternate screen and the next redraw erased it. It was therefore invisible
+// rather than loud, which is the opposite of what a diagnostic is for. The fact
+// still has to travel — the status bar shows the parent's route, not the child's —
+// so it travels as an audit record the protocol layer turns into a notice.
+func TestTheChildsRouteIsReportedWhereTheFrontEndRuns(t *testing.T) {
+	child := &fakeModel{script: []model.ModelResponse{textResponse("ok")}}
+	h := newHarness(t, child)
+
+	h.call(t, map[string]any{"prompt": "anything"})
+
+	var started map[string]any
+	for _, record := range h.events {
+		if record["kind"] == KindSubagentStarted {
+			started = record
+		}
+	}
+	if started == nil {
+		t.Fatal("the child's route was never reported as a record")
+	}
+	// The parent's own record, not a child's: it is the tool reporting on the
+	// delegation it just started, and a front end that saw it marked as a child's
+	// would have to route it back through the delegation's own transcript.
+	if origin, _ := started[ChildOriginKey].(bool); origin {
+		t.Error("the route report came through the child's path; the parent's own account is what carries it")
+	}
+	if got, _ := started["subagent_id"].(string); !IsChildID(got) {
+		t.Errorf("the route report names %q, which is not a child id", got)
+	}
+	if model, _ := started["model"].(string); model != "fake" {
+		t.Errorf("the route report names model %q, want the resolved one", model)
+	}
+	if provider, _ := started["provider"].(string); provider != "test" {
+		t.Errorf("the route report names provider %q, want the resolved one", provider)
+	}
+	// And nothing was written to the sink that goes to the terminal.
+	if len(h.warnings) != 0 {
+		t.Errorf("the delegation reported %d diagnostic(s) outside the record channel: %q",
+			len(h.warnings), h.warnings)
+	}
+}
+
+// TestAChildSessionThatCannotBeSavedIsRecorded is the other half of the same rule.
+//
+// `checkpointChild` used to answer a failed write with a stderr line, so the one
+// failure a delegation can suffer that leaves **no other trace** was written where
+// nobody could read it: the parent still receives the child's answer, so nothing on
+// the parent's side says the child's transcript is gone.
+func TestAChildSessionThatCannotBeSavedIsRecorded(t *testing.T) {
+	child := &fakeModel{script: []model.ModelResponse{textResponse("ok")}}
+	h := newHarness(t, child)
+
+	// Sabotage the write the way a full disk would: the store's file for the child
+	// cannot be created, because a directory is already sitting on its name.
+	blocked := ChildID(h.parent.SessionID, 1)
+	path, err := h.store.Path(blocked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	result := h.call(t, map[string]any{"prompt": "anything"})
+	if !strings.Contains(result.Text, "ok") {
+		t.Fatalf("the parent did not get the answer anyway: %q", result.Text)
+	}
+
+	var problem map[string]any
+	for _, record := range h.events {
+		if record["kind"] == KindSubagentProblem {
+			problem = record
+		}
+	}
+	if problem == nil {
+		t.Fatal("a child session that could not be saved was not recorded anywhere")
+	}
+	if id, _ := problem["subagent_id"].(string); id != blocked {
+		t.Errorf("the problem record names %q, want %q", id, blocked)
+	}
+	if reason, _ := problem["reason"].(string); reason == "" {
+		t.Error("the problem record does not say why the write failed")
+	}
+	if len(h.warnings) != 0 {
+		t.Errorf("the failure went to the terminal instead of the record channel: %q", h.warnings)
 	}
 }
 

@@ -1,8 +1,7 @@
 package protocol
 
 import (
-	"os"
-
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 )
 
@@ -58,6 +57,11 @@ func Main(opener RuntimeOpener, summaries func() []map[string]any,
 		Stream:           stream,
 		Debug:            debug,
 	})
+	// A runtime that cannot be assembled is still a message the front end has to
+	// receive: it is the reason the session never started, and with the child's
+	// stderr out of reach (see Client.Start) the notice channel is the only place it
+	// can be read. Wired before the opener runs, because the opener is what fails.
+	OpenFailureNotice(server.notice)
 
 	open := func(sessionID string) (Runtime, error) {
 		return opener(sessionID, RuntimeHooks{
@@ -74,6 +78,14 @@ func Main(opener RuntimeOpener, summaries func() []map[string]any,
 
 	runtime, err := open(initialSession)
 	if err != nil {
+		// Said twice on purpose, to two different readers. The notice is what the
+		// front end draws — a sentence instead of a bare exit code — and the stderr
+		// line is the contract for somebody running this mode in a plain terminal
+		// directly, where nothing else would print the reason.
+		if openFailureNotice != nil {
+			openFailureNotice("warn", "runtime", i18n.T("channels.runtime.open_failed",
+				"problem", err.Error()))
+		}
 		warn("%v", err)
 		return 2
 	}
@@ -85,12 +97,3 @@ func Main(opener RuntimeOpener, summaries func() []map[string]any,
 // RuntimeDir is where sessions and logs live; a front end needs it only to display
 // the audit path, which the runtime already sends in the handshake.
 func RuntimeDir() string { return paths.WorkspaceRuntimeDir() }
-
-// StderrIsATerminal reports whether diagnostics are going to a person or to a file.
-func StderrIsATerminal() bool {
-	info, err := os.Stderr.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
-}
