@@ -185,3 +185,50 @@ func TestAMalformedHeaderSectionIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// TestARouteWithOnlyABaseURLAndAKeyIsReadUnchanged is the promise behind the two
+// optional keys: a route that declares neither of them keeps the shape it had before
+// they existed.
+//
+// This is the shape almost every configuration has — one OpenAI-compatible gateway, a
+// URL and a key — and it is the shape a mis-implemented option would break first. The
+// failure would not be an error message either: a route whose protocol was resolved
+// wrongly, or whose empty header was sent as a real one, would produce a confusing
+// reply from the endpoint rather than a complaint from here. So what is pinned is
+// that the absent keys stay absent and that the route is still usable.
+func TestARouteWithOnlyABaseURLAndAKeyIsReadUnchanged(t *testing.T) {
+	path := writeConfig(t, `{
+		"providers": {
+			"ericai": {
+				"base_url": "https://eric.example",
+				"api_key": "a.jwt.token",
+				"models": [{"id": "eric-model"}]
+			}
+		}
+	}`)
+	registry, err := Load(path)
+	if err != nil {
+		t.Fatalf("a base_url-and-key route no longer loads: %v", err)
+	}
+
+	provider, ok := registry.ProviderByName("ericai")
+	if !ok {
+		t.Fatal("the route is missing from the catalogue")
+	}
+	// Empty, not defaulted. Deciding what an empty style means belongs to the model
+	// package, which is the only place that knows what the three protocols look like;
+	// a default filled in here would be a second answer to the same question.
+	if provider.APIStyle != "" {
+		t.Errorf("APIStyle = %q for a route that declared none, want empty", provider.APIStyle)
+	}
+	if len(provider.Headers) != 0 {
+		t.Errorf("Headers = %#v for a route that declared none, want none", provider.Headers)
+	}
+	if !provider.Usable() {
+		t.Error("the route is not usable, so its models cannot be selected")
+	}
+	if len(provider.Models) != 1 || provider.Models[0].ID != "eric-model" {
+		t.Errorf("Models = %#v, want the one declared model", provider.Models)
+	}
+}
+
