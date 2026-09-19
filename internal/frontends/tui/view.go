@@ -33,10 +33,6 @@ func (m model) View() string {
 	if m.width == 0 {
 		return ""
 	}
-	height := m.height
-	if height <= 0 {
-		height = 24
-	}
 
 	top := m.renderTopBar()
 	session := m.renderSessionBar()
@@ -47,21 +43,46 @@ func (m model) View() string {
 	// bar's `Ctrl+B context rail` already says how to get the rail back, and a
 	// second line repeating the contents is one row of vertical space for
 	// nothing.
-	if m.width < narrowColumns && (m.railHidden || m.width < minRailWidth) {
+	if m.showRailSummary() {
 		summary = m.renderRailSummary()
 	}
-	bodyHeight := height - lipgloss.Height(top) - lipgloss.Height(session) -
-		lipgloss.Height(status) - lipgloss.Height(prompt) - lipgloss.Height(summary)
-	if bodyHeight < 3 {
-		bodyHeight = 3
-	}
-	body := m.renderBody(bodyHeight)
+	body := m.renderBody(m.bodyHeight())
 	parts := []string{top, session}
 	if summary != "" {
 		parts = append(parts, summary)
 	}
 	parts = append(parts, body, status, prompt)
 	return strings.Join(parts, "\n")
+}
+
+// showRailSummary reports whether the narrow-screen stand-in for the rail is
+// drawn. View and bodyHeight must agree on it, or the body is measured for a
+// frame that is not the one being drawn.
+func (m model) showRailSummary() bool {
+	return m.width < narrowColumns && (m.railHidden || m.width < minRailWidth)
+}
+
+// bodyHeight is how many rows the body has: the terminal minus the bars and the
+// input box.
+//
+// It is a method rather than an expression inside View because **the scroll
+// window is measured in these rows** and the empty state is fitted into them:
+// two places deriving the number separately is how a window ends up one row
+// taller than the frame and pushes the status bar off the bottom.
+func (m model) bodyHeight() int {
+	height := m.height
+	if height <= 0 {
+		height = 24
+	}
+	rows := lipgloss.Height(m.renderTopBar()) + lipgloss.Height(m.renderSessionBar()) +
+		lipgloss.Height(m.renderStatusBar()) + lipgloss.Height(m.renderInput())
+	if m.showRailSummary() {
+		rows += lipgloss.Height(m.renderRailSummary())
+	}
+	if body := height - rows; body >= 3 {
+		return body
+	}
+	return 3
 }
 
 // narrowColumns is where the bars stop carrying their right-hand halves.
@@ -339,8 +360,13 @@ func (m model) renderTranscript(width, height int) string {
 	// notices draw beneath it and stay there when the conversation starts.
 	// Removing it the moment anything arrives would make it flash — it is the
 	// conversation's cover page, not a splash.
+	//
+	// It is drawn to the room that is actually left. The full card is 23 rows
+	// and a 24-row terminal has 16: the fixed-height form was cut off, and
+	// everything below it — the init notices, which are conversation content —
+	// was off-screen and, while the empty state was up, unreachable.
 	if m.welcomeVisible() {
-		rows = append(rows, m.renderWelcome(width)...)
+		rows = append(rows, m.renderWelcome(width, maxInt(height-1, 1))...)
 		rows = append(rows, "")
 	}
 	for index := range m.transcript {
@@ -350,30 +376,62 @@ func (m model) renderTranscript(width, height int) string {
 	if len(rows) == 0 {
 		rows = append(rows, "")
 	}
-	if m.welcomeVisible() {
-		// The cover page pins to the **top**: the init notices can be taller
-		// than it, and scrolling to the bottom would push the boxes' top edge
-		// off-screen — which reads as "this screen starts mid-way".
-		start := 0
-		visible := rows[:min(height, len(rows))]
-		_ = start
-		for len(visible) < height {
-			visible = append(visible, "")
+	return m.window(rows, height)
+}
+
+// window cuts the log down to the rows the body has room for.
+//
+// The window is held by **anchor** — the index of the row drawn on its first
+// line — and not by a distance from the bottom. That distinction is the whole
+// fix for "the log drags me down while it streams": when an answer grows inside
+// one entry, or a report arrives as one multi-row entry, nothing about the
+// window depends on how many rows exist below it, so the row the reader is on
+// does not move. `follow` is the one thing that does depend on them, and it
+// means exactly "the window is on the newest row".
+func (m model) window(rows []string, height int) string {
+	state := m.scroll
+	if state == nil {
+		// A model built by hand (the zero value, a test literal) has no shared
+		// cell to keep a position in. It draws the way the log did before the
+		// position existed: the cover page from the top, the conversation from
+		// the newest row.
+		anchor := 0
+		if !m.welcomeVisible() {
+			anchor = maxInt(len(rows)-height, 0)
 		}
-		return strings.Join(visible, "\n")
+		return joinRows(rows, anchor, height)
 	}
-	end := len(rows) - m.scroll
-	if end > len(rows) {
-		end = len(rows)
+	welcome := m.welcomeVisible()
+	if welcome != state.welcome {
+		// Crossing between the empty state and the conversation is the one
+		// moment that **decides** the anchoring: the cover page opens at the
+		// top, the conversation opens on the newest row. Every later frame
+		// leaves it where the reader put it.
+		state.welcome = welcome
+		state.follow = !welcome
+		state.anchor = 0
 	}
-	if end < 0 {
-		end = 0
+	state.maxAnchor = maxInt(len(rows)-height, 0)
+	if state.follow {
+		state.anchor = state.maxAnchor
 	}
-	start := end - height
-	if start < 0 {
-		start = 0
+	if state.anchor > state.maxAnchor {
+		state.anchor = state.maxAnchor
 	}
-	visible := rows[start:end]
+	if state.anchor < 0 {
+		state.anchor = 0
+	}
+	return joinRows(rows, state.anchor, height)
+}
+
+// joinRows is the window itself: `rows[anchor : anchor+height]`, padded with
+// blanks so the frame is the same height whatever the log holds.
+func joinRows(rows []string, anchor, height int) string {
+	end := min(anchor+height, len(rows))
+	if anchor > end {
+		anchor = end
+	}
+	visible := append([]string{}, rows[anchor:end]...)
 	for len(visible) < height {
 		visible = append(visible, "")
 	}

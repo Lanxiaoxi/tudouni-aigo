@@ -108,8 +108,11 @@ const (
 	welcomeHintWidth   = 75
 	welcomeStackColumn = 86
 	welcomeBoxLines    = 10
-	welcomeHintLines   = 4
-	welcomeStampWidth  = 14
+	// welcomeMinLines is the shortest the two boxes may become when the terminal
+	// is too short for the full card: the mark, the greeting and the version.
+	welcomeMinLines   = 3
+	welcomeHintLines  = 4
+	welcomeStampWidth = 14
 )
 
 // welcomeTitleWidth is the recent row's title column: content width minus the
@@ -124,30 +127,97 @@ func welcomeTitleWidth() int { return welcomeRightWidth - 4 - welcomeStampWidth 
 // content starts where the conversation will. Below welcomeStackColumn the two
 // boxes stack instead: 75 columns of boxes do not fit a narrow terminal, and
 // squeezing them would clip text off the right edge.
-func (m model) renderWelcome(width int) []string {
+//
+// It draws **inside `height` rows**, which is not decoration: the full card is 23
+// rows and the body of a 24-row terminal is 16, so the fixed form was cut off —
+// and the init notices below it, which are conversation content, went off-screen
+// with it while the empty state was up.
+func (m model) renderWelcome(width, height int) []string {
 	stacked := width < welcomeStackColumn
-	startBox := m.renderWelcomeBox(welcomeStartWidth, welcomeBoxLines,
-		i18n.T("welcome.box.start"), m.startRows())
-	recentBox := m.renderWelcomeBox(welcomeRightWidth, welcomeBoxLines,
-		i18n.T("welcome.box.recent"), m.recentBoxRows(4))
+	hintWidth := min(width-2, welcomeHintWidth)
+	hintRows := m.hintRows(width)
+	// The key card's height is measured, not assumed: its rows wrap, and a
+	// budget that guessed low would draw a card taller than the room reserved
+	// for it, which puts the last row (and whatever follows the card) off-screen
+	// again.
+	lines, withHint := welcomeBudget(height, stacked,
+		1+maxInt(len(hintRows), welcomeHintLines)+4)
+
+	startWidth, recentWidth := welcomeStartWidth, welcomeRightWidth
+	if stacked {
+		// Stacked, both boxes take the hint card's width: the card is the
+		// widest block of the three, so it is what the pair is measured against.
+		startWidth, recentWidth = hintWidth, hintWidth
+	}
+	startBox := m.renderWelcomeBox(startWidth, lines,
+		i18n.T("welcome.box.start"), m.startRows(lines))
+	recentBox := m.renderWelcomeBox(recentWidth, lines,
+		i18n.T("welcome.box.recent"), m.recentBoxRows(lines))
 
 	var body string
 	if stacked {
-		boxWidth := min(width-2, welcomeHintWidth)
-		startBox = m.renderWelcomeBox(boxWidth, welcomeBoxLines,
-			i18n.T("welcome.box.start"), m.startRows())
-		recentBox = m.renderWelcomeBox(boxWidth, welcomeBoxLines,
-			i18n.T("welcome.box.recent"), m.recentBoxRows(4))
 		body = lipgloss.JoinVertical(lipgloss.Left, startBox, "", recentBox)
 	} else {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, startBox, " ", recentBox)
 	}
-	hintRows := m.hintRows(width)
-	hintWidth := min(width-2, welcomeHintWidth)
-	hintBox := m.renderWelcomeBox(hintWidth, welcomeHintLines,
-		i18n.T("welcome.box.hint"), hintRows)
-	body = lipgloss.JoinVertical(lipgloss.Left, body, "", hintBox)
+	if withHint {
+		hintBox := m.renderWelcomeBox(hintWidth, maxInt(len(hintRows), welcomeHintLines),
+			i18n.T("welcome.box.hint"), hintRows)
+		body = lipgloss.JoinVertical(lipgloss.Left, body, "", hintBox)
+	}
 	return strings.Split(lipgloss.PlaceHorizontal(width, lipgloss.Left, body), "\n")
+}
+
+// welcomeBudget decides how much of the empty state is drawn, given the rows the
+// body has. `hintBlock` is the height the key card would take, its blank line
+// included.
+//
+// What is given up is given up in the order it matters in: the key card first (it
+// repeats what `/help` and the bars already say, and nothing else in this
+// interface is reachable only from here), then the boxes' spare content rows down
+// to the three the mark and the greeting need. The alternative — the old
+// behaviour — was to draw all 23 rows anyway and let the terminal cut them, which
+// silently took the init notices with them.
+func welcomeBudget(height int, stacked bool, hintBlock int) (int, bool) {
+	boxHeight := func(lines int) int {
+		if stacked {
+			// The pair, plus the blank line between them.
+			return 2*(lines+4) + 1
+		}
+		return lines + 4
+	}
+	if height >= boxHeight(welcomeBoxLines)+hintBlock {
+		return welcomeBoxLines, true
+	}
+	if height >= boxHeight(welcomeBoxLines) {
+		return welcomeBoxLines, false
+	}
+	lines := height - 4
+	if stacked {
+		lines = (height-1)/2 - 4
+	}
+	if lines > welcomeBoxLines {
+		lines = welcomeBoxLines
+	}
+	if lines < welcomeMinLines {
+		lines = welcomeMinLines
+	}
+	return lines, false
+}
+
+// fitRows pads or trims a box's content to the height that box was given.
+//
+// Trimming from the **bottom** is what keeps the identity panel's first rows —
+// the mark, the greeting, the version — when the terminal cannot hold the whole
+// card; padding is what keeps two boxes beside each other level with each other.
+func fitRows(rows []string, lines int) []string {
+	for len(rows) < lines {
+		rows = append(rows, "")
+	}
+	if len(rows) > lines {
+		rows = rows[:lines]
+	}
+	return rows
 }
 
 // renderWelcomeBox draws one box with its title on the top border line.
@@ -267,9 +337,11 @@ func (m model) hintRows(width int) []string {
 }
 
 // startRows is the identity panel: the mark, the greeting, the version, and
-// where to type. Ten lines, fixed — the boxes are the same height because their
-// content is the same height, and neither deforms with the data.
-func (m model) startRows() []string {
+// where to type. `lines` is the height the box was given — ten at the full size,
+// fewer when the terminal cannot hold the whole card — and the rows are built in
+// the order they matter, so trimming the tail drops "where to type" before it
+// drops who is talking.
+func (m model) startRows(lines int) []string {
 	inner := welcomeStartWidth - 4 // minus border and padding
 	centre := func(text string, role string) string {
 		text = clipText(text, inner)
@@ -291,24 +363,32 @@ func (m model) startRows() []string {
 	rows = append(rows, centre(m.modelAndWorkspace(), "process"))
 	rows = append(rows, "")
 	rows = append(rows, centre(i18n.T("welcome.palette_hint"), "rule"))
-	for len(rows) < welcomeBoxLines {
-		rows = append(rows, "")
-	}
-	return rows
+	return fitRows(rows, lines)
 }
 
 // recentBoxRows fills the second box with the sessions last touched, newest by
 // mtime — "the last time I worked on it", not "the first time it was created".
 // Empty slots hold their line so the box height never depends on the disk.
-func (m model) recentBoxRows(limit int) []string {
+//
+// `lines` is the height the box was given; the entry slots are what shrinks with
+// it, so the title and the motto stay inside a trimmed box instead of being
+// pushed out of it by rows that no longer fit.
+func (m model) recentBoxRows(lines int) []string {
+	slots := lines - 3 // the title, the blank and the motto take the rest
+	if slots > 4 {
+		slots = 4
+	}
+	if slots < 0 {
+		slots = 0
+	}
 	rows := []string{currentTheme.styleFor("process").Render(i18n.T("welcome.recent.title"))}
-	items := mostRecent(m.recentSessions, limit)
+	items := mostRecent(m.recentSessions, slots)
 	for _, item := range items {
 		rows = append(rows, recentRow(item))
 	}
-	for index := limit - len(items); index > 0; index-- {
+	for index := slots - len(items); index > 0; index-- {
 		blank := ""
-		if len(items) == 0 && index == limit {
+		if len(items) == 0 && index == slots {
 			blank = currentTheme.styleFor("rule").Render(i18n.T("welcome.recent.empty"))
 		}
 		rows = append(rows, blank)
@@ -322,10 +402,7 @@ func (m model) recentBoxRows(limit int) []string {
 		motto = strings.Repeat(" ", pad/2) + motto
 	}
 	rows = append(rows, currentTheme.styleFor("quote").Render(motto))
-	for len(rows) < welcomeBoxLines {
-		rows = append(rows, "")
-	}
-	return rows
+	return fitRows(rows, lines)
 }
 
 // mottoOfDay is today's line from a rotating list: the same all day, different

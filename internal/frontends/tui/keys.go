@@ -98,11 +98,18 @@ func (m model) handleEditorKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// the caret is already on the top row. That is what the original's
 		// PromptArea does, and it keeps Up from being a dead key in a box that
 		// has text in it.
+		//
+		// This is also the **only** scroll path, and that is on purpose: mouse
+		// reporting is off (see Run) so the terminal keeps drag-to-select, which
+		// is what a person actually takes out of this screen. A terminal that
+		// translates a wheel notch into arrow keys — Windows Terminal does, in
+		// the alternate screen — therefore scrolls the log with the wheel too,
+		// without this program having to own the pointer.
 		if !m.atFirstRow(m.inputInnerWidth()) {
 			m.moveCaretRow(m.inputInnerWidth(), -1)
 			return m, nil
 		}
-		m.scroll += 1
+		m.scrollBy(-1)
 		return m, nil
 
 	case tea.KeyDown:
@@ -110,9 +117,7 @@ func (m model) handleEditorKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.moveCaretRow(m.inputInnerWidth(), 1)
 			return m, nil
 		}
-		if m.scroll > 0 {
-			m.scroll -= 1
-		}
+		m.scrollBy(1)
 		return m, nil
 
 	case tea.KeyLeft:

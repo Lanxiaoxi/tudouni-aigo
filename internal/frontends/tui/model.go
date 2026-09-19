@@ -106,8 +106,14 @@ type model struct {
 	// it the box could only append and delete-from-the-end, which makes fixing a
 	// typo in the middle of a sentence impossible.
 	inputCursor int
-	// scroll is how many lines back from the bottom the transcript is drawn.
-	scroll int
+
+	// scroll is the log's window position. It is a **pointer to a shared cell**,
+	// not an int, because View has a value receiver: Bubble Tea holds its own
+	// copy of the model, so a position corrected while drawing — the only place
+	// the authoritative row count exists — would be thrown away by the next
+	// Update. Every copy shares the cell, which is what lets "the row I was
+	// reading stays put" survive a streamed delta. See scrollState.
+	scroll *scrollState
 
 	panel panelstate
 
@@ -231,6 +237,9 @@ func newModel(client *protocol.Client, bridge *bridge, options Options) model {
 		// itself once when a task list first appears — "what it plans to do" is
 		// the one place to see whether it understood — and Ctrl+B rules after.
 		railHidden: true,
+		// A new session opens on the empty state, so the log starts on its cover
+		// page rather than on the newest row. See scrollState.welcome.
+		scroll: &scrollState{welcome: true},
 	}
 }
 
@@ -530,7 +539,10 @@ func (m *model) resetForSession() {
 	m.transcript = nil
 	m.current = nil
 	m.turnSeq = 0
-	m.scroll = 0
+	// A fresh cell, not a zeroed one: the new session opens on its own cover
+	// page (or on the newest row, when it is a resumed one), rather than
+	// inheriting where the previous conversation was left.
+	m.scroll = &scrollState{welcome: true}
 	m.streamedText = ""
 	m.streamRunID = ""
 	m.streamStep = 0
@@ -856,12 +868,15 @@ func (m *model) currentAppend(line renderLine) {
 }
 
 // appendLines adds a block of pre-rendered rows as one entry.
+//
+// No scroll bookkeeping happens here, and none is needed: the window follows the
+// newest row while the reader is at the bottom, and is left alone while they are
+// not — however many rows the entry turns out to hold.
 func (m *model) appendLines(lines []renderLine) {
 	if len(lines) == 0 {
 		return
 	}
 	m.transcript = append(m.transcript, entry{lines: lines, kind: "answer"})
-	m.stick()
 }
 
 // backfill finds the line with the same anchor and appends the tail. When the
@@ -1135,10 +1150,11 @@ func (m *model) applyState(payload map[string]any) {
 
 // ── transcript helpers ────────────────────────────────────────────────────────
 
-// appendLine adds a standalone entry.
+// appendLine adds a standalone entry. As with appendLines, the window needs no
+// adjustment: following the bottom and being held in place are both the window's
+// own business (see window).
 func (m *model) appendLine(line renderLine, kind, text string) {
 	m.transcript = append(m.transcript, entry{line: line, kind: kind, text: text})
-	m.stick()
 }
 
 // appendUser adds one **restored** user message. Replay only: a live turn draws
@@ -1200,13 +1216,17 @@ func (m *model) appendAnswer(text string) {
 }
 
 // updateStreamingAnswer writes the live text into the trailing streaming entry.
+//
+// Every delta lands here, and a delta that only makes the block taller is the
+// case that used to drag the reader: the entry's own row count grows with the
+// text and nothing here has to know it. The window follows the newest row while
+// the reader is at the bottom and holds still while they are not.
 func (m *model) updateStreamingAnswer() {
 	if index := m.trailingStreaming(); index >= 0 {
 		m.transcript[index].text = m.streamedText
 		return
 	}
 	m.transcript = append(m.transcript, entry{kind: "streaming", text: m.streamedText})
-	m.stick()
 }
 
 func (m *model) dropStreamingAnswer() {
@@ -1226,12 +1246,67 @@ func (m *model) trailingStreaming() int {
 	return -1
 }
 
-// stick keeps the view pinned to the bottom while it already is there.
-func (m *model) stick() {
-	if m.scroll == 0 {
-		return
+// scrollState is the log's window position.
+//
+// It replaced a plain `scroll int` — "how many lines back from the bottom" —
+// because that number cannot express the thing a reader cares about. Growing
+// content (a streaming answer, a report arriving as one multi-row entry) changes
+// how many rows sit below the window, and a distance from the bottom therefore
+// moves the window every time the log grows: reading while the model streams
+// dragged the text out from under the cursor. An anchor does not: rows *below*
+// the window cannot move it.
+type scrollState struct {
+	// anchor is the index of the row drawn on the window's first line.
+	anchor int
+	// maxAnchor is the largest anchor the last drawn frame allowed: the row
+	// that puts the newest line on the window's last row. It is remembered
+	// rather than derived on the keypress because the key handler has no rows
+	// to measure.
+	maxAnchor int
+	// follow is true while the window is pinned to the newest row. It is what
+	// "the log is at the bottom" means, and the only state in which growth
+	// moves the window.
+	follow bool
+	// welcome records which anchoring was last drawn: the empty state's cover
+	// page (top) or the conversation (bottom). Crossing between the two is the
+	// one moment that decides the window, so the cross is detected rather than
+	// assumed; a fresh cell starts as the empty state, which is what a new
+	// session shows.
+	welcome bool
+}
+
+// scrollCell is the shared cell. It is allocated on first use so a model built
+// by hand (a test literal) still scrolls instead of panicking on a nil pointer.
+func (m *model) scrollCell() *scrollState {
+	if m.scroll == nil {
+		m.scroll = &scrollState{welcome: true}
 	}
-	m.scroll++
+	return m.scroll
+}
+
+// scrollBy moves the window `delta` rows: negative is up, towards older lines.
+//
+// Scrolling up **leaves** the bottom and stays where the reader put it — that is
+// the whole point of the gesture. Scrolling down onto the newest row re-arms
+// following, which is how the log behaves before anybody touches it.
+func (m *model) scrollBy(delta int) {
+	state := m.scrollCell()
+	switch {
+	case delta < 0:
+		state.follow = false
+		state.anchor += delta
+	case delta > 0:
+		state.anchor += delta
+		if state.anchor >= state.maxAnchor {
+			state.follow = true
+		}
+	}
+	if state.anchor < 0 {
+		state.anchor = 0
+	}
+	if state.follow {
+		state.anchor = state.maxAnchor
+	}
 }
 
 // welcomeVisible reports whether the empty state's screen is still up.

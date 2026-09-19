@@ -72,6 +72,13 @@ func Run(options Options) int {
 	}
 
 	model := newModel(client, hooks, options)
+	// **Alt screen only — no mouse reporting, deliberately.** Reporting the mouse
+	// would make the wheel work in every terminal, but it also takes drags away
+	// from the terminal, so selecting text to copy needs Shift held down. That
+	// trade is the wrong way round for this interface: text is what a user takes
+	// out of it. Where the terminal translates a wheel notch into arrow keys
+	// (Windows Terminal does, in the alternate screen), the log scrolls anyway —
+	// see `handleEditorKey`'s Up/Down, which is the one scroll path there is.
 	program := tea.NewProgram(model, tea.WithAltScreen())
 
 	hooks.program = program

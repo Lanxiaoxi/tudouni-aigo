@@ -40,7 +40,7 @@ TextArea built-ins (Ctrl+A/E/W/U, Home/End, Delete, Ctrl+Left/Right): inherited.
 | `Ctrl+K` | open the palette, insert `/` when empty (`app.py:1481-1501`) | `keys.go:71-75` | m9 (no `/` inserted) |
 | `Ctrl+S` | skills panel (`app.py:2172-2174`) | `keys.go:77-83` | parity |
 | `Esc` | close overlay / interrupt / idle notice / deny in the approval (`app.py:2176-2198`) | `keys.go:47-60`, `keys.go:916-917` | parity |
-| `↑` / `↓` | palette move else log scroll (`app.py:1454-1472`) | `keys.go:88-109` | parity (Go also moves the caret inside the box first) |
+| `↑` / `↓` | palette move else log scroll (`app.py:1454-1472`) | `keys.go:95-120` | parity (Go also moves the caret inside the box first; mouse reporting is left **off** so drag-to-select still works, which means the wheel scrolls only where the terminal translates it into these keys) |
 | `Enter` | send (`widgets.py:1887`) | `keys.go:156-161` | parity |
 | `Shift+Enter` | newline (`widgets.py:357-372`, `test_tui.py:1536`) | **not present**; `Ctrl+J` / `Alt+Enter` instead (`keys.go:147-160`) | m6 |
 | `Ctrl+A`/`Ctrl+E`/`Home`/`End` | TextArea line start/end | `keys.go:127-133` | parity |
