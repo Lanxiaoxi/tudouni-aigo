@@ -2,6 +2,39 @@
 
 对照 `docs/parity-review.md` 的问题清单，逐条记录已修项、对应测试、以及原版出处。
 每一项都遵循同一条规矩：**修的同时把原版那条测试搬成 Go 测试**（见 `docs/parity-test-map.md`）。
+本页最新一条（4.1.1）是例外：它不是"把原版搬回来"，而是**有意偏离原版**（用户要求），
+所以没有对应的原版测试可搬，测试钉的是 Go 自己的新行为。
+
+## 4.1.1 —— 选完模型 / 强度，面板不关（用户实测发现）
+
+- **现象**（用户反馈："我希望我上下键选完模型回车之后，模型列表就关闭了"）：`/model` 面板里用 `↑↓`
+  选一行、按 `Enter`，浮层**不会消失**。它先画 `waiting for the runtime to apply deepseek/…`，
+  runtime 那句话回来之后再把它画在清单底下，人得再按一次 `Esc` 才拿回输入行。同一段代码的
+  `/effort` 一字不差，用户看完盘点后要求**一起改**。
+- **根因**：18.2 当初的决定是"`/model` 的成败只有 runtime 知道，所以面板留着把那句话写出来"。
+  但那句话**本来就另有一份写进会话流**（`model.go` 的 `protocol.OutNotice` 分支，`settleOverlay`
+  只是又抄了一遍），于是面板压住的正是同一句里唯一可读的那一份，而"等回话"的代价是一次多余的 `Esc`。
+  同一段代码里 `/theme` 早就是"选完即关"，`/model <name>` 也从来没有面板可留 —— 这两个是仅有的
+  "选完还站着"、却不比日志多说一个字的。
+- **改动**：
+  - `keys.go` 的 `commitOverlay`：`model.pick.title` 与 `effort.pick.title` 两支都改成**先关面板、
+    再发请求**，不再写 `overlay.waiting`；头注释改成"候选面板一律选完即关，`/mcp` 是例外且不是一回事"。
+  - `keys.go` 的 `settleOverlay`：删掉 `model` / `effort` 两支，只留 `mcp`（参数里的那句话随之删掉）。
+    这两个 notice 现在**没有面板可落**：面板在回包到达前就关了，写进去只会落到"这中间被重新打开
+    的那个"上 —— 一个 `/theme` 浮层会显示一句关于模型的话。原来只看 `code` 不看标题，这条路一直存在。
+  - 连带清掉三处随之为空的死代码：`reloadOverlayOptions`（+ `model.go` 里 `ui(state)` 之后的调用点）、
+    `renderOptionPicker` 里的 waiting 分支、i18n 的 `picker.waiting`（`picker.footer` 在这之前就
+    已经没人引用，一并删掉）。`/mcp` 面板的行为**不动**，它依旧是"留着的活面板"。
+- **测试**：`internal/frontends/tui/picker_test.go` 四条 ——
+  `TestEnterOnAModelRowClosesThePicker`、`TestEnterOnAnEffortRowClosesThePicker`（回车后
+  `overlay.kind` 归零、`waiting` 为空、`renderOverlay` 是空串）、`TestAValueNoticeDoesNotSettleAPicker`
+  （`/theme` 与 `/effort` 面板上都不许出现那句话）、`TestTheMCPPanelStillWaitsForItsReply`
+  （唯一留着的那条路没被带走：waiting 行必须被回包清掉，面板不许被回包关掉）。
+  已核对：两条"关不关"的测试在改动前**失败**（改动前的输出里，整个面板连同
+  `waiting for the runtime to apply deepseek/deepseek-v4-pro…` / `…apply low…` 一起被打了出来），
+  改动后通过。
+- **用户可直接复测**：`make build` 后跑 `dist\tudouni.exe --tui`，`/model` 和 `/effort` 各回车一次
+  —— 面板都应当当场消失，紧接着会话流里出现 `[info] [model] Switched to …` / `[info] [effort] …`。
 
 ## 3.10.2 —— 审批面板的底色是"三块拼的"（用户实测发现）
 

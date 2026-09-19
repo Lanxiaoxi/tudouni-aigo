@@ -61,9 +61,10 @@ type overlay struct {
 	// both narrows the list and supplies the argument.
 	filter string
 
-	// waiting names the action the runtime is still processing. The panel
-	// **never draws a result before the runtime confirms it**: a mount that
-	// failed to start would otherwise read as mounted.
+	// waiting names the action the runtime is still processing. Only the MCP panel
+	// uses it: it **never draws a result before the runtime confirms it**, because
+	// a mount that failed to start would otherwise read as mounted. The pickers
+	// close on the pick, so they have nothing to wait for.
 	waiting string
 
 	// count is the badge on the panel head (`3 / 5 running`).
@@ -727,11 +728,10 @@ func (m model) renderOptionPicker(width int) string {
 			body = append(body, wrapCells(currentTheme.styleFor("rule").Render("  "+note), inner)...)
 		}
 	}
-	if m.overlay.waiting != "" {
-		// The runtime has not spoken yet. Drawing the new value before the
-		// runtime confirms it is drawing a lie — the panel stays open and says so.
-		body = append(body, wrapCells(currentTheme.styleFor("warn").Render("  "+m.overlay.waiting), inner)...)
-	}
+	// No waiting line here. Every picker this draws — `/theme`, `/model`,
+	// `/effort` — is closed by the time the runtime answers, so there is never a
+	// note to show; the waiting line lives in the MCP panel (`renderMCPPanel`),
+	// which is the one panel that stays up across a round trip.
 	body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("option.footer")), inner)...)
 	badge := ""
 	if len(rows) > 0 {

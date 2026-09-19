@@ -129,8 +129,6 @@ var catalog = map[string]string{
 	"effort.pick.title": "Change the reasoning effort",
 	"theme.pick.title":  "Change the theme",
 	"picker.alias":      "(a retired name — it is recognised, not selectable)",
-	"picker.footer":     "↑↓ move · Enter pick · Esc leave",
-	"picker.waiting":    "waiting for the runtime to apply {value}…",
 
 	// Command palette.
 	"palette.no_match": "(no command matches)",

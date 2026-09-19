@@ -445,10 +445,10 @@ func (m *model) handleServerMessage(payload map[string]any) {
 			{text: "[" + level + "] " + text, role: role},
 		}}, "notice", "")
 		// A panel that asked the runtime a question has to close the loop: the
-		// answer only the runtime knows (whether that route has a key, whether the
-		// server came up) arrives as this notice, and the panel stays up showing
+		// answer only the runtime knows (whether the server came up, or why it did
+		// not) arrives as this notice, and the MCP panel stays up showing
 		// "waiting…" until it is written down.
-		m.settleOverlay(code, text)
+		m.settleOverlay(code)
 
 	case protocol.OutSessions:
 		if items, ok := payload["items"].([]any); ok {
@@ -879,9 +879,6 @@ func (m *model) handleUI(payload map[string]any) {
 	switch kind {
 	case protocol.UIState:
 		m.applyState(payload)
-		// A panel left open is **live**: it has to follow the facts it shows, or
-		// the highlight sits on a value that is no longer the current one.
-		m.reloadOverlayOptions()
 		m.reportAutopilot()
 
 	case protocol.UIRunFinished:
@@ -919,7 +916,7 @@ func (m *model) handleUI(payload map[string]any) {
 		if servers, ok := payload["mcp_servers"].([]any); ok {
 			m.panel.mcp = servers
 		}
-		m.settleOverlay("mcp", "")
+		m.settleOverlay("mcp")
 
 	case protocol.UIStatus:
 		m.appendLines(m.statusScreen(payload))

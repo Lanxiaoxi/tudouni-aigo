@@ -2244,14 +2244,15 @@ runtime 会**先等那一轮跑完**（工具定义每轮取一次快照，半�
 | | 初始光标 | 选完之后 |
 |---|---|---|
 | `/theme` | 停在当前那一套（和 `/effort` 同理） | **立刻关**（`_set_theme` 当场重画，已生效） |
-| `/effort` | 停在当前那一档（三四个选项，"换一档"和"看现在是哪一档"按键成本一样） | **不关**：等 runtime 那条 notice |
+| `/effort` | 停在当前那一档（三四个选项，"换一档"和"看现在是哪一档"按键成本一样） | **立刻关**（Go 4.1.1 起，理由同 `/model` —— 见 18.2.2；原版是"不关"） |
 | `/model` | 停在**当前的下一个**（打开它的人几乎总是想换一个，按 `Esc` 才是"留在原地"） | **立刻关**（Go 4.1.1 起：runtime 那句话照旧写进会话流，面板不再压着它 —— 见 18.2.2；原版是"不关"） |
 
 "不关"那两条的理由是：`/model` 的成败只有 runtime 知道（那条路由有没有密钥），先关掉的
 话"没换成"就只表现为一张关掉的浮层 —— 和"换成了一下子没看出来"分不开。所以 notice 回来
 时那句话**原样**写在面板底下，人看清了再按 `Esc`（同一条 notice 在会话流里另有一份）。
 这是 17.1 那条"面板为什么不关"的同一类判断，而 `/theme` 不适用它：配色是本地的。
-（`/model` 那一条 Go 版已经改了 —— 见 18.2.2。）
+（`/model` `/effort` 这两条 Go 版都改了 —— 见 18.2.2。剩下的判据是"这一个动作是一次
+挑完就走，还是一串动作里的第一下"：`/mcp` 是后者，所以它还留着。）
 
 ### 18.2.1 留在屏幕上的代价：它必须跟着最新的 state 重画
 
@@ -2267,12 +2268,36 @@ runtime 会**先等那一轮跑完**（工具定义每轮取一次快照，半�
 这和 17.1 那条"`McpPanel` 必须能就地刷新"是同一个形状的代价：**留着的面板都是活的**，
 而活的东西必须跟着它显示的那份事实走。取数函数由 `_push_option_picker(kind=...)` 给
 （`model` / `effort`），`/theme` 不给 —— 它选完就关，没有"等回话"那一段。
+（Go 版 4.1.1 起 `/model` 和 `/effort` 也选完即关，于是没有任何候选面板还会开着等回话，
+"留着就必须重画"这条代价在这里归零，`reloadOverlayOptions` 随之删掉，见 18.2.2。）
 
 顺带一条踩过的坑：那个方法**不能叫 `refresh`** —— Textual 的 `Widget` 自己有一个
 `refresh(*, repaint=…)`，覆盖它会在框架重画那一步炸 `TypeError`（而那时栈上指向的是
 Textual 内部，看不出是自己覆盖的）。
 
+### 18.2.2 Go 版 4.1.1：`/model` 与 `/effort` 改成"选完即关"
+
+原版（本节上文）让 `/model` 和 `/effort` 都留着面板等 runtime 的 notice。Go 版把这两个都改成
+**选完立刻关**，理由是那句 notice 在两边**都另写一份到会话流里**：留着的面板只是把同一句话挡在
+它自己下面，而按完 `Enter` 还得再按一次 `Esc` 才能回到输入行（用户实测反馈）。`/model <name>`
+（打名字的那条路）本来就没有面板可留，行为因此也一致了。
+
+`/mcp` 面板保持原样：它是**一连串动作的第一下**（连着挂几台服务器），而不是"挑完就走"，
+所以它留着、把 `Waiting for the runtime…` 画在清单底下，回包到了再清掉那一行。
+
+- 代码：`internal/frontends/tui/keys.go` 的 `commitOverlay`（两支都先关面板再发请求）。
+- `settleOverlay` 不再把 `model` / `effort` notice 写进面板：那两个面板在回包到达前就已经关了，
+  写进去只会落到"这中间被重新打开的那个"上（一个 `/theme` 浮层会显示一句关于模型的话）。
+  它现在只认 `mcp`，参数里的那句话也随之删掉。
+- 连带清掉三处随之为空的死代码：`reloadOverlayOptions`（没有任何候选面板还会开着等回话，
+  `model.go` 里 `ui(state)` 之后的调用点也删了）、`renderOptionPicker` 里的 waiting 分支、
+  i18n 的 `picker.waiting`（`picker.footer` 在这之前就已经没人引用，也一并删了）。
+- 测试：`internal/frontends/tui/picker_test.go` 的 `TestEnterOnAModelRowClosesThePicker`、
+  `TestEnterOnAnEffortRowClosesThePicker`、`TestAValueNoticeDoesNotSettleAPicker`、
+  `TestTheMCPPanelStillWaitsForItsReply`。
+
 ### 18.3 名字那一列还是 `provider/model`
+
 面板里回给 runtime 的值**就是行上写的那一串**（`Option.value`），界面不自己拼、也不猜。
 理由和 15 节那条一样：同名模型可以在多条路由上，而"选了哪一个"决定请求发到哪个账号上。
 

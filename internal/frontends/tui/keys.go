@@ -843,13 +843,17 @@ func (m model) overlayCount() int {
 
 // commitOverlay acts on the row under the cursor.
 //
-// Which panels close is decided by **what is left to read**. `/theme` is local (a
-// wrong pick shows at once) and `/model` is answered by the runtime in the log —
-// a switch prints its own line whether it worked or not, which is all
-// `/model <name>` prints too — so both are pick-and-close: keeping the panel up
-// put that sentence behind the list that asked the question, and getting the
-// keyboard back cost an Esc. `/effort` and the MCP panel still wait on their
-// notice and draw it under the list.
+// Every **selection** panel closes on the pick: `/theme` is local (a wrong choice
+// shows at once), and `/model` and `/effort` are answered by the runtime in the
+// log — a switch prints its own line whether it worked or not, which is all
+// `/model <name>` prints too. A panel held open on top of that sentence was
+// showing it in the one place it could not be read, and the next keystroke had to
+// be Esc.
+//
+// The MCP panel is the exception, and it is not the same thing: it is a
+// switchboard rather than a pick, one mount is usually the first of several, and
+// its round trip is long enough to be worth watching — so it stays up and clears
+// its own waiting line when the reply lands.
 func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 	switch m.overlay.kind {
 	case overlayCommand:
@@ -909,7 +913,10 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 			m.client.SetModel(picked.value)
 			return m, nil
 		case i18n.T("effort.pick.title"):
-			m.overlay.waiting = i18n.T("picker.waiting", "value", picked.value)
+			// The same reasoning as `/model`: "Effort is now …" is a line the
+			// runtime writes into the log, so a panel held open would be holding
+			// nothing the log does not already say.
+			m.overlay = overlay{}
 			m.client.SetEffort(picked.value)
 			return m, nil
 		}
@@ -951,48 +958,27 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// reloadOverlayOptions recomputes the picker's rows from the latest state,
-// keeping the cursor where it was. A picker left open is live; a static
-// highlight on a value that is no longer current reads as "my press did
-// nothing".
+// settleOverlay clears the waiting line of the one panel that asks the runtime a
+// question and stays up for the answer.
 //
-// `/effort` is the only option picker that is still up when the answer lands —
-// `/theme` and `/model` close on Enter — so it is the only one that can have new
-// rows to derive. The waiting note is cleared only when the runtime's answer
-// arrives; a snapshot alone does not settle the panel.
-func (m *model) reloadOverlayOptions() {
-	if m.overlay.kind != overlayOptions || m.overlay.waiting == "" {
-		return
-	}
-	if m.overlay.title == i18n.T("effort.pick.title") {
-		m.overlay.options = m.effortOptions()
-	}
-}
-
-// settleOverlay writes the runtime's verdict onto the panel that asked for one.
+// The MCP panel is that panel: a mount is a real round trip (connecting can take
+// seconds, and a running turn is waited out first), so it draws "waiting for the
+// runtime…" and needs a signal that the thing it waited for is over. The callers
+// are the two replies that can carry that signal — a `ui(mcp)` payload and an
+// `mcp` notice (the runtime answers a bad action with a warning instead).
 //
-// `/effort` is the only panel left to write to: it stays up, and the sentence is
-// drawn under the list so it can be read before Esc. A `model` notice is not
-// written anywhere — `/model` is gone by the time it arrives, and the notice that
-// changes the value must not be pasted into whichever picker happens to be open
-// (a `/theme` list opened in the meantime would show a sentence about the model).
-// The panel decides by title, not by kind, for that reason.
+// Every *selection* panel was a second caller until 4.1.1, writing the runtime's
+// sentence under its list. `/model` and `/effort` close on the pick now, and the
+// mechanism is deliberately not kept for them: the sentence is already a line in
+// the log, and pasting it into a picker reopened in the meantime would put a fact
+// about the model under a list of effort levels.
 //
 // Other notices are ignored on purpose: the startup lines and warnings about
 // something else entirely arrive while a panel happens to be open, and writing
-// those into it would be "pushed aside while choosing". The sentence itself is
-// reproduced verbatim where it is shown: it carries facts this program cannot
-// reconstruct, such as which route lacked a key.
-func (m *model) settleOverlay(code, text string) {
-	switch code {
-	case "effort":
-		if m.overlay.kind == overlayOptions && m.overlay.title == i18n.T("effort.pick.title") {
-			m.overlay.waiting = text
-		}
-	case "mcp":
-		if m.overlay.kind == overlayMCP {
-			m.overlay.waiting = ""
-		}
+// those into it would be "pushed aside while choosing".
+func (m *model) settleOverlay(code string) {
+	if code == "mcp" && m.overlay.kind == overlayMCP {
+		m.overlay.waiting = ""
 	}
 }
 

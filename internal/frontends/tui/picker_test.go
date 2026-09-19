@@ -140,47 +140,112 @@ func TestEnterOnAModelRowClosesThePicker(t *testing.T) {
 	}
 }
 
-// TestAModelNoticeDoesNotSettleAnotherPicker — the notice belongs to the panel
-// that asked for it, and `/model` is not that panel any more.
+// TestEnterOnAnEffortRowClosesThePicker — `/effort` is the same control as
+// `/model` and now behaves the same way.
 //
-// `settleOverlay` matched on the notice's code alone, so a model notice arriving
+// It was the last picker that stayed up: Enter wrote "waiting for the runtime to
+// apply X…" under the list, the runtime's "Effort is now …" replaced it there, and
+// the panel was still standing between the user and the input line. That sentence
+// is a line in the log too, so the Esc bought exactly nothing.
+func TestEnterOnAnEffortRowClosesThePicker(t *testing.T) {
+	withColour(t)
+
+	m := filledModel(120, 40)
+	m.railHidden = true
+	// nil stdin: `SetEffort` writes nowhere, which is all a front-end test needs.
+	m.client = protocol.NewClient(nil)
+	m.effortLevels = []string{"low", "high"}
+	m.panel.effort = "low"
+
+	m.openOptionPicker(i18n.T("effort.pick.title"), m.effortOptions(), pickerStartCurrent)
+	if m.overlay.kind != overlayOptions {
+		t.Fatalf("the picker did not open: kind = %v", m.overlay.kind)
+	}
+	if chosen := m.overlay.options[m.overlay.cursor].value; chosen != "low" {
+		t.Fatalf("the cursor is on %q, want the level in effect", chosen)
+	}
+
+	next, _ := m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	if m.overlay.kind != overlayNone || m.overlay.waiting != "" {
+		t.Errorf("the picker survived Enter: kind = %v, cursor = %d, waiting = %q",
+			m.overlay.kind, m.overlay.cursor, m.overlay.waiting)
+	}
+	if rendered := stripANSI(m.renderOverlay(112)); rendered != "" {
+		t.Errorf("a closed overlay still draws:\n%s", rendered)
+	}
+}
+
+// TestAValueNoticeDoesNotSettleAPicker — a notice about the model or the effort
+// belongs to no panel, because the panel that asked is gone.
+//
+// `settleOverlay` matched on the notice's code alone, so one of these arriving
 // while a *theme* picker was open was written under the colour list as a warning
-// line: a fact about the model, under a list of palettes. With `/model` closing
-// on Enter there is no panel left for a model notice to settle at all, and the
-// title — not the kind — is what says so.
-func TestAModelNoticeDoesNotSettleAnotherPicker(t *testing.T) {
+// line: a fact about the model, under a list of palettes. That was reachable even
+// before `/model` closed on Enter — a picker reopened during the round trip took
+// the previous switch's sentence — and now it is the only way it could happen at
+// all, so the cases are gone rather than merely guarded.
+func TestAValueNoticeDoesNotSettleAPicker(t *testing.T) {
 	withColour(t)
 	setTheme(defaultTheme)
 	t.Cleanup(func() { setTheme(defaultTheme) })
 
-	m := filledModel(120, 40)
-	m.openOptionPicker(i18n.T("theme.pick.title"), pickerThemeOptions(), pickerStartCurrent)
+	for name, picker := range map[string]func(m *model){
+		"theme": func(m *model) {
+			m.openOptionPicker(i18n.T("theme.pick.title"), pickerThemeOptions(), pickerStartCurrent)
+		},
+		"effort": func(m *model) {
+			m.effortLevels = []string{"low", "high"}
+			m.panel.effort = "low"
+			m.openOptionPicker(i18n.T("effort.pick.title"), m.effortOptions(), pickerStartCurrent)
+		},
+	} {
+		m := filledModel(120, 40)
+		picker(&m)
 
-	m.settleOverlay("model", "Switched to deepseek/deepseek-v4-pro (previous: deepseek/deepseek-flash)")
+		m.settleOverlay("model")
+		m.settleOverlay("effort")
 
-	if m.overlay.waiting != "" {
-		t.Errorf("a model notice was written into the theme picker: %q", m.overlay.waiting)
-	}
-	if rendered := stripANSI(m.renderOverlay(112)); strings.Contains(rendered, "Switched to") {
-		t.Errorf("the theme picker is drawing a sentence about the model:\n%s", rendered)
+		if m.overlay.waiting != "" {
+			t.Errorf("%s: a value notice was written into the picker: %q", name, m.overlay.waiting)
+		}
+		if m.overlay.kind != overlayOptions {
+			t.Errorf("%s: the notice closed a picker nobody asked to close: kind = %v",
+				name, m.overlay.kind)
+		}
+		if rendered := stripANSI(m.renderOverlay(112)); !strings.Contains(rendered, "Enter confirm") {
+			t.Errorf("%s: the picker stopped drawing itself:\n%s", name, rendered)
+		}
 	}
 }
 
-// TestAnEffortNoticeStillSettlesTheEffortPicker — the other half of the rule, and
-// the reason the title check is safe to add: the panel that *does* stay open still
-// takes its own answer.
-func TestAnEffortNoticeStillSettlesTheEffortPicker(t *testing.T) {
+// TestTheMCPPanelStillWaitsForItsReply — the one panel that stays up keeps the
+// mechanism: "waiting for the runtime…" has to go away when the answer lands, or
+// the panel lies about a mount that finished several seconds ago.
+func TestTheMCPPanelStillWaitsForItsReply(t *testing.T) {
 	withColour(t)
 
 	m := filledModel(120, 40)
-	m.effortLevels = []string{"low", "high"}
-	m.panel.effort = "low"
-	m.openOptionPicker(i18n.T("effort.pick.title"), m.effortOptions(), pickerStartCurrent)
+	// nil stdin: the toggle writes nowhere, which is all a front-end test needs.
+	m.client = protocol.NewClient(nil)
+	m.panel.mcp = []any{map[string]any{"name": "kb", "state": "loaded", "tools": 3}}
+	m.overlay = overlay{kind: overlayMCP, stayOpen: true, title: i18nTitle("mcp_dialog.head")}
 
-	const notice = "Effort is now high."
-	m.settleOverlay("effort", notice)
+	next, _ := m.commitOverlay()
+	m = next.(model)
+	if m.overlay.waiting == "" {
+		t.Fatal("the MCP panel ran no action, so there is nothing waiting")
+	}
+	if m.overlay.kind != overlayMCP {
+		t.Errorf("the MCP panel closed on the toggle: kind = %v", m.overlay.kind)
+	}
 
-	if m.overlay.waiting != notice {
-		t.Fatalf("the effort picker did not take its own notice: %q", m.overlay.waiting)
+	m.settleOverlay("mcp")
+	if m.overlay.waiting != "" {
+		t.Errorf("the waiting line outlived the reply: %q", m.overlay.waiting)
+	}
+	if m.overlay.kind != overlayMCP {
+		t.Errorf("the reply closed the MCP panel: kind = %v", m.overlay.kind)
 	}
 }

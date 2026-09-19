@@ -381,12 +381,13 @@ no counterexample for the label-trimming rules the Python code computes per lang
   `structure_test.go:238-253`).
 * **Palette-as-input-line**: the filter reads the live input, Enter carries the argument, `/re` narrows
   (`app.py:1529-1538` ↔ `panels.go:628-658`, `keys.go:714-731`).
-* **Option-picker semantics**: `/theme` picks and closes; `/model` picks and closes too (Go 4.1.1 — a
-  deliberate departure, listed below); `/effort` stays open until the runtime's notice arrives and
-  prints that sentence verbatim (`app.py:1822-1877` ↔ `keys.go:733-757`, `keys.go:822-833`); `/model`
-  starts on current + 1, `/effort` and `/theme` on current (`app.py:1838-1844` ↔ `keys.go:539-568`); a
-  live snapshot re-derives the rows of the panel that is still waiting
-  (`app.py:1802-1820` ↔ `keys.go:800-812`).
+* **Option-picker semantics**: `/theme`, `/model` and `/effort` all pick and close in Go 4.1.1 (the
+  last two are a deliberate departure, listed below); the original keeps `/model` and `/effort` up
+  until the runtime's notice arrives and prints that sentence verbatim
+  (`app.py:1822-1877` ↔ `keys.go:733-757`, `keys.go:822-833`); `/model` starts on current + 1,
+  `/effort` and `/theme` on current (`app.py:1838-1844` ↔ `keys.go:539-568`); the original also
+  re-derives the rows of a picker left open (`app.py:1802-1820`) — Go has no such picker left, so that
+  mechanism was removed with it.
 * **Approval dialog**: conditional `t`/`a` buttons and hint lines, arguments printed whole and sorted,
   `Esc` denies, only the runtime's own `remember_hint` / `trust_all_hint` text is shown
   (`app.py:1398-1413`, `widgets.py:2009-2154` ↔ `view.go:823-945`, `keys.go:898-935`);
@@ -489,16 +490,16 @@ no counterexample for the label-trimming rules the Python code computes per lang
   (`view.go:305-328`). Requested by the user: the conversation owns the left margin.
   Everything else about the rail — 32 cells, the six blocks in order, the
   `width < 100` drop rule, the collapsed one-line summary — is unchanged.
-* **The `/model` picker closes on pick (4.1.1).** The original keeps the panel up until the runtime's
-  notice arrives, and draws that sentence under the list (`app.py:1822-1877`;
+* **The `/model` and `/effort` pickers close on pick (4.1.1).** The original keeps both panels up
+  until the runtime's notice arrives, and draws that sentence under the list (`app.py:1822-1877`;
   `docs/TUI-design.md` §18.2, "选完之后：不关"). The notice is appended to the log in **both** versions,
-  so the panel was covering the one line that answers "did it switch" with a copy of itself on top of
-  it, and the next keystroke had to be `Esc`. Requested by the user. Changing the model is also the
-  one pick whose rows come from the runtime, and `/model <name>` — the typed form of the same
-  command — never had a panel to hold the answer in the first place.
-  `/effort` and the MCP panel keep the waiting behaviour
-  (`keys.go` `commitOverlay` / `settleOverlay`, pinned by
-  `picker_test.go:TestEnterOnAModelRowClosesThePicker`).
+  so the panel was covering the one line that answers "did it change" with a copy of itself on top of
+  it, and the next keystroke had to be `Esc`. Requested by the user. `/model <name>`, the typed form of
+  the same command, never had a panel to hold the answer in the first place.
+  The MCP panel keeps the waiting behaviour — it is a switchboard (one mount is usually the first of
+  several) rather than a pick (`keys.go` `commitOverlay` / `settleOverlay`, pinned by
+  `picker_test.go:TestEnterOnAModelRowClosesThePicker`, `TestEnterOnAnEffortRowClosesThePicker`,
+  `TestTheMCPPanelStillWaitsForItsReply`).
 
 ---
 
