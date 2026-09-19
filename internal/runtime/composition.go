@@ -701,6 +701,31 @@ func (r *Runtime) StatsLine() string {
 			"cached", deref(cached),
 			"hit_rate", state.HitRate(*prompt, deref(cached))))
 	}
+	// The output rate rides on the same "at least one successful call" guard rather
+	// than on its own: completion tokens with no prompt tokens cannot happen (a
+	// response always reports both or neither), and splitting the condition would
+	// be two tests for one fact that could disagree.
+	//
+	// It is stated as a cumulative average over the session — "1874 tokens at an
+	// average of 38 tok/s" — because that is the question this line answers: this
+	// report is per turn, and the previous turn's total is what a person compares
+	// the current one against. The per-step figure lives in the transcript.
+	//
+	// **The segment is omitted, not filled with a dash, when there is no
+	// denominator.** A log recorded before `duration_ms` was summed — or one whose
+	// successful calls reported no duration — would otherwise print
+	// "avg — tok/s" on every turn for ever, which is a claim about a measurement
+	// nobody was waiting for. This is the same rule the status bar's segment
+	// follows; `OutputRate`'s em dash is for the reports that have a slot to fill.
+	if prompt != nil && *prompt > 0 {
+		completion := intPtr(usage["completion"])
+		if completion != nil {
+			if rate, ok := state.OutputRateText(*completion, deref(intPtr(usage["model_ms"]))); ok {
+				builder.WriteString(i18n.T("stats.rate",
+					"completion", *completion, "rate", rate))
+			}
+		}
+	}
 	if ms, ok := lastTurnMs(events); ok {
 		builder.WriteString(i18n.T("stats.turn", "value", msText(int(ms))))
 	}

@@ -730,19 +730,50 @@ func (m model) autopilotBadge(narrow bool) string {
 	return currentTheme.styleFor(role).Render(i18n.T(key))
 }
 
-// statusRight is the cost of this run: context, cache hit, how long this turn
-// has been going (or how big the session is), and where the audit is written.
+// statusRight is the cost of this run: context, cache hit, the output rate, how
+// long this turn has been going (or how big the session is), and where the audit
+// is written.
 // Narrow screens keep the first two — the audit path and "this turn" are the
-// longest and least urgent items, and keeping all four on a narrow screen is
+// longest and least urgent items, and keeping all five on a narrow screen is
 // what clips the left half into a sentence with no verb.
 func (m model) statusRight(narrow bool) string {
 	context := m.contextText(narrow)
 	hit := m.cacheHitText()
+	rate := m.outputRateText()
 	if narrow {
+		// The rate is dropped rather than the cache hit: on a narrow bar the
+		// cache figure is the one that changes the bill, and `spreadStyled` cuts
+		// from the tail anyway — putting the rate last would just mean it was the
+		// segment that vanished without anybody deciding so.
 		return strings.Join([]string{context, hit}, "  ·  ")
 	}
-	return strings.Join([]string{context, hit, m.spanText(),
+	if rate == "" {
+		// No measurement (a turn that only called tools). The segment is left out
+		// entirely rather than drawn as `avg — tok/s`: see OutputRateText.
+		return strings.Join([]string{context, hit, m.spanText(),
+			i18n.T("status.audit", "path", m.auditDirShort())}, "  ·  ")
+	}
+	return strings.Join([]string{context, hit, rate, m.spanText(),
 		i18n.T("status.audit", "path", m.auditDirShort())}, "  ·  ")
+}
+
+// outputRateText is the last model call's average output rate, or "" when there
+// is no measurement to report.
+//
+// It reads the same four fields the rail's Session block and the cache-hit figure
+// read, so the bar is describing one call throughout: the prompt size, the cached
+// part, the answer size and the call's duration all come from the same
+// `model_call` event.
+func (m model) outputRateText() string {
+	completion, span := m.panel.completionTokens, m.panel.modelMs
+	if completion == nil || span == nil {
+		return ""
+	}
+	rate, ok := state.OutputRateText(*completion, *span)
+	if !ok {
+		return ""
+	}
+	return i18n.T("status.rate", "rate", rate)
 }
 
 // contextText is the last request's prompt size against the model's window.

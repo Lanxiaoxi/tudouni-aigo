@@ -132,6 +132,13 @@ func Summarize(events []map[string]any) string {
 
 	prompt := numberOf(usage["prompt"])
 	cached := numberOf(usage["cached"])
+	completion := numberOf(usage["completion"])
+	// The rate's denominator is the successful calls' own wall time, which
+	// `state.Summarize` accumulates beside the token totals so that one number
+	// cannot describe a different set of calls than the other. It is an em dash
+	// when there is nothing to divide — a report has a slot for the figure, and
+	// "not measured" is a fact it has to state.
+	rate := state.OutputRate(completion, numberOf(usage["model_ms"]))
 
 	var builder strings.Builder
 	builder.WriteString(strings.Repeat("-", 78) + "\n")
@@ -142,7 +149,8 @@ func Summarize(events []map[string]any) string {
 		"cached", cached,
 		"miss", numberOf(usage["miss"]),
 		"hit_rate", state.HitRate(prompt, cached),
-		"completion", numberOf(usage["completion"])) + "\n")
+		"completion", completion,
+		"rate", rate) + "\n")
 
 	if len(byStatus) == 0 {
 		builder.WriteString(i18n.T("audit.summary.tools_none", "calls", results) + "\n")

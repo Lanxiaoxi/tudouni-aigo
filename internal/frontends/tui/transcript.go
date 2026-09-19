@@ -383,11 +383,20 @@ func stopReasonText(reason string) string {
 	return reason
 }
 
-// modelLine is `  · model 1.2s  context 12.4k tokens (cache hit 10.1k · 88%)`.
+// modelLine is
+// `  · model 1.2s  context 12.4k tokens (cache hit 10.1k · 88%)  38 tok/s`.
 //
 // It is the only place the cost of one step is visible while the turn runs, and
 // the cache figure is the one number that explains why two identical-looking
-// turns differ in cost.
+// turns differ in cost. The output rate is the second such number, for the same
+// reason: it is what turns "that step felt slow" into something with a figure
+// attached, and it is per-step so two steps of a turn can be compared.
+//
+// The rate **omits itself** when there is nothing to divide. A step that only
+// asked for tools reports no completion tokens, and a tool-only session would
+// otherwise carry `avg — tok/s` on every line it draws — a permanent statement
+// about a measurement nobody was waiting for. Same rule as the `cached_tokens`
+// segment above it.
 func modelLine(payload map[string]any) renderLine {
 	parts := []seg{{text: i18n.T("event.model_prefix"), role: "process"}}
 	if span, ok := protocol.Int(payload, "duration_ms"); ok {
@@ -403,6 +412,13 @@ func modelLine(payload map[string]any) renderLine {
 		}
 		parts = append(parts, seg{text: i18n.T("event.cache_hit",
 			"cached", stateTokensText(cached), "percent", percent), role: "rule"})
+	}
+	if completion, hasTokens := protocol.Int(payload, "completion_tokens"); hasTokens {
+		if span, hasSpan := protocol.Int(payload, "duration_ms"); hasSpan {
+			if rate, ok := state.OutputRateText(completion, span); ok {
+				parts = append(parts, seg{text: i18n.T("event.output_rate", "rate", rate), role: "rule"})
+			}
+		}
 	}
 	return renderLine{segments: parts}
 }

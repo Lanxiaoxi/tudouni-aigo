@@ -668,6 +668,22 @@ func renderStatus(message map[string]any) string {
 		fmt.Fprintf(&builder, "  %s: %v runs · %v model calls · %v tool calls\n",
 			i18n.T("status.kv.turns"), counters["runs"], counters["model_calls"], counters["tool_calls"])
 	}
+
+	// The ledger, on the same terms as the TUI's `/status` screen: the output rate
+	// is the session's average, and the wording says over how many calls so the
+	// figure cannot be read as any single call's speed.
+	usage, _ := status["usage"].(map[string]any)
+	if usage != nil {
+		completion := intOf(usage["completion"])
+		if text, ok := state.OutputRateText(completion, intOf(usage["model_ms"])); ok {
+			okCalls := 0
+			if counters != nil {
+				okCalls = intOf(counters["model_ok"])
+			}
+			fmt.Fprintf(&builder, "  %s: %s\n", i18n.T("status.kv.output_total"),
+				i18n.T("status.usage.output.rate", "tokens", completion, "rate", text, "calls", okCalls))
+		}
+	}
 	return strings.TrimRight(builder.String(), "\n")
 }
 

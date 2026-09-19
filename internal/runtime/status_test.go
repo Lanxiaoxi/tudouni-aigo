@@ -1,9 +1,12 @@
 package runtime
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -153,6 +156,122 @@ func TestTheOriginMarkerDoesNotReachTheAuditLog(t *testing.T) {
 	ordinary := map[string]any{"kind": "tool_call", "tool": "shell"}
 	if got := auditRecord(ordinary); len(got) != len(ordinary) {
 		t.Errorf("an ordinary record was not passed through: %v", got)
+	}
+}
+
+// TestTheStatsLineReportsTheAverageOutputRate pins the one line the REPL prints
+// after every turn.
+//
+// The figure is the **session's** average, not the last call's: this report is read
+// per turn and what a person compares is the previous turn against this one. It is
+// the same arithmetic the status bar and `--audit` use, so the three cannot
+// disagree about what a rate is.
+func TestTheStatsLineReportsTheAverageOutputRate(t *testing.T) {
+	logs := tempSink(t)
+	// Two successful calls: 300 tokens in 4s of model time is 75 tok/s.
+	writeAll(t, logs, "s", []map[string]any{
+		audit.Event(audit.KindModelCall, "s", "run-1", 0, map[string]any{
+			"status": "ok", "prompt_tokens": 1000, "cached_tokens": 400,
+			"completion_tokens": 100, "duration_ms": 1000}),
+		audit.Event(audit.KindModelCall, "s", "run-1", 1, map[string]any{
+			"status": "ok", "prompt_tokens": 2000, "cached_tokens": 2000,
+			"completion_tokens": 200, "duration_ms": 3000}),
+		// A failed attempt carries no usage and must not enter the denominator:
+		// including it would report a rate dragged down by a call that produced
+		// nothing.
+		audit.Event(audit.KindModelCall, "s", "run-1", 1, map[string]any{
+			"status": "error", "duration_ms": 6000, "attempt": 1}),
+	})
+
+	line := statsRuntime(logs).StatsLine()
+	if !strings.Contains(line, "75.0 tok/s") {
+		t.Fatalf("the stats line lost the rate: %q", line)
+	}
+	if !strings.Contains(line, "300 tokens") {
+		t.Errorf("the stats line lost the output total: %q", line)
+	}
+	if !strings.Contains(line, "hit rate 80%") {
+		t.Errorf("the stats line lost the cache figure: %q", line)
+	}
+}
+
+// TestTheStatsLineOmitsAnUnmeasurableRate is the rule that keeps this line from
+// carrying a permanent claim about nothing.
+//
+// A log whose successful calls recorded no duration — an older log, or one from a
+// gateway that reported no usage — has completion tokens but no denominator. The
+// segment is left out rather than filled with the em dash `OutputRate` returns:
+// "avg — tok/s" on every turn of every session is noise, and the reports that do
+// have a slot for the figure (`--audit`, `/status`) still state "not measured".
+func TestTheStatsLineOmitsAnUnmeasurableRate(t *testing.T) {
+	cases := []struct {
+		name   string
+		record map[string]any
+	}{
+		{
+			name: "a successful call with no duration",
+			record: map[string]any{"status": "ok", "prompt_tokens": 1000,
+				"completion_tokens": 300},
+		},
+		{
+			name: "a successful call with no output",
+			record: map[string]any{"status": "ok", "prompt_tokens": 1000,
+				"completion_tokens": 0, "duration_ms": 4000},
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			logs := tempSink(t)
+			writeAll(t, logs, "s", []map[string]any{
+				audit.Event(audit.KindModelCall, "s", "run-1", 0, testCase.record),
+			})
+
+			line := statsRuntime(logs).StatsLine()
+			if strings.Contains(line, "tok/s") {
+				t.Fatalf("the stats line claims a rate it never measured: %q", line)
+			}
+			if strings.Contains(line, "avg —") {
+				t.Fatalf("the stats line printed a dash where a figure belongs: %q", line)
+			}
+			// The rest of the line survives: dropping the rate must not take the
+			// cache figure with it.
+			if !strings.Contains(line, "hit rate") {
+				t.Errorf("the rate's absence took the cache figure with it: %q", line)
+			}
+		})
+	}
+}
+
+// tempSink is an audit sink in a directory the test owns.
+func tempSink(t *testing.T) *audit.JsonlSink {
+	t.Helper()
+	sink, err := audit.NewJsonlSink(filepath.Join(t.TempDir(), "logs"))
+	if err != nil {
+		t.Fatalf("cannot open an audit sink: %v", err)
+	}
+	t.Cleanup(func() { _ = sink.Close() })
+	return sink
+}
+
+func writeAll(t *testing.T, sink *audit.JsonlSink, sessionID string, records []map[string]any) {
+	t.Helper()
+	for _, record := range records {
+		if err := sink.Write(record); err != nil {
+			t.Fatalf("cannot write an audit record: %v", err)
+		}
+	}
+}
+
+// statsRuntime is the minimum a stats line needs: a session id, an audit sink and
+// a model adapter that declares no window.
+func statsRuntime(logs *audit.JsonlSink) *Runtime {
+	metadata := map[string]any{}
+	return &Runtime{
+		SessionIDValue: "s",
+		SessionValue:   &state.Session{SessionID: "s", Metadata: metadata},
+		Logs:           logs,
+		ModelState:     state.NewSessionModel(metadata, "m-one", "one"),
+		Chat:           &statusChat{},
 	}
 }
 

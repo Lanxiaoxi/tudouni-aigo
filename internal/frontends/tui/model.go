@@ -57,6 +57,17 @@ type panelstate struct {
 	// whole session's total (that one is money, and it lives in `/status`).
 	promptTokens *int
 	cachedTokens *int
+	// completionTokens / modelMs are the two halves of that same call's output
+	// rate: how much it wrote, and how long the whole call took.
+	//
+	// They ride with the two above rather than being accumulated across the
+	// session because a bar that takes one segment from the last call and another
+	// from the whole session is a bar whose neighbours cannot be compared — and
+	// the comparison is the only reason any of these four is on screen. The
+	// cumulative average is a different figure, it answers a different question,
+	// and it lives in `/status` and `--audit` with the other session totals.
+	completionTokens *int
+	modelMs          *int
 	// toolInfo is `init.tools` keyed by name: risk, parallel_safe, interactive.
 	// The approval dialog needs the last two to warn that a tool cannot run
 	// alongside others or will take over the input.
@@ -623,6 +634,20 @@ func (m *model) handleEvent(payload map[string]any) {
 				m.panel.cachedTokens = &cached
 			} else {
 				m.panel.cachedTokens = nil
+			}
+			// The output rate's two halves, read off the same event as the other
+			// four figures so the bar cannot mix calls. Both are cleared when
+			// absent rather than left standing: a duration from the previous step
+			// beside this step's token count would be a rate nothing measured.
+			if completion, ok := protocol.Int(payload, "completion_tokens"); ok {
+				m.panel.completionTokens = &completion
+			} else {
+				m.panel.completionTokens = nil
+			}
+			if span, ok := protocol.Int(payload, "duration_ms"); ok {
+				m.panel.modelMs = &span
+			} else {
+				m.panel.modelMs = nil
 			}
 		} else {
 			attempt, _ := protocol.Int(payload, "attempt")

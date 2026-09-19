@@ -7,6 +7,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 )
 
 // The `/status` screen and the `/tools` list.
@@ -152,8 +153,24 @@ func (m model) statusScreen(payload map[string]any) []renderLine {
 		add(i18n.T("status.kv.input_total"), i18n.T("status.usage.input",
 			"tokens", stateTokensText(prompt), "cached", stateTokensText(cached),
 			"rate", fmt.Sprintf("%.0f%%", float64(cached)/float64(prompt)*100)))
-		add(i18n.T("status.kv.output_total"), i18n.T("status.usage.output",
-			"tokens", stateTokensText(intOf(usage["completion"]))))
+		// The output row carries the **session's** average rate rather than the
+		// last call's, and the wording says "over N calls" so the two on-screen
+		// rates cannot be mistaken for each other: this screen answers "what has
+		// this session cost", while the status bar's segment answers "how fast was
+		// the step that just finished". Same figure family, two different
+		// questions, and only the label keeps them apart.
+		completion := intOf(usage["completion"])
+		modelMs := intOf(usage["model_ms"])
+		if rate, ok := state.OutputRateText(completion, modelMs); ok {
+			add(i18n.T("status.kv.output_total"), i18n.T("status.usage.output.rate",
+				"tokens", stateTokensText(completion), "rate", rate,
+				"calls", intOf(counters["model_ok"])))
+		} else {
+			// No measurable call: the row still exists, because a reader looking
+			// for "how much did it write" is owed the token count either way.
+			add(i18n.T("status.kv.output_total"), i18n.T("status.usage.output",
+				"tokens", stateTokensText(completion)))
+		}
 	} else {
 		add(i18n.T("status.kv.usage_total"), i18n.T("status.usage.none"))
 	}

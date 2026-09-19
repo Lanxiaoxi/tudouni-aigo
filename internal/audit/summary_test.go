@@ -101,6 +101,8 @@ func TestTheSummaryCarriesWhatTheCommandIsFor(t *testing.T) {
 		"2 (1 succeeded)", // model calls, and how many worked
 		"1000 tokens",     // input
 		"40%",             // cache hit rate
+		"50 tokens",       // output
+		"25.0 tok/s",      // 50 completion tokens in the successful call's 2s
 		"denied=1",        // tool outcomes, refusals included
 		"invalid_args=1",  // the number answers "how much work", not "how much worked"
 		"Time",            // the timing line
@@ -113,6 +115,25 @@ func TestTheSummaryCarriesWhatTheCommandIsFor(t *testing.T) {
 	}
 	if strings.Contains(text, "$") {
 		t.Errorf("the summary reports money; it may only report tokens:\n%s", text)
+	}
+}
+
+// TestTheOutputRateIsAnEmDashWhenNothingWasMeasured — the report has a slot for the
+// figure, so "not measured" is a fact it states rather than a column it drops.
+// `0.0 tok/s` would read as a measurement of zero, and the failed call in this log
+// is the case that reaches here: it carries no completion tokens at all.
+func TestTheOutputRateIsAnEmDashWhenNothingWasMeasured(t *testing.T) {
+	events := []map[string]any{
+		{"kind": "model_call", "status": "error", "duration_ms": 900},
+		{"kind": "model_call", "status": "ok", "prompt_tokens": 800, "completion_tokens": 0,
+			"duration_ms": 1200},
+	}
+	text := Summarize(events)
+	if !strings.Contains(text, "avg — tok/s") {
+		t.Errorf("an unmeasurable rate is not stated as such:\n%s", text)
+	}
+	if strings.Contains(text, "0.0 tok/s") {
+		t.Errorf("the summary claims a measured zero rate:\n%s", text)
 	}
 }
 

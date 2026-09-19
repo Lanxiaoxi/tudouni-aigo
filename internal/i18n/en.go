@@ -187,6 +187,15 @@ var catalog = map[string]string{
 	"status.context.used":            "context {used}",
 	"status.hit":                     "cache hit {percent}%",
 	"status.hit.none":                "cache hit  —",
+	// The average output rate. "avg" is in the wording on purpose: the figure is
+	// completion tokens over the whole call, prompt processing included, so it
+	// sits below what the model actually decodes — a label promising the decode
+	// rate would be the one number on this bar nobody could reproduce.
+	//
+	// There is no `status.rate.none`: when there is nothing to divide, the bar
+	// leaves the whole segment out rather than drawing a dash in it, so no text
+	// is needed for that case. See the status bar's own outputRateText.
+	"status.rate": "avg {rate} tok/s",
 	"status.turn":                    "this turn {duration}",
 	"status.session.messages.one":    "{n} message",
 	"status.session.messages.other":  "{n} messages",
@@ -218,6 +227,7 @@ var catalog = map[string]string{
 	"event.model_prefix":      "  · model ",
 	"event.context_tokens":    "  context {tokens} tokens",
 	"event.cache_hit":         " (cache hit {cached} · {percent}%)",
+	"event.output_rate":       "  {rate} tok/s",
 	"turn.running":            "running · step 1",
 	"think.prefix_folded":     "  ▸ Thinking",
 	"think.folded_tail.one":   " ({chars} char · Ctrl+T to expand)",
@@ -327,6 +337,11 @@ var catalog = map[string]string{
 	"status.budget.no_window":  "est. {used} (window unknown, no degradation)",
 	"status.usage.input":       "{tokens} tokens (cache hit {cached}, rate {rate})",
 	"status.usage.output":      "{tokens} tokens",
+	// The output rate on the `/status` screen. It is stated beside the cumulative
+	// output because that is the only number it is comparable to: it is the
+	// whole session's completion tokens over the whole session's successful model
+	// time, not any single call's speed.
+	"status.usage.output.rate": "{tokens} tokens (avg {rate} tok/s over {calls} calls)",
 	"status.usage.none":        "No successful model call yet",
 	"status.turns.value":       "{runs} runs · {model_calls} model calls · {tool_calls} tool calls{tail}",
 	"status.turns.waits":       " (of which {waits} approval waits",
@@ -341,6 +356,9 @@ var catalog = map[string]string{
 
 	// --- the line the REPL prints after every turn -------------------------
 	"stats.usage":             "cumulative input {prompt} tokens (cached {cached}, hit rate {hit_rate})",
+	// The output rate on the REPL's per-turn line. Same figure, same wording as
+	// the status bar's, because it is the same ledger read twice.
+	"stats.rate":              " · output {completion} tokens (avg {rate} tok/s)",
 	"stats.turn":              "this turn {value}",
 	"stats.context.ratio":     "context {used}/{window} ({percent}%)",
 	"stats.context.used_only": "context {used}",
@@ -351,7 +369,7 @@ var catalog = map[string]string{
 	// --- the block that closes `--audit` -----------------------------------
 	"audit.header":              "Audit trail of session {name}: {n} records",
 	"audit.no_records":          "Session {name} has no audit records ({dir})",
-	"audit.summary.model":       "Model calls {calls} ({ok} succeeded)  input {prompt} tokens (cached {cached} / miss {miss}, hit rate {hit_rate})  output {completion} tokens",
+	"audit.summary.model":       "Model calls {calls} ({ok} succeeded)  input {prompt} tokens (cached {cached} / miss {miss}, hit rate {hit_rate})  output {completion} tokens (avg {rate} tok/s)",
 	"audit.summary.tools_none":  "Tool calls {calls}",
 	"audit.summary.tools":       "Tool calls {calls}  {statuses}",
 	"audit.summary.stops":       "Turn endings  {reasons}",
