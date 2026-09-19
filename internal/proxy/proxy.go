@@ -73,11 +73,25 @@ func System() (*url.URL, bool, error) { return system() }
 // It exists so that "your setting was ignored" is never silent. A person who wrote
 // a value this program cannot use needs to be told, or the failure that follows
 // reads as the network rather than as the typo.
+//
+// It covers **both** places a setting can be refused, and the second one is the
+// reason this reads the machine's own configuration as well. A PAC script is refused
+// rather than evaluated (`systemFrom` says why), and `Resolve` — the only production
+// caller — used to discard that error and fall through to "direct". The startup
+// notice then stated, as a fact, that requests go direct, while the truth was that
+// the machine's proxy had been skipped; on a network reachable only through it, every
+// model call then timed out with nothing on screen pointing at the cause.
 func Problem() string {
 	if value := environment(); value != "" {
 		if _, err := parse(value); err != nil {
 			return "HTTPS_PROXY is set to " + value + " but is not a usable proxy address: " + err.Error()
 		}
+		// The environment wins over the system setting, so a machine setting that was
+		// refused is not what took effect and is not worth reporting alongside it.
+		return ""
+	}
+	if _, _, err := System(); err != nil {
+		return err.Error()
 	}
 	return ""
 }
