@@ -3,6 +3,8 @@
 package process
 
 import (
+	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -22,23 +24,31 @@ func assignToJob(cmd *exec.Cmd) {}
 // Only the group this child leads is targeted. Signalling a group we do not own —
 // in particular our own — would take down the agent along with the thing it was
 // trying to stop, which is a much worse outcome than a leftover process.
-func TerminateTree(cmd *exec.Cmd) {
-	if cmd.Process == nil {
-		return
+//
+// It reports whether anything was stopped, for the reason the Windows side states:
+// the callers have outcomes to declare, and one of them is a background job telling
+// a person it is gone.
+func TerminateTree(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
 	}
+	var groupErr error
 	if pgid, err := syscall.Getpgid(cmd.Process.Pid); err == nil && pgid != 0 {
 		own, ownErr := syscall.Getpgid(0)
 		if ownErr != nil || pgid != own {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+				groupErr = err
+			}
 		}
 	}
 	// A backstop for the case where the group signal did not reach the leader
-	// (already gone, or the child never made it into its own group).
-	_ = cmd.Process.Kill()
+	// (already gone, or the child never made it into its own group). An already
+	// finished process is the outcome the caller wanted, not a failure.
+	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) && groupErr == nil {
+		groupErr = err
+	}
+	return groupErr
 }
-
-// TerminateAll returns false off Windows: there is no job object to sweep.
-func TerminateAll() bool { return false }
 
 // JobObjectProblem reports nothing off Windows.
 func JobObjectProblem() (string, bool) { return "", false }

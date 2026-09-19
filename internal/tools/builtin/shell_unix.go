@@ -15,11 +15,23 @@ func setProcessGroup(cmd *exec.Cmd) {
 
 // killProcessTree kills the child's entire process group. The negative pid targets
 // every process in the group created above.
-func killProcessTree(cmd *exec.Cmd) {
+//
+// The error is returned rather than discarded, for the reason the Windows side
+// states: the caller reports to the model whether the command actually stopped, and
+// a SIGKILL that was refused (EPERM on a process that changed user, ESRCH when the
+// group is already gone — the one benign case) must not be reported as a
+// termination that happened.
+func killProcessTree(cmd *exec.Cmd) error {
 	if cmd.Process == nil {
-		return
+		return nil
 	}
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if err == syscall.ESRCH {
+		// Nothing left in the group: the command and its children are already gone,
+		// which is exactly what the caller was asking for.
+		return nil
+	}
+	return err
 }
 
 // shellName is the shell the commands are handed to, as the user knows it.

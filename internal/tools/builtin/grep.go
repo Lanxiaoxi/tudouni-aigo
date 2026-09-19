@@ -184,10 +184,18 @@ func grep(workspace *tools.Workspace, binary, pattern, searchPath, include strin
 		case <-ctx.Done():
 			// A timeout returns nothing at all, so the model cannot mistake a partial
 			// search for "this is everything".
-			process.TerminateTree(cmd)
+			killErr := process.TerminateTree(cmd)
 			<-done
-			return "搜索超过了 " + itoa(GREP_TIMEOUT_SECONDS) + " 秒，已终止，这次没有任何结果。\n" +
+			text := "搜索超过了 " + itoa(GREP_TIMEOUT_SECONDS) + " 秒，已终止，这次没有任何结果。\n" +
 				"缩小范围再试：把 path 指到子目录，或者用 include 限定文件名（例如 *.py）。"
+			if killErr != nil {
+				// The search produced nothing either way, but "already terminated" and
+				// "could not be stopped" are different things to leave behind.
+				text = "搜索超过了 " + itoa(GREP_TIMEOUT_SECONDS) + " 秒，而且**没能把它停掉**（" +
+					killErr.Error() + "）—— 它可能还在跑。这次没有任何结果。\n" +
+					"先确认那个进程还在不在，再缩小范围重试。"
+			}
+			return text
 		case <-done:
 		}
 	}

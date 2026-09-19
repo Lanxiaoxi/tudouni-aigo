@@ -535,6 +535,11 @@ func environ() []string { return os.Environ() }
 // terminateTree collects a server and everything it started. A server launched
 // through npx or a shell wrapper has children, and killing only the wrapper leaves
 // them holding the pipes.
+//
+// The failure is dropped on purpose here and only here: this runs while a server is
+// being torn down on the way out of the session, and there is no interface left to
+// tell. Every path where a person could still act on it — the `job_kill` tool, the
+// shell timeout, the grep timeout — reads the error instead.
 func terminateTree(command *exec.Cmd) {
-	process.TerminateTree(command)
+	_ = process.TerminateTree(command)
 }

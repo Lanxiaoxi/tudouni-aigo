@@ -444,7 +444,16 @@ func (b *JobBoard) Kill(jobID string) tools.Result {
 	job.reason = "被 job_kill 收掉了"
 	cmd := job.cmd
 	job.mu.Unlock()
-	process.TerminateTree(cmd)
+	// The kill is reported for what it was. Saying "terminated" over a refused
+	// taskkill is how this program's own notes describe the worst kind of leftover:
+	// a process still holding a port that the panel says is gone.
+	if err := process.TerminateTree(cmd); err != nil {
+		return tools.Result{
+			Text: fmt.Sprintf("后台任务 %s **没能停掉**（%v）—— 它可能还在跑，也还占着端口或文件。"+
+				"不要重复 job_kill；先确认那个进程还在不在，必要时手动结束它。", jobID, err),
+			Audit: map[string]any{"job_id": jobID, "job_status": JobKilled, "kill_failed": true},
+		}
+	}
 	return tools.Result{
 		Text: fmt.Sprintf("后台任务 %s 已终止（整棵进程树）。**不是它自己结束的**，所以它的输出不是结果；要结果就重新起一条。",
 			jobID),
@@ -607,7 +616,10 @@ func (b *JobBoard) Close() error {
 			job.mu.Lock()
 			cmd := job.cmd
 			job.mu.Unlock()
-			process.TerminateTree(cmd)
+			// Best effort, and deliberately not reported per job: closing the board is
+			// the shutdown path, where the job object's kill-on-close is the next line
+			// of defence and a warning per stuck process would bury the exit.
+			_ = process.TerminateTree(cmd)
 		}
 		_ = os.Remove(job.OutputPath)
 	}
