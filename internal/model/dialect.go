@@ -98,6 +98,30 @@ type dialect interface {
 	// to agree on this, which is why it is one answer per protocol rather than
 	// something configurable.
 	credentialHeader() string
+	// onTheWireMessage reduces one message to the fields this protocol defines.
+	//
+	// It is a hole in the wall that has to exist, because the message list this
+	// program keeps in its session is **not** the message list the endpoint accepts.
+	// Ours carries bookkeeping the context layer needs — `artifact_id` is the one
+	// that has actually been rejected, by a gateway answering
+	//
+	//	Extra inputs are not permitted, field: 'messages[5].artifact_id'
+	//
+	// with a 400 that is **fatal**, so the turn dies and every later turn of that
+	// session dies the same way: the offending message is in the session file and is
+	// re-sent with it. See the field-size note in `agent/agent.go` for the original
+	// reason the field is there at all.
+	//
+	// A protocol that rebuilds its messages field by field (both of the non-OpenAI
+	// shapes do) needs nothing here and returns the message unchanged. OpenAI's chat
+	// completions takes the list whole, which is exactly why it needs a whitelist:
+	// pass-through is what put our private field on the wire.
+	//
+	// An unrecognised key is dropped, never sent. That direction is chosen
+	// deliberately: over-redacting costs us a field we can add back with an
+	// observed failure, while under-redacting costs the user a session that cannot
+	// be continued.
+	onTheWireMessage(message map[string]any) map[string]any
 }
 
 // dialectRequest is everything a dialect needs to build one request.

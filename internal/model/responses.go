@@ -27,6 +27,13 @@ func (responsesDialect) wantsStreamOptions() bool { return false }
 // serving this shape, a bearer token authenticates here.
 func (responsesDialect) credentialHeader() string { return credentialHeaderBearer }
 
+// onTheWireMessage returns the message unchanged, for the same reason as the
+// Messages shape: `splitResponsesInput` builds each item from named fields, so an
+// unknown key cannot reach this protocol's wire. See the dialect interface.
+func (responsesDialect) onTheWireMessage(message map[string]any) map[string]any {
+	return message
+}
+
 func (responsesDialect) encode(request dialectRequest) (map[string]any, error) {
 	instructions, items, err := splitResponsesInput(request.messages)
 	if err != nil {

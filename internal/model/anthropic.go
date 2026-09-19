@@ -67,6 +67,15 @@ func thinkingBudget(effort string) int {
 // The two are set here in one place so that relationship cannot drift.
 func maxOutputTokens(effort string) int { return thinkingBudget(effort) + 8192 }
 
+// onTheWireMessage returns the message unchanged: this shape rebuilds every
+// message field by field in `splitSystemPrompt` and `anthropicMessages`, so a key
+// this program added to its own session format has no path to the wire. The
+// method exists to satisfy the dialect interface honestly rather than to filter —
+// see the interface for why the filter has to exist at all.
+func (anthropicDialect) onTheWireMessage(message map[string]any) map[string]any {
+	return message
+}
+
 func (anthropicDialect) encode(request dialectRequest) (map[string]any, error) {
 	system, messages, err := splitSystemPrompt(request.messages)
 	if err != nil {

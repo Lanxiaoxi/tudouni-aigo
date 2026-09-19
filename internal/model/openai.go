@@ -24,10 +24,43 @@ func (openaiDialect) wantsStreamOptions() bool { return true }
 // bearer token.
 func (openaiDialect) credentialHeader() string { return credentialHeaderBearer }
 
+// onTheWireMessage keeps only the fields the chat completions shape defines, for
+// the messages whose fields are all strings or arrays of objects and therefore
+// need no rebuilding.
+//
+// The four roles this program sends are:
+//
+//	system     {role, content}
+//	user       {role, content}
+//	assistant  {role, content, tool_calls}
+//	tool       {role, content, tool_call_id, name}
+//
+// `name` is kept because it is the documented optional field of these roles, even
+// though nothing here sets it — a gateway that reads it should not be sent a
+// request that means something else. Everything else is dropped, and what that
+// currently drops is `artifact_id`, a field of this program's session format.
+//
+// The whitelist is a property of OpenAI's shape rather than of this program, so it
+// lives with the dialect: the day a second shape accepts the list whole it needs
+// its own list, and the day this one gains a field the whitelist has to be told.
+func (openaiDialect) onTheWireMessage(message map[string]any) map[string]any {
+	clean := make(map[string]any, 4)
+	for _, key := range []string{"role", "content", "tool_calls", "tool_call_id", "name"} {
+		if value, ok := message[key]; ok {
+			clean[key] = value
+		}
+	}
+	return clean
+}
+
 func (openaiDialect) encode(request dialectRequest) (map[string]any, error) {
+	messages := make([]map[string]any, 0, len(request.messages))
+	for _, message := range request.messages {
+		messages = append(messages, openaiDialect{}.onTheWireMessage(message))
+	}
 	body := map[string]any{
 		"model":    request.model,
-		"messages": request.messages,
+		"messages": messages,
 	}
 	if len(request.tools) > 0 {
 		body["tools"] = request.tools

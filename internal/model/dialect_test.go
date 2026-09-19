@@ -627,6 +627,101 @@ func newTestAdapter(t *testing.T, options Options) *OpenAICompatible {
 	return adapter
 }
 
+// TestPrivateSessionFieldsNeverReachTheWire is the regression for a 400 that
+// killed a session outright.
+//
+// This program's session format carries bookkeeping the context layer needs —
+// `artifact_id` on a tool message is the one that has actually been rejected —
+// and the chat completions shape **takes the message list whole**. Passing it
+// through put our private field in the request body, and the gateway answered
+//
+//	Extra inputs are not permitted, field: 'messages[5].artifact_id'
+//
+// as a **fatal** 400: the turn died, and because the offending message is in the
+// session file it would have been re-sent with every later turn of that session.
+// The failure is worth a test of its own rather than a line in another one,
+// because what it protects is "a session can be continued at all".
+func TestPrivateSessionFieldsNeverReachTheWire(t *testing.T) {
+	// The session message the agent writes for a tool result that became an
+	// artifact, verbatim: content is the human-readable reference, `artifact_id`
+	// is the machine-readable one.
+	toolMessage := map[string]any{
+		"role":         "tool",
+		"tool_call_id": "chatcmpl-tool-87eadf8d31c8bb9d",
+		"content":      "[artifact art_f7e0211e7551 · 45 字符 · shell]",
+		"artifact_id":  "art_f7e0211e7551",
+	}
+	messages := []map[string]any{
+		{"role": "user", "content": "count the lines"},
+		{"role": "assistant", "content": nil, "tool_calls": []any{
+			map[string]any{"id": "chatcmpl-tool-87eadf8d31c8bb9d", "function": map[string]any{
+				"name": "shell", "arguments": `{"command":"Get-ChildItem"}`,
+			}},
+		}},
+		toolMessage,
+	}
+
+	server, bodies, _ := dialectGateway(t, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	adapter := newTestAdapter(t, Options{Route: route(server.URL, "gpt-x", StyleOpenAI)})
+
+	if _, err := adapter.Complete(messages, nil, CompleteOptions{}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	body := (*bodies)[0]
+	sent, ok := requestedRole(t, body, "tool")
+	if !ok {
+		t.Fatalf("the tool message did not reach the wire at all: %#v", messagesOf(t, body))
+	}
+	if _, present := sent["artifact_id"]; present {
+		t.Errorf("artifact_id reached the request body: %#v", sent)
+	}
+	// The whitelist must keep the fields the protocol defines, or the fix trades a
+	// 400 for a tool result the model cannot pair with its call.
+	if sent["tool_call_id"] != "chatcmpl-tool-87eadf8d31c8bb9d" {
+		t.Errorf("tool_call_id = %v, want it preserved", sent["tool_call_id"])
+	}
+	if sent["content"] != toolMessage["content"] {
+		t.Errorf("content = %v, want the reference preserved", sent["content"])
+	}
+	// And the caller's message is not the thing that was edited: the session file
+	// still has to carry the field, that is how an artifact is found again.
+	if toolMessage["artifact_id"] != "art_f7e0211e7551" {
+		t.Error("the fix mutated the session message instead of the wire copy")
+	}
+}
+
+// TestTheWireWhitelistKeepsEveryFieldTheShapeDefines: the filter is a whitelist,
+// so the risk it introduces is over-redaction — dropping a field a gateway needs
+// and producing a confusing reply instead of a refusal.
+func TestTheWireWhitelistKeepsEveryFieldTheShapeDefines(t *testing.T) {
+	dialect := openaiDialect{}
+	message := map[string]any{
+		"role":         "tool",
+		"content":      "body",
+		"tool_call_id": "call_1",
+		"name":         "read_file",
+		"tool_calls":   []any{},
+		"artifact_id":  "art_deadbeef",
+		"pinned":       true,
+	}
+	got := dialect.onTheWireMessage(message)
+
+	for _, key := range []string{"role", "content", "tool_call_id", "name", "tool_calls"} {
+		if _, present := got[key]; !present {
+			t.Errorf("%q was dropped from the wire message", key)
+		}
+	}
+	for _, key := range []string{"artifact_id", "pinned"} {
+		if _, present := got[key]; present {
+			t.Errorf("%q reached the wire message", key)
+		}
+	}
+	if len(message) != 7 {
+		t.Errorf("the input message was mutated down to %d keys", len(message))
+	}
+}
+
 // messagesOf reads the `messages` array out of a request body.
 func messagesOf(t *testing.T, body map[string]any) []map[string]any {
 	t.Helper()
