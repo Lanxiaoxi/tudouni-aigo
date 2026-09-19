@@ -27,10 +27,20 @@ type Session struct {
 // The system message is written once, here. That is why editing AGENT.md only
 // affects sessions created afterwards: the prompt a session runs on is fixed at
 // the moment the session starts.
+//
+// **The AGENT.md report is kept as well as the block**, under `agent_md` in the
+// metadata. Two readers need it and neither can recover it from the prompt text:
+// the startup notices ("which files went in, which were cut, which failed") and the
+// rail's session block, which answers "did my AGENT.md take effect" long after the
+// notice has scrolled away. Reading it from the session rather than from disk is
+// what makes a restored session describe the prompt it actually carries.
 func NewSession(sessionID, workspace string) *Session {
 	session := NewEmptySession(sessionID)
-	osName := runtime.GOOS
-	session.Messages = []map[string]any{BuildSystemMessage(workspace, osName)}
+	message, report := buildSystemMessage(workspace, runtime.GOOS)
+	session.Messages = []map[string]any{message}
+	if report.HasAnything() {
+		session.Metadata[AgentMDSessionKey] = AgentMDToBlock(report)
+	}
 	return session
 }
 
@@ -173,7 +183,22 @@ func MessageText(message map[string]any) (string, bool) {
 //
 // Putting the mutable part last means editing it invalidates only the tail of
 // the prompt instead of every token after it.
+//
+// This is the entry point for callers that only want the message. `NewSession` uses
+// `buildSystemMessage` directly, because it has to keep the AGENT.md report as well —
+// see the note there.
 func BuildSystemMessage(workspace, osName string) map[string]any {
+	message, _ := buildSystemMessage(workspace, osName)
+	return message
+}
+
+// buildSystemMessage is BuildSystemMessage plus the AGENT.md report it read.
+//
+// The report is returned rather than looked up again because reading the file twice
+// would be two answers to "what is in this session's prompt": the file can change
+// between the two reads, and the notice would then describe a prompt the session does
+// not carry.
+func buildSystemMessage(workspace, osName string) (map[string]any, AgentMDReport) {
 	body := prompts.System()
 	if body == "" {
 		body = i18nFallbackPrompt
@@ -184,7 +209,8 @@ func BuildSystemMessage(workspace, osName string) map[string]any {
 	env.WriteString("# 运行环境\n\n")
 	env.WriteString("- 操作系统：" + osName + "\n")
 
-	block := AgentMDBlock(workspace)
+	text, report := LoadAgentMD(workspace)
+	block := AgentMDTextBlock(text, report)
 	if block != "" {
 		env.WriteString("\n")
 		env.WriteString(block)
@@ -193,7 +219,7 @@ func BuildSystemMessage(workspace, osName string) map[string]any {
 	return map[string]any{
 		"role":    "system",
 		"content": body + env.String(),
-	}
+	}, report
 }
 
 // i18nFallbackPrompt is used only when the prompt file cannot be found at all.
@@ -201,29 +227,3 @@ func BuildSystemMessage(workspace, osName string) map[string]any {
 // better than sending an empty system message, and the startup notice explains
 // what happened.
 const i18nFallbackPrompt = "你是 agent runtime 中的执行助手。"
-
-// AgentMDNotes describes what happened to this session's AGENT.md, read back
-// from the session rather than from disk.
-//
-// Reading it from the session is the point: when an old session is restored, the
-// report has to describe the prompt that session actually carries, not whatever
-// the file says today.
-func AgentMDNotes(session *Session, relativeTo string) []map[string]any {
-	raw, ok := session.Metadata[AgentMDSessionKey]
-	if !ok {
-		return nil
-	}
-	records, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]map[string]any, 0, len(records))
-	for _, item := range records {
-		record, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		out = append(out, record)
-	}
-	return out
-}

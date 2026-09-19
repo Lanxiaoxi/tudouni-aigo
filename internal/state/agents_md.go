@@ -160,13 +160,6 @@ func LoadAgentMD(workspace string) (string, AgentMDReport) {
 	return text, report
 }
 
-// AgentMDBlock wraps an already-loaded body so it can go into the system
-// message. An empty body yields an empty string.
-func AgentMDBlock(workspace string) string {
-	text, report := LoadAgentMD(workspace)
-	return AgentMDTextBlock(text, report)
-}
-
 // AgentMDTextBlock is the injection block for a body and its report.
 func AgentMDTextBlock(text string, report AgentMDReport) string {
 	if text == "" {

@@ -412,6 +412,17 @@ func OpenRuntime(options Options) (*Runtime, error) {
 			i18n.T("notice.context.missing_window", "model", chat.ModelName())))
 	}
 
+	// Which AGENT.md files this session's prompt actually carries, and which were
+	// refused or cut short.
+	//
+	// `NewSession` read the file and stored the report in the session metadata;
+	// these are the reporter's own sentences. They were written and then never
+	// called, so a workspace with an oversized or unreadable AGENT.md started a
+	// session where the file silently did nothing — the failure mode the design
+	// notes single out, because a file that is clearly present and has no effect
+	// sends a person looking for the problem in the prompt rather than in the file.
+	runtimeValue.notices = append(runtimeValue.notices, agentMDNotices(session)...)
+
 	memory, err := MemoryFromPermissions()
 	if err != nil {
 		return nil, err
@@ -1937,8 +1948,84 @@ func (r *Runtime) auditPath() string {
 	return path
 }
 
-// notice builds one start-up line.
+// agentMDNotices turns the AGENT.md report stored in a session's metadata back into
+// the start-up lines about it.
 //
+// The report is read back from the session rather than from disk, for the reason
+// `AgentMDForDisplay` gives for doing the same: a restored session has to describe
+// the prompt it actually carries. The file may have been fixed, deleted or grown
+// since, and a notice about today's copy would be a statement about a different
+// session's prompt.
+//
+// A session with no AGENT.md has no record and produces no lines: not having the file
+// is the normal state, and a line for it would bury the cases that do matter.
+func agentMDNotices(session *state.Session) []map[string]any {
+	if session == nil {
+		return nil
+	}
+	block, ok := session.Metadata[state.AgentMDSessionKey].(map[string]any)
+	if !ok {
+		return nil
+	}
+	var report state.AgentMDReport
+	if loaded, ok := block["loaded"].([]any); ok {
+		for _, item := range loaded {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			report.Loaded = append(report.Loaded, state.AgentMDLoaded{
+				Path:       stringOf(entry["path"]),
+				Lines:      intOf(entry["lines"]),
+				TotalLines: intOf(entry["total_lines"]),
+				Dropped:    intOf(entry["dropped"]),
+				Omitted:    intOf(entry["omitted"]),
+			})
+		}
+	}
+	if failures, ok := block["failures"].([]any); ok {
+		for _, item := range failures {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			report.Failures = append(report.Failures, state.AgentMDFailure{
+				Path:   stringOf(entry["path"]),
+				Reason: stringOf(entry["reason"]),
+			})
+		}
+	}
+	if !report.HasAnything() {
+		return nil
+	}
+	out := make([]map[string]any, 0, 2)
+	for _, line := range state.AgentMDNotices(report, paths.WorkspaceDir()) {
+		out = append(out, notice(line[0], line[1], line[2]))
+	}
+	return out
+}
+
+// intOf reads a whole number out of a decoded JSON object.
+//
+// It exists here rather than being shared with the agent-facing helpers because the
+// shapes differ: this side reads what `encoding/json` produced (float64 for every
+// number) out of stored metadata, and a missing or mistyped field is not an error —
+// the count it feeds is a display figure, and zero is the honest reading of "not
+// recorded".
+func intOf(value any) int {
+	switch number := value.(type) {
+	case int:
+		return number
+	case int64:
+		return int(number)
+	case float64:
+		return int(number)
+	default:
+		return 0
+	}
+}
+
+// notice builds one start-up line.//
 // `stream` says where it belongs: "err" for diagnostics, "out" for the one thing
 // that is part of the session's own output. The distinction is not cosmetic — the
 // line REPL's stdout is a documented contract (`tudouni > chat.txt` has to contain
