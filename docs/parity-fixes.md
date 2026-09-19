@@ -601,8 +601,11 @@ README 和原版 `scripts/build_release.py` 的承诺一致。产物内容（7 �
 ### B5 行式 CLI 的 stdout 契约（已修）
 
 - **改动**：`internal/frontends/cli/cli.go` 的 `Options` 新增 `Err io.Writer`（默认 `os.Stderr`）；
-  提示符、`/` 命令的每一条答复、错误、诊断全部走它，**stdout 只留对话正文**（版本行与审计行
-  仍按原版放 stdout）。
+  提示符、`/` 命令的每一条答复、错误、诊断全部走它，**stdout 只留对话正文与两行启动信息**。
+- **与本文档早先说法不一致之处（已统一）**：版本行**和审计行**都留在 stdout。原版的审计行走的是
+  stderr（`docs/parity-cli.md` 的 B1 条目把它记为 MINOR 偏差），这里作为**有意保留的差异**记下来：
+  审计路径是读 `> 对话.txt` 的人唯一会回头去复制的一行，且它紧跟在会话 id 下面。口径以
+  `cli.go` 里 `Run` 的注释为准，两边说法此前互相矛盾。
 - **原版出处**：`frontends/cli/__init__.py:629-638,1057,1112`；测试 `tests/test_banner.py:78-120`。
 - **测试**：`internal/frontends/cli/cli_test.go`（新文件，`internal/frontends/cli` 此前**零测试**）。
 

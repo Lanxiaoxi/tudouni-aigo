@@ -176,17 +176,3 @@ func (s *JsonlSink) Read(sessionID string) ([]map[string]any, error) {
 	}
 	return records, nil
 }
-
-// AnyExists reports whether this sink holds at least one record.
-func (s *JsonlSink) AnyExists() bool {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
-			return true
-		}
-	}
-	return false
-}

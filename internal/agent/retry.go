@@ -46,11 +46,12 @@ type RetryHooks struct {
 	// end, which reads as the model saying everything twice rather than as a
 	// plumbing event.
 	BeforeEach func()
-	// OnRetry runs only when a retry will actually happen, with the backoff the
-	// runtime is about to take. Recording a wait that never happened would make
-	// the audit claim delays that did not occur.
-	OnRetry func(backoffMs int)
 	// OnAttempt records the outcome of every attempt.
+	//
+	// There is deliberately no sibling "a retry is about to happen" callback. One
+	// existed and nothing ever installed it: the fact it would have carried — the
+	// backoff — is already on `Attempt`, which is the record the audit writes, and a
+	// second hook for the same fact is how two records of one retry come to disagree.
 	OnAttempt func(Attempt)
 	// ShouldStop abandons the call between attempts, and is handed to the adapter
 	// as well so a stream in flight can be dropped.
@@ -132,9 +133,6 @@ func CallWithRetry(
 		lastErr = err
 
 		if wait > 0 {
-			if hooks.OnRetry != nil {
-				hooks.OnRetry(wait)
-			}
 			sleep(time.Duration(wait) * time.Millisecond)
 		}
 	}

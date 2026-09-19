@@ -155,7 +155,10 @@
 - 没有会话身份两行（原版 `main.py:277-281` 走 stdout；`tests/test_banner.py:107` 断言
   `新会话 'stream-check'`）。
 - 审计行给的是 **logs 目录**而不是 `<id>.jsonl`，而且走 stdout（原版 `composition.py:1701-1710`
-  合成 `directory/<id>.jsonl`，由 `main.py:283` 最后打到 stderr）。
+  合成 `directory/<id>.jsonl`，由 `main.py:283` 最后打到 stderr）。**这一条已决定保持不变**：
+  审计路径是读 `> 对话.txt` 的人唯一会回头复制的一行，改流会移动每份保存下来的对话的开头两行。
+  口径以 `internal/frontends/cli/cli.go` 里 `Run` 的注释为准（该注释此前写成"版本行与审计行
+  走 stderr"，与代码相反，已修正）。
 - 不回声 `--- 用户输入: {line} ---`（原版 `:1072`，stdout）；Go 改成多打一个空行。
 - `/tools` 丢了 `可用工具` 表头与 `按过 t`/`外部`/`会问你`/`可并发` 标记（原版 `:799-827`；
   `tools.mark.*` 在 `en.go:375-378` 只有 TUI 用）。
