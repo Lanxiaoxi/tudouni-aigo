@@ -30,6 +30,12 @@ import (
 // after the first interactive login, so the first `--ericai` asks for a browser
 // login once and every later run is silent.
 //
+// That last promise is a chain of two links, and both have to hold: the login
+// has to come back with a refresh token (which needs `offline_access` in the
+// scope), and that token has to reach the store. Break either one and the
+// feature degrades into "log in again every single run" — still working, which
+// is why the failure is easy to miss.
+//
 // The failure posture is unchanged and is the point: **nothing here may block
 // start-up**. Whether the old token still works is only truly known when the
 // model request fails, so every failure path returns an explanation and keeps
@@ -47,6 +53,16 @@ const (
 	// The scope is the api:// form of the client id; it is a public constant of
 	// the backend, not a secret.
 	ericScope = "api://" + ericClientID + "/API"
+	// offline_access is what makes Entra hand back a refresh_token at all: the
+	// device-code endpoint issues one only when the original `scope` asked for
+	// it. Leave it out and every step still succeeds — the login works, the
+	// access token gets written — while the store stays empty and the next
+	// expiry asks for a browser again.
+	ericOfflineAccess = "offline_access"
+	// Both requests ask for exactly this: the API, plus the right to come back
+	// without a browser. They are kept identical on purpose, so the refresh
+	// token minted at login is redeemable later.
+	ericScopes = ericScope + " " + ericOfflineAccess
 
 	ericRefreshName = "ericai_refreshtoken"
 	ericTimeout     = 300 * time.Second
@@ -124,28 +140,81 @@ func ericPostToken(form url.Values) (ericTokenResponse, error) {
 	return payload, nil
 }
 
-// ericDeviceCode starts the device-code flow and prints the instructions to
-// stderr, where a plain terminal can see them before the interface starts.
-func ericDeviceCode() (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	response, err := client.PostForm(ericDeviceCodeURL, url.Values{
+// The three network entry points, behind variables so a test can walk the whole
+// decision tree — interactive login, storing the refresh token, silent refresh —
+// without a tenant to talk to. Nothing else assigns them.
+var (
+	ericRequestDeviceCodeFn = ericRequestDeviceCode
+	ericPostTokenFn         = ericPostToken
+	ericRefreshFn           = ericRefresh
+)
+
+// ericDeviceCodeForm is the first request of the interactive flow. Both it and
+// the refresh grant send ericScopes; see the constant for why.
+func ericDeviceCodeForm() url.Values {
+	return url.Values{
 		"client_id": {ericClientID},
-		"scope":     {ericScope},
-	})
+		"scope":     {ericScopes},
+	}
+}
+
+// ericPollForm trades the user code's device_code for tokens. No scope here:
+// RFC 8628's poll takes grant_type, client_id and device_code, and the scopes
+// were fixed by the /devicecode request above.
+func ericPollForm(deviceCode string) url.Values {
+	return url.Values{
+		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+		"client_id":   {ericClientID},
+		"device_code": {deviceCode},
+	}
+}
+
+// ericRefreshForm redeems a stored refresh token for a new access token.
+func ericRefreshForm(refreshToken string) url.Values {
+	return url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {ericClientID},
+		"refresh_token": {refreshToken},
+		"scope":         {ericScopes},
+	}
+}
+
+// ericLoginPrompt is what /devicecode hands back: what to show the user, and
+// the code the token poll trades in.
+type ericLoginPrompt struct {
+	DeviceCode      string `json:"device_code"`
+	UserCode        string `json:"user_code"`
+	VerificationURI string `json:"verification_uri"`
+	ExpiresIn       int    `json:"expires_in"`
+	Interval        int    `json:"interval"`
+	Message         string `json:"message"`
+}
+
+func ericRequestDeviceCode() (ericLoginPrompt, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	response, err := client.PostForm(ericDeviceCodeURL, ericDeviceCodeForm())
 	if err != nil {
-		return "", err
+		return ericLoginPrompt{}, err
 	}
 	defer response.Body.Close()
-	var start struct {
-		DeviceCode      string `json:"device_code"`
-		UserCode        string `json:"user_code"`
-		VerificationURI string `json:"verification_uri"`
-		ExpiresIn       int    `json:"expires_in"`
-		Interval        int    `json:"interval"`
-		Message         string `json:"message"`
-	}
+	var start ericLoginPrompt
 	if err := json.NewDecoder(response.Body).Decode(&start); err != nil {
-		return "", err
+		return ericLoginPrompt{}, err
+	}
+	return start, nil
+}
+
+// ericDeviceCode runs the device-code flow and prints the instructions to
+// stderr, where a plain terminal can see them before the interface starts.
+//
+// It returns the **whole** token response, not just the access token. The
+// refresh_token in there is the entire reason the next run can stay silent, and
+// returning only the access token — as this used to — parses that field and then
+// throws it away, which is a browser login on every run.
+func ericDeviceCode() (ericTokenResponse, error) {
+	start, err := ericRequestDeviceCodeFn()
+	if err != nil {
+		return ericTokenResponse{}, err
 	}
 
 	fmt.Fprintf(os.Stderr, "\n[ericai] One Eric AI login is needed (every later run refreshes silently):\n")
@@ -157,31 +226,22 @@ func ericDeviceCode() (string, error) {
 	deadline := time.Now().Add(ericTimeout)
 	for time.Now().Before(deadline) {
 		time.Sleep(interval)
-		payload, err := ericPostToken(url.Values{
-			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
-			"client_id":   {ericClientID},
-			"device_code": {start.DeviceCode},
-		})
+		payload, err := ericPostTokenFn(ericPollForm(start.DeviceCode))
 		if err != nil {
 			if strings.Contains(payload.Error, "authorization_pending") ||
 				strings.Contains(payload.Error, "slow_down") {
 				continue
 			}
-			return "", err
+			return ericTokenResponse{}, err
 		}
-		return payload.AccessToken, nil
+		return payload, nil
 	}
-	return "", fmt.Errorf("the device code expired before the login finished")
+	return ericTokenResponse{}, fmt.Errorf("the device code expired before the login finished")
 }
 
 // ericRefresh silently mints an access token from a stored refresh token.
 func ericRefresh(refreshToken string) (ericTokenResponse, error) {
-	return ericPostToken(url.Values{
-		"grant_type":    {"refresh_token"},
-		"client_id":     {ericClientID},
-		"refresh_token": {refreshToken},
-		"scope":         {ericScope},
-	})
+	return ericPostToken(ericRefreshForm(refreshToken))
 }
 
 // ── the refresh-token store ───────────────────────────────────────────────────
@@ -278,18 +338,21 @@ func EnsureEricAI() string {
 	// Silent first: a stored refresh token means no browser round trip.
 	var payload ericTokenResponse
 	if stored := ericLoadRefreshToken(); stored != "" {
-		payload, err = ericRefresh(stored)
+		payload, err = ericRefreshFn(stored)
 	}
 	if err != nil || payload.AccessToken == "" {
 		// No store, or the refresh token died. Interactive login; a new refresh
 		// token comes back with it, so this happens once per machine.
-		token, loginErr := ericDeviceCode()
+		var loginErr error
+		payload, loginErr = ericDeviceCode()
 		if loginErr != nil {
 			return fmt.Sprintf("[ericai] login/refresh failed: %v (the old token stays; rerun to try again)", loginErr)
 		}
-		// The device-code response does not always carry a refresh token, but
-		// when it does, the next run is silent again.
-		payload.AccessToken = token
+		if payload.RefreshToken == "" {
+			// Say it out loud rather than let the user discover it at the next
+			// expiry: this login bought one access token and no silence.
+			fmt.Fprintln(os.Stderr, "[ericai] the login returned no refresh token — the next run may ask you to log in again")
+		}
 	}
 
 	exp, ok := DecodeExpiry(payload.AccessToken)

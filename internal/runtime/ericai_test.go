@@ -3,11 +3,14 @@ package runtime
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/config"
 )
 
 // ── JWT expiry ────────────────────────────────────────────────────────────────
@@ -128,13 +131,146 @@ func configReadForTest(path string) (map[string]any, error) {
 // ── ensure: every failure degrades, none blocks ──────────────────────────────
 
 func TestEnsureDegradesWithAnExplanationWhenThereIsNoRoute(t *testing.T) {
-	// EnsureEricAI reads the real user config; a machine without an ericai route
-	// must get a sentence, not an error and not a partial start-up.
+	// EnsureEricAI reads the user config; a machine without an ericai route must
+	// get a sentence, not an error and not a partial start-up. The path is
+	// pointed at a throwaway config so the test does not depend on — or, worse,
+	// wait on — whatever the machine running it happens to have configured.
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv(config.FileEnv, configPath)
+	body := `{"providers": {"deepseek": {"api_key": "sk-other"}}}`
+	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	message := EnsureEricAI()
-	if message == "" {
-		t.Fatal("a degraded run must still say something")
+	if !strings.Contains(message, "no ericai route") {
+		t.Fatalf("message = %q, want a sentence about the missing route", message)
 	}
-	if strings.HasPrefix(message, "[ericai] token refreshed") {
-		t.Fatal("a machine without the route cannot have had its token refreshed")
+}
+
+// ── the sequence the feature promises: log in once, then never again ─────────
+
+// TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently walks the real
+// EnsureEricAI and the real device-code flow with only the three network calls
+// stubbed out. It is the regression test for the bug users saw: the first run
+// logged in, threw the login's refresh_token away, and so every later run
+// logged in again.
+func TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently(t *testing.T) {
+	// A throwaway home and config: the refresh-token store lives under the home
+	// directory, so both have to move for the test to be hermetic.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv(config.FileEnv, configPath)
+
+	stale := makeJWT(map[string]any{"exp": float64(time.Now().Add(time.Minute).Unix())})
+	fresh := makeJWT(map[string]any{"exp": float64(time.Now().Add(time.Hour).Unix())})
+	fresher := makeJWT(map[string]any{"exp": float64(time.Now().Add(2 * time.Hour).Unix())})
+	writeEricConfig(t, configPath, stale)
+
+	logins, polls := 0, 0
+	var refreshedWith []string
+	originalRequest, originalPost, originalRefresh := ericRequestDeviceCodeFn, ericPostTokenFn, ericRefreshFn
+	t.Cleanup(func() {
+		ericRequestDeviceCodeFn, ericPostTokenFn, ericRefreshFn = originalRequest, originalPost, originalRefresh
+	})
+
+	ericRequestDeviceCodeFn = func() (ericLoginPrompt, error) {
+		logins++
+		// Interval 1 keeps the poll loop's mandatory sleep down to a second.
+		return ericLoginPrompt{DeviceCode: "device-1", UserCode: "ABCD-EFGH", Interval: 1, ExpiresIn: 900}, nil
 	}
+	ericPostTokenFn = func(url.Values) (ericTokenResponse, error) {
+		polls++
+		// Entra only includes this field because the request asked for
+		// offline_access; the login is the one place a refresh token is born.
+		return ericTokenResponse{AccessToken: fresh, RefreshToken: "refresh-1"}, nil
+	}
+	ericRefreshFn = func(token string) (ericTokenResponse, error) {
+		refreshedWith = append(refreshedWith, token)
+		return ericTokenResponse{AccessToken: fresher, RefreshToken: "refresh-2"}, nil
+	}
+
+	// Run 1: nothing stored yet, so exactly one interactive login.
+	if message := EnsureEricAI(); !strings.Contains(message, "token refreshed") {
+		t.Fatalf("the first run said %q, want a refreshed token", message)
+	}
+	if logins != 1 || polls != 1 {
+		t.Fatalf("logins/polls after the first run = %d/%d, want 1/1", logins, polls)
+	}
+	if got := ericLoadRefreshToken(); got != "refresh-1" {
+		t.Fatalf("the refresh token from the login was not stored: %q", got)
+	}
+	if got := storedEricKey(t, configPath); got != fresh {
+		t.Fatalf("the config key = %q, want the freshly minted access token", got)
+	}
+
+	// Run 2: the store has to buy silence. Stale again, so a refresh is due —
+	// but no browser, which is the whole point.
+	writeEricConfig(t, configPath, stale)
+	if message := EnsureEricAI(); !strings.Contains(message, "token refreshed") {
+		t.Fatalf("the second run said %q, want a refreshed token", message)
+	}
+	if logins != 1 {
+		t.Fatalf("the second run opened another login (logins = %d); the refresh token was not reused", logins)
+	}
+	if len(refreshedWith) != 1 || refreshedWith[0] != "refresh-1" {
+		t.Fatalf("the second run refreshed with %v, want the stored refresh-1", refreshedWith)
+	}
+	if got := storedEricKey(t, configPath); got != fresher {
+		t.Fatalf("the config key = %q, want the refreshed access token", got)
+	}
+	// Entra rotates refresh tokens; the rotated one has to replace the old, or
+	// the run after next starts from a token that is already spent.
+	if got := ericLoadRefreshToken(); got != "refresh-2" {
+		t.Fatalf("the rotated refresh token was not stored: %q", got)
+	}
+}
+
+// TestEveryTokenRequestAsksForOfflineAccess pins the other half of the chain:
+// Entra issues a refresh_token only when the original scope asked for
+// offline_access, so dropping it from either request silently restores the
+// login-every-run behaviour with no error anywhere.
+func TestEveryTokenRequestAsksForOfflineAccess(t *testing.T) {
+	forms := map[string]url.Values{
+		"device code": ericDeviceCodeForm(),
+		"refresh":     ericRefreshForm("stored-refresh-token"),
+	}
+	for name, form := range forms {
+		scope := form.Get("scope")
+		if !strings.Contains(scope, ericOfflineAccess) {
+			t.Errorf("the %s request asked for scope %q, which lacks %s", name, scope, ericOfflineAccess)
+		}
+		if !strings.Contains(scope, ericScope) {
+			t.Errorf("the %s request asked for scope %q, which lacks the API scope %s", name, scope, ericScope)
+		}
+	}
+}
+
+func writeEricConfig(t *testing.T, path, key string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"providers": map[string]any{
+			EricAIProvider: map[string]any{"api_key": key, "base_url": "https://eric.example"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func storedEricKey(t *testing.T, path string) string {
+	t.Helper()
+	decoded, err := configReadForTest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers, _ := decoded["providers"].(map[string]any)
+	item, _ := providers[EricAIProvider].(map[string]any)
+	key, _ := item["api_key"].(string)
+	return key
 }
