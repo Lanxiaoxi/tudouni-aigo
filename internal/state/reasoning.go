@@ -94,31 +94,27 @@ func ThinkingText(value bool) string {
 	return i18n.T("thinking.off")
 }
 
-// RequestFields builds the endpoint parameters for the two knobs.
+// What happened to RequestFields
 //
-// Note the asymmetry, which is the whole point of having two knobs: when
-// thinking is off, only the disabled marker is sent and no `reasoning_effort`
-// goes out at all. Sending both would be asking the endpoint to reconcile a
-// contradiction, and whichever way it resolves it, the bill shows it.
+// It used to live here and returned a literal request-body fragment —
+// `reasoning_effort` plus an `extra_body` object holding the `thinking` marker —
+// which put wire knowledge in the configuration layer. That was defensible while
+// there was one protocol. With three it is not: the Messages shape wants
+// `thinking: {type, budget_tokens}` and has never heard of `reasoning_effort`,
+// while the Responses shape wants `reasoning.effort`, so a function here that named
+// any of those fields would have to branch on the protocol of a route it cannot
+// see, and the configuration layer would slowly fill up with the union of every
+// vendor's spelling.
 //
-// **`extra_body` is a channel, not a field name.** It is how a caller says
-// "this key does not fit the typed request object, merge it into the body" — the
-// OpenAI SDK does exactly that, which is why the previous generation could write
-// `thinking` here even though the SDK has no type for it. A caller that builds
-// the JSON itself must do the same merge; `model.applyRequestFields` is the one
-// place that does. Writing the map across verbatim sends the literal string
-// "extra_body" to the endpoint and no `thinking` at all.
-func RequestFields(thinking bool, effort string) map[string]any {
-	if thinking {
-		return map[string]any{
-			"reasoning_effort": effort,
-			"extra_body":       map[string]any{"thinking": map[string]any{"type": "enabled"}},
-		}
-	}
-	return map[string]any{
-		"extra_body": map[string]any{"thinking": map[string]any{"type": "disabled"}},
-	}
-}
+// So this layer now answers only the question it owns — "is thinking on, and at
+// what level" — and `internal/model`'s dialects turn that into a body. The two
+// knobs themselves are unchanged, and so is the asymmetry below.
+//
+// **The asymmetry is the whole point of having two knobs**: when thinking is off,
+// only the disabled marker is sent and no effort level goes out at all. Sending
+// both would be asking the endpoint to reconcile a contradiction, and whichever way
+// it resolves it, the bill shows it. Each dialect applies that rule in its own
+// vocabulary.
 
 // Summary is the one-line description of the two knobs.
 func Summary(thinking bool, effort string) string {

@@ -35,6 +35,10 @@ Thumbs.db
 # Session state, never committed
 .tudouni/
 
+# The agent harness's own working notes for this repository. They are a scratchpad
+# that happens to live here, and nothing in the program reads them.
+/.workbuddy/
+
 # Keep the vendored engines even though they look like build output.
 !tools/vendor/rg/x86_64-pc-windows-msvc/rg.exe
 !tools/vendor/rg/x86_64-unknown-linux-musl/rg

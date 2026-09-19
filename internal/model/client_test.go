@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 )
 
 // recordedRequest is one request the fake gateway received.
@@ -40,6 +38,7 @@ func gateway(t *testing.T) (*httptest.Server, *[]recordedRequest) {
 	return server, calls
 }
 
+// completeOnce runs one non-streamed call and fails the test on error.
 func completeOnce(t *testing.T, adapter *OpenAICompatible) ModelResponse {
 	t.Helper()
 	response, err := adapter.Complete(
@@ -57,9 +56,9 @@ func completeOnce(t *testing.T, adapter *OpenAICompatible) ModelResponse {
 // a default varies with the endpoint, and this one is the user's choice.
 func TestThinkingIsOnByDefaultInTheRequest(t *testing.T) {
 	server, calls := gateway(t)
-	adapter := New(Options{
-		BaseURL: server.URL, Model: "m", Provider: "p",
-		Thinking: state.DefaultThinking, Effort: state.DefaultEffort,
+	adapter := newTestAdapter(t, Options{
+		Route:    route(server.URL, "m", StyleOpenAI),
+		Thinking: true, Effort: "high",
 	})
 	completeOnce(t, adapter)
 
@@ -89,9 +88,9 @@ func TestThinkingIsOnByDefaultInTheRequest(t *testing.T) {
 // whoever inspects the traffic believe it took effect.
 func TestTurningThinkingOffChangesTheNextRequest(t *testing.T) {
 	server, calls := gateway(t)
-	adapter := New(Options{
-		BaseURL: server.URL, Model: "m", Provider: "p",
-		Thinking: state.DefaultThinking, Effort: state.DefaultEffort,
+	adapter := newTestAdapter(t, Options{
+		Route:    route(server.URL, "m", StyleOpenAI),
+		Thinking: true, Effort: "high",
 	})
 
 	adapter.SetReasoning(false, "high")
@@ -115,9 +114,9 @@ func TestTurningThinkingOffChangesTheNextRequest(t *testing.T) {
 // thinking off does not lose the level, and turning it back on sends it again.
 func TestTheEffortSurvivesADisabledThinking(t *testing.T) {
 	server, calls := gateway(t)
-	adapter := New(Options{
-		BaseURL: server.URL, Model: "m", Provider: "p",
-		Thinking: state.DefaultThinking, Effort: state.DefaultEffort,
+	adapter := newTestAdapter(t, Options{
+		Route:    route(server.URL, "m", StyleOpenAI),
+		Thinking: true, Effort: "high",
 	})
 
 	adapter.SetReasoning(false, "max")
@@ -135,11 +134,11 @@ func TestTheEffortSurvivesADisabledThinking(t *testing.T) {
 	}
 }
 
-// TestApplyRequestFieldsFlattensTheEscapeHatch pins the merge itself, so a future
-// change to the request builder cannot quietly send the plumbing again.
-func TestApplyRequestFieldsFlattensTheEscapeHatch(t *testing.T) {
+// TestApplyRequestFieldsKeepsTheThinkingMarkersFlat pins the merge itself, so a
+// future change to the request builder cannot quietly send the plumbing again.
+func TestApplyRequestFieldsKeepsTheThinkingMarkersFlat(t *testing.T) {
 	body := map[string]any{"model": "m"}
-	applyRequestFields(body, state.RequestFields(true, "max"))
+	applyOpenAIRequestFields(body, ReasoningKnobs{Thinking: true, Effort: "max"})
 
 	if body["reasoning_effort"] != "max" {
 		t.Errorf("reasoning_effort = %v, want max", body["reasoning_effort"])
@@ -149,7 +148,7 @@ func TestApplyRequestFieldsFlattensTheEscapeHatch(t *testing.T) {
 		t.Errorf("thinking = %#v, want {type: enabled}", body["thinking"])
 	}
 	if _, present := body["extra_body"]; present {
-		t.Errorf("extra_body was not merged: %#v", body)
+		t.Errorf("extra_body was not flattened: %#v", body)
 	}
 }
 
@@ -182,22 +181,20 @@ func authGateway(t *testing.T, label string) (*httptest.Server, *[]recordedReque
 	return server, calls
 }
 
-// TestInstallingAnotherRouteMovesTheEndpointAndTheKey mirrors the original's
-// `tests/test_model_switch.py:453-475` ("界面说换了、请求没动"): after moving to
-// another route, the **next request** must actually go to the new endpoint and
-// carry the new key.
-//
-// The failure this exists to prevent has no symptom on the surface: `/status`, the
-// session record and the audit all report the new route, while every request keeps
-// going to the old endpoint on the old key — and the bill is the only place that
-// ever shows it.
+// TestInstallingAnotherRouteMovesTheEndpointAndTheKey covers the failure with no
+// symptom on the surface: after moving to another route, `/status`, the session
+// record and the audit all report the new route, while every request keeps going
+// to the old endpoint on the old key — and the bill is the only place that ever
+// shows it.
 func TestInstallingAnotherRouteMovesTheEndpointAndTheKey(t *testing.T) {
 	first, firstCalls := authGateway(t, "from route one")
 	second, secondCalls := authGateway(t, "from route two")
 
-	adapter := New(Options{
-		APIKey: "key-one", BaseURL: first.URL, Model: "m-one", Provider: "one",
-		Thinking: state.DefaultThinking, Effort: state.DefaultEffort,
+	adapter := newTestAdapter(t, Options{
+		Route: Route{
+			Name: "one", APIKey: "key-one", BaseURL: first.URL, Model: "m-one",
+		},
+		Thinking: true, Effort: "high",
 	})
 
 	response := completeOnce(t, adapter)
@@ -205,7 +202,7 @@ func TestInstallingAnotherRouteMovesTheEndpointAndTheKey(t *testing.T) {
 		t.Fatalf("the first request did not reach route one: %#v", response.Content)
 	}
 
-	if !adapter.Install("key-two", second.URL, "m-two", "two") {
+	if !adapter.Install(Route{Name: "two", APIKey: "key-two", BaseURL: second.URL, Model: "m-two"}) {
 		t.Fatal("Install refused a valid route change")
 	}
 
@@ -234,13 +231,13 @@ func TestInstallingAnotherRouteMovesTheEndpointAndTheKey(t *testing.T) {
 // a half-applied route change would leave the adapter pointed somewhere nobody
 // chose, which is worse than refusing.
 func TestInstallingRefusesAnEmptyEndpointOrModel(t *testing.T) {
-	adapter := New(Options{
-		APIKey: "key-one", BaseURL: "https://example.invalid", Model: "m-one", Provider: "one",
+	adapter := newTestAdapter(t, Options{
+		Route: Route{Name: "one", APIKey: "key-one", BaseURL: "https://example.invalid", Model: "m-one"},
 	})
-	if adapter.Install("k", "   ", "m", "p") {
+	if adapter.Install(Route{Name: "p", APIKey: "k", BaseURL: "   ", Model: "m"}) {
 		t.Error("Install accepted an empty base_url")
 	}
-	if adapter.Install("k", "https://example.invalid", "  ", "p") {
+	if adapter.Install(Route{Name: "p", APIKey: "k", BaseURL: "https://example.invalid", Model: "  "}) {
 		t.Error("Install accepted an empty model name")
 	}
 	// A refused install must leave the adapter exactly as it was.
@@ -249,14 +246,30 @@ func TestInstallingRefusesAnEmptyEndpointOrModel(t *testing.T) {
 	}
 }
 
+// TestInstallingAnUnknownProtocolIsRefusedWithoutMoving keeps the all-or-nothing
+// rule: a route that cannot be spoken is not half-applied.
+func TestInstallingAnUnknownProtocolIsRefusedWithoutMoving(t *testing.T) {
+	adapter := newTestAdapter(t, Options{
+		Route: Route{Name: "one", APIKey: "key-one", BaseURL: "https://example.invalid", Model: "m-one"},
+	})
+	if adapter.Install(Route{
+		Name: "two", APIKey: "key-two", BaseURL: "https://other.invalid", Model: "m-two", Style: "antropic",
+	}) {
+		t.Error("Install accepted an unknown api_style")
+	}
+	if adapter.ProviderName() != "one" || adapter.ModelName() != "m-one" {
+		t.Errorf("a refused install moved the adapter: %s / %s", adapter.ProviderName(), adapter.ModelName())
+	}
+}
+
 // TestSwitchingWithinARouteIsTheCheapPath keeps the two capabilities apart: the
 // same route only needs the model name changed, and that must not require a route
 // install.
 func TestSwitchingWithinARouteIsTheCheapPath(t *testing.T) {
 	server, calls := authGateway(t, "ok")
-	adapter := New(Options{
-		APIKey: "key-one", BaseURL: server.URL, Model: "m-one", Provider: "one",
-		Thinking: state.DefaultThinking, Effort: state.DefaultEffort,
+	adapter := newTestAdapter(t, Options{
+		Route:    Route{Name: "one", APIKey: "key-one", BaseURL: server.URL, Model: "m-one"},
+		Thinking: true, Effort: "high",
 	})
 
 	if !adapter.SwitchModel("m-two") {

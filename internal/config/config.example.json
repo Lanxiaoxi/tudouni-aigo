@@ -20,6 +20,21 @@
     "  reports usage without a percentage. A wrong percentage is worse than none —",
     "  it gets treated as true.",
     "",
+    "  api_style: which wire protocol this endpoint speaks. Omit the line and it is",
+    "  worked out from base_url, which is right for almost every route. Write it only",
+    "  to override that:",
+    "      openai      POST base_url/chat/completions   (the default)",
+    "      anthropic   POST base_url/v1/messages        (Claude, and the",
+    "                  Anthropic-compatible endpoints of MiniMax, Qwen, ...)",
+    "      responses   POST base_url/v1/responses",
+    "  The inference reads the end of base_url, so ending it in /messages,",
+    "  /v1/messages or /anthropic is enough. Nothing else is adjusted: if the",
+    "  endpoint is reached at /v1/messages, base_url must not already end in /v1.",
+    "",
+    "  headers: extra request headers, sent on every request to that route. Some",
+    "  vendors require their own client identification — a custom User-Agent or a",
+    "  session header — and this is the only way to say so. Values are strings.",
+    "",
     "web: the keys for web search. Leave them out and web_search is not registered",
     "(fetch_web is unaffected; a missing key there is not an error)."
   ],
@@ -31,6 +46,28 @@
       "models": [
         {"id": "deepseek-flash", "context_window": 1000000},
         {"id": "deepseek-v4-pro", "context_window": 1000000}
+      ]
+    },
+
+    "anthropic-example": {
+      "base_url": "https://api.anthropic.com",
+      "api_style": "anthropic",
+      "api_key": "",
+      "models": [
+        {"id": "claude-sonnet-5", "context_window": 200000}
+      ]
+    },
+
+    "headers-example": {
+      "$comment": "A route that needs its own client identification. The api_key carries the credential; these ride along with it, and neither is invented from a provider name.",
+      "base_url": "https://opencode.example",
+      "api_key": "",
+      "headers": {
+        "User-Agent": "tudouni/0.2",
+        "x-opencode-session": ""
+      },
+      "models": [
+        {"id": "opencode-model", "context_window": 200000}
       ]
     }
   },

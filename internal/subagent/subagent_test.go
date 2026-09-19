@@ -49,7 +49,7 @@ func (f *fakeModel) Complete(messages []map[string]any, toolSchemas []map[string
 
 func (f *fakeModel) SwitchModel(string) bool { return true }
 
-func (f *fakeModel) Install(string, string, string, string) bool { return true }
+func (f *fakeModel) Install(model.Route) bool { return true }
 
 func (f *fakeModel) SetReasoning(bool, string) {}
 
@@ -58,6 +58,10 @@ func (f *fakeModel) ModelName() string { return "fake" }
 func (f *fakeModel) ProviderName() string { return "test" }
 
 func (f *fakeModel) BaseURL() string { return "http://localhost" }
+
+func (f *fakeModel) Route() model.Route { return model.Route{Name: "test"} }
+
+func (f *fakeModel) SameEndpoint(model.Route) bool { return true }
 
 // offered reports whether a tool name was ever sent to the child.
 func (f *fakeModel) offered(name string) bool {

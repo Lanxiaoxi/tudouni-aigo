@@ -154,22 +154,30 @@ type ChatModel interface {
 	// SwitchModel changes the model for subsequent requests. It returns false when
 	// this adapter cannot do that mid-session.
 	SwitchModel(name string) bool
-	// Install moves to another **route**: the key, the endpoint and the model name
-	// together. It returns false when this adapter cannot.
+	// Install moves to another **route**: the key, the endpoint, the protocol and
+	// the model name together. It returns false when this adapter cannot.
 	//
 	// It is a separate capability from SwitchModel because the cost is different:
-	// that one changes a single request field, this one changes the credentials and
-	// the endpoint, which for most implementations means rebuilding the client. An
-	// adapter that cannot rename a model certainly cannot do this.
+	// that one changes a single request field, this one changes the credentials,
+	// the endpoint and the kind of request that goes out, which for most
+	// implementations means rebuilding the client. An adapter that cannot rename a
+	// model certainly cannot do this.
 	//
-	// Renaming a model across routes with SwitchModel alone produces the worst
-	// shape of bug there is: the interface, the session record and the audit all
-	// say the new route, while the request still goes to the old endpoint on the
-	// old key. Nothing anywhere reports the divergence.
+	// **The whole route is handed over, not its fields.** That is what keeps this
+	// signature from growing: a parameter added here would have to be added at
+	// every call site, by a layer whose whole purpose is not to know what an
+	// endpoint needs. It is also what makes the route change all-or-nothing —
+	// applying the endpoint without the protocol, or the model without the extra
+	// headers, produces the worst shape of bug there is: the interface, the
+	// session record and the audit all say the new route, while the request still
+	// goes out the old way. Nothing anywhere reports the divergence.
+	//
+	// Renaming a model across routes with SwitchModel alone produces that same
+	// bug, which is why the two capabilities are kept apart.
 	//
 	// The contract matches SwitchModel's: the next request uses the new route, and
 	// one already in flight is unaffected.
-	Install(apiKey, baseURL, model, provider string) bool
+	Install(route Route) bool
 	// SetReasoning updates the two thinking knobs for subsequent requests.
 	SetReasoning(thinking bool, effort string)
 	// ModelName is the model currently in use.
@@ -178,4 +186,17 @@ type ChatModel interface {
 	ProviderName() string
 	// BaseURL is where requests currently go.
 	BaseURL() string
+	// Route is the endpoint currently in use, as one value.
+	//
+	// It is how a caller answers "is this the route I think I am on" without
+	// comparing a field: comparing fields is how a change of protocol once went
+	// unnoticed, because every field the caller thought to check was equal.
+	Route() Route
+	// SameEndpoint reports whether another route reaches the same endpoint,
+	// ignoring which model it names.
+	//
+	// It is the test behind the cheap path: the same endpoint with a different
+	// model is a rename, and a different endpoint — a new key, a new protocol, a
+	// header the vendor now requires — is not.
+	SameEndpoint(other Route) bool
 }

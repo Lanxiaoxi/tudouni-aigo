@@ -166,7 +166,7 @@ func (s *statusChat) Complete(messages []map[string]any, tools []map[string]any,
 
 func (s *statusChat) SwitchModel(name string) bool { return true }
 
-func (s *statusChat) Install(apiKey, baseURL, model, provider string) bool { return true }
+func (s *statusChat) Install(model.Route) bool { return true }
 
 func (s *statusChat) SetReasoning(thinking bool, effort string) {}
 
@@ -175,3 +175,7 @@ func (s *statusChat) ModelName() string { return "m-one" }
 func (s *statusChat) ProviderName() string { return "one" }
 
 func (s *statusChat) BaseURL() string { return "https://example.invalid" }
+
+func (s *statusChat) Route() model.Route { return model.Route{Name: "one", Model: "m-one"} }
+
+func (s *statusChat) SameEndpoint(route model.Route) bool { return route.Name == "one" }

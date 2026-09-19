@@ -1,301 +1,48 @@
 package model
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 )
 
-// streamUsageOption asks the gateway to report token usage on a streamed request.
-// Without it a streamed call has no usage block at all.
-const streamUsageOption = `"stream_options":{"include_usage":true}`
-
-// unsupportedStreamOptions remembers which (base_url, model) pairs have proved
-// they reject `stream_options`.
+// openaiDialect speaks the chat completions shape: POST /chat/completions, a
+// `choices` array, `reasoning_content` for thinking, `role: "tool"` for results.
 //
-// Why process-wide: knowledge bought with one 400 has to be kept, otherwise
-// **every** model call pays a wasted round trip to rediscover it. The key is
-// (base_url, model) rather than an instance, because switching sessions rebuilds
-// the client and "does this gateway accept this parameter" has nothing to do with
-// a session.
-//
-// Why not a configuration option: this is a discovered fact, not a preference.
-// Asking a person to write "does my gateway support include_usage" means the wrong
-// answer fails once per turn.
-var (
-	unsupportedMu   sync.Mutex
-	unsupportedOpts = map[string]bool{}
-)
+// This is the shape the adapter was born with and it is still the default. The
+// code here is what used to be spread through openai.go; it was moved, not
+// rewritten, so a route with no `api_style` sends exactly the bytes it sent
+// before.
+type openaiDialect struct{}
 
-func streamOptionsKey(baseURL, model string) string { return baseURL + "\x00" + model }
+func (openaiDialect) path() string { return "/chat/completions" }
 
-func streamOptionsSupported(baseURL, model string) bool {
-	unsupportedMu.Lock()
-	defer unsupportedMu.Unlock()
-	return !unsupportedOpts[streamOptionsKey(baseURL, model)]
-}
+// wantsStreamOptions is true: `stream_options.include_usage` is a parameter of
+// this family, and dropping it after a rejection is the recovery that exists for
+// it.
+func (openaiDialect) wantsStreamOptions() bool { return true }
 
-func rememberStreamOptionsUnsupported(baseURL, model string) {
-	unsupportedMu.Lock()
-	defer unsupportedMu.Unlock()
-	unsupportedOpts[streamOptionsKey(baseURL, model)] = true
-}
+// credentialHeader is the Authorization header: this family authenticates with a
+// bearer token.
+func (openaiDialect) credentialHeader() string { return credentialHeaderBearer }
 
-// OpenAICompatible talks to any endpoint that speaks the chat completions shape.
-type OpenAICompatible struct {
-	client *http.Client
-
-	apiKey   string
-	baseURL  string
-	model    string
-	provider string
-	// verify is kept from the configuration file. A transport that skips
-	// certificate checks would be built here; the default client verifies.
-	verify bool
-
-	thinking bool
-	effort   string
-}
-
-// Options configures a new adapter.
-type Options struct {
-	APIKey   string
-	BaseURL  string
-	Model    string
-	Provider string
-	Verify   bool
-	Thinking bool
-	Effort   string
-	Client   *http.Client
-	// Timeout is how long one request may take. A streamed answer can legitimately
-	// take minutes, so this is generous.
-	Timeout time.Duration
-}
-
-// New creates an adapter.
-func New(options Options) *OpenAICompatible {
-	client := options.Client
-	if client == nil {
-		timeout := options.Timeout
-		if timeout == 0 {
-			timeout = 10 * time.Minute
-		}
-		client = &http.Client{Timeout: timeout}
-	}
-	if options.Provider != "" {
-		// Recorded so `/status` can say which route a request went out on; two
-		// routes can carry a model with the same name.
-		_ = options.Provider
-	}
-	return &OpenAICompatible{
-		client:   client,
-		apiKey:   options.APIKey,
-		baseURL:  strings.TrimRight(options.BaseURL, "/"),
-		model:    options.Model,
-		provider: options.Provider,
-		verify:   options.Verify,
-		thinking: options.Thinking,
-		effort:   options.Effort,
-	}
-}
-
-// ModelName is the model in use.
-func (m *OpenAICompatible) ModelName() string { return m.model }
-
-// ProviderName is the route in use.
-func (m *OpenAICompatible) ProviderName() string { return m.provider }
-
-// BaseURL is where requests go.
-func (m *OpenAICompatible) BaseURL() string { return m.baseURL }
-
-// SwitchModel changes the model for subsequent requests.
-func (m *OpenAICompatible) SwitchModel(name string) bool {
-	if strings.TrimSpace(name) == "" {
-		return false
-	}
-	m.model = strings.TrimSpace(name)
-	return true
-}
-
-// apiKeyOf is the key this adapter currently sends.
-//
-// It exists so the runtime can tell "the same route, a different model" from
-// "another route", which is the same test the previous generation made. The key is
-// the identifier that matters: two routes can share a base_url and differ only in
-// which tenant they bill.
-func (m *OpenAICompatible) apiKeyOf() string { return m.apiKey }
-
-// Install moves to another route: key, endpoint, model name and route name.
-//
-// The HTTP client is deliberately kept. It never carried the key — that goes in a
-// per-request header — and its connection pool is worth reusing. An implementation
-// whose credentials live inside the client would rebuild it here instead.
-func (m *OpenAICompatible) Install(apiKey, baseURL, model, provider string) bool {
-	if strings.TrimSpace(model) == "" {
-		return false
-	}
-	if strings.TrimSpace(baseURL) == "" {
-		return false
-	}
-	m.apiKey = apiKey
-	m.baseURL = strings.TrimRight(baseURL, "/")
-	m.model = strings.TrimSpace(model)
-	if provider != "" {
-		m.provider = provider
-	}
-	return true
-}
-
-// SetReasoning updates the two thinking knobs.
-func (m *OpenAICompatible) SetReasoning(thinking bool, effort string) {
-	m.thinking = thinking
-	m.effort = effort
-}
-
-// Complete runs one request, streaming when a sink is present.
-//
-// The stream is only requested when somebody is reading it. A streamed request
-// nobody consumes costs the same and delivers less, and asking for `stream` in the
-// body is itself observable in the audit.
-func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[string]any, options CompleteOptions) (ModelResponse, error) {
-	if options.OnDelta == nil {
-		return m.completeOnce(messages, tools, nil, options.ShouldStop)
-	}
-
-	response, err := m.completeOnce(messages, tools, options.OnDelta, options.ShouldStop)
-	if err == nil {
-		return response, nil
-	}
-	// A cancelled turn is not a failure to retry. Retrying it would send the
-	// request again after the user asked for it to stop.
-	if IsCancelled(err) {
-		return ModelResponse{}, err
-	}
-
-	// A gateway that rejects `stream_options` cannot report usage while streaming.
-	// Drop the parameter, remember it, and send the request again — the text that
-	// already reached the screen is kept, and the caller is told to discard its
-	// copy through OnAttemptStarted so the restatement does not read as the model
-	// saying everything twice.
-	if !isStreamOptionsRejection(err) {
-		return ModelResponse{}, err
-	}
-	rememberStreamOptionsUnsupported(m.baseURL, m.model)
-	if options.OnAttemptStarted != nil {
-		options.OnAttemptStarted()
-	}
-	return m.completeOnce(messages, tools, options.OnDelta, options.ShouldStop)
-}
-
-// streamOptionsRejection marks a 400 that is specifically about stream_options.
-type streamOptionsRejection struct{ Msg string }
-
-func (e *streamOptionsRejection) Error() string { return e.Msg }
-
-func isStreamOptionsRejection(err error) bool {
-	_, ok := err.(*streamOptionsRejection)
-	return ok
-}
-
-func (m *OpenAICompatible) completeOnce(messages []map[string]any, tools []map[string]any, sink DeltaSink, shouldStop func() bool) (ModelResponse, error) {
-	body := m.requestBody(messages, tools, sink != nil)
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return ModelResponse{}, AsFatal("cannot encode the request: %v", err)
-	}
-
-	endpoint := m.baseURL + "/chat/completions"
-	request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return ModelResponse{}, AsFatal("cannot build the request: %v", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	if m.apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+m.apiKey)
-	}
-	if sink != nil {
-		request.Header.Set("Accept", "text/event-stream")
-	}
-
-	response, err := m.client.Do(request)
-	if err != nil {
-		return ModelResponse{}, AsTransient("%v", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode >= 400 {
-		raw, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		return ModelResponse{}, classifyHTTPError(response.StatusCode, string(raw), m.baseURL+"/chat/completions")
-	}
-
-	if sink == nil {
-		return parseUnaryResponse(response.Body)
-	}
-	return parseStreamWithStop(response.Body, sink, shouldStop)
-}
-
-func (m *OpenAICompatible) requestBody(messages []map[string]any, tools []map[string]any, stream bool) map[string]any {
+func (openaiDialect) encode(request dialectRequest) (map[string]any, error) {
 	body := map[string]any{
-		"model":    m.model,
-		"messages": messages,
+		"model":    request.model,
+		"messages": request.messages,
 	}
-	if len(tools) > 0 {
-		body["tools"] = tools
+	if len(request.tools) > 0 {
+		body["tools"] = request.tools
 	}
-	// The thinking knobs are read on every call, which is what makes "it takes
-	// effect on the next request" true.
-	applyRequestFields(body, state.RequestFields(m.thinking, m.effort))
-	if stream {
+	applyOpenAIRequestFields(body, request.knobs)
+	if request.stream {
 		body["stream"] = true
-		if streamOptionsSupported(m.baseURL, m.model) {
+		if request.includeStreamUsage {
 			body["stream_options"] = map[string]any{"include_usage": true}
 		}
 	}
-	return body
+	return body, nil
 }
 
-// applyRequestFields merges the thinking knobs into a raw request body the way
-// the OpenAI SDK does, and the difference is not cosmetic.
-//
-// `state.RequestFields` describes the parameters the way the previous generation
-// wrote them: in SDK terms. Over there the dict goes to
-// `chat.completions.create(**fields)`, and the SDK treats `extra_body` as an
-// **escape hatch** — it merges that object into the top level of the JSON it
-// sends, which is the only way to reach a field the SDK has no type for. So the
-// wire body carries a top-level `thinking`, and the endpoint never sees the string
-// "extra_body".
-//
-// This package writes the JSON itself, so there is no SDK to do that merge. Copying
-// the fields across verbatim would put a literal `extra_body` object on the wire
-// and no `thinking` at all: `/thinking off` would reach the endpoint as nothing,
-// thinking would stay on and keep being billed, and a strict gateway would reject
-// the unknown parameter outright.
-func applyRequestFields(body, fields map[string]any) {
-	for key, value := range fields {
-		if key != "extra_body" {
-			body[key] = value
-			continue
-		}
-		if extra, ok := value.(map[string]any); ok {
-			for nestedKey, nestedValue := range extra {
-				body[nestedKey] = nestedValue
-			}
-		}
-	}
-}
-
-func parseUnaryResponse(reader io.Reader) (ModelResponse, error) {
-	raw, err := io.ReadAll(reader)
-	if err != nil {
-		return ModelResponse{}, AsTransient("cannot read the response: %v", err)
-	}
+func (openaiDialect) parseUnary(raw []byte) (ModelResponse, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return ModelResponse{}, AsFatal("the response is not JSON: %v", err)
@@ -315,34 +62,87 @@ func parseUnaryResponse(reader io.Reader) (ModelResponse, error) {
 	if content, ok := message["content"].(string); ok {
 		result.Content = &content
 	}
-	result.ToolCalls = parseToolCalls(message["tool_calls"])
+	result.ToolCalls = parseToolCallItems(message["tool_calls"], []string{"id"}, []string{"name"})
 	return result, nil
 }
 
-func parseToolCalls(raw any) []ToolCall {
-	items, _ := raw.([]any)
-	var out []ToolCall
-	for _, item := range items {
-		entry, ok := item.(map[string]any)
-		if !ok {
-			continue
+func (openaiDialect) parseStream(body reader, sink DeltaSink, shouldStop func() bool) (ModelResponse, error) {
+	return readSSE(body, sink, shouldStop, func(chunk map[string]any, accumulator *responseAccumulator) error {
+		// Usage may arrive on its own chunk, including the one after the last
+		// content chunk, so it is read before anything else looks at `choices`.
+		if usage := extractUsage(chunk["usage"]); usage != nil {
+			accumulator.usage = usage
 		}
-		function, _ := entry["function"].(map[string]any)
-		call := ToolCall{}
-		call.ID, _ = entry["id"].(string)
-		call.Name, _ = function["name"].(string)
-		if arguments, ok := function["arguments"].(string); ok {
-			call.Arguments = arguments
+
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
+			return nil
 		}
-		if call.Name == "" {
-			continue
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		if delta == nil {
+			return nil
 		}
-		out = append(out, call)
-	}
-	return out
+
+		if text, ok := delta["content"].(string); ok && text != "" {
+			accumulator.text(text)
+			if sink != nil {
+				sink(text, "")
+			}
+		}
+		if reasoning := extractReasoning(delta); reasoning != nil && *reasoning != "" {
+			accumulator.reasoningText(*reasoning)
+			if sink != nil {
+				sink("", *reasoning)
+			}
+		}
+		accumulator.toolCalls(delta["tool_calls"])
+		return nil
+	})
 }
 
-// extractReasoning reads the thinking text from a message.
+// applyOpenAIRequestFields merges the thinking knobs into a chat completions body.
+//
+// `state.RequestFields` describes the parameters the way the previous generation
+// wrote them: in SDK terms. Over there the dict goes to
+// `chat.completions.create(**fields)`, and the SDK treats `extra_body` as an
+// **escape hatch** — it merges that object into the top level of the JSON it
+// sends, which is the only way to reach a field the SDK has no type for. So the
+// wire body carries a top-level `thinking`, and the endpoint never sees the string
+// "extra_body".
+//
+// This package writes the JSON itself, so there is no SDK to do that merge. Copying
+// the fields across verbatim would put a literal `extra_body` object on the wire
+// and no `thinking` at all: `/thinking off` would reach the endpoint as nothing,
+// thinking would stay on and keep being billed, and a strict gateway would reject
+// the unknown parameter outright.
+func applyOpenAIRequestFields(body map[string]any, knobs ReasoningKnobs) {
+	if knobs.omit {
+		// Nothing to say. A thinking-only model answers 400 to any explicit "do not
+		// think" instruction, and the only request it accepts is silent on the
+		// subject — so silence is what this state means, and it is different from
+		// "off".
+		return
+	}
+	if knobs.Thinking {
+		body["reasoning_effort"] = knobs.Effort
+		body["thinking"] = map[string]any{"type": "enabled"}
+		return
+	}
+	// When thinking is off, only the disabled marker is sent and no
+	// `reasoning_effort` goes out at all. Sending both would be asking the
+	// endpoint to reconcile a contradiction, and whichever way it resolves it,
+	// the bill shows it.
+	//
+	// This form is what the endpoints this program was built against expect, and it
+	// is worth keeping: replacing it with silence would make `/thinking off` a
+	// no-op on every model that merely *defaults* to thinking on. A model that
+	// cannot comply is handled by the refusal-and-retry in `Complete`, which
+	// produces this state's silence for that model alone.
+	body["thinking"] = map[string]any{"type": "disabled"}
+}
+
+// extractReasoning reads the thinking text from a message or a streaming delta.
 //
 // A gateway without the field, or with it set to null or to something that is not
 // a string, is not an error: the feature is optional, and saying nothing is the
@@ -359,10 +159,10 @@ func extractReasoning(message map[string]any) *string {
 	return nil
 }
 
-// extractUsage normalises the usage block.
+// extractUsage normalises an OpenAI-shaped usage block.
 //
 // The cache hit count comes from the standard `prompt_tokens_details.cached_tokens`
-// rather than a provider-specific field: this adapter is called "OpenAI
+// rather than a provider-specific field: this dialect is called "OpenAI
 // compatible", so a vendor extension must not be a required part of it.
 func extractUsage(raw any) *TokenUsage {
 	block, ok := raw.(map[string]any)
@@ -394,29 +194,12 @@ func intOf(value any) int {
 	}
 }
 
-// classifyHTTPError maps a failing response onto the two domain classes.
-//
-// The split matters because the handling is completely different: a transient
-// failure is worth backing off and retrying, a permanent one only repeats the same
-// failure three times.
-func classifyHTTPError(status int, body string, endpoint string) error {
-	trimmed := strings.TrimSpace(body)
-	if len(trimmed) > 600 {
-		trimmed = trimmed[:600] + "…"
-	}
-	summary := fmt.Sprintf("HTTP %d from %s: %s", status, endpoint, trimmed)
-
-	if strings.Contains(strings.ToLower(body), "stream_options") ||
-		strings.Contains(strings.ToLower(body), "include_usage") {
-		if status == 400 {
-			return &streamOptionsRejection{Msg: summary}
+// firstString returns the first key that holds a non-empty string.
+func firstString(object map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if text, ok := object[key].(string); ok && text != "" {
+			return text
 		}
 	}
-
-	switch {
-	case status == 408 || status == 409 || status == 429 || status >= 500:
-		return AsTransient("%s", summary)
-	default:
-		return AsFatal("%s", summary)
-	}
+	return ""
 }

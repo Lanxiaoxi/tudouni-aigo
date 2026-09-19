@@ -357,15 +357,14 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		return nil, err
 	}
 
-	chat := model.New(model.Options{
-		APIKey:   chosenProvider.APIKey,
-		BaseURL:  chosenProvider.BaseURL,
-		Model:    chosen,
-		Provider: chosenProvider.Name,
-		Verify:   chosenProvider.Verify,
+	chat, err := model.New(model.Options{
+		Route:    routeOf(chosenProvider, chosen, session.SessionID),
 		Thinking: modelState.Thinking(),
 		Effort:   modelState.Effort(),
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	workspace, err := tools.NewWorkspace(paths.WorkspaceDir())
 	if err != nil {
@@ -924,19 +923,55 @@ func (r *Runtime) ResolveChild(route subagent.Route, parentModel, parentProvider
 		effort = r.ModelState.Effort()
 	}
 
+	// The **parent's** session id, deliberately, not the child's own. A delegated
+	// call belongs to the same conversation, which is what a gateway asking for a
+	// per-conversation identifier is asking about — routing and cache affinity are
+	// about the work, and the work is the same session. The child's own id is not
+	// available here in any case: it is minted by the spawn path, which calls this
+	// resolver before it creates the child session, and threading it through would
+	// mean teaching the subagent package about request headers for a distinction the
+	// gateway does not make.
+	childChat, err := model.New(model.Options{
+		Route:    routeOf(provider, chosen, r.SessionIDValue),
+		Thinking: thinking,
+		Effort:   effort,
+	})
+	if err != nil {
+		return subagent.ChildChat{}, err
+	}
+
 	return subagent.ChildChat{
-		Chat: model.New(model.Options{
-			APIKey:   provider.APIKey,
-			BaseURL:  provider.BaseURL,
-			Model:    chosen,
-			Provider: provider.Name,
-			Verify:   provider.Verify,
-			Thinking: thinking,
-			Effort:   effort,
-		}),
+		Chat:     childChat,
 		Model:    chosen,
 		Provider: provider,
 	}, nil
+}
+
+// routeOf turns one catalogue entry into the model package's route value.
+//
+// It is the **only** place the two descriptions of a route meet, which is the
+// point of it existing: the catalogue says where requests go, and the model
+// package says how to send them, and neither has to know the other's field names
+// beyond this one conversion. A new route capability is added here once, instead
+// of at every construction site — and there is more than one, because delegated
+// subagents build their own adapter.
+//
+// The session id is threaded through here for the same reason. A vendor that asks
+// for a per-conversation header gets one without the model package knowing that
+// vendor's name and without the configuration file naming a session it cannot see:
+// the configuration writes the placeholder, and this is where the value is filled
+// in.
+func routeOf(provider state.Provider, modelID, sessionID string) model.Route {
+	return model.Route{
+		Name:      provider.Name,
+		APIKey:    provider.APIKey,
+		BaseURL:   provider.BaseURL,
+		Model:     modelID,
+		SessionID: sessionID,
+		Verify:    provider.Verify,
+		Style:     model.NormalizeStyle(provider.APIStyle),
+		Headers:   provider.Headers,
+	}
 }
 
 // notesFrom is the payload tail a delegated subagent gets: the bodies of the
@@ -1708,27 +1743,31 @@ func (r *Runtime) switchChat(ref state.ModelRef, route state.Provider) bool {
 	if r.sameRoute(route) {
 		return r.Chat.SwitchModel(ref.ID)
 	}
-	// Another route: the key and the endpoint have to move as well. An adapter that
-	// cannot do that is refused rather than renamed, because renaming alone leaves
-	// the request going to the old endpoint on the old key while `/status` and the
-	// session record both say the new route.
-	return r.Chat.Install(route.APIKey, route.BaseURL, ref.ID, ref.Provider)
+	// Another route: the key, the endpoint and the protocol have to move as well.
+	// An adapter that cannot do that is refused rather than renamed, because
+	// renaming alone leaves the request going to the old endpoint on the old key
+	// while `/status` and the session record both say the new route.
+	return r.Chat.Install(routeOf(route, ref.ID, r.SessionIDValue))
 }
 
 // sameRoute reports whether the adapter is already pointed at this route.
 //
-// The test is the previous generation's: same provider name, and the key the
-// adapter is actually sending is the key this route declares. The key is the
-// identifier that matters — two routes can share a base_url and differ only in
-// which tenant they bill.
+// The comparison is now the whole route rather than a field of it — the same
+// test, extended to the parts that did not exist when it was written. It matters
+// that the protocol and the extra headers are compared too: a route that changed
+// from chat completions to Messages, or that gained a header the vendor now
+// requires, is a different endpoint in every sense that matters, and taking the
+// cheap "rename the model" path across that change is how the screen ends up
+// describing a route that is not the one being talked to.
+//
+// An adapter that does not describe itself as a route at all falls back to the
+// name test: refusing to switch would be worse than a conservative answer, and
+// the only adapters in this program do implement it.
 func (r *Runtime) sameRoute(route state.Provider) bool {
 	if r.Chat.ProviderName() != route.Name {
 		return false
 	}
-	if holder, ok := r.Chat.(interface{ apiKeyOf() string }); ok {
-		return holder.apiKeyOf() == route.APIKey
-	}
-	return true
+	return r.Chat.SameEndpoint(routeOf(route, r.Chat.ModelName(), r.SessionIDValue))
 }
 
 // routeNames lists the configured route names, for a "no such route" message that

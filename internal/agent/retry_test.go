@@ -87,12 +87,14 @@ func (m *recordingModel) Complete(messages []map[string]any, tools []map[string]
 	return model.ModelResponse{Content: &text}, nil
 }
 
-func (m *recordingModel) SwitchModel(string) bool                     { return true }
-func (m *recordingModel) Install(string, string, string, string) bool { return true }
-func (m *recordingModel) SetReasoning(bool, string)                   {}
-func (m *recordingModel) ModelName() string                           { return "recording" }
-func (m *recordingModel) ProviderName() string                        { return "test" }
-func (m *recordingModel) BaseURL() string                             { return "http://localhost" }
+func (m *recordingModel) SwitchModel(string) bool       { return true }
+func (m *recordingModel) Install(model.Route) bool      { return true }
+func (m *recordingModel) SetReasoning(bool, string)     {}
+func (m *recordingModel) ModelName() string             { return "recording" }
+func (m *recordingModel) ProviderName() string          { return "test" }
+func (m *recordingModel) BaseURL() string               { return "http://localhost" }
+func (m *recordingModel) Route() model.Route            { return model.Route{Name: "test"} }
+func (m *recordingModel) SameEndpoint(model.Route) bool { return true }
 
 // IsRunCancelled reports whether the error is this package's cancellation, without
 // tripping over the type's shape from the outside.

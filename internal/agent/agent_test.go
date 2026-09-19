@@ -45,7 +45,7 @@ func (f *fakeModel) SwitchModel(name string) bool { f.switched = true; return tr
 // Install is the route change. The fake records it separately from SwitchModel so
 // a test can tell "the model was renamed" from "the key and the endpoint moved",
 // which are different capabilities with different costs.
-func (f *fakeModel) Install(apiKey, baseURL, model, provider string) bool {
+func (f *fakeModel) Install(route model.Route) bool {
 	f.installed = true
 	return true
 }
@@ -59,6 +59,10 @@ func (f *fakeModel) ModelName() string { return "fake" }
 func (f *fakeModel) ProviderName() string { return "test" }
 
 func (f *fakeModel) BaseURL() string { return "http://localhost" }
+
+func (f *fakeModel) Route() model.Route { return model.Route{Name: "test"} }
+
+func (f *fakeModel) SameEndpoint(model.Route) bool { return true }
 
 // harness is one assembled agent plus what the tests need to inspect.
 type harness struct {

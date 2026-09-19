@@ -56,6 +56,64 @@ wrong percentage is worse than none, because it gets believed. Fill in the `web`
 key and `web_search` is registered; leave it out and the tool is simply absent from
 the schema rather than present and forever failing.
 
+### Endpoints that are not plain OpenAI
+
+Most gateways speak the chat completions shape and need nothing extra. Two other
+protocols are supported, and a route is put on one by its `base_url` — ending it in
+`/messages`, `/v1/messages` or `/anthropic` selects the Messages shape, `/responses`
+selects the Responses shape, and anything else is chat completions:
+
+```jsonc
+{
+  "providers": {
+    "qwen": {
+      "base_url": "https://{workspace}.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
+      "api_key": "sk-…",
+      "models": [{"id": "qwen3-max", "context_window": 200000}]
+    },
+    "vendor-required-headers": {
+      "base_url": "https://gateway.example",
+      "api_key": "sk-…",
+      "headers": {
+        "User-Agent": "my-agent/1.0",
+        "x-vendor-session": "${session}"
+      },
+      "models": [{"id": "some-model", "context_window": 200000}]
+    }
+  }
+}
+```
+
+`api_style` (`openai` / `anthropic` / `responses`) overrides that inference; write it
+only when a base URL is genuinely ambiguous — the case it exists for is one gateway
+serving several protocols under one host, where every route's `base_url` looks the
+same. Nothing else is adjusted for you: if the endpoint is reached at
+`/v1/messages`, `base_url` must not already end in `/v1`, or the path comes out
+`/v1/v1/messages`.
+
+`headers` are the escape hatch for a vendor that demands its own client
+identification. They are sent on every request to that route and cannot displace the
+headers the program sets itself. The value `${session}` is replaced by the current
+session id, which is what a gateway asking for a per-conversation identifier wants;
+a header whose value comes out empty is not sent at all.
+
+**Where the credential goes is the protocol's decision, not yours.** Chat completions
+and the Responses shape take `Authorization: Bearer <key>`; the Messages shape takes
+`x-api-key: <key>`. Writing the bearer token by hand for a Messages endpoint is the
+one thing here that fails in a way that names the wrong cause — the endpoint answers
+"Missing API key" while the key is sitting in the request.
+
+Two tools exist for checking a configuration without starting a session:
+
+```sh
+go run ./tools/checkconfig ~/.tudouni/config.json   # what it reads, where it will POST
+go run ./tools/probeconfig ~/.tudouni/config.json my-session-id [route]
+```
+
+`probeconfig` sends one small request per route through the same code path the
+program uses, which is the only way to tell a wrong request shape from a wrong key
+before a real session does it for you. It spends quota.
+
 The program creates this file for you the first time it finds no usable route, and
 tells you where it put it. `config.example.json` in this repository is only the
 template it copies.

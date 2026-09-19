@@ -35,7 +35,23 @@ func catalogErrorf(format string, args ...any) *CatalogError {
 // anyone who writes it is told so at once, which is what a real incident taught:
 // someone put the key itself in that field (the two names look almost alike,
 // one holds a name and one holds a value) and all they got back was "no key".
-var providerKeys = []string{"display_name", "base_url", "api_key", "models", "verify"}
+var providerKeys = []string{"display_name", "base_url", "api_key", "models", "verify", "api_style", "headers"}
+
+// The wire protocols a route may speak. The names are the values a person writes
+// in `"api_style"`.
+//
+// They are deliberately spelled out rather than derived from the model package,
+// which imports this one: a constant here that has to agree with a constant there
+// would be a second description of the same fact. `model` accepts these three
+// strings and refuses anything else, and this list is what the config error names.
+const (
+	StyleOpenAI    = "openai"
+	StyleAnthropic = "anthropic"
+	StyleResponses = "responses"
+)
+
+// styles are the accepted `api_style` values.
+var styles = []string{StyleOpenAI, StyleAnthropic, StyleResponses}
 
 var modelKeys = []string{"id", "label", "context_window", "summary", "note", "vision", "reasoning_effort"}
 
@@ -91,6 +107,15 @@ type Provider struct {
 	Models      []ModelRef
 	DisplayName string
 	Verify      bool
+	// APIStyle is which wire protocol this endpoint speaks: `openai`,
+	// `anthropic` or `responses`. Empty means "work it out from base_url", and
+	// the model package makes that decision — it is the only place that knows
+	// what the three shapes look like.
+	APIStyle string
+	// Headers are extra request headers this route requires, verbatim. A vendor
+	// that asks for a custom User-Agent or a session header has no other way to
+	// be told, and the alternative was a code change per vendor.
+	Headers map[string]string
 }
 
 // Title is the name shown to the user.
@@ -293,6 +318,14 @@ func Load(path string) (Registry, error) {
 		if err != nil {
 			return Registry{}, err
 		}
+		style, err := styleField(object, "api_style", where)
+		if err != nil {
+			return Registry{}, err
+		}
+		headers, err := headersField(object, "headers", where)
+		if err != nil {
+			return Registry{}, err
+		}
 
 		providers = append(providers, Provider{
 			Name:        name,
@@ -301,6 +334,8 @@ func Load(path string) (Registry, error) {
 			Models:      models,
 			DisplayName: displayName,
 			Verify:      verify,
+			APIStyle:    style,
+			Headers:     headers,
 		})
 		if len(models) == 0 {
 			problems = append(problems, i18nText("catalog.problem.no_models", "route", name))
@@ -461,6 +496,65 @@ func flagField(raw map[string]any, key, where string, fallback bool) (bool, erro
 	return flag, nil
 }
 
+// styleField reads `api_style`.
+//
+// An unknown value is an error rather than a fallback to `openai`: silently
+// treating a typo as the default is exactly the failure this catalogue refuses
+// everywhere else. A route that ends up speaking the wrong protocol produces
+// errors from the endpoint, not from here, and those errors name the endpoint
+// rather than the line that is wrong.
+func styleField(raw map[string]any, key, where string) (string, error) {
+	text, err := textField(raw, key, where)
+	if err != nil {
+		return "", err
+	}
+	if text == "" {
+		return "", nil
+	}
+	normalized := strings.ToLower(text)
+	for _, style := range styles {
+		if normalized == style {
+			return normalized, nil
+		}
+	}
+	return "", catalogErrorf("%s", i18nText("catalog.error.bad_style",
+		"where", where, "style", repr(text), "styles", strings.Join(styles, ", ")))
+}
+
+// headersField reads the `headers` object: extra request headers this route
+// needs, verbatim.
+//
+// Both halves are checked to be strings. A number would be a plausible typo for
+// a version header (`"x-api-version": 2`) and JSON would happily carry it, but the
+// header would go out as `2` only if we formatted it ourselves — and then the
+// question "is this a number or a string" has to be answered somewhere. Refusing
+// at read time answers it once, here.
+func headersField(raw map[string]any, key, where string) (map[string]string, error) {
+	value, present := raw[key]
+	if !present || value == nil {
+		return nil, nil
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, catalogErrorf("%s", i18nText("catalog.error.headers_not_object",
+			"where", where, "key", key))
+	}
+	out := make(map[string]string, len(object))
+	for name, entry := range object {
+		header := strings.TrimSpace(name)
+		if header == "" {
+			return nil, catalogErrorf("%s", i18nText("catalog.error.header_empty_name", "where", where))
+		}
+		text, ok := entry.(string)
+		if !ok {
+			return nil, catalogErrorf("%s", i18nText("catalog.error.header_not_string",
+				"where", where, "name", header))
+		}
+		out[header] = text
+	}
+	return out, nil
+}
+
 func windowField(raw map[string]any, key, where string) (*int, error) {
 	value, present := raw[key]
 	if !present || value == nil {
@@ -500,6 +594,14 @@ func jsonInt(value any) (int, bool) {
 	}
 }
 
+// unknownKeys lists the keys a section does not understand.
+//
+// A key beginning with `$` is a **comment**, not a key: JSON has none and this file
+// is written by hand, which is why the configuration reader already skips them
+// everywhere it reads a section. This function has to apply the same rule, or a
+// note placed beside the route it explains — which is the only place it is useful,
+// and the very reason the convention exists — would be reported as a misspelled
+// key and stop the session from starting.
 func unknownKeys(raw map[string]any, allowed []string) []string {
 	known := map[string]bool{}
 	for _, key := range allowed {
@@ -507,6 +609,9 @@ func unknownKeys(raw map[string]any, allowed []string) []string {
 	}
 	var out []string
 	for key := range raw {
+		if strings.HasPrefix(key, "$") {
+			continue
+		}
 		if !known[key] {
 			out = append(out, key)
 		}

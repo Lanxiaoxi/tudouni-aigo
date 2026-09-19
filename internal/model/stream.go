@@ -3,77 +3,18 @@ package model
 import (
 	"bufio"
 	"encoding/json"
-	"io"
 	"strings"
 )
 
-// parseStream reads an SSE stream, feeding increments to the sink and returning
-// the assembled response.
+// responseAccumulator is the middle shape every dialect's stream is folded into.
 //
-// The accumulation rules are not arbitrary; each one corresponds to something a
-// gateway actually does:
-//
-//   - tool calls are joined **by index**, not by arrival order. A gateway is free
-//     to interleave the pieces of several calls, and joining by arrival produces
-//     calls with the arguments of another call spliced into them;
-//   - the id is taken from the first non-empty piece, and the name is **not**
-//     appended when it repeats. Some gateways restate the function name in every
-//     chunk, which naively concatenated gives `read_fileread_file`;
-//   - the usage block belongs to the whole request, so it replaces rather than
-//     accumulates;
-//   - a placeholder chunk carrying only an id and nothing else is dropped.
-func parseStream(reader io.Reader, sink DeltaSink) (ModelResponse, error) {
-	return parseStreamWithStop(reader, sink, nil)
-}
-
-// parseStreamWithStop is parseStream with a chance to give up.
-//
-// The check runs once per chunk, which is the finest granularity available without
-// asking the transport to interrupt a read: chunks arrive many times a second, so
-// the user's wait after pressing stop is bounded by one packet rather than by the
-// rest of the answer.
-func parseStreamWithStop(reader io.Reader, sink DeltaSink, shouldStop func() bool) (ModelResponse, error) {
-	accumulator := newStreamAccumulator()
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
-
-	for scanner.Scan() {
-		if shouldStop != nil && shouldStop() {
-			return ModelResponse{}, CancelledError{}
-		}
-		line := strings.TrimRight(scanner.Text(), "\r")
-		if line == "" || strings.HasPrefix(line, ":") {
-			// Blank keep-alive lines and comments carry nothing.
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "" {
-			continue
-		}
-		if payload == "[DONE]" {
-			break
-		}
-
-		var chunk map[string]any
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			// One unreadable chunk must not lose the whole answer; the pieces that
-			// did arrive are still on the screen and still usable.
-			continue
-		}
-		if err := accumulator.feed(chunk, sink); err != nil {
-			return ModelResponse{}, err
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return ModelResponse{}, AsTransient("the stream broke off: %v", err)
-	}
-	return accumulator.response(), nil
-}
-
-type streamAccumulator struct {
+// The three protocols announce their increments with different event names and
+// different nesting, but once an increment has been identified it is one of three
+// things: answer text, reasoning text, or a fragment of a tool call. Accumulating
+// those three is identical everywhere — the joining rules below were learned from
+// real gateways and are not protocol-specific — so each dialect does only the
+// translation and this type does the bookkeeping.
+type responseAccumulator struct {
 	content      strings.Builder
 	reasoning    strings.Builder
 	hasContent   bool
@@ -85,50 +26,96 @@ type streamAccumulator struct {
 	order []int
 }
 
-func newStreamAccumulator() *streamAccumulator {
-	return &streamAccumulator{calls: map[int]*ToolCall{}}
+// nextIndex is the index a positional (non-streamed) caller should use.
+//
+// A whole response has no interleaving to preserve, so its tool calls are numbered
+// in the order they appear. The index still goes through the same map as the
+// streamed path, so both end up sorted and rendered by one piece of code.
+func (a *responseAccumulator) nextIndex() int { return len(a.order) }
+
+func newResponseAccumulator() *responseAccumulator {
+	return &responseAccumulator{calls: map[int]*ToolCall{}}
 }
 
-func (a *streamAccumulator) feed(chunk map[string]any, sink DeltaSink) error {
-	// Usage may arrive on its own chunk, including the one after the last content
-	// chunk, so it is read before anything else looks at `choices`.
-	if usage := extractUsage(chunk["usage"]); usage != nil {
-		a.usage = usage
+// text records a piece of the answer.
+func (a *responseAccumulator) text(piece string) {
+	if piece == "" {
+		return
 	}
-
-	choices, _ := chunk["choices"].([]any)
-	if len(choices) == 0 {
-		return nil
-	}
-	choice, _ := choices[0].(map[string]any)
-	delta, _ := choice["delta"].(map[string]any)
-	if delta == nil {
-		return nil
-	}
-
-	if text, ok := delta["content"].(string); ok && text != "" {
-		a.content.WriteString(text)
-		a.hasContent = true
-		a.chunks++
-		if sink != nil {
-			sink(text, "")
-		}
-	}
-
-	if reasoning := extractReasoning(delta); reasoning != nil && *reasoning != "" {
-		a.reasoning.WriteString(*reasoning)
-		a.hasReasoning = true
-		a.chunks++
-		if sink != nil {
-			sink("", *reasoning)
-		}
-	}
-
-	a.feedToolCalls(delta["tool_calls"])
-	return nil
+	a.content.WriteString(piece)
+	a.hasContent = true
+	a.chunks++
 }
 
-func (a *streamAccumulator) feedToolCalls(raw any) {
+// reasoningText records a piece of the model's thinking.
+func (a *responseAccumulator) reasoningText(piece string) {
+	if piece == "" {
+		return
+	}
+	a.reasoning.WriteString(piece)
+	a.hasReasoning = true
+	a.chunks++
+}
+
+// toolFragment records one piece of a tool call.
+//
+// The index is what the call is joined by — not arrival order. A gateway is free
+// to interleave the pieces of several calls, and joining by arrival produces calls
+// with the arguments of another call spliced into them. The name is **not**
+// appended when it repeats, because some gateways restate it in every fragment,
+// which naively concatenated gives `read_fileread_file`.
+func (a *responseAccumulator) toolFragment(index int, id, name, arguments string, nameIsAppendable bool) {
+	call, present := a.calls[index]
+	if !present {
+		call = &ToolCall{}
+		a.calls[index] = call
+		a.order = append(a.order, index)
+	}
+	if id != "" && call.ID == "" {
+		call.ID = id
+	}
+	if name != "" {
+		if nameIsAppendable {
+			call.Name += name
+		} else if !strings.Contains(call.Name, name) {
+			call.Name = name
+		}
+	}
+	if arguments != "" {
+		call.Arguments += arguments
+	}
+}
+
+// replaceToolCall overwrites a call with its finished form.
+//
+// It exists for the protocols that send both fragments and a final item: the
+// assembled fragments and the final value are two renderings of the same thing,
+// and appending the second to the first would produce arguments like
+// `{"path":"a"}{"path":"a"}` — valid-looking JSON that is not JSON. Overwriting is
+// the correct reading of "here is the whole thing".
+func (a *responseAccumulator) replaceToolCall(index int, id, name, arguments string) {
+	call, present := a.calls[index]
+	if !present {
+		call = &ToolCall{}
+		a.calls[index] = call
+		a.order = append(a.order, index)
+	}
+	if id != "" {
+		call.ID = id
+	}
+	if name != "" {
+		call.Name = name
+	}
+	if arguments != "" {
+		call.Arguments = arguments
+	}
+}
+
+// toolCalls feeds the chat completions `tool_calls` array of one chunk.
+//
+// This is the OpenAI shape: a list of `{index, id, function: {name, arguments}}`
+// entries where `arguments` accumulates as text.
+func (a *responseAccumulator) toolCalls(raw any) {
 	items, _ := raw.([]any)
 	for position, item := range items {
 		entry, ok := item.(map[string]any)
@@ -139,35 +126,22 @@ func (a *streamAccumulator) feedToolCalls(raw any) {
 		if value, ok := entry["index"]; ok {
 			index = intOf(value)
 		}
-		call, present := a.calls[index]
-		if !present {
-			call = &ToolCall{}
-			a.calls[index] = call
-			a.order = append(a.order, index)
-		}
-		if id, ok := entry["id"].(string); ok && id != "" && call.ID == "" {
-			call.ID = id
-		}
 		function, _ := entry["function"].(map[string]any)
-		if function == nil {
-			continue
+		id, _ := entry["id"].(string)
+		name, arguments := "", ""
+		if function != nil {
+			name, _ = function["name"].(string)
+			arguments, _ = function["arguments"].(string)
 		}
-		if name, ok := function["name"].(string); ok && name != "" && !strings.Contains(call.Name, name) {
-			// Restated names are not appended; a name that is genuinely split
-			// across chunks does not appear in the earlier piece, so this cannot
-			// drop a real fragment.
-			call.Name = name
-		}
-		if args, ok := function["arguments"].(string); ok {
-			call.Arguments += args
-		}
+		a.toolFragment(index, id, name, arguments, false)
 	}
 }
 
-func (a *streamAccumulator) response() ModelResponse {
+// response turns the accumulated pieces into the shared answer type.
+func (a *responseAccumulator) response(streamed bool) ModelResponse {
 	result := ModelResponse{
 		Usage:        a.usage,
-		Streamed:     true,
+		Streamed:     streamed,
 		StreamChunks: a.chunks,
 	}
 	if a.hasContent {
@@ -196,6 +170,139 @@ func (a *streamAccumulator) response() ModelResponse {
 	return result
 }
 
+// readSSE drives an SSE body, handing each decoded chunk to one dialect callback.
+//
+// The scanner rules are the protocol-independent parts, and each one corresponds
+// to something a gateway actually does: `data:` lines carry the payload, blank
+// lines and `:` comments (keep-alives) carry nothing, `[DONE]` ends the stream,
+// and one unreadable chunk must not lose the whole answer — the pieces that did
+// arrive are still on the screen and still usable.
+//
+// The callback may return an error, and that is how a failure delivered **inside**
+// the stream is handled. Not every protocol reports trouble with a status code: one
+// of them sends a mid-stream error event, and treating it as an unknown event would
+// return a truncated answer as if it were complete.
+func readSSE(body reader, sink DeltaSink, shouldStop func() bool, feed func(chunk map[string]any, accumulator *responseAccumulator) error) (ModelResponse, error) {
+	accumulator := newResponseAccumulator()
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 8<<20)
+
+	for scanner.Scan() {
+		if shouldStop != nil && shouldStop() {
+			return ModelResponse{}, CancelledError{}
+		}
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		// A dialect with named events (`event: content_block_delta`) still puts
+		// the whole payload in the `data:` line, so the event name is never
+		// needed: the JSON carries its own `type`. Skipping other field lines is
+		// therefore correct for all three protocols, not a shortcut for one.
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" {
+			continue
+		}
+		if payload == "[DONE]" {
+			break
+		}
+
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		if err := feed(chunk, accumulator); err != nil {
+			return ModelResponse{}, err
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return ModelResponse{}, AsTransient("the stream broke off: %v", err)
+	}
+	return accumulator.response(true), nil
+}
+
+// parseToolCallItems folds a whole (non-streamed) array of tool call entries.
+//
+// `idKeys` and `nameKeys` are lists because the three protocols spell them
+// differently (`id` versus `call_id`, `name` versus a nested `function.name`), and
+// passing the alternatives in keeps this from becoming three near-identical
+// functions.
+func parseToolCallItems(raw any, idKeys, nameKeys []string) []ToolCall {
+	items, _ := raw.([]any)
+	var out []ToolCall
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		call := ToolCall{ID: firstString(entry, idKeys...), Name: firstString(entry, nameKeys...)}
+		// `function` is a nested object in the chat completions shape only; in
+		// the flattened shapes the keys above already found the name.
+		if function, ok := entry["function"].(map[string]any); ok {
+			if call.Name == "" {
+				call.Name = firstString(function, nameKeys...)
+			}
+			call.Arguments = stringifyArguments(function["arguments"])
+		} else {
+			call.Arguments = stringifyArguments(firstValue(entry, "arguments", "input", "partial_json"))
+		}
+		if call.Name == "" {
+			continue
+		}
+		out = append(out, call)
+	}
+	return out
+}
+
+// stringifyArguments renders a tool call's arguments as the JSON text the tool
+// layer parses.
+//
+// The protocols disagree about the carrier: chat completions and the streaming
+// events hand over a JSON **string**, while the Messages shape hands back a parsed
+// **object** in `input`. `ToolCall.Arguments` is a string in both cases because
+// that is what the tools parse, so the object is converted back to text here —
+// this is the only place that difference is allowed to show.
+func stringifyArguments(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case map[string]any:
+		if len(typed) == 0 {
+			// An empty `input` is a tool call that takes no arguments. It is
+			// rendered as an empty object rather than as nothing, because the
+			// tool layer parses what it is given and "" is not JSON.
+			return "{}"
+		}
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return "{}"
+		}
+		return string(encoded)
+	default:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	}
+}
+
+// firstValue returns the value of the first key that is present.
+func firstValue(object map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, present := object[key]; present {
+			return value
+		}
+	}
+	return nil
+}
+
+// sortInts orders the tool call indices.
 func sortInts(values []int) {
 	for i := 1; i < len(values); i++ {
 		for j := i; j > 0 && values[j] < values[j-1]; j-- {
