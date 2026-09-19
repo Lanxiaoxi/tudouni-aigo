@@ -101,46 +101,43 @@ func (openaiDialect) parseStream(body reader, sink DeltaSink, shouldStop func() 
 	})
 }
 
-// applyOpenAIRequestFields merges the thinking knobs into a chat completions body.
+// applyOpenAIRequestFields writes the reasoning switch into a chat completions body.
 //
-// `state.RequestFields` describes the parameters the way the previous generation
-// wrote them: in SDK terms. Over there the dict goes to
-// `chat.completions.create(**fields)`, and the SDK treats `extra_body` as an
-// **escape hatch** — it merges that object into the top level of the JSON it
-// sends, which is the only way to reach a field the SDK has no type for. So the
-// wire body carries a top-level `thinking`, and the endpoint never sees the string
-// "extra_body".
+// **One field, not two.** This dialect used to send `thinking: {"type": "enabled"}` or
+// `{"type": "disabled"}` beside `reasoning_effort`, because that is what the previous
+// generation wrote: the OpenAI SDK treats `extra_body` as an escape hatch and merges
+// it into the top level, so the field reached the wire without the SDK having a type
+// for it. Writing the JSON by hand has no such requirement, and the second field
+// turned out to be pure liability — measured against a real gateway it is redundant
+// (`reasoning_effort` alone expresses on, off and the level), and an upstream that
+// does not know the field rejects the whole request with `json: unknown field
+// "thinking"`. A field nobody needs is not free: it is a rejection waiting for the one
+// gateway that has never heard of it.
 //
-// This package writes the JSON itself, so there is no SDK to do that merge. Copying
-// the fields across verbatim would put a literal `extra_body` object on the wire
-// and no `thinking` at all: `/thinking off` would reach the endpoint as nothing,
-// thinking would stay on and keep being billed, and a strict gateway would reject
-// the unknown parameter outright.
+// `"none"` is how thinking is turned off, and it is a real value of this parameter
+// rather than an invented one. It is not universally accepted — a thinking-only model
+// refuses it by name — and that refusal is what `Complete` recovers from by sending
+// the request again with nothing said about reasoning at all.
 func applyOpenAIRequestFields(body map[string]any, knobs ReasoningKnobs) {
 	if knobs.omit {
-		// Nothing to say. A thinking-only model answers 400 to any explicit "do not
-		// think" instruction, and the only request it accepts is silent on the
+		// Nothing to say. A thinking-only model refuses an explicit "do not think"
+		// instruction by name, and the only request it accepts is silent on the
 		// subject — so silence is what this state means, and it is different from
 		// "off".
 		return
 	}
 	if knobs.Thinking {
 		body["reasoning_effort"] = knobs.Effort
-		body["thinking"] = map[string]any{"type": "enabled"}
 		return
 	}
-	// When thinking is off, only the disabled marker is sent and no
-	// `reasoning_effort` goes out at all. Sending both would be asking the
-	// endpoint to reconcile a contradiction, and whichever way it resolves it,
-	// the bill shows it.
-	//
-	// This form is what the endpoints this program was built against expect, and it
-	// is worth keeping: replacing it with silence would make `/thinking off` a
-	// no-op on every model that merely *defaults* to thinking on. A model that
-	// cannot comply is handled by the refusal-and-retry in `Complete`, which
-	// produces this state's silence for that model alone.
-	body["thinking"] = map[string]any{"type": "disabled"}
+	body["reasoning_effort"] = offEffort
 }
+
+// offEffort is the value that means "do not reason".
+//
+// It is named rather than inlined because it is a protocol literal that appears in
+// the request builder and in the refusal detection, and the two have to agree.
+const offEffort = "none"
 
 // extractReasoning reads the thinking text from a message or a streaming delta.
 //

@@ -22,14 +22,18 @@ type ReasoningKnobs struct {
 	// Effort is the level. It has a value even when Thinking is false, so that
 	// turning thinking off and on again does not lose the level.
 	Effort string
-	// omit means "say nothing about reasoning", which is a third state and not the
-	// same as Thinking == false.
+	// omit means "say nothing about reasoning at all", which is a third state and
+	// not the same as turning it off.
 	//
 	// It exists because of a measured incompatibility: a thinking-only model refuses
-	// both `reasoning_effort: "none"` and `thinking: {"type": "disabled"}` with a 400,
-	// and the only request it accepts is one that does not mention reasoning at all.
+	// **both** `reasoning_effort: "none"` and `thinking: {"type": "disabled"}` by
+	// name, and the only request it accepts is one that does not mention reasoning.
 	// Saying "off" and saying "no opinion" are therefore different requests, and a
-	// protocol that cannot express "off" has to be given the latter.
+	// protocol that cannot express "off" for one model has to be given the latter.
+	//
+	// It is unexported because it is not a decision a caller makes — it is what the
+	// retry in `Complete` falls back to after an endpoint has refused the explicit
+	// instruction.
 	omit bool
 }
 

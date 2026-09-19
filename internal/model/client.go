@@ -479,22 +479,27 @@ func classifyHTTPError(status int, body string, endpoint string, streamOptionsPo
 // isThinkingRefusal recognises the refusal a model gives when it cannot be told not
 // to think.
 //
-// The wording is the endpoint's, and it is matched narrowly on purpose: a broad
-// match on the word "thinking" would also catch a genuine rejection of the
-// *enabled* form — which is a different problem, and one that retrying cannot fix.
-// What is matched here is a statement that the model is thinking-only, or that
-// disabling is what was refused. The parameter names are included because that is
-// how an endpoint names the offending field.
+// The wording is the endpoint's and is matched narrowly, because a broad match on the
+// word "thinking" would also catch a genuine rejection of the *enabled* form — a
+// different problem, and one that retrying cannot fix. Three phrasings have been
+// observed on real endpoints, and they are listed with what produced them:
+//
+//	"GLM-5.3 is a thinking-only model; disabling thinking
+//	 (reasoning_effort='none') is not supported"        — measured on glm-5.3, glm-5.2
+//	"invalid thinking: only type=enabled is allowed
+//	 for this model"                                    — measured on kimi-k2.7-code
+//
+// The parameter name is matched too, because that is how the same refusal is worded
+// when it does not use either phrase, and because `reasoning_effort` exists for this
+// switch and nothing else.
 func isThinkingRefusal(lowerBody string) bool {
 	switch {
 	case strings.Contains(lowerBody, "thinking-only"),
 		strings.Contains(lowerBody, "thinking only"),
 		strings.Contains(lowerBody, "disabling thinking"),
 		strings.Contains(lowerBody, "cannot disable thinking"),
+		strings.Contains(lowerBody, "only type=enabled"),
 		strings.Contains(lowerBody, "reasoning_effort"):
-		// A complaint that names `reasoning_effort` is about the reasoning switch
-		// even when it does not use any of the phrases above: this parameter exists
-		// for that switch and for nothing else.
 		return true
 	default:
 		return false

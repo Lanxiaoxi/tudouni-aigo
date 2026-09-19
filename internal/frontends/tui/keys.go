@@ -843,10 +843,13 @@ func (m model) overlayCount() int {
 
 // commitOverlay acts on the row under the cursor.
 //
-// Which panels close is decided by **who owns the outcome**: the theme is local
-// (a wrong pick is visible immediately, so pick-and-close), while model and
-// effort changes only the runtime can confirm — their panels stay up until the
-// notice arrives, and the notice is printed under the panel.
+// Which panels close is decided by **what is left to read**. `/theme` is local (a
+// wrong pick shows at once) and `/model` is answered by the runtime in the log —
+// a switch prints its own line whether it worked or not, which is all
+// `/model <name>` prints too — so both are pick-and-close: keeping the panel up
+// put that sentence behind the list that asked the question, and getting the
+// keyboard back cost an Esc. `/effort` and the MCP panel still wait on their
+// notice and draw it under the list.
 func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 	switch m.overlay.kind {
 	case overlayCommand:
@@ -897,7 +900,12 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 			m.overlay = overlay{}
 			return m, nil
 		case i18n.T("model.pick.title"):
-			m.overlay.waiting = i18n.T("picker.waiting", "value", picked.value)
+			// Pick-and-close. The list has done its job the moment Enter lands:
+			// the answer — "Switched to X …" or "not switched: …" — is a line the
+			// runtime writes into the log either way, so a panel held open on top
+			// of it was showing the same sentence in the one place it could not be
+			// read, and the next keystroke had to be Esc.
+			m.overlay = overlay{}
 			m.client.SetModel(picked.value)
 			return m, nil
 		case i18n.T("effort.pick.title"):
@@ -947,32 +955,38 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 // keeping the cursor where it was. A picker left open is live; a static
 // highlight on a value that is no longer current reads as "my press did
 // nothing".
+//
+// `/effort` is the only option picker that is still up when the answer lands —
+// `/theme` and `/model` close on Enter — so it is the only one that can have new
+// rows to derive. The waiting note is cleared only when the runtime's answer
+// arrives; a snapshot alone does not settle the panel.
 func (m *model) reloadOverlayOptions() {
 	if m.overlay.kind != overlayOptions || m.overlay.waiting == "" {
 		return
 	}
-	switch m.overlay.title {
-	case i18n.T("model.pick.title"):
-		m.overlay.options = m.modelOptions()
-	case i18n.T("effort.pick.title"):
+	if m.overlay.title == i18n.T("effort.pick.title") {
 		m.overlay.options = m.effortOptions()
 	}
-	// The waiting note is cleared only when the runtime's answer arrives; a
-	// snapshot alone does not settle the panel.
 }
 
-// settleOverlay writes the runtime's verdict onto a panel that asked for one.
+// settleOverlay writes the runtime's verdict onto the panel that asked for one.
 //
-// Only the model and effort notices settle the picker: other notices (the
-// startup lines, a warning about something else entirely) arrive while a panel
-// happens to be open, and letting those close it would be "pushed aside while
-// choosing". The sentence is reproduced verbatim because it carries facts this
-// program cannot reconstruct — which route lacked a key, which value is still
-// pending — and the panel stays up so it can be read before Esc.
+// `/effort` is the only panel left to write to: it stays up, and the sentence is
+// drawn under the list so it can be read before Esc. A `model` notice is not
+// written anywhere — `/model` is gone by the time it arrives, and the notice that
+// changes the value must not be pasted into whichever picker happens to be open
+// (a `/theme` list opened in the meantime would show a sentence about the model).
+// The panel decides by title, not by kind, for that reason.
+//
+// Other notices are ignored on purpose: the startup lines and warnings about
+// something else entirely arrive while a panel happens to be open, and writing
+// those into it would be "pushed aside while choosing". The sentence itself is
+// reproduced verbatim where it is shown: it carries facts this program cannot
+// reconstruct, such as which route lacked a key.
 func (m *model) settleOverlay(code, text string) {
 	switch code {
-	case "model", "effort":
-		if m.overlay.kind == overlayOptions {
+	case "effort":
+		if m.overlay.kind == overlayOptions && m.overlay.title == i18n.T("effort.pick.title") {
 			m.overlay.waiting = text
 		}
 	case "mcp":

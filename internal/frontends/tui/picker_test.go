@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 )
 
 // TestTheModelPickerMarksTheModelInEffect — the row in effect carries the dot, and
@@ -92,5 +95,92 @@ func TestAPickersNoteCarriesNoCurrentMarker(t *testing.T) {
 		if marked != 1 {
 			t.Errorf("%s: %d rows claim to be in effect, want exactly 1", name, marked)
 		}
+	}
+}
+
+// TestEnterOnAModelRowClosesThePicker — the model list is a "pick one and it goes
+// away" control, not something that stands there afterwards.
+//
+// It used to stay up for the whole round trip: first "waiting for the runtime to
+// apply X…", then the runtime's own sentence drawn under the list. That sentence
+// is appended to the log as well, so the panel was covering the one line that
+// answers "did it switch" with a copy of itself, and the keyboard only came back
+// after Esc — which is the whole of the complaint.
+func TestEnterOnAModelRowClosesThePicker(t *testing.T) {
+	withColour(t)
+
+	m := filledModel(120, 40)
+	m.railHidden = true
+	// nil stdin: `SetModel` writes nowhere, which is all a front-end test needs.
+	// What the runtime does with the name is `internal/runtime`'s business.
+	m.client = protocol.NewClient(nil)
+	m.panel.model = "deepseek/deepseek-flash"
+	m.modelCatalog = []any{
+		map[string]any{"provider": "deepseek", "id": "deepseek-flash"},
+		map[string]any{"provider": "deepseek", "id": "deepseek-v4-pro"},
+	}
+
+	m.openOptionPicker(i18n.T("model.pick.title"), m.modelOptions(), pickerStartNext)
+	if m.overlay.kind != overlayOptions {
+		t.Fatalf("the picker did not open: kind = %v", m.overlay.kind)
+	}
+	if chosen := m.overlay.options[m.overlay.cursor].value; chosen != "deepseek/deepseek-v4-pro" {
+		t.Fatalf("the cursor is on %q, want the row after the one in effect", chosen)
+	}
+
+	next, _ := m.handleOverlayKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+
+	if m.overlay.kind != overlayNone || m.overlay.waiting != "" {
+		t.Errorf("the picker survived Enter: kind = %v, cursor = %d, waiting = %q",
+			m.overlay.kind, m.overlay.cursor, m.overlay.waiting)
+	}
+	if rendered := stripANSI(m.renderOverlay(112)); rendered != "" {
+		t.Errorf("a closed overlay still draws:\n%s", rendered)
+	}
+}
+
+// TestAModelNoticeDoesNotSettleAnotherPicker — the notice belongs to the panel
+// that asked for it, and `/model` is not that panel any more.
+//
+// `settleOverlay` matched on the notice's code alone, so a model notice arriving
+// while a *theme* picker was open was written under the colour list as a warning
+// line: a fact about the model, under a list of palettes. With `/model` closing
+// on Enter there is no panel left for a model notice to settle at all, and the
+// title — not the kind — is what says so.
+func TestAModelNoticeDoesNotSettleAnotherPicker(t *testing.T) {
+	withColour(t)
+	setTheme(defaultTheme)
+	t.Cleanup(func() { setTheme(defaultTheme) })
+
+	m := filledModel(120, 40)
+	m.openOptionPicker(i18n.T("theme.pick.title"), pickerThemeOptions(), pickerStartCurrent)
+
+	m.settleOverlay("model", "Switched to deepseek/deepseek-v4-pro (previous: deepseek/deepseek-flash)")
+
+	if m.overlay.waiting != "" {
+		t.Errorf("a model notice was written into the theme picker: %q", m.overlay.waiting)
+	}
+	if rendered := stripANSI(m.renderOverlay(112)); strings.Contains(rendered, "Switched to") {
+		t.Errorf("the theme picker is drawing a sentence about the model:\n%s", rendered)
+	}
+}
+
+// TestAnEffortNoticeStillSettlesTheEffortPicker — the other half of the rule, and
+// the reason the title check is safe to add: the panel that *does* stay open still
+// takes its own answer.
+func TestAnEffortNoticeStillSettlesTheEffortPicker(t *testing.T) {
+	withColour(t)
+
+	m := filledModel(120, 40)
+	m.effortLevels = []string{"low", "high"}
+	m.panel.effort = "low"
+	m.openOptionPicker(i18n.T("effort.pick.title"), m.effortOptions(), pickerStartCurrent)
+
+	const notice = "Effort is now high."
+	m.settleOverlay("effort", notice)
+
+	if m.overlay.waiting != notice {
+		t.Fatalf("the effort picker did not take its own notice: %q", m.overlay.waiting)
 	}
 }

@@ -74,7 +74,8 @@ Summary contents: Python includes the autopilot cell; Go does not (M10).
 | overlay | open | keys | close | notes |
 |---|---|---|---|---|
 | command palette | `/` (both), `Ctrl+K` (both) | `↑↓`, `Enter` runs the row carrying the typed argument, typing filters | `Esc` (clears the line) | Go's palette is an overlay; Python's is an inline row. Parity of interaction. |
-| `/model` `/effort` picker | no argument | `↑↓`, `Enter` | `Esc` = nothing; the panel **stays up** after a pick until the runtime's notice arrives | parity |
+| `/model` picker | no argument | `↑↓`, `Enter` | `Esc` = nothing; **closes immediately** on pick (Go 4.1.1, a deliberate departure — `parity-tui.md` → "Deliberate departures") | Python keeps the panel up until the runtime's notice arrives |
+| `/effort` picker | no argument | `↑↓`, `Enter` | `Esc` = nothing; the panel **stays up** after a pick until the runtime's notice arrives | parity |
 | `/theme` picker | no argument | `↑↓`, `Enter` | `Esc` = nothing; **closes immediately** on pick | parity |
 | `/resume` picker | no argument | `↑↓`, `Enter` switches | `Esc` = nothing | parity; Go does not show the todo suffix (m14) |
 | `/mcp` panel | no argument | `↑↓`, `Enter`/`Space` toggle | `Esc` only closes | parity; **not opened on a bad argument** (M5); the "waiting for runtime" line replaces the hint line in both |

@@ -98,13 +98,11 @@ func thinkingOnlyGateway(t *testing.T) (*httptest.Server, *[]map[string]any) {
 		*bodies = append(*bodies, body)
 		mu.Unlock()
 
-		if _, mentionsThinking := body["thinking"]; mentionsThinking {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":` +
-				`"GLM-5.3 is a thinking-only model; disabling thinking (reasoning_effort='none') is not supported."}}`))
-			return
-		}
-		if _, mentionsEffort := body["reasoning_effort"]; mentionsEffort {
+		// The refusal is about being *told* not to think. `reasoning_effort: "none"` is
+		// what this program sends for that, and it is what two real models refused by
+		// name — glm-5.3 and kimi-k2.7-code. A body that says nothing about reasoning
+		// is accepted, which is the whole mechanism.
+		if off, present := body["reasoning_effort"]; present && off == offEffort {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":` +
 				`"GLM-5.3 is a thinking-only model; disabling thinking (reasoning_effort='none') is not supported."}}`))
@@ -119,11 +117,12 @@ func thinkingOnlyGateway(t *testing.T) (*httptest.Server, *[]map[string]any) {
 // TestAModelThatCannotStopThinkingIsAskedAgainWithoutTheInstruction covers the
 // measured incompatibility this exists for.
 //
-// A thinking-only model refuses both the disabled marker and an effort of "none"
-// with a 400. The request cannot be made to comply, so the only useful thing to do
-// is send it again saying nothing about reasoning — while keeping the explicit
-// instruction for the models that merely default to thinking on, where silence
-// would make `/thinking off` a no-op that still bills for thinking.
+// A thinking-only model refuses `reasoning_effort: "none"` by name — measured on
+// glm-5.3, glm-5.2 and kimi-k2.7-code, with two different wordings — and the request
+// cannot be made to comply. So it is sent again saying nothing about reasoning, while
+// the explicit instruction is kept for the first attempt, because on a model that
+// merely *defaults* to thinking on, silence would make `/thinking off` a no-op that
+// still bills for thinking.
 func TestAModelThatCannotStopThinkingIsAskedAgainWithoutTheInstruction(t *testing.T) {
 	server, bodies := thinkingOnlyGateway(t)
 	adapter := newTestAdapter(t, Options{
@@ -141,15 +140,16 @@ func TestAModelThatCannotStopThinkingIsAskedAgainWithoutTheInstruction(t *testin
 	}
 	// The first attempt is the explicit instruction, not silence: on a model that
 	// can comply, that is what makes the switch real.
-	if _, present := (*bodies)[0]["thinking"]; !present {
-		t.Error("the first attempt said nothing about thinking, so the switch was never asked for")
+	if got := (*bodies)[0]["reasoning_effort"]; got != offEffort {
+		t.Errorf("the first attempt sent reasoning_effort = %v, want %q", got, offEffort)
 	}
-	// The retry says nothing at all about reasoning — neither marker nor effort.
-	if _, present := (*bodies)[1]["thinking"]; present {
-		t.Errorf("the retry still carried the thinking marker: %#v", (*bodies)[1])
-	}
+	// The retry says nothing at all about reasoning. This is the state that no model
+	// has been observed to refuse.
 	if _, present := (*bodies)[1]["reasoning_effort"]; present {
 		t.Errorf("the retry still carried reasoning_effort: %#v", (*bodies)[1])
+	}
+	if _, present := (*bodies)[1]["thinking"]; present {
+		t.Errorf("the retry carried a thinking field: %#v", (*bodies)[1])
 	}
 }
 

@@ -66,46 +66,49 @@ func TestThinkingIsOnByDefaultInTheRequest(t *testing.T) {
 	if got := body["reasoning_effort"]; got != "high" {
 		t.Errorf("reasoning_effort = %v, want high", got)
 	}
-	thinking, ok := body["thinking"].(map[string]any)
-	if !ok {
-		t.Fatalf("thinking is not an object in the request: %#v", body["thinking"])
+	// **No second field.** `thinking` used to be sent beside this one, inherited from
+	// a generation that reached the wire through the OpenAI SDK's `extra_body` merge.
+	// Writing the JSON directly has no such need, the field is redundant — this one
+	// expresses on, off and the level — and an upstream that has never heard of it
+	// refuses the whole request with `json: unknown field "thinking"`. A field nobody
+	// needs is not free.
+	if _, present := body["thinking"]; present {
+		t.Errorf("thinking reached the wire: %#v", body["thinking"])
 	}
-	if thinking["type"] != "enabled" {
-		t.Errorf("thinking.type = %v, want enabled", thinking["type"])
-	}
-	// The escape hatch must not reach the endpoint: the SDK merges it into the
-	// body, and an endpoint that sees this key has been sent the plumbing.
+	// The escape hatch must not reach the endpoint either: the SDK merges it into
+	// the body, and an endpoint that sees this key has been sent the plumbing.
 	if _, present := body["extra_body"]; present {
 		t.Errorf("extra_body reached the wire: %#v", body["extra_body"])
 	}
 }
 
-// TestTurningThinkingOffChangesTheNextRequest mirrors the original's
-// `test_turning_thinking_off_changes_the_next_request`, including the half that is
-// easy to lose: with thinking off, `reasoning_effort` is **not** sent.
+// TestTurningThinkingOffChangesTheNextRequest keeps the switch real in both
+// directions.
 //
-// The endpoint ignores the pair together, but a field nobody reads only makes
-// whoever inspects the traffic believe it took effect.
+// Turning it off has to change the request, or the display says off while the model
+// keeps thinking and the bill keeps growing. The change is now a single field moving
+// to `"none"` rather than a marker appearing, and the invariant worth pinning is that
+// the two directions do not produce the same body.
 func TestTurningThinkingOffChangesTheNextRequest(t *testing.T) {
 	server, calls := gateway(t)
 	adapter := newTestAdapter(t, Options{
 		Route:    route(server.URL, "m", StyleOpenAI),
 		Thinking: true, Effort: "high",
 	})
+	completeOnce(t, adapter)
 
 	adapter.SetReasoning(false, "high")
 	completeOnce(t, adapter)
 
-	body := (*calls)[0].body
-	thinking, ok := body["thinking"].(map[string]any)
-	if !ok {
-		t.Fatalf("thinking is not an object in the request: %#v", body["thinking"])
+	on, off := (*calls)[0].body, (*calls)[1].body
+	if got := off["reasoning_effort"]; got != "none" {
+		t.Errorf("reasoning_effort while thinking is off = %v, want none", got)
 	}
-	if thinking["type"] != "disabled" {
-		t.Errorf("thinking.type = %v, want disabled", thinking["type"])
+	if got := on["reasoning_effort"]; got == off["reasoning_effort"] {
+		t.Error("turning thinking off produced the same request as leaving it on")
 	}
-	if got, present := body["reasoning_effort"]; present {
-		t.Errorf("reasoning_effort = %v is sent while thinking is off", got)
+	if _, present := off["thinking"]; present {
+		t.Errorf("thinking reached the wire: %#v", off["thinking"])
 	}
 }
 
@@ -128,27 +131,47 @@ func TestTheEffortSurvivesADisabledThinking(t *testing.T) {
 	if got := second["reasoning_effort"]; got != "max" {
 		t.Errorf("reasoning_effort after turning thinking back on = %v, want max", got)
 	}
-	thinking, _ := second["thinking"].(map[string]any)
-	if thinking["type"] != "enabled" {
-		t.Errorf("thinking.type = %v, want enabled", thinking["type"])
+	// The first request, made while thinking was off, must not have kept the level:
+	// the switch has to be visible in the body, not only in the interface.
+	if got := (*calls)[0].body["reasoning_effort"]; got != offEffort {
+		t.Errorf("reasoning_effort while thinking was off = %v, want %q", got, offEffort)
 	}
 }
 
-// TestApplyRequestFieldsKeepsTheThinkingMarkersFlat pins the merge itself, so a
-// future change to the request builder cannot quietly send the plumbing again.
-func TestApplyRequestFieldsKeepsTheThinkingMarkersFlat(t *testing.T) {
-	body := map[string]any{"model": "m"}
-	applyOpenAIRequestFields(body, ReasoningKnobs{Thinking: true, Effort: "max"})
+// TestApplyRequestFieldsWritesExactlyOneField pins the whole of what this function
+// is allowed to add.
+//
+// The count is the point. Every extra field here is one more thing an upstream can
+// refuse as unknown, and the one it used to add — `thinking` — was refused by name on
+// a real gateway. Writing that as "the body has these keys and no others" means a
+// future addition has to be deliberate rather than incidental.
+func TestApplyRequestFieldsWritesExactlyOneField(t *testing.T) {
+	on := map[string]any{"model": "m"}
+	applyOpenAIRequestFields(on, ReasoningKnobs{Thinking: true, Effort: "max"})
+	if got := on["reasoning_effort"]; got != "max" {
+		t.Errorf("reasoning_effort = %v, want max", got)
+	}
+	if len(on) != 2 {
+		t.Errorf("the body has %d keys, want 2 (model and reasoning_effort): %#v", len(on), on)
+	}
 
-	if body["reasoning_effort"] != "max" {
-		t.Errorf("reasoning_effort = %v, want max", body["reasoning_effort"])
+	off := map[string]any{"model": "m"}
+	applyOpenAIRequestFields(off, ReasoningKnobs{Thinking: false, Effort: "max"})
+	if got := off["reasoning_effort"]; got != offEffort {
+		t.Errorf("reasoning_effort = %v while thinking is off, want %q", got, offEffort)
 	}
-	thinking, ok := body["thinking"].(map[string]any)
-	if !ok || thinking["type"] != "enabled" {
-		t.Errorf("thinking = %#v, want {type: enabled}", body["thinking"])
+	if len(off) != 2 {
+		t.Errorf("the body has %d keys, want 2: %#v", len(off), off)
 	}
-	if _, present := body["extra_body"]; present {
-		t.Errorf("extra_body was not flattened: %#v", body)
+
+	// The state the retry falls back to says nothing at all about reasoning.
+	silent := map[string]any{"model": "m"}
+	applyOpenAIRequestFields(silent, ReasoningKnobs{Thinking: false, Effort: "max", omit: true})
+	if len(silent) != 1 {
+		t.Errorf("the fallback body has %d keys, want only the model: %#v", len(silent), silent)
+	}
+	if _, present := silent["extra_body"]; present {
+		t.Errorf("extra_body was not flattened: %#v", silent)
 	}
 }
 
