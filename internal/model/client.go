@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/proxy"
 )
 
 // streamUsageOption asks the gateway to report token usage on a streamed request.
@@ -125,7 +127,12 @@ func New(options Options) (*OpenAICompatible, error) {
 		if timeout == 0 {
 			timeout = 10 * time.Minute
 		}
-		client = &http.Client{Timeout: timeout}
+		// The transport is built rather than defaulted so that the machine's own
+		// proxy setting is followed. Go's zero-value transport reads only the
+		// environment, which on Windows is not where the browser reads it from —
+		// see internal/proxy for what that cost.
+		transport, _ := proxy.Transport()
+		client = &http.Client{Timeout: timeout, Transport: transport}
 	}
 	return &OpenAICompatible{
 		client:   client,

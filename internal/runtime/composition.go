@@ -19,6 +19,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/process"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/proxy"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -572,6 +573,25 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// reason to refuse to start — it is a reason to say so.
 	for _, line := range catalog.Problems {
 		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "catalog", line))
+	}
+
+	// [network] Which path requests take: a proxy, or none.
+	//
+	// Said out loud because this is the one fact about a request that a person
+	// cannot see anywhere else, and its absence has already cost real debugging
+	// time: a machine whose browser loaded the gateway fine while every model call
+	// died on a TLS handshake timeout, with nothing on screen to say the two were
+	// taking different routes. A message in a log is cheap next to that.
+	if problem := proxy.Problem(); problem != "" {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "network",
+			i18n.T("notice.proxy.problem", "problem", problem)))
+	}
+	if configured, source := proxy.Resolve(); configured != nil {
+		runtimeValue.notices = append(runtimeValue.notices, notice("info", "network",
+			i18n.T("notice.proxy.in_use", "url", configured.String(), "source", source)))
+	} else {
+		runtimeValue.notices = append(runtimeValue.notices, notice("info", "network",
+			i18n.T("notice.proxy.direct")))
 	}
 
 	asker := security.AskFunc(nil)
