@@ -103,16 +103,36 @@ and the Responses shape take `Authorization: Bearer <key>`; the Messages shape t
 one thing here that fails in a way that names the wrong cause — the endpoint answers
 "Missing API key" while the key is sitting in the request.
 
-Two tools exist for checking a configuration without starting a session:
+Three tools check a configuration without starting a session. They answer three
+different questions, which is why there are three:
 
 ```sh
-go run ./tools/checkconfig ~/.tudouni/config.json   # what it reads, where it will POST
+go run ./tools/checkconfig ~/.tudouni/config.json
 go run ./tools/probeconfig ~/.tudouni/config.json my-session-id [route]
+go run ./tools/probereachable ~/.tudouni/config.json my-session-id [model...]
 ```
 
-`probeconfig` sends one small request per route through the same code path the
-program uses, which is the only way to tell a wrong request shape from a wrong key
-before a real session does it for you. It spends quota.
+`checkconfig` reads the file through the same catalogue reader the program uses and
+prints what each route resolved to, including the endpoint it will actually POST to.
+It sends nothing, so it costs nothing, and it is the one to run after editing by
+hand.
+
+`probeconfig` sends one small request per route — non-streamed and streamed — through
+the same code path a session uses. It is the only way to tell a wrong request shape
+from a wrong key before a real session does it for you. An empty `api_style`, an
+inferred protocol and a header the configuration declared but nothing substituted are
+all visible here and nowhere else.
+
+`probereachable` asks **every** model in the file whether it answers, with no model
+names, or only the ones named. A catalogue entry is a claim, not a fact: a model can
+be listed by the vendor and still be refused for this account, for this region, or
+for a plan that does not include it. It separates the three outcomes that matter —
+answered, refused by the endpoint, and never reached — because they call for
+completely different actions. Pass model names to re-check only what changed; a
+region-restricted model will refuse every time, and there is no reason to pay for
+that answer twice.
+
+`probeconfig` and `probereachable` spend quota.
 
 The program creates this file for you the first time it finds no usable route, and
 tells you where it put it. `config.example.json` in this repository is only the
