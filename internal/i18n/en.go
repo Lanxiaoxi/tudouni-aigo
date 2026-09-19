@@ -103,6 +103,7 @@ var catalog = map[string]string{
 	"stop.cancelled":          "Interrupted",
 	"stop.model_error":        "Model failed",
 	"stop.model_fatal":        "Model failed (fatal)",
+	"stop.empty_response":     "No answer (thinking only)",
 
 	// --- the permission line ---------------------------------------------
 	"permission.line_prefix": "  · permission ",
@@ -117,6 +118,7 @@ var catalog = map[string]string{
 	"turn.state.other":       "{n} steps · {duration} · {outcome}",
 	"turn.max_steps_warning": "  ! Step limit reached — this turn did **not** wrap up; the session is fine, you can keep going.",
 	"turn.cancelled_warning": "  ! Stopped at your request (it stopped between two steps; the session is intact).",
+	"turn.empty_warning":     "  ! This turn produced no reply: the model spent both attempts thinking and never wrote an answer. **Nothing is missing from the session** — the request just got no text back (a gateway that drops a long answer after a long think looks exactly like this). Ask again, or rephrase; the turn itself is over.",
 
 	// --- the runtime process ending ----------------------------------------
 	//

@@ -89,8 +89,9 @@ func (openaiDialect) parseUnary(raw []byte) (ModelResponse, error) {
 	message, _ := choice["message"].(map[string]any)
 
 	result := ModelResponse{
-		Usage:     extractUsage(payload["usage"]),
-		Reasoning: extractReasoning(message),
+		Usage:        extractUsage(payload["usage"]),
+		Reasoning:    extractReasoning(message),
+		FinishReason: firstString(choice, "finish_reason"),
 	}
 	if content, ok := message["content"].(string); ok {
 		result.Content = &content
@@ -112,6 +113,12 @@ func (openaiDialect) parseStream(body reader, sink DeltaSink, shouldStop func() 
 			return nil
 		}
 		choice, _ := choices[0].(map[string]any)
+		// Read before the delta is examined: the chunk that carries the marker
+		// often carries no content at all, and skipping it is how a generation
+		// that ran out of room came to look exactly like one that chose to stop.
+		if finish := firstString(choice, "finish_reason"); finish != "" {
+			accumulator.finishReason = finish
+		}
 		delta, _ := choice["delta"].(map[string]any)
 		if delta == nil {
 			return nil

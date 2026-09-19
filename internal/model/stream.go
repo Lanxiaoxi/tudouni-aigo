@@ -21,6 +21,10 @@ type responseAccumulator struct {
 	hasReasoning bool
 	chunks       int
 	usage        *TokenUsage
+	// finishReason is the last one seen rather than the first: a gateway is free
+	// to send `null` on every content chunk and the real marker on the last one,
+	// and the last non-empty value is the one that describes the end.
+	finishReason string
 	// calls is keyed by index; order is recovered by sorting the keys at the end.
 	calls map[int]*ToolCall
 	order []int
@@ -143,6 +147,7 @@ func (a *responseAccumulator) response(streamed bool) ModelResponse {
 		Usage:        a.usage,
 		Streamed:     streamed,
 		StreamChunks: a.chunks,
+		FinishReason: a.finishReason,
 	}
 	if a.hasContent {
 		text := a.content.String()

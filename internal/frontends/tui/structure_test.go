@@ -175,7 +175,7 @@ func TestMultiLineEntryCountsItsRows(t *testing.T) {
 // separate exception type for the step limit.
 func TestStopReasonsAreDistinguishable(t *testing.T) {
 	seen := map[string]string{}
-	for _, reason := range []string{"answered", "max_steps", "cancelled", "model_error", "model_fatal"} {
+	for _, reason := range []string{"answered", "max_steps", "cancelled", "model_error", "model_fatal", "empty_response"} {
 		turn := &turnData{index: 1, steps: 3, finished: true, outcome: reason, duration: 4200 * time.Millisecond}
 		header := stripANSI(turnHeader(turn).plain())
 		if !strings.Contains(header, "4.2s") {
@@ -190,6 +190,27 @@ func TestStopReasonsAreDistinguishable(t *testing.T) {
 	turn := &turnData{index: 1, outcome: "some_new_reason", finished: true}
 	if !strings.Contains(turnHeader(turn).plain(), "some_new_reason") {
 		t.Error("an unknown stop reason must be shown verbatim")
+	}
+}
+
+// TestEmptyTurnSaysWhyTheSpaceIsBlank — a header reading "No answer (thinking
+// only)" over an empty turn is only readable if a line says the blank space is
+// the whole story. Without it the reader is left deciding whether the interface
+// lost the text.
+func TestEmptyTurnSaysWhyTheSpaceIsBlank(t *testing.T) {
+	m := filledModel(120, 36)
+	m.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
+	m.handleEvent(map[string]any{"kind": "run_finished", "run_id": "r1", "stop_reason": "empty_response", "duration_ms": 36000})
+
+	var body strings.Builder
+	for index := range m.transcript {
+		for _, row := range m.renderEntry(index, 90) {
+			body.WriteString(stripANSI(row))
+			body.WriteString("\n")
+		}
+	}
+	if !strings.Contains(body.String(), "no reply") {
+		t.Errorf("an empty turn drew no explanation:\n%s", body.String())
 	}
 }
 

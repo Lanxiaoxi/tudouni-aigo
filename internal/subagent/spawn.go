@@ -444,6 +444,13 @@ func stopReasonOf(runErr error, answer string) string {
 			return "max_steps"
 		case agent.RunCancelled:
 			return "cancelled"
+		case *agent.EmptyResponse:
+			// A child that thought and never spoke is "no output", not a failure:
+			// the parent's next move is to re-delegate or answer itself, and the
+			// error type exists only because the child's own loop needs a way to
+			// stop. Translating it here keeps the wording the parent already reads
+			// for an empty answer unchanged.
+			return "no_output"
 		}
 		if model.IsFatal(runErr) {
 			return "model_fatal"

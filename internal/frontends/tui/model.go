@@ -904,6 +904,14 @@ func (m *model) finishTurn(reason string, durationMS int) {
 		m.appendLine(renderLine{segments: []seg{
 			{text: i18n.T("turn.cancelled_warning"), role: "warn"},
 		}}, "notice", "")
+	case "empty_response":
+		// The header alone cannot carry this one. "Answered" over a blank turn is
+		// what the runtime used to say, and the only thing that makes the fixed
+		// wording readable is a line saying that the blank space is the whole
+		// story — nothing was lost, there was simply no text.
+		m.appendLine(renderLine{segments: []seg{
+			{text: i18n.T("turn.empty_warning"), role: "warn"},
+		}}, "notice", "")
 	}
 }
 

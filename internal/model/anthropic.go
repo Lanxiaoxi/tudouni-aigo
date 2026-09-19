@@ -292,7 +292,9 @@ func (anthropicDialect) parseUnary(raw []byte) (ModelResponse, error) {
 	if len(blocks) == 0 {
 		return ModelResponse{}, AsFatal("the response has no content blocks")
 	}
-	return readContentBlocks(blocks, extractAnthropicUsage(payload["usage"])), nil
+	result := readContentBlocks(blocks, extractAnthropicUsage(payload["usage"]))
+	result.FinishReason = firstString(payload, "stop_reason")
+	return result, nil
 }
 
 func (anthropicDialect) parseStream(body reader, sink DeltaSink, shouldStop func() bool) (ModelResponse, error) {
@@ -365,6 +367,14 @@ func (anthropicDialect) parseStream(body reader, sink DeltaSink, shouldStop func
 			// nothing — silently, and on every streamed call.
 			if usage := extractAnthropicUsage(chunk["usage"]); usage != nil {
 				accumulator.mergeUsage(usage)
+			}
+			// `stop_reason` is the same fact the other two protocols report as
+			// `finish_reason`, in this protocol's words (`end_turn`, `max_tokens`,
+			// `tool_use`). It is read here because this is where it arrives.
+			if delta, ok := chunk["delta"].(map[string]any); ok {
+				if reason := firstString(delta, "stop_reason"); reason != "" {
+					accumulator.finishReason = reason
+				}
 			}
 
 		case "error":

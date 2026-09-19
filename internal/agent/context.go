@@ -32,11 +32,24 @@ func (a *Agent) renderer() *context.Renderer {
 
 // noteText is the session-state line at the tail of the payload. It is per-round,
 // so it never enters history.
+//
+// The empty-response nudge rides here for the same reason and by the same rule:
+// it describes **this request**, not the conversation, and a copy of it in the
+// history would be read as a person complaining about the model — a line the
+// session would then carry forever. It also belongs at the very end: the retry's
+// prefix is the failed request's prefix unchanged, so the prompt cache of a long
+// session survives a nudge, which it would not if the line went in earlier.
 func (a *Agent) noteText() string {
-	if a.Notes == nil {
-		return ""
+	var parts []string
+	if a.Notes != nil {
+		if note := strings.TrimSpace(a.Notes()); note != "" {
+			parts = append(parts, note)
+		}
 	}
-	return strings.TrimSpace(a.Notes())
+	if a.emptyNudged {
+		parts = append(parts, emptyNudge)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // Payload is what actually goes out for this request.

@@ -85,6 +85,17 @@ type ModelResponse struct {
 	// Reasoning is the model's thinking, when the gateway reports it. It goes to
 	// the audit and to the interface; it is never fed back into the next request.
 	Reasoning *string
+	// FinishReason is the endpoint's own answer to "why did this generation end",
+	// passed through in its own vocabulary (`stop`, `length`, `tool_calls`,
+	// `end_turn`, `max_tokens`, `incomplete`…) because the three protocols do not
+	// agree on the words and translating them here would invent a fourth set.
+	//
+	// It is the one field that separates two failures that otherwise look
+	// identical from above: a generation the endpoint cut off because it ran out
+	// of output room, and one that ended deliberately with nothing to say. Empty
+	// means the endpoint reported none — which is itself the finding, because
+	// every protocol here announces the end of a stream.
+	FinishReason string
 	// Streamed reports whether this turn was delivered incrementally.
 	Streamed bool
 	// StreamChunks counts both kinds of increment (text and reasoning). It is

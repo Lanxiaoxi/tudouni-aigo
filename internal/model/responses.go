@@ -225,7 +225,24 @@ func (responsesDialect) parseUnary(raw []byte) (ModelResponse, error) {
 	accumulator := newResponseAccumulator()
 	accumulator.usage = extractResponsesUsage(payload["usage"])
 	accumulator.foldOutputItems(output)
+	accumulator.finishReason = responsesFinishReason(payload)
 	return accumulator.response(false), nil
+}
+
+// responsesFinishReason names why this shape's generation ended.
+//
+// This protocol has no `finish_reason` field: the state is `status`, and the
+// reason a generation was cut short lives one level down in
+// `incomplete_details.reason` (whose value for an output budget is
+// `max_output_tokens`). Reading only `status` would report "incomplete" and drop
+// the one word that says **why** — the same loss this field exists to prevent.
+func responsesFinishReason(payload map[string]any) string {
+	if details, ok := payload["incomplete_details"].(map[string]any); ok {
+		if reason := firstString(details, "reason"); reason != "" {
+			return reason
+		}
+	}
+	return firstString(payload, "status")
 }
 
 func (responsesDialect) parseStream(body reader, sink DeltaSink, shouldStop func() bool) (ModelResponse, error) {
@@ -298,6 +315,9 @@ func (responsesDialect) parseStream(body reader, sink DeltaSink, shouldStop func
 			response, _ := chunk["response"].(map[string]any)
 			if usage := extractResponsesUsage(response["usage"]); usage != nil {
 				accumulator.usage = usage
+			}
+			if reason := responsesFinishReason(response); reason != "" {
+				accumulator.finishReason = reason
 			}
 			// A gateway that streams the envelope but not the text deltas would
 			// otherwise return an empty answer. The items are folded only in that

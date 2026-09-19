@@ -24,10 +24,17 @@ type fakeModel struct {
 	installed bool
 	thinking  bool
 	effort    string
+	// seen records the messages of every request, so a test can ask what actually
+	// went out — the payload is not the history, and the difference is the point
+	// of several rules (the trailing note, the nudge).
+	seen [][]map[string]any
 }
 
 func (f *fakeModel) Complete(messages []map[string]any, toolSchemas []map[string]any,
 	options model.CompleteOptions) (model.ModelResponse, error) {
+	copied := make([]map[string]any, len(messages))
+	copy(copied, messages)
+	f.seen = append(f.seen, copied)
 	index := f.calls
 	f.calls++
 	if index < len(f.errs) && f.errs[index] != nil {
@@ -186,6 +193,131 @@ func toolCallResponse(id, name, arguments string) model.ModelResponse {
 }
 
 func textResponse(text string) model.ModelResponse { return model.ModelResponse{Content: &text} }
+
+// reasoningOnlyResponse is the failure this guard exists for: a step that
+// produced thinking and nothing else. `Content` stays nil — the pointer being
+// nil, not an empty string, is what a gateway sends when it answers with
+// `content: null`.
+func reasoningOnlyResponse(reasoning string) model.ModelResponse {
+	return model.ModelResponse{Reasoning: &reasoning}
+}
+
+// TestReasoningOnlyStepIsNudgedBack — a step with no content and no tool call is
+// not an answer. The turn asks once more, and the second attempt's answer is the
+// turn's answer.
+func TestReasoningOnlyStepIsNudgedBack(t *testing.T) {
+	chat := &fakeModel{script: []model.ModelResponse{
+		reasoningOnlyResponse("thinking hard about it"),
+		textResponse("here it is"),
+	}}
+	h := newHarness(t, chat, security.AlwaysAllow)
+
+	answer, err := h.agent.Run("hi")
+	if err != nil {
+		t.Fatalf("a nudged turn must not fail: %v", err)
+	}
+	if answer != "here it is" {
+		t.Fatalf("answer = %q, want the second attempt's text", answer)
+	}
+	if chat.calls != 2 {
+		t.Fatalf("model calls = %d, want 2 (the empty step plus the retry)", chat.calls)
+	}
+	if reason := lastStopReason(h.events); reason != StopAnswered {
+		t.Fatalf("stop_reason = %q, want %q", reason, StopAnswered)
+	}
+}
+
+// TestReasoningOnlyStepIsNotPersisted — the empty reply must not enter history.
+//
+// An assistant message with `content: null` and no tool call is a turn that never
+// happened: replayed into every later request it is noise, and it makes the
+// session file claim the model said something.
+func TestReasoningOnlyStepIsNotPersisted(t *testing.T) {
+	chat := &fakeModel{script: []model.ModelResponse{
+		reasoningOnlyResponse("thinking hard about it"),
+		textResponse("here it is"),
+	}}
+	h := newHarness(t, chat, security.AlwaysAllow)
+
+	if _, err := h.agent.Run("hi"); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range h.session.Messages {
+		if message["role"] != "assistant" {
+			continue
+		}
+		if content, _ := message["content"].(string); strings.TrimSpace(content) == "" {
+			t.Fatalf("an empty assistant message reached the session: %#v", message)
+		}
+	}
+}
+
+// TestEmptyTurnIsNotAnswered — when the second attempt is empty too, the turn
+// ends as its own outcome. "Answered" over a blank screen is the report this
+// exists to prevent, and the error carries it in words as well as in the enum.
+func TestEmptyTurnIsNotAnswered(t *testing.T) {
+	chat := &fakeModel{script: []model.ModelResponse{
+		reasoningOnlyResponse("thinking, attempt one"),
+		reasoningOnlyResponse("thinking, attempt two"),
+	}}
+	h := newHarness(t, chat, security.AlwaysAllow)
+
+	answer, err := h.agent.Run("hi")
+	if err == nil {
+		t.Fatal("an empty turn must report an error, not an empty answer")
+	}
+	var empty *EmptyResponse
+	if !errors.As(err, &empty) {
+		t.Fatalf("error = %#v, want *EmptyResponse", err)
+	}
+	if answer != "" {
+		t.Fatalf("answer = %q, want empty", answer)
+	}
+	if reason := lastStopReason(h.events); reason != StopEmptyResponse {
+		t.Fatalf("stop_reason = %q, want %q", reason, StopEmptyResponse)
+	}
+	if chat.calls != 2 {
+		t.Fatalf("model calls = %d, want 2 (one nudge, then stop)", chat.calls)
+	}
+}
+
+// TestNudgeRidesThePayloadOnly — the nudge is a fact about this request, so it
+// goes out with it and never enters the conversation.
+func TestNudgeRidesThePayloadOnly(t *testing.T) {
+	chat := &fakeModel{script: []model.ModelResponse{
+		reasoningOnlyResponse("thinking"),
+		textResponse("answer"),
+	}}
+	h := newHarness(t, chat, security.AlwaysAllow)
+
+	if _, err := h.agent.Run("hi"); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range h.session.Messages {
+		if content, _ := message["content"].(string); strings.Contains(content, "用户看不到思考过程") {
+			t.Fatalf("the nudge was written into history: %#v", message)
+		}
+	}
+	if len(chat.seen) != 2 {
+		t.Fatalf("requests seen = %d, want 2", len(chat.seen))
+	}
+	if payloadMentions(chat.seen[0], "用户看不到思考过程") {
+		t.Error("the first request already carried the nudge")
+	}
+	if !payloadMentions(chat.seen[1], "用户看不到思考过程") {
+		t.Error("the retry did not carry the nudge: the model is never told that nothing was visible")
+	}
+}
+
+// payloadMentions reports whether any message of a request carries the text.
+func payloadMentions(messages []map[string]any, text string) bool {
+	for _, message := range messages {
+		if content, ok := message["content"].(string); ok && strings.Contains(content, text) {
+			return true
+		}
+	}
+	return false
+}
 
 func TestAnsweredTurn(t *testing.T) {
 	chat := &fakeModel{script: []model.ModelResponse{textResponse("hello")}}
