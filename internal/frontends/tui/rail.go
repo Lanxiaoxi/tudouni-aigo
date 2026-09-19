@@ -233,9 +233,15 @@ func (m model) sessionRows() []string {
 		if name == "" {
 			name = "?"
 		}
+		// The row's own vocabulary: `AgentMDForDisplay` marks a file that could not
+		// be injected with `status: "failed"` and puts the reason under `problem`.
+		// This used to look for `failed` and `reason`, which nothing writes — so a
+		// file that failed was drawn as though it had loaded, with the line count
+		// where its reason should be, and the one case the mark exists for was the
+		// one case that never got it.
 		failed := false
-		if value, ok := row["failed"].(bool); ok {
-			failed = value
+		if value, ok := row["status"].(string); ok {
+			failed = value == "failed"
 		}
 		truncated := false
 		if value, ok := row["truncated"].(bool); ok {
@@ -252,7 +258,7 @@ func (m model) sessionRows() []string {
 		}
 		detail := ""
 		if failed {
-			detail, _ = row["reason"].(string)
+			detail, _ = row["problem"].(string)
 		} else {
 			lines := intOf(row["lines"])
 			detail = i18n.Tn("rail.session.agent_md_lines", lines, "n", lines)

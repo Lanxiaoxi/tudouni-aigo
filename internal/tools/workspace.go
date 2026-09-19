@@ -71,6 +71,15 @@ func (w *Workspace) Root() string { return w.root }
 // The comparison is made on resolved paths, so `..` and symlinks both land on the
 // same check — "create a link that points at .tudouni and write through it" goes
 // through this door like everything else.
+//
+// Resolution is best-effort because a path that does not exist yet has nothing to
+// resolve, and that is the ordinary case for a file about to be created. When
+// `EvalSymlinks` cannot answer, the string comparison above is only as good as the
+// claim that nothing in the path is a link — so the path is walked, component by
+// component, and a link found that way is refused rather than compared. See
+// `linkedComponent`: on Windows this is the difference between a boundary and a
+// suggestion, because a junction makes `EvalSymlinks` fail while still leading out
+// of the workspace.
 func (w *Workspace) SafePath(path string) (string, error) {
 	target := path
 	if !filepath.IsAbs(target) {
@@ -86,7 +95,48 @@ func (w *Workspace) SafePath(path string) (string, error) {
 	if !within(absolute, w.root) {
 		return "", fmt.Errorf("Path escapes workspace")
 	}
+	if link := w.linkedComponent(absolute); link != "" {
+		return "", fmt.Errorf("Path goes through a link this program cannot resolve, so it cannot tell whether it stays inside the workspace: %s", link)
+	}
 	return absolute, nil
+}
+
+// linkedComponent returns the first component of path, walking down from the
+// workspace root, that is a filesystem link — or "" when there is none.
+//
+// This is the check `filepath.EvalSymlinks` cannot make by itself. On Windows a
+// junction, which needs no privilege to create, makes `EvalSymlinks` fail; the
+// caller keeps the unresolved path when it does, and a string comparison then
+// says "inside the workspace" about a name that leads somewhere else. Walking from
+// the root is what turns that into a refusal, and starting at the root rather than
+// at the path is the point: the answer has to be about the way in, not about the
+// last name in it.
+//
+// A component that is not there yet ends the walk. It cannot be a link, and
+// neither can anything under it — this is the ordinary case for a file about to be
+// created, which is why the caller tolerates an unresolved path at all.
+func (w *Workspace) linkedComponent(path string) string {
+	rel, err := filepath.Rel(w.root, path)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		// Not inside the workspace: `within` has already refused this, and there
+		// is no chain of workspace components left to walk.
+		return ""
+	}
+	current := w.root
+	for _, name := range strings.Split(rel, string(filepath.Separator)) {
+		if name == "" || name == "." {
+			continue
+		}
+		current = filepath.Join(current, name)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return ""
+		}
+		if info.Mode()&os.ModeSymlink != 0 || isReparsePoint(info) {
+			return current
+		}
+	}
+	return ""
 }
 
 // WritablePath resolves a path for a write and refuses the control plane.

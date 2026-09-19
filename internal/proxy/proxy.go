@@ -46,9 +46,9 @@ import (
 // package exists to remove, and hiding the path again at the last step would put
 // it back.
 func Resolve() (*url.URL, string) {
-	if value := environment(); value != "" {
+	if name, value := environment(); value != "" {
 		if parsed, err := parse(value); err == nil {
-			return parsed, "environment (HTTPS_PROXY)"
+			return parsed, "environment (" + name + ")"
 		}
 	}
 	if parsed, found, _ := System(); found {
@@ -82,9 +82,9 @@ func System() (*url.URL, bool, error) { return system() }
 // the machine's proxy had been skipped; on a network reachable only through it, every
 // model call then timed out with nothing on screen pointing at the cause.
 func Problem() string {
-	if value := environment(); value != "" {
+	if name, value := environment(); value != "" {
 		if _, err := parse(value); err != nil {
-			return "HTTPS_PROXY is set to " + value + " but is not a usable proxy address: " + err.Error()
+			return name + " is set to " + value + " but is not a usable proxy address: " + err.Error()
 		}
 		// The environment wins over the system setting, so a machine setting that was
 		// refused is not what took effect and is not worth reporting alongside it.
@@ -105,18 +105,25 @@ func Problem() string {
 // mistake that reads as "the environment was ignored".
 var proxyVariables = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"}
 
-// environment reads the proxy variables Go itself would read.
+// environment reads the proxy variables Go itself would read, and reports which
+// spelling supplied the value.
+//
+// The name is returned rather than assumed. All four spellings are read, and a
+// description that always says `HTTPS_PROXY` is simply wrong on the machine that
+// sets only `HTTP_PROXY` — the common case on Linux. The description is the whole
+// point of this package (see Resolve), so it has to name the variable that was
+// actually used.
 //
 // The lowercase spellings are checked too: they are the documented form, and a
 // machine that sets only `https_proxy` — which every other tool on it honours —
 // must not be the one machine where this program goes direct.
-func environment() string {
+func environment() (string, string) {
 	for _, name := range proxyVariables {
 		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
-			return value
+			return name, value
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // parse accepts what the proxy variables accept: a full URL, or a bare

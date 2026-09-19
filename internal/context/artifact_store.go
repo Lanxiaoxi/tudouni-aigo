@@ -108,12 +108,16 @@ type ArtifactStore struct {
 	// Clock is injectable so tests can pin creation times.
 	Clock func() float64
 
-	mu     sync.Mutex
-	items  map[string]Artifact
-	order  []string
-	cache  map[string]string
-	byKey  map[string]string
-	loaded bool
+	mu    sync.Mutex
+	items map[string]Artifact
+	order []string
+	cache map[string]string
+	// cacheOrder is the insertion order of `cache`, oldest first. It exists
+	// because the map cannot answer "which one went in first", and eviction that
+	// does not know that is not the FIFO it is documented to be.
+	cacheOrder []string
+	byKey      map[string]string
+	loaded     bool
 }
 
 // OpenArtifactStore prepares the store for a session directory. The directory
@@ -157,6 +161,7 @@ func (s *ArtifactStore) Load() []string {
 func (s *ArtifactStore) loadLocked() []string {
 	s.items = map[string]Artifact{}
 	s.cache = map[string]string{}
+	s.cacheOrder = nil
 	s.byKey = map[string]string{}
 	s.order = nil
 	s.loaded = true
@@ -479,15 +484,23 @@ func (s *ArtifactStore) MetadataOf(artifactID string) map[string]any {
 }
 
 func (s *ArtifactStore) rememberLocked(artifactID, text string) {
+	if _, warm := s.cache[artifactID]; !warm {
+		s.cacheOrder = append(s.cacheOrder, artifactID)
+	}
 	s.cache[artifactID] = text
 	// Eviction is FIFO rather than LRU on purpose: the goal is only "do not read
 	// the disk on every step", and LRU would require reordering on every hit —
 	// an expense paid on every step for a marginal gain.
-	for len(s.cache) > CacheEntries {
-		for oldest := range s.cache {
-			delete(s.cache, oldest)
-			break
-		}
+	//
+	// `cacheOrder` is what makes that FIFO true rather than aspirational: ranging
+	// over the map would hand back whichever key Go felt like, which can be the
+	// entry that was just read from disk. An id deleted underneath the order (see
+	// Delete) is skipped when it comes up, because the loop asks the cache
+	// whether anything was actually dropped.
+	for len(s.cache) > CacheEntries && len(s.cacheOrder) > 0 {
+		oldest := s.cacheOrder[0]
+		s.cacheOrder = s.cacheOrder[1:]
+		delete(s.cache, oldest)
 	}
 }
 
@@ -567,13 +580,18 @@ func clip(lines []string, first, last, total int, maxChars *int) Snippet {
 			end = first + offset
 			continue
 		}
-		head := 0
-		if len(kept) == 0 {
-			head = 1
+		// The separator is the newline **between** lines, so it is owed from the
+		// second line on — the same account the unlimited branch above keeps. It
+		// used to be charged to the first line instead, which under-counted a run
+		// of n lines by n-2 and let the snippet through a budget it had been
+		// measured against.
+		separator := 0
+		if len(kept) > 0 {
+			separator = 1
 		}
-		if used+head+runeLen(line) <= *maxChars {
+		if used+separator+runeLen(line) <= *maxChars {
 			kept = append(kept, line)
-			used += head + runeLen(line)
+			used += separator + runeLen(line)
 			end = first + offset
 			continue
 		}
@@ -583,7 +601,11 @@ func clip(lines []string, first, last, total int, maxChars *int) Snippet {
 			// "already have content" branch is what made degradation return the
 			// whole body again and again while the level genuinely changed — so
 			// nothing in the log or the level told you it was stuck.
-			allowance := *maxChars - head
+			//
+			// The ellipsis is a character too, so one is held back from the
+			// budget for it. Taking it out of `separator` is what this used to
+			// do, and a newline is not what that character is.
+			allowance := *maxChars - 1
 			if allowance < 1 {
 				allowance = 1
 			}

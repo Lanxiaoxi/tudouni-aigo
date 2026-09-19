@@ -100,12 +100,23 @@ func (anthropicDialect) encode(request dialectRequest) (map[string]any, error) {
 	// no `reasoning_effort` in this shape, and there is no `thinking` field in the
 	// chat completions shape: sending either one to the wrong endpoint is an
 	// unknown-parameter rejection.
-	if request.knobs.Thinking {
+	//
+	// `omit` is looked at first, and it is the one state that writes nothing at
+	// all. It is what `Complete` retries with after an endpoint refused to be told
+	// "do not think" (see ReasoningKnobs), and the only request that endpoint
+	// accepts is one that does not mention reasoning. Writing
+	// `{"type":"disabled"}` here would send the refused shape a second time, byte
+	// for byte, and turn one recoverable refusal into a model that can never be
+	// called on this route again.
+	switch {
+	case request.knobs.omit:
+		// Deliberately nothing: silence is the third state, and it is not "off".
+	case request.knobs.Thinking:
 		body["thinking"] = map[string]any{
 			"type":          "enabled",
 			"budget_tokens": thinkingBudget(request.knobs.Effort),
 		}
-	} else {
+	default:
 		body["thinking"] = map[string]any{"type": "disabled"}
 	}
 
@@ -340,11 +351,20 @@ func (anthropicDialect) parseStream(body reader, sink DeltaSink, shouldStop func
 			}
 
 		case "message_delta":
-			// The complete usage block arrives last, and it replaces the partial
-			// one from `message_start` rather than accumulating onto it: both
-			// describe the same request.
+			// This event carries the **final** `output_tokens` and nothing else.
+			// `input_tokens`, `cache_read_input_tokens` and the cache-creation
+			// count are announced once, in `message_start`, and never repeated —
+			// so this merges field by field.
+			//
+			// It used to replace the block wholesale, on the reading that both
+			// events describe the same request. They do, but they do not describe
+			// the same *fields*: `extractAnthropicUsage` reads the two prompt
+			// counters as 0 out of a delta, and the "all three are zero" guard
+			// below does not catch it because `output_tokens` is not zero. The
+			// result was a real measurement recorded as a request that sent
+			// nothing — silently, and on every streamed call.
 			if usage := extractAnthropicUsage(chunk["usage"]); usage != nil {
-				accumulator.usage = usage
+				accumulator.mergeUsage(usage)
 			}
 
 		case "error":
@@ -415,4 +435,34 @@ func extractAnthropicUsage(raw any) *TokenUsage {
 		return nil
 	}
 	return usage
+}
+
+// mergeUsage folds a later usage block into the one already held, field by field.
+//
+// The Messages protocol splits one measurement across two events, and the split is
+// not symmetric: `message_start` reports the prompt (with its cache counts) and an
+// opening `output_tokens`, while `message_delta` reports the final `output_tokens`
+// and leaves every other field absent. A field that is absent arrives as zero, and
+// zero here means "not in this block", not "nothing was sent" — so a zero must not
+// overwrite a number that was actually measured.
+//
+// A real zero output count and a missing one are therefore treated alike. That is
+// the safe direction: `extractAnthropicUsage` has already refused a block that is
+// zero in all three fields, so what reaches here carries at least one measurement,
+// and keeping a stale-completion figure is not a possibility — the later event is
+// the one that reports completions.
+func (a *responseAccumulator) mergeUsage(usage *TokenUsage) {
+	if a.usage == nil {
+		a.usage = usage
+		return
+	}
+	if usage.PromptTokens != 0 {
+		a.usage.PromptTokens = usage.PromptTokens
+	}
+	if usage.CachedTokens != 0 {
+		a.usage.CachedTokens = usage.CachedTokens
+	}
+	if usage.CompletionTokens != 0 {
+		a.usage.CompletionTokens = usage.CompletionTokens
+	}
 }

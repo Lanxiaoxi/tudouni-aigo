@@ -175,7 +175,12 @@ func NewJobBoardForSession(sessionID string, clock func() float64) *JobBoard {
 // prune removes leftover output files and reports how many there were.
 //
 // A file that cannot be deleted does not stop startup: the alternative is refusing
-// to run because of a file nobody needs, and the count is reported anyway.
+// to run because of a file nobody needs. It is counted all the same, because the
+// number is not "how many did I manage to unlink" — it is "what did the previous run
+// leave here", which is the fact the start-up notice is built on ("that session did
+// not exit cleanly, so those commands may still be running"). Reporting only the
+// successes would drop the warning in exactly the case where something is holding
+// the files open.
 func (b *JobBoard) prune() int {
 	entries, err := os.ReadDir(b.dir)
 	if err != nil {
@@ -186,11 +191,11 @@ func (b *JobBoard) prune() int {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".out") {
 			continue
 		}
-		if err := os.Remove(filepath.Join(b.dir, entry.Name())); err == nil {
-			count++
-		} else {
-			count++
-		}
+		// This used to be `if err == nil { count++ } else { count++ }`, which claimed
+		// to tell the two outcomes apart and did not: it made the next reader believe
+		// a failed removal was handled somewhere.
+		_ = os.Remove(filepath.Join(b.dir, entry.Name()))
+		count++
 	}
 	return count
 }

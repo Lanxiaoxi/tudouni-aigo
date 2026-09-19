@@ -173,9 +173,11 @@ func (r *Renderer) MissingLine(artifact Artifact) string {
 //  3. the body is gone → MissingLine;
 //  4. it references no artifact at all (legacy session, or a plain tool message)
 //     → pass through;
-//  5. the reference exists but this side has no item for it (should not happen)
-//     → pass through the reference as-is. The only case where sending slightly
-//     too much beats dropping information.
+//  5. the reference exists but this side has no item for it (the ledger did not
+//     restore) → the body straight from the store, at the preview level. There is
+//     no decided level to look up, and the alternative is not "slightly too much"
+//     but "nothing at all": `message["content"]` in this shape *is* the reference
+//     line, so passing it through sends a pointer the model cannot follow.
 func (r *Renderer) RenderToolContent(message map[string]any) string {
 	artifactID := ArtifactIDOf(message)
 	if artifactID == "" {
@@ -185,8 +187,24 @@ func (r *Renderer) RenderToolContent(message map[string]any) string {
 
 	item := r.Manager.Item(artifactID)
 	if item == nil {
-		content, _ := message["content"].(string)
-		return content
+		// The context ledger has no entry for this reference, so no level was ever
+		// decided for it: the state block did not decode, or was written by a
+		// version that lost it. Sending `message["content"]` here — which in this
+		// shape **is** the reference line, `[artifact art_… · 12480 字符 · read_file]`
+		// — would hand the model a pointer it cannot follow, and that body would
+		// then be invisible for the rest of the session.
+		//
+		// So the body comes from the store instead, at the preview level: the
+		// content is real, and the line count bounds it, because there is no budget
+		// decision left here to bound it any other way. When the store has nothing
+		// either, the reference line itself is all that is left — it still names the
+		// size and the tool, which is more than an empty string.
+		stored, ok := r.Store.Get(artifactID)
+		if !ok {
+			content, _ := message["content"].(string)
+			return content
+		}
+		return r.RenderArtifact(stored, RepresentationPreview, nil).Text
 	}
 
 	if item.Removed {

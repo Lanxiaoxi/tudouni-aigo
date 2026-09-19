@@ -68,7 +68,16 @@ func Summarize(events []map[string]any) map[string]any {
 				asks++
 			}
 		case "permission":
-			permissionWaits++
+			// Only a call that actually asked somebody counts as a wait. A
+			// verdict is written for **every** call, whether or not anybody was
+			// asked, and `waited_ms` is the field that says a person was: the
+			// gate sets it only when the question went out. Counting the verdicts
+			// instead made the status screen's "of which N approval waits" equal
+			// the number of tool calls — a figure that tells nobody anything, and
+			// that says people were interrupted N times when they were not.
+			if _, asked := item["waited_ms"]; asked {
+				permissionWaits++
+			}
 		}
 	}
 

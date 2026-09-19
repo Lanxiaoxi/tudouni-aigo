@@ -225,8 +225,16 @@ func (s *SessionStore) Save(session *Session) error {
 			"name", session.SessionID, "before", mark.messages, "after", len(session.Messages)))
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// O_RDWR as well as append: the tail of the file has to be read before
+	// anything is written to it, and that needs a readable handle. Every write
+	// still lands at the end, which is all O_APPEND was ever for.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
+		delete(s.watermark, session.SessionID)
+		return err
+	}
+	if err := closeHalfLine(file); err != nil {
+		file.Close()
 		delete(s.watermark, session.SessionID)
 		return err
 	}
@@ -321,6 +329,43 @@ func (s *SessionStore) Save(session *Session) error {
 	return nil
 }
 
+// closeHalfLine makes sure the file ends with a newline before anything is
+// appended to it.
+//
+// A process killed mid-write, or a disk that filled up, leaves a record with no
+// terminating newline. `Load` skips what it cannot parse on purpose, but an
+// append onto the end of that half line welds the next record to it — and then
+// the half line has taken a whole record down with it, which is exactly what the
+// tolerance in `Load` exists to prevent. The record it takes is often an
+// assistant turn carrying `tool_calls`, whose paired results are each on their
+// own line and therefore survive: history then holds results whose calls are
+// missing, and every later request is refused.
+//
+// The file is append-only and this writes in append mode, so the newline this
+// adds cannot land anywhere but the end. A blank line at the end is harmless:
+// `Load` skips empty lines.
+func closeHalfLine(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	// ReadAt rather than Seek: the handle is in append mode, where the offset a
+	// write uses is not the offset a seek sets. Reading at an explicit offset
+	// keeps this from becoming a second thing that moves the file position.
+	var last [1]byte
+	if _, err := file.ReadAt(last[:], info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+	_, err = file.Write([]byte{'\n'})
+	return err
+}
+
 // Load replays a session file back into a Session.
 //
 // `head` supplies the creation time, `meta` and `ctx` take the last one seen,
@@ -385,7 +430,20 @@ func (s *SessionStore) Load(id string) (*Session, error) {
 	}
 	mark.messages = len(session.Messages)
 	mark.ctxSeen = session.Context != nil
-	s.watermark[id] = mark
+
+	// The mutex, because `Save` holds it for its whole body and the two really do
+	// run at once: a turn is on its own goroutine, and the session picker lists
+	// the stored sessions — `Load` included — from the protocol read loop. It
+	// matters twice over. An unsynchronised write here is the crash the field
+	// comment describes, and overwriting a mark that `Save` has already advanced
+	// beyond what this read saw would make the next save append those messages a
+	// second time. A session that is already tracked therefore keeps its mark;
+	// this only seeds one for a file nobody is writing.
+	s.mu.Lock()
+	if _, tracked := s.watermark[id]; !tracked {
+		s.watermark[id] = mark
+	}
+	s.mu.Unlock()
 	return session, nil
 }
 

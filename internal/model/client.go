@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/proxy"
 )
@@ -456,7 +457,15 @@ func endpointURL(baseURL, path string) string {
 func classifyHTTPError(status int, body string, endpoint string, streamOptionsPossible bool) error {
 	trimmed := strings.TrimSpace(body)
 	if len(trimmed) > 600 {
-		trimmed = trimmed[:600] + "…"
+		// Cut back to a character boundary before slicing. These endpoints answer
+		// a bad request in Chinese, so byte 600 lands inside a rune roughly half
+		// the time, and an error string with an invalid tail travels into the
+		// audit and onto the screen as mojibake.
+		cut := 600
+		for cut > 0 && !utf8.RuneStart(trimmed[cut]) {
+			cut--
+		}
+		trimmed = trimmed[:cut] + "…"
 	}
 	summary := fmt.Sprintf("HTTP %d from %s: %s", status, endpoint, trimmed)
 

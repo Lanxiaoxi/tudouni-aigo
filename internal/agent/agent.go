@@ -554,6 +554,11 @@ type prepared struct {
 	call      model.ToolCall
 	tool      tools.Tool
 	arguments map[string]any
+	// parallel says the batch this call belongs to ran together. It is recorded
+	// on the result, because whether a batch runs in parallel is only known once
+	// every call in it has been inspected — one tool that is not parallel-safe
+	// demotes the whole batch — and the call event is written before that.
+	parallel bool
 	// failure is set when the call cannot run; the text is what the model sees.
 	failure     string
 	failureKind string // "invalid_args" | "denied"
@@ -593,6 +598,14 @@ func (a *Agent) runBatch(calls []model.ToolCall) error {
 			parallel = false
 		}
 		batch = append(batch, item)
+	}
+
+	// The mode is a property of the whole batch, so it is written down only now
+	// that nothing can change it. The audit's timing reads it from the results:
+	// a parallel batch's per-call durations overlap, and a summary that took them
+	// for serial work counted the batch twice.
+	for i := range batch {
+		batch[i].parallel = parallel
 	}
 
 	if parallel {
@@ -638,7 +651,7 @@ func (a *Agent) inspect(index int, call model.ToolCall) prepared {
 
 	tool, known := a.Tools.Get(call.Name)
 	if !known {
-		a.reportToolCall(item, false)
+		a.reportToolCall(item)
 		return failPrepared(item, statusInvalidArgs, "没有这个工具："+call.Name+"。请改用已注册的工具。")
 	}
 	item.tool = tool
@@ -646,12 +659,12 @@ func (a *Agent) inspect(index int, call model.ToolCall) prepared {
 	arguments := map[string]any{}
 	if strings.TrimSpace(call.Arguments) != "" {
 		if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
-			a.reportToolCall(item, false)
+			a.reportToolCall(item)
 			return failPrepared(item, statusInvalidArgs, "参数不是合法 JSON："+err.Error())
 		}
 	}
 	item.arguments = arguments
-	a.reportToolCall(item, false)
+	a.reportToolCall(item)
 	return item
 }
 
@@ -729,6 +742,14 @@ func (a *Agent) reportToolResult(item *prepared, durationMs int, ok bool) {
 		"chars":       len([]rune(item.result)),
 		"duration_ms": durationMs,
 	}
+	if item.parallel {
+		// The audit's timing has to tell a batch's overlapping durations from a
+		// serial call's, or it adds them up and reports a turn that took longer
+		// than it did. This is the only field it reads to do that, and until it
+		// was written the whole "how much did running together save" figure was
+		// dead: no result was ever marked, so every batch was measured as serial.
+		data["parallel"] = true
+	}
 	// The tool's own audit fields are passed through: it knows things the agent
 	// cannot derive (an exit code, how a question was answered, which skill action
 	// happened), and they are what makes the log worth reading.
@@ -781,15 +802,20 @@ func (a *Agent) runParallel(batch []prepared) {
 	}))
 }
 
-func (a *Agent) reportToolCall(item prepared, parallel bool) {
+// reportToolCall records the request itself, before anything is known about
+// whether it will run, or alongside what.
+//
+// It carries no `parallel` field on purpose. Whether a batch runs together is
+// decided by the last call inspected — one tool that is not parallel-safe demotes
+// the whole batch — and this event is written during inspection, while that
+// answer is still moving. The result event carries it instead; see
+// reportToolResult.
+func (a *Agent) reportToolCall(item prepared) {
 	data := map[string]any{
 		"tool":       item.call.Name,
 		"call_id":    item.call.ID,
 		"tool_index": item.index,
 		"arguments":  previewArguments(item.call.Arguments),
-	}
-	if parallel {
-		data["parallel"] = true
 	}
 	// Lazy: a `write_file` argument carries the whole file, and preview() walks it.
 	a.debugLazy(func() string {

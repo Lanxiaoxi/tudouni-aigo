@@ -203,14 +203,13 @@ func (a *Agent) FixedPayloadTokens() int {
 	budget := a.Context.Budget
 	total := 0
 
+	// The summary is counted where it appears, in the view below — not here as
+	// well. It used to be added on its own *and* counted by the loop, because
+	// `FoldedView` puts it in the list this function then walks; the fixed
+	// overhead came out one summary too large, so every compaction reported
+	// saving a couple of thousand tokens less than it did, and degradation
+	// started a rung early.
 	summary := a.summaryMessage()
-	if summary != nil {
-		// The summary is **not** an artifact (it replaces history, not a tool
-		// result), so it is not covered by the item estimate. It counts as a
-		// plain message, the same way the trailing note does.
-		content, _ := summary["content"].(string)
-		total += context.MessageOverhead + budget.Tokens(content)
-	}
 
 	for _, message := range a.foldedView(summary) {
 		if message == nil {
@@ -219,11 +218,10 @@ func (a *Agent) FixedPayloadTokens() int {
 		content, _ := message["content"].(string)
 
 		// **The system prompt is skipped.** FoldedView brings it in (correctly —
-		// the payload must have it), but it is not an artifact and not an item,
-		// and the summary's entry above has already counted one plain message. A
-		// second helping here makes `after` **larger** than `before` after a
-		// compaction (the summary is new text while the system prompt was counted
-		// twice), so "how much did that save" is always negative.
+		// the payload must have it) and `Measure` counts it on its own, as the one
+		// part of the request that is neither an artifact nor a message. Counting
+		// it here as well makes `after` **larger** than `before` after a
+		// compaction, so "how much did that save" comes out negative every time.
 		if message["role"] == "system" {
 			continue
 		}

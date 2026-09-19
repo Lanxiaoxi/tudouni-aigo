@@ -208,6 +208,14 @@ func extractUsage(raw any) *TokenUsage {
 	if details, ok := block["prompt_tokens_details"].(map[string]any); ok {
 		usage.CachedTokens = intOf(details["cached_tokens"])
 	}
+	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.CachedTokens == 0 {
+		// A block whose counters are all zero is a gateway that sends the field
+		// without measuring anything, or one that sends it on a frame where it
+		// means nothing yet. That is "unknown", not "free" — the same reading the
+		// other two dialects already make, and the one that keeps a real request
+		// out of the audit as a zero-token call.
+		return nil
+	}
 	return usage
 }
 
