@@ -120,11 +120,16 @@ Write-Host '  [1/3] 文件已就位'
 # **用户级，不是机器级**：机器级要管理员，而这个工具本来就不需要。
 # 已经在了就不重复加 —— 重复加会让 PATH 一次次变长，而 Windows 对它有长度上限。
 #
-# 这里有一处**刻意的不自动化**。如果用户 PATH 里还留着没展开的 `%VAR%` 引用
-# （注册表里的 REG_EXPAND_SZ），那么读出来的是**展开之后**的值，我们再写回去就把它
-# 变成了字面字符串 —— 别人设的 `%JAVA_HOME%` 这类引用就此死掉，而症状要过很久才出现
-# 在一个和这里毫无关系的地方。所以那种情况下**不碰它**，让用户自己加一行：
-# 宁可多一步，不可悄悄改坏一个我们看不懂的 PATH。
+# **上一版在这里停手，这一版不会。** 之前一看见没展开的 `%VAR%` 引用就整个不改 PATH，
+# 理由是"读出来的是展开之后的值，写回去就变成字面字符串，别人设的 `%JAVA_HOME%` 会死掉"。
+# 那句话说的是 `[Environment]::SetEnvironmentVariable` —— 它写的是 **REG_SZ**。所以真正
+# 的原因不是 `%VAR%` 本身，而是**写回去的时候把值的类型丢了**：读的时候用
+# `DoNotExpandEnvironmentNames` 拿的是原样字符串，写的时候用回同一个 kind，
+# `%USERPROFILE%\go\bin` 的展开行为一位都不会变。于是"看得懂才自动、看不懂就手动"这次
+# 真的做到了，而不必让整类机器退回手动。
+#
+# 反过来，"不改"是有代价的，而且刚付过一次：新目录进不了 PATH，而旧名字那一份在同一轮里
+# 被收走了，于是**两个名字都不可用** —— 这比一条写得不好看的 PATH 糟糕得多。
 #
 # 旧名字的那个目录在同一次写入里一起拿掉：一个程序在 PATH 上有两个目录，最后跑的是
 # 哪一个取决于目录顺序而不是新旧，别名再好也救不了。
@@ -137,6 +142,13 @@ $rawUserPath = if ($null -ne $envKey -and ($envKey.GetValueNames() -contains 'Pa
         'Path', '',
         [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 } else { '' }
+# PATH is REG_EXPAND_SZ on most machines. The kind travels with the value, so it is read
+# once here and written back unchanged — writing it as REG_SZ is the thing that breaks
+# `%VAR%` references, not the references themselves.
+$pathKind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+if ($null -ne $envKey -and ($envKey.GetValueNames() -contains 'Path')) {
+    $pathKind = $envKey.GetValueKind('Path')
+}
 
 $entries = @($rawUserPath -split ';' | Where-Object { $_ -ne '' })
 $staleCount = @($entries | Where-Object { $_ -eq $LegacyTarget }).Count
@@ -146,24 +158,41 @@ $needsCleanup = $staleCount -gt 0
 
 if (-not $needsTarget -and -not $needsCleanup) {
     Write-Host '  [2/3] 用户 PATH 里已经有了'
-} elseif ($rawUserPath -like '*%*') {
-    $manualPath = $true
-    Write-Host '  [2/3] 你的用户 PATH 里有 %VAR% 形式的引用，脚本不替你改' -ForegroundColor Yellow
-    if ($needsTarget) {
-        Write-Host "       请把这个目录加进去：$Target" -ForegroundColor Yellow
-    }
-    if ($needsCleanup) {
-        Write-Host "       旧的 $LegacyTarget 也还在里面，请一并删掉。" -ForegroundColor Yellow
-    }
 } else {
     $newEntries = @($entries)
     if ($needsTarget) { $newEntries += $Target }
-    [Environment]::SetEnvironmentVariable('Path', ($newEntries -join ';'), 'User')
-    $pathChanged = $true
-    if ($needsCleanup) {
-        Write-Host '  [2/3] 已加进用户 PATH，并把旧名字的目录去掉了'
+    # Through the registry rather than [Environment]::SetEnvironmentVariable: only this
+    # way can the value keep its kind. The one case that still ends in instructions is a
+    # PATH we cannot write at all — that is not something to guess at.
+    $written = $false
+    try {
+        $writable = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+        $writable.SetValue('Path', ($newEntries -join ';'), $pathKind)
+        # Read back through the same handle: "the write returned" and "the entry is
+        # there" are two different claims, and only the second one helps a user.
+        $readBack = @(([string]$writable.GetValue('Path', '',
+            [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)) -split ';')
+        $written = $readBack -contains $Target
+        $writable.Close()
+    } catch {
+        $written = $false
+    }
+    if ($written) {
+        $pathChanged = $true
+        if ($needsCleanup) {
+            Write-Host '  [2/3] 已加进用户 PATH，并把旧名字的目录去掉了'
+        } else {
+            Write-Host '  [2/3] 已加进用户 PATH'
+        }
     } else {
-        Write-Host '  [2/3] 已加进用户 PATH'
+        $manualPath = $true
+        Write-Host '  [2/3] 用户 PATH 没能改写，脚本没有动它' -ForegroundColor Yellow
+        if ($needsTarget) {
+            Write-Host "       请把这个目录加进去：$Target" -ForegroundColor Yellow
+        }
+        if ($needsCleanup) {
+            Write-Host "       并把旧的 $LegacyTarget 删掉。" -ForegroundColor Yellow
+        }
     }
 }
 
