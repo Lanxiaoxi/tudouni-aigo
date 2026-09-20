@@ -213,3 +213,19 @@
 `/theme`、`/quiet` 只存在于 TUI（`frontends/tui/view_state.py:2226-2241`），
 `/export` 与 `/jobs` 在整个项目里都不存在。Go 的 CLI **多**实现了 `/exit` `/quit` `/help` `/new`
 `/resume` `/skills` `/autopilot` —— 这些是新增，不是缺失。
+
+## 本轮之后的主动偏离
+
+上面记的是"Go 版比原 Python 版少了/多了什么"，下面这几条**不是**移植没做到，是有意改掉的
+——以后再对账时别把它们当成 bug：
+
+- **默认界面反过来了。** 原版与此前的 Go 版都是"裸跑 = 行式 REPL，`--tui` 才是全屏"。现在
+  裸跑就是全屏界面，`--cli` 要回行式 REPL；`--tui` 仍然接受，并作为强制开关保留。显式 flag
+  之间的优先级没变（`--tui` 先于 `--runtime-stdio`），所以上面那条 flag 优先级记录依然成立；
+  变的只是"没给 flag 时给哪一个"。
+- **非终端自动回落。** stdin 或 stdout 不是终端时（`> chat.txt`、管道、CI），裸跑走行式
+  REPL，以保住 `cli.go` 里那条 stdout 契约。显式给了 `--tui` 就不再回落 —— 它是有意要的。
+- **命令改名 `tudouni` → `tudouni-aigo`。** `internal/version.Name` 是唯一来源（`--help`、
+  flag set 的名字、打包出来的可执行文件名都从它取）。安装脚本另外留一个 `tudouni` 的别名，
+  并顺手收走旧名字装的那一份。数据目录（`~/.tudouni`、工作区的 `.tudouni/`）**没有动**。
+

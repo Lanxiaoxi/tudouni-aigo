@@ -10,7 +10,7 @@ import (
 
 // TestEveryNoticeNamesItsStream pins the field the front ends dispatch on.
 //
-// The line REPL's stdout is a documented contract — `tudouni > chat.txt` has to
+// The line REPL's stdout is a documented contract — `tudouni-aigo > chat.txt` has to
 // contain the conversation and nothing else — so a notice that lands on the wrong
 // stream either pollutes the transcript or hides a warning where nobody reads it. A
 // missing `stream` key is the worst of both: it silently becomes "err".

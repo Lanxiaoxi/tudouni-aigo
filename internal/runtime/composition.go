@@ -2028,7 +2028,7 @@ func intOf(value any) int {
 // notice builds one start-up line.//
 // `stream` says where it belongs: "err" for diagnostics, "out" for the one thing
 // that is part of the session's own output. The distinction is not cosmetic — the
-// line REPL's stdout is a documented contract (`tudouni > chat.txt` has to contain
+// line REPL's stdout is a documented contract (`tudouni-aigo > chat.txt` has to contain
 // the conversation and nothing else), so a notice that lands on the wrong stream
 // either pollutes the transcript or hides a warning where nobody reads it.
 func notice(level, code, text string) map[string]any {

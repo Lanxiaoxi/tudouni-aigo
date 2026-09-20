@@ -128,7 +128,7 @@ var catalog = map[string]string{
 	// "unexpected" are separate sentences because only one of them is a failure.
 	"runtime.exited.ordered":    "  ! The runtime has ended. This transcript is saved; start a new session to keep going.",
 	"runtime.exited.unexpected": " ! The runtime exited unexpectedly (code {code}); nothing else will answer in this session.",
-	"runtime.exited.detail":     " The session and the audit log are on disk — `tudouni --audit <id>` reads what it managed to record before it went.",
+	"runtime.exited.detail":     " The session and the audit log are on disk — `tudouni-aigo --audit <id>` reads what it managed to record before it went.",
 
 	// --- the separator when joining a list --------------------------------
 	"list.separator":           ", ",
@@ -516,7 +516,7 @@ var catalog = map[string]string{
 	// --- the skills panel --------------------------------------------------
 	"skills.title":  "Skills",
 	"skills.empty":  "No skills in this workspace (.tudouni/skills/<name>/SKILL.md)",
-	"skills.footer": "✓ = loaded  ·  Esc to close  ·  full list: tudouni --skills",
+	"skills.footer": "✓ = loaded  ·  Esc to close  ·  full list: tudouni-aigo --skills",
 
 	// --- pickers ------------------------------------------------------------
 	"option.count.one":      "{n} item",
@@ -699,8 +699,8 @@ var catalog = map[string]string{
 	"notice.tools.header":         "Registered tools:",
 	"notice.tools.row":            "  - {name} risk={risk}",
 	// --- what the line REPL says about flags it cannot honour --------------
-	"notice.cli.no_stream":             "[streaming] the line REPL cannot write character by character (it does not go through the protocol's delta channel); use --tui to watch it arrive. Continuing with --no-stream, so stdout stays one whole answer.",
-	"notice.cli.quiet_tui_only":        "[quiet] --quiet only affects the TUI (--tui): it changes how that interface draws, and the line REPL's output is one line per thing already.",
+	"notice.cli.no_stream":             "[streaming] the line REPL cannot write character by character (it does not go through the protocol's delta channel); the full-screen interface does, and that is what a bare invocation gets. Continuing with --no-stream, so stdout stays one whole answer.",
+	"notice.cli.quiet_tui_only":        "[quiet] --quiet only affects the full-screen interface (the default, or --tui): it changes how that interface draws, and the line REPL's output is one line per thing already.",
 	"notice.permissions.unknown_tools": "[permissions] these tools in {file} are not registered, so their rules do nothing: {names}",
 	"notice.permissions.levels":        "[permissions] auto-approved by level: {levels}; never asked by name: {named}",
 	"notice.permissions.deny":          "[permissions] denied outright: {names}",

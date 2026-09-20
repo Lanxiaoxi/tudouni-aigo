@@ -1,11 +1,11 @@
-// Command tudouni is an agent runtime with a terminal interface.
+// Command tudouni-aigo is an agent runtime with a terminal interface.
 //
 // One binary, four jobs:
 //
-//	tudouni                 the line-oriented REPL
-//	tudouni --tui           the full-screen interface
-//	tudouni --runtime-stdio the protocol endpoint a front end starts as a child
-//	tudouni --audit …       the read-only subcommands
+//	tudouni-aigo                 the full-screen interface
+//	tudouni-aigo --cli           the line-oriented REPL
+//	tudouni-aigo --runtime-stdio the protocol endpoint a front end starts as a child
+//	tudouni-aigo --audit …       the read-only subcommands
 //
 // `--runtime-stdio` is not an implementation detail of the TUI. It is the same
 // entry point a web front end or a test harness would use, and keeping it public
@@ -34,6 +34,8 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
+
+	"golang.org/x/term"
 )
 
 func main() {
@@ -42,6 +44,7 @@ func main() {
 
 type options struct {
 	tui           bool
+	cli           bool
 	stdio         bool
 	session       string
 	showList      bool
@@ -119,7 +122,9 @@ func run(argv []string) int {
 		return 2
 	}
 
-	if opts.tui {
+	// Which interface this run gets. The rules live in `useFullScreen` so that the
+	// precedence can be tested without a terminal.
+	if useFullScreen(opts, interactiveTerminal()) {
 		// **Before the alternate screen takes over.** The TUI's parent does not
 		// assemble a runtime — the real one is the `--runtime-stdio` child — but a
 		// configuration problem has to be reported on an ordinary terminal: the
@@ -180,14 +185,63 @@ func run(argv []string) int {
 	})
 }
 
+// interactiveTerminal reports whether both ends of this process are a terminal.
+//
+// **Both**, not just one. The full-screen interface reads keys from stdin and draws
+// on stdout, and a run where only half of that is true cannot work: a redirected
+// stdout collects escape sequences nobody can read, and a piped stdin answers every
+// keystroke with EOF.
+//
+// This is what keeps the line REPL's stdout contract intact now that the other
+// interface is the default. It is a check rather than a flag because the person who
+// needs it is the one who did not know there was anything to choose: `> chat.txt`
+// and `| head` are not ways of asking for an interface.
+func interactiveTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// useFullScreen reports whether this run draws the full-screen interface instead of
+// the line REPL.
+//
+// **The full-screen interface is the default**, because that is what somebody typing
+// the program's name is asking for; `--cli` asks for the REPL back. The one fact
+// passed in — whether both ends of the process are a terminal — is not a nicety:
+// `tudouni-aigo > chat.txt` and `echo hi | tudouni-aigo` are the line REPL's
+// documented contract, and a full-screen program on a pipe is not a smaller version of
+// that, it either fails to start or writes escape sequences into the redirected file.
+// So a bare invocation falls back to the REPL when either end is not a terminal, while
+// an explicit `--tui` is honoured either way: it means what it says, and every note
+// written before this default changed relies on it.
+//
+// The rules are a function of the flags rather than a chain of `if`s in `run` because
+// each combination below is something a person can type, two of them are
+// contradictions, and the order they resolve in is the whole behaviour.
+func useFullScreen(opts options, terminal bool) bool {
+	switch {
+	case opts.cli:
+		// A contradiction (`--cli --tui`) resolves toward the quieter interface, the
+		// same way `--no-stream` beats `--stream`.
+		return false
+	case opts.tui:
+		return true
+	case opts.stdio:
+		// A protocol endpoint rather than an interface: the parent owns the terminal,
+		// and nothing here draws on it.
+		return false
+	default:
+		return terminal
+	}
+}
+
 func parse(argv []string) (options, error) {
 	opts := options{maxSteps: runtime.DefaultMaxSteps()}
 
-	flags := flag.NewFlagSet("tudouni", flag.ContinueOnError)
+	flags := flag.NewFlagSet(version.Name, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	flags.Usage = func() { fmt.Fprint(os.Stdout, usageText()) }
 
-	flags.BoolVar(&opts.tui, "tui", false, "full-screen interface")
+	flags.BoolVar(&opts.tui, "tui", false, "force the full-screen interface (it is the default on a terminal)")
+	flags.BoolVar(&opts.cli, "cli", false, "use the line-oriented REPL instead of the full-screen interface")
 	flags.BoolVar(&opts.stdio, "runtime-stdio", false, "speak the JSONL protocol on stdin/stdout")
 	flags.StringVar(&opts.session, "session", "", "session id (a new one is created when it does not exist)")
 	flags.BoolVar(&opts.showList, "list", false, "list saved sessions and exit")
@@ -196,8 +250,9 @@ func parse(argv []string) (options, error) {
 	flags.BoolVar(&opts.showHist, "history", false, "print a session's messages and exit")
 	flags.BoolVar(&opts.autopilot, "autopilot", false, "do not ask for approval (the audit records every release)")
 	// The two stream flags default to **off**, and the asymmetry is deliberate: the
-	// line REPL must hand back one whole answer so that `tudouni > chat.txt` stays a
-	// clean transcript, while `--tui` streams unless told otherwise (see below).
+	// line REPL must hand back one whole answer so that `tudouni-aigo > chat.txt`
+	// stays a clean transcript, while the full-screen interface streams unless told
+	// otherwise (see below).
 	flags.BoolVar(&opts.stream, "stream", false, "stream the answer as it is written")
 	flags.BoolVar(&opts.noStream, "no-stream", false, "do not stream")
 	flags.BoolVar(&opts.debug, "debug", false, "print what goes to the model")
@@ -227,12 +282,17 @@ func parse(argv []string) (options, error) {
 
 func usageText() string {
 	return strings.Join([]string{
-		"tudouni — an agent runtime for the terminal",
+		version.Name + " — an agent runtime for the terminal",
 		"",
-		"  tudouni                     the line-oriented REPL",
-		"  tudouni --tui               the full-screen interface",
-		"  tudouni --runtime-stdio     speak the JSONL protocol on stdin/stdout",
+		// The three jobs are padded from `version.Name` rather than typed out: the
+		// help, the flag set's name and the archive's contents all have to agree,
+		// and a name that is right in two of the three is a name nobody can run.
+		fmt.Sprintf("  %-30s %s", version.Name, "the full-screen interface (the default on a terminal)"),
+		fmt.Sprintf("  %-30s %s", version.Name+" --cli", "the line-oriented REPL (what a pipe gets)"),
+		fmt.Sprintf("  %-30s %s", version.Name+" --runtime-stdio", "speak the JSONL protocol on stdin/stdout"),
 		"",
+		"  --cli             the line-oriented REPL, not the full-screen interface",
+		"  --tui             force the full-screen interface",
 		"  --session <id>    use (or create) a session with this id",
 		"  --list            list saved sessions",
 		"  --skills          list this workspace's skills",

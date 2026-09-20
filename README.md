@@ -1,16 +1,28 @@
-# tudouni
+# tudouni-aigo
 
 An agent runtime for the terminal. One static binary, no interpreter, no virtual
 environment, no `_internal/` directory.
 
 ```
-tudouni                 the line-oriented REPL
-tudouni --tui           the full-screen interface
-tudouni --runtime-stdio the JSONL protocol endpoint a front end starts as a child
-tudouni --audit …       the read-only subcommands
+tudouni-aigo                  the full-screen interface (the default on a terminal)
+tudouni-aigo --cli            the line-oriented REPL
+tudouni-aigo --runtime-stdio  the JSONL protocol endpoint a front end starts as a child
+tudouni-aigo --audit …        the read-only subcommands
 ```
 
-`tudouni --version` answers which build this is; `--help` lists the rest, including
+The interface is chosen by the terminal rather than by a flag. A bare invocation gets
+the full-screen interface when both stdin and stdout are a terminal, and the line REPL
+when they are not: `tudouni-aigo > chat.txt`, `echo hi | tudouni-aigo` and a CI job all
+take the second path, because a full-screen program on a pipe either fails to start or
+writes escape sequences into the redirected file. `--cli` asks for the REPL anyway, and
+`--tui` forces the interface back — which is what every note written before this
+default changed already says.
+
+The installer also leaves a second name, `tudouni`, pointing at the same binary: the
+command was renamed, and a rename should not silently turn old notes and scripts into
+"command not found".
+
+`tudouni-aigo --version` answers which build this is; `--help` lists the rest, including
 `--session`, `--list`, `--skills`, `--history`, `--autopilot`, `--theme`,
 `--quiet`, `--stream`/`--no-stream`, `--debug` and `--max-steps`.
 
@@ -163,7 +175,7 @@ it directly; the conclusion is the same.
 
 `make release` runs `tools/release`, which for each platform builds the binary,
 stages what has to sit beside it, **verifies the result**, and writes
-`dist/tudouni-<version>-<triple>.zip`. The archive is the whole download: unpack
+`dist/tudouni-aigo-<version>-<triple>.zip`. The archive is the whole download: unpack
 it, run `install.ps1` / `install.sh`, done.
 
 Two platforms ship, both x86_64: the ones with a vendored ripgrep is exactly the

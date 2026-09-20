@@ -296,10 +296,10 @@ func transportFor(via, proxyURL string) (*http.Transport, string, error) {
 	switch via {
 	case "direct":
 		base.Proxy = nil
-		return base, "direct (no proxy at all — this is what tudouni does today)", nil
+		return base, "direct (no proxy at all — this is what tudouni-aigo does today)", nil
 	case "env":
 		base.Proxy = http.ProxyFromEnvironment
-		return base, "env (HTTP_PROXY/HTTPS_PROXY, what tudouni honours)", nil
+		return base, "env (HTTP_PROXY/HTTPS_PROXY, what tudouni-aigo honours)", nil
 	case "proxy":
 		parsed, err := url.Parse(proxyURL)
 		if err != nil {

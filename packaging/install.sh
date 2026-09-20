@@ -1,14 +1,16 @@
 #!/bin/sh
-# 把 tudouni 装到这台机器上。**只装给当前用户，不需要 root。**
+# 把 tudouni-aigo 装到这台机器上。**只装给当前用户，不需要 root。**
 #
 # 用法：把压缩包完整解压，在解压出来的目录里跑
 #
 #     chmod +x install.sh && ./install.sh
 #
-# 装到哪儿：~/.local/opt/tudouni，并在 ~/.local/bin/tudouni 放一个软链接。
+# 装到哪儿：~/.local/opt/tudouni-aigo，并在 ~/.local/bin/tudouni-aigo 放一个软链接。
+# 同一份文件还会在 ~/.local/bin/tudouni 放一个软链接：命令改过名字，而旧的笔记和
+# 脚本里写的是老名字，留一个别名比让它们静默变成"找不到命令"便宜。
 # 重复运行就是覆盖升级，不会留下第二份。
 #
-# 想换地方就设 TUDOUNI_PREFIX，例如 `TUDOUNI_PREFIX=/opt/tudouni ./install.sh`。
+# 想换地方就设 TUDOUNI_PREFIX，例如 `TUDOUNI_PREFIX=/opt/tudouni-aigo ./install.sh`。
 #
 # 这个文件必须**不带 BOM、用 LF 换行**：`#!` 前面多三个字节内核找不到解释器，
 # CRLF 会让第一行变成 `#!/bin/sh\r` 而报 "bad interpreter"。`go run ./tools/release`
@@ -18,14 +20,19 @@ set -eu
 
 SOURCE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PREFIX="${TUDOUNI_PREFIX:-$HOME/.local}"
-APPDIR="$PREFIX/opt/tudouni"
+APPDIR="$PREFIX/opt/tudouni-aigo"
 BINDIR="$PREFIX/bin"
-LINK="$BINDIR/tudouni"
+LINK="$BINDIR/tudouni-aigo"
+ALIAS="$BINDIR/tudouni"
+# The previous release installed itself under the old command's name. Leaving that
+# directory behind leaves a second `tudouni` on PATH pointing at the old build, and
+# the alias above is only worth having if it is the one that answers.
+LEGACY_APPDIR="$PREFIX/opt/tudouni"
 
 say() { printf '%s\n' "$*"; }
 
 say ''
-say '  tudouni 安装'
+say '  tudouni-aigo 安装'
 say "    来源    $SOURCE"
 say "    安装到  $APPDIR"
 say ''
@@ -33,9 +40,9 @@ say ''
 # --- 0. 确认这个脚本旁边真的有东西 ------------------------------------------
 #
 # 从压缩包里直接跑（没解压）时这里会立刻说清楚"先解压"，而不是让用户对着一句
-# "找不到 tudouni" 发愣。
-if [ ! -f "$SOURCE/tudouni" ] || [ ! -d "$SOURCE/prompts" ] || [ ! -d "$SOURCE/tools" ]; then
-    say '  这个目录里没有 tudouni / prompts / tools。' >&2
+# "找不到 tudouni-aigo" 发愣。
+if [ ! -f "$SOURCE/tudouni-aigo" ] || [ ! -d "$SOURCE/prompts" ] || [ ! -d "$SOURCE/tools" ]; then
+    say '  这个目录里没有 tudouni-aigo / prompts / tools。' >&2
     say '  请**先把压缩包完整解压**，再运行解压出来的那个 install.sh。' >&2
     exit 1
 fi
@@ -50,10 +57,16 @@ if [ -d "$APPDIR" ]; then
     say '  已装过一份，覆盖升级……'
     rm -rf "$APPDIR"
 fi
+# 旧名字那一份一起收走：一个程序在 PATH 上有两个目录，最后跑的是哪一个取决于目录
+# 顺序而不是新旧。
+if [ -d "$LEGACY_APPDIR" ]; then
+    say '  发现用旧名字装的那一份，一并收走……'
+    rm -rf "$LEGACY_APPDIR"
+fi
 mkdir -p "$APPDIR" "$BINDIR"
 # `cp -R src/. dst/` 而不是 `cp -R src dst`：后者在 dst 已存在时会再套一层。
-cp -R "$SOURCE/tudouni" "$SOURCE/prompts" "$SOURCE/tools" "$APPDIR/"
-chmod +x "$APPDIR/tudouni"
+cp -R "$SOURCE/tudouni-aigo" "$SOURCE/prompts" "$SOURCE/tools" "$APPDIR/"
+chmod +x "$APPDIR/tudouni-aigo"
 say '  [1/4] 文件已就位'
 
 # --- 2. 随包的 ripgrep 要有执行位 -------------------------------------------
@@ -66,18 +79,22 @@ if [ -d "$APPDIR/tools/vendor/rg" ]; then
 fi
 say '  [2/4] 执行位已确认'
 
-# --- 3. 放一个软链接 --------------------------------------------------------
+# --- 3. 放软链接 ------------------------------------------------------------
 #
 # 装到 `opt/` 里、只把链接放进 `bin/`，是为了升级时不会出现"文件正在被使用"那种
 # 半新半旧的状态（`rm -rf` 换的是整个目录，链接最后才改指）。
-ln -sf "$APPDIR/tudouni" "$LINK"
+#
+# 两个名字指同一份文件。`ln -sf` 会把上一次留下的东西直接换掉 —— 装的如果是老名字
+# 那一版，`$ALIAS` 原本是指向老目录的软链接，这一行正好把它改指过来。
+ln -sf "$APPDIR/tudouni-aigo" "$LINK"
+ln -sf "$APPDIR/tudouni-aigo" "$ALIAS"
 say '  [3/4] 软链接已建好'
 
 # --- 4. 确认这个二进制真的能跑，并说出它是哪一版 ----------------------------
 #
 # 版本号是**编译进二进制**的，所以这一句说出来的就是你刚装的这一份。
-if ! version=$("$APPDIR/tudouni" --version 2>&1); then
-    say '  装好了，但 tudouni --version 跑不起来。' >&2
+if ! version=$("$APPDIR/tudouni-aigo" --version 2>&1); then
+    say '  装好了，但 tudouni-aigo --version 跑不起来。' >&2
     say '  这通常意味着包不完整或者平台不对（这个包只支持 x86_64 的 Linux）。' >&2
     exit 1
 fi
@@ -100,7 +117,7 @@ case ":$PATH:" in
 esac
 say '    2) cd 到你自己的项目目录，然后：'
 say ''
-say '         tudouni --tui'
+say '         tudouni-aigo'
 say ''
 say '   第一次运行会告诉你去哪填密钥。那份文件是：'
 say '         ~/.tudouni/config.json'

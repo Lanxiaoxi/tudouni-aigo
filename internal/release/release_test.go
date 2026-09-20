@@ -46,13 +46,13 @@ func TestTargetsAreTheTwoWeShip(t *testing.T) {
 // out of a download page, so it has to say which version and which platform.
 func TestArchiveNamesCarryTheVersionAndTriple(t *testing.T) {
 	windows, linux := Targets[0], Targets[1]
-	if got := ArchiveName("1.2.3", windows); got != "tudouni-1.2.3-x86_64-pc-windows-msvc.zip" {
+	if got := ArchiveName("1.2.3", windows); got != "tudouni-aigo-1.2.3-x86_64-pc-windows-msvc.zip" {
 		t.Errorf("windows archive: %s", got)
 	}
-	if got := ArchiveName("1.2.3", linux); got != "tudouni-1.2.3-x86_64-unknown-linux-musl.zip" {
+	if got := ArchiveName("1.2.3", linux); got != "tudouni-aigo-1.2.3-x86_64-unknown-linux-musl.zip" {
 		t.Errorf("linux archive: %s", got)
 	}
-	if got := StageDirName("1.2.3", windows); got != "tudouni-1.2.3-x86_64-pc-windows-msvc" {
+	if got := StageDirName("1.2.3", windows); got != "tudouni-aigo-1.2.3-x86_64-pc-windows-msvc" {
 		t.Errorf("stage dir: %s", got)
 	}
 }
@@ -192,7 +192,7 @@ func TestZipRoundTripsAndRefusesSource(t *testing.T) {
 			t.Errorf("a zip entry uses a backslash: %q — it unpacks on Linux as one file", name)
 		}
 	}
-	for _, want := range []string{"tudouni", "prompts/system.zh.md", "config.example.json",
+	for _, want := range []string{"tudouni-aigo", "prompts/system.zh.md", "config.example.json",
 		"install.ps1", "install.sh", "README.txt",
 		"tools/vendor/rg/" + target.Triple + "/rg"} {
 		if !have[want] {

@@ -1,5 +1,11 @@
 # 出发布包
 
+> **这份文档记的是 Go 重写之前那套 Python + PyInstaller 的出包流程，已经不适用了。**
+> 现在的出包是 `make release`（即 `go run ./tools/release`）：两个平台一次构建、校验、打包，
+> 现行流程见 `README.md` 的 "Releasing" 一节。下面保留原文只为对照历史 —— 里面提到的
+> `scripts/build_release.py`、`packaging/tudouni.spec`、`uv`、PyInstaller 在这个仓库里都
+> 已经不存在了；命令名也早从 `tudouni` 改成了 `tudouni-aigo`。
+
 给不装 Python、也不该看到源码的人一个压缩包：解压 → 跑安装脚本 → 能用。
 
 ## 出包

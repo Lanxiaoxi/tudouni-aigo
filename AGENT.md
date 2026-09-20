@@ -8,8 +8,8 @@
 | 路径 | 内容 |
 | --- | --- |
 | `cmd/tudouni/` | 唯一入口：命令行参数、`--help`/`--version` 文案、子命令分发 |
-| `internal/frontends/tui/` | Bubble Tea TUI（界面、主题、面板、输入行、快捷键、命令面板） |
-| `internal/frontends/cli/` | 非交互式子命令 |
+| `internal/frontends/tui/` | Bubble Tea TUI（界面、主题、面板、输入行、快捷键、命令面板）——**裸跑时的默认界面** |
+| `internal/frontends/cli/` | 行式 REPL：`--cli` 要它，stdin/stdout 不是终端时也回落给它 |
 | `internal/frontends/ansi/` | 纯文本前端（无 TTY 时的输出） |
 | `internal/runtime/` | 运行时主体：`--runtime-stdio` 起的子进程，把 TUI 和智能体循环隔开 |
 | `internal/protocol/` | TUI ↔ runtime 的 JSONL 协议 |
@@ -20,7 +20,7 @@
 | `internal/config/`、`internal/paths/` | 配置文件、安装包内路径解析 |
 | `internal/skills/`、`internal/mcp/` | 技能与 MCP 连接 |
 | `internal/i18n/` | 界面文案 |
-| `internal/version/` | 版本号的读取与展示 |
+| `internal/version/` | 版本号的读取与展示；**命令名也在这里**（`version.Name`，`--help`、flag set 名、打包产物名都从它取，改名字只改这一处 + `packaging/`） |
 | `internal/release/`、`tools/release/` | 打包、暂存目录、校验、压缩 |
 | `prompts/` | 系统提示词（运行时按目录是否存在来判定「这是不是安装包根目录」） |
 | `tools/vendor/rg/` | 随包分发的 ripgrep，按平台各一份 |
@@ -29,7 +29,7 @@
 ## 构建、测试、发布
 
 ```
-make build      # 编译本机平台，产物 ${PWD}/dist/tudouni-<版本>-<平台>/
+make build      # 编译本机平台，产物 ${PWD}/dist/tudouni-aigo-<版本>-<平台>/
 make test       # go test ./...
 make vet
 make release    # 两个平台全量构建 + 校验 + 打包成 zip

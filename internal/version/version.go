@@ -20,6 +20,12 @@ package version
 // time; the variable exists so the linker has somewhere to write.
 var Version = "dev"
 
+// Name is the command as a person types it, and the name the packaged executable
+// carries. It is written down once because three things have to agree on it — the
+// help text, the flag set's name, and what the release archive contains — and a name
+// that is right in two of the three is a name nobody can run.
+const Name = "tudouni-aigo"
+
 // Current returns the version string of this build.
 func Current() string {
 	if Version == "" {
@@ -30,5 +36,5 @@ func Current() string {
 
 // Describe returns the one-line identification used by --version.
 func Describe() string {
-	return "tudouni " + Current()
+	return Name + " " + Current()
 }

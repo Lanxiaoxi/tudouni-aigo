@@ -29,6 +29,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
 )
 
 // Module is the import path the linker needs for `-X`.
@@ -61,12 +63,17 @@ var Targets = []Target{
 	{GOOS: "linux", GOARCH: "amd64", Triple: "x86_64-unknown-linux-musl"},
 }
 
+// CommandName is what the program is installed as and typed as. The platforms differ
+// only in the suffix, so the name itself has exactly one definition — the same one
+// the help text and the flag set use.
+const CommandName = version.Name
+
 // BinaryName is the executable's name inside the archive.
 func (t Target) BinaryName() string {
 	if t.GOOS == "windows" {
-		return "tudouni.exe"
+		return CommandName + ".exe"
 	}
-	return "tudouni"
+	return CommandName
 }
 
 // RgName is the vendored ripgrep's file name for this target.
@@ -89,14 +96,14 @@ func HostTarget() (Target, bool) {
 
 // ArchiveName is what the user downloads.
 func ArchiveName(version string, target Target) string {
-	return fmt.Sprintf("tudouni-%s-%s.zip", version, target.Triple)
+	return fmt.Sprintf("%s-%s-%s.zip", CommandName, version, target.Triple)
 }
 
 // StageDirName is the directory the archive is built from. It is kept after the
 // zip is written: it is what you inspect when a user reports that something is
 // missing.
 func StageDirName(version string, target Target) string {
-	return fmt.Sprintf("tudouni-%s-%s", version, target.Triple)
+	return fmt.Sprintf("%s-%s-%s", CommandName, version, target.Triple)
 }
 
 // Layout is one staged release directory.

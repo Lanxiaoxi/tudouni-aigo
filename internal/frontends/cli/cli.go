@@ -58,7 +58,7 @@ type Options struct {
 // able to answer an approval without a terminal, and an embedder has to be able to
 // put the conversation somewhere other than the process's own descriptors. Both are
 // diagnostics, never stdout — stdout carries the agent's answer, and
-// `tudouni > chat.txt` has to stay clean.
+// `tudouni-aigo > chat.txt` has to stay clean.
 //
 // **The memory the runtime hands to the factory is the one used**, and that is the
 // whole correction here. This function used to build a second one of its own, so
@@ -177,7 +177,7 @@ func isExitWord(text string) bool {
 //
 // **stdout carries the conversation, the version line and the audit path — nothing
 // else.** The prompt, the notices, the tool table's diagnostics and every answer to a
-// `/` command go to stderr, because `tudouni > chat.txt` is a documented contract: the
+// `/` command go to stderr, because `tudouni-aigo > chat.txt` is a documented contract: the
 // file has to contain what the user asked and what the model answered, not the
 // plumbing around it.
 //

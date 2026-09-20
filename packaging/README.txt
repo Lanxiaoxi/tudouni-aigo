@@ -1,5 +1,5 @@
-tudouni —— 在命令行里干活的编码助手
-====================================
+tudouni-aigo —— 在命令行里干活的编码助手
+========================================
 
 这个压缩包里没有源码，只有一个装好就能用的程序。
 不需要 Python、Node 或任何别的运行时 —— 它是**一个独立的可执行文件**。
@@ -17,7 +17,7 @@ Windows（x86_64）
     3. 关掉这个窗口，**开一个新的终端**（PATH 是启动时读的）。
 
 Linux（x86_64）
-    1. 解压：unzip tudouni-*.zip
+    1. 解压：unzip tudouni-aigo-*.zip
     2. cd 进解压出来的目录，然后：chmod +x install.sh && ./install.sh
        （zip 不带权限位，所以那一步 chmod 是必须的；脚本自己会给程序和随包的
          ripgrep 补上执行位。）
@@ -35,7 +35,7 @@ Linux（x86_64）
 ------------------------------
 
     cd 到你自己的项目目录
-    tudouni --tui
+    tudouni-aigo
 
 第一次运行会直接报"一条能用的模型路由都没有"，并告诉你去哪个文件填。那份文件是：
 
@@ -63,21 +63,25 @@ Linux（x86_64）
 要接自己的网关，就改 `base_url` / `models`，或者再加一条路由 —— **第一条有密钥的路由
 就是默认路由**，顺序由你排。**配置只有这一个文件**：这个程序不读环境变量、也不读 .env。
 
-填完存盘，重新运行 tudouni --tui 就行。密钥只放在你自己这台机器上。
+填完存盘，重新运行 tudouni-aigo 就行。密钥只放在你自己这台机器上。
 
 
 三、怎么用
 ----------
 
-    tudouni --tui                    TUI 界面（推荐）
-    tudouni --session <id>           接着某个会话聊
-    tudouni --list                   列出这个目录里存过的会话（不需要密钥）
-    tudouni --skills                 列出这个目录里有哪些技能（不需要密钥）
-    tudouni --version                看装的是哪一版（不需要密钥）
-    tudouni --tui --theme A-T2       换配色（A 石墨琥珀 / A-T2 深透明 / P3 粉紫）
-    tudouni --tui --no-stream        不要逐字输出，答案整段出现
-    tudouni --tui --quiet            一个工具调用压成一行
-    tudouni --help                   全部参数
+    tudouni-aigo                     全屏界面（默认，推荐）
+    tudouni-aigo --cli               行式 REPL（输出被重定向或接了管道时自动用它）
+    tudouni-aigo --session <id>      接着某个会话聊
+    tudouni-aigo --list              列出这个目录里存过的会话（不需要密钥）
+    tudouni-aigo --skills            列出这个目录里有哪些技能（不需要密钥）
+    tudouni-aigo --version           看装的是哪一版（不需要密钥）
+    tudouni-aigo --theme A-T2        换配色（A 石墨琥珀 / A-T2 深透明 / P3 粉紫）
+    tudouni-aigo --no-stream         不要逐字输出，答案整段出现
+    tudouni-aigo --quiet             一个工具调用压成一行
+    tudouni-aigo --help              全部参数
+
+**以前的命令名 `tudouni` 也还能用**：安装脚本在同一个目录里多放了一个同样可执行的
+名字（Windows 上是副本，Linux 上是软链接），所以旧笔记和旧脚本不需要改。
 
 进去之后常用的斜杠命令：/model 换模型、/new 开新会话、/resume 换回旧会话、
 /help 看全部。输入框里 **Ctrl+J 换行**（回车是发送）。
@@ -97,7 +101,7 @@ Linux（x86_64）
 **第一次跑某个工具会问你要不要放行。** 按提示选即可；选「以后都允许」会把决定
 写进那个项目的 .tudouni/permissions.json，可以自己 review、也可以提交给团队。
 
-**版本号是编译在程序里的。** 所以 `tudouni --version` 说出来的就是你手上这个
+**版本号是编译在程序里的。** 所以 `tudouni-aigo --version` 说出来的就是你手上这个
 文件本身的版本 —— 它不会因为旁边多了个文件而说谎。
 
 
@@ -105,20 +109,20 @@ Linux（x86_64）
 ------------
 
 想知道装的是哪一版
-    tudouni --version
+    tudouni-aigo --version
 
 程序根本起不来 / 提示不是有效的 Win32 应用程序
     平台不对。这个包只支持 x86_64 的 Windows 和 Linux。
 
-装了但敲 tudouni 说找不到命令
-    新开的终端才认 PATH。Windows 上确认 %LOCALAPPDATA%\Programs\tudouni
+装了但敲 tudouni-aigo 说找不到命令
+    新开的终端才认 PATH。Windows 上确认 %LOCALAPPDATA%\Programs\tudouni-aigo
     在用户 PATH 里；Linux 上确认 ~/.local/bin 在 PATH 里。
 
 界面闪一下就退
     大概率是配置问题（比如 config.json 里多了一个逗号）。在同一个目录里跑
-    tudouni --tui，子进程的报错会打在终端上，照着改即可。
+    tudouni-aigo，子进程的报错会打在终端上，照着改即可。
 
 模型说找不到文件、或者 `grep` 这条命令在 /tools 里没有
     检查安装目录里的 `prompts\` 和 `tools\` 还在不在（它们必须和程序在一起）。
     随包的 ripgrep 也要有执行位：Linux 上
-        chmod +x ~/.local/opt/tudouni/tools/vendor/rg/*/rg
+        chmod +x ~/.local/opt/tudouni-aigo/tools/vendor/rg/*/rg

@@ -105,7 +105,7 @@ func HomeDir() string {
 // WorkspaceDir returns the current working directory.
 //
 // The workspace is the current directory, deliberately: that is what the user
-// typed `tudouni` in, and it is the one thing the file tools may touch.
+// typed `tudouni-aigo` in, and it is the one thing the file tools may touch.
 func WorkspaceDir() string {
 	cwd, err := os.Getwd()
 	if err != nil {

@@ -40,7 +40,7 @@ func TestTheAskersMemoryIsTheGateSMemory(t *testing.T) {
 }
 
 // TestTheAskerWritesItsPromptToTheDiagnosticStream: stdout carries the agent's answer
-// and `tudouni > chat.txt` has to stay clean, so where the approval prompt goes is a
+// and `tudouni-aigo > chat.txt` has to stay clean, so where the approval prompt goes is a
 // contract rather than a preference. The streams are parameters now, which is what
 // lets this be asserted at all.
 func TestTheAskerWritesItsPromptToTheDiagnosticStream(t *testing.T) {

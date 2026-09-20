@@ -89,7 +89,7 @@ func run(argv []string) error {
 		return err
 	}
 
-	fmt.Printf("tudouni %s\n", version)
+	fmt.Printf("%s %s\n", release.CommandName, version)
 	for _, target := range targets {
 		fmt.Printf("  %-18s -> %s\n", target.GOOS+"/"+target.GOARCH, release.ArchiveName(version, target))
 	}
