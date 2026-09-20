@@ -618,7 +618,9 @@ func markdownStyle(t theme) ansi.StyleConfig {
 	style.Enumeration.Color = &t.ink2
 	style.BlockQuote.Color = &t.ink3
 	style.BlockQuote.BackgroundColor = &t.sunk
-	style.Strong.Color = &t.ink
+	// Bold follows the accent: the same colour as the input box rules, so a
+	// bold phrase in the answer reads as one of the screen's structural marks.
+	style.Strong.Color = &t.accent
 	style.Emph.Color = &t.ink2
 	style.Strikethrough.Color = &t.ink3
 	style.HorizontalRule.Color = &t.hairline
