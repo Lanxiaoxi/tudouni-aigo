@@ -74,9 +74,9 @@ func (m model) statusScreen(payload map[string]any) []renderLine {
 	add(i18n.T("status.kv.session"), i18n.T("status.session_id",
 		"name", textOf2(session, "id", "?"), "started", started))
 	add(i18n.T("status.kv.workspace"), workspaceName(textOf2(session, "workspace", "—")))
-	add(i18n.T("status.kv.size"), i18n.T("rail.session.size",
-		"messages", i18n.Tn("rail.session.messages", intOf(session["messages"]), "n", intOf(session["messages"])),
-		"steps", i18n.Tn("rail.session.steps", intOf(session["steps"]), "n", intOf(session["steps"]))))
+	add(i18n.T("status.kv.size"), i18n.T("status.session.size",
+		"messages", i18n.Tn("status.session.messages", intOf(session["messages"]), "n", intOf(session["messages"])),
+		"steps", i18n.Tn("status.session.steps", intOf(session["steps"]), "n", intOf(session["steps"]))))
 
 	// "What it is using" versus "what it was asked for" are different facts: the
 	// second is only briefly ahead of the first, right after `/model`. Not saying

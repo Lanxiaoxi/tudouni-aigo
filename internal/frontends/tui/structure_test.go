@@ -115,10 +115,11 @@ func TestTheRailIsDockedRight(t *testing.T) {
 	m.railHidden = false
 
 	bars, header := 0, 0
+	width := m.railWidthFor()
 	for _, row := range strings.Split(m.renderBodySplit(30), "\n") {
 		plain := stripANSI(row)
 		if at := strings.Index(plain, "▌"); at >= 0 {
-			if column := runewidth.StringWidth(plain[:at]); column < m.width-railWidth {
+			if column := runewidth.StringWidth(plain[:at]); column < m.width-width {
 				t.Errorf("a rail block bar sits at column %d, left of the rail: %q", column, plain)
 			}
 			bars++
@@ -477,7 +478,6 @@ func filledModel(width, height int) model {
 		map[string]any{"id": "2", "state": "uncollected", "command": "go build ./...", "exit_code": 0},
 	}
 	m.panel.mcp = []any{map[string]any{"name": "kb", "state": "loaded", "tools": 3}}
-	m.panel.agentsMD = []any{map[string]any{"path": "AGENT.md", "lines": 42}}
 	m.panel.toolInfo = map[string]map[string]any{
 		"shell": {"risk": "high", "parallel_safe": true},
 	}

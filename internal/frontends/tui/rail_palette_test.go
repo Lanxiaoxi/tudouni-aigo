@@ -10,10 +10,10 @@ import (
 
 // Two regressions found by using the interface rather than reading it.
 
-// TestRailRowsNeverExceedTheRail — the rail's own column is 32 cells, and a row
-// wider than that does not "overflow a little": the two halves of the body are
-// joined side by side, so the widest rail row sets the column and **every**
-// conversation row shifts right with it.
+// TestRailRowsNeverExceedTheRail — a row wider than the rail's own column does not
+// "overflow a little": the two halves of the body are joined side by side, so the
+// widest rail row sets the column and **every** conversation row shifts right with
+// it.
 //
 // The screen-level invariant test could not see this, because the whole line
 // stayed under the terminal width while the rail part was too wide.
@@ -21,15 +21,35 @@ func TestRailRowsNeverExceedTheRail(t *testing.T) {
 	// Both empty states: their sentences are the longest text the rail ever
 	// draws, and they used to bypass the wrapper entirely.
 	empty := model{width: 120, height: 40, theme: defaultTheme}
-	for _, rendered := range []string{
-		empty.renderRail(railWidth, 40),
-		filledModel(120, 40).renderRail(railWidth, 40),
-	} {
-		for index, line := range strings.Split(rendered, "\n") {
-			if got := runewidth.StringWidth(stripANSI(line)); got > railWidth {
-				t.Errorf("rail row %d is %d cells wide (limit %d): %q",
-					index, got, railWidth, stripANSI(line))
+	for _, probe := range []model{empty, filledModel(120, 40)} {
+		width := probe.railWidthFor()
+		for _, rendered := range []string{probe.renderRail(width, 40)} {
+			for index, line := range strings.Split(rendered, "\n") {
+				if got := runewidth.StringWidth(stripANSI(line)); got > width {
+					t.Errorf("rail row %d is %d cells wide (limit %d): %q",
+						index, got, width, stripANSI(line))
+				}
 			}
+		}
+	}
+}
+
+// TestRailWidensWithTheTerminal pins the scaling rule: the rail is no longer one
+// constant width, and the two ends of the rule are both load-bearing — 32 is the
+// design's column, 48 is where it stops being a column, and the conversation keeps
+// its own floor at every size in between.
+func TestRailWidensWithTheTerminal(t *testing.T) {
+	for _, testCase := range []struct{ width, want int }{
+		{80, 32}, {100, 32}, {120, 36}, {150, 46}, {200, 48}, {260, 48},
+	} {
+		m := model{width: testCase.width, height: 40, theme: defaultTheme}
+		got := m.railWidthFor()
+		if got != testCase.want {
+			t.Errorf("at %d columns the rail is %d wide, want %d", testCase.width, got, testCase.want)
+		}
+		if remaining := testCase.width - got; remaining < transcriptMinWidth {
+			t.Errorf("at %d columns the conversation is left %d cells, under the %d floor",
+				testCase.width, remaining, transcriptMinWidth)
 		}
 	}
 }
@@ -43,7 +63,7 @@ func TestRailRowsNeverExceedTheRail(t *testing.T) {
 // cut off. A hint that silently drops its last word is worse than no hint.
 func TestRailEmptyStateWrapsItsSentences(t *testing.T) {
 	m := model{width: 120, height: 40, theme: defaultTheme}
-	rendered := stripANSI(m.renderRail(railWidth, 40))
+	rendered := stripANSI(m.renderRail(m.railWidthFor(), 40))
 	for _, text := range []string{
 		"No goal", "a goal it keeps resuming",
 		"No tasks yet", "what the agent plans to do",

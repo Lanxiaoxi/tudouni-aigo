@@ -91,13 +91,12 @@ func TestTheAnswerIsDrawnInsideItsTurn(t *testing.T) {
 // missing: **a manual collapse does not suppress it**.
 //
 // When the user folded the rail there was no task list, so "the model just wrote one
-// down" is information they have not seen. Keying this on `railPinned` removes the
-// feature for anybody who has ever pressed Ctrl+B — silently, because the rail just
-// stays folded.
+// down" is information they have not seen. Keying this on a "the user pinned it" flag
+// removes the feature for anybody who has ever pressed Ctrl+B — silently, because the
+// rail just stays folded.
 func TestTheRailAutoOpensOnTheFirstTaskList(t *testing.T) {
 	m := testModel()
 	m.railHidden = true
-	m.railPinned = true
 	m.panel.todos = []any{map[string]any{"status": "pending", "content": "x"}}
 
 	m.beginTurn(map[string]any{"run_id": "r1"})
@@ -107,18 +106,96 @@ func TestTheRailAutoOpensOnTheFirstTaskList(t *testing.T) {
 	}
 }
 
+// TestTheRailAutoOpensOnAGoal: the same edge as the task list, for the one thing the
+// rail holds that is a person's own words restated by the model.
+//
+// "Did it understand what I asked for" is the question the goal block answers, and it
+// is worth more than the columns — a goal is what the session is **for**, it outlives
+// the turn that created it, and it survives a `/resume` and a compaction. Reading it
+// only after pressing Ctrl+B is reading it too late.
+func TestTheRailAutoOpensOnAGoal(t *testing.T) {
+	m := testModel()
+	m.railHidden = true
+
+	m.handleUI(map[string]any{
+		"kind": protocol.UIState,
+		"goal": map[string]any{
+			"objective": "把重连修好，并证明它修好了", "phase": "active",
+			"rounds_text": "0/60", "armed": true,
+		},
+	})
+	if m.railHidden {
+		t.Error("the rail stayed folded when the goal was created")
+	}
+}
+
+// TestTheRailAutoOpensOnAJob: the third edge — a command the person sent to the
+// background. The block is the only place its state is drawn, and the whole point of
+// backgrounding is to be able to look at it later.
+//
+// It keys on **any** job rather than on "something is still running": the block lists
+// collected and killed rows too, and a job that finished inside the same snapshot
+// window would otherwise never be announced at all.
+func TestTheRailAutoOpensOnAJob(t *testing.T) {
+	m := testModel()
+	m.railHidden = true
+
+	m.handleUI(map[string]any{
+		"kind": protocol.UIState,
+		"jobs": []any{map[string]any{"state": "running", "command": "go test ./...", "seconds": 3}},
+	})
+	if m.railHidden {
+		t.Error("the rail stayed folded when a background job appeared")
+	}
+}
+
+// TestAnEmptyGoalOrJobBoardReArmsTheEdge: the edge, not the level. Once the thing is
+// gone, the next one is a new event — a goal cleared with `/goal clear` and created
+// again must announce itself, and so must a board that empties out.
+func TestAnEmptyGoalOrJobBoardReArmsTheEdge(t *testing.T) {
+	m := testModel()
+	m.railHidden = true
+	m.handleUI(map[string]any{
+		"kind": protocol.UIState,
+		"goal": map[string]any{"objective": "第一个目标", "phase": "active", "rounds_text": "0/5",
+			"armed": true},
+		"jobs": []any{map[string]any{"state": "running", "command": "go test ./..."}},
+	})
+	if m.railHidden {
+		t.Fatal("neither a goal nor a job opened the rail")
+	}
+
+	// Both go away, the user folds the rail, and both come back as new ones.
+	m.handleUI(map[string]any{
+		"kind": protocol.UIState,
+		"goal": map[string]any{"objective": "", "phase": ""},
+		"jobs": []any{},
+	})
+	m.railHidden = true
+	m.handleUI(map[string]any{
+		"kind": protocol.UIState,
+		"goal": map[string]any{"objective": "第二个目标", "phase": "active", "rounds_text": "0/5",
+			"armed": true},
+		"jobs": []any{map[string]any{"state": "done", "command": "go build ./..."}},
+	})
+	if m.railHidden {
+		t.Error("the re-armed edge did not open the rail")
+	}
+}
+
 // TestTheRailDoesNotReopenOnAContentUpdate: `todo_write` is called many times in one
 // long task, and re-opening on every call would be a panel that keeps popping itself
-// open.
+// open. A job changing state is the same kind of update.
 func TestTheRailDoesNotReopenOnAContentUpdate(t *testing.T) {
 	m := testModel()
 	m.panel.todos = []any{map[string]any{"status": "pending", "content": "x"}}
+	m.panel.jobs = []any{map[string]any{"state": "running", "command": "go test ./..."}}
 	m.beginTurn(map[string]any{"run_id": "r1"})
 
-	// The user folds it again, then a task changes state.
+	// The user folds it again, then a task changes state and the job finishes.
 	m.railHidden = true
-	m.railPinned = true
 	m.panel.todos = []any{map[string]any{"status": "completed", "content": "x"}}
+	m.panel.jobs = []any{map[string]any{"state": "uncollected", "command": "go test ./..."}}
 	m.beginTurn(map[string]any{"run_id": "r2"})
 
 	if !m.railHidden {
@@ -137,7 +214,6 @@ func TestTheRailDoesNotReopenOnAContentUpdate(t *testing.T) {
 func TestTheRailOpensOnATaskListThatArrivesMidTurn(t *testing.T) {
 	m := testModel()
 	m.railHidden = true
-	m.railPinned = true
 
 	m.handleEvent(map[string]any{"kind": "run_started", "run_id": "r1"})
 	if !m.railHidden {
@@ -160,7 +236,6 @@ func TestTheRailOpensOnATaskListThatArrivesMidTurn(t *testing.T) {
 func TestAMidTurnTaskListStillRespectsACollapse(t *testing.T) {
 	m := testModel()
 	m.railHidden = true
-	m.railPinned = true
 
 	state := func(status, content string) map[string]any {
 		return map[string]any{
@@ -279,8 +354,9 @@ func TestTheLiveThinkingOutranksThePreviousStepsReasoning(t *testing.T) {
 		t.Errorf("the live block is not drawn with its own count:\n%s", screen)
 	}
 	// The spinner is the part that says "and it is still going". Its frame is read
-	// off the clock, so pinning one glyph would fail at random — ask for the frame
-	// the model would draw and look for that one.
+	// off the clock once per frame (`View` pins `frameAt`), so this asks that same
+	// reading rather than the clock again: asking `time.Now()` here was a race with
+	// a 90ms tick.
 	if frame := m.spinnerFrame(); frame == "" {
 		t.Error("a live thinking line is drawn with no spinner frame available")
 	} else if !strings.Contains(screen, frame) {
@@ -370,12 +446,11 @@ func TestAnEmptyListReArmsTheEdge(t *testing.T) {
 
 	m.panel.todos = nil
 	m.beginTurn(map[string]any{"run_id": "r2"})
-	if m.railTodosSeen {
+	if m.railSeen.todos {
 		t.Fatal("an empty list did not re-arm the edge")
 	}
 
 	m.railHidden = true
-	m.railPinned = true
 	m.panel.todos = []any{map[string]any{"status": "pending", "content": "y"}}
 	m.beginTurn(map[string]any{"run_id": "r3"})
 	if m.railHidden {
@@ -416,6 +491,39 @@ func TestTheSpinnerStopsWhileAPersonIsBeingAsked(t *testing.T) {
 	m.pendingQuestion = map[string]any{"id": "q1"}
 	if m.spinnerNeeded() {
 		t.Error("the spinner kept running while a question was waiting")
+	}
+}
+
+// TestBothSpinnersShowTheSameFrameInOneRepaint: the status bar's mark and the live
+// thinking line's are drawn by two different passes of the same frame, and they must
+// agree — a spinner that disagrees with the one beside it reads as two clocks.
+//
+// That is what `frameAt` is for: View takes one reading of the clock before it draws
+// anything, so a 90ms tick landing between the two passes cannot split them. Before
+// it, each read the clock itself and the pair differed at random.
+func TestBothSpinnersShowTheSameFrameInOneRepaint(t *testing.T) {
+	m := testModel()
+	m.width, m.height = 120, 40
+	m.busy = true
+	m.quiet = true
+	m.spinning = true
+	m.maxSteps = 40
+	m.streamRunID = "r1"
+	m.thinkingLive = true
+	m.thinkingText = "还在想"
+	m.thinkingChars = 3
+	turn := &turnData{index: 1, runID: "r1", startedAt: time.Now()}
+	m.transcript = []entry{{turn: turn}}
+	m.current = turn
+
+	frame := m.spinnerFrame()
+	if frame == "" {
+		t.Fatal("no spinner frame while a turn is running")
+	}
+	screen := stripANSI(m.View())
+	if got := strings.Count(screen, frame); got < 2 {
+		t.Errorf("the frame %q appears %d times; the status bar and the thinking line must both carry it:\n%s",
+			frame, got, screen)
 	}
 }
 

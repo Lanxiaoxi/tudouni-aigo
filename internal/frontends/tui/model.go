@@ -51,7 +51,6 @@ type panelstate struct {
 	autopilot bool
 	thinking  bool
 	effort    string
-	agentsMD  []any
 	skills    []any
 	// promptTokens / cachedTokens are the last completed model call's usage. The
 	// status bar's cache-hit figure and the rail's context line both read them, and
@@ -180,8 +179,11 @@ type model struct {
 	pendingUserInput string
 
 	// Spin frame state for quiet mode. The frame number is read off the clock, so
-	// two things drawn at the same moment cannot each spin on their own.
+	// two things drawn at the same moment cannot each spin on their own — `frameAt`
+	// is that one reading, taken by View before it draws. Zero means "nobody pinned
+	// it", which is what a direct `renderTurn`/`renderRail` caller gets.
 	spinning bool
+	frameAt  time.Time
 
 	// autopilotWanted is the value `/autopilot` asked for, held until the runtime's
 	// own snapshot agrees with it. Nil when nothing is pending, which is what keeps
@@ -190,22 +192,36 @@ type model struct {
 
 	// Display preferences. They change what is drawn and nothing else, which is
 	// why they are not part of the panel state the runtime owns.
-	// The rail starts **hidden**: 32 columns is 28% of a 116-column terminal,
-	// and the summary line answers the same questions for one row. It opens
-	// itself once when a task list first appears — "what it plans to do" is the
-	// one place to see whether it understood — and Ctrl+B rules after that.
+	// The rail starts **hidden**: it costs columns the conversation wants, and the
+	// summary line answers the same questions for one row. It opens itself once
+	// when one of the three things it exists to show arrives — see `noteRail` —
+	// and Ctrl+B rules after that.
 	railHidden bool
-	// railTodosSeen is the edge detector for the auto-open: "the task list went
-	// from empty to non-empty". railPinned records that the user has taken the
-	// decision into their own hands with Ctrl+B, after which the interface stops
-	// opening the rail for them.
-	railTodosSeen bool
-	railPinned    bool
-	quiet         bool
-	theme         themeKey
+	// railSeen is the edge detector for that auto-open: for each of the three
+	// things the rail holds, "did the interface already open itself for the one
+	// that is on screen now". Empty means "there has never been one here", which
+	// is what re-arms it: a goal that is cleared, a task list that goes back to
+	// empty, a background board that empties out. A level test would re-open the
+	// rail on the next snapshot 50ms later, which is the failure that makes Ctrl+B
+	// look broken.
+	railSeen railSeen
+	quiet    bool
+	theme    themeKey
 	// runtimeGone records that this interface has already said the runtime ended.
 	// One line is a report; two would read as two deaths.
 	runtimeGone bool
+}
+
+// railSeen is the three edges the rail auto-opens on, one field each.
+//
+// A struct rather than three loose bools because they are read and written
+// together: `noteRail` answers one question — "is there something here the
+// interface has not opened itself for" — and a caller that had to remember three
+// names would eventually test two of them.
+type railSeen struct {
+	todos bool
+	goal  bool
+	jobs  bool
 }
 
 func newModel(client *protocol.Client, bridge *bridge, options Options) model {
@@ -235,10 +251,10 @@ func newModel(client *protocol.Client, bridge *bridge, options Options) model {
 		// one lie that line must not tell.
 		booting: true,
 		bootAt:  time.Now(),
-		// The rail starts hidden: 32 columns is 28% of a 116-column terminal,
-		// and the summary line answers the same questions for one row. It opens
-		// itself once when a task list first appears — "what it plans to do" is
-		// the one place to see whether it understood — and Ctrl+B rules after.
+		// The rail starts hidden: it costs columns the conversation wants, and the
+		// summary line answers the same questions for one row. It opens itself once
+		// when the run first has something to put in it — see `noteRail` — and
+		// Ctrl+B rules after that.
 		railHidden: true,
 		// A new session opens on the empty state, so the log starts on its cover
 		// page rather than on the newest row. See scrollState.welcome.
@@ -619,10 +635,13 @@ func (m *model) resetForSession() {
 	m.questionInput = ""
 	m.overlay = overlay{}
 	m.recentSessions = nil
-	m.railTodosSeen = false
-	m.railPinned = false
+	m.railSeen = railSeen{}
 	// A new session starts on the empty state, so the rail goes back to its
-	// default instead of staying however the previous session left it.
+	// default instead of staying however the previous session left it. Clearing
+	// the edges above is what lets the new session's goal open it again: a
+	// **resumed** session carries its goal and its task list in the first snapshot,
+	// and "this session is for something, and here is what" is exactly the fact the
+	// auto-open exists to deliver.
 	m.railHidden = true
 	// Panel facts are per-session. Leaving them up would attribute the previous
 	// session's task list and risk scope to the new one until its first snapshot.
@@ -827,49 +846,66 @@ func (m *model) beginTurn(payload map[string]any) {
 	m.current = turn
 	m.transcript = append(m.transcript, entry{turn: turn})
 
-	// The rail auto-opens when a task list first appears: "what it plans to do" is
-	// the one place a person can see whether it understood, and that is worth more
-	// than the 32 columns.
+	// The rail auto-opens when the run first has something to put in it — a task
+	// list, a goal, a background job. See `noteRail`.
 	//
-	// It is an **edge, not a level**, and that distinction is load-bearing: keyed on
-	// "there are todos" the answer would still be yes on the next snapshot 50ms
-	// later, so a user who had just pressed Ctrl+B to fold the rail would have it
-	// shoved back — making that key look broken. Seeing the list once per
-	// appearance, then listening to the user; going back to empty re-arms it. A
-	// **content** update (one task turning completed) does not re-open it either:
-	// `todo_write` is called many times in a long task, and re-opening every time
-	// would be a panel that keeps popping itself open.
-	//
-	// A manual collapse is respected for everything **except** this one event.
-	// Deliberate: when the user folded the rail there was no task list, so "the
-	// model just wrote one down" is new information they have not seen. That is why
-	// there is no `railPinned` test here — adding one silently removes the feature
-	// for anybody who has ever pressed Ctrl+B.
-	m.noteTaskList()
+	// It is called here as well as from the state snapshot because none of the three
+	// is there when a turn starts: `run_started` arrives first, so this call sees an
+	// empty panel, and the snapshot is where the edge is actually observable.
+	m.noteRail()
 }
 
-// noteTaskList updates the "a task list just appeared" edge and opens the rail on
-// it.
+// noteRail opens the rail once for each of the three things it holds that has
+// appeared since the last time that thing was absent, and re-arms that edge when
+// the thing goes away.
 //
-// It is called from **two** places, and that is the whole point. A turn's task
-// list is not there when the turn starts: `run_started` arrives first, and the
-// list only reaches the panel when the state snapshot that follows `todo_write`
-// comes back — which is one or more steps later, mid-turn. Checking this only in
-// `beginTurn` meant the check always ran against an empty list, so the rail never
-// opened itself for the one thing it opens itself for.
+// It is an **edge, not a level**, and that distinction is load-bearing: keyed on
+// "there are todos" the answer would still be yes on the next snapshot 50ms later,
+// so a user who had just pressed Ctrl+B to fold the rail would have it shoved back
+// — making that key look broken. A **content** update (one task turning completed,
+// a job finishing) does not re-open it either: `todo_write` is called many times
+// in a long task, and re-opening every time would be a panel that keeps popping
+// itself open.
 //
-// The edge, not the level: `todo_write` is called many times in a long task, and
-// re-opening on every call would be a panel that keeps popping itself open. An
-// **empty** list re-arms it, so a later appearance counts as new.
-func (m *model) noteTaskList() {
-	if len(m.panel.todos) > 0 {
-		if !m.railTodosSeen {
-			m.railTodosSeen = true
-			m.railHidden = false
-		}
+// A manual collapse is respected for everything **except** a first appearance.
+// Deliberate: when the user folded the rail there was nothing in it, so "the model
+// just wrote a task list down" / "it just decided what this session is for" / "a
+// command went to the background" is information they have not seen. There is no
+// "the user pinned it" flag to test here on purpose — keying this on one silently
+// removes the feature for anybody who has ever pressed Ctrl+B.
+//
+// It is called from **two** places, and that is the whole point. None of the three
+// is there when a turn starts: `run_started` arrives first, and they only reach the
+// panel through the state snapshot that follows the tool call that produced them —
+// one or more steps later, mid-turn. Checking this only in `beginTurn` meant the
+// check always ran against an empty panel, so the rail never opened itself for the
+// thing it opens itself for.
+func (m *model) noteRail() {
+	m.noteRailTrigger(&m.railSeen.todos, len(m.panel.todos) > 0)
+	m.noteRailTrigger(&m.railSeen.goal, goalObjective(m.panel.goal) != "")
+	m.noteRailTrigger(&m.railSeen.jobs, len(m.panel.jobs) > 0)
+}
+
+// noteRailTrigger moves one edge and opens the rail when it rises.
+func (m *model) noteRailTrigger(seen *bool, present bool) {
+	if !present {
+		// Back to nothing: the next appearance is a new event, not "the same batch
+		// is still there".
+		*seen = false
 		return
 	}
-	m.railTodosSeen = false
+	if !*seen {
+		*seen = true
+		m.railHidden = false
+	}
+}
+
+// goalObjective is the goal's text, or "" when there is no goal. The runtime sends
+// the empty shape rather than omitting the key, so "no goal" is an empty string and
+// never a missing map.
+func goalObjective(goal map[string]any) string {
+	objective, _ := goal["objective"].(string)
+	return objective
 }
 
 // finishTurn closes the current turn and rewrites its header in place.
@@ -1169,10 +1205,6 @@ func (m *model) observeChild(payload map[string]any, kind string) {
 func (m *model) applyState(payload map[string]any) {
 	if value, ok := payload["todos"].([]any); ok {
 		m.panel.todos = value
-		// This is where a task list actually appears: the snapshot follows the
-		// `todo_write` result, so it is the first moment the panel can know. The
-		// call in `beginTurn` only ever sees an empty list — see noteTaskList.
-		m.noteTaskList()
 	}
 	if value, ok := payload["jobs"].([]any); ok {
 		m.panel.jobs = value
@@ -1207,15 +1239,17 @@ func (m *model) applyState(payload map[string]any) {
 	if value, ok := protocol.String(payload, "effort"); ok {
 		m.panel.effort = value
 	}
-	if value, ok := payload["agents_md"].([]any); ok {
-		m.panel.agentsMD = value
-	}
 	if value, ok := payload["skills"].([]any); ok {
 		m.panel.skills = value
 	}
 	if value, ok := payload["goal"].(map[string]any); ok {
 		m.panel.goal = value
 	}
+	// **After** every field this reads: the snapshot follows the tool call that
+	// produced the task list, the goal or the background job, so this is the first
+	// moment the panel can know any of the three is there. The call in `beginTurn`
+	// only ever sees a panel with nothing in it yet — see noteRail.
+	m.noteRail()
 }
 
 // ── transcript helpers ────────────────────────────────────────────────────────
@@ -1427,12 +1461,23 @@ func (m model) spinnerNeeded() bool {
 // drawn at the same instant (the status mark and a folded thinking line) must
 // show the same frame, and a counter that advances per message would drift with
 // however many messages happened to arrive. The original derived it the same way.
+//
+// **The instant comes from `frameAt`**, which View sets once before it draws
+// anything, falling back to the clock for the direct-render callers (tests and
+// the panels). Reading `time.Now()` in here instead meant the two places that draw
+// a spinner could straddle a tick and disagree — and
+// `TestTheLiveThinkingOutranksThePreviousStepsReasoning` compared a frame it asked
+// for against a screen drawn a moment earlier, so it failed at random under load.
 func (m model) spinnerFrame() string {
 	if !m.spinnerNeeded() {
 		return ""
 	}
+	at := m.frameAt
+	if at.IsZero() {
+		at = time.Now()
+	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	step := time.Now().UnixNano() / int64(spinnerSeconds*float64(time.Second))
+	step := at.UnixNano() / int64(spinnerSeconds*float64(time.Second))
 	return frames[int(step%int64(len(frames)))]
 }
 

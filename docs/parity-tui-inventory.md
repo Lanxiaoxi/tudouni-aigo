@@ -36,7 +36,7 @@ TextArea built-ins (Ctrl+A/E/W/U, Home/End, Delete, Ctrl+Left/Right): inherited.
 |---|---|---|---|
 | `Ctrl+C` | quit app (`app.py:492`) | `keys.go:44` | parity |
 | `Ctrl+T` | toggle the thinking block of the turn under the viewport (`app.py:2149-2170`) | `keys.go:85-86`, `keys.go:881-890` — walks back to the newest turn that has thinking | same user-visible effect while the newest turn is the one on screen |
-| `Ctrl+B` | toggle the rail + pin (`app.py:2138-2147`) | `keys.go:62-69` | **divergence**: dead while an overlay is open (m2) |
+| `Ctrl+B` | toggle the rail + pin (`app.py:2138-2147`) | `keys.go:61-68`, `keys.go:577-583` | **divergence**: dead while an overlay is open (m2); Go no longer pins — the auto-open is an edge, so a folded rail stays folded until something new appears |
 | `Ctrl+K` | open the palette, insert `/` when empty (`app.py:1481-1501`) | `keys.go:71-75` | m9 (no `/` inserted) |
 | `Ctrl+S` | skills panel (`app.py:2172-2174`) | `keys.go:77-83` | parity |
 | `Esc` | close overlay / interrupt / idle notice / deny in the approval (`app.py:2176-2198`) | `keys.go:47-60`, `keys.go:916-917` | parity |
@@ -49,28 +49,36 @@ TextArea built-ins (Ctrl+A/E/W/U, Home/End, Delete, Ctrl+Left/Right): inherited.
 
 ## C. Left rail — every row
 
-Python `rail_blocks` / `_*_block`: `view_state.py:1780-2085`. Go `railBlocks`: `rail.go:37-530`.
+Python `rail_blocks` / `_*_block`: `view_state.py:1780-2085`. Go `railBlocks`: `rail.go`.
 
-Block order: Goal · Tasks · Loaded skills · Session · Background jobs · MCP.
-Python had **Permissions** between Loaded skills and Session; Go no longer draws that block
-at all — see the row below.
+Block order: Goal · Tasks · Loaded skills · Background jobs · MCP.
+Python had **Permissions** between Loaded skills and Session, and a **Session** block; Go
+draws neither (see the two rows below). Background jobs moved above MCP.
+
+Block width: Python's is a fixed column; Go's scales with the terminal —
+`clamp(width/3 - 4, 32, 48)` with the conversation keeping 48 cells (`railWidthFor`,
+`rail.go`). Height budget: each block is capped (`railMaxRows`), and a block that does not
+fit on a short terminal is dropped from the bottom with the rows it lost reported as `(+N
+more)` rather than vanishing.
 
 | block | rows (Python) | Go |
 |---|---|---|
-| Goal | — (Python has no goal block) | `rail.go:52-55` — objective, phase/rounds line, armed/disarmed, blocked message |
-| Tasks | progress bar (one cell per task, `+N` past 20) + one row per todo with `✓/◐/○/·`; badge `done / total`; two-line empty state | `rail.go:261-313` — same, badge omitted when empty (matches Python's `""`) |
-| Loaded skills | one row per name (`ROLE_SKILL`); badge is a literal `"0"` | `rail.go:389-402` — same |
+| Goal | — (Python has no goal block) | `goalRows` — objective (**capped at 6 rows**, then `… (+N more lines) — /goal`), phase/rounds line, armed/disarmed, blocked message |
+| Tasks | progress bar (one cell per task, `+N` past 20) + one row per todo with `✓/◐/○/·`; badge `done / total`; two-line empty state | `todoRows` — same, badge omitted when empty (matches Python's `""`) |
+| Loaded skills | one row per name (`ROLE_SKILL`); badge is a literal `"0"` | `skillRows` — same |
 | Permissions | one row per risk level, disposition word from the runtime, colour only on medium/high; granted-tools row, granted-prefixes row, denied-tools row, else "reported by level" | **removed.** The risk table duplicated the status bar's permission chip (it is the same `risk_scope` payload, and those two single-line places are where the fact is read); the granted / command-rule / denied rows went with it and `/tools` is where that policy is read. The i18n keys and `panelstate.granted/prefixes/denied` went too. |
-| Session | id; model + window; thinking-off row (with effort); size; context figure; audit dir; one row per AGENT.md with `!`/`…` | `rail.go:160-256` — same; **no provider line anywhere** (Go never reads `init.provider`) |
-| Background jobs | four state marks, `n / m` badge counts outstanding, only `uncollected` in the waiting colour | `rail.go:350-387`, `rail.go:455-471` — same |
-| MCP | only `loaded` rows with the tool count, badge `running / configured`; empty state says nothing is mounted | `rail.go:404-451` — same |
+| Session | id; model + window; thinking-off row (with effort); size; context figure; audit dir; one row per AGENT.md with `!`/`…` | **removed** (2026-09). Every fact had a better home: the id is on the top bar, the model and the step limit on the session bar, and the context figure, the message/step counts and the audit path on the status bar. The effort level moved to the session bar in parentheses beside the model (drawn whether or not thinking is on); the AGENT.md rows are gone and the startup notice is where that question is asked. It cost ~8 rows — more than the rest of the rail together on a normal terminal. |
+| Background jobs | four state marks, `n / m` badge counts outstanding, only `uncollected` in the waiting colour | `jobRows`, `jobCount` — same; **moved above MCP** |
+| MCP | only `loaded` rows with the tool count, badge `running / configured`; empty state says nothing is mounted | `mcpRows`, `mcpCount` — same |
 
-Collapse behaviour: `Ctrl+B` toggles + pins; auto-open on the todos edge
-(Python `view_state.py:2121-2159` ↔ Go `noteTaskList`, `model.go` — called from **both**
-`beginTurn` and the state snapshot, because the list only ever appears mid-turn).
+Collapse behaviour: `Ctrl+B` toggles (no pinning — see F). Auto-open on **three** edges:
+a task list, a goal and a background job each open the rail once when it first appears, and
+each re-arms when it goes away (`noteRail`/`noteRailTrigger`, `model.go` — called from both
+`beginTurn` and the state snapshot, because none of the three is there when a turn starts).
+A manual collapse is respected until something new appears.
 
 Narrow degradation: rail hidden below 100 columns and the one-line summary shows only below
-120 columns on both (`view.go:24`, `view.go:50-52` ↔ `app.py:848-856`).
+120 columns on both (`minRailWidth`, `narrowColumns` ↔ `app.py:848-856`).
 Summary contents: Python includes the autopilot cell; Go does not (M10).
 
 ## D. Overlays
@@ -105,9 +113,10 @@ Divergences: no spinner during boot (M8); the frame keeps animating while a dial
 
 ## F. What Python's `view_state.py` computes that Go does not
 
-* `should_auto_open` — present in Go as `noteTaskList`, called from the state snapshot (the
-  todos edge is only observable there) as well as `beginTurn`. The `railPinned` gate M2
-  described is gone.
+* `should_auto_open` — present in Go as `noteRail`, called from the state snapshot (none of
+  the three edges is observable at `beginTurn`) as well as `beginTurn`. The `railPinned` gate
+  M2 described is gone, and so is the field itself: the auto-open is an edge, so there is
+  nothing for a "the user pinned it" flag to suppress.
 * `rail_summary` — present, minus the autopilot segment (M10).
 * `tokens_text`'s integer trimming (m1) and `ms_text`'s `—` for a missing duration
   (`view_state.py:268-271` → Go's `msText` returns `"0ms"` for a nil/zero duration,

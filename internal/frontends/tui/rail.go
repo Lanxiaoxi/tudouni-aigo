@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 )
@@ -15,7 +16,7 @@ import (
 // from the original's layout, which docks this column on the left. The blocks
 // themselves are the original's, cell for cell.
 //
-// Six blocks, each introduced by a colour bar. The bar is the rail_bar role — a
+// Five blocks, each introduced by a colour bar. The bar is the rail_bar role — a
 // **softened** version of the theme's line colour, because one full-strength
 // stroke per block competes with the body text for attention, and an anchor is
 // supposed to be the quiet layer. The eye counts the segments by walking the bar.
@@ -27,14 +28,72 @@ import (
 // ride in the same block are gone with it: those are policy, `/tools` is where
 // the policy is read.
 //
+// There is no Session block either. Every fact it carried is stated somewhere
+// better, and it cost more rows than the rest of the rail together on a normal
+// terminal: the id is on the top bar, the model and the step limit are on the
+// session bar, and the context figure, the message/step counts and the audit
+// path are on the status bar. The effort level moved onto the session bar beside
+// the model. The AGENT.md rows are gone with it — the startup notice that says
+// which files were spliced in is where that question is actually asked, and
+// keeping a standing copy cost a row per file.
+//
 // The block order is **not** interchangeable. It is the order the design fixed
-// (goal / tasks / skills / session); jobs and MCP were appended because they are
-// the two blocks that stand for something *alive* on this machine, and they
-// belong together at the end. Moving one of them into the middle shifts every
-// block below it, and "which block is where" is the muscle memory a person
-// builds between two glances.
+// (goal / tasks / skills), with the two blocks that stand for something *alive*
+// on this machine — background jobs and MCP — kept in a fixed order after them.
+// Jobs sits above MCP because "a command I started" is something the person
+// asked for and is watching, while a mounted server is background
+// infrastructure. Moving a block shifts every block below it, and "which block is
+// where" is the muscle memory a person builds between two glances.
 
-const railWidth = 32
+// railMinWidth is where the rail stops being worth its columns, and railMaxWidth
+// is where it stops being a column and starts competing with the conversation.
+// 32 is the design's own width and the floor here; wider is better for the rows
+// that are prose or command lines rather than figures, which wrap at 30 cells.
+const (
+	railMinWidth = 32
+	railMaxWidth = 48
+	// transcriptMinWidth is what the conversation keeps, whatever the rail wants.
+	// Below it the welcome card and the two-column `/status` sheet stop being
+	// readable, and "the rail is comfortable" is paid for with the thing the
+	// screen exists for. With railMaxWidth at 48 the two never collide: no
+	// terminal this rail is drawn on is narrower than the rail plus this.
+	transcriptMinWidth = 48
+)
+
+// clipEllipsis marks a row that was cut to fit the rail's own width.
+const clipEllipsis = "…"
+
+// railMaxRows caps a block whose content is prose rather than a list. Task rows
+// and job rows are lists — the person asked for every one of them, so the cap there
+// is a soft one that bites on a short terminal (see clipBlock). The Goal objective
+// is unbounded text: one paragraph cost nine rows of a twenty-three-row rail, which
+// pushed the three blocks below it off the screen.
+const railMaxRows = 6
+
+// goalMaxRows is the Goal block's own cap, and it is one row more than railMaxRows
+// on purpose: the row that says "the rest is one `/goal` away" is part of what the
+// block draws, so it is the block's last row rather than a row the block budget
+// then counts and reports a second time.
+const goalMaxRows = railMaxRows + 1
+
+// railWidthFor is the rail's width for a terminal. It scales with the terminal —
+// a third of it, minus the chrome — and stops at both ends: 32 because that is
+// the design's column, 48 because past that the conversation is paying for the
+// rail. Whatever the result, the transcript keeps transcriptMinWidth, so the two
+// can never collide and the result is always a drawable column.
+func (m model) railWidthFor() int {
+	width := m.width/3 - 4
+	if width < railMinWidth {
+		width = railMinWidth
+	}
+	if width > railMaxWidth {
+		width = railMaxWidth
+	}
+	if m.width-width < transcriptMinWidth {
+		width = m.width - transcriptMinWidth
+	}
+	return width
+}
 
 // railBlock is one titled section of the rail.
 type railBlock struct {
@@ -45,14 +104,14 @@ type railBlock struct {
 	hint  string
 }
 
-func (m model) railBlocks() []railBlock {
+func (m model) railBlocks(width int) []railBlock {
 	return []railBlock{
 		{
 			title: i18n.T("rail.goal"),
 			// The badge is the round counter, which is the one number that answers
 			// "how much longer can this go on by itself".
 			count: goalCount(m.panel.goal),
-			rows:  goalRows(m.panel.goal),
+			rows:  goalRows(m.panel.goal, width),
 			empty: i18n.T("rail.goal.empty"), hint: i18n.T("rail.goal.empty_hint"),
 		},
 		{
@@ -71,11 +130,6 @@ func (m model) railBlocks() []railBlock {
 			empty: i18n.T("rail.skills.empty"), hint: i18n.T("rail.skills.empty_hint"),
 		},
 		{
-			title: i18n.T("rail.session"),
-			rows:  m.sessionRows(),
-			empty: i18n.T("rail.session.empty"), hint: i18n.T("rail.session.empty_hint"),
-		},
-		{
 			title: i18n.T("rail.jobs"),
 			count: jobCount(m.panel.jobs),
 			rows:  jobRows(m.panel.jobs),
@@ -92,10 +146,12 @@ func (m model) railBlocks() []railBlock {
 
 // renderRail draws the rail at the given width.
 //
-// When the six blocks do not fit, the **top** is what survives. The original's
-// rail is a scroll container that starts at the top; trimming from the bottom
-// instead threw away the task list — with its title and its progress bar — which
-// is the one block the rail opens itself for.
+// When the blocks do not fit, the **top** is what survives: this is a fixed
+// column rather than a scroll container, so the alternative is a block that
+// cannot be reached at all. Two things keep "does not fit" from being the common
+// case: a block whose content is prose is capped (railMaxRows, and the goal's own
+// objective cap), and a block that does fall off the bottom is marked as
+// truncated instead of being drawn as though it were complete.
 func (m model) renderRail(width, height int) string {
 	// The title carries no bold: every block shouting would mean nothing shouts.
 	// It is the same grey as the body — it says "what this block is called", and
@@ -104,14 +160,7 @@ func (m model) renderRail(width, height int) string {
 	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.ink4))
 
 	var out []string
-	flush := func(lines []string) bool {
-		if len(out)+len(lines) > height {
-			return false
-		}
-		out = append(out, lines...)
-		return true
-	}
-	for _, block := range m.railBlocks() {
+	for _, block := range m.railBlocks(width - 2) {
 		head := titleStyle.Render(block.title)
 		if block.count != "" {
 			head += titleStyle.Render(" · " + block.count)
@@ -123,10 +172,7 @@ func (m model) renderRail(width, height int) string {
 		// as the empty state indented one cell deeper than the rows that replace it.
 		bar := lipgloss.NewStyle().Foreground(lipgloss.Color(currentTheme.railBar))
 		row := func(text string) string { return bar.Render("▌") + " " + text }
-		var lines []string
-		// The title is clipped rather than wrapped: it is a heading, and a heading
-		// on two lines reads as two rows of content.
-		lines = append(lines, row(clipStyled(head, width-2)))
+		var content []string
 		if len(block.rows) == 0 {
 			// The empty state wraps like any other row. It is two sentences of
 			// English in a 32-column column, and drawing them unwrapped pushed them
@@ -138,19 +184,20 @@ func (m model) renderRail(width, height int) string {
 				if sentence == "" {
 					continue
 				}
-				for _, physical := range wrapCells(emptyStyle.Render(sentence), width-2) {
-					lines = append(lines, row(physical))
-				}
+				content = append(content, wrapCells(emptyStyle.Render(sentence), width-2)...)
 			}
 		} else {
-			for _, content := range block.rows {
-				for _, physical := range wrapCells(content, width-2) {
-					lines = append(lines, row(physical))
-				}
+			for _, line := range block.rows {
+				content = append(content, wrapCells(line, width-2)...)
 			}
 		}
+		// The title is clipped rather than wrapped: it is a heading, and a heading
+		// on two lines reads as two rows of content. The bar is added exactly once,
+		// where the row is emitted — adding it here as well drew two of them, which
+		// is what the title rows looked like before this was fixed.
+		lines := append([]string{clipStyled(head, width-2)}, clipBlock(content, width-2)...)
 		lines = append(lines, "")
-		if !flush(lines) {
+		if len(out)+len(lines) > height {
 			// Out of room: draw what still fits of this block and stop. Whole
 			// blocks first keeps a half-drawn block from looking like a complete
 			// one with missing rows.
@@ -158,9 +205,12 @@ func (m model) renderRail(width, height int) string {
 				if len(out) >= height {
 					break
 				}
-				out = append(out, line)
+				out = append(out, row(line))
 			}
 			break
+		}
+		for _, line := range lines {
+			out = append(out, row(line))
 		}
 	}
 	for len(out) < height {
@@ -169,111 +219,49 @@ func (m model) renderRail(width, height int) string {
 	return strings.Join(out, "\n")
 }
 
-// sessionRows is the "which conversation is this" block: the id, the model and
-// its window, the thinking switch, the size, the context figure, where the audit
-// goes, and which AGENT.md files were spliced in at the start.
-func (m model) sessionRows() []string {
-	if m.sessionID == "" {
-		return nil
-	}
-	var rows []string
-	rows = append(rows, currentTheme.styleFor("process").Render(m.sessionID))
-	if m.panel.model != "" {
-		modelRow := currentTheme.styleFor("skill").Render(m.panel.model)
-		if m.panel.window != nil {
-			modelRow += currentTheme.styleFor("rule").Render("  " + windowText(m.panel.window))
+// clipBlock returns a block's content rows, each already at most railMaxRows
+// long, with the rows that did not fit reported in one.
+//
+// The cap is what keeps a long task list or a long command from taking the whole
+// column: the person asked for every row, so the rows are not dropped silently —
+// the last row says how many are missing. A row wider than the rail is clipped
+// with the same marker, for the same reason: a row that overflows would widen the
+// frame the conversation is joined to.
+func clipBlock(rows []string, width int) []string {
+	kept := make([]string, 0, len(rows)+1)
+	hidden := 0
+	for _, line := range rows {
+		visible := line
+		if runewidth.StringWidth(stripANSI(visible)) > width {
+			visible = clipStyled(line, width) + clipEllipsis
 		}
-		rows = append(rows, modelRow)
-	}
-	// Thinking-off is the one state worth a standing line: on is what the
-	// endpoint does by default, and a default does not need a row. The effort
-	// level rides on the same line, and **only when thinking is off** — writing
-	// "off · high" on its own line would suggest high is still in effect.
-	if !m.panel.thinking {
-		line := currentTheme.styleFor("warn").Render(i18n.T("rail.session.thinking_off"))
-		if m.panel.effort != "" {
-			line += currentTheme.styleFor("rule").Render(
-				i18n.T("rail.session.effort", "effort", m.panel.effort))
-		}
-		rows = append(rows, line)
-	}
-	if m.panel.messages > 0 {
-		rows = append(rows, currentTheme.styleFor("rule").Render(i18n.T("rail.session.size",
-			"messages", i18n.Tn("rail.session.messages", m.panel.messages, "n", m.panel.messages),
-			"steps", i18n.Tn("rail.session.steps", m.panel.steps, "n", m.panel.steps))))
-	}
-	if used, cached := m.panel.promptTokens, m.panel.cachedTokens; used != nil {
-		_ = cached
-		window := intOf(m.panel.window)
-		if window > 0 {
-			rows = append(rows, currentTheme.styleFor("rule").Render(
-				i18n.T("status.context.percent",
-					"used", stateTokensText(*used), "total", stateTokensText(window),
-					"percent", fmt.Sprintf("%.1f", float64(*used)/float64(window)*100))))
-		} else {
-			rows = append(rows, currentTheme.styleFor("rule").Render(
-				i18n.T("status.context.used", "used", stateTokensText(*used))))
-		}
-	}
-	if m.auditPath != "" {
-		rows = append(rows, currentTheme.styleFor("rule").Render(
-			i18n.T("status.audit", "path", m.auditDirShort())))
-	}
-	// Which AGENT.md files were spliced into this session's system message. It
-	// belongs here rather than in a block of its own: it is the same kind of fact
-	// as the session id — decided when the session started, different per session
-	// — and the startup notice that says it scrolls away, while "did my AGENT.md
-	// take effect" is a question people ask again later.
-	for _, item := range m.panel.agentsMD {
-		row, ok := item.(map[string]any)
-		if !ok {
+		if len(kept) >= railMaxRows {
+			hidden++
 			continue
 		}
-		name, _ := row["path"].(string)
-		if name == "" {
-			name = "?"
-		}
-		// The row's own vocabulary: `AgentMDForDisplay` marks a file that could not
-		// be injected with `status: "failed"` and puts the reason under `problem`.
-		// This used to look for `failed` and `reason`, which nothing writes — so a
-		// file that failed was drawn as though it had loaded, with the line count
-		// where its reason should be, and the one case the mark exists for was the
-		// one case that never got it.
-		failed := false
-		if value, ok := row["status"].(string); ok {
-			failed = value == "failed"
-		}
-		truncated := false
-		if value, ok := row["truncated"].(bool); ok {
-			truncated = value
-		}
-		// Truncated is marked differently from failed on purpose: the content did
-		// get in, just not all of it, and sharing the `!` would read as "this file
-		// had no effect".
-		mark := ""
-		if failed {
-			mark = "! "
-		} else if truncated {
-			mark = "… "
-		}
-		detail := ""
-		if failed {
-			detail, _ = row["problem"].(string)
-		} else {
-			lines := intOf(row["lines"])
-			detail = i18n.Tn("rail.session.agent_md_lines", lines, "n", lines)
-		}
-		role := "rule"
-		if failed {
-			role = "warn"
-		}
-		line := currentTheme.styleFor(role).Render(mark + name)
-		if detail != "" {
-			line += currentTheme.styleFor("rule").Render("  " + detail)
-		}
-		rows = append(rows, line)
+		kept = append(kept, visible)
 	}
-	return rows
+	// The count goes on the last row that survived — and only when the last row is
+	// not already a "there is more" row of its own. Two markers stacked read as two
+	// separate omissions, and the block whose own cap fired has already said its
+	// number (see `railMore` and goalRows).
+	if hidden > 0 && !isRailMore(kept[len(kept)-1]) {
+		kept[len(kept)-1] += currentTheme.styleFor("rule").Render(
+			i18n.Tn("rail.more", hidden, "n", hidden))
+	}
+	return kept
+}
+
+// railMore is the style role of a row that says something was left out. It is one
+// role rather than three, because "is this row an omission marker" is asked by the
+// cap above and must not depend on the wording.
+const railMore = "warn"
+
+// isRailMore reports whether a row is an omission marker. The test is on the role
+// the row opens with: the row's text is localized and the count is in it, so the
+// text is not something to match on.
+func isRailMore(row string) bool {
+	return strings.Contains(row, currentTheme.styleFor(railMore).Render("x"))
 }
 
 // todoRows opens with the progress bar — one cell per task, compressed past
@@ -316,13 +304,36 @@ func todoRows(todos []any) []string {
 // active and disarmed — after a resume, after a pause, after the round budget ran
 // out — and a panel that showed only the phase would leave a person waiting for
 // work that is never going to start.
-func goalRows(goal map[string]any) []string {
+//
+// The objective is the one unbounded string in the rail, so it is capped at the
+// rail's own content width: an objective is a paragraph a model wrote, and at 30
+// cells of content width the one in this repository's own session took nine rows
+// of a twenty-three-row column — the Tasks block and both blocks below it went off
+// the screen for it. The cap keeps "did it understand what I asked" answerable
+// from the rail; the whole sentence is one `/goal` away, and the row that was cut
+// says so.
+func goalRows(goal map[string]any, width int) []string {
 	objective, _ := goal["objective"].(string)
 	if goal == nil || objective == "" {
 		return nil
 	}
 	process := currentTheme.styleFor("process")
-	rows := []string{process.Render(objective)}
+
+	var rows []string
+	// A newline is a row break in wrapCells, and an objective is one sentence: a
+	// model that wrote one would otherwise spend the whole cap on two physical
+	// lines' worth of text.
+	objective = strings.ReplaceAll(objective, "\n", " ")
+	wrapped := wrapCells(process.Render(objective), width)
+	// The cap is six rows of text: the objective is prose, and the block still has
+	// to fit its phase and its "continuing / paused" row underneath it.
+	if len(wrapped) > railMaxRows {
+		hidden := len(wrapped) - railMaxRows
+		wrapped = wrapped[:railMaxRows]
+		wrapped = append(wrapped, currentTheme.styleFor(railMore).Render(
+			i18n.T("rail.goal.more", "n", hidden)))
+	}
+	rows = append(rows, wrapped...)
 
 	phase, _ := goal["phase"].(string)
 	rounds, _ := goal["rounds_text"].(string)

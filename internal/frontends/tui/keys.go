@@ -60,10 +60,10 @@ func (m model) handleEditorKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyCtrlB:
 		// The rail toggle is a display preference, not a mode, and it is bound at the
-		// **window** level in the original, so it fires whatever is on top. Pressing
-		// it also **pins** the choice: from here on the interface stops opening the
-		// rail on its own, or a task list arriving would shove back what the user
-		// just folded.
+		// **window** level in the original, so it fires whatever is on top. What it
+		// folds stays folded: the auto-open fires on a first appearance, not on every
+		// snapshot, so a task list arriving does not shove back what the user just
+		// folded.
 		m.toggleRail()
 		return m, nil
 
@@ -574,10 +574,14 @@ func slashCommands() []string {
 	return names
 }
 
-// toggleRail folds or unfolds the context rail, and pins the choice.
+// toggleRail folds or unfolds the context rail.
+//
+// It does not record the choice. The auto-open is an edge — it fires when a task
+// list, a goal or a background job **appears**, not while one is there — so a
+// folded rail stays folded until something new arrives, and there is nothing for a
+// "the user has decided" flag to suppress.
 func (m *model) toggleRail() {
 	m.railHidden = !m.railHidden
-	m.railPinned = true
 }
 
 // thinkingEffortNote says whether the effort level is in force.

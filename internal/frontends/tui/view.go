@@ -33,6 +33,11 @@ func (m model) View() string {
 	if m.width == 0 {
 		return ""
 	}
+	// **One clock reading for the whole frame.** The thinking line's spinner and
+	// the status bar's are drawn by two different passes; each reading the clock
+	// for itself is how they end up one tick apart, and how a test that asks for
+	// "the frame the model would draw" gets a screen from a moment earlier.
+	m.frameAt = time.Now()
 
 	top := m.renderTopBar()
 	session := m.renderSessionBar()
@@ -143,6 +148,16 @@ func (m model) renderSessionBar() string {
 	}
 	if m.panel.model != "" && !narrow {
 		left += currentTheme.styleFor("process").Render("  ·  " + m.panel.model)
+		// The effort level rides with the model, because that is the fact it
+		// qualifies: "which model, thinking how hard" is one answer, and the rail's
+		// Session block — where this used to live, and only while thinking was off
+		// — is gone. It is drawn whether or not thinking is on: the level is in
+		// force either way, and a value that appears and disappears with another
+		// switch is a value nobody trusts.
+		if m.panel.effort != "" {
+			left += currentTheme.styleFor("rule").Render(
+				i18n.T("session.bar.effort", "effort", m.panel.effort))
+		}
 	}
 	// The limit the runtime is actually enforcing, not the flag: the two can
 	// differ, and a bar advertising "up to 5 steps" over a run allowed forty is
@@ -325,19 +340,25 @@ func padRows(block string, width int) string {
 
 // renderBodySplit draws the conversation and, when the rail is up, the rail beside
 // it. **The rail is docked right**, which is the one place this port departs from
-// the original's layout on purpose: Python puts the context column on the left
+// the original: Python puts the context column on the left
 // (`app.py` CSS `#rail`, and the `Horizontal` at `app.py:639-641` yields
 // rail-then-log). The conversation is what the eye is on, so it keeps the left
 // margin and the panel stays out of the column the text starts at — a request from
-// the user, not a parity finding. The rail's own width, its six blocks, the
+// the user, not a parity finding. The rail's own width, its blocks, the
 // narrow-screen drop rule and the collapsed summary are untouched by it.
+//
+// The rail's width is not the constant it was: it scales with the terminal
+// (`railWidthFor`), because the rows that wrap worst — an objective, a command
+// line — are the ones this column exists to show. The conversation keeps
+// `transcriptMinWidth` whatever happens.
 func (m model) renderBodySplit(available int) string {
 	showRail := !m.railHidden && m.width >= minRailWidth
 	if !showRail {
 		return m.renderTranscript(m.width, available)
 	}
-	transcriptWidth := m.width - railWidth - 1
-	rail := m.renderRail(railWidth, available)
+	width := m.railWidthFor()
+	transcriptWidth := m.width - width - 1
+	rail := m.renderRail(width, available)
 	// The transcript is padded to its full width **because the rail follows it**:
 	// `JoinHorizontal` pads a block to its own widest row, so one short row would
 	// let the rail slide left and leave background between it and the edge. With
@@ -345,7 +366,7 @@ func (m model) renderBodySplit(available int) string {
 	// and nobody could see it.
 	transcript := padRows(m.renderTranscript(transcriptWidth, available), transcriptWidth)
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		transcript, " ", paintBackground(rail, railWidth, currentTheme.rail))
+		transcript, " ", paintBackground(rail, width, currentTheme.rail))
 }
 
 // renderTranscript draws the conversation, newest at the bottom.
