@@ -655,6 +655,14 @@ var catalog = map[string]string{
 	"channels.goal.unsupported":    "this runtime does not accept goal commands",
 	"channels.goal.refused":        "the goal command was refused: {problem}",
 
+	// --- the managed EricAI token (`--ericai`) -----------------------------
+	//
+	// These arrive as notices, mid-turn, and each one is a statement about a
+	// credential rather than about the conversation: "the token was replaced and the
+	// request is going out with the new one" is the kind of fact that otherwise has
+	// to be guessed from a turn that failed and then did not.
+	"auth.installed": "[ericai] {route} is now using the refreshed token",
+
 	// --- the rail's goal block --------------------------------------------
 	"rail.goal":            "Goal",
 	"rail.goal.empty":      "No goal",

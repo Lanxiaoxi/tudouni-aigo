@@ -37,6 +37,13 @@ type Options struct {
 	// and changeable in-session (/theme, /quiet). They never reach the runtime.
 	Theme string
 	Quiet bool
+	// EricAI is `--ericai`, passed through unchanged. It is **not** a display
+	// preference: the token is managed by the process that owns the model client,
+	// and that process is the child this front end starts — so the flag is one of
+	// the arguments rather than something this side acts on. Acting on it here is
+	// what the entry point used to do, and it could not work: the refreshed key
+	// never reached the client that was sending requests.
+	EricAI bool
 }
 
 // Run starts the interface and returns the process exit code.
@@ -58,6 +65,13 @@ func Run(options Options) int {
 	}
 	if options.Debug {
 		arguments = append(arguments, "--debug")
+	}
+	// The credential flag travels to the child, which is the process that reads the
+	// catalogue and holds the model client. Dropping it here was silent and total:
+	// `--ericai` refreshed the config in the parent, and the child went on sending
+	// the key it had read before that.
+	if options.EricAI {
+		arguments = append(arguments, "--ericai")
 	}
 	// The limit has to travel with the child, not just sit on the status bar:
 	// showing "up to 5 steps" over a runtime allowed forty is a number the user

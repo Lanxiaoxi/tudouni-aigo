@@ -60,6 +60,16 @@ type RetryHooks struct {
 	// call: a user who presses stop during a backoff would otherwise wait out the
 	// delay and then see the request go again.
 	ShouldStop func() bool
+	// OnFatal is offered a fatal error before it ends the call. A true answer means
+	// the cause has been removed and the request is worth sending again; false (or a
+	// nil hook) reports the error, which is what happens for every other fatal
+	// failure.
+	//
+	// The caller is responsible for answering true **at most once**, because this
+	// loop has no way to tell "fixed it" from "believes it fixed it": a hook that
+	// always says yes would turn a permanently bad route into three identical
+	// requests. See Agent.recoverFromFatal, which is the one implementation.
+	OnFatal func(err error) bool
 	// Sleep is injected so tests do not spend real time waiting.
 	Sleep func(d time.Duration)
 }
@@ -116,6 +126,11 @@ func CallWithRetry(
 
 		var wait int
 		var backoffMs *int
+		// A recovered fatal is retried immediately rather than backed off: nothing
+		// was overloaded, so waiting would only make the person wait. It is still
+		// recorded as `fatal` in the audit, because that is what the endpoint
+		// answered — the recovery is the caller's decision, not a reclassification.
+		recovered := !fatal || (hooks.OnFatal != nil && hooks.OnFatal(err))
 		if !fatal && number < MaxAttempts {
 			wait = backoffMillis(number)
 			backoffMs = &wait
@@ -127,7 +142,7 @@ func CallWithRetry(
 			})
 		}
 
-		if fatal {
+		if !recovered {
 			return model.ModelResponse{}, err
 		}
 		lastErr = err

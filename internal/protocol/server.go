@@ -540,6 +540,24 @@ func (s *Server) finishTurn(runtime Runtime, answer string, err error) {
 	// last step, and the panel should not be a turn behind.
 	s.Send(s.stateMessage(false))
 
+	// Whatever the runtime has to say about the session's credential, said now.
+	//
+	// It is collected **here** because this is the first moment the turn that earned
+	// it is over, and the events are about that turn ("the token was replaced and
+	// the request went out again"): sent while it was still running, the line would
+	// arrive under a turn that is still drawing. The interface is an optional one,
+	// like the goal hooks — a runtime that knows nothing about tokens does not
+	// implement it, and this layer stays ignorant of what a credential is.
+	if talker, ok := runtime.(interface{ DrainAuthNotices() []map[string]any }); ok {
+		for _, item := range talker.DrainAuthNotices() {
+			envelope := map[string]any{"v": VERSION, "t": OutNotice}
+			for key, value := range item {
+				envelope[key] = value
+			}
+			s.Send(envelope)
+		}
+	}
+
 	// A reserved round is queued on its **own** goroutine, and it waits for this
 	// turn's `done` first. Calling back into `startTurn` from here would deadlock:
 	// that path begins with `joinTurn`, which waits for the very `done` this

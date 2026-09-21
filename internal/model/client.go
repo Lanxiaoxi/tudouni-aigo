@@ -485,6 +485,13 @@ func classifyHTTPError(status int, body string, endpoint string, streamOptionsPo
 	}
 
 	switch {
+	case status == 401 || status == 403:
+		// Classified before the general split, and it is still fatal: retrying this
+		// request as it stands earns the same refusal. It is separated out because
+		// one caller — a program that manages the session's token — can change what
+		// is sent without changing what is asked, and only it is allowed to act on
+		// that. See model.CredentialError.
+		return &CredentialError{Msg: summary}
 	case status == 408 || status == 409 || status == 429 || status >= 500:
 		return AsTransient("%s", summary)
 	default:

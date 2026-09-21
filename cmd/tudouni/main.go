@@ -92,13 +92,22 @@ func run(argv []string) int {
 		return showAudit(opts.session, opts.showHist)
 	}
 
-	// The token check happens before any interface starts, because its whole
-	// purpose is to keep a stale JWT from surfacing mid-session. It prints its
-	// own verdict to stderr and never blocks start-up.
-	if opts.ericai {
-		fmt.Fprintln(os.Stderr, runtime.EnsureEricAI())
-	}
-
+	// `--ericai` is not run here, and that is deliberate.
+	//
+	// It used to be: the token was refreshed in this process, before any interface
+	// started, with every line written to stderr. Both halves of that were wrong for
+	// the full-screen interface, which is not a detail — they made the flag unable
+	// to do its job there. The refresh wrote the new key into the config, but the
+	// process that talks to the model is the `--runtime-stdio` **child**, which had
+	// already read the catalogue (or, for the TUI, had not been started yet); and
+	// the interactive login's device code went to a stderr that the alternate screen
+	// hides.
+	//
+	// So the flag travels to whoever owns the model client — the child for the TUI,
+	// this process for the other two interfaces — and the refresh happens there,
+	// where the new key can be installed on the client that will use it. See
+	// runtime.StartupAuth.
+	//
 	// The workspace check runs before anything else can go wrong. read_file needs
 	// no approval, so starting in the home directory would hand over .ssh, other
 	// projects' .env files and browser data without anybody being asked twice.
@@ -150,6 +159,10 @@ func run(argv []string) int {
 			MaxSteps:  opts.maxSteps,
 			Theme:     opts.theme,
 			Quiet:     opts.quiet,
+			// The token belongs to the child, and the child is started from this
+			// list — so the flag has to travel with it or the interface would
+			// promise a refresh nobody performs.
+			EricAI: opts.ericai,
 		})
 	}
 	if opts.stdio {
@@ -258,7 +271,7 @@ func parse(argv []string) (options, error) {
 	flags.BoolVar(&opts.debug, "debug", false, "print what goes to the model")
 	flags.IntVar(&opts.maxSteps, "max-steps", runtime.DefaultMaxSteps(), "how many model calls one turn may take")
 	flags.BoolVar(&opts.showVer, "version", false, "print the version and exit")
-	flags.BoolVar(&opts.ericai, "ericai", false, "check the EricAI token at start-up and refresh it when it is near expiry")
+	flags.BoolVar(&opts.ericai, "ericai", false, "manage the EricAI token: refresh it at start-up and, from then on, whenever a request is about to use a stale one")
 	flags.StringVar(&opts.theme, "theme", "", "start-up theme: deep clear (default), amber, pink violet — /theme changes it later")
 	flags.BoolVar(&opts.quiet, "quiet", false, "start in quiet mode: one line per tool call — /quiet toggles it later")
 
@@ -299,7 +312,8 @@ func usageText() string {
 		"  --audit           print a session's audit log",
 		"  --history         print a session's messages",
 		"  --autopilot       do not ask for approval",
-		"  --ericai          refresh the EricAI token at start-up when it is near expiry",
+		"  --ericai          manage the EricAI token for this session: check it at start-up, and refresh it",
+		"                    before any request that would otherwise go out with a stale one",
 		"  --theme <name>    start-up theme: deep clear (default), amber, pink violet",
 		"  --quiet           start in quiet mode: one line per tool call",
 		"  --stream/--no-stream",
@@ -359,6 +373,7 @@ func openRuntime(booted runtime.Booted, sessionID string,
 		Stream:      opts.stream,
 		MaxSteps:    opts.maxSteps,
 		Resumed:     resumed,
+		EricAI:      opts.ericai,
 		ShouldStop:  hooks.ShouldStop,
 		OnDelta:     hooks.OnDelta,
 		OnEventHook: hooks.OnEvent,

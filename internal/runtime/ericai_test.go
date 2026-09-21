@@ -128,11 +128,11 @@ func configReadForTest(path string) (map[string]any, error) {
 	return out, nil
 }
 
-// ── ensure: every failure degrades, none blocks ──────────────────────────────
+// ── refresh: every failure degrades, none blocks ─────────────────────────────
 
-func TestEnsureDegradesWithAnExplanationWhenThereIsNoRoute(t *testing.T) {
-	// EnsureEricAI reads the user config; a machine without an ericai route must
-	// get a sentence, not an error and not a partial start-up. The path is
+func TestRefreshDegradesWithAnExplanationWhenThereIsNoRoute(t *testing.T) {
+	// RefreshEricAI reads the user config; a machine without an ericai route must
+	// get an explanation rather than a panic or a partial write. The path is
 	// pointed at a throwaway config so the test does not depend on — or, worse,
 	// wait on — whatever the machine running it happens to have configured.
 	configPath := filepath.Join(t.TempDir(), "config.json")
@@ -142,19 +142,23 @@ func TestEnsureDegradesWithAnExplanationWhenThereIsNoRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	message := EnsureEricAI()
-	if !strings.Contains(message, "no ericai route") {
-		t.Fatalf("message = %q, want a sentence about the missing route", message)
+	_, err := RefreshEricAI(RefreshOptions{})
+	if err == nil || !strings.Contains(err.Error(), "no ericai route") {
+		t.Fatalf("err = %v, want a sentence about the missing route", err)
 	}
 }
 
 // ── the sequence the feature promises: log in once, then never again ─────────
 
-// TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently walks the real
-// EnsureEricAI and the real device-code flow with only the three network calls
-// stubbed out. It is the regression test for the bug users saw: the first run
-// logged in, threw the login's refresh_token away, and so every later run
-// logged in again.
+// TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently walks the real refresh and
+// the real device-code flow with only the three network calls stubbed out. It is the
+// regression test for the bug users saw: the first run logged in, threw the login's
+// refresh_token away, and so every later run logged in again.
+//
+// It also pins the other half of that fix — the login's instructions reach the
+// caller's reporter. Written to stderr directly, they were invisible to the
+// full-screen front end, which is how "the token needs a browser" turned into a
+// session that simply stopped working with no explanation on screen.
 func TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently(t *testing.T) {
 	// A throwaway home and config: the refresh-token store lives under the home
 	// directory, so both have to move for the test to be hermetic.
@@ -171,6 +175,7 @@ func TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently(t *testing.T) {
 
 	logins, polls := 0, 0
 	var refreshedWith []string
+	var reported []string
 	originalRequest, originalPost, originalRefresh := ericRequestDeviceCodeFn, ericPostTokenFn, ericRefreshFn
 	t.Cleanup(func() {
 		ericRequestDeviceCodeFn, ericPostTokenFn, ericRefreshFn = originalRequest, originalPost, originalRefresh
@@ -179,7 +184,10 @@ func TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently(t *testing.T) {
 	ericRequestDeviceCodeFn = func() (ericLoginPrompt, error) {
 		logins++
 		// Interval 1 keeps the poll loop's mandatory sleep down to a second.
-		return ericLoginPrompt{DeviceCode: "device-1", UserCode: "ABCD-EFGH", Interval: 1, ExpiresIn: 900}, nil
+		return ericLoginPrompt{
+			DeviceCode: "device-1", UserCode: "ABCD-EFGH",
+			VerificationURI: "https://microsoft.com/devicelogin", Interval: 1, ExpiresIn: 900,
+		}, nil
 	}
 	ericPostTokenFn = func(url.Values) (ericTokenResponse, error) {
 		polls++
@@ -191,13 +199,27 @@ func TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently(t *testing.T) {
 		refreshedWith = append(refreshedWith, token)
 		return ericTokenResponse{AccessToken: fresher, RefreshToken: "refresh-2"}, nil
 	}
+	report := func(line string) { reported = append(reported, line) }
 
 	// Run 1: nothing stored yet, so exactly one interactive login.
-	if message := EnsureEricAI(); !strings.Contains(message, "token refreshed") {
-		t.Fatalf("the first run said %q, want a refreshed token", message)
+	result, err := RefreshEricAI(RefreshOptions{Reporter: report})
+	if err != nil {
+		t.Fatalf("the first run failed: %v", err)
+	}
+	if !strings.Contains(result.Status, "token refreshed") {
+		t.Fatalf("the first run said %q, want a refreshed token", result.Status)
+	}
+	if result.Key != fresh || result.Minutes <= 0 {
+		t.Fatalf("the first run returned key=%v minutes=%d, want the new token and its lifetime", result.Key != "", result.Minutes)
 	}
 	if logins != 1 || polls != 1 {
 		t.Fatalf("logins/polls after the first run = %d/%d, want 1/1", logins, polls)
+	}
+	// The code and the URI have to arrive through the reporter, or a session that
+	// needs a browser login can never be completed.
+	joined := strings.Join(reported, "\n")
+	if !strings.Contains(joined, "ABCD-EFGH") || !strings.Contains(joined, "https://microsoft.com/devicelogin") {
+		t.Fatalf("the login instructions did not reach the reporter: %q", joined)
 	}
 	if got := ericLoadRefreshToken(); got != "refresh-1" {
 		t.Fatalf("the refresh token from the login was not stored: %q", got)
@@ -209,8 +231,12 @@ func TestTheFirstRunLogsInAndTheSecondRunRefreshesSilently(t *testing.T) {
 	// Run 2: the store has to buy silence. Stale again, so a refresh is due —
 	// but no browser, which is the whole point.
 	writeEricConfig(t, configPath, stale)
-	if message := EnsureEricAI(); !strings.Contains(message, "token refreshed") {
-		t.Fatalf("the second run said %q, want a refreshed token", message)
+	second, err := RefreshEricAI(RefreshOptions{})
+	if err != nil {
+		t.Fatalf("the second run failed: %v", err)
+	}
+	if !strings.Contains(second.Status, "token refreshed") {
+		t.Fatalf("the second run said %q, want a refreshed token", second.Status)
 	}
 	if logins != 1 {
 		t.Fatalf("the second run opened another login (logins = %d); the refresh token was not reused", logins)

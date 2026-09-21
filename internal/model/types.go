@@ -32,6 +32,33 @@ type FatalError struct{ Msg string }
 
 func (e *FatalError) Error() string { return e.Msg }
 
+// CredentialError is a refusal that is about what we sent to authenticate.
+//
+// It is a *FatalError in every sense that matters — the same request will be
+// refused again, and IsFatal says so — and it is a distinct type because exactly
+// one caller is entitled to disagree. A program that manages a token (expiry,
+// silent refresh, a stored refresh token) can change the credential without
+// changing the request, so for that caller this is the one fatal failure worth
+// answering with a refresh and **one** retry.
+//
+// The distinction has to come from here rather than from a string match on the
+// error text: "HTTP 401" is a rendering, and a caller that parsed it would break
+// the day the message is reworded — while the failure it guards is a dead session.
+type CredentialError struct{ Msg string }
+
+func (e *CredentialError) Error() string { return e.Msg }
+
+// Unwrap makes CredentialError discoverable as the FatalError it is, so existing
+// callers that only ask "is this fatal" keep working unchanged.
+func (e *CredentialError) Unwrap() error { return &FatalError{Msg: e.Msg} }
+
+// IsCredential reports whether an error is an authentication refusal the caller
+// might be able to answer by supplying a different credential.
+func IsCredential(err error) bool {
+	var refusal *CredentialError
+	return errors.As(err, &refusal)
+}
+
 // IsFatal reports whether an error should stop the retry loop immediately.
 //
 // Anything unrecognised counts as fatal. Failing fast on an error we do not

@@ -15,20 +15,67 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 )
 
-// `--ericai`: the built-in EricAI login and token refresh.
+// Reporter is where the interactive login's instructions go.
+//
+// **It is a parameter rather than a stream written to directly**, and that is the
+// fix for a failure that was invisible: this module used to print the device code
+// and the verification URI straight to stderr, which is right for the line REPL
+// and wrong for the full-screen interface — there, stderr belongs to the parent
+// (and the parent's stderr is the terminal the interface is drawing on), while the
+// process that runs this code is a child whose stderr is drained and dropped. The
+// result was a login that *could not be completed*: the runtime sat waiting up to
+// five minutes for a device code the person was never shown.
+//
+// So the caller decides. The line REPL passes a reporter that writes to stderr;
+// the protocol server passes one that turns each line into a notice the front end
+// draws in the transcript.
+type Reporter func(line string)
+
+// authReport is the nil-safe form of Reporter.
+type authReport struct{ reporter Reporter }
+
+// Report sends one line, and does nothing when nobody is listening. A nil check at
+// every call site is a check somebody eventually forgets.
+func (r authReport) Report(line string) {
+	if r.reporter == nil {
+		return
+	}
+	r.reporter(line)
+}
+
+// `--ericai` and the in-session `/ericai`: the built-in EricAI login and token
+// refresh.
 //
 // The provider's key is a JWT issued by an EricSSO (Microsoft MSAL) flow, and it
-// expires roughly hourly. This module checks it at start-up, quietly mints a new
-// one when it is close to expiry, and writes it back into the config. It exists
-// so a stale token never becomes the user's problem to diagnose mid-session.
+// expires roughly hourly (measured: about 70 minutes). This module checks it,
+// quietly mints a new one when it is close to expiry, and writes it back into the
+// config. It exists so a stale token never becomes the user's problem to diagnose
+// mid-session.
+//
+// **Checking it once, at start-up, was not enough**, and the symptom was exact: a
+// session left open past the token's lifetime answered every turn with "HTTP 401"
+// and the only way forward was to quit and restart with the flag. Two facts made
+// that so:
+//
+//   - writing a new key into the config changes nothing for a process that has
+//     already read it. The catalogue is loaded once, at open, and the route's key
+//     is copied into the model client; without re-installing it, a refresh on disk
+//     is invisible to the requests that are failing;
+//   - the interactive half was invisible too, because the instructions went to a
+//     stderr that a full-screen front end never shows (see Reporter).
+//
+// So the module is now callable at any time and reports where the caller says.
+// `RefreshEricAI` returns the **new key** as well as the sentence, which is what
+// lets the runtime install it on the live client (see Runtime.EnsureAuth and the
+// pre-request check the agent runs).
 //
 // One thing the Python original could do that this one deliberately does not:
 // share Microsoft's encrypted token cache with the ericai desktop package. That
 // cache is an MSAL-internal format; reimplementing its decryption would couple
 // this program to a private file format for a one-time convenience. The Go
 // variant keeps its own refresh token (in the user config directory, mode 0600)
-// after the first interactive login, so the first `--ericai` asks for a browser
-// login once and every later run is silent.
+// after the first interactive login, so the first login asks for a browser once
+// and every later refresh is silent.
 //
 // That last promise is a chain of two links, and both have to hold: the login
 // has to come back with a refresh token (which needs `offline_access` in the
@@ -36,10 +83,10 @@ import (
 // feature degrades into "log in again every single run" — still working, which
 // is why the failure is easy to miss.
 //
-// The failure posture is unchanged and is the point: **nothing here may block
-// start-up**. Whether the old token still works is only truly known when the
-// model request fails, so every failure path returns an explanation and keeps
-// the old key in place.
+// The failure posture is unchanged and is the point: **nothing here may take a
+// session down**. Whether the old token still works is only truly known when the
+// model request fails, so every failure path leaves the old key in place and
+// returns an explanation.
 
 // EricAIProvider is the route whose api_key this module manages.
 const EricAIProvider = "ericai"
@@ -65,8 +112,14 @@ const (
 	ericScopes = ericScope + " " + ericOfflineAccess
 
 	ericRefreshName = "ericai_refreshtoken"
-	ericTimeout     = 300 * time.Second
 )
+
+// ericTimeout is how long the device-code poll waits for a person to finish.
+//
+// A variable rather than a constant, for the same reason the three network calls
+// are: a test that walks the "nothing works" path would otherwise spend five real
+// minutes waiting for a deadline it can state directly.
+var ericTimeout = 300 * time.Second
 
 // ── JWT expiry ────────────────────────────────────────────────────────────────
 
@@ -204,23 +257,27 @@ func ericRequestDeviceCode() (ericLoginPrompt, error) {
 	return start, nil
 }
 
-// ericDeviceCode runs the device-code flow and prints the instructions to
-// stderr, where a plain terminal can see them before the interface starts.
+// ericDeviceCode runs the device-code flow and reports the instructions through
+// the caller's reporter.
+//
+// The lines go somewhere a person can see them — the line REPL's stderr, or the
+// interface's notice channel — and **which** one is not this module's business.
+// See Reporter for what writing to stderr here cost.
 //
 // It returns the **whole** token response, not just the access token. The
 // refresh_token in there is the entire reason the next run can stay silent, and
 // returning only the access token — as this used to — parses that field and then
 // throws it away, which is a browser login on every run.
-func ericDeviceCode() (ericTokenResponse, error) {
+func ericDeviceCode(report authReport) (ericTokenResponse, error) {
 	start, err := ericRequestDeviceCodeFn()
 	if err != nil {
 		return ericTokenResponse{}, err
 	}
 
-	fmt.Fprintf(os.Stderr, "\n[ericai] One Eric AI login is needed (every later run refreshes silently):\n")
-	fmt.Fprintf(os.Stderr, "[ericai]   open:  %s\n", start.VerificationURI)
-	fmt.Fprintf(os.Stderr, "[ericai]   code:  %s\n", start.UserCode)
-	fmt.Fprintf(os.Stderr, "[ericai]   valid for %d s — the run continues on its own once you finish.\n", start.ExpiresIn)
+	report.Report("\n[ericai] One Eric AI login is needed (later logins refresh silently):")
+	report.Report(fmt.Sprintf("[ericai]   open:  %s", start.VerificationURI))
+	report.Report(fmt.Sprintf("[ericai]   code:  %s", start.UserCode))
+	report.Report(fmt.Sprintf("[ericai]   valid for %d s — the run continues on its own once you finish.", start.ExpiresIn))
 
 	interval := time.Duration(maxIntE(start.Interval, 1)) * time.Second
 	deadline := time.Now().Add(ericTimeout)
@@ -307,32 +364,73 @@ func ericWriteBack(configPath, newKey string) error {
 
 // ── the start-up action ───────────────────────────────────────────────────────
 
-// EnsureEricAI is `--ericai`: check, refresh when needed (silently, or with one
-// browser login), write back. It returns a sentence for a human. **No failure
-// path returns an error** — the old token stays in place and start-up continues,
-// because whether the old token truly works is decided by the next model request,
-// not here.
-func EnsureEricAI() string {
-	configPath := config.ConfigFile()
+// ── refreshing on demand, from inside a running session ───────────────────────
+
+// RefreshOptions configures one refresh.
+type RefreshOptions struct {
+	// Path is the configuration file to read and write. Empty means the user's
+	// own config, which is what `--ericai` has always managed.
+	Path string
+	// Force refreshes even when the token is not near expiry. The command uses it:
+	// "the endpoint just told me 401" is a fact that outranks the clock in the
+	// token, and a check that answers "still valid" would refuse the one request
+	// that knows better.
+	Force bool
+	// Reporter receives the interactive login's instructions, one line at a time.
+	// Nil means nobody is listening, and the flow still completes.
+	Reporter Reporter
+}
+
+// RefreshResult is what one refresh learned.
+//
+// It carries the new key as well as the sentence, because writing it back to the
+// config is only half the job: a **running** session holds its route in memory —
+// the catalogue is read once, at open — so the process that just minted the token
+// has to install it on its own client. Returning only a string is how the token
+// got refreshed on disk while every request kept carrying the old one.
+type RefreshResult struct {
+	// Status is the sentence for a human. Empty means nothing happened and there
+	// is nothing to say — a token that did not need refreshing.
+	Status string
+	// Key is the new access token, or "" when the token was left alone.
+	Key string
+	// ExpiresAt and Minutes describe Key, and are only meaningful when Key is set.
+	ExpiresAt time.Time
+	Minutes   int
+}
+
+// RefreshEricAI checks the EricAI token, refreshes it when it is near expiry
+// (silently, or with one browser login), and writes it back.
+//
+// Every failure path **still writes back nothing** and leaves the old key in
+// place, but unlike the start-up action it *does* return the error: a caller that
+// asked for a refresh and did not get one has to be able to say so, and the
+// interactive login's instructions — which used to go to a stream nobody was
+// reading — travel through RefreshOptions.Reporter.
+func RefreshEricAI(options RefreshOptions) (RefreshResult, error) {
+	configPath := options.Path
+	if configPath == "" {
+		configPath = config.ConfigFile()
+	}
+	report := authReport{reporter: options.Reporter}
+
 	raw, err := config.ReadJSONObject(configPath)
 	if err != nil {
-		return fmt.Sprintf("[ericai] could not read the config (%v) — refresh skipped", err)
+		return RefreshResult{}, fmt.Errorf("could not read the config (%w)", err)
 	}
 	providers, _ := raw["providers"].(map[string]any)
 	if len(providers) == 0 {
-		return "[ericai] the config has no providers section — configure providers.ericai first"
+		return RefreshResult{}, fmt.Errorf("the config has no providers section — configure providers.%s first", EricAIProvider)
 	}
 	item, ok := providers[EricAIProvider].(map[string]any)
 	if !ok {
-		return fmt.Sprintf("[ericai] no %s route in providers — --ericai has nothing to manage", EricAIProvider)
+		return RefreshResult{}, fmt.Errorf("no %s route in providers", EricAIProvider)
 	}
 	key, _ := item["api_key"].(string)
 
 	now := time.Now()
-	if !NeedsRefresh(key, now) {
-		exp, _ := DecodeExpiry(key)
-		minutes := int((exp - float64(now.Unix())) / 60)
-		return fmt.Sprintf("[ericai] token still valid for about %d min — no refresh", minutes)
+	if !options.Force && !NeedsRefresh(key, now) {
+		return RefreshResult{}, nil
 	}
 
 	// Silent first: a stored refresh token means no browser round trip.
@@ -343,15 +441,14 @@ func EnsureEricAI() string {
 	if err != nil || payload.AccessToken == "" {
 		// No store, or the refresh token died. Interactive login; a new refresh
 		// token comes back with it, so this happens once per machine.
-		var loginErr error
-		payload, loginErr = ericDeviceCode()
-		if loginErr != nil {
-			return fmt.Sprintf("[ericai] login/refresh failed: %v (the old token stays; rerun to try again)", loginErr)
+		payload, err = ericDeviceCode(report)
+		if err != nil {
+			return RefreshResult{}, err
 		}
 		if payload.RefreshToken == "" {
 			// Say it out loud rather than let the user discover it at the next
 			// expiry: this login bought one access token and no silence.
-			fmt.Fprintln(os.Stderr, "[ericai] the login returned no refresh token — the next run may ask you to log in again")
+			report.Report("[ericai] the login returned no refresh token — the next login may ask you to use a browser again")
 		}
 	}
 
@@ -359,23 +456,29 @@ func EnsureEricAI() string {
 	if !ok {
 		// Not refusing to store an unparseable key is how a dead token ends up
 		// in the config with no way to diagnose it.
-		return "[ericai] the new token carries no exp — not written back, the old token stays"
+		return RefreshResult{}, fmt.Errorf("the new token carries no exp — not written back, the old token stays")
 	}
 	if exp <= float64(now.Unix()) {
-		return "[ericai] the new token is already expired — not written back, the old token stays"
+		return RefreshResult{}, fmt.Errorf("the new token is already expired — not written back, the old token stays")
 	}
 
 	if payload.RefreshToken != "" {
 		if err := ericSaveRefreshToken(payload.RefreshToken); err != nil {
 			// Not fatal: the next run just logs in again.
-			fmt.Fprintf(os.Stderr, "[ericai] could not store the refresh token: %v\n", err)
+			report.Report(fmt.Sprintf("[ericai] could not store the refresh token: %v", err))
 		}
 	}
 	if err := ericWriteBack(configPath, payload.AccessToken); err != nil {
-		return fmt.Sprintf("[ericai] got the token but could not write it back: %v (the old token stays)", err)
+		return RefreshResult{}, fmt.Errorf("got the token but could not write it back (%w) — the old token stays", err)
 	}
-	minutes := int((exp - float64(now.Unix())) / 60)
-	return fmt.Sprintf("[ericai] token refreshed (valid for about %d min)", minutes)
+	expiresAt := time.Unix(int64(exp), 0)
+	minutes := int(time.Until(expiresAt).Minutes())
+	return RefreshResult{
+		Status:    fmt.Sprintf("[ericai] token refreshed (valid for about %d min)", minutes),
+		Key:       payload.AccessToken,
+		ExpiresAt: expiresAt,
+		Minutes:   minutes,
+	}, nil
 }
 
 func maxIntE(a, b int) int {

@@ -208,6 +208,22 @@ type Options struct {
 	Stream    bool
 	MaxSteps  int
 	Resumed   bool
+	// EricAI is `--ericai`: manage this session's token. It is the switch for
+	// everything in auth_session.go — without it nothing inspects a token, nothing
+	// is refreshed, and an authentication refusal is reported like any other fatal
+	// error.
+	//
+	// It is a start-up decision rather than a per-turn one because a session's
+	// route is fixed when the client is built: "is this the route whose token I
+	// manage" is answered once, at open, and the answer is the resolved provider.
+	//
+	// One consequence, stated because it is a real limit rather than a detail:
+	// switching to another route mid-session (`/model`) does not put that route
+	// under management. A session that starts on a plain key and is moved onto the
+	// managed one keeps reporting its 401s, which is the conservative direction —
+	// the alternative is guessing that a route named in a config is one whose token
+	// this process is entitled to replace.
+	EricAI bool
 
 	// ShouldStop is the per-turn cancellation flag.
 	ShouldStop func() bool
@@ -246,6 +262,11 @@ type Runtime struct {
 	Resumed     bool
 	ModelState  *state.SessionModel
 	Catalog     state.Registry
+	// auth is the session's token state: which route to keep fresh, and how to
+	// install a new key on the live client. Nil unless `--ericai` asked for it, and
+	// every method that reads it treats nil as "not mine to manage". See
+	// auth_session.go.
+	auth *ericAuth
 
 	// ContextValue is the session's context ledger: which artifacts are in play,
 	// at what level, and what has been folded away.
@@ -431,6 +452,24 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// notes single out, because a file that is clearly present and has no effect
 	// sends a person looking for the problem in the prompt rather than in the file.
 	runtimeValue.notices = append(runtimeValue.notices, agentMDNotices(session)...)
+
+	// The EricAI token, and it is handled **here rather than in the entry point**.
+	//
+	// The catalogue above was read once, and this session's client is holding the
+	// key that was in it at that moment — so a refresh is only real if this
+	// process installs the new key on the client it is about to use. Doing it in
+	// `main` (which is where it used to live) refreshed the file for the *next*
+	// run and told a full-screen interface nothing, because its stderr is dropped.
+	//
+	// `--ericai` decides whether any of this exists: with the flag the token is
+	// checked here, before the first turn, and again before every later model call
+	// (authCheck). Without it there is no auth state at all, so the check below is
+	// a nil read and an authentication failure is reported like any other fatal
+	// error.
+	runtimeValue.initAuth(options.EricAI)
+	if options.EricAI {
+		runtimeValue.StartupAuth()
+	}
 
 	memory, err := MemoryFromPermissions()
 	if err != nil {
@@ -690,8 +729,21 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		OnCheckpoint: runtimeValue.checkpoint,
 		OnEvent:      runtimeValue.onEvent,
 		Notes:        runtimeValue.notes,
-		Context:      ctxManager,
-		Processor:    processor,
+		// The pre-request check. It goes in as one more thing the retry loop does
+		// before an attempt, and it is deliberately **not** called anything about
+		// models: "is the credential still good" is asked at the same moment
+		// "should the half-written answer be dropped" is, because both are
+		// questions about the attempt that is starting.
+		//
+		// Both hooks are registered unconditionally, and both are nil-safe: without
+		// `--ericai` there is no auth state, so the check returns immediately and
+		// the recovery answers false. Registering them conditionally instead would
+		// put "does this session manage a credential" in a second place, and the
+		// retry loop has no business knowing the answer.
+		BeforeEach: runtimeValue.authCheck,
+		OnFatal:    runtimeValue.RecoverAuth,
+		Context:    ctxManager,
+		Processor:  processor,
 	})
 	runtimeValue.OnEventHook = options.OnEventHook
 	return runtimeValue, nil
