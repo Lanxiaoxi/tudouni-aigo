@@ -140,6 +140,8 @@ func TestEffortWithNoArgumentReportsTheCurrentLevel(t *testing.T) {
 		"thinking":      true,
 		"effort":        "high",
 		"effort_levels": []any{"low", "high", "max"},
+		"model":         "glm-5.3",
+		"provider":      "zhipu",
 	}
 	out := &strings.Builder{}
 	handleCommand(fake, "/effort", out)
@@ -150,6 +152,33 @@ func TestEffortWithNoArgumentReportsTheCurrentLevel(t *testing.T) {
 	}
 	if !strings.Contains(text, "low / high / max") {
 		t.Errorf("the report does not offer the alternatives:\n%s", text)
+	}
+	// The list belongs to the model, so the report has to say which one. A short
+	// menu must read as "this is all this model takes", not as "this build knows
+	// few levels".
+	if !strings.Contains(text, "zhipu/glm-5.3") {
+		t.Errorf("the report does not say which model the levels belong to:\n%s", text)
+	}
+}
+
+// TestEffortNamesTheModelOnlyWhenItIsKnown keeps the unnamed form for a runtime
+// that has not sent the model yet: a sentence with an empty name in it is worse
+// than the shorter sentence.
+func TestEffortNamesTheModelOnlyWhenItIsKnown(t *testing.T) {
+	fake := &fakeRuntime{}
+	fake.fields = map[string]any{
+		"effort":        "high",
+		"effort_levels": []any{"low", "high", "max"},
+	}
+	out := &strings.Builder{}
+	handleCommand(fake, "/effort", out)
+
+	text := out.String()
+	if !strings.Contains(text, i18n.T("effort.howto", "levels", "low / high / max")) {
+		t.Errorf("the report does not carry the unnamed how-to line:\n%s", text)
+	}
+	if strings.Contains(text, "()") || strings.Contains(text, " ()") {
+		t.Errorf("the report has an empty model name in it:\n%s", text)
 	}
 }
 

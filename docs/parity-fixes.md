@@ -5,6 +5,48 @@
 本页最新一条（4.1.1）是例外：它不是"把原版搬回来"，而是**有意偏离原版**（用户要求），
 所以没有对应的原版测试可搬，测试钉的是 Go 自己的新行为。
 
+## 5.0.3 —— 思考强度不再折算，档位清单按模型声明（用户要求）
+
+- **现象**（用户反馈："现在好像写死三个选项，实际上模型不一定是这三个，有可能 xhigh 这种"）：
+  `/effort` 只有 `low` / `high` / `max` 三档，而 `xhigh`、`medium`、`minimal` 被**静默折算**成
+  这三档里的一个 —— 打 `/effort xhigh` 得到 `high`，屏幕显示的和发出去的报文不是同一个档。
+- **根因**：`state.EffortLevels` 是内核里的一个全局常量，`EffortAliases` 是一张折算表。前端那一侧
+  其实是对的（它只渲染协议发来的 `effort_levels`），坏的是**发清单的那一头** ——
+  "这个值可能是端点的一个能力事实"被当成了"我们的一个档位设计"。折叠表则更糟：它同时改掉
+  发出去的报文和用户看到的字，于是"我刚才到底设了哪一档"在任何地方都没有答案。而且那个
+  "效果和价钱都一样"的断言没有依据 —— `docs/responses-api-wire-format.md` 自己写着
+  "哪些模型支持哪些 effort 值，我未确认"，`litellm#27168` 就是无脑塞 `xhigh` 换来 invalid request。
+- **改动**：
+  - `reasoning.go`：删掉 `EffortAliases` 整张表；`ResolveEffort` 改成 `(text, allowed)`，
+    词表作为**参数**而不是包变量（同一个词在一条路由上是一档、在另一条上是 400）。
+    新增 `BroadEffortLevels`（`minimal/low/medium/high/xhigh/max`，`none` 除外 —— 它是关思考）
+    作为"没人知道得更好"时的默认。
+  - `catalog.go`：新增 `effort_levels` 键，**路由级是它各模型的默认，模型条目自己的优先**；
+    `ModelRef.EffortLevels` 是解析结果；`Registry.EffortLevelsFor` 是唯一出口（查不到就给宽词表，
+    因为空菜单等于宣称"这个模型不收任何档"，那是一句没人说过的话）。声明里出现本 build 不认识的
+    档位**透传不报错** —— 词表是端点的、会长，拒一个本 build 没见过的名字更糟。
+  - `composition.go`：`managedLevels()` 每次问目录；`StateMessage` / `OutInit` / 审计三处
+    发的都是**当前模型的**那份；`SetEffort` 按它校验，拒了就说"这个模型收的是 …，什么都没改"。
+  - 一并接通 `ModelRef.DefaultEffort`（原来被读、被校验、然后丢掉）：`AsRow` 带上 `effort`，
+    启动与切模型时用 `applyDefaultEffortFor` 采用，靠新的 `SessionModel.EffortChosen()`
+    保证**只有没人选过时才采用默认**。
+  - `cli.go` / `keys.go`：`/effort` 的 how-to 行点名 `provider/model` —— 清单既然按模型，
+    短菜单就得能读成"这个模型就收这些"，而不是"这个 build 只有几档"。
+- **明确不做的事**：夹取（把不收的档换成最近的）。等价于折叠表的同一个错误 —— 请求变了、
+  屏幕没变。`NearestEffort` 保留在 `reasoning.go` 里、有测试、**没有调用者**，就是为了让下一个
+  想到夹取的人先读到为什么不行。模型切换时档位**原样保留**，下一个请求由端点报错。
+- **测试**：`internal/state/reasoning_effort_test.go`（档位解析后必须原样不变、不猜测、
+  词表就是端点那一套）、`internal/state/catalog_effort_test.go`（按路由/按模型的声明与默认档位、
+  坏配置报错而不是忽略）、`internal/runtime/effort_test.go`（拒绝而非改档且什么都不动、
+  切模型后清单跟着变、前端拿到的就是当前模型的清单、`none` 仍指向 `/thinking`）、
+  `internal/frontends/cli/cli_test.go`（点了模型名、模型未知时不留空名）。
+  一处**回归是测试抓到的**：初版给 `Runtime` 加了 `managedEffortLevels` 字段做缓存，
+  手工构造的 runtime 字段为空就静默退回宽词表 —— 字段已删，"清单从哪来"现在只有一个答案。
+- **用户可直接复测**：`make build` 后跑 `dist\tudouni-aigo.exe --cli`（或 `--tui`），
+  在一条声明了 `"effort_levels": ["high", "max"]` 的路由上打 `/effort xhigh`
+  —— 应当回一条 warn notice 说这个模型收 `high / max` 且**什么都没改**；`/effort max` 则成功。
+  不声明 `effort_levels` 的路由上，`/effort` 应当列出全部六档。
+
 ## 4.1.1 —— 选完模型 / 强度，面板不关（用户实测发现）
 
 - **现象**（用户反馈："我希望我上下键选完模型回车之后，模型列表就关闭了"）：`/model` 面板里用 `↑↓`

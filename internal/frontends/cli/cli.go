@@ -522,7 +522,28 @@ func printEffort(current protocol.Runtime, out io.Writer, prefix string) {
 		fmt.Fprintln(out, i18n.T("effort.howto_bare"))
 		return
 	}
+	// The list belongs to the model, not to the program — a short menu has to be
+	// readable as "this is all this model takes" rather than "this build has few
+	// levels in it". See protocol 3.11.
+	if model := effortModel(current); model != "" {
+		fmt.Fprintln(out, i18n.T("effort.howto_for", "levels", strings.Join(levels, " / "), "model", model))
+		return
+	}
 	fmt.Fprintln(out, i18n.T("effort.howto", "levels", strings.Join(levels, " / ")))
+}
+
+// effortModel is the model the effort menu belongs to, written `provider/model`
+// like `/model` writes it, or "" when the runtime has not said.
+func effortModel(current protocol.Runtime) string {
+	fields := current.InitFields()
+	model, _ := fields["model"].(string)
+	if model == "" {
+		return ""
+	}
+	if provider, _ := fields["provider"].(string); provider != "" {
+		return provider + "/" + model
+	}
+	return model
 }
 
 // reasoningOf reads the two knobs out of the runtime's own init fields, which are

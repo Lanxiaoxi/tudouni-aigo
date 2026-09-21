@@ -207,8 +207,10 @@
   `prompt_tokens_details.cached_tokens`；reasoning 取 `reasoning_content` 或 `reasoning`；
   `base_url` 去掉尾部 `/`；`tools` 为空时不发（Python 发 `[]`）；两边都没有
   `temperature` / `max_tokens`。
-- **思考/强度的定义域**：等级 `low/high/max`、别名 `minimal/medium/xhigh/ultra`、
-  关闭词 `none/off/disabled/false/no`、`/effort none` 被拒并指向 `/thinking off`、
+- **思考/强度的定义域**：强度档位**不再折算也不再是全局三档**（2026-10 改）：档位清单按
+  模型/路由声明（`effort_levels`），没声明时给一整套 `minimal/low/medium/high/xhigh/max`，
+  打了不收的档就报错、什么都不改（原来 `xhigh→high`、`ultra→max` 的折叠表已删）。
+  关闭词仍是 `none/off/disabled/false/no`、`/effort none` 被拒并指向 `/thinking off`、
   关思考时保留 effort、改动在下一次请求生效、适配器与 `session.metadata` 一次调用同时更新、
   会话立刻落盘。**只有线上编码是错的**（B1）。
 - **步数上限语义**：抛异常而不是返回、`run_finished(max_steps)` + 检查点在抛出之前、

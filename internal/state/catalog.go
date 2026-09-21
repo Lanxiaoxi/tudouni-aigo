@@ -35,7 +35,7 @@ func catalogErrorf(format string, args ...any) *CatalogError {
 // anyone who writes it is told so at once, which is what a real incident taught:
 // someone put the key itself in that field (the two names look almost alike,
 // one holds a name and one holds a value) and all they got back was "no key".
-var providerKeys = []string{"display_name", "base_url", "api_key", "models", "verify", "api_style", "headers"}
+var providerKeys = []string{"display_name", "base_url", "api_key", "models", "verify", "api_style", "headers", "effort_levels"}
 
 // The wire protocols a route may speak. The names are the values a person writes
 // in `"api_style"`.
@@ -53,7 +53,7 @@ const (
 // styles are the accepted `api_style` values.
 var styles = []string{StyleOpenAI, StyleAnthropic, StyleResponses}
 
-var modelKeys = []string{"id", "label", "context_window", "summary", "note", "vision", "reasoning_effort"}
+var modelKeys = []string{"id", "label", "context_window", "summary", "note", "vision", "reasoning_effort", "effort_levels"}
 
 // ModelRef is one entry in the catalogue: a model and the route it lives on.
 type ModelRef struct {
@@ -68,6 +68,15 @@ type ModelRef struct {
 	Note          string
 	Vision        bool
 	DefaultEffort string
+	// EffortLevels are the levels this model accepts. It is what `/effort`
+	// offers for it, and the runtime refuses a level that is not on the list,
+	// so nothing is sent that the model would reject.
+	//
+	// Empty means "nobody declared" and the broad default applies. Declaring a
+	// narrower list is a claim about the model, and a wrong narrow claim hides a
+	// level that works, so it belongs in the catalog where it can be corrected
+	// per route rather than in the kernel.
+	EffortLevels []string
 }
 
 // Title is the short name shown in lists.
@@ -86,16 +95,26 @@ func (m ModelRef) Title() string {
 func (m ModelRef) Qualified() string { return m.Provider + "/" + m.ID }
 
 // AsRow renders one line of the model catalogue sent to the interface.
-func (m ModelRef) AsRow(current bool) map[string]any {
+//
+// `effort` is which level this model would run at if picked. The caller passes
+// it, because only the caller knows whether the session has already chosen one
+// for this model — this type knows the model's own default and nothing about a
+// session.
+func (m ModelRef) AsRow(current bool, effort string) map[string]any {
+	if effort == "" {
+		effort = m.DefaultEffort
+	}
 	return map[string]any{
-		"provider": m.Provider,
-		"id":       m.ID,
-		"label":    m.Title(),
-		"window":   m.Window,
-		"summary":  m.Summary,
-		"note":     m.Note,
-		"vision":   m.Vision,
-		"current":  current,
+		"provider":      m.Provider,
+		"id":            m.ID,
+		"label":         m.Title(),
+		"window":        m.Window,
+		"summary":       m.Summary,
+		"note":          m.Note,
+		"vision":        m.Vision,
+		"current":       current,
+		"effort":        effort,
+		"effort_levels": m.EffortLevels,
 	}
 }
 
@@ -254,6 +273,19 @@ func (r Registry) DefaultModel() (ModelRef, bool) {
 	return provider.Models[0], true
 }
 
+// EffortLevelsFor is the list `/effort` offers for one model.
+//
+// A caller that cannot be found in the catalogue — a session whose route was
+// edited out from under it, say — gets the broad vocabulary, because an empty
+// menu would say "this model takes no level" and that is a claim nobody made.
+func (r Registry) EffortLevelsFor(modelID, provider string) []string {
+	ref, ok := r.Find(modelID, provider)
+	if !ok || len(ref.EffortLevels) == 0 {
+		return BroadEffortLevels
+	}
+	return ref.EffortLevels
+}
+
 // Windows returns {model id: context window} for the models whose window is known.
 func (r Registry) Windows() map[string]int {
 	out := map[string]int{}
@@ -306,6 +338,20 @@ func Load(path string) (Registry, error) {
 		models, err := modelsFrom(object["models"], name, where)
 		if err != nil {
 			return Registry{}, err
+		}
+		// A route-wide list is a default for its models; an entry that declares
+		// its own keeps it. Routes differ (glm's effort vocabulary is not
+		// Anthropic's), but so do the models on one route, so both levels exist.
+		routeLevels, declared, err := effortLevelsField(object, "effort_levels", where)
+		if err != nil {
+			return Registry{}, err
+		}
+		if declared {
+			for index := range models {
+				if len(models[index].EffortLevels) == 0 {
+					models[index].EffortLevels = routeLevels
+				}
+			}
 		}
 
 		displayName, err := textField(object, "display_name", where)
@@ -401,12 +447,15 @@ func modelsFrom(raw any, provider, where string) ([]ModelRef, error) {
 		if effort == "" {
 			effort = DefaultEffort
 		}
-		resolved, ok := ResolveEffort(effort)
+		resolved, ok := ResolveEffort(effort, BroadEffortLevels)
 		if !ok {
 			return nil, catalogErrorf("%s", i18nText("catalog.error.bad_effort",
 				"spot", spot, "effort", repr(effort),
-				"levels", strings.Join(EffortLevels, ", "),
-				"aliases", strings.Join(sortedCopy(mapKeys(EffortAliases)), ", ")))
+				"levels", strings.Join(BroadEffortLevels, ", ")))
+		}
+		levels, _, err := effortLevelsField(object, "effort_levels", spot)
+		if err != nil {
+			return nil, err
 		}
 
 		window, err := windowField(object, "context_window", spot)
@@ -437,6 +486,7 @@ func modelsFrom(raw any, provider, where string) ([]ModelRef, error) {
 			Summary:       summary,
 			Note:          note,
 			Vision:        vision,
+			EffortLevels:  levels,
 			DefaultEffort: resolved,
 		})
 	}
@@ -496,6 +546,42 @@ func flagField(raw map[string]any, key, where string, fallback bool) (bool, erro
 		return false, catalogErrorf("%s", i18nText("catalog.error.not_bool", "where", where, "key", key))
 	}
 	return flag, nil
+}
+
+// effortLevelsField reads an `effort_levels` array.
+//
+// `declared` is false when the key is absent, and also when it is present but
+// holds nothing usable — an empty or all-blank list says nothing about the
+// model, and treating it as "this model takes no level" would empty the menu.
+// A list that names a level we have never heard of is accepted rather than
+// refused: the vocabulary is the endpoint's, it grows, and rejecting a name this
+// build predates would be worse than passing it through to the one party that
+// knows.
+func effortLevelsField(raw map[string]any, key, where string) ([]string, bool, error) {
+	value, present := raw[key]
+	if !present || value == nil {
+		return nil, false, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false, catalogErrorf("%s", i18nText("catalog.error.levels_not_list",
+			"where", where, "key", key))
+	}
+	texts := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, false, catalogErrorf("%s", i18nText("catalog.error.not_string",
+				"where", where, "key", key, "kind", goKindName(item)))
+		}
+		texts = append(texts, text)
+	}
+	levels, ok := NormalizeEffortLevels(texts)
+	if !ok {
+		return nil, false, catalogErrorf("%s", i18nText("catalog.error.levels_empty",
+			"where", where, "key", key))
+	}
+	return levels, true, nil
 }
 
 // styleField reads `api_style`.

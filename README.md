@@ -109,6 +109,29 @@ headers the program sets itself. The value `${session}` is replaced by the curre
 session id, which is what a gateway asking for a per-conversation identifier wants;
 a header whose value comes out empty is not sent at all.
 
+`effort_levels` and `reasoning_effort` are the thinking strength. `reasoning_effort`
+on a model is the level it starts on; `effort_levels` is which levels it accepts, and
+that is what `/effort` offers and enforces. Put `effort_levels` on the route to cover
+its models, or on one model to override that:
+
+```json
+{
+  "base_url": "https://api.example",
+  "api_key": "",
+  "effort_levels": ["high", "max"],
+  "models": [{"id": "quiet-model", "reasoning_effort": "max"}]
+}
+```
+
+Write neither and `/effort` offers the whole vocabulary — `minimal`, `low`, `medium`,
+`high`, `xhigh`, `max` — and a level the model does not take comes back as an error
+from the endpoint. That default is deliberately wide: listing too much costs one
+visible error, while listing too little hides a level that works, and nobody reports
+a level they cannot see. **A level is never rewritten on its way out**, so what you
+pick is what goes on the wire; if a route wants a short menu, say so here rather than
+letting the program guess. `none` is not a level — it means thinking off, which is
+`/thinking`.
+
 **Where the credential goes is the protocol's decision, not yours.** Chat completions
 and the Responses shape take `Authorization: Bearer <key>`; the Messages shape takes
 `x-api-key: <key>`. Writing the bearer token by hand for a Messages endpoint is the

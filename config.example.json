@@ -35,6 +35,20 @@
     "  vendors require their own client identification — a custom User-Agent or a",
     "  session header — and this is the only way to say so. Values are strings.",
     "",
+    "  reasoning_effort / effort_levels: the thinking levels. `reasoning_effort` on a",
+    "  model is the level that model starts on; `effort_levels` is which levels it",
+    "  accepts, and it is what /effort offers and enforces. Put effort_levels on the",
+    "  route to cover all its models, or on one model to override that.",
+    "",
+    "  Leave both out and /effort offers the whole vocabulary — minimal, low, medium,",
+    "  high, xhigh, max — and a level the model does not take comes back as an error",
+    "  from the endpoint. That is the deliberate default: listing too much costs one",
+    "  visible error, while listing too little hides a level that works, and nobody",
+    "  reports a level they cannot see. Declare effort_levels when you know better;",
+    "  the values are never rewritten, so what you pick is what goes on the wire.",
+    "",
+    "  `none` is not a level: it means thinking off, which is /thinking, not /effort.",
+    "",
     "web: the keys for web search. Leave them out and web_search is not registered",
     "(fetch_web is unaffected; a missing key there is not an error)."
   ],
@@ -53,8 +67,9 @@
       "base_url": "https://api.anthropic.com",
       "api_style": "anthropic",
       "api_key": "",
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"],
       "models": [
-        {"id": "claude-sonnet-5", "context_window": 200000}
+        {"id": "claude-sonnet-5", "context_window": 200000, "reasoning_effort": "high"}
       ]
     },
 

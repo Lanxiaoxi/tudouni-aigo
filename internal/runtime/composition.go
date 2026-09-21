@@ -359,6 +359,15 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A model may name its own default level; until now that field was read and
+	// validated and then dropped, so a route declaring `reasoning_effort: low`
+	// still came up at the global default. It applies only when nobody has
+	// chosen: a level someone picked is not something this may overwrite.
+	if !modelState.EffortChosen() {
+		if ref, ok := catalog.Find(chosen, chosenProvider.Name); ok && ref.DefaultEffort != "" {
+			modelState.SelectEffort(ref.DefaultEffort, 0)
+		}
+	}
 
 	chat, err := model.New(model.Options{
 		Route:    routeOf(chosenProvider, chosen, session.SessionID),
@@ -671,6 +680,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		Memory:       memory,
 		Session:      session,
 		Model:        modelState,
+		EffortLevels: runtimeValue.managedLevels(),
 		MaxSteps:     runtimeValue.MaxSteps,
 		Autopilot:    options.Autopilot,
 		Debug:        options.Debug,
@@ -1373,7 +1383,7 @@ func (r *Runtime) InitFields() map[string]any {
 		"provider":       provider,
 		"thinking":       r.ModelState.Thinking(),
 		"effort":         r.ModelState.Effort(),
-		"effort_levels":  state.EffortLevels,
+		"effort_levels":  r.managedLevels(),
 		"model_catalog":  r.modelCatalog(),
 		"workspace":      paths.WorkspaceDir(),
 		"max_steps":      r.MaxSteps,
@@ -1400,7 +1410,7 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		"model_window":     r.modelWindow(),
 		"thinking":         r.ModelState.Thinking(),
 		"effort":           r.ModelState.Effort(),
-		"effort_levels":    state.EffortLevels,
+		"effort_levels":    r.managedLevels(),
 		"autopilot":        r.Agent.Autopilot(),
 		"granted_tools":    r.Memory.Tools(),
 		"granted_prefixes": formattedRules(r.Memory.Prefixes()),
@@ -1787,6 +1797,8 @@ func (r *Runtime) SetModel(name string) (bool, string) {
 		return false, i18n.T("model.select.no_switch", "kind", fmt.Sprintf("%T", r.Chat), "path", r.Catalog.Source)
 	}
 	r.ModelState.SelectRoute(ref.Provider, ref.ID, 0)
+	r.applyDefaultEffortFor(ref)
+	r.syncReasoning()
 	r.checkpoint()
 
 	if previous == "" {
@@ -1828,6 +1840,45 @@ func (r *Runtime) sameRoute(route state.Provider) bool {
 	return r.Chat.SameEndpoint(routeOf(route, r.Chat.ModelName(), r.SessionIDValue))
 }
 
+// managedLevels is the effort vocabulary the runtime offers and enforces: the
+// list the model in use declares, or the broad default when it declares none.
+//
+// It is asked of the catalogue every time rather than remembered in a field. A
+// cached copy was tried and removed the same day: it made "which levels apply"
+// have two answers — the field and the catalogue — and a runtime built anywhere
+// other than the assembly path had an empty field, so it silently offered the
+// broad vocabulary for a model that had declared a narrow one. The catalogue is
+// the only thing that knows, so it is the only thing asked.
+func (r *Runtime) managedLevels() []string {
+	return r.Catalog.EffortLevelsFor(r.ModelState.Selected(), r.ModelState.SelectedProvider())
+}
+
+// applyDefaultEffortFor moves the session onto a model's own default level.
+//
+// Only when nobody has chosen one. A level a person set is not this function's
+// to overwrite, even when the new model would rather have another — and when the
+// new model cannot take it, the refusal comes from the endpoint at the next
+// request, which is the one place that actually knows. Silently meeting the new
+// model halfway is what this deliberately does not do: it would change the
+// request while leaving the chosen level on screen unchanged.
+func (r *Runtime) applyDefaultEffortFor(ref state.ModelRef) {
+	if r.ModelState.EffortChosen() || ref.DefaultEffort == "" {
+		return
+	}
+	if r.ModelState.Effort() != ref.DefaultEffort {
+		r.ModelState.SelectEffort(ref.DefaultEffort, 0)
+	}
+}
+
+// syncReasoning hands both thinking knobs back to the adapter.
+//
+// One place does this, and it is called from both paths that can change what
+// `/effort` may offer — composing a session and switching models — because two
+// call sites resolving the same question is two answers waiting to disagree.
+func (r *Runtime) syncReasoning() {
+	r.Chat.SetReasoning(r.ModelState.Thinking(), r.ModelState.Effort())
+}
+
 // routeNames lists the configured route names, for a "no such route" message that
 // tells the user what there is.
 func routeNames(catalog state.Registry) []string {
@@ -1850,16 +1901,20 @@ func (r *Runtime) SetThinking(on bool) (bool, string) {
 }
 
 // SetEffort implements protocol.Runtime.
+//
+// The list it checks against is the one the model in use declares, so a level a
+// neighbouring model takes is refused here with a sentence naming what this one
+// takes, rather than travelling to the endpoint to earn a bare 400.
 func (r *Runtime) SetEffort(level string) (bool, string) {
+	levels := r.managedLevels()
 	if state.IsOff(level) {
-		return false, i18n.T("effort.select.off_word", "levels", strings.Join(state.EffortLevels, " / "))
+		return false, i18n.T("effort.select.off_word", "levels", strings.Join(levels, " / "))
 	}
-	resolved, ok := state.ResolveEffort(level)
+	resolved, ok := state.ResolveEffort(level, levels)
 	if !ok {
 		return false, i18n.T("effort.select.unknown",
 			"effort", level,
-			"levels", strings.Join(state.EffortLevels, " / "),
-			"aliases", strings.Join(sortedAliases(), " / "))
+			"levels", strings.Join(levels, " / "))
 	}
 	r.ModelState.SelectEffort(resolved, 0)
 	r.Chat.SetReasoning(r.ModelState.Thinking(), resolved)
@@ -1896,8 +1951,19 @@ func (r *Runtime) contextTokens() any { return r.modelWindow() }
 func (r *Runtime) modelCatalog() map[string]any {
 	rows := make([]any, 0)
 	aliases := make([]any, 0)
+	current := r.Chat.ModelName()
+	currentProvider := r.Chat.ProviderName()
 	for _, model := range r.Catalog.Models() {
-		rows = append(rows, model.AsRow(model.ID == r.Chat.ModelName() && model.Provider == r.Chat.ProviderName()))
+		isCurrent := model.ID == current && model.Provider == currentProvider
+		// The row for the model in use carries the level actually set, which may
+		// not be that model's default; every other row carries what picking it
+		// would give. A row that reported the declared default while the session
+		// ran on something else would describe a request nobody is making.
+		effort := ""
+		if isCurrent {
+			effort = r.ModelState.Effort()
+		}
+		rows = append(rows, model.AsRow(isCurrent, effort))
 	}
 	return map[string]any{"models": rows, "aliases": aliases}
 }
@@ -2083,15 +2149,6 @@ func formattedRules(rules []security.Rule) []string {
 			out = append(out, text)
 		}
 	}
-	return out
-}
-
-func sortedAliases() []string {
-	out := make([]string, 0, len(state.EffortAliases))
-	for alias := range state.EffortAliases {
-		out = append(out, alias)
-	}
-	sort.Strings(out)
 	return out
 }
 

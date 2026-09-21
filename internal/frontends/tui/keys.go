@@ -630,8 +630,23 @@ func (m *model) appendEffortList() {
 		return
 	}
 	m.appendLine(renderLine{segments: []seg{
-		{text: i18n.T("effort.howto", "levels", strings.Join(m.effortLevels, " / ")), role: "rule"},
+		{text: m.effortHowto(), role: "rule"},
 	}}, "notice", "")
+}
+
+// effortHowto names the model the menu belongs to.
+//
+// The list is a property of the model, not of the program: a route whose models
+// take `high`/`max` offers two levels while its neighbour offers six, and a user
+// who sees a short list has to be able to tell "this is all this model takes" from
+// "this build only knows three levels". When the model is not known — the payload
+// has not arrived — the unnamed form is used rather than an empty name.
+func (m *model) effortHowto() string {
+	levels := strings.Join(m.effortLevels, " / ")
+	if m.panel.model == "" {
+		return i18n.T("effort.howto", "levels", levels)
+	}
+	return i18n.T("effort.howto_for", "levels", levels, "model", m.panel.model)
 }
 
 func onOff(value bool) string {

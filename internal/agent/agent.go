@@ -126,6 +126,12 @@ type Config struct {
 	// Model is the session-level choice; it supplies the change notice and the
 	// thinking settings reported in the audit.
 	Model *state.SessionModel
+	// EffortLevels is the list the session's current model accepts. The audit
+	// records it beside the level that was chosen, so a run can be read back as
+	// "chose high out of these five" rather than only "chose high". It is passed
+	// in because resolving it means reading the catalogue, which is assembly's
+	// business; an empty list falls back to the broad vocabulary.
+	EffortLevels []string
 
 	MaxSteps  int
 	Autopilot bool
@@ -222,6 +228,18 @@ func (a *Agent) SetAutopilot(on bool) { a.autopilot = on }
 // Autopilot reports the running switch.
 func (a *Agent) Autopilot() bool { return a.autopilot }
 
+// OfferedEffortLevels is the list the audit records beside the chosen level.
+//
+// It reports the resolved list when assembly provided one, and the broad
+// vocabulary otherwise. An empty list would read back as "this model takes no
+// level", which is a claim nobody made.
+func (a *Agent) OfferedEffortLevels() []string {
+	if len(a.EffortLevels) == 0 {
+		return state.BroadEffortLevels
+	}
+	return a.EffortLevels
+}
+
 // Run executes one turn and returns the answer.
 func (a *Agent) Run(userInput string) (string, error) {
 	return a.RunMessages([]map[string]any{{"role": "user", "content": userInput}})
@@ -309,7 +327,9 @@ func (a *Agent) runStartedData() map[string]any {
 	if a.Model != nil {
 		data["thinking"] = a.Model.Thinking()
 		data["effort"] = a.Model.Effort()
-		data["effort_levels"] = state.EffortLevels
+		// Which levels were on offer for this turn's model, so the audit says what
+		// the level was chosen *from* rather than only what was chosen.
+		data["effort_levels"] = a.OfferedEffortLevels()
 	}
 	return data
 }

@@ -78,7 +78,7 @@ func selectionFromBlock(block any) (Selection, bool) {
 		thinking = value
 	}
 	effort := DefaultEffort
-	if resolved, ok := ResolveEffort(stringFieldOf(object, "effort")); ok {
+	if resolved, ok := ResolveEffort(stringFieldOf(object, "effort"), BroadEffortLevels); ok {
 		effort = resolved
 	}
 	return Selection{
@@ -184,6 +184,12 @@ type SessionModel struct {
 	fallback         string
 	fallbackProvider string
 	selection        *Selection
+	// effortChosen records that the effort came from someone asking for it,
+	// rather than from a default. The distinction is not in the selection: a
+	// level the user picked on purpose and a level filled in by the model's own
+	// default look identical once stored, and only the first one should survive
+	// a model switch that would otherwise adopt the new model's default.
+	effortChosen bool
 }
 
 // NewSessionModel reads the session's choice, with the catalogue defaults as a
@@ -192,6 +198,9 @@ func NewSessionModel(metadata map[string]any, fallback, fallbackProvider string)
 	model := &SessionModel{metadata: metadata, fallback: fallback, fallbackProvider: fallbackProvider}
 	if selection, ok := LoadSelection(metadata); ok {
 		model.selection = &selection
+		// A stored selection was made by someone, in this session or an earlier
+		// one; only the level it holds is remembered, so it counts as chosen.
+		model.effortChosen = strings.TrimSpace(selection.Effort) != ""
 	}
 	return model
 }
@@ -295,6 +304,12 @@ func (s *SessionModel) SelectThinking(on bool, now float64) Selection {
 	return selection
 }
 
+// EffortChosen reports whether the effort came from an explicit choice rather
+// than from a default.
+func (s *SessionModel) EffortChosen() bool {
+	return s.effortChosen
+}
+
 // SelectEffort changes only the effort. It is recorded even while thinking is
 // off: the user's intent is "still this one when I turn it back on".
 func (s *SessionModel) SelectEffort(effort string, now float64) Selection {
@@ -307,6 +322,7 @@ func (s *SessionModel) SelectEffort(effort string, now float64) Selection {
 		Thinking: current.Thinking, Effort: effort,
 	}, now)
 	s.selection = &selection
+	s.effortChosen = true
 	return selection
 }
 

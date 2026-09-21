@@ -103,9 +103,11 @@
       "effort": {
         "type": "string",
         "doc": [
-          "强度。**runtime 只认 `low` / `high` / `max`**（端点还接受 minimal/medium/",
-          "xhigh/ultra，但它们折算之后分别是这三档，所以不列出来）；认不出来的回一条",
-          "`notice`，什么都不改。`none` 不在里面 —— 那是关掉思考，走 set_thinking。",
+          "强度。**runtime 只认当前模型声明的那些**（模型没声明时是那一整套",
+          "`minimal` / `low` / `medium` / `high` / `xhigh` / `max`）；认不出来的回一条",
+          "`notice`，什么都不改。**不做折算** —— 打 `xhigh` 就先看它收不收，",
+          "不收就报错，不会悄悄替你发成 `high`。",
+          "`none` 不在里面 —— 那是关掉思考，走 set_thinking。",
           "思考关着时**照样接受**（记下来，等下次打开用）—— 不逼用户记住先开才能设。"
         ]
       }

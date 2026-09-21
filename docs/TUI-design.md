@@ -2106,7 +2106,7 @@ import `frontends/tui` —— 而两个前端互不依赖是 `frontends/` 的规
 |---|---|---|
 | `/model` | 目录（`state/catalog.py`）+ `Runtime.select_model` | 名字写成 `provider/model`；两条路由同名时必须写全 |
 | `/thinking` | `Runtime.select_thinking` | 不带参数报当前值；`on` / `off` 两个字（认不出就提示） |
-| `/effort` | `Runtime.select_effort` + `init.effort_levels` | 不带参数列档位；档位**由 runtime 给**，界面不写死（**v2.4 起不带参数改为选择面板**，见 18） |
+| `/effort` | `Runtime.select_effort` + `init.effort_levels` | 不带参数列档位；档位**由 runtime 给**，界面不写死（**v2.4 起不带参数改为选择面板**，见 18）。清单是**当前这个模型**的，切模型后会变 |
 
 ### 16.1 左栏与 `/status` 各多一行：思考模式
 
@@ -2121,8 +2121,21 @@ import `frontends/tui` —— 而两个前端互不依赖是 `frontends/` 的规
 ### 16.2 档位清单随协议发，前端不写死
 
 `init.effort_levels`。理由是决策 18 那条规矩的直接后果：前端不许 import 内核，所以它
-拿不到 `reasoning.EFFORT_LEVELS`；而**抄一份到自己这边就会漂** —— 端点加一档要改两个
-地方，漏改的那一处只表现为"这一档选不了"。同理 `/model` 那份清单也是随协议来的。
+拿不到档位清单；而**抄一份到自己这边就会漂** —— 端点加一档要改两个地方，漏改的那一处
+只表现为"这一档选不了"。同理 `/model` 那份清单也是随协议来的。
+
+**那份清单是"当前这个模型"的属性，不是内核里的一个全局常量**（2026-10 起）。以前它是
+写死的三档 `low/high/max`，外加一张折叠表把 `xhigh` 折成 `high`、`ultra` 折成 `max`。
+折叠是这里唯一真正错的东西：它同时改掉了**发出去的报文**和**用户看到的字**，于是屏幕写
+着 `xhigh`、账单上是 `high`，而"我刚才到底设了哪一档"没有答案。现在：
+
+- 清单由路由或模型条目的 `effort_levels` 声明，**不折叠、不折算**；
+- 没声明时给**一整套** `minimal/low/medium/high/xhigh/max`（`none` 除外，它是关思考）；
+- 打了当前模型不收的档 → **报错，什么都不改**。
+
+列宽是有意选的：选错最多换来端点一次可见的 400，列窄则是"一个能用的档你永远选不到"，
+而后者没人会发现。面板里那份清单是**打开那一刻的快照** —— 切模型之后重新 `/effort`
+才会看到新的。
 
 **但"哪些词算开"由前端自己折算。** `/thinking 开` 和 `/thinking on` 在 CLI 那一支都认
 （它直连 runtime，可以调 domain 的折算函数），而 TUI 只认 `on` / `off` 两个字面量。这
