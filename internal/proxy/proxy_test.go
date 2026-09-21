@@ -122,7 +122,7 @@ func TestADeadLoopbackProxyFallsBackToDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	client := &http.Client{Transport: transportFor(dead)}
+	client := &http.Client{Transport: transportFor(dead, false)}
 	response, err := client.Get(target.URL)
 	if err != nil {
 		t.Fatalf("a dead loopback proxy stopped the request: %v", err)
@@ -157,7 +157,7 @@ func TestALiveLoopbackProxyIsUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{Transport: transportFor(configured)}
+	client := &http.Client{Transport: transportFor(configured, false)}
 	response, err := client.Get(target.URL)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -179,11 +179,11 @@ func TestTheTransportDoesNotSecondGuessTheDecision(t *testing.T) {
 	clearProxyVariables(t)
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
 
-	if transportFor(nil).Proxy != nil {
+	if transportFor(nil, false).Proxy != nil {
 		t.Error("a direct transport still carries a proxy function")
 	}
 	configured, _ := url.Parse("http://127.0.0.1:9")
-	if transportFor(configured).Proxy == nil {
+	if transportFor(configured, false).Proxy == nil {
 		t.Error("a configured proxy was dropped")
 	}
 }

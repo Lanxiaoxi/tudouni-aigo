@@ -113,7 +113,11 @@ func TestTheHTTPSPathTunnelsThroughTheProxy(t *testing.T) {
 	// the certificate trust is swapped in, because httptest signs its gateway with a
 	// throwaway CA. That is the only difference from a real run, and it is unrelated
 	// to what is being measured.
-	transport, source := proxy.Transport()
+	//
+	// `false` is the route's `verify` flag, and this test is not about it: the
+	// decision under test is which proxy is used, and turning verification off here
+	// would swap in a second difference from production.
+	transport, source := proxy.Transport(false)
 	if source == "" {
 		t.Fatal("no source reported for the proxy decision")
 	}
