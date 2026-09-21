@@ -195,11 +195,13 @@ func (r Registry) Find(name string, provider string) (ModelRef, bool) {
 	if wanted == "" {
 		return ModelRef{}, false
 	}
+	// Only interpret as "provider/model" if the first part is actually a known provider.
+	// This avoids confusing model IDs that contain "/" (like "Qwen/Qwen3.8-27B-FP8")
+	// with the provider/model syntax.
 	if head, tail, found := strings.Cut(wanted, "/"); found {
-		if route, ok := r.ProviderByName(strings.TrimSpace(head)); ok {
-			return route.Find(tail)
+		if _, ok := r.ProviderByName(strings.TrimSpace(head)); ok {
+			return r.Find(tail, head)
 		}
-		return ModelRef{}, false
 	}
 	if provider != "" {
 		if route, ok := r.ProviderByName(provider); ok {
