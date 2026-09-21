@@ -29,6 +29,7 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/url"
@@ -157,9 +158,10 @@ func (errNoHost) Error() string { return "it has no host:port" }
 // The proxy function Go would normally use is left nil on purpose: the decision is
 // made once here, and asking Go to make it again would re-read only the
 // environment — which is the bug this package exists to fix, not the fix.
-func Transport() (*http.Transport, string) {
+func Transport(skipVerify bool) (*http.Transport, string) {
 	configured, source := Resolve()
-	return transportFor(configured), source
+	return transportFor(configured, skipVerify), source
+
 }
 
 // transportFor builds a transport for one already-made decision.
@@ -168,7 +170,7 @@ func Transport() (*http.Transport, string) {
 // apart: a test can ask for "this proxy, no matter what this machine says", which
 // is the only way to cover the fallback without depending on the machine's own
 // settings.
-func transportFor(configured *url.URL) *http.Transport {
+func transportFor(configured *url.URL, skipVerify bool) *http.Transport {
 	transport := &http.Transport{
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
@@ -178,6 +180,9 @@ func transportFor(configured *url.URL) *http.Transport {
 	}
 	if configured != nil {
 		transport.Proxy = skipWhenUnreachable(configured)
+	}
+	if skipVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	return transport
 }
