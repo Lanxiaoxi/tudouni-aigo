@@ -132,7 +132,7 @@ func New(options Options) (*OpenAICompatible, error) {
 		// proxy setting is followed. Go's zero-value transport reads only the
 		// environment, which on Windows is not where the browser reads it from —
 		// see internal/proxy for what that cost.
-		transport, _ := proxy.Transport()
+		transport, _ := proxy.Transport(route.Verify)
 		client = &http.Client{Timeout: timeout, Transport: transport}
 	}
 	return &OpenAICompatible{
