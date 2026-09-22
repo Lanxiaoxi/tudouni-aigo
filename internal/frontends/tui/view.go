@@ -99,11 +99,23 @@ const narrowColumns = 120
 // background survives the resets inside the row: a bar is several coloured
 // segments, and every one of them ends with a reset that would otherwise clear
 // the background for the rest of the line.
+//
+// A row may be **several physical rows** — the input box hands in both of its
+// editable rows as one `"> …\n  …"` string — and they are padded one by one.
+// Measuring the block instead of its rows sums two half-rows into one full width,
+// which pads neither of them: with an opaque theme the chrome background then
+// stops in the middle of the first row, and with the transparent one the row's
+// shape depends on the draft's length.
 func chromeRow(text string, width int) string {
-	if currentTheme.clearRoles["chrome"] {
-		return padCells(text, width)
+	rows := strings.Split(text, "\n")
+	for index, row := range rows {
+		if currentTheme.clearRoles["chrome"] {
+			rows[index] = padCells(row, width)
+			continue
+		}
+		rows[index] = paintRow(row, width, currentTheme.chrome)
 	}
-	return paintRow(text, width, currentTheme.chrome)
+	return strings.Join(rows, "\n")
 }
 
 // padCells pads a row out to width without painting anything.
@@ -276,15 +288,50 @@ func (m model) renderBody(available int) string {
 			m.renderQuestionDialog())
 	case m.overlay.kind != overlayNone:
 		body = lipgloss.Place(m.width, available, lipgloss.Center, lipgloss.Center,
-			m.renderOverlay(m.width-8))
+			m.renderOverlay(m.width-8, available))
 	default:
 		body = m.renderBodySplit(available)
 	}
+	// **A modal is clamped to the room the body has.** `lipgloss.Place` pads to
+	// the height it is given but never truncates, so a panel taller than the body
+	// used to grow the frame past the terminal — see fitBlockRows for what a
+	// full-screen program gets for that.
+	body = fitBlockRows(body, available)
 	// **The body is the theme's own background.** Everything else on this screen
 	// is a bar or a box painted *on* it, and without this fill the palette's floor
 	// colour never appears at all: a dark theme on a light terminal is unreadable,
 	// and the "deep clear" variant loses the one thing it is transparent against.
 	return paintBackground(body, m.width, currentTheme.bg)
+}
+
+// fitBlockRows cuts a block down to the rows the body has, padding with blanks.
+//
+// This is the last line of defence for the one invariant a full-screen program
+// cannot break: **the frame may never be taller than the terminal.** Both dialogs
+// and every panel are sized by their content — a permission request with twenty
+// arguments, the command palette on a terminal shorter than its own list — and
+// lipgloss pads to a height but does not truncate to it. A frame that is taller
+// than the terminal is not drawn faithfully: Bubble Tea drops its **top** rows (or
+// the screen scrolls), so what is on screen stops matching what the program laid
+// out — the top bar, the session bar and the modal's own head are the first things
+// to go, and the eye then pairs up rows that never belonged together.
+//
+// The **top** of the block is what survives, deliberately: a modal's head is what
+// says what it is, and for the input box and the status bar — which are appended
+// after the body — surviving means staying at the bottom of the frame where they
+// belong.
+func fitBlockRows(block string, height int) string {
+	if height < 1 {
+		return ""
+	}
+	rows := strings.Split(block, "\n")
+	if len(rows) > height {
+		rows = rows[:height]
+	}
+	for len(rows) < height {
+		rows = append(rows, "")
+	}
+	return strings.Join(rows, "\n")
 }
 
 // paintBackground fills every row out to the full width in one colour.

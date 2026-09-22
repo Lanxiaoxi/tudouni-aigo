@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
@@ -166,6 +168,215 @@ func TestMultiLineEntryCountsItsRows(t *testing.T) {
 	}
 	if lines := len(strings.Split(m.View(), "\n")); lines > m.height {
 		t.Fatalf("the frame grew to %d rows for a %d-row terminal", lines, m.height)
+	}
+}
+
+// ── turn outcomes ─────────────────────────────────────────────────────────────
+
+// TestAModalNeverGrowsTheFramePastTheTerminal is the invariant above, one layer
+// up. Panels and dialogs are sized by their content and `lipgloss.Place` pads to
+// the height it is given but **never truncates to it**, so a modal taller than the
+// body used to make the whole frame taller than the terminal. A full-screen
+// program cannot survive that: Bubble Tea drops the frame's top rows (or the
+// screen scrolls), the bars and the modal's own head are the first things to go,
+// and what is left is a screen whose rows no longer pair up the way they were laid
+// out. That is the difference between "a panel is too tall" and "the interface came
+// apart", and it is what this pins.
+//
+// The command palette is the everyday case, not an exotic one: it is 24 rows of
+// panel, so every terminal shorter than about 31 rows used to overflow the moment
+// `/` was pressed.
+func TestAModalNeverGrowsTheFramePastTheTerminal(t *testing.T) {
+	withColour(t)
+	sizes := []struct{ width, height int }{
+		{80, 20}, {80, 24}, {100, 24}, {120, 30}, {120, 36}, {160, 24},
+	}
+	modals := map[string]func(m *model){
+		"command palette": func(m *model) {
+			m.input = "/"
+			m.inputCursor = 1
+			m.overlay = overlay{kind: overlayCommand}
+		},
+		"option picker": func(m *model) {
+			m.openOptionPicker(i18n.T("model.pick.title"), m.modelOptions(), pickerStartNext)
+		},
+		"session picker": func(m *model) {
+			m.sessionOptions = []option{{value: "a", row: "20260917-120000-abcd  12 messages · 4 steps"}}
+			m.overlay = overlay{kind: overlaySessions, title: i18n.T("session_dialog.head")}
+		},
+		"mcp panel": func(m *model) {
+			m.overlay = overlay{kind: overlayMCP, title: i18n.T("mcp_dialog.head")}
+		},
+		"skills panel": func(m *model) {
+			m.skillRows = []skillRow{{name: "frontend-design", description: "layout work"}}
+			m.overlay = overlay{kind: overlaySkills, title: i18n.T("skills.title")}
+		},
+		"permission dialog": func(m *model) {
+			arguments := map[string]any{}
+			for index := 0; index < 12; index++ {
+				arguments[fmt.Sprintf("argument_%02d", index)] = strings.Repeat("value ", 6)
+			}
+			m.pendingPermission = map[string]any{
+				"id": "p", "tool": "shell", "risk": "high", "arguments": arguments,
+				"remember_hint": strings.Repeat("consequence sentence ", 3),
+				"allow_trust_all": true, "trust_all_hint": strings.Repeat("trust hint ", 4),
+			}
+		},
+		"question dialog": func(m *model) {
+			options := make([]any, 0, 8)
+			for index := 0; index < 8; index++ {
+				options = append(options, fmt.Sprintf("candidate %d with a sentence on it", index))
+			}
+			m.pendingQuestion = map[string]any{
+				"id": "q", "header": "Which one", "question": strings.Repeat("question ", 4),
+				"options": options,
+			}
+		},
+	}
+	for name, open := range modals {
+		for _, size := range sizes {
+			m := filledModel(size.width, size.height)
+			open(&m)
+			if lines := len(strings.Split(m.View(), "\n")); lines > size.height {
+				t.Errorf("%s at %dx%d: the frame is %d rows", name, size.width, size.height, lines)
+			}
+			for _, row := range strings.Split(m.View(), "\n") {
+				if got := runewidth.StringWidth(stripANSI(row)); got > size.width {
+					t.Errorf("%s at %dx%d: a row is %d cells wide: %q",
+						name, size.width, size.height, got, stripANSI(row))
+					break
+				}
+			}
+		}
+	}
+}
+
+// TestThePaletteWindowsOnAShortTerminal — the list is windowed to the room the
+// body has, and the markers say what the window left out. The alternative (draw
+// the whole list anyway) is what made the frame taller than the terminal; a silent
+// cut would be no better, because the palette's promise is "here is everything you
+// can type".
+func TestThePaletteWindowsOnAShortTerminal(t *testing.T) {
+	withColour(t)
+	m := filledModel(100, 24)
+	m.input = "/"
+	m.inputCursor = 1
+	m.overlay = overlay{kind: overlayCommand}
+
+	short := stripANSI(m.renderOverlay(92, m.bodyHeight()))
+	if !strings.Contains(short, "/new") {
+		t.Fatalf("the palette lost its rows:\n%s", short)
+	}
+	if !strings.Contains(short, "more") {
+		t.Errorf("a windowed palette must say how many rows are hidden:\n%s", short)
+	}
+	if rows := lipgloss.Height(m.renderOverlay(92, m.bodyHeight())); rows > m.bodyHeight() {
+		t.Errorf("the palette is %d rows in a %d-row body", rows, m.bodyHeight())
+	}
+	// On a terminal that has the room, the whole list is still there and nothing
+	// is marked as hidden.
+	m = filledModel(120, 40)
+	m.input = "/"
+	m.overlay = overlay{kind: overlayCommand}
+	tall := stripANSI(m.renderOverlay(112, m.bodyHeight()))
+	if strings.Contains(tall, "more") {
+		t.Errorf("a list that fits must not claim to be cut:\n%s", tall)
+	}
+	for _, command := range commands() {
+		if !strings.Contains(tall, command.name) {
+			t.Errorf("%s is missing from a palette with room for it", command.name)
+		}
+	}
+}
+
+// TestTheInputBoxRowsAreTheWidthOfTheFrame — both editable rows are handed to the
+// chrome as **one** string with an embedded newline, and a block measured as a
+// whole sums two half rows into one full width. The padding then lands on the
+// second row alone: the first row is left short (so with an opaque theme its
+// background stops mid-row) and the second is padded for both.
+func TestTheInputBoxRowsAreTheWidthOfTheFrame(t *testing.T) {
+	withColour(t)
+	t.Cleanup(func() { setTheme(defaultTheme) })
+	for _, key := range themeOrder {
+		setTheme(key)
+		for _, width := range []int{80, 100, 120} {
+			for _, draft := range []string{"", "/status", "帮我读一下 internal/frontends/tui/input.go"} {
+				m := filledModel(width, 30)
+				m.input = draft
+				m.inputCursor = len([]rune(draft))
+				rows := strings.Split(m.renderInput(), "\n")
+				if len(rows) != 4 {
+					t.Fatalf("%s %d: the box is %d rows, want 4 (two rules, two editable rows)",
+						key, width, len(rows))
+				}
+				for index, row := range rows {
+					if got := runewidth.StringWidth(stripANSI(row)); got != width {
+						t.Errorf("%s width=%d draft=%q: box row %d is %d cells: %q",
+							key, width, draft, index, got, stripANSI(row))
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestNoScreenAsksForAKeyTheTableDoesNotHave — every word the interface draws comes
+// from the catalogue, and `T` answers a key that is not in it with a `⟪key⟫` marker
+// that goes straight onto the screen. `/status` shipped with exactly that on its
+// Size row: the key that joins the message and step counts was never added, so the
+// one screen whose whole job is to state facts printed its own bug.
+//
+// The screens here are the ones the interface renders by itself — the two reports,
+// the help block, and a whole frame with the rail up. `i18n.MissingKeys` is what the
+// i18n package records for this question; a test is the only caller that can ask it
+// without a user having to notice first.
+func TestNoScreenAsksForAKeyTheTableDoesNotHave(t *testing.T) {
+	i18n.ResetMissingKeys()
+	t.Cleanup(i18n.ResetMissingKeys)
+
+	m := filledModel(120, 36)
+	status := m.statusScreen(map[string]any{
+		"status": map[string]any{
+			"session": map[string]any{"id": "20260917-120000-abcd", "workspace": "/w/tudouni",
+				"messages": 12, "steps": 4, "resumed": true},
+			"model": map[string]any{"current": "deepseek/deepseek-chat", "provider": "deepseek",
+				"selected": "deepseek/deepseek-v4-pro",
+				"reasoning": map[string]any{"thinking": true, "effort": "high"}},
+			"counters": map[string]any{"runs": 2, "model_calls": 6, "tool_calls": 9,
+				"model_ok": 6, "permission_waits": 1, "asks": 2},
+			"usage": map[string]any{"prompt": 12400, "cached": 10900, "completion": 800, "model_ms": 21000},
+			"meta": map[string]any{"stream": true, "autopilot": false, "max_steps": 40,
+				"tool_count": 12, "audit_path": "/w/.tudouni/logs/20260917-120000-abcd.jsonl"},
+			"context": map[string]any{"artifacts": 3, "open": 2, "compact": 1, "removed": 0, "pinned": 0,
+				"estimated_tokens": 12400, "limit_tokens": 128000, "items": 5},
+		},
+		"context_tokens": 128000, "last_prompt_tokens": 12400,
+	})
+	if len(status) == 0 {
+		t.Fatal("the status screen drew nothing")
+	}
+	joined := ""
+	for _, line := range status {
+		joined += stripANSI(line.plain()) + "\n"
+	}
+	// The Size row carries both counts, which is the fact the row exists for.
+	if !strings.Contains(joined, "12 messages") || !strings.Contains(joined, "4 steps") {
+		t.Errorf("the Size row lost its counts:\n%s", joined)
+	}
+
+	// The other screens the interface draws by itself, plus one whole frame with
+	// the rail up: every one of them goes through the same catalogue.
+	m.toolsScreen(map[string]any{"tools": []any{
+		map[string]any{"name": "shell", "risk": "high", "disposition": "ask", "granted": true,
+			"parallel_safe": false, "interactive": true},
+		map[string]any{"name": "read_file", "risk": "low", "disposition": "auto"},
+	}, "granted_prefixes": []any{"git add"}})
+	m.showHelp()
+	m.railHidden = false
+	_ = m.View()
+
+	if missing := i18n.MissingKeys(); len(missing) > 0 {
+		t.Errorf("a screen asked for text the catalogue does not have: %v", missing)
 	}
 }
 

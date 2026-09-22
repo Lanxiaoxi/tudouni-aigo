@@ -123,7 +123,7 @@ func TestPanelsDoNotReflowTheirRows(t *testing.T) {
 				m.railHidden = true
 				testCase.setup(&m)
 				m.overlay.cursor = cursor
-				rendered := m.renderOverlay(termWidth - 8)
+				rendered := m.renderOverlay(termWidth-8, m.bodyHeight())
 				lines := panelLines(t, rendered)
 				counts[cursor] = len(lines)
 				if widest := widestLine(lines); widest > frameWidth {

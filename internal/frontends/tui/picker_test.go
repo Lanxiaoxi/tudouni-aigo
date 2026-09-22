@@ -54,7 +54,7 @@ func TestTheModelPickerMarksTheModelInEffect(t *testing.T) {
 			m.overlay.cursor)
 	}
 
-	rendered := stripANSI(m.renderOverlay(112))
+	rendered := stripANSI(m.renderOverlay(112, m.bodyHeight()))
 	if !strings.Contains(rendered, "●") {
 		t.Fatalf("no row carries the dot:\n%s", rendered)
 	}
@@ -135,7 +135,7 @@ func TestEnterOnAModelRowClosesThePicker(t *testing.T) {
 		t.Errorf("the picker survived Enter: kind = %v, cursor = %d, waiting = %q",
 			m.overlay.kind, m.overlay.cursor, m.overlay.waiting)
 	}
-	if rendered := stripANSI(m.renderOverlay(112)); rendered != "" {
+	if rendered := stripANSI(m.renderOverlay(112, m.bodyHeight())); rendered != "" {
 		t.Errorf("a closed overlay still draws:\n%s", rendered)
 	}
 }
@@ -172,7 +172,7 @@ func TestEnterOnAnEffortRowClosesThePicker(t *testing.T) {
 		t.Errorf("the picker survived Enter: kind = %v, cursor = %d, waiting = %q",
 			m.overlay.kind, m.overlay.cursor, m.overlay.waiting)
 	}
-	if rendered := stripANSI(m.renderOverlay(112)); rendered != "" {
+	if rendered := stripANSI(m.renderOverlay(112, m.bodyHeight())); rendered != "" {
 		t.Errorf("a closed overlay still draws:\n%s", rendered)
 	}
 }
@@ -214,7 +214,7 @@ func TestAValueNoticeDoesNotSettleAPicker(t *testing.T) {
 			t.Errorf("%s: the notice closed a picker nobody asked to close: kind = %v",
 				name, m.overlay.kind)
 		}
-		if rendered := stripANSI(m.renderOverlay(112)); !strings.Contains(rendered, "Enter confirm") {
+		if rendered := stripANSI(m.renderOverlay(112, m.bodyHeight())); !strings.Contains(rendered, "Enter confirm") {
 			t.Errorf("%s: the picker stopped drawing itself:\n%s", name, rendered)
 		}
 	}

@@ -212,6 +212,10 @@ var catalog = map[string]string{
 	"status.session.messages.other":  "{n} messages",
 	"status.session.steps.one":       "{n} step",
 	"status.session.steps.other":     "{n} steps",
+	// The `/status` screen's Size row: the two counts above, joined. Without this
+	// key the row rendered the missing-key marker (`⟪status.session.size⟫`) —
+	// the one screen whose whole job is to state facts, printing its own bug.
+	"status.session.size":            "{messages} · {steps}",
 	"status.session.span":            "session {messages} · {steps}",
 	"status.session.none":            "session  —",
 	"status.audit":                   "audit {path}",

@@ -85,6 +85,29 @@ type overlay struct {
 // false. The +3 is headroom for the hint row, the "more" markers and the border.
 func maxOverlayRows() int { return len(commands()) + 3 }
 
+// overlayListRows is how many list rows a panel may draw inside a body of the
+// given height.
+//
+// The frame is a fixed cost — two border rows, two padding rows and the head —
+// and so is the tail every panel ends with: the hint or footer line, and the
+// `↑ / ↓ N more` markers a windowed list draws. What is left is the list's budget.
+//
+// It exists because a panel that ignores the body's height does not merely look
+// bad: `lipgloss.Place` never truncates, so the frame grew taller than the
+// terminal and Bubble Tea answered by dropping the frame's top rows — the top bar,
+// the session bar and the panel's own head. The palette is the everyday case: it
+// is 24 rows of panel, so **every terminal shorter than about 31 rows** overflowed
+// the moment `/` was pressed. Windowing instead keeps the panel inside the body,
+// and the markers are what keeps it honest: a list cut without saying so is a list
+// that lies about what you can type.
+func overlayListRows(height int) int {
+	limit := height - (4 + 1 + 3)
+	if limit < 1 {
+		limit = 1
+	}
+	return min(limit, maxOverlayRows())
+}
+
 // welcomeLogo is the three-line mark. Half- and full-block characters only:
 // they are exactly one cell wide in every monospace font, where graphic
 // characters often go double-width under CJK fonts and shove the text beside
@@ -537,18 +560,21 @@ func workspaceName(path string) string {
 }
 
 // renderOverlay draws the active panel centred over the body.
-func (m model) renderOverlay(width int) string {
+//
+// `height` is the room the body has, and the panels use it to window their lists
+// rather than draw past the bottom of the terminal — see overlayListRows.
+func (m model) renderOverlay(width, height int) string {
 	switch m.overlay.kind {
 	case overlayCommand:
-		return m.renderCommandPalette(width)
+		return m.renderCommandPalette(width, height)
 	case overlayOptions:
-		return m.renderOptionPicker(width)
+		return m.renderOptionPicker(width, height)
 	case overlayMCP:
-		return m.renderMCPPanel(width)
+		return m.renderMCPPanel(width, height)
 	case overlaySessions:
-		return m.renderSessionPicker(width)
+		return m.renderSessionPicker(width, height)
 	case overlaySkills:
-		return m.renderSkillsPanel(width)
+		return m.renderSkillsPanel(width, height)
 	}
 	return ""
 }
@@ -699,9 +725,9 @@ func windowRows(count, cursor, limit int) (int, int) {
 // Each row is the name in a fixed column plus the command's one-line
 // description. The column is what makes the hints line up; without it the panel
 // is a list of names that assumes you already know what they do.
-func (m model) renderCommandPalette(width int) string {
+func (m model) renderCommandPalette(width, height int) string {
 	rows := m.filteredCommands()
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
+	first, last := windowRows(len(rows), m.overlay.cursor, overlayListRows(height))
 	inner := overlayInner(width)
 	var body []string
 	body = append(body, wrapCells(currentTheme.styleFor("rule").Render(i18n.T("palette.hint")), inner)...)
@@ -782,9 +808,9 @@ func (m model) paletteArgument() string {
 // Both are needed: the cursor is where Enter acts, and the dot is what the
 // setting currently is — a panel that only marked the cursor made "which one am
 // I on" unanswerable without reading the notes.
-func (m model) renderOptionPicker(width int) string {
+func (m model) renderOptionPicker(width, height int) string {
 	rows := m.overlay.options
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
+	first, last := windowRows(len(rows), m.overlay.cursor, overlayListRows(height))
 	inner := overlayInner(width)
 	var body []string
 	for index := first; index < last; index++ {
@@ -830,9 +856,9 @@ func optionNote(opt option) string {
 // The state mark and colour carry the answer: mounted, configured but not
 // mounted, and tried-and-failed are three different situations, and the third
 // one has to say why.
-func (m model) renderMCPPanel(width int) string {
+func (m model) renderMCPPanel(width, height int) string {
 	rows := m.mcpPanelRows()
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
+	first, last := windowRows(len(rows), m.overlay.cursor, overlayListRows(height))
 	inner := overlayInner(width)
 	var body []string
 	if len(rows) == 0 {
@@ -931,9 +957,9 @@ func (m model) mcpPanelRows() []mcpRow {
 //
 // The current session is marked: `/resume` on the session you are already in is a
 // no-op, and without the mark that no-op looks like a broken panel.
-func (m model) renderSessionPicker(width int) string {
+func (m model) renderSessionPicker(width, height int) string {
 	rows := m.sessionOptions
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
+	first, last := windowRows(len(rows), m.overlay.cursor, overlayListRows(height))
 	inner := overlayInner(width)
 	var body []string
 	if len(rows) == 0 {
@@ -962,9 +988,9 @@ func (m model) renderSessionPicker(width int) string {
 // It is a panel rather than a block in the log because it is a lookup that is
 // opened, read and dismissed — and because the rail's skills block answers a
 // different question ("which ones has this session read").
-func (m model) renderSkillsPanel(width int) string {
+func (m model) renderSkillsPanel(width, height int) string {
 	rows := m.skillRows
-	first, last := windowRows(len(rows), m.overlay.cursor, maxOverlayRows())
+	first, last := windowRows(len(rows), m.overlay.cursor, overlayListRows(height))
 	inner := overlayInner(width)
 	var body []string
 	if len(rows) == 0 {
