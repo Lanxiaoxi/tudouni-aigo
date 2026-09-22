@@ -1,0 +1,82 @@
+可以。你可以直接按下面这个方案执行，**Glamour v1/v2 都适用**：
+
+### Agent TUI Theme 设计
+
+**1. 抽离统一 Theme 层**
+
+```text
+Theme
+├── UI Theme
+│   ├── User
+│   ├── Assistant
+│   ├── Tool
+│   ├── Error
+│   ├── Border
+│   └── Status
+│
+└── Markdown Theme
+    ├── Heading
+    ├── Paragraph
+    ├── Bold
+    ├── Italic
+    ├── Code
+    ├── CodeBlock
+    ├── Link
+    ├── Quote
+    ├── List
+    └── Table
+```
+
+**2. UI Theme 用 Lip Gloss 管**
+
+负责：
+
+```text
+边框 / Padding / Margin / 布局 / 颜色 / Component 样式
+```
+
+**3. Markdown Theme 用 Glamour `StyleConfig` 管**
+
+负责：
+
+```text
+Markdown 各语法元素的颜色、字体属性、缩进、间距等
+```
+
+**4. 不要让业务代码直接写具体颜色**
+
+不要：
+
+```go
+lipgloss.NewStyle().Foreground("#7AA2F7")
+```
+
+到处散落。
+
+而是：
+
+```go
+theme.Markdown.Heading
+theme.Markdown.Code
+theme.UI.Tool
+theme.UI.Error
+```
+
+统一从 Theme 获取。
+
+**5. 最终形成这一层次**
+
+```text
+Agent TUI
+   │
+   └── Theme
+       ├── UI Theme ──────→ Lip Gloss
+       │
+       └── Markdown Theme ─→ Glamour
+```
+
+这样以后换 **Claude Code 风格 / Tokyo Night / Dracula / Light / 自定义主题**，本质上只需要替换 Theme，而不用修改 TUI 业务逻辑。
+
+**核心原则就一句话：**
+
+> **Theme 管“长什么样”，组件管“显示什么”，Renderer 管“怎么渲染”。**

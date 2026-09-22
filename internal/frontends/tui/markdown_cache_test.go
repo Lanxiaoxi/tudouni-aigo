@@ -105,7 +105,12 @@ func TestCachedMarkdownSeparatesWidths(t *testing.T) {
 // the new palette, and switching back must give the original bytes — which is
 // what proves the theme is genuinely part of the key rather than something the
 // cache happens to get right because themes are set once at start-up.
+//
+// Colours are forced: the difference between two palettes *is* their colours, and
+// without a profile the renderer strips them and this test would compare two
+// identical plain-text renders.
 func TestCachedMarkdownSeparatesThemes(t *testing.T) {
+	withColour(t)
 	resetMarkdownResults()
 	text := markdownTestDoc("theme")
 
@@ -182,7 +187,8 @@ func TestMarkdownResultsStayBounded(t *testing.T) {
 func seedMarkdownOrder(n int) {
 	for index := 0; index < n; index++ {
 		markdownResults.order = append(markdownResults.order, markdownKey{
-			hash: uint64(index) + 1, width: 97, theme: defaultTheme, length: 1,
+			hash: uint64(index) + 1, width: 97, length: 1,
+			identity: markdownIdentity{theme: defaultTheme, profile: markdownProfile()},
 		})
 	}
 }
@@ -277,10 +283,10 @@ func TestMarkdownResultsSweepKeepsTheNewest(t *testing.T) {
 
 	held := func(answer string) bool {
 		key := markdownKey{
-			hash:   markdownHash(answer),
-			width:  97,
-			theme:  defaultTheme,
-			length: len(answer),
+			hash:     markdownHash(answer),
+			width:    97,
+			identity: markdownIdentity{theme: defaultTheme, profile: markdownProfile()},
+			length:   len(answer),
 		}
 		_, ok := markdownResults.entries[key]
 		return ok
@@ -449,11 +455,17 @@ func TestLongSessionFrameDoesNotRerenderHistory(t *testing.T) {
 // Uncached, an 80-turn frame cost ~817ms against ~7ms cached; the bound below is
 // two orders of magnitude looser than that and still fails loudly if the cache
 // stops working.
+//
+// Colours are forced so the comparison is made on the full render. Without a
+// profile the answer is drawn at the terminal's own depth, and on a colourless
+// one there is no syntax highlighting at all — a cheaper render on the uncached
+// side only, which shrinks the ratio this test is built on.
 func TestLongSessionFrameIsNotDominatedByHistory(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
 	}
 	setTheme(defaultTheme)
+	withColour(t)
 
 	// One frame of an 80-turn session whose answers have to be rendered.
 	resetMarkdownResults()

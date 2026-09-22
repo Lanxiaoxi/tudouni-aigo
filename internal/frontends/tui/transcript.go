@@ -6,11 +6,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alecthomas/chroma/v2"
+	chromastyles "github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
+	"github.com/muesli/termenv"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
@@ -539,35 +542,162 @@ func thinkingBody(text string, width int) []string {
 
 // ── markdown ──────────────────────────────────────────────────────────────────
 
-// markdownRendererCache holds the renderer itself — theme + width, no content.
-// What it does *not* hold is anything rendered with it; that is
+// markdownRendererCache holds the renderer itself — theme + width + colour depth,
+// no content. What it does *not* hold is anything rendered with it; that is
 // `markdownResults` below, and the distinction is the difference between a long
 // session and a slow one.
 var markdownRendererCache markdownRendererSlot
 
 type markdownRendererSlot struct {
-	key   themeKey
-	width int
-	value *glamour.TermRenderer
+	identity markdownIdentity
+	width    int
+	value    *glamour.TermRenderer
+}
+
+// markdownIdentity is everything an answer's rendering depends on besides the
+// text and the width: the palette, and the colour depth it was drawn at. Both
+// caches below key on it, because a row rendered in 24-bit colour is not the row
+// a 16-colour terminal should be given.
+type markdownIdentity struct {
+	theme   themeKey
+	profile termenv.Profile
+}
+
+// markdownProfile is the colour depth the answer is drawn at.
+//
+// It is deliberately the **chrome's** profile: the frame, the panels and the
+// transcript go through lipgloss, which follows the terminal's own detection
+// (`NO_COLOR`, `COLORTERM`, `TERM`). glamour's default is TrueColor outright, so
+// without this the answer alone emitted 24-bit escapes into a terminal that was
+// detected as 16-colour — or into one whose user had asked for no colour at all,
+// while every other line on the screen stayed plain.
+func markdownProfile() termenv.Profile {
+	return lipgloss.ColorProfile()
 }
 
 func markdownRenderer(width int) *glamour.TermRenderer {
-	if markdownRendererCache.value != nil && markdownRendererCache.key == currentTheme.key && markdownRendererCache.width == width {
+	identity := markdownIdentity{theme: currentTheme.key, profile: markdownProfile()}
+	if markdownRendererCache.value != nil && markdownRendererCache.identity == identity &&
+		markdownRendererCache.width == width {
 		return markdownRendererCache.value
 	}
+	// The syntax palette is registered **before** the renderer that will use it:
+	// glamour resolves a code block's style by name while rendering. See
+	// registerMarkdownChroma.
+	codeTheme := ""
+	if identity.profile != termenv.Ascii {
+		codeTheme = markdownChromaStyle
+		registerMarkdownChroma(currentTheme)
+	}
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStyles(markdownStyle(currentTheme)),
+		glamour.WithStyles(markdownStyle(currentTheme, codeTheme)),
 		glamour.WithWordWrap(maxInt(width-4, 40)),
+		glamour.WithColorProfile(identity.profile),
+		glamour.WithChromaFormatter(chromaFormatter(identity.profile)),
 	)
 	if err != nil {
 		return nil
 	}
-	markdownRendererCache = markdownRendererSlot{currentTheme.key, width, renderer}
+	markdownRendererCache = markdownRendererSlot{identity, width, renderer}
 	return renderer
 }
 
+// markdownChromaStyle is the name our syntax highlighting is registered under.
+//
+// **It is ours rather than glamour's, and that is the whole point.** glamour
+// registers its own chroma palette under a fixed literal name and only when that
+// name is not taken yet, so with three themes in one process the first theme to
+// draw a code block owned the colours for the rest of the session: `/theme`
+// repainted everything except the inside of a fenced code block. Registering
+// under a name we own, and re-registering whenever the renderer is rebuilt,
+// makes a palette switch reach the code block too.
+const markdownChromaStyle = "tudouni"
+
+// registerMarkdownChroma installs t's syntax palette under markdownChromaStyle.
+//
+// chroma keeps its styles in one process-wide map and glamour reaches them by
+// name, so this is the only handle it gives us. Re-registering overwrites, which
+// is what makes a theme switch work. Both the write here and the read during a
+// render happen on the render path, which is single-goroutine.
+func registerMarkdownChroma(t theme) {
+	chromastyles.Register(chroma.MustNewStyle(markdownChromaStyle, chromaEntriesOf(t)))
+}
+
+// chromaEntriesOf maps the theme onto chroma's token types.
+//
+// The rule is the one the rest of the screen follows, so a code block reads as
+// part of the interface rather than as a sample of somebody else's colours:
+// structure (keywords) takes the accent — the same "this is where the machine
+// acts" colour the tool lines draw with — names take the body inks, values take
+// the two semantic colours (ok for text, warn for numbers), and comments step
+// back to the quietest ink. Every value is a colour the palette already names;
+// none is invented here.
+func chromaEntriesOf(t theme) chroma.StyleEntries {
+	entries := chroma.StyleEntries{
+		chroma.Text:                t.ink,
+		chroma.Error:               t.danger,
+		chroma.Comment:             t.ink4,
+		chroma.CommentPreproc:      t.warn,
+		chroma.Keyword:             t.accent,
+		chroma.KeywordReserved:     t.accent,
+		chroma.KeywordNamespace:    t.accent,
+		chroma.KeywordType:         t.ok,
+		chroma.Operator:            t.ink3,
+		chroma.Punctuation:         t.ink3,
+		chroma.Name:                t.ink2,
+		chroma.NameBuiltin:         t.ok,
+		chroma.NameTag:             t.accent,
+		chroma.NameAttribute:       t.ink2,
+		chroma.NameClass:           t.ink,
+		chroma.NameConstant:        t.ok,
+		chroma.NameDecorator:       t.warn,
+		chroma.NameFunction:        t.ok,
+		chroma.NameOther:           t.ink2,
+		chroma.Literal:             t.ink2,
+		chroma.LiteralNumber:       t.warn,
+		chroma.LiteralString:       t.ok,
+		chroma.LiteralStringEscape: t.warn,
+		chroma.GenericDeleted:      t.danger,
+		chroma.GenericInserted:     t.ok,
+		chroma.GenericSubheading:   t.ink3,
+	}
+	// **Every token carries the block's own surface.** A fenced code block is the
+	// third thing on this screen that means "quoted material" (with the thinking
+	// block and inline code) and it was the only one not on the sunken surface:
+	// once highlighting is on, the text is written by chroma, `CodeBlock.Color`
+	// and its background reach the block's padding and nothing else, and both of
+	// chroma's terminal formatters clear the style's own background. Painting each
+	// token is what makes that surface visible.
+	out := make(chroma.StyleEntries, len(entries))
+	for token, entry := range entries {
+		out[token] = entry + " bg:" + t.sunk
+	}
+	return out
+}
+
+// chromaFormatter is the highlighter's output width, chosen the same way the
+// colour profile above it is: true colour where the terminal can show it, 256
+// colours where it cannot. glamour's default is the 256-colour formatter
+// whatever the terminal is, which is why the code block was the one place on
+// screen still emitting indexed colours next to 24-bit ones.
+func chromaFormatter(profile termenv.Profile) string {
+	switch profile {
+	case termenv.TrueColor:
+		return "terminal16m"
+	case termenv.ANSI256:
+		return "terminal256"
+	case termenv.ANSI:
+		return "terminal16"
+	default:
+		// Unreachable in practice: without colour there is no highlighting at all
+		// (the code block theme is left empty) and this formatter is never asked
+		// for a style.
+		return "terminal"
+	}
+}
+
 // markdownResults memoises what glamour produced, keyed on the answer, the width
-// and the theme.
+// and the renderer identity (theme + colour depth).
 //
 // **This cache is what keeps a long session from getting slower as it grows.**
 // Bubble Tea redraws the whole screen from model state on every message —
@@ -589,11 +719,12 @@ func markdownRenderer(width int) *glamour.TermRenderer {
 //     TestRenderedMarkdownIsStable. The renderer carries no state between
 //     Render calls that reaches the output.
 //   - **a stale entry cannot be reached.** The width is in the key, and so is
-//     the theme — so `/theme`, a resize, or a different answer each address a
-//     different entry. `markdownStyle` reads only `currentTheme`, which is why
-//     the theme alone is enough to describe the renderer, and why a theme
-//     switch needs no invalidation hook (the mistake `--theme` already made
-//     once, see `newModel`).
+//     the renderer identity — so `/theme`, a resize, a change of colour depth or
+//     a different answer each address a different entry. `markdownStyle` reads
+//     only `currentTheme` and `markdownProfile()`, which is why those two are
+//     enough to describe the renderer, and why a theme switch needs no
+//     invalidation hook (the mistake `--theme` already made once, see
+//     `newModel`).
 //
 // The value holds the source text as well as the rows. That is deliberate: the
 // key is a hash, so it can collide, and a cache that answers a collision with
@@ -634,9 +765,9 @@ const (
 )
 
 type markdownKey struct {
-	hash  uint64
-	width int
-	theme themeKey
+	hash     uint64
+	width    int
+	identity markdownIdentity
 	// length is compared together with the hash, so a shorter colliding text
 	// cannot be mistaken for a longer one before the byte comparison happens.
 	length int
@@ -662,19 +793,19 @@ func markdownHash(text string) uint64 {
 // into it. Writing into it would corrupt the entry for every later frame.
 func cachedMarkdown(text string, width int) []string {
 	key := markdownKey{
-		hash:   markdownHash(text),
-		width:  width,
-		theme:  currentTheme.key,
-		length: len(text),
+		hash:     markdownHash(text),
+		width:    width,
+		identity: markdownIdentity{theme: currentTheme.key, profile: markdownProfile()},
+		length:   len(text),
 	}
 	if entry, ok := markdownResults.entries[key]; ok && entry.text == text {
 		return entry.lines
 	}
-	lines, theme := renderMarkdownUncached(text, width)
-	// The theme is taken from the render that just happened, so a renderer built
-	// for one palette can never be filed under another — which is the whole
-	// reason the theme is part of the key.
-	key.theme = theme
+	lines, identity := renderMarkdownUncached(text, width)
+	// The identity is taken from the render that just happened, so a renderer
+	// built for one palette (or for another colour depth) can never be filed
+	// under it — which is the whole reason it is part of the key.
+	key.identity = identity
 	if markdownResults.entries == nil {
 		markdownResults.entries = make(map[markdownKey]*markdownEntry)
 	}
@@ -732,16 +863,30 @@ func dropOldestMarkdownResults(count int) {
 // markdownStyle is the answer's typography, taken from the theme rather than from
 // the renderer's own defaults.
 //
-// Two of these are not cosmetic:
+// **Everything the answer draws has to come from here.** glamour's base styles are
+// a starting point, not a stylesheet: a field left alone keeps glamour's colour
+// rather than the theme's, and the ones that did are the reason this function is
+// longer than the list of things it has something to say about (see the note on
+// images and the table rules below, and `TestNoForeignColourReachesTheAnswer`).
+//
+// Three of these are not cosmetic:
 //
 //   - **the document margin is zero.** The renderer's default indents every line
 //     by two cells, which lands on top of this screen's `│ ` bar and pushes the
 //     body out of line with the tool lines above it. The original's stylesheet
-//     sets that alignment explicitly.
+//     sets that alignment explicitly, and the code block below follows it for the
+//     same reason.
 //   - **h2-h6 lose their `## ` prefixes.** The renderer's default writes the
 //     literal hashes, so a document written with headings reads as markup instead
 //     of as headings.
-func markdownStyle(t theme) ansi.StyleConfig {
+//   - **h1 loses its background.** Both of glamour's base styles paint a level-1
+//     heading on a blue slab, and clearing the prefix does not clear the slab: a
+//     document with a `#` title drew one amber-on-blue line, the only colour on
+//     the screen the theme had never heard of.
+//
+// codeTheme is the name of the syntax palette registered by
+// registerMarkdownChroma, or "" to leave fenced code unhighlighted.
+func markdownStyle(t theme, codeTheme string) ansi.StyleConfig {
 	style := styles.DarkStyleConfig
 	if !t.dark {
 		style = styles.LightStyleConfig
@@ -763,19 +908,34 @@ func markdownStyle(t theme) ansi.StyleConfig {
 		heading.Color = &t.ink
 		heading.Bold = &bold
 		heading.BlockSuffix = ""
+		heading.BackgroundColor = nil
 	}
 
 	// Code: the same sunken background the thinking block uses, so "this is
-	// quoted material" is one idea on this screen rather than three.
+	// quoted material" is one idea on this screen rather than three. The block
+	// loses glamour's two-cell indent so it starts where the prose does — the same
+	// alignment the document margin above is about.
 	style.Code.Color = &t.ink
 	style.Code.BackgroundColor = &t.sunk
 	style.CodeBlock.Color = &t.ink
 	style.CodeBlock.BackgroundColor = &t.sunk
+	style.CodeBlock.Margin = &zero
+	// Syntax highlighting is **ours**: the palette is registered under a name we
+	// own and re-registered on every theme change (see registerMarkdownChroma).
+	// glamour's own Chroma block is therefore cleared rather than filled in —
+	// leaving it set makes glamour register its palette under a fixed name that
+	// only the first theme in the process can claim.
+	style.CodeBlock.Chroma = nil
+	style.CodeBlock.Theme = codeTheme
 
 	// The rest of the palette, so nothing in the answer is a colour the theme has
 	// never heard of.
 	style.Link.Color = &t.accent
 	style.LinkText.Color = &t.accent
+	// Images carry their own two colours in glamour's styles — a pink link and a
+	// grey label — which is the same leak as the h1 slab.
+	style.Image.Color = &t.accent
+	style.ImageText.Color = &t.ink4
 	style.Item.Color = &t.ink4
 	style.Enumeration.Color = &t.ink2
 	style.BlockQuote.Color = &t.ink3
@@ -787,10 +947,24 @@ func markdownStyle(t theme) ansi.StyleConfig {
 	style.Strikethrough.Color = &t.ink3
 	style.HorizontalRule.Color = &t.hairline
 	style.Table.Color = &t.ink2
+	// The table's rules are pinned to the glyphs the rest of the screen draws
+	// with. Left unset, glamour falls back to lipgloss's own default border —
+	// a character choice made outside the theme, which is how the table ended up
+	// as the one framed thing on screen with rules of its own.
+	style.Table.CenterSeparator = &tableCross
+	style.Table.ColumnSeparator = &tableBar
+	style.Table.RowSeparator = &tableRule
 	style.DefinitionTerm.Color = &t.ink
 	style.DefinitionDescription.Color = &t.ink3
 	return style
 }
+
+// The table's glyphs, the same ones the frame and the rail draw with.
+var (
+	tableCross = "┼"
+	tableBar   = "│"
+	tableRule  = "─"
+)
 
 // renderMarkdown formats one finished answer **through the result cache**. The
 // uncached form is renderMarkdownUncached below: this wrapper exists so no
@@ -806,24 +980,25 @@ func renderMarkdown(text string, width int) []string {
 // because a count is machine-independent where a duration is not.
 var markdownUncachedRenders int
 
-// renderMarkdownUncached formats one finished answer and reports the theme it
-// was rendered under. Failure falls back to the plain text: a malformed
-// document is the model's problem to see, not a crash.
+// renderMarkdownUncached formats one finished answer and reports the renderer
+// identity it was rendered under. Failure falls back to the plain text: a
+// malformed document is the model's problem to see, not a crash.
 //
-// The theme comes back from the renderer that did the work rather than from
+// The identity comes back from the renderer that did the work rather than from
 // `currentTheme` at the end, because the two differ if a `/theme` lands
 // mid-render — and filing a render under the palette that did not produce it
 // would hand the next frame a screen in the wrong colours.
-func renderMarkdownUncached(text string, width int) ([]string, themeKey) {
+func renderMarkdownUncached(text string, width int) ([]string, markdownIdentity) {
 	markdownUncachedRenders++
+	identity := markdownIdentity{theme: currentTheme.key, profile: markdownProfile()}
 	renderer := markdownRenderer(width)
 	if renderer == nil {
-		return wrapCells(text, width), currentTheme.key
+		return wrapCells(text, width), identity
 	}
-	theme := markdownRendererCache.key
+	identity = markdownRendererCache.identity
 	out, err := renderer.Render(text)
 	if err != nil {
-		return wrapCells(text, width), theme
+		return wrapCells(text, width), identity
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	// Drop glamour's trailing blank padding; the layout supplies its own.
@@ -833,7 +1008,7 @@ func renderMarkdownUncached(text string, width int) ([]string, themeKey) {
 	for len(lines) > 0 && strings.TrimSpace(stripANSI(lines[0])) == "" {
 		lines = lines[1:]
 	}
-	return lines, theme
+	return lines, identity
 }
 
 // stripANSI removes SGR sequences for measurement only.
