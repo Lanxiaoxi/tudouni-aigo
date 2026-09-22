@@ -181,6 +181,26 @@ func loadTodos(metadata map[string]any) []todoEntry {
 	return out
 }
 
+// TodoRows returns the stored list in the shape a front end reads: a plain `[]any`
+// of `{content, status}` maps, empty when there is no list.
+//
+// It is the one reader for the state payload, and it goes through `loadTodos` so it
+// inherits the two-shape tolerance **at the source** rather than in each front end.
+// The reason it exists at all is that getting this wrong fails silently and totally:
+// a payload read with a bare `.([]any)` answers "no tasks" for every list written in
+// this process (the board stores `[]map[string]any` straight into live metadata) and
+// "here are the tasks" for the same list after a `/resume`, when it has been through
+// a session file once. The rail drew "No tasks yet" through an entire long task while
+// the model was on its fifteenth `todo_write`.
+func TodoRows(metadata map[string]any) []any {
+	items := loadTodos(metadata)
+	rows := make([]any, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, map[string]any{"content": item.Content, "status": item.Status})
+	}
+	return rows
+}
+
 // todoEntriesOf normalises the in-memory shape and the JSON shape to one list.
 func todoEntriesOf(raw any) []map[string]any {
 	switch value := raw.(type) {

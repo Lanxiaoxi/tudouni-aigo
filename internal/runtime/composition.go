@@ -1979,15 +1979,15 @@ func (r *Runtime) SetEffort(level string) (bool, string) {
 
 // --- helpers ----------------------------------------------------------------
 
+// todos is the task list as the panel payload carries it.
+//
+// The reading of the two stored shapes lives in `builtin.TodoRows`, not here: this
+// function used to accept only the `[]any` a session file decodes to, so a list the
+// model had just written (a `[]map[string]any` in live metadata) came back as "no
+// tasks" for the whole session — the rail's Tasks block stayed empty until the
+// session was resumed, which is the one moment the list has been through JSON.
 func (r *Runtime) todos() []any {
-	raw, ok := r.SessionValue.Metadata[builtin.TodosKey]
-	if !ok {
-		return []any{}
-	}
-	if list, ok := raw.([]any); ok {
-		return list
-	}
-	return []any{}
+	return builtin.TodoRows(r.SessionValue.Metadata)
 }
 
 func (r *Runtime) modelWindow() any {
