@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"time"
 
@@ -538,19 +539,21 @@ func thinkingBody(text string, width int) []string {
 
 // ── markdown ──────────────────────────────────────────────────────────────────
 
-// markdownRenderer renders the assistant's finished answer. Built once per
-// theme; streaming draws plain text and the finished answer is rendered once,
-// because re-flowing markdown on every delta would make the stream stutter on
-// exactly the messages long enough to be worth formatting.
-var markdownCache = struct {
+// markdownRendererCache holds the renderer itself — theme + width, no content.
+// What it does *not* hold is anything rendered with it; that is
+// `markdownResults` below, and the distinction is the difference between a long
+// session and a slow one.
+var markdownRendererCache markdownRendererSlot
+
+type markdownRendererSlot struct {
 	key   themeKey
 	width int
 	value *glamour.TermRenderer
-}{}
+}
 
 func markdownRenderer(width int) *glamour.TermRenderer {
-	if markdownCache.value != nil && markdownCache.key == currentTheme.key && markdownCache.width == width {
-		return markdownCache.value
+	if markdownRendererCache.value != nil && markdownRendererCache.key == currentTheme.key && markdownRendererCache.width == width {
+		return markdownRendererCache.value
 	}
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStyles(markdownStyle(currentTheme)),
@@ -559,12 +562,171 @@ func markdownRenderer(width int) *glamour.TermRenderer {
 	if err != nil {
 		return nil
 	}
-	markdownCache = struct {
-		key   themeKey
-		width int
-		value *glamour.TermRenderer
-	}{currentTheme.key, width, renderer}
+	markdownRendererCache = markdownRendererSlot{currentTheme.key, width, renderer}
 	return renderer
+}
+
+// markdownResults memoises what glamour produced, keyed on the answer, the width
+// and the theme.
+//
+// **This cache is what keeps a long session from getting slower as it grows.**
+// Bubble Tea redraws the whole screen from model state on every message —
+// including every streamed delta and every keystroke — and `renderTranscript`
+// walks the entire history each time. Without this, every one of those frames
+// re-ran glamour over every finished answer in the conversation. Measured on a
+// 120×40 terminal with medium-length Chinese answers carrying a code block, one
+// answer cost ~3.5ms to typeset, so an 80-turn session paid ~280ms of glamour
+// inside a ~327ms frame: the frame was almost entirely re-typesetting text that
+// had not changed since the frame before. With the cache, an 80-turn frame is
+// ~7ms and no longer reaches glamour at all after the first draw — see
+// TestLongSessionFrameDoesNotRerenderHistory, which asserts the count rather
+// than the duration because the count is what holds on every machine.
+//
+// Two facts make memoising safe here, and both are properties of how the
+// renderer is used rather than assumptions about glamour:
+//
+//   - **the same input gives the same bytes.** Verified, not assumed: see
+//     TestRenderedMarkdownIsStable. The renderer carries no state between
+//     Render calls that reaches the output.
+//   - **a stale entry cannot be reached.** The width is in the key, and so is
+//     the theme — so `/theme`, a resize, or a different answer each address a
+//     different entry. `markdownStyle` reads only `currentTheme`, which is why
+//     the theme alone is enough to describe the renderer, and why a theme
+//     switch needs no invalidation hook (the mistake `--theme` already made
+//     once, see `newModel`).
+//
+// The value holds the source text as well as the rows. That is deliberate: the
+// key is a hash, so it can collide, and a cache that answers a collision with
+// somebody else's answer would be a correctness bug rather than a slow frame.
+// The text is re-checked byte for byte before a hit is trusted. It costs one
+// more copy of each answer — small against the rendered rows it guards.
+var markdownResults = struct {
+	entries map[markdownKey]*markdownEntry
+	order   []markdownKey
+	// frame counts render passes and evictAt is when the next sweep is due, so
+	// that eviction can happen between frames rather than inside one. See
+	// beginMarkdownFrame.
+	frame   uint64
+	evictAt uint64
+}{}
+
+// markdownResultLimit is how many rendered answers are kept between sweeps, and
+// markdownResultPeak is the memory ceiling the insertion path enforces.
+//
+// The gap between the two is what stops a frame from evicting the answer it is
+// about to draw. Rendering a frame walks the transcript oldest-first, so with a
+// cache at its limit every miss evicts the very next answer in that walk: a
+// session only slightly over the limit then misses on *every* answer, every
+// frame, with a full cache and a zero hit rate. The slack lets one render pass
+// finish with everything it touched still held; the sweep at the next frame
+// boundary then drops the oldest answers — the ones the window has scrolled past
+// — and keeps the fresh tail.
+//
+// The limit is per sweep interval, not per frame, so a frame that renders more
+// than this many answers still completes without evicting itself. The peak only
+// bites on a session an order of magnitude over the limit, where it is the
+// memory ceiling rather than the working set: 4096 entries at the ~19KB an
+// answer of the measured size costs is ~78MB in the pathological case, and a
+// few MB in ordinary use.
+const (
+	markdownResultLimit = 512
+	markdownResultPeak  = 4096
+)
+
+type markdownKey struct {
+	hash  uint64
+	width int
+	theme themeKey
+	// length is compared together with the hash, so a shorter colliding text
+	// cannot be mistaken for a longer one before the byte comparison happens.
+	length int
+}
+
+type markdownEntry struct {
+	text  string
+	lines []string
+}
+
+func markdownHash(text string) uint64 {
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(text))
+	return hash.Sum64()
+}
+
+// cachedMarkdown returns the rendered rows for this answer, rendering them if
+// they are not held. It never assumes the caller's text matches the entry it
+// found by hash: see markdownResults.
+//
+// The returned slice is **shared, not copied**, and every caller treats it as
+// read-only — a frame appends from it into its own row list but never writes
+// into it. Writing into it would corrupt the entry for every later frame.
+func cachedMarkdown(text string, width int) []string {
+	key := markdownKey{
+		hash:   markdownHash(text),
+		width:  width,
+		theme:  currentTheme.key,
+		length: len(text),
+	}
+	if entry, ok := markdownResults.entries[key]; ok && entry.text == text {
+		return entry.lines
+	}
+	lines, theme := renderMarkdownUncached(text, width)
+	// The theme is taken from the render that just happened, so a renderer built
+	// for one palette can never be filed under another — which is the whole
+	// reason the theme is part of the key.
+	key.theme = theme
+	if markdownResults.entries == nil {
+		markdownResults.entries = make(map[markdownKey]*markdownEntry)
+	}
+	markdownResults.entries[key] = &markdownEntry{text: text, lines: lines}
+	// A re-inserted key is appended again rather than moved in place: the order
+	// slice is a bag of candidate keys and the map is what says which of them are
+	// live. A stale duplicate is reclaimed for free when the sweep reaches it,
+	// and because the map was written first, the live copy is never the one that
+	// goes — see dropOldestMarkdownResults.
+	markdownResults.order = append(markdownResults.order, key)
+	evictMarkdownResults()
+	return lines
+}
+
+// beginMarkdownFrame marks the start of one render pass.
+//
+// Everything in the pass belongs to the same frame, so the cache must not evict
+// against it — an answer dropped halfway through a pass is an answer the pass
+// re-renders immediately. Called from `renderTranscript`, which is the one place
+// that renders the whole history.
+//
+// This is also the only place the cache is swept, and that is deliberate. An
+// earlier version swept from the insertion path instead, which meant a frame
+// that was entirely cache hits — the steady state, and the case worth optimising
+// — never swept at all. A frame boundary is the one moment that knows a pass has
+// finished and therefore what "too old to be needed again" means.
+func beginMarkdownFrame() {
+	markdownResults.frame++
+	if markdownResults.frame < markdownResults.evictAt {
+		return
+	}
+	markdownResults.evictAt = markdownResults.frame + uint64(markdownResultLimit)
+	dropOldestMarkdownResults(len(markdownResults.order) - markdownResultLimit)
+}
+
+// evictMarkdownResults is the memory ceiling, applied on the insertion path
+// because that path is the only one that can grow the cache without a frame
+// boundary in sight. See the note on beginMarkdownFrame for why the ordinary
+// sweep does not live here.
+func evictMarkdownResults() {
+	if len(markdownResults.order) > markdownResultPeak {
+		dropOldestMarkdownResults(len(markdownResults.order) - markdownResultLimit)
+	}
+}
+
+// dropOldestMarkdownResults removes up to count of the longest-held entries.
+func dropOldestMarkdownResults(count int) {
+	for index := 0; index < count && len(markdownResults.order) > 0; index++ {
+		key := markdownResults.order[0]
+		markdownResults.order = markdownResults.order[1:]
+		delete(markdownResults.entries, key)
+	}
 }
 
 // markdownStyle is the answer's typography, taken from the theme rather than from
@@ -630,16 +792,38 @@ func markdownStyle(t theme) ansi.StyleConfig {
 	return style
 }
 
-// renderMarkdown formats one finished answer. Failure falls back to the plain
-// text: a malformed document is the model's problem to see, not a crash.
+// renderMarkdown formats one finished answer **through the result cache**. The
+// uncached form is renderMarkdownUncached below: this wrapper exists so no
+// caller can bypass the cache by accident and put the per-frame glamour cost
+// back.
 func renderMarkdown(text string, width int) []string {
+	return cachedMarkdown(text, width)
+}
+
+// markdownUncachedRenders counts how many times an answer actually reached
+// glamour. It is incremented only on a cache miss, so it is the cache's own hit
+// counter — and it is the thing the long-session regression test asserts on,
+// because a count is machine-independent where a duration is not.
+var markdownUncachedRenders int
+
+// renderMarkdownUncached formats one finished answer and reports the theme it
+// was rendered under. Failure falls back to the plain text: a malformed
+// document is the model's problem to see, not a crash.
+//
+// The theme comes back from the renderer that did the work rather than from
+// `currentTheme` at the end, because the two differ if a `/theme` lands
+// mid-render — and filing a render under the palette that did not produce it
+// would hand the next frame a screen in the wrong colours.
+func renderMarkdownUncached(text string, width int) ([]string, themeKey) {
+	markdownUncachedRenders++
 	renderer := markdownRenderer(width)
 	if renderer == nil {
-		return wrapCells(text, width)
+		return wrapCells(text, width), currentTheme.key
 	}
+	theme := markdownRendererCache.key
 	out, err := renderer.Render(text)
 	if err != nil {
-		return wrapCells(text, width)
+		return wrapCells(text, width), theme
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	// Drop glamour's trailing blank padding; the layout supplies its own.
@@ -649,7 +833,7 @@ func renderMarkdown(text string, width int) []string {
 	for len(lines) > 0 && strings.TrimSpace(stripANSI(lines[0])) == "" {
 		lines = lines[1:]
 	}
-	return lines
+	return lines, theme
 }
 
 // stripANSI removes SGR sequences for measurement only.

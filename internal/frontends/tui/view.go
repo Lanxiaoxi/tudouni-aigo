@@ -375,6 +375,11 @@ func (m model) renderBodySplit(available int) string {
 // and counting characters would push every line past the right edge.
 func (m model) renderTranscript(width, height int) string {
 	width = maxInt(width-2, 20)
+	// One render pass is one frame. Saying so is what lets the rendered-markdown
+	// cache sweep itself between frames instead of evicting entries this pass has
+	// not reached yet — see evictMarkdownResults, where that distinction turned
+	// out to be the difference between a cache and no cache.
+	beginMarkdownFrame()
 	var rows []string
 
 	// The welcome screen is a **block in the log**, at the top: the init
