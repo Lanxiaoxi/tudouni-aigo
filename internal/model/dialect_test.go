@@ -705,7 +705,7 @@ func TestTheWireWhitelistKeepsEveryFieldTheShapeDefines(t *testing.T) {
 		"artifact_id":  "art_deadbeef",
 		"pinned":       true,
 	}
-	got := dialect.onTheWireMessage(message)
+	got := dialect.onTheWireMessage(message, false)
 
 	for _, key := range []string{"role", "content", "tool_call_id", "name", "tool_calls"} {
 		if _, present := got[key]; !present {
@@ -719,6 +719,58 @@ func TestTheWireWhitelistKeepsEveryFieldTheShapeDefines(t *testing.T) {
 	}
 	if len(message) != 7 {
 		t.Errorf("the input message was mutated down to %d keys", len(message))
+	}
+}
+
+// TestReasoningIsSentBackOnlyWhenTheEndpointAskedForIt is the regression for a
+// fatal 400 that made a session impossible to continue.
+//
+// A thinking endpoint requires the assistant turn it produced to come back with its
+// `reasoning_content`, and refuses the whole request by name without it — measured
+// on opencode-go / deepseek-v4.1-flash:
+//
+//	The `reasoning_content` in the thinking mode must be passed back to the API.
+//
+// The field is not part of the base chat completions shape, though, so an endpoint
+// that has never heard of it can refuse the message *for carrying* it. Neither
+// answer may be assumed, which is why the flag exists and why both directions are
+// pinned here: the request the endpoint asked for, and the request to one that has
+// not asked.
+func TestReasoningIsSentBackOnlyWhenTheEndpointAskedForIt(t *testing.T) {
+	dialect := openaiDialect{}
+	message := map[string]any{
+		"role":              "assistant",
+		"content":           nil,
+		"reasoning_content": "I should read the file first.",
+		"tool_calls": []any{map[string]any{
+			"id": "call_1", "type": "function",
+			"function": map[string]any{"name": "read_file", "arguments": `{"path":"a.txt"}`},
+		}},
+	}
+
+	sent := dialect.onTheWireMessage(message, true)
+	if sent["reasoning_content"] != "I should read the file first." {
+		t.Errorf("reasoning_content = %#v, want the thinking sent back", sent["reasoning_content"])
+	}
+	// The rest of the turn has to survive the same pass, or the fix trades one 400
+	// for a tool result the model cannot pair with its call.
+	if _, present := sent["tool_calls"]; !present {
+		t.Error("the tool calls were dropped along with the whitelist change")
+	}
+
+	withheld := dialect.onTheWireMessage(message, false)
+	if _, present := withheld["reasoning_content"]; present {
+		t.Errorf("reasoning_content reached an endpoint that never asked for it: %#v", withheld)
+	}
+	// Dropping the field must not drop the message: an assistant turn that asked for
+	// a tool is still an assistant turn that asked for a tool.
+	if _, present := withheld["tool_calls"]; !present {
+		t.Error("the tool calls were dropped with the field")
+	}
+	// And the caller's own message is not the thing that was edited — the session
+	// file keeps the thinking whether or not this endpoint is sent it.
+	if message["reasoning_content"] != "I should read the file first." {
+		t.Error("the filter mutated the session message instead of the wire copy")
 	}
 }
 

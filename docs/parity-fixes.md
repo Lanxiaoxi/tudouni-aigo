@@ -5,6 +5,77 @@
 本页最新一条（4.1.1）是例外：它不是"把原版搬回来"，而是**有意偏离原版**（用户要求），
 所以没有对应的原版测试可搬，测试钉的是 Go 自己的新行为。
 
+## 5.2.2 —— 思考模式要求把 `reasoning_content` 回传（用户实测发现）
+
+- **现象**（用户贴的报错）：
+
+  ```
+  [warn] [turn failed] HTTP 400 from https://opencode.ai/zen/go/v1/chat/completions:
+  {"error":{"type":"invalid_request_error","message":"Upstream request failed:
+   [invalid_request_error] The `reasoning_content` in the thinking mode must be passed back to the API."}}
+  ```
+
+  审计里能复现完整因果链（`.tudouni/logs/20260922-185420.jsonl`，路由 `opencode-go`，
+  模型 `deepseek-v4.1-flash`）：step 0–4 每轮都带 `reasoning_effort: "high"` + tools，
+  assistant 回 `finish_reason: tool_calls`，一路正常；**step 5 同样的一条历史再发一次就是
+  fatal 400**，`stop_reason=model_fatal`，整轮结束。
+- **实机测量（同一端点、同一模型，当天）**：写完之后拿真实报文去撞了这个 400，结论比
+  "上游要这个字段"更细一层 —— **这个校验是偶发的**。同一份请求（历史里带一条没有
+  `reasoning_content` 的 `tool_calls` assistant 消息）连发 12 次：**不带字段 3 次 200 /
+  9 次 400；带字段 12 次全 200**。而另外两组各 10 次（带与不带都有）全是 200。
+  批次之间的差别比批次之内大得多，说明 `opencode.ai/zen` 后面挂着行为不一致的上游。
+  这条测量直接决定了修复的形状：**不能"永远带上"**（有的上游不一定认这个字段），
+  也不能"发一次就算"（下一次换到另一个上游又炸），只能**被拒一次就学会、然后带字段重发** ——
+  也就是 `Complete` 里已经在用的那套发现式恢复。
+- **根因**：发送侧从来没把 `reasoning_content` 回传过，而开启思考（`DefaultThinking = true`）时
+  上游要求上一轮带 tool_calls 的 assistant 消息必须原样带回它。两处一起造成的：
+  - `internal/model/openai.go` 的 `onTheWireMessage` 白名单只有
+    `role/content/tool_calls/tool_call_id/name`，`reasoning_content` 被静默丢掉；
+  - `internal/agent/agent.go` 的 `assistantMessage` 根本没把它写进消息 —— 就算白名单放开也没数据。
+  这条偏离**原版就有**、并且早就写在 `docs/TUI-design.md` 的 D2 里（"官方文档说携带 tools 的
+  请求必须完整回传 `reasoning_content`，否则 400，而本项目每轮都带 tools"）：当时那个端点没严格执行，
+  所以只是记了一笔。opencode-go 后面的 DeepSeek 执行了，于是暴露。
+  次生问题：这个 400 被 `classifyHTTPError` 判成 **fatal**，不重试也不降级，而
+  `isThinkingRefusal` 还会因为文案里出现 `reasoning_effort` 把它误判成"模型不能被告知别思考" ——
+  那会把思考指令整场进程丢掉，`/thinking on` 变成静默空操作。**这条是修的时候读代码才发现的，
+  用户没报**（真正的"不能关思考"那两种措辞里本来就没有 `reasoning_effort`）。
+- **改动**：
+  - `internal/agent/agent.go`：`assistantMessage` 把 `response.Reasoning` 写成消息上的
+    `reasoning_content`。**存下来**（回合只发生一次，载荷是它的渲染），发不发由方言决定。
+  - `internal/model/dialect.go`：`ReasoningKnobs` 新增 `ReplayReasoning`；`onTheWireMessage`
+    签名带上它（另两个协议忽略）。接口注释里补了这条"加回来的字段"。
+  - `internal/model/openai.go`：白名单在 `ReplayReasoning` 为真时才放行 `reasoning_content`；
+    新增 `reasoningReplayRejection`（与 `thinkingInstructionRejection` **分开**，两者恢复方向相反）
+    与 `isReasoningReplayRefusal`（窄匹配：同时出现 "must be passed back" 和 "reasoning_content"）。
+  - `internal/model/client.go`：照 `stream_options` / 思考指令那两处的老规矩做"发现式恢复"——
+    `replayReasoning` 表按 `(base_url, model)` 记住，先发不含字段的请求，读到这条 400 就记住、
+    丢一次 `OnAttemptStarted`、带字段重发一次；**只在思考开着时重发**（思考没开时把整轮标成
+    `fatal` 也没意义，重发换来的还是同一条错误）。
+  - `isThinkingRefusal` **删掉 `reasoning_effort` 这一条匹配**：它是整个思考模式的公共词表，
+    别的毛病（要求回传、档位不收）也会提它，按"不能关思考"处理等于把一个可恢复的拒答换成
+    "这个模型在本进程里再也不能用"。
+  - `internal/model/types.go`：`Reasoning` 的注释改成"会进历史"，不再是"永不回传"。
+- **明确不做的事**：另外两个协议不做对等改动。`responses` 本来就有自己的回放机制
+  （`include: ["reasoning.encrypted_content"]`）；`anthropic` 的回放要原样带签名
+  （`thinking.signature`），而我们只存了文本，拼一个没签名的 thinking 块会被端点拒掉 ——
+  那是一个独立的、需要先解决"签名存哪"的问题，不是这次这条 400 的修补。
+- **测试**：`internal/model/replay_test.go`（学一次就不再付第二次学费、学到的只属于
+  `(端点, 模型)`、没拒过人的端点永远不发这个字段、重发时 `reasoning_effort` 仍在、
+  "要求回传"与"不能关思考"两种拒答不互相误判）、
+  `internal/model/dialect_test.go`（`reasoning_content` 只在被要求时上线，且带它上线时
+  tool_calls 不能被顺手削掉）、`internal/agent/agent_test.go`（带 tool_calls 的那条 assistant
+  消息必须带着思考进会话）。
+- **一条需要手动开的实机测试**：`internal/model/live_test.go` 打的是真端点，默认 skip；
+  只有显式给了模型名才会发请求（不静默花谁的钱），密钥默认从 `~/.tudouni/config.json`
+  里那条路由取：
+  `$env:TUDOUNI_LIVE_MODEL='deepseek-v4.1-flash'; go test ./internal/model/ -run TestLiveEndpointReplaysTheThinking -v`
+  判据是"上游肯不肯接受它自己产出的那段思考"；网络不通（`TransientError`）就 skip 而不是 FAIL。
+  （写这次修复时本机 Go 直连该端点一直 EOF，所以这条**没有在写的时候跑通**，是留给下一次的
+  自检；上面那些结论来自 Node 侧的探测。）
+- **用户可直接复测**：`make build` 后在 `opencode-go` + `deepseek-v4.1-flash` 上跑一个需要连续
+  工具调用的任务 —— 原本第 5 步左右就 `[turn failed]`，现在第一次请求会多走一个来回（学习，
+  审计里前一条 `model_call` 记 `status=fatal`、紧接着一条 `ok`），之后整场正常。
+
 ## 5.0.3 —— 思考强度不再折算，档位清单按模型声明（用户要求）
 
 - **现象**（用户反馈："现在好像写死三个选项，实际上模型不一定是这三个，有可能 xhigh 这种"）：

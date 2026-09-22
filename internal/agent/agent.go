@@ -602,12 +602,31 @@ func (a *Agent) toolSchemas() []map[string]any {
 	return a.Tools.Schemas()
 }
 
+// assistantMessage renders the model's turn into the history.
+//
+// The thinking goes in with it when the gateway reported any, and that is worth
+// stating because this field is the one thing above the wire that is *not* for the
+// reader: a thinking endpoint requires the assistant turn it produced to come back
+// with its `reasoning_content`, and answers 400 — fatally, and for every later turn
+// of the session, since the message is in the session file — when it does not.
+// Measured on opencode-go / deepseek-v4.1-flash:
+//
+//	The `reasoning_content` in the thinking mode must be passed back to the API.
+//
+// It is recorded here rather than looked up at send time for the same reason as
+// everything else in this message: the turn happened once, and the payload of the
+// next request is a rendering of what happened. Whether a given endpoint is sent
+// the field is the dialect's business — see ReasoningKnobs.ReplayReasoning, which
+// keeps an endpoint that has never heard of it from being sent an unknown field.
 func assistantMessage(response model.ModelResponse) map[string]any {
 	message := map[string]any{"role": "assistant"}
 	if response.Content != nil {
 		message["content"] = *response.Content
 	} else {
 		message["content"] = nil
+	}
+	if response.Reasoning != nil && *response.Reasoning != "" {
+		message["reasoning_content"] = *response.Reasoning
 	}
 	if len(response.ToolCalls) > 0 {
 		calls := make([]any, 0, len(response.ToolCalls))

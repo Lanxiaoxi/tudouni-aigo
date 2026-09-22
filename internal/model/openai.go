@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 )
 
 // openaiDialect speaks the chat completions shape: POST /chat/completions, a
@@ -32,7 +33,7 @@ func (openaiDialect) credentialHeader() string { return credentialHeaderBearer }
 //
 //	system     {role, content}
 //	user       {role, content}
-//	assistant  {role, content, tool_calls}
+//	assistant  {role, content, tool_calls}   (+ reasoning_content, see below)
 //	tool       {role, content, tool_call_id, name}
 //
 // `name` is kept because it is the documented optional field of these roles, even
@@ -43,9 +44,25 @@ func (openaiDialect) credentialHeader() string { return credentialHeaderBearer }
 // The whitelist is a property of OpenAI's shape rather than of this program, so it
 // lives with the dialect: the day a second shape accepts the list whole it needs
 // its own list, and the day this one gains a field the whitelist has to be told.
-func (openaiDialect) onTheWireMessage(message map[string]any) map[string]any {
-	clean := make(map[string]any, 4)
-	for _, key := range []string{"role", "content", "tool_calls", "tool_call_id", "name"} {
+//
+// `replayReasoning` is the exception that needed telling. It is a message field of
+// the thinking mode rather than of the base shape, and it costs a round trip when
+// it is wrong in either direction:
+//
+//   - Sending it to an endpoint that never asked is an unknown-field refusal on
+//     some gateways, so it is not simply always sent.
+//   - Withholding it from one that requires it answers 400 and kills the turn —
+//     measured on opencode-go / deepseek-v4.1-flash.
+//
+// So it is passed in: the transport knows, per endpoint, which of the two answers
+// this endpoint gave. See ReasoningKnobs.ReplayReasoning.
+func (openaiDialect) onTheWireMessage(message map[string]any, replayReasoning bool) map[string]any {
+	keys := []string{"role", "content", "tool_calls", "tool_call_id", "name"}
+	if replayReasoning {
+		keys = append(keys, "reasoning_content")
+	}
+	clean := make(map[string]any, len(keys))
+	for _, key := range keys {
 		if value, ok := message[key]; ok {
 			clean[key] = value
 		}
@@ -56,7 +73,7 @@ func (openaiDialect) onTheWireMessage(message map[string]any) map[string]any {
 func (openaiDialect) encode(request dialectRequest) (map[string]any, error) {
 	messages := make([]map[string]any, 0, len(request.messages))
 	for _, message := range request.messages {
-		messages = append(messages, openaiDialect{}.onTheWireMessage(message))
+		messages = append(messages, openaiDialect{}.onTheWireMessage(message, request.knobs.ReplayReasoning))
 	}
 	body := map[string]any{
 		"model":    request.model,
@@ -194,6 +211,35 @@ func extractReasoning(message map[string]any) *string {
 		}
 	}
 	return nil
+}
+
+// reasoningReplayRejection marks a 400 that is specifically about the thinking this
+// request left out.
+//
+// It is a distinct type from thinkingInstructionRejection, which is about being
+// asked *not* to think, because the two recoveries are opposite: one retries with
+// the reasoning sent back and the other retries with nothing said about reasoning
+// at all. Collapsing them would answer the wrong one.
+type reasoningReplayRejection struct{ Msg string }
+
+func (e *reasoningReplayRejection) Error() string { return e.Msg }
+
+func isReasoningReplayRejection(err error) bool {
+	_, ok := err.(*reasoningReplayRejection)
+	return ok
+}
+
+// isReasoningReplayRefusal recognises the endpoint that will not accept a thinking
+// turn whose reasoning was not sent back with it.
+//
+// The wording is the endpoint's and is matched narrowly, because the recovery is
+// only correct for this one refusal: a request that leaves out reasoning the
+// endpoint requires is answered with this sentence by name, while every other 400
+// that merely mentions `reasoning_content` — a bad value, a field it does not
+// accept — is a different problem that resending cannot fix.
+func isReasoningReplayRefusal(lowerBody string) bool {
+	return strings.Contains(lowerBody, "must be passed back") &&
+		strings.Contains(lowerBody, "reasoning_content")
 }
 
 // extractUsage normalises an OpenAI-shaped usage block.

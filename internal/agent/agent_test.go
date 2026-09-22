@@ -371,6 +371,55 @@ func TestToolCallThenAnswer(t *testing.T) {
 	}
 }
 
+// TestTheThinkingOfAToolCallIsKeptInTheHistory is the regression for a fatal 400
+// that made a session impossible to continue.
+//
+// A thinking endpoint requires the assistant turn it produced to come back with its
+// `reasoning_content`, and refuses the whole request by name when it does not —
+// measured on opencode-go / deepseek-v4.1-flash: "The `reasoning_content` in the
+// thinking mode must be passed back to the API". The history is what is re-sent
+// every round, so a turn recorded without its thinking is a request that can never
+// be made to work: the message is in the session file, and every later turn of that
+// session is refused the same way.
+//
+// **Where the field goes and where it does not.** It is stored on the message,
+// because that is the shape the turn happened in. Whether a given endpoint is sent
+// it is the dialect's decision, because one that has never heard of the field can
+// refuse it — see model.ReasoningKnobs.ReplayReasoning. This test pins the half
+// that belongs to the loop.
+func TestTheThinkingOfAToolCallIsKeptInTheHistory(t *testing.T) {
+	thinking := "I should read the file before answering."
+	step := toolCallResponse("call_1", "read_file", `{"path":"a.txt"}`)
+	step.Reasoning = &thinking
+	chat := &fakeModel{script: []model.ModelResponse{step, textResponse("read it")}}
+	h := newHarness(t, chat, security.AlwaysAllow)
+
+	if _, err := h.agent.Run("read a.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	var assistant map[string]any
+	for _, message := range h.session.Messages {
+		if role, _ := message["role"].(string); role == "assistant" {
+			if _, asks := message["tool_calls"]; asks {
+				assistant = message
+			}
+		}
+	}
+	if assistant == nil {
+		t.Fatal("the assistant turn that asked for the tool never reached the session")
+	}
+	if got := assistant["reasoning_content"]; got != thinking {
+		t.Errorf("reasoning_content = %#v, want the thinking that produced the call", got)
+	}
+	// The rest of the turn must survive: a message with the thinking and no calls
+	// would leave the tool result below it referring to nothing, and the endpoint
+	// refuses that for the whole request.
+	if _, present := assistant["tool_calls"]; !present {
+		t.Error("the tool calls were dropped")
+	}
+}
+
 func TestDeniedCallNeverRuns(t *testing.T) {
 	chat := &fakeModel{script: []model.ModelResponse{
 		toolCallResponse("call_1", "write_file", `{"path":"a.txt","content":"x"}`),

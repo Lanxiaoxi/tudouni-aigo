@@ -35,6 +35,26 @@ type ReasoningKnobs struct {
 	// retry in `Complete` falls back to after an endpoint has refused the explicit
 	// instruction.
 	omit bool
+	// ReplayReasoning is whether this endpoint needs the previous turn's thinking
+	// sent back with the history.
+	//
+	// It exists because of a measured refusal, not a preference. A thinking model
+	// behind a gateway answers 400 to a request whose assistant turn carries
+	// `tool_calls` while its `reasoning_content` is missing:
+	//
+	//	The `reasoning_content` in the thinking mode must be passed back to the API.
+	//
+	// Measured on opencode-go / deepseek-v4.1-flash. It arrives as a fatal 400, and
+	// because the offending assistant message is in the session file, every later
+	// turn of that session is refused the same way — the shape of the `artifact_id`
+	// failure the wire whitelist exists for, one layer up.
+	//
+	// It is a property of the *endpoint* rather than of the program, which is why it
+	// is learned instead of configured: see OpenAICompatible.Complete, which sends
+	// the history without it first and turns this on for the retry once an endpoint
+	// has asked. Sending it to an endpoint that never asked is the other half of the
+	// risk — some of them refuse an unknown message field by name.
+	ReplayReasoning bool
 }
 
 // RequestFields describes the thinking knobs the way the protocol-independent
@@ -121,7 +141,14 @@ type dialect interface {
 	// deliberately: over-redacting costs us a field we can add back with an
 	// observed failure, while under-redacting costs the user a session that cannot
 	// be continued.
-	onTheWireMessage(message map[string]any) map[string]any
+	//
+	// The one field that has had to be added back is `reasoning_content`, which a
+	// thinking endpoint requires on the assistant turn it produced. It is not a
+	// general pass-through: the chat completions dialect sends it only when the
+	// reasoning was actually asked for and the endpoint has shown it wants it — see
+	// ReasoningKnobs.ReplayReasoning, which is what the second parameter carries to
+	// the one dialect that takes the message list whole.
+	onTheWireMessage(message map[string]any, replayReasoning bool) map[string]any
 }
 
 // dialectRequest is everything a dialect needs to build one request.

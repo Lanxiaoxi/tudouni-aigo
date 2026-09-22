@@ -80,6 +80,56 @@ func rememberThinkingInstructionUnsupported(baseURL, model string) {
 	unsupportedThink[streamOptionsKey(baseURL, model)] = true
 }
 
+// reasoningReplayEndpoints remembers which (base_url, model) pairs have proved
+// they need the previous turn's thinking sent back with the history.
+//
+// It is the same bargain as the two memories above, and it exists because of a
+// measured refusal rather than a guess: a thinking model behind a gateway answers
+// 400 to a request whose assistant turn carries `tool_calls` while its
+// `reasoning_content` is missing — "The `reasoning_content` in the thinking mode
+// must be passed back to the API", measured on opencode-go / deepseek-v4.1-flash.
+//
+// Why the program does not simply always send it: the field is not part of the
+// base chat completions shape, so an endpoint that has never heard of it can
+// refuse the message by name, and that refusal would be a new failure invented by
+// the fix. Why not a configuration option: "does my gateway want the thinking
+// replayed" is a discovered fact, not a preference, and the wrong answer fails
+// once per turn rather than once per install.
+//
+// Learning costs one wasted round trip per (endpoint, model) per process, on the
+// one call that happens to be carrying replayed history. After that the retry
+// succeeds, and every later turn of the session — the failure that used to be
+// permanent — sends the field from the start.
+var (
+	replayMu        sync.Mutex
+	replayReasoning = map[string]bool{}
+)
+
+// replayReasoningFor reports whether this endpoint has asked for the thinking to
+// be replayed.
+func replayReasoningFor(baseURL, model string) bool {
+	replayMu.Lock()
+	defer replayMu.Unlock()
+	return replayReasoning[streamOptionsKey(baseURL, model)]
+}
+
+func rememberReplayReasoningRequired(baseURL, model string) {
+	replayMu.Lock()
+	defer replayMu.Unlock()
+	replayReasoning[streamOptionsKey(baseURL, model)] = true
+}
+
+// forgetReplayReasoning drops what was learned about one endpoint.
+//
+// It exists for tests, which run several endpoints on the same process. The
+// learning itself is deliberately never forgotten: it is a fact about an endpoint
+// that does not stop being true.
+func forgetReplayReasoning(baseURL, model string) {
+	replayMu.Lock()
+	defer replayMu.Unlock()
+	delete(replayReasoning, streamOptionsKey(baseURL, model))
+}
+
 // OpenAICompatible talks to a chat endpoint. Which wire protocol that is comes
 // from the route's Style; the name is kept because it is the honest description of
 // the family this adapter belongs to and of the default it falls back to.
@@ -216,11 +266,12 @@ func (m *OpenAICompatible) SetReasoning(thinking bool, effort string) {
 // nobody consumes costs the same and delivers less, and asking for `stream` in the
 // body is itself observable in the audit.
 //
-// Two refusals are recoverable, and both are handled here rather than in the caller
-// because both are properties of the endpoint that were only discoverable by
-// asking it: `stream_options` on a gateway that does not know the parameter, and an
-// explicit "do not think" instruction on a model that has no way to comply. Each is
-// tried once, remembered, and dropped for the retry.
+// Three refusals are recoverable, and all three are handled here rather than in the
+// caller because all three are properties of the endpoint that were only
+// discoverable by asking it: `stream_options` on a gateway that does not know the
+// parameter, an explicit "do not think" instruction on a model that has no way to
+// comply, and an endpoint that requires the previous turn's thinking to be sent
+// back with the history. Each is tried once, remembered, and applied to the retry.
 func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[string]any, options CompleteOptions) (ModelResponse, error) {
 	promise := m.knobs()
 	attempted := map[string]bool{}
@@ -228,9 +279,14 @@ func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[strin
 	for {
 		// The recorded state is consulted per attempt rather than per session: a
 		// refusal just remembered in this loop has to affect the retry below.
+		//
+		// The replay fact is read from the endpoint rather than kept on the
+		// adapter, because it is a fact about the endpoint and the adapter is
+		// rebuilt every time the route changes — see replayReasoningEndpoints.
+		promise.ReplayReasoning = replayReasoningFor(m.route.BaseURL, m.route.Model)
 		knobs := promise
 		if !thinkingInstructionSupported(m.route.BaseURL, m.route.Model) {
-			knobs = ReasoningKnobs{Thinking: false, Effort: promise.Effort, omit: true}
+			knobs = ReasoningKnobs{Thinking: false, Effort: promise.Effort, omit: true, ReplayReasoning: promise.ReplayReasoning}
 		}
 
 		response, err := m.completeOnce(messages, tools, options.OnDelta, options.ShouldStop, knobs)
@@ -241,6 +297,19 @@ func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[strin
 		// request again after the user asked for it to stop.
 		if IsCancelled(err) {
 			return ModelResponse{}, err
+		}
+
+		// The endpoint wants the thinking it produced sent back with the history,
+		// and this request went without it. That is what a session written before
+		// this field existed looks like, and what a first call to such an endpoint
+		// looks like — the fact is learned here and the request goes again.
+		if isReasoningReplayRejection(err) && !attempted["reasoning_replay"] {
+			attempted["reasoning_replay"] = true
+			rememberReplayReasoningRequired(m.route.BaseURL, m.route.Model)
+			if options.OnAttemptStarted != nil {
+				options.OnAttemptStarted()
+			}
+			continue
 		}
 
 		if isThinkingInstructionRejection(err) && !attempted["thinking"] {
@@ -479,6 +548,13 @@ func classifyHTTPError(status int, body string, endpoint string, streamOptionsPo
 			(strings.Contains(lower, "stream_options") || strings.Contains(lower, "include_usage")) {
 			return &streamOptionsRejection{Msg: summary}
 		}
+		// Asked for and ordered before the thinking refusal below, because the
+		// endpoint that sends this one *requires* thinking: the sentence would
+		// otherwise match on `reasoning_content` and be answered by turning the
+		// thinking off, which is the opposite of the recovery it calls for.
+		if isReasoningReplayRefusal(lower) {
+			return &reasoningReplayRejection{Msg: summary}
+		}
 		if isThinkingRefusal(lower) {
 			return &thinkingInstructionRejection{Msg: summary}
 		}
@@ -504,7 +580,7 @@ func classifyHTTPError(status int, body string, endpoint string, streamOptionsPo
 //
 // The wording is the endpoint's and is matched narrowly, because a broad match on the
 // word "thinking" would also catch a genuine rejection of the *enabled* form — a
-// different problem, and one that retrying cannot fix. Three phrasings have been
+// different problem, and one that retrying cannot fix. Two phrasings have been
 // observed on real endpoints, and they are listed with what produced them:
 //
 //	"GLM-5.3 is a thinking-only model; disabling thinking
@@ -512,17 +588,23 @@ func classifyHTTPError(status int, body string, endpoint string, streamOptionsPo
 //	"invalid thinking: only type=enabled is allowed
 //	 for this model"                                    — measured on kimi-k2.7-code
 //
-// The parameter name is matched too, because that is how the same refusal is worded
-// when it does not use either phrase, and because `reasoning_effort` exists for this
-// switch and nothing else.
+// **`reasoning_effort` is deliberately not matched here**, though it names exactly
+// the parameter this switch moves to `"none"`. It is the whole vocabulary the
+// thinking mode is discussed in, so an endpoint explaining a different problem
+// about it — a required thinking replay, a level it does not accept — mentions it
+// too, and answering those by turning thinking off would replace a recoverable
+// refusal with "the model cannot be used at all on this route": the retry below
+// drops the instruction for the rest of the process, and `/thinking on` becomes a
+// silent no-op. Measured: opencode-go answers 400 with "The `reasoning_content` in
+// the thinking mode must be passed back to the API" to a request whose history
+// omitted it, and that endpoint demands thinking rather than refusing it.
 func isThinkingRefusal(lowerBody string) bool {
 	switch {
 	case strings.Contains(lowerBody, "thinking-only"),
 		strings.Contains(lowerBody, "thinking only"),
 		strings.Contains(lowerBody, "disabling thinking"),
 		strings.Contains(lowerBody, "cannot disable thinking"),
-		strings.Contains(lowerBody, "only type=enabled"),
-		strings.Contains(lowerBody, "reasoning_effort"):
+		strings.Contains(lowerBody, "only type=enabled"):
 		return true
 	default:
 		return false

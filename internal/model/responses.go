@@ -30,7 +30,11 @@ func (responsesDialect) credentialHeader() string { return credentialHeaderBeare
 // onTheWireMessage returns the message unchanged, for the same reason as the
 // Messages shape: `splitResponsesInput` builds each item from named fields, so an
 // unknown key cannot reach this protocol's wire. See the dialect interface.
-func (responsesDialect) onTheWireMessage(message map[string]any) map[string]any {
+//
+// The replay flag is ignored here too: this protocol replays reasoning as a
+// dedicated `reasoning` item with encrypted content, which is a different thing
+// from a chat-completions message field.
+func (responsesDialect) onTheWireMessage(message map[string]any, replayReasoning bool) map[string]any {
 	return message
 }
 

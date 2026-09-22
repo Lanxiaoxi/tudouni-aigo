@@ -110,7 +110,11 @@ type ModelResponse struct {
 	ToolCalls []ToolCall
 	Usage     *TokenUsage
 	// Reasoning is the model's thinking, when the gateway reports it. It goes to
-	// the audit and to the interface; it is never fed back into the next request.
+	// the audit and to the interface, and it is kept in the history as
+	// `reasoning_content` — a thinking endpoint requires the turn it produced to
+	// come back with it. Whether it is actually sent to a given endpoint is
+	// decided per endpoint, because one that has never heard of the field can
+	// refuse it: see ReasoningKnobs.ReplayReasoning.
 	Reasoning *string
 	// FinishReason is the endpoint's own answer to "why did this generation end",
 	// passed through in its own vocabulary (`stop`, `length`, `tool_calls`,

@@ -591,6 +591,14 @@ data["reasoning"] = attempt.response.reasoning      # 整段，不截断
 而本项目每轮都带 tools"。当前端点没严格执行。**决策 1 不做流式，所以这次改动
 不碰发送侧** —— `reasoning` 依然只读进来、不回传。那不是本次遗漏，是另一件事。
 
+> **已修（5.2.2）。** 那个"没严格执行"的端点后来执行了：opencode-go 后面的
+> DeepSeek 对同样一条历史答 400 `The reasoning_content in the thinking mode must
+> be passed back to the API`，而且是 fatal —— 那条 assistant 消息在会话文件里，
+> 于是该会话之后每一轮都死在同一个地方。现在 `reasoning` 进历史，发不发由方言按
+> `(base_url, model)` 学来的事实决定（先发不含字段的请求，被拒一次就记住、
+> 带字段重发一次）。详见 `docs/parity-fixes.md` 的 5.2.2。上面这段留作当时判断的
+> 记录，不要照它改代码。
+
 ---
 
 ### D3【必须】三条人机通道换成 UI 实现（决策 6）

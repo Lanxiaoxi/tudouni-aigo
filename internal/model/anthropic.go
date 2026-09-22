@@ -72,7 +72,11 @@ func maxOutputTokens(effort string) int { return thinkingBudget(effort) + 8192 }
 // this program added to its own session format has no path to the wire. The
 // method exists to satisfy the dialect interface honestly rather than to filter —
 // see the interface for why the filter has to exist at all.
-func (anthropicDialect) onTheWireMessage(message map[string]any) map[string]any {
+//
+// The replay flag is ignored for the same reason: this protocol has its own way of
+// reproducing a thinking turn, and it does not read a chat-completions message
+// field to do it.
+func (anthropicDialect) onTheWireMessage(message map[string]any, replayReasoning bool) map[string]any {
 	return message
 }
 
