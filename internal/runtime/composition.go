@@ -648,6 +648,16 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	if configured, source := proxy.Resolve(); configured != nil {
 		runtimeValue.notices = append(runtimeValue.notices, notice("info", "network",
 			i18n.T("notice.proxy.in_use", "url", configured.String(), "source", source)))
+		// Said as well as the line above, not instead of it. "Requests go through
+		// this proxy" is only true of the destinations the machine did not exclude,
+		// and on the server this was reported from the exclusion is the entire point:
+		// the model gateway is internal and the proxy cannot reach it. A notice that
+		// named the proxy and stopped there would describe the login and misdescribe
+		// the model calls.
+		if skip := proxy.NoProxy(); skip != "" {
+			runtimeValue.notices = append(runtimeValue.notices, notice("info", "network",
+				i18n.T("notice.proxy.no_proxy", "list", skip)))
+		}
 	} else {
 		runtimeValue.notices = append(runtimeValue.notices, notice("info", "network",
 			i18n.T("notice.proxy.direct")))

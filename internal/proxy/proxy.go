@@ -26,6 +26,26 @@
 // because it is the more specific instruction: `HTTPS_PROXY=… some-command` says
 // "for this invocation, use this", while the system proxy says "on this machine,
 // use this". Specific beats general.
+//
+// # Why NO_PROXY is honoured, and why it is not a second answer
+//
+// "Which path does a request take" is not always one answer per machine, and the
+// case that proves it is an isolated development server: the model gateway is on
+// the internal network and is reached directly, while the identity provider that
+// authenticates the session is on the public internet and is reachable only
+// through a proxy. One machine, two paths, chosen per destination.
+//
+// `NO_PROXY` is the machine's own way of saying that — it is the same variable
+// curl, Git and Go itself read — so honouring it is not the configuration key this
+// package refuses above. It is the machine's answer, read from the machine, and it
+// stays the single source of truth: `Resolve` still decides **which** proxy to use,
+// and `NO_PROXY` only says which destinations that proxy is not for.
+//
+// The matching is not reimplemented here. `golang.org/x/net/http/httpproxy` is what
+// Go's own `http.ProxyFromEnvironment` uses, and a second implementation of "does
+// this host match this pattern" would be exactly the drift this package exists to
+// prevent — a machine where curl and this program disagree about `NO_PROXY` for no
+// visible reason.
 package proxy
 
 import (
@@ -37,6 +57,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/http/httpproxy"
 )
 
 // Resolve reports the proxy to use and where that decision came from.
@@ -69,6 +91,20 @@ func Resolve() (*url.URL, string) {
 // asked, confidently.
 func System() (*url.URL, bool, error) { return system() }
 
+// NoProxy reports the destinations the machine's own `NO_PROXY` excludes from the
+// proxy, or "" when it names none.
+//
+// It is exported because the decision it describes cannot be summarised by `Resolve`
+// alone: `Resolve` answers "which proxy", and this answers "which destinations that
+// proxy is not for". A startup notice that reported only the first would be telling
+// the person something untrue about their own traffic — the failure mode this
+// package exists to remove — so both are said out loud.
+//
+// It returns the value verbatim rather than a parsed form. Nothing in this program
+// needs to interrogate it, and re-formatting a list the machine wrote would be a
+// second way to spell it.
+func NoProxy() string { return noProxy() }
+
 // Problem reports a configured proxy that could not be understood.
 //
 // It exists so that "your setting was ignored" is never silent. A person who wrote
@@ -97,14 +133,25 @@ func Problem() string {
 	return ""
 }
 
-// proxyVariables is every spelling this package reads, in priority order.
+// Variables is every spelling this package reads for the proxy address, in
+// priority order.
 //
 // It is a package-level list rather than a literal inside `environment` so that the
-// tests clear exactly what the code reads. That matters more than it looks: on
-// Windows environment names are **case-insensitive**, so a test that sets
-// `HTTPS_PROXY` and then clears `https_proxy` clears the value it just set — a
-// mistake that reads as "the environment was ignored".
-var proxyVariables = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"}
+// tests clear exactly what the code reads, and it is **exported** so that the tests
+// of another package can do the same: `internal/model` builds its own client from
+// `Transport`, and a test there that cleared a hand-copied list would go on
+// honouring whatever the developer's own machine had set.
+//
+// NoProxyVariables is the same idea for the destinations that skip the proxy. The
+// two are deliberately **separate lists**: the first names where a proxy address can
+// come from, and `Problem` reports a value in it that cannot be parsed. `NO_PROXY`
+// holds hosts, not addresses, and the standard library treats a malformed entry as
+// "ignore it" rather than as an error — folding it into one list would make a typo
+// in `NO_PROXY` report itself as an unusable proxy address.
+var (
+	Variables        = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"}
+	NoProxyVariables = []string{"NO_PROXY", "no_proxy"}
+)
 
 // environment reads the proxy variables Go itself would read, and reports which
 // spelling supplied the value.
@@ -118,13 +165,36 @@ var proxyVariables = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_
 // The lowercase spellings are checked too: they are the documented form, and a
 // machine that sets only `https_proxy` — which every other tool on it honours —
 // must not be the one machine where this program goes direct.
-func environment() (string, string) {
-	for _, name := range proxyVariables {
+func environment() (string, string) { return fromEnvironment(Variables) }
+
+// noProxy returns the machine's skip list, or "" when it has none.
+//
+// It is read rather than parsed here: the value is handed to `httpproxy` whole, so
+// that every pattern it accepts — a host, a domain suffix, a CIDR block, a `host:port`
+// pair, `*` — behaves here exactly as it does everywhere else on the machine.
+func noProxy() string { return environmentValue(NoProxyVariables) }
+
+// fromEnvironment returns the first name in the list that holds a non-empty value,
+// with the name that supplied it.
+func fromEnvironment(names []string) (string, string) {
+	for _, name := range names {
 		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
 			return name, value
 		}
 	}
 	return "", ""
+}
+
+// environmentValue returns the first non-empty value among the names, with no
+// trimming: this one is read for a list whose whitespace the standard library
+// already trims per entry.
+func environmentValue(names []string) string {
+	for _, name := range names {
+		if value := os.Getenv(name); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // parse accepts what the proxy variables accept: a full URL, or a bare
@@ -179,12 +249,67 @@ func transportFor(configured *url.URL, skipVerify bool) *http.Transport {
 		ExpectContinueTimeout: time.Second,
 	}
 	if configured != nil {
-		transport.Proxy = skipWhenUnreachable(configured)
+		transport.Proxy = noProxyAware(configured)
 	}
 	if skipVerify {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	return transport
+}
+
+// noProxyAware returns the proxy function for a configured proxy: the proxy, except
+// for the destinations the machine's own `NO_PROXY` names.
+//
+// The decision is made **per request**, and it has to be: `Resolve` answers "which
+// proxy does this machine use", which is one answer, while "is this particular
+// destination on the far side of it" is a different question with a different answer
+// for every host. This is the only place in the program that needs the second
+// question asked, and it is the reason "authenticate through the proxy, reach the
+// model directly" was impossible before: the proxy was applied to every destination
+// alike.
+//
+// `NO_PROXY` is read once, here, when the transport is built, and handed to
+// `httpproxy` whole. Reading it per request would put an environment lookup in the
+// path of every model call for a value no one changes mid-session, and `httpproxy`
+// snapshots the parsed config anyway.
+//
+// The standard library's loopback rule comes along with it and is worth knowing
+// about, because it is not something this package wrote: `localhost` and loopback
+// addresses are never sent to a proxy, with or without `NO_PROXY`. That is narrower
+// than the fallback below, which is about a loopback proxy that is **dead** rather
+// than about a destination.
+func noProxyAware(configured *url.URL) func(*http.Request) (*url.URL, error) {
+	// Both schemes get the one resolved address: this package's whole point is that
+	// the machine has a single answer, and `Resolve` returns a single URL rather
+	// than a per-scheme pair. The scheme still matters to httpproxy, which looks up
+	// the proxy per request scheme and answers with a direct connection when it has
+	// none — so leaving one side unset would silently go direct for that scheme.
+	config := &httpproxy.Config{
+		HTTPProxy:  configured.String(),
+		HTTPSProxy: configured.String(),
+		// Deliberately not `httpproxy.FromEnvironment`: the proxy address is the
+		// decision `Resolve` already made, system setting included. Letting
+		// httpproxy read the environment for it would hand the question back to the
+		// bug this package exists to fix.
+		NoProxy: noProxy(),
+	}
+	// No CGI flag either. `httpproxy` refuses an `HTTP_PROXY` value outright when
+	// `REQUEST_METHOD` is set, to stop a CGI caller injecting one; this program is
+	// not a CGI handler and does not spawn one, so that rule would only be a way for
+	// an unrelated variable to silently take the proxy away.
+	skip := config.ProxyFunc()
+
+	// The dead-loopback fallback is applied to the proxy httpproxy hands back, not
+	// in front of it: a destination that `NO_PROXY` skipped must go direct whether
+	// or not the proxy would have answered, and a loopback proxy that is not
+	// listening must still fall back rather than hang.
+	return skipWhenUnreachable(func(request *http.Request) (*url.URL, error) {
+		proxy, err := skip(request.URL)
+		if err != nil || proxy == nil {
+			return nil, err
+		}
+		return configured, nil
+	})
 }
 
 // loopbackProbeTTL is how long a "nothing is listening" answer is trusted.
@@ -214,14 +339,26 @@ var (
 // The check is restricted to loopback on purpose. For a remote proxy, "not
 // reachable" is indistinguishable from a slow network, and a failed connection to
 // it is the honest answer — retrying the same request around it would hide a real
-// problem behind a second, different path.
-func skipWhenUnreachable(configured *url.URL) func(*http.Request) (*url.URL, error) {
-	if !isLoopback(configured.Hostname()) {
-		// Not this program's business to second-guess a remote proxy.
-		return http.ProxyURL(configured)
-	}
-	key := configured.String()
-	return func(*http.Request) (*url.URL, error) {
+// problem behind a second, different path. That restriction is also what keeps this
+// honest once `NO_PROXY` is in play: a remote proxy stays the answer for everything
+// `NO_PROXY` did not exclude, because "it might be down" is not a reason to take a
+// route the machine did not ask for.
+//
+// `decide` is the proxy function being wrapped, and it is a parameter rather than a
+// URL so that the reachability rule composes with the other per-request rule —
+// `NO_PROXY` — instead of competing with it: whichever of the two says "direct"
+// wins, and this one only ever gets to say it for a loopback proxy that is dead.
+func skipWhenUnreachable(decide func(*http.Request) (*url.URL, error)) func(*http.Request) (*url.URL, error) {
+	return func(request *http.Request) (*url.URL, error) {
+		configured, err := decide(request)
+		if err != nil || configured == nil {
+			return nil, err
+		}
+		if !isLoopback(configured.Hostname()) {
+			// Not this program's business to second-guess a remote proxy.
+			return configured, nil
+		}
+		key := configured.String()
 		if !loopbackAlive(key, configured) {
 			return nil, nil
 		}
