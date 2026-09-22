@@ -182,7 +182,7 @@ func isExitWord(text string) bool {
 // plumbing around it.
 //
 // The two lines that stay on stdout are a departure from the previous generation,
-// which printed both on stderr (`docs/parity-cli.md` records it as a MINOR
+// which printed both on stderr (`docs/parity/parity-cli.md` records it as a MINOR
 // difference). They are kept here on purpose: the audit path is the one piece of
 // start-up output a person copies out of the file afterwards, and it sits directly
 // under the session id, which has never been on stderr. Changing it now would move

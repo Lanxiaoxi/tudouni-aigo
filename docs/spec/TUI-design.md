@@ -596,7 +596,7 @@ data["reasoning"] = attempt.response.reasoning      # 整段，不截断
 > be passed back to the API`，而且是 fatal —— 那条 assistant 消息在会话文件里，
 > 于是该会话之后每一轮都死在同一个地方。现在 `reasoning` 进历史，发不发由方言按
 > `(base_url, model)` 学来的事实决定（先发不含字段的请求，被拒一次就记住、
-> 带字段重发一次）。详见 `docs/parity-fixes.md` 的 5.2.2。上面这段留作当时判断的
+> 带字段重发一次）。详见 `docs/parity/parity-fixes.md` 的 5.2.2。上面这段留作当时判断的
 > 记录，不要照它改代码。
 
 ---

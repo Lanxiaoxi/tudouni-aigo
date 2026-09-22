@@ -45,7 +45,7 @@
 | M15 ask_user 多选 | `tests/test_ask_user.py` | `1,3` / `1，3` / `1、3` / `1, 换个别的` 四种输入 | 无 |
 | M16 fetch_web 编码 | `tests/test_webfetch.py`（编码相关） | 声明什么就按什么解 | 无 |
 | M17 会话列表 | `tests/test_session_list.py`（全量 9.8KB） | 排序（含 mtime 回退与 id tiebreak）、行内容 | 无 |
-| TUI 各条 | `tests/test_tui.py`（156KB）、`test_tui_commands.py`（51KB）、`test_tui_boot.py`、`test_tui_quiet.py`、`test_tui_palette.py` | 见 `docs/parity-tui.md` | TUI 是 Go 侧测试最多的包（约 1.4k 行 / 6 个文件），但上面 10 条 MAJOR 都没有对应断言 |
+| TUI 各条 | `tests/test_tui.py`（156KB）、`test_tui_commands.py`（51KB）、`test_tui_boot.py`、`test_tui_quiet.py`、`test_tui_palette.py` | 见 `docs/parity/parity-tui.md` | TUI 是 Go 侧测试最多的包（约 1.4k 行 / 6 个文件），但上面 10 条 MAJOR 都没有对应断言 |
 
 ## 三、建议的搬迁顺序
 

@@ -91,7 +91,7 @@
 - 后果：第 120 步时报错信息是「撞在：」后面跟整轮上百个工具名，而不是"这一轮卡在哪几个工具上"——
   这条信息唯一的线索被毁掉了。
 
-### M4 启动通知只剩约 4/20（详见 `docs/parity-cli.md` 的 B4）
+### M4 启动通知只剩约 4/20（详见 `docs/parity/parity-cli.md` 的 B4）
 
 - 原版 `runtime/composition.py:1311-1550` + `main.py:283`，协议侧同样在
   `protocol/channels.py:1221-1224` 发出。
@@ -154,7 +154,7 @@
   带 `RuntimeNoteKey: true`（常量在 `internal/state/session.go:88`），`internal/agent/context.go:81-92`
   原样透传。后果：模型换路由那条通知以一个"多带一个布尔键的 user 消息"发出去，宽容的网关忽略它，
   严格的可能 400。修法应该是**在组载荷时剥掉**这个标记（`Session.UserInputs` 还要靠它），而不是删掉。
-- **m7** `--tui` 没有配置预检（详见 `docs/parity-cli.md` 的 M12）。
+- **m7** `--tui` 没有配置预检（详见 `docs/parity/parity-cli.md` 的 M12）。
 - **m8** `stream_options` 降级时会丢掉已经流出去的那半段：原版 `models/openai_compatible.py:536-555`
   在 while 循环**之前**建累加器、循环**之后** `as_response()`（注释「攒着的东西不丢」），
   测试 `tests/test_streaming.py:337-376`；Go `internal/model/openai.go:143-160` 重新调

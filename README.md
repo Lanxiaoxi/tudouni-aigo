@@ -365,7 +365,7 @@ between whole steps, which is also why `interrupt` stops *between* steps and why
 
 ## Protocol
 
-`protocol/schema/*.schema.json` is the shape. `docs/protocol.md` is the semantic
+`protocol/schema/*.schema.json` is the shape. `docs/spec/protocol.md` is the semantic
 reference, inherited from the Python project this was rewritten from — it answers
 what a schema cannot: when a message is sent, what to do on receipt, what a client
 is not allowed to decide for itself. Note that it describes the *original* wire

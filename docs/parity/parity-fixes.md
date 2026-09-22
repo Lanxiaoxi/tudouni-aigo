@@ -1,7 +1,7 @@
 # 修复日志（parity fix log）
 
-对照 `docs/parity-review.md` 的问题清单，逐条记录已修项、对应测试、以及原版出处。
-每一项都遵循同一条规矩：**修的同时把原版那条测试搬成 Go 测试**（见 `docs/parity-test-map.md`）。
+对照 `docs/parity/parity-review.md` 的问题清单，逐条记录已修项、对应测试、以及原版出处。
+每一项都遵循同一条规矩：**修的同时把原版那条测试搬成 Go 测试**（见 `docs/parity/parity-test-map.md`）。
 本页最新一条（4.1.1）是例外：它不是"把原版搬回来"，而是**有意偏离原版**（用户要求），
 所以没有对应的原版测试可搬，测试钉的是 Go 自己的新行为。
 
@@ -32,7 +32,7 @@
   - `internal/model/openai.go` 的 `onTheWireMessage` 白名单只有
     `role/content/tool_calls/tool_call_id/name`，`reasoning_content` 被静默丢掉；
   - `internal/agent/agent.go` 的 `assistantMessage` 根本没把它写进消息 —— 就算白名单放开也没数据。
-  这条偏离**原版就有**、并且早就写在 `docs/TUI-design.md` 的 D2 里（"官方文档说携带 tools 的
+  这条偏离**原版就有**、并且早就写在 `docs/spec/TUI-design.md` 的 D2 里（"官方文档说携带 tools 的
   请求必须完整回传 `reasoning_content`，否则 400，而本项目每轮都带 tools"）：当时那个端点没严格执行，
   所以只是记了一笔。opencode-go 后面的 DeepSeek 执行了，于是暴露。
   次生问题：这个 400 被 `classifyHTTPError` 判成 **fatal**，不重试也不降级，而
@@ -85,7 +85,7 @@
   其实是对的（它只渲染协议发来的 `effort_levels`），坏的是**发清单的那一头** ——
   "这个值可能是端点的一个能力事实"被当成了"我们的一个档位设计"。折叠表则更糟：它同时改掉
   发出去的报文和用户看到的字，于是"我刚才到底设了哪一档"在任何地方都没有答案。而且那个
-  "效果和价钱都一样"的断言没有依据 —— `docs/responses-api-wire-format.md` 自己写着
+  "效果和价钱都一样"的断言没有依据 —— `docs/spec/responses-api-wire-format.md` 自己写着
   "哪些模型支持哪些 effort 值，我未确认"，`litellm#27168` 就是无脑塞 `xhigh` 换来 invalid request。
 - **改动**：
   - `reasoning.go`：删掉 `EffortAliases` 整张表；`ResolveEffort` 改成 `(text, allowed)`，
@@ -716,7 +716,7 @@ README 和原版 `scripts/build_release.py` 的承诺一致。产物内容（7 �
 - **改动**：`internal/frontends/cli/cli.go` 的 `Options` 新增 `Err io.Writer`（默认 `os.Stderr`）；
   提示符、`/` 命令的每一条答复、错误、诊断全部走它，**stdout 只留对话正文与两行启动信息**。
 - **与本文档早先说法不一致之处（已统一）**：版本行**和审计行**都留在 stdout。原版的审计行走的是
-  stderr（`docs/parity-cli.md` 的 B1 条目把它记为 MINOR 偏差），这里作为**有意保留的差异**记下来：
+  stderr（`docs/parity/parity-cli.md` 的 B1 条目把它记为 MINOR 偏差），这里作为**有意保留的差异**记下来：
   审计路径是读 `> 对话.txt` 的人唯一会回头去复制的一行，且它紧跟在会话 id 下面。口径以
   `cli.go` 里 `Run` 的注释为准，两边说法此前互相矛盾。
 - **原版出处**：`frontends/cli/__init__.py:629-638,1057,1112`；测试 `tests/test_banner.py:78-120`。

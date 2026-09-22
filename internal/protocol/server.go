@@ -1198,7 +1198,7 @@ const childOriginKey = "child_origin"
 // boundary was wrong, and it is the one a front end crosses first: a block keyed
 // on `step` never learns that step 1 has begun.
 //
-// Measured, not inferred: see docs/protocol.md 3.8 for the table.
+// Measured, not inferred: see docs/spec/protocol.md 3.8 for the table.
 //
 // `lastStep` keeps its own meaning — the step of the most recent audit record —
 // and is no longer read from here.

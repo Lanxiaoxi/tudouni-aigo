@@ -4,7 +4,7 @@
 方法：逐模块对照 `agent_runtime/` 的每个包与 `internal/` 的对应包，以原版代码 + 原版测试为
 「行为规格」，只报**行为 / 功能 / 交互**差异，不报语言习惯与文件布局差异。
 
-**状态：审查完成，全部已发现缺陷已修复。** 逐条修复记录见 `docs/parity-fixes.md`。
+**状态：审查完成，全部已发现缺陷已修复。** 逐条修复记录见 `docs/parity/parity-fixes.md`。
 
 范围声明（按用户要求排除）：
 - **主题由 13 套减到 3 套、默认主题 A → A-T2**：这是既定计划，不计入本轮问题清单。
@@ -38,7 +38,7 @@ Go 版把 Python 版的**骨架**搬过来了：三个前端 / runtime / tools �
 ## 二、问题清单与修复状态
 
 > 每条给出：原版出处 · Go 版出处 · 后果。全部状态为**已修**；逐条改动与新增测试见
-> `docs/parity-fixes.md`。
+> `docs/parity/parity-fixes.md`。
 
 ### BLOCKER（10 条，全部已修）
 
@@ -89,7 +89,7 @@ TUI 侧 9 条已修（`Ctrl+B` 在覆盖层里失效、调色板行数上限写�
 ## 三、审计过程中新发现的缺陷
 
 这些**不在最初那份报告里**，因为只有把流程真跑一遍、或把契约测一遍才会露出来。
-逐条修复记录同样在 `docs/parity-fixes.md`。
+逐条修复记录同样在 `docs/parity/parity-fixes.md`。
 
 | # | 缺陷 | 为什么初查没看到 |
 |---|---|---|
@@ -119,13 +119,13 @@ TUI 侧 9 条已修（`Ctrl+B` 在覆盖层里失效、调色板行数上限写�
 
 | 文件 | 内容 |
 |---|---|
-| `docs/parity-review.md` | 本文件：总报告与最终结论 |
-| `docs/parity-fixes.md` | 修复日志：每条的改动、原版出处、新增测试 |
-| `docs/parity-tui.md` + `docs/parity-tui-inventory.md` | TUI 明细（31 条 + 命令/按键/rail/覆盖层/状态栏清单） |
-| `docs/parity-cli.md` | 行式 CLI 与整个命令行接口明细 |
-| `docs/parity-agent.md` | agent 循环、模型适配、流式、重试、装配明细 |
-| `docs/parity-tools.md` | 工具系统与 16 个内置工具明细（含逐工具 parity 表） |
-| `docs/parity-test-map.md` | 原版测试 → Go 测试的搬迁清单 |
+| `docs/parity/parity-review.md` | 本文件：总报告与最终结论 |
+| `docs/parity/parity-fixes.md` | 修复日志：每条的改动、原版出处、新增测试 |
+| `docs/parity/parity-tui.md` + `docs/parity/parity-tui-inventory.md` | TUI 明细（31 条 + 命令/按键/rail/覆盖层/状态栏清单） |
+| `docs/parity/parity-cli.md` | 行式 CLI 与整个命令行接口明细 |
+| `docs/parity/parity-agent.md` | agent 循环、模型适配、流式、重试、装配明细 |
+| `docs/parity/parity-tools.md` | 工具系统与 16 个内置工具明细（含逐工具 parity 表） |
+| `docs/parity/parity-test-map.md` | 原版测试 → Go 测试的搬迁清单 |
 | `VERSION` | 3.10.2 |
 
 ---

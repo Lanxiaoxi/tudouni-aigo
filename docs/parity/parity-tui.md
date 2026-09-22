@@ -33,7 +33,7 @@ no counterexample for the label-trimming rules the Python code computes per lang
 * Evidence: Python has `Palette("P5", "夜紫柔彩", …)`, `Palette("P7", "靛夜", …)`,
   `Palette("B", "极地冷", …)`, `_transparent(_PALETTES[0])` → `P3-T`, `_transparent(_PALETTES[5])` → `A-T`;
   Go's own file comment says it outright: *"The original had thirteen; the ones kept here are the three
-  that were actually named"* (`theme.go:13-17`). `docs/TUI-design.md:1937-1942` — the Go-side spec —
+  that were actually named"* (`theme.go:13-17`). `docs/spec/TUI-design.md:1937-1942` — the Go-side spec —
   still says **"13 套，默认 ⑥ 石墨琥珀 … 落地的是 13 套"**, so this is a regression against the shipped
   spec, not a documented re-scoping.
 * Consequence, all user-visible:
@@ -492,7 +492,7 @@ no counterexample for the label-trimming rules the Python code computes per lang
   `width < 100` drop rule, the collapsed one-line summary — is unchanged.
 * **The `/model` and `/effort` pickers close on pick (4.1.1).** The original keeps both panels up
   until the runtime's notice arrives, and draws that sentence under the list (`app.py:1822-1877`;
-  `docs/TUI-design.md` §18.2, "选完之后：不关"). The notice is appended to the log in **both** versions,
+  `docs/spec/TUI-design.md` §18.2, "选完之后：不关"). The notice is appended to the log in **both** versions,
   so the panel was covering the one line that answers "did it change" with a copy of itself on top of
   it, and the next keystroke had to be `Esc`. Requested by the user. `/model <name>`, the typed form of
   the same command, never had a panel to hold the answer in the first place.
