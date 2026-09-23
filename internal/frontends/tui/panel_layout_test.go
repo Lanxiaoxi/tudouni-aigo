@@ -82,8 +82,12 @@ func TestPanelsDoNotReflowTheirRows(t *testing.T) {
 		{
 			name: "mcp panel",
 			setup: func(m *model) {
+				// One row carries an endpoint, because that is the column that can
+				// be arbitrarily long and the reason this panel reflowed: the case
+				// below without a `where` is the one that never caught it.
 				m.panel.mcp = []any{
-					map[string]any{"name": "kb", "state": "loaded", "tools": 3},
+					map[string]any{"name": "kb", "state": "loaded", "tools": 6,
+						"where": "https://kb.lanxi.me"},
 					map[string]any{"name": "remote", "state": "failed",
 						"error": strings.Repeat("connection refused ", 6)},
 				}
@@ -220,6 +224,105 @@ func TestASelectedRowAlwaysSetsItsInk(t *testing.T) {
 		}
 		if strings.Contains(row, ansiDefault) {
 			t.Errorf("%s: the do-not-paint sentinel reached the renderer: %q", key, row)
+		}
+	}
+}
+
+// TestAnMCPRowsEndpointDoesNotWrapTheRow — the endpoint is the one column on the
+// MCP panel that can be arbitrarily long, and it used to be free to run over the
+// frame's inner width.
+//
+// The cost is not a clipped string. A row that does not fit is reflowed by the
+// frame, whose wrap disagrees with this program's about ANSI escapes, so the row
+// came out as two physical lines and the cursor painted **both** of them as a
+// full-width accent bar — the row under the cursor read as a solid bar of colour
+// with the server's state pushed off it, and the panel lost its right border.
+//
+// `https://kb.lanxi.me` is the real endpoint from `~/.tudouni/mcp.json`, and it is
+// here rather than a `strings.Repeat` because the bug needs a token that is both
+// long and **unbreakable**: the wrapper can only cut at a space, so a long final
+// token is what pushes the row over.
+func TestAnMCPRowsEndpointDoesNotWrapTheRow(t *testing.T) {
+	withColour(t)
+	const endpoint = "https://kb.lanxi.me"
+	for _, termWidth := range []int{140, 100, 84, 80, 76, 72, 64, 56, 48} {
+		m := filledModel(termWidth, 40)
+		m.railHidden = true
+		m.panel.mcp = []any{map[string]any{
+			"name": "kb", "state": "loaded", "tools": 6, "where": endpoint,
+		}}
+		m.overlay = overlay{kind: overlayMCP, stayOpen: true, title: i18nTitle("mcp_dialog.head")}
+		m.overlay.cursor = 0
+
+		rendered := m.renderOverlay(termWidth-8, m.bodyHeight())
+		width := overlayFrameWidth(termWidth-8) + 2
+		for _, line := range panelLines(t, rendered) {
+			if got := runewidth.StringWidth(stripANSI(line)); got != width {
+				t.Errorf("term %d: a line is %d cells wide, want %d: %q",
+					termWidth, got, width, stripANSI(line))
+			}
+		}
+		// The row itself is one physical line, accent bar included. Two would mean
+		// the frame reflowed it, which is the reported shape.
+		body := stripANSI(rendered)
+		if strings.Count(body, "https://kb.lanxi.me") > 1 {
+			t.Errorf("term %d: the endpoint was drawn twice, so the row wrapped:\n%s", termWidth, body)
+		}
+	}
+}
+
+// TestALongEndpointIsCutVisibly — when the endpoint cannot fit, it is cut with an
+// ellipsis rather than silently ending mid-host.
+//
+// A remote server's endpoint is the one value on this row a person checks against
+// their own config file, so "kb.lanxi" and "kb.lanxi.me" have to be told apart.
+func TestALongEndpointIsCutVisibly(t *testing.T) {
+	withColour(t)
+	m := filledModel(76, 40)
+	m.railHidden = true
+	m.panel.mcp = []any{map[string]any{
+		"name": "kb", "state": "unload", "tools": 0,
+		"where": "https://kb.lanxi.me/a/very/long/path/that/cannot/fit",
+	}}
+	m.overlay = overlay{kind: overlayMCP, stayOpen: true, title: i18nTitle("mcp_dialog.head")}
+
+	inner := overlayInner(76 - 8)
+	row := mcpRow{name: "kb", state: "unload", where: "https://kb.lanxi.me/a/very/long/path/that/cannot/fit"}
+	text := row.text(len("kb"), inner)
+	if width := runewidth.StringWidth(stripANSI(text)); width > inner-1 {
+		t.Errorf("the row is %d cells for a budget of %d (the selection marker takes one more): %q",
+			width, inner, stripANSI(text))
+	}
+	if !strings.Contains(stripANSI(text), "…") {
+		t.Errorf("a cut row says nothing about being cut: %q", stripANSI(text))
+	}
+	if !strings.Contains(stripANSI(text), "https://kb.lanxi") {
+		t.Errorf("the host is gone entirely, so nothing can be checked: %q", stripANSI(text))
+	}
+}
+
+// TestTheMCPFooterFitsOneLine — the hint line is the one row on the panel that has
+// to be read at a glance, and it was 107 cells long in a 72-cell panel.
+//
+// The wrapper breaks at a space, so the overflow was not a clipped tail: it was
+// the last four words on a second line of their own, which reads as a separate
+// sentence rather than as the rest of the hint. The row is dim and the eye lands
+// on the cursor's row instead, so the second line looked like stray text left
+// under the panel.
+func TestTheMCPFooterFitsOneLine(t *testing.T) {
+	withColour(t)
+	footer := i18n.T("mcp_dialog.footer")
+	// 72 is the widest inner width the panel ever has (the frame is capped at 76
+	// and loses 4 to its border and padding). It is the width the screenshot's
+	// panel had, and the one the hint has to fit.
+	if got := len(wrapCells(footer, 72)); got != 1 {
+		t.Errorf("the footer wraps into %d lines at inner width 72: %q", got, footer)
+	}
+	// Narrower than that is a terminal the panel is shrinking into, where wrapping
+	// is expected — but it must still break on spaces rather than mid-word.
+	for _, line := range wrapCells(footer, 48) {
+		if strings.HasSuffix(line, "-") {
+			t.Errorf("the footer broke mid-word: %q", line)
 		}
 	}
 }

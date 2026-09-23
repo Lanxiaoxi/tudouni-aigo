@@ -535,7 +535,11 @@ var catalog = map[string]string{
 	"mcp_dialog.head":    "◱ MCP servers",
 	"mcp_dialog.empty":   "No MCP server is configured. The list lives in ~/.tudouni/mcp.json (server URLs or the commands to start are written there).",
 	"mcp_dialog.running": "{loaded} / {total} running",
-	"mcp_dialog.footer":  "↑↓ pick  ·  Enter mount / unmount  ·  Esc close  ·  the switch only affects this run, mcp.json is not touched",
+	// The footer has to survive the panel's narrowest inner width (72 cells at
+	// the frame's 76), because the one word that does not fit is the one that
+	// lands alone on a second line — and at 107 cells this line did exactly that,
+	// leaving "affects this run, mcp.json is not touched" as its own row.
+	"mcp_dialog.footer":  "↑↓ pick  ·  Enter mount / unmount  ·  Esc close  ·  this run only",
 	"mcp_dialog.pending": "Waiting for the runtime to handle `{name}`… (connecting can take a few seconds; if a turn is running it waits for that too)",
 
 	// --- key explanations ---------------------------------------------------

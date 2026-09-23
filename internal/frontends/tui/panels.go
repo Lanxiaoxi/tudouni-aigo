@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
@@ -902,7 +903,7 @@ func (m model) renderMCPPanel(width, height int) string {
 	}
 	for index := first; index < last; index++ {
 		row := rows[index]
-		text := row.text(nameWidth)
+		text := row.text(nameWidth, inner)
 		if index == m.overlay.cursor {
 			body = append(body, highlightRows(text, inner,
 				func(line string) string { return selectedRow(line, inner) })...)
@@ -930,8 +931,20 @@ type mcpRow struct {
 	err   string
 }
 
-// text draws one MCP row: mark, name in a fixed column, then the state.
-func (row mcpRow) text(nameWidth int) string {
+// text draws one MCP row: mark, name in a fixed column, then the state, then the
+// endpoint when there is one (host only for a remote server).
+//
+// `budget` is the panel's inner width, and the row is **cut** to it rather than
+// left to run over. A row that is one cell too wide is not merely clipped: the
+// frame reflows it, and its wrap does not agree with this program's about ANSI
+// escapes, so a long endpoint pushed the state onto a second line -- which the
+// cursor then painted as a second full-width accent bar, and the row underneath
+// lost the panel's right border. Cutting is what keeps one row one line.
+//
+// The cut is visible ("…") because the alternative is a URL that silently ends
+// mid-host, and a remote server's endpoint is the one thing on this row a person
+// has to be able to check against their config file.
+func (row mcpRow) text(nameWidth, budget int) string {
 	mark, role := "·", "rule"
 	switch row.state {
 	case "loaded":
@@ -960,6 +973,16 @@ func (row mcpRow) text(nameWidth int) string {
 		// Host only. A hosted URL routinely carries a token in path or query, and
 		// this string is drawn on a screen.
 		line += currentTheme.styleFor("rule").Render("  " + row.where)
+	}
+	if budget > 1 {
+		// Truncation, not wrapping: `wrapCells` would break at the last space and
+		// leave the endpoint alone on a second line, which is the shape that made
+		// the selected row's highlight run past the frame.
+		//
+		// One cell less than the budget, because the selection marker is prepended
+		// to this string before it is wrapped: a row one cell over the budget is
+		// reflowed exactly like one ten cells over.
+		return ansi.Truncate(line, budget-1, "…")
 	}
 	return line
 }
