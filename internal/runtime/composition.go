@@ -297,6 +297,13 @@ type Runtime struct {
 	Driver *Driver
 	// mcpMounts is the servers currently up. Empty at start-up: mounting is a
 	// decision a person makes, not a consequence of a config file existing.
+	//
+	// Guarded by mcpMu. `/mcp load` / `unload` wait for the running turn and then
+	// write, but the reads are not all on that goroutine: `ui(mcp)` and the
+	// `ui(state)` snapshot that follows it can both be drawn while a mount is in
+	// flight, and a Go map read that overlaps a write is a hard crash rather than
+	// a stale panel. Every reader goes through mcpMountsSnapshot.
+	mcpMu     sync.Mutex
 	mcpMounts map[string]*mcpMount
 
 	notices    []map[string]any
@@ -1460,6 +1467,12 @@ func (r *Runtime) InitFields() map[string]any {
 
 // StateMessage implements protocol.Runtime.
 func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
+	// The mounted servers, under the name protocol 3.12 gives this snapshot
+	// (`mcp`). The `ui(mcp)` reply carries the same rows as `mcp_servers`; this
+	// one is what the rail and the `/mcp` panel are drawn from, so hard-coding it
+	// empty is what made a mounted server invisible everywhere except the notice
+	// that announced it.
+	mcpRows, _ := r.mcpInventory(r.McpCfg)
 	payload := map[string]any{
 		"todos":            r.todos(),
 		"skills":           []any{},
@@ -1479,7 +1492,7 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		"denied_tools":     r.Policy.DenyTools,
 		"risk_scope":       r.riskScope(),
 		"agents_md":        agentsMDRows(r.SessionValue),
-		"mcp":              []any{},
+		"mcp":              mcpRows,
 		// Always present, in both the "there is one" and "there is not" shapes: a
 		// front end with two cases to draw has two places to get the empty one
 		// wrong.

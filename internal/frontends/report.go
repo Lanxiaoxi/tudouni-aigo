@@ -267,7 +267,10 @@ func RenderSkills(message map[string]any) string {
 // listed but not mounted is the normal state, not a problem: nothing is mounted at
 // start-up, because starting a program on this machine is a decision a person makes.
 func RenderMCP(message map[string]any) string {
-	rows, _ := message["mcp"].([]any)
+	// `mcp_servers` is the name on an `mcp` reply (protocol 3.12). The `ui(state)`
+	// snapshot spells the same rows `mcp`, and that one is read by the panels, not
+	// here — so this is not a typo to "fix" by accepting both.
+	rows, _ := message["mcp_servers"].([]any)
 	if len(rows) == 0 {
 		return i18n.T("mcp.host.no_servers", "file", "mcp.json")
 	}
