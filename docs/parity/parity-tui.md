@@ -425,7 +425,8 @@ no counterexample for the label-trimming rules the Python code computes per lang
 * **Streaming**: plain text while streaming, markdown once finished, the live copy removed before the
   final answer is drawn, `delta_reset` drops the half-written block
   (`view_state.py:1610-1723` ↔ `model.go:792-813`, `model.go:825-845`, `view.go:368-379`).
-* **Welcome screen**: two equal-height titled boxes plus a full-width key box, the `▄▀█` logo, the
+* **Welcome screen**: two equal-height titled boxes plus a full-width key box, a `▄▀█` block mark (the
+  rabbit, see the departures below), the
   version, `model · workspace`, recent sessions by `modified_at` with "how long ago" and the preview
   title, a placeholder row when empty, the banner pinned to the top
   (`widgets.py:1059-1257` ↔ `panels.go:74-373`).
@@ -500,6 +501,15 @@ no counterexample for the label-trimming rules the Python code computes per lang
   several) rather than a pick (`keys.go` `commitOverlay` / `settleOverlay`, pinned by
   `picker_test.go:TestEnterOnAModelRowClosesThePicker`, `TestEnterOnAnEffortRowClosesThePicker`,
   `TestTheMCPPanelStillWaitsForItsReply`).
+* **The empty state's mark is a rabbit, and it is four lines rather than three** (`panels.go`
+  `welcomeLogo`). The original's three-line `▄▄▄▄▄▄ / ██▀▀██ / ▄▄▄▄▄▄` block was replaced at the user's
+  request. The constraints the original's mark existed to satisfy are unchanged: only `▄▀█` and the
+  space, every line the same width (so the mark centres as a block), nothing wider than the 28-cell
+  inner width of the 32-cell box. The extra line is why `welcomeBoxLines` moved 10 → 11 and the full
+  card is 24 rows instead of 23; the budget manager (`welcomeBudget`) and `welcomeMinLines = 3` are
+  untouched, so a short terminal still degrades the same way — it drops the key card first, then the
+  boxes' spare rows, and at three rows it shows the mark's ears and eyes with the greeting cut above
+  it.
 
 ---
 

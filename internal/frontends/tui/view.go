@@ -434,7 +434,7 @@ func (m model) renderTranscript(width, height int) string {
 	// Removing it the moment anything arrives would make it flash — it is the
 	// conversation's cover page, not a splash.
 	//
-	// It is drawn to the room that is actually left. The full card is 23 rows
+	// It is drawn to the room that is actually left. The full card is 24 rows
 	// and a 24-row terminal has 16: the fixed-height form was cut off, and
 	// everything below it — the init notices, which are conversation content —
 	// was off-screen and, while the empty state was up, unreachable.

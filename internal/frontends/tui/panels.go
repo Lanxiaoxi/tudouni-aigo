@@ -108,11 +108,33 @@ func overlayListRows(height int) int {
 	return min(limit, maxOverlayRows())
 }
 
-// welcomeLogo is the three-line mark. Half- and full-block characters only:
-// they are exactly one cell wide in every monospace font, where graphic
-// characters often go double-width under CJK fonts and shove the text beside
-// them out of line. The three lines are the same width for the same reason.
-var welcomeLogo = []string{" ▄▄▄▄▄▄", "██▀▀██ ", " ▄▄▄▄▄▄"}
+// welcomeLogo is the four-line mark: a rabbit, ears first.
+//
+// Half- and full-block characters only: they are exactly one cell wide in every
+// monospace font, where graphic characters often go double-width under CJK fonts
+// and shove the text beside them out of line. Every line is the same width for
+// the same reason — the mark is centred as a block, and a row one cell wider than
+// its neighbours would tilt it against the greeting under it.
+//
+// Each cell is **two pixels tall** (its upper and lower half), which is the whole
+// trick of the drawing: `███ ██ ███` is a head with two full-cell eyes cut out of
+// it, and the `▄` under an ear is an ear that only starts halfway down its cell.
+// Read as pixels the four lines are
+//
+//	..##..##..
+//	..##..##..
+//	..##..##..
+//	.########.
+//	###.##.###
+//	###.##.###
+//	##########
+//	.########.
+var welcomeLogo = []string{
+	"  ██  ██  ",
+	" ▄██▄▄██▄ ",
+	"███ ██ ███",
+	"▀████████▀",
+}
 
 // The welcome screen's geometry, mirrored from the original.
 //
@@ -121,8 +143,8 @@ var welcomeLogo = []string{" ▄▄▄▄▄▄", "██▀▀██ ", " ▄�
 // the key card spanning them; on a 200-column terminal they do not stretch,
 // because three long empty bars are uglier than the whitespace.
 //
-// The height matters as much as the width: 14 = 10 rows of content + 2 rows of
-// padding + 2 border rows. Writing 10 and letting the border and padding be
+// The height matters as much as the width: 15 = 11 rows of content + 2 rows of
+// padding + 2 border rows. Writing 11 and letting the border and padding be
 // added on top is what keeps the two boxes level with each other — they carry
 // the same number of content rows on purpose, so neither deforms with the data.
 const (
@@ -130,9 +152,15 @@ const (
 	welcomeRightWidth  = 42
 	welcomeHintWidth   = 75
 	welcomeStackColumn = 86
-	welcomeBoxLines    = 10
+	// welcomeBoxLines is the identity card's full content height: the four-line
+	// mark, the blanks that separate it from the greeting, and the greeting,
+	// version, model and palette rows under it.
+	welcomeBoxLines = 11
 	// welcomeMinLines is the shortest the two boxes may become when the terminal
-	// is too short for the full card: the mark, the greeting and the version.
+	// is too short for the full card: the mark's own first rows, cut above the
+	// greeting. It is a **geometric** floor, not a taste one — two stacked boxes
+	// plus the blank between them have to fit the body, and no value below three
+	// does at the narrowest size that still draws them.
 	welcomeMinLines   = 3
 	welcomeHintLines  = 4
 	welcomeStampWidth = 14
@@ -151,10 +179,12 @@ func welcomeTitleWidth() int { return welcomeRightWidth - 4 - welcomeStampWidth 
 // boxes stack instead: 75 columns of boxes do not fit a narrow terminal, and
 // squeezing them would clip text off the right edge.
 //
-// It draws **inside `height` rows**, which is not decoration: the full card is 23
+// It draws **inside `height` rows**, which is not decoration: the full card is 24
 // rows and the body of a 24-row terminal is 16, so the fixed form was cut off —
 // and the init notices below it, which are conversation content, went off-screen
-// with it while the empty state was up.
+// with it while the empty state was up. At 24 rows the manager keeps the two
+// boxes whole and gives up the key card, which is the block that repeats what
+// `/help` and the bars already say.
 func (m model) renderWelcome(width, height int) []string {
 	stacked := width < welcomeStackColumn
 	hintWidth := min(width-2, welcomeHintWidth)
@@ -198,8 +228,8 @@ func (m model) renderWelcome(width, height int) []string {
 // What is given up is given up in the order it matters in: the key card first (it
 // repeats what `/help` and the bars already say, and nothing else in this
 // interface is reachable only from here), then the boxes' spare content rows down
-// to the three the mark and the greeting need. The alternative — the old
-// behaviour — was to draw all 23 rows anyway and let the terminal cut them, which
+// to the three the mark's own top rows need. The alternative — the old
+// behaviour — was to draw all 24 rows anyway and let the terminal cut them, which
 // silently took the init notices with them.
 func welcomeBudget(height int, stacked bool, hintBlock int) (int, bool) {
 	boxHeight := func(lines int) int {
@@ -360,10 +390,10 @@ func (m model) hintRows(width int) []string {
 }
 
 // startRows is the identity panel: the mark, the greeting, the version, and
-// where to type. `lines` is the height the box was given — ten at the full size,
-// fewer when the terminal cannot hold the whole card — and the rows are built in
-// the order they matter, so trimming the tail drops "where to type" before it
-// drops who is talking.
+// where to type. `lines` is the height the box was given — eleven at the full
+// size, fewer when the terminal cannot hold the whole card — and the rows are
+// built in the order they matter, so trimming the tail drops "where to type"
+// before it drops who is talking.
 func (m model) startRows(lines int) []string {
 	inner := welcomeStartWidth - 4 // minus border and padding
 	centre := func(text string, role string) string {
