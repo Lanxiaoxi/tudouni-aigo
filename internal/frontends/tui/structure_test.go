@@ -635,6 +635,74 @@ func TestInputEditorMovesAndEdits(t *testing.T) {
 	}
 }
 
+// TestControlCharactersNeverReachTheInputBuffer is the regression for a NUL that
+// reached a real session's history.
+//
+// On Windows a key the IME is processing arrives as `VK_PROCESSKEY`, which
+// bubbletea does not know, so `keyType` falls through to `KeyRunes` carrying
+// `e.Char` — and `Char` is zero for a key the IME swallowed. The front end put that
+// NUL in the buffer, where it looks like nothing and is not: `filepath.Ext` runs to
+// the end of the string, so a message written as `看 a.png\x00这张是首页` reported an
+// extension of `.png这张是首页` and the picture was never attached — the model then
+// answered about the words with nothing on screen to say a picture was meant to be
+// there.
+//
+// The escape character is the other half, and the worse one: this buffer is drawn
+// into a terminal and sent to a model, so a pasted `\x1b[2J` clears the screen.
+//
+// What must **not** change is the newline and the tab: Shift+Enter is how a person
+// writes a second line, and a pasted log arrives indented.
+func TestControlCharactersNeverReachTheInputBuffer(t *testing.T) {
+	m := filledModel(120, 36)
+
+	// The exact sequence that broke it: words, the swallowed key, then a path.
+	m.insertText("这个图片里面是什么")
+	m.insertText("\x00")
+	m.insertText("docs/design/vision-test.png")
+
+	if strings.ContainsRune(m.input, 0) {
+		t.Fatalf("a NUL reached the buffer: %q", m.input)
+	}
+	if m.input != "这个图片里面是什么docs/design/vision-test.png" {
+		t.Fatalf("the visible text changed: %q", m.input)
+	}
+	// The caret must not have been advanced by a character that was dropped, or the
+	// next keystroke lands in the wrong place.
+	if m.inputCursor != len([]rune(m.input)) {
+		t.Fatalf("the caret is at %d, the buffer ends at %d", m.inputCursor, len([]rune(m.input)))
+	}
+
+	// An escape character goes too — and that is what makes a pasted CSI sequence
+	// inert. Only the ESC is a control character; the `[2J` behind it is ordinary
+	// printable text, and a terminal acts on it **only** when the ESC precedes it.
+	// So dropping the ESC is the whole of the fix: what is left prints as the
+	// literal characters it is.
+	m2 := filledModel(120, 36)
+	m2.insertText("before\x1b[2Jafter\x07\x7f")
+	if strings.ContainsRune(m2.input, 0x1b) {
+		t.Fatalf("an escape survived, so a pasted sequence could still run: %q", m2.input)
+	}
+	if m2.input != "before[2Jafter" {
+		t.Fatalf("unexpected result: %q", m2.input)
+	}
+
+	// And the two separators a person means are kept.
+	m3 := filledModel(120, 36)
+	m3.insertText("line one\nline two\tindented")
+	if !strings.Contains(m3.input, "\n") || !strings.Contains(m3.input, "\t") {
+		t.Fatalf("a newline or tab was dropped: %q", m3.input)
+	}
+
+	// An insertion that is nothing but control characters is a no-op, not a crash
+	// and not a moved caret.
+	m4 := filledModel(120, 36)
+	m4.insertText("kept")
+	m4.insertText("\x00\x1b")
+	if m4.input != "kept" || m4.inputCursor != 4 {
+		t.Fatalf("an all-control insertion did something: %q cursor=%d", m4.input, m4.inputCursor)
+	}
+}
+
 // TestBriefReadsWhatEachToolIsAbout — the quiet line names the subject, and the
 // shapes that are not strings get words rather than a Go dump.
 func TestBriefReadsWhatEachToolIsAbout(t *testing.T) {

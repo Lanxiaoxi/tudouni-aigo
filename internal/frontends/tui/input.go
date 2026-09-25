@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"unicode"
+
 	"github.com/mattn/go-runewidth"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
@@ -133,15 +135,57 @@ func (m model) runesOf() ([]rune, int) {
 	return runes, cursor
 }
 
+// insertText puts a run of characters into the buffer at the caret.
+//
+// **Control characters are dropped**, and that is not tidiness: a NUL reached a
+// real session's history through the gap this closes. On Windows, bubbletea builds a
+// `KeyRunes` message out of `e.Char` for every key it does not recognise — `VK_SPACE`
+// goes down that path by design, and a key the IME is processing
+// (`VK_PROCESSKEY`, which bubbletea has no case for) falls through to it — so an
+// event carrying `Char == 0` puts a NUL in the buffer. That NUL looks like nothing
+// and is not nothing: `filepath.Ext` runs to the end of the string, so
+// `看 a.png\x00这张是首页` reports an extension of `.png这张是首页` and the picture
+// stops being recognised at all.
+//
+// Which key produced that particular NUL cannot be settled from here — the terminal
+// and the IME belong to the user, and the session file records the byte, not its
+// origin. It does not change the fix: no control character is something a person
+// types into a chat box, so the filter is right for every key that could carry one.
+//
+// An escape character is the other reason, and the more serious one: this buffer is
+// drawn into a terminal and sent to a model, so a pasted `\x1b[2J` clears the
+// screen. Both are dropped rather than translated — inventing a space for the NUL
+// would be guessing at a key whose character was already lost.
+//
+// A newline and a tab are kept: Shift+Enter is how a person writes a second line,
+// and a pasted log arrives indented.
 func (m *model) insertText(text string) {
 	runes, cursor := m.runesOf()
-	inserted := []rune(text)
+	inserted := printableRunes(text)
+	if len(inserted) == 0 {
+		return
+	}
 	out := make([]rune, 0, len(runes)+len(inserted))
 	out = append(out, runes[:cursor]...)
 	out = append(out, inserted...)
 	out = append(out, runes[cursor:]...)
 	m.input = string(out)
 	m.inputCursor = cursor + len(inserted)
+}
+
+// printableRunes drops the control characters that must never reach the buffer.
+//
+// The whole C0 range, DEL and the C1 range go; `\n` and `\t` stay because they are
+// separators a person means. See insertText for the two failures this prevents.
+func printableRunes(text string) []rune {
+	out := make([]rune, 0, len(text))
+	for _, character := range text {
+		if unicode.IsControl(character) && character != '\n' && character != '\t' {
+			continue
+		}
+		out = append(out, character)
+	}
+	return out
 }
 
 func (m *model) backspace() {

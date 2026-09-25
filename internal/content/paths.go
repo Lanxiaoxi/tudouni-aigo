@@ -3,6 +3,7 @@ package content
 import (
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // Finding pictures in what a person typed.
@@ -65,6 +66,18 @@ func IsImagePath(path string) bool {
 	return imageExtensions[strings.ToLower(filepath.Ext(strings.TrimSpace(path)))]
 }
 
+// isTokenSeparator is what splits a body into candidate tokens: whitespace, and
+// every control character.
+//
+// Whitespace alone is `strings.Fields`, and it is not enough — see FindImagePaths
+// for what a NUL inside a sentence does to the extension test. A control character
+// is never part of a file name a person meant to type, so treating one as a
+// separator cannot split a real path in two; the only thing it can do is separate
+// prose from the path that follows it, which is exactly what went wrong.
+func isTokenSeparator(character rune) bool {
+	return unicode.IsSpace(character) || unicode.IsControl(character)
+}
+
 // FindImagePaths returns the path-looking candidates of a body, grouped by the
 // token they came from and ordered most-likely-first within each group.
 //
@@ -77,6 +90,27 @@ func IsImagePath(path string) bool {
 // the resolver looking for a file nobody named.
 //
 // It does not check that anything exists, and it does not resolve anything.
+//
+// ## Control characters separate tokens
+//
+// The split is on control characters as well as whitespace, and that is a real
+// input this program receives rather than a defensive flourish: a NUL from the
+// Windows key path reached a real session's history (see `tui.insertText` for how it
+// gets there, and for what the front end now does about it), so a message arrives as
+// `看这张图\x00docs/a.png` — one field to `strings.Fields`, because a NUL is not
+// whitespace.
+//
+// The consequence is not cosmetic. `filepath.Ext` runs to the end of the string, so
+// a token carrying `\x00` and more prose after it reports an extension of
+// `.png这张是首页` and **the picture is silently not attached** — the one outcome
+// this whole layer exists to avoid, since the model then answers about the words
+// with nothing on screen to say a picture was meant to be there.
+//
+// Splitting on them fixes that wherever the text came from: a session file written
+// before the front end stopped emitting them, the line REPL reading a pasted
+// control byte, or any front end added later. The front end still drops them (that
+// is the cure); this is what makes the reader robust to the cases the cure cannot
+// reach.
 func FindImagePaths(text string) [][]string {
 	if text == "" || !strings.Contains(text, ".") {
 		return nil
@@ -84,7 +118,7 @@ func FindImagePaths(text string) [][]string {
 	var found [][]string
 	seen := map[string]bool{}
 	count := 0
-	for _, token := range strings.Fields(text) {
+	for _, token := range strings.FieldsFunc(text, isTokenSeparator) {
 		candidates := pathCandidates(token)
 		if len(candidates) == 0 {
 			continue

@@ -206,6 +206,57 @@ func TestTheScannerReadsASentenceTheWayPeopleWriteIt(t *testing.T) {
 	}
 }
 
+// TestAControlCharacterSeparatesThePathFromTheProse is the regression for a NUL
+// that reached a real session.
+//
+// A key the IME is processing arrives at the front end as a NUL on Windows (see
+// `tui.insertText` for the mechanism), so a message arrives as
+// `这个图片里面是什么\x00docs/a.png`. A NUL is not whitespace, so `strings.Fields`
+// returns **one** token — and `filepath.Ext` runs to the end of the string, so that
+// token's extension is `.png这张是首页` and the picture is not recognised at all.
+//
+// The failure is the one this whole layer exists to avoid: the model answers about
+// the words and nothing on screen says a picture was meant to be there. So the
+// split has to treat a control character as a separator, wherever the text came
+// from — a session file written before the front end stopped emitting them, the
+// line REPL reading a pasted control byte, or a front end added later.
+func TestAControlCharacterSeparatesThePathFromTheProse(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want int
+	}{
+		// The exact shape a real session carried, and the one that used to work only
+		// by luck: it has a backslash, so reading 2 happened to recover the path.
+		{"NUL between the words and the path", "这个图片里面是什么\x00docs\\design\\vision-test.png", 1},
+		// These two are what the NUL actually broke. Neither has a separator in front
+		// of the path, so no later reading could rescue them.
+		{"path, then NUL, then more prose", "看 docs/a.png\x00这张是首页", 1},
+		{"NUL, path, NUL, prose, another path", "看\x00docs/a.png\x00再来一张 b.png", 2},
+		{"a bare name after a NUL", "看看\x00shot.png", 1},
+		{"an absolute path after a NUL", "看看\x00/tmp/shot.png", 1},
+		{"NULs on both sides of one path", "看\x00docs/a.png\x00", 1},
+		// And the separators that were already working must keep working.
+		{"a plain space", "看 docs/a.png 这张", 1},
+		{"a tab", "看\tdocs/a.png", 1},
+		{"a newline", "看 docs/a.png\n下一段", 1},
+		// Nothing to find is still nothing to find: a control character in the middle
+		// of prose must not invent a token that looks like a path.
+		{"a NUL inside prose only", "前半\x00后半", 0},
+		{"an ordinary sentence", "就是一句普通的话", 0},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			groups := FindImagePaths(testCase.text)
+			if len(groups) != testCase.want {
+				t.Fatalf("FindImagePaths(%q) = %#v, want %d group(s)",
+					testCase.text, groups, testCase.want)
+			}
+		})
+	}
+}
+
 // TestTheScannerIgnoresProseThatMentionsAnExtension.
 //
 // A sentence explaining the PNG format must not become an attachment attempt. The
