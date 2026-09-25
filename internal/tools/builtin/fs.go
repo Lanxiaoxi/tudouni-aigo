@@ -23,11 +23,27 @@ import (
 func NewFileTools(workspace *tools.Workspace) []tools.Tool {
 	return []tools.Tool{
 		{
-			Name:        "read_file",
-			Description: "读取指定文件的全部内容（按 UTF-8 解码，不分页）。文件不存在、路径指向目录、或超出工作区都会报错。",
-			Risk:        security.RiskLow,
+			Name: "read_file",
+			// The range parameters have to be documented where the model reads
+			// them, because the choice they enable — read the interval, not the
+			// file — is the one it has to make before calling.
+			Description: "读取指定文件的内容（按 UTF-8 解码）。不传 start_line / end_line 就是整个文件；传了就只返回那一段" +
+				"（行号从 1 开始，含首含尾，越界会夹到文件边界并说明）。文件不存在、路径指向目录、或超出工作区都会报错。\n" +
+				"看大文件时给区间：grep 已经把行号给了你，只读那一段比整读省得多，也省得绕到 shell 去。",
+			Risk: security.RiskLow,
 			Schema: tools.ObjectSchema(map[string]any{
 				"path": tools.StringSchema("文件路径", tools.MinLength(1)),
+				// No Default on either bound. A default would be applied by the
+				// validator, so the handler could no longer tell "the model asked
+				// for the whole file" from "the model asked for 1..end" — and
+				// those two must stay different, because only the second gets a
+				// header. Absent is the whole-file case; present is a range.
+				"start_line": tools.IntSchema(
+					"从第几行开始（1 起，含这一行）。不传表示从第 1 行开始",
+					tools.Minimum(1)),
+				"end_line": tools.IntSchema(
+					"读到第几行（1 起，含这一行）。不传表示读到文件末尾",
+					tools.Minimum(1)),
 			}, "path"),
 			Handler: func(args map[string]any) (tools.Result, error) {
 				return readFile(workspace, args)
@@ -88,6 +104,16 @@ old_string 在文件里出现多次时，默认拒绝执行并要你把它改得
 // readFile resolves inside the workspace and reports failures as text the model
 // can read, never as a panic. An escape is surfaced as a structured message so the
 // model can see "this is a permission error", not just a failure.
+//
+// Two forms, and the difference between them is load-bearing:
+//
+//   - **no bounds: the whole file, byte for byte.** Nothing is added. Every
+//     session written before the bounds existed read files this way, and a
+//     full-level render has to stay identical to what the tool returned — a header
+//     here would change the payload of every read in every session.
+//   - **bounds given: that interval, with a header saying which one it is.** The
+//     header is not decoration: a model that reads half a file and believes it read
+//     all of it is the one silent failure this whole layer is built to avoid.
 func readFile(workspace *tools.Workspace, args map[string]any) (tools.Result, error) {
 	path, _ := args["path"].(string)
 	target, err := workspace.SafePath(path)
@@ -112,7 +138,120 @@ func readFile(workspace *tools.Workspace, args map[string]any) (tools.Result, er
 	if !utf8.Valid(raw) {
 		return tools.TextResult("不是 UTF-8 文本，读不了：" + path), nil
 	}
-	return tools.TextResult(string(raw)), nil
+
+	text := string(raw)
+	if !hasBounds(args) {
+		return tools.TextResult(text), nil
+	}
+	return readRange(path, text, args), nil
+}
+
+// hasBounds reports whether either bound was supplied.
+//
+// The schema gives neither bound a default, and that is deliberate: a default would
+// be filled in by the validator, so the handler could no longer tell "the model asked
+// for the whole file" from "the model asked for 1..the end". Only the second form
+// gets a header, and only the first is byte-identical to what a session written
+// before these parameters existed would have got. Absent is the whole-file case.
+func hasBounds(args map[string]any) bool {
+	_, fromStart := args["start_line"]
+	_, toEnd := args["end_line"]
+	return fromStart || toEnd
+}
+
+// readRange returns one 1-based, inclusive line interval.
+//
+// The numbering is the one grep prints and the one the range level renders with, so a
+// line number the model read in a search result can be used here without arithmetic.
+//
+// Out-of-range bounds are **clamped and explained, not refused**, matching
+// ArtifactStore.Read: "line number out of range" tells the model nothing it can act
+// on, while saying which lines it actually got does. The one case that cannot be
+// clamped into sense is a start past the end of the file, and that is answered with
+// the file's real length rather than with an empty body that looks like an empty file.
+func readRange(path, text string, args map[string]any) tools.Result {
+	lines := splitLinesKeepingEnds(text)
+	total := len(lines)
+
+	start := 1
+	if value, ok := args["start_line"].(int); ok {
+		start = value
+	}
+	end := total
+	if value, ok := args["end_line"].(int); ok {
+		end = value
+	}
+
+	if total == 0 {
+		return tools.Result{
+			Text:  "文件是空的：" + path + "（0 行）",
+			Audit: map[string]any{"total_lines": 0},
+		}
+	}
+	if start > total {
+		return tools.Result{
+			Text: fmt.Sprintf("%s 只有 %d 行，从第 %d 行开始读不到内容 —— 这次没有返回任何行。"+
+				"想要末尾几行就把 start_line 调小。", path, total, start),
+			Audit: map[string]any{"total_lines": total},
+		}
+	}
+	if end > total {
+		end = total
+	}
+	if end < start {
+		return tools.Result{
+			Text: fmt.Sprintf("%s 的第 %d-%d 行没有内容（文件共 %d 行）：end_line 不能小于 start_line。",
+				path, start, end, total),
+			Audit: map[string]any{"total_lines": total},
+		}
+	}
+
+	// The header carries the interval **and** the total, so "there is more" is
+	// visible in the text the model actually reads. The interval is in the file's own
+	// numbering; a body that stopped at the file's end still says so.
+	head := fmt.Sprintf("[%s：第 %d-%d 行（共 %d 行）]", path, start, end, total)
+	return tools.Result{
+		Text: head + "\n" + strings.Join(lines[start-1:end], ""),
+		// The audit is how the interval reaches the Artifact's metadata: the agent
+		// copies a tool's audit fields into it. Two reads of one file then stay
+		// distinguishable after the fact, which the reference line in history cannot
+		// do — it names the size and the tool, and nothing about which part.
+		Audit: map[string]any{
+			"start_line":  start,
+			"end_line":    end,
+			"total_lines": total,
+		},
+	}
+}
+
+// splitLinesKeepingEnds splits on "\n" and keeps every line's own terminator, so
+// joining a run of them back together reproduces the original bytes exactly. That is
+// what lets a CRLF file's slice still be edited: the excerpt the model copies out
+// of carries the same ending the file uses.
+//
+// Splitting on "\n" alone is also what makes the numbering agree with grep's: a CRLF
+// file's "\r" stays inside the line it belongs to instead of becoming a line of its
+// own. The trailing empty element a final newline produces is dropped, because that
+// newline *terminates* the last line rather than starting an empty one — counting it
+// would make the total one too high and put every line number the model quotes back
+// one out. Same rule as the context store's own splitter, so "line 900" means one
+// thing whether it is a tool argument or a rendered interval.
+func splitLinesKeepingEnds(text string) []string {
+	if text == "" {
+		return nil
+	}
+	var lines []string
+	start := 0
+	for index := 0; index < len(text); index++ {
+		if text[index] == '\n' {
+			lines = append(lines, text[start:index+1])
+			start = index + 1
+		}
+	}
+	if start < len(text) {
+		lines = append(lines, text[start:])
+	}
+	return lines
 }
 
 // writeFile delegates to the workspace, which enforces both the boundary and the
