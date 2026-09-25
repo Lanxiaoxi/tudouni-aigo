@@ -73,7 +73,16 @@ func (openaiDialect) onTheWireMessage(message map[string]any, replayReasoning bo
 func (openaiDialect) encode(request dialectRequest) (map[string]any, error) {
 	messages := make([]map[string]any, 0, len(request.messages))
 	for _, message := range request.messages {
-		messages = append(messages, openaiDialect{}.onTheWireMessage(message, request.knobs.ReplayReasoning))
+		clean := openaiDialect{}.onTheWireMessage(message, request.knobs.ReplayReasoning)
+		// The whitelist above keeps `content` as it stands, which was correct while
+		// a body was always text. It is not any more: a body carrying a picture holds
+		// a part that names an artifact id, and passing that through would put this
+		// program's own field on the wire — the same failure `artifact_id` produced,
+		// with the same permanent consequence.
+		if body, ok := message["content"].([]any); ok {
+			clean["content"] = openaiContent(body, request.images)
+		}
+		messages = append(messages, clean)
 	}
 	body := map[string]any{
 		"model":    request.model,
@@ -90,6 +99,42 @@ func (openaiDialect) encode(request dialectRequest) (map[string]any, error) {
 		}
 	}
 	return body, nil
+}
+
+// openaiContent rewrites one body into this protocol's content-array form.
+//
+// The two block types are the documented ones for a user turn:
+//
+//	{"type": "text",      "text": "…"}
+//	{"type": "image_url", "image_url": {"url": "data:image/png;base64,…"}}
+//
+// A picture whose bytes cannot be fetched becomes a **text block describing it**,
+// never an image block with an empty url: two of the three endpoints refuse the
+// empty form with a message about the request shape, and the third accepts it and
+// shows the model nothing — which is worse, because the model then answers a
+// question about a picture it never saw.
+//
+// Text blocks are emitted **verbatim**, including empty ones, because a body that
+// was assembled elsewhere decides what belongs in it; only this program's own
+// picture parts are translated.
+func openaiContent(parts []any, loader ImageLoader) []any {
+	out := make([]any, 0, len(parts))
+	for _, entry := range parts {
+		if image, isImage := readImagePart(entry); isImage {
+			body, reason, ok := loadImage(image, loader)
+			if !ok {
+				out = append(out, map[string]any{"type": partText, "text": reason})
+				continue
+			}
+			out = append(out, map[string]any{
+				"type":      "image_url",
+				"image_url": map[string]any{"url": dataURL(image.MIME, body)},
+			})
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func (openaiDialect) parseUnary(raw []byte) (ModelResponse, error) {

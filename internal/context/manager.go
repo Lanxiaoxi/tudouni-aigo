@@ -337,7 +337,7 @@ func (m *Manager) ShouldCompact() bool {
 
 // Fit brings the context under budget and reports what moved.
 //
-// `render` supplies the current text for an item (from the renderer). The
+// `render` supplies the current content for an item (from the renderer). The
 // rewriting happens here, because "what the options become after degrading" is
 // knowledge about context state.
 //
@@ -351,7 +351,7 @@ func (m *Manager) ShouldCompact() bool {
 //
 // It is called every step, and only changes anything when the budget is
 // overshot. Levels already dropped do not come back.
-func (m *Manager) Fit(render func(*ContextItem) string, extra int) []Degraded {
+func (m *Manager) Fit(render func(*ContextItem) Rendered, extra int) []Degraded {
 	if !m.Budget.Enabled() {
 		// Unknown window: count, do not act.
 		m.LastEstimate = m.Estimate(render, extra)
@@ -394,7 +394,7 @@ func (m *Manager) Fit(render func(*ContextItem) string, extra int) []Degraded {
 // It also feeds Calibrate. So a missing `extra` is not just a low reading: the
 // provider's measured prompt_tokens **includes** the fixed overhead, so the
 // ratio comes out too high and every later degradation bites too hard.
-func (m *Manager) Estimate(render func(*ContextItem) string, extra int) int {
+func (m *Manager) Estimate(render func(*ContextItem) Rendered, extra int) int {
 	total := extra + m.Budget.EstimateItems(m.State.Live(), render)
 	for _, note := range m.State.Notes {
 		total += MessageOverhead + m.Budget.Tokens(note.Text)
@@ -431,12 +431,36 @@ func (m *Manager) Calibrate(measuredPromptTokens int) float64 {
 // action — and "changed but did not shrink" is invisible in the token bill (it
 // simply did not go down) and invisible in the log (the level really did
 // change).
+//
+// **Pictures take their own ladder.** full → thumbnail → metadata, because half a
+// JPEG is not half an image: the only way to make a picture cheaper while keeping
+// the picture is to send a smaller one, and a size that cannot be shown any other
+// way is described in words instead.
 func (m *Manager) degrade(item *ContextItem) {
-	target := item.Representation.Degraded()
+	artifact, known := m.Store.Get(item.ArtifactID)
+	isImage := known && artifact.IsImage()
+	target := item.Representation.NextLevel(isImage)
 	if target == item.Representation {
 		return
 	}
+
+	// A picture whose smaller copy could not be made has nowhere to go but the
+	// facts: taking the thumbnail rung would move the level while keeping the
+	// original's bytes, which is a degradation that does not degrade. The rung is
+	// skipped rather than taken, so the loop reaches "it really did not shrink"
+	// honestly and evicts.
+	if isImage && target == RepresentationThumbnail && !m.hasThumbnail(artifact) {
+		target = RepresentationMetadata
+	}
+
 	item.Representation = target
+
+	if isImage {
+		// A picture takes no window parameters at any level: nothing is truncated
+		// and there is no line count to narrow.
+		item.Options = map[string]any{}
+		return
+	}
 
 	switch target {
 	case RepresentationPreview:
@@ -484,6 +508,20 @@ func (m *Manager) degrade(item *ContextItem) {
 // delete the artifact.
 func (m *Manager) evict(item *ContextItem) {
 	item.Removed = true
+}
+
+// hasThumbnail reports whether a picture really has a smaller copy on disk.
+//
+// Both halves are checked: the metadata names an id, and the bytes are there. The
+// index knows about an artifact whose body somebody deleted, and sending that id
+// would render an empty picture block — the one outcome worse than sending the
+// original, because it tells the model nothing at all.
+func (m *Manager) hasThumbnail(artifact Artifact) bool {
+	id := artifact.MetadataString(MetaThumbnailID)
+	if id == "" {
+		return false
+	}
+	return m.Store.Exists(id)
 }
 
 // windowOptions derives how many lines and characters a level should give, from

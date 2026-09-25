@@ -29,7 +29,7 @@ func TestAMissingLedgerEntryStillSendsTheBody(t *testing.T) {
 		"artifact_id": artifact.ID,
 	}
 
-	rendered := h.renderer.RenderToolContent(message)
+	rendered := wireText(t, h.renderer.RenderToolContent(message))
 	if rendered == message["content"] {
 		t.Fatalf("the reference line was sent as the body: %q", rendered)
 	}

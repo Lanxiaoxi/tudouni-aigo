@@ -176,18 +176,34 @@ func (b *Budget) Tokens(text string) int {
 
 // EstimateItems adds up what a batch of items costs at their current levels.
 //
-// `render` is the injection point for "turn this item into text at its current
+// `render` is the injection point for "turn this item into content at its current
 // level". The budget must not know how rendering works — that is the renderer's
-// knowledge — it only needs a way to get the current text.
-func (b *Budget) EstimateItems(items []*ContextItem, render func(*ContextItem) string) int {
+// knowledge — it only needs a way to get the current payload.
+//
+// ## Why it takes Rendered rather than a string
+//
+// A picture has no characters, so a text estimator cannot price it: 1.5MB of JPEG
+// is about 400,000 tokens by character count — several times the whole window —
+// while the provider bills closer to a thousand. Counting it that way makes the
+// budget degrade everything in the session for a picture that fits; counting it as
+// zero (which is what `message["content"].(string)` yields for an array) lets the
+// request go out over the window. So the parts travel up and each kind is priced
+// by the rule that applies to it.
+func (b *Budget) EstimateItems(items []*ContextItem, render func(*ContextItem) Rendered) int {
 	total := 0
 	for _, item := range items {
 		if item.Removed {
 			continue
 		}
 		total += MessageOverhead + SnippetOverhead
-		if text := render(item); text != "" {
-			total += b.Tokens(text)
+		rendered := render(item)
+		if rendered.Text != "" {
+			total += b.Tokens(rendered.Text)
+		}
+		// Pictures are priced per picture, not per character. The header a
+		// degraded level adds is already counted in Text above.
+		for _, image := range rendered.Parts.Images() {
+			total += ImageRefCost(image)
 		}
 	}
 	return total
@@ -232,7 +248,7 @@ func (b *Budget) Sample() (int, int, bool) {
 //
 // The arguments divide up like this:
 //
-//   - `render` fetches the current text, which the estimate needs;
+//   - `render` fetches the current content, which the estimate needs;
 //   - `degrade` drops an item one level — the caller rewrites the item, because
 //     "what happens to the line numbers in options" is rendering knowledge;
 //   - `remove` takes an item out of the context, likewise the caller's job;
@@ -252,7 +268,7 @@ func (b *Budget) Sample() (int, int, bool) {
 // never comes back".
 func (b *Budget) Fit(
 	state *ContextState,
-	render func(*ContextItem) string,
+	render func(*ContextItem) Rendered,
 	degrade func(*ContextItem),
 	remove func(*ContextItem),
 	extra int,

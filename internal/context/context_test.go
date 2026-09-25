@@ -336,8 +336,14 @@ func TestFullLevelRendersTheBodyVerbatim(t *testing.T) {
 
 	item := h.manager.Item(artifact.ID)
 	rendered := h.renderer.RenderItem(item)
-	if rendered != body {
-		t.Fatalf("full level added something:\nwant %q\ngot  %q", body, rendered)
+	if rendered.Text != body {
+		t.Fatalf("full level added something:\nwant %q\ngot  %q", body, rendered.Text)
+	}
+	// A text artifact renders as text and nothing else: the parts field staying
+	// empty is what keeps `ToWire` handing back a plain string, and a plain string
+	// is what keeps the payload of a picture-free session byte-for-byte unchanged.
+	if len(rendered.Parts) != 0 {
+		t.Fatalf("a text artifact produced %d parts", len(rendered.Parts))
 	}
 }
 
@@ -357,11 +363,11 @@ func TestDegradedLevelsSaySoOutLoud(t *testing.T) {
 	}
 
 	rendered := h.renderer.RenderItem(item)
-	if !strings.Contains(rendered, "共 400 行") {
-		t.Fatalf("the range header does not state the total:\n%s", firstLines(rendered, 3))
+	if !strings.Contains(rendered.Text, "共 400 行") {
+		t.Fatalf("the range header does not state the total:\n%s", firstLines(rendered.Text, 3))
 	}
-	if !strings.Contains(rendered, "行") {
-		t.Fatalf("the range header does not state the interval:\n%s", firstLines(rendered, 3))
+	if !strings.Contains(rendered.Text, "行") {
+		t.Fatalf("the range header does not state the interval:\n%s", firstLines(rendered.Text, 3))
 	}
 }
 
@@ -380,13 +386,35 @@ func TestEvictedReferenceStillRendersASentence(t *testing.T) {
 	}
 
 	h.manager.Remove(artifact.ID)
-	rendered := h.renderer.RenderToolContent(message)
+	rendered := wireText(t, h.renderer.RenderToolContent(message))
 
 	if strings.TrimSpace(rendered) == "" {
 		t.Fatal("an evicted artifact rendered as empty text")
 	}
 	if !strings.Contains(rendered, artifact.ID) {
 		t.Fatalf("the sentence does not name the artifact: %q", rendered)
+	}
+}
+
+// wireText is the text of whatever `RenderToolContent` handed back.
+//
+// The return type is `any` because a tool result may carry a picture, and this
+// helper is how the text-only tests read it: an array would be a bug in those
+// tests, and saying so is better than a blank string that makes the assertion
+// below pass for the wrong reason.
+func wireText(t *testing.T, wire any) string {
+	t.Helper()
+	switch typed := wire.(type) {
+	case string:
+		return typed
+	case []any:
+		t.Fatalf("a text-only render came back as a parts array: %v", typed)
+		return ""
+	case nil:
+		return ""
+	default:
+		t.Fatalf("unexpected wire form %T", wire)
+		return ""
 	}
 }
 
@@ -658,6 +686,53 @@ func TestSummaryMessageIsAPlainUserMessage(t *testing.T) {
 	}
 	if !strings.HasSuffix(content, "内容") {
 		t.Fatalf("the summary body was not trimmed and appended: %q", firstLines(content, 3))
+	}
+}
+
+// TestTheSkeletonNamesAPictureInsteadOfDroppingIt.
+//
+// The skeleton is what the summarising model is handed as "this is the stretch you
+// are folding", and it reads each body through a type assertion. That assertion
+// yields "" for an array — and an array is what a message carrying a picture has — so
+// a user turn that said "分析这张图" and attached a screenshot would enter the summary
+// as **nothing at all**.
+//
+// That is the one place in this system where losing a fact is permanent: the summary
+// is the only record of that stretch of history the model keeps afterwards, and the
+// original messages stop being sent. So the picture is named.
+func TestTheSkeletonNamesAPictureInsteadOfDroppingIt(t *testing.T) {
+	message := map[string]any{
+		"role": "user",
+		"content": []any{
+			map[string]any{"type": "text", "text": "这个页面怎么了？"},
+			map[string]any{
+				"type": "image", "artifact_id": "art_shot",
+				"mime": "image/png", "name": "shot.png", "width": 1280, "height": 720,
+			},
+		},
+	}
+
+	described := DescribeMessage(message)
+	if !strings.Contains(described, "这个页面怎么了") {
+		t.Errorf("the words were dropped: %q", described)
+	}
+	if !strings.Contains(described, "shot.png") {
+		t.Errorf("the picture was dropped, which the summary would then never know about: %q", described)
+	}
+	if !strings.Contains(described, "[用户]") {
+		t.Errorf("the role label is missing: %q", described)
+	}
+}
+
+// TestTheSkeletonStillReadsPlainText is the other half: the helper must not change
+// what a text-only history produces, or every existing summary would be rewritten.
+func TestTheSkeletonStillReadsPlainText(t *testing.T) {
+	described := DescribeMessage(map[string]any{"role": "user", "content": "hello"})
+	if described != "[用户] hello" {
+		t.Fatalf("described = %q", described)
+	}
+	if got := DescribeMessage(map[string]any{"role": "tool", "content": "output"}); got != "[工具结果] output" {
+		t.Fatalf("described = %q", got)
 	}
 }
 

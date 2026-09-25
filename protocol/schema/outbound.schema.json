@@ -105,7 +105,7 @@
         "type": "string",
         "enum": ["run_started", "model_call", "tool_call", "tool_result",
                  "permission", "tool_batch", "run_finished", "delta_reset",
-                 "context_degraded", "context_compacted"],
+                 "context_degraded", "context_compacted", "image_attached"],
         "doc": "**就是 audit/events.py 那几种**，不新造。`delta_reset` 是流式加进来的第八种：它记的是\"重试/重发之前，界面上那段增量作废了\"——**审计里没有 delta 的正文**（那会让日志变成第二个会话文件），所以这一条是\"屏幕上出现过的东西后来被丢了\"唯一的痕迹。`context_degraded` 是 Context 预算加进来的第九种：它记的是\"这一步因为超预算把哪些 Artifact 降了档\"（`full→range→preview→metadata→removed`），字段是 items/estimated/limit/changes —— **正文不进审计**（它还在盘上，抄一遍就是第二个会话文件）。`context_compacted` 是历史压缩加进来的第十种：它记的是\"这一次把最早的多少条历史折成了一份摘要\"，字段是 folded/folded_total/messages/summary_id/summary_chars/generation/before/after/duration_ms/model —— **摘要正文同样不进审计**（它是一份 Artifact），所以这一条回答的是\"上下文为什么突然小了\"。"
       },
       "session_id": {"type": "string"},

@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/content"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 )
 
@@ -20,14 +22,45 @@ import (
 
 // renderer builds something that turns messages into a payload.
 //
-// A fresh one each time rather than a cached one: it holds two fields and no
-// state, and caching it would mean handling "the session was switched" — the
+// A fresh one each time rather than a cached one: it holds a couple of fields and
+// no state, and caching it would mean handling "the session was switched" — the
 // same trap the Session object fell into before it was moved out of the agent.
+//
+// The vision gate is attached here, at the one place a renderer is built, and that
+// is deliberate: it has to be consulted on **every** render rather than once when a
+// picture is attached, because the model can be switched mid-session. A picture
+// attached while a vision model was in use must not be sent to the model
+// afterwards — and, just as important, it must not **fail** the turn either. Both
+// of those are decided here: the renderer turns such a picture into a sentence
+// naming it, which is a payload the endpoint accepts and a context the model can
+// act on.
 func (a *Agent) renderer() *context.Renderer {
 	if a.Context == nil {
 		return nil
 	}
-	return context.NewRenderer(a.Context.Store, a.Context)
+	renderer := context.NewRenderer(a.Context.Store, a.Context)
+	renderer.AllowImages = a.imagePolicy()
+	return renderer
+}
+
+// imagePolicy reports whether pictures may be sent, and why not when they may not.
+//
+// Nil `Vision` means "nobody declared", and it is read as **yes**: the runtime
+// always supplies the predicate, so the nil case is a test or a one-shot agent with
+// no catalogue behind it, and suppressing pictures there would silently change what
+// those callers send. The refusal this exists for comes from the catalogue, where
+// `vision` defaults to false and a model that has not declared it does not get
+// pictures.
+func (a *Agent) imagePolicy() func() (bool, string) {
+	if a.Vision == nil {
+		return nil
+	}
+	return func() (bool, string) {
+		if a.Vision() {
+			return true, ""
+		}
+		return false, i18n.T("agent.vision.render_reason", "model", a.Chat.ModelName())
+	}
 }
 
 // noteText is the session-state line at the tail of the payload. It is per-round,
@@ -90,18 +123,23 @@ func (a *Agent) Payload() []map[string]any {
 	summary := a.summaryMessage()
 	view := a.foldedView(summary)
 
+	// Every message goes through the renderer, and the ones this layer has nothing
+	// to say about come back **unchanged** — not copied, not normalised. That is
+	// what keeps a picture-free session byte-for-byte identical to what it sent
+	// before pictures existed, and the prefix cache is priced on exactly that.
+	//
+	// A message is rewritten in two cases, and both are about a reference rather
+	// than about text: a tool result (its body comes from the artifact store at the
+	// level the budget decided), and a user message carrying a picture (the
+	// picture's level is decided the same way, and it may have degraded to a
+	// sentence since).
 	messages := make([]map[string]any, 0, len(view)+1)
 	for _, message := range view {
-		if renderer == nil || message["role"] != "tool" {
+		if renderer == nil {
 			messages = append(messages, message)
 			continue
 		}
-		rendered := map[string]any{}
-		for key, value := range message {
-			rendered[key] = value
-		}
-		rendered["content"] = renderer.RenderToolContent(message)
-		messages = append(messages, rendered)
+		messages = append(messages, renderer.RenderMessage(message))
 	}
 
 	if renderer == nil {
@@ -228,7 +266,45 @@ func (a *Agent) FixedPayloadTokens() int {
 		if message == nil {
 			continue
 		}
-		content, _ := message["content"].(string)
+		// **A body is read through `content.Parse`, never through a type
+		// assertion.** `message["content"].(string)` yields "" for an array, and an
+		// array is exactly what a message carrying a picture has — so the assertion
+		// counts an image (and the paragraph next to it) as **zero** tokens. The
+		// budget then believes a request fits when it does not, which is the
+		// dangerous direction, and the failure it produces is a 400 from the
+		// endpoint that reads like "context too long" with nothing visibly over.
+		body := content.Parse(message["content"])
+		text := body.TextOf()
+		// A picture is priced per picture rather than per character, and — the part
+		// that took a second pass — **only when the item estimate is not already
+		// pricing it.**
+		//
+		// An attached picture is in two places at once: a ledger item (so it can be
+		// degraded and evicted) and the message body (because that is where the model
+		// reads it). `EstimateItems` walks the ledger and prices what the item renders
+		// **at its current level**; counting the body's copy here as well would charge
+		// the session twice for one screenshot, and the second charge would be the
+		// original's — because this walk reads the **stored** message, whose part still
+		// names the full-size artifact however far the ladder has taken it. The result
+		// is a picture that looks twice as expensive as it is and never gets cheaper as
+		// it degrades, which is the opposite of what the ladder is for.
+		//
+		// This is the same rule the tool message below already follows — a reference is
+		// counted by the item estimate, and only an **unreferenced** body is counted in
+		// full — applied to the other kind of part that can be referred to.
+		//
+		// The residual, stated rather than hidden: an item the budget **evicted** is
+		// skipped by both walks, while the payload still carries the sentence saying it
+		// was evicted (a few dozen tokens). That is the existing behaviour for an
+		// evicted tool reference as well, and it is the one case where this estimate is
+		// a shade low rather than a shade high.
+		images := 0
+		for _, image := range body.Images() {
+			if a.Context.Item(image.ArtifactID) != nil {
+				continue
+			}
+			images += context.ImageRefCost(image)
+		}
 
 		// **The system prompt is skipped.** FoldedView brings it in (correctly —
 		// the payload must have it) and `Measure` counts it on its own, as the one
@@ -242,14 +318,14 @@ func (a *Agent) FixedPayloadTokens() int {
 			// The message's own fixed overhead was counted by the item estimate;
 			// only the reference line is added here.
 			if context.ArtifactIDOf(message) != "" {
-				total += budget.Tokens(content)
+				total += budget.Tokens(text)
 			} else {
-				total += context.MessageOverhead + budget.Tokens(content)
+				total += context.MessageOverhead + budget.Tokens(text)
 			}
 			continue
 		}
 
-		total += context.MessageOverhead + budget.Tokens(content)
+		total += context.MessageOverhead + images + budget.Tokens(text)
 		if calls, ok := message["tool_calls"].([]any); ok {
 			for _, entry := range calls {
 				call, ok := entry.(map[string]any)
@@ -347,10 +423,17 @@ func (a *Agent) summaryMessage() map[string]any {
 func (a *Agent) Measure() int {
 	renderer := a.renderer()
 	if a.Context == nil || renderer == nil {
+		// A bare estimate over the messages, and it goes through the same body
+		// parser as everything else: this path is what a session **without** a
+		// context layer measures itself with, and such a session is exactly the
+		// one where a picture sits inline in history rather than behind a
+		// reference. A `.(string)` assertion here would report it as zero.
 		total := 0
 		for _, message := range a.Session.Messages {
-			if content, ok := message["content"].(string); ok {
-				total += context.EstimateTokens(content)
+			body := content.Parse(message["content"])
+			total += context.EstimateTokens(body.TextOf())
+			for _, image := range body.Images() {
+				total += context.ImageRefCost(image)
 			}
 		}
 		return total
@@ -361,12 +444,12 @@ func (a *Agent) Measure() int {
 	// 1) The artifact half.
 	total := budget.EstimateItems(a.Context.State.Live(), renderer.RenderItem)
 	// 2) The history half (reference lines, the user's and assistant's words, the
-	//    summary).
+	//    summary, and the pictures a user message carries).
 	total += a.FixedPayloadTokens()
 	// 3) The system prompt: neither an artifact nor part of the fixed overhead.
 	if len(a.Session.Messages) > 0 && a.Session.Messages[0]["role"] == "system" {
-		content, _ := a.Session.Messages[0]["content"].(string)
-		total += context.MessageOverhead + budget.Tokens(content)
+		system := content.Parse(a.Session.Messages[0]["content"]).TextOf()
+		total += context.MessageOverhead + budget.Tokens(system)
 	}
 	// 4) The trailing note (no overlap with the fixed overhead — it never enters
 	//    session.Messages).

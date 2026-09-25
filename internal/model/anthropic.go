@@ -73,6 +73,11 @@ func maxOutputTokens(effort string) int { return thinkingBudget(effort) + 8192 }
 // method exists to satisfy the dialect interface honestly rather than to filter —
 // see the interface for why the filter has to exist at all.
 //
+// A picture likewise has no path here: `splitSystemPrompt` builds each content
+// block from named fields, so the picture blocks are produced there (see
+// `anthropicUserBlocks`) rather than being filtered out of a body this method
+// passes through.
+//
 // The replay flag is ignored for the same reason: this protocol has its own way of
 // reproducing a thinking turn, and it does not read a chat-completions message
 // field to do it.
@@ -81,7 +86,7 @@ func (anthropicDialect) onTheWireMessage(message map[string]any, replayReasoning
 }
 
 func (anthropicDialect) encode(request dialectRequest) (map[string]any, error) {
-	system, messages, err := splitSystemPrompt(request.messages)
+	system, messages, err := splitSystemPrompt(request.messages, request.images)
 	if err != nil {
 		return nil, err
 	}
@@ -166,14 +171,23 @@ func anthropicTools(tools []map[string]any) []map[string]any {
 // Both facts have to be applied to every request, including the ones that resume a
 // long conversation, which is why this runs on the whole history rather than being
 // arranged once at the start.
-func splitSystemPrompt(messages []map[string]any) (string, []map[string]any, error) {
+//
+// `loader` is only ever used for a user turn's pictures. None of the other three
+// positions can hold one in this protocol — `system` is a string, a tool result is
+// a text or block list this program builds itself, and an assistant turn is the
+// model's own output — so a picture that somehow lands in one of them is described
+// in words by `textBlocksFrom` rather than being dropped.
+func splitSystemPrompt(messages []map[string]any, loader ImageLoader) (string, []map[string]any, error) {
 	system := ""
 	out := make([]map[string]any, 0, len(messages))
 
 	for _, message := range messages {
 		switch role, _ := message["role"].(string); role {
 		case "system":
-			text, _ := message["content"].(string)
+			// A string by construction, but read through the same helper as
+			// everything else: a body assembled elsewhere could put parts here, and
+			// a type assertion would silently drop the instructions.
+			text := textBlocksFrom(message["content"])
 			if system != "" && text != "" {
 				system += "\n\n"
 			}
@@ -185,7 +199,7 @@ func splitSystemPrompt(messages []map[string]any) (string, []map[string]any, err
 				"content": []any{map[string]any{
 					"type":        "tool_result",
 					"tool_use_id": firstString(message, "tool_call_id"),
-					"content":     stringifyContent(message["content"]),
+					"content":     anthropicToolResult(message["content"]),
 				}},
 			})
 
@@ -195,7 +209,7 @@ func splitSystemPrompt(messages []map[string]any) (string, []map[string]any, err
 		default:
 			out = append(out, map[string]any{
 				"role":    role,
-				"content": textBlocks(stringifyContent(message["content"])),
+				"content": anthropicUserBlocks(message["content"], loader),
 			})
 		}
 	}
@@ -207,6 +221,74 @@ func splitSystemPrompt(messages []map[string]any) (string, []map[string]any, err
 		return "", nil, AsFatal("every message in this request was a system prompt, and the Messages protocol needs at least one conversation turn")
 	}
 	return system, out, nil
+}
+
+// anthropicUserBlocks renders a non-assistant turn's content into this protocol's
+// blocks.
+//
+// The picture block is this shape's own, and it is the one that could not be
+// passed through:
+//
+//	{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "…"}}
+//
+// Note where the base64 goes: inside `source`, as a field with its own name, next
+// to the media type the endpoint checks against the payload. The chat completions
+// spelling (`image_url`) means nothing here, and the data URL form this program
+// would naturally produce is exactly the kind of "close enough" that earns a 400
+// naming a field.
+//
+// A picture whose bytes cannot be fetched becomes a **text block** describing it,
+// never an image block with empty data: this endpoint refuses the empty form, and
+// the sentence is the only version of it the model can act on.
+func anthropicUserBlocks(content any, loader ImageLoader) []any {
+	parts, ok := content.([]any)
+	if !ok {
+		return textBlocks(textBlocksFrom(content))
+	}
+	blocks := make([]any, 0, len(parts))
+	for _, entry := range parts {
+		if image, isImage := readImagePart(entry); isImage {
+			body, reason, ok := loadImage(image, loader)
+			if !ok {
+				blocks = append(blocks, map[string]any{"type": partText, "text": reason})
+				continue
+			}
+			blocks = append(blocks, map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": image.MIME,
+					"data":       encodeBase64(body),
+				},
+			})
+			continue
+		}
+		if object, isObject := entry.(map[string]any); isObject {
+			if text, _ := object["text"].(string); text != "" {
+				blocks = append(blocks, map[string]any{"type": partText, "text": text})
+				continue
+			}
+		}
+		// An entry that is neither: kept as text rather than dropped, because a
+		// block silently disappearing from a history is the failure this whole
+		// layer is built to avoid.
+		blocks = append(blocks, map[string]any{"type": partText, "text": stringifyContent(entry)})
+	}
+	return blocks
+}
+
+// anthropicToolResult renders one tool result's body.
+//
+// It is a **string** here, not a block list: this protocol's `tool_result` takes
+// text, and a picture inside a tool result (an MCP server returning an image, say)
+// has no block form to go into. `textBlocksFrom` therefore describes such a
+// picture in words — the same answer the MCP layer gives when it has no way to
+// pass one on.
+func anthropicToolResult(content any) string {
+	if text, ok := content.(string); ok {
+		return text
+	}
+	return textBlocksFrom(content)
 }
 
 // anthropicAssistantMessage renders one assistant turn, including the tool calls

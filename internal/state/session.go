@@ -146,30 +146,73 @@ func isRuntimeNote(message map[string]any) bool {
 // MessageText returns the plain text of a message.
 //
 // A message may carry a string or a list of content parts (the shape some
-// gateways use). Both are accepted; anything else yields no text rather than an
-// error, because a message with an unexpected shape should not stop a turn.
+// gateways use, and the shape this program uses for a message with a picture in
+// it). Both are accepted; anything else yields no text rather than an error,
+// because a message with an unexpected shape should not stop a turn.
+//
+// **A picture is named, not dropped.** This function is what the session list's
+// preview, the compaction skeleton and the interface's replay read a body through,
+// and a body that quietly loses its image reads as a message that never had one —
+// which is the difference between "the user sent a screenshot" and "the user sent a
+// sentence". The label is the same one the model is shown, so a person reading the
+// transcript sees what the model saw.
 func MessageText(message map[string]any) (string, bool) {
 	switch content := message["content"].(type) {
 	case string:
 		return content, true
 	case []any:
-		var parts []string
-		for _, item := range content {
-			part, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			if text, ok := part["text"].(string); ok {
-				parts = append(parts, text)
-			}
-		}
-		if len(parts) == 0 {
+		described := describeParts(content)
+		if described == "" {
 			return "", false
 		}
-		return strings.Join(parts, ""), true
+		return described, true
 	default:
 		return "", false
 	}
+}
+
+// describeParts joins a body's text and names its pictures.
+//
+// It walks the parts rather than going through `internal/content`, because this
+// package is the session file's own format and the reading here has to stay total: a
+// part whose shape nobody recognises contributes nothing rather than making the
+// whole message unreadable.
+func describeParts(parts []any) string {
+	var pieces []string
+	for _, item := range parts {
+		part, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text, ok := part["text"].(string); ok {
+			pieces = append(pieces, text)
+			continue
+		}
+		if kind, _ := part["type"].(string); kind == "image" {
+			pieces = append(pieces, imagePartLabel(part))
+		}
+	}
+	return strings.Join(pieces, "")
+}
+
+// imagePartLabel names one picture part for a reader who cannot see it.
+//
+// The dimensions are stated when they are known and omitted when they are not: a
+// made-up `0×0` would read as a measured size, and the label is what a person uses to
+// decide which picture is being discussed.
+func imagePartLabel(part map[string]any) string {
+	name, _ := part["name"].(string)
+	if name == "" {
+		name, _ = part["mime"].(string)
+	}
+	if name == "" {
+		name = "image"
+	}
+	width, height := intOf(part["width"]), intOf(part["height"])
+	if width > 0 && height > 0 {
+		return "[Image: " + name + " " + itoa(width) + "×" + itoa(height) + "]"
+	}
+	return "[Image: " + name + "]"
 }
 
 // BuildSystemMessage assembles the system message for a new session.

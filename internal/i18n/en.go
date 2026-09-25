@@ -206,12 +206,12 @@ var catalog = map[string]string{
 	// There is no `status.rate.none`: when there is nothing to divide, the bar
 	// leaves the whole segment out rather than drawing a dash in it, so no text
 	// is needed for that case. See the status bar's own outputRateText.
-	"status.rate":                    "avg {rate} tok/s",
-	"status.turn":                    "this turn {duration}",
-	"status.session.messages.one":    "{n} message",
-	"status.session.messages.other":  "{n} messages",
-	"status.session.steps.one":       "{n} step",
-	"status.session.steps.other":     "{n} steps",
+	"status.rate":                   "avg {rate} tok/s",
+	"status.turn":                   "this turn {duration}",
+	"status.session.messages.one":   "{n} message",
+	"status.session.messages.other": "{n} messages",
+	"status.session.steps.one":      "{n} step",
+	"status.session.steps.other":    "{n} steps",
 	// The `/status` screen's Size row: the two counts above, joined. Without this
 	// key the row rendered the missing-key marker (`⟪status.session.size⟫`) —
 	// the one screen whose whole job is to state facts, printing its own bug.
@@ -233,40 +233,49 @@ var catalog = map[string]string{
 	"status.subagents.doing":         " · {what}",
 
 	// --- process lines: model call / thinking / tool call / tool result ---
-	"event.model_retry":       "  · Model call failed (attempt {attempt}){tail}",
-	"event.model_retry_wait":  ", retrying in {backoff}ms",
-	"event.denied":            "      (denied, not executed)",
-	"event.tool_batch.one":    "{n} read-only tool finished in parallel",
-	"event.tool_batch.other":  "{n} read-only tools finished in parallel",
-	"event.tool_batch_wall":   " ({wall}ms)",
-	"event.model_prefix":      "  · model ",
-	"event.context_tokens":    "  context {tokens} tokens",
-	"event.cache_hit":         " (cache hit {cached} · {percent}%)",
-	"event.output_rate":       "  {rate} tok/s",
-	"turn.running":            "running · step 1",
-	"think.prefix_folded":     "  ▸ Thinking",
-	"think.folded_tail.one":   " ({chars} char · Ctrl+T to expand)",
-	"think.folded_tail.other": " ({chars} chars · Ctrl+T to expand)",
-	"think.prefix_expanded":   "  ▾ Thinking",
-	"think.expanded_tail":     " (expanded · Ctrl+T to collapse)",
-	"think.live_chars.one":    " {chars} char",
-	"think.live_chars.other":  " {chars} chars",
-	"risk.high":               "   HIGH risk",
-	"risk.medium":             "   MEDIUM risk",
-	"tool.ok_tail.one":        "{chars} char   {span}",
-	"tool.ok_tail.other":      "{chars} chars   {span}",
-	"tool.result_chars.one":   "{chars} char",
-	"tool.result_chars.other": "{chars} chars",
-	"tool.denied":             "denied, not executed",
-	"tool.invalid_args":       "invalid arguments, not executed",
-	"tool.error.one":          "failed ({chars} char)",
-	"tool.error.other":        "failed ({chars} chars)",
-	"brief.items.one":         "{n} item",
-	"brief.items.other":       "{n} items",
-	"brief.todo_items.one":    "{n} task",
-	"brief.todo_items.other":  "{n} tasks",
-	"brief.yes":               "yes",
-	"brief.no":                "no",
+	"event.model_retry":      "  · Model call failed (attempt {attempt}){tail}",
+	"event.model_retry_wait": ", retrying in {backoff}ms",
+	"event.denied":           "      (denied, not executed)",
+	"event.tool_batch.one":   "{n} read-only tool finished in parallel",
+	"event.tool_batch.other": "{n} read-only tools finished in parallel",
+	"event.tool_batch_wall":  " ({wall}ms)",
+	// The picture lines. They are drawn **inside the turn** rather than as startup
+	// notices, because attaching happens when the user's message arrives — and the
+	// refusal in particular has to be visible: the turn runs without the picture, so
+	// nothing else on the screen would say the model never saw it.
+	"event.image.attached":       "  · image attached: {name} ({width}×{height}, {size})",
+	"event.image.attached_plain": "  · image attached: {name} ({size})",
+	"event.image.skipped":        "  ⚠ image skipped: {path} — {reason}",
+	"event.image.over_limit":     "  ⚠ only the first {limit} images were attached; {rest} left out: {paths}",
+	"event.image.refused":        "  ⚠ {names} not attached: {model} cannot be sent images",
+	"event.model_prefix":         "  · model ",
+	"event.context_tokens":       "  context {tokens} tokens",
+	"event.cache_hit":            " (cache hit {cached} · {percent}%)",
+	"event.output_rate":          "  {rate} tok/s",
+	"turn.running":               "running · step 1",
+	"think.prefix_folded":        "  ▸ Thinking",
+	"think.folded_tail.one":      " ({chars} char · Ctrl+T to expand)",
+	"think.folded_tail.other":    " ({chars} chars · Ctrl+T to expand)",
+	"think.prefix_expanded":      "  ▾ Thinking",
+	"think.expanded_tail":        " (expanded · Ctrl+T to collapse)",
+	"think.live_chars.one":       " {chars} char",
+	"think.live_chars.other":     " {chars} chars",
+	"risk.high":                  "   HIGH risk",
+	"risk.medium":                "   MEDIUM risk",
+	"tool.ok_tail.one":           "{chars} char   {span}",
+	"tool.ok_tail.other":         "{chars} chars   {span}",
+	"tool.result_chars.one":      "{chars} char",
+	"tool.result_chars.other":    "{chars} chars",
+	"tool.denied":                "denied, not executed",
+	"tool.invalid_args":          "invalid arguments, not executed",
+	"tool.error.one":             "failed ({chars} char)",
+	"tool.error.other":           "failed ({chars} chars)",
+	"brief.items.one":            "{n} item",
+	"brief.items.other":          "{n} items",
+	"brief.todo_items.one":       "{n} task",
+	"brief.todo_items.other":     "{n} tasks",
+	"brief.yes":                  "yes",
+	"brief.no":                   "no",
 
 	// --- the context rail -------------------------------------------------
 	"rail.jobs":              "Background jobs",
@@ -766,6 +775,24 @@ var catalog = map[string]string{
 	"agents_md.notice.truncated_chars": "another {omitted} characters were cut off the end, so the text stops mid-sentence",
 	"agents_md.notice.truncated":       "[AGENT.md] {path} is over the injection budget, {detail}; the model has to read_file it for the full text.",
 	"agents_md.notice.failed":          "[AGENT.md] cannot read {path}: {reason}",
+
+	// --- pictures in a message ---------------------------------------------
+	//
+	// `agent.vision.render_reason` is what the **model** is told in place of a picture
+	// it cannot be shown. It is a sentence rather than a dropped part on purpose: a
+	// model asked about a screenshot with nothing attached does not say "I cannot see
+	// it" — it answers from the surrounding prose, confidently.
+	"agent.vision.render_reason": "the model in use ({model}) cannot be shown pictures, so this one was described instead of attached. Switching to a model that declares `vision` in the catalog will send it.",
+	// `notice.image.rejected` is what the **user** is told, on stderr, for the same
+	// event: the turn still runs, so a person who attached a screenshot has to be told
+	// it was never seen — otherwise they read an answer about their words and believe
+	// the picture was considered.
+	"notice.image.rejected": "[image] the model in use cannot be sent pictures, so {names} ({count}) were not attached. Switch to a model with `vision` enabled to use them.",
+	// The two labels are shared: the metadata level, the transcript replay, the
+	// interface's row for a restored message and the model's own copy of a picture's
+	// name all read the same shape, so a reader meets one convention everywhere.
+	"image.label":       "[Image: {name}]",
+	"image.label.sized": "[Image: {name} {width}×{height}]",
 
 	// --- session files -----------------------------------------------------
 	"session.preview.unreadable": "(unreadable: {kind})",

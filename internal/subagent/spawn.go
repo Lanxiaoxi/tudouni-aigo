@@ -135,6 +135,7 @@ func (t *Tool) spawn(task string) (tools.Result, error) {
 		Notes:        t.childNotes,
 		Context:      manager,
 		Processor:    calls,
+		Vision:       t.modelVisionFor(chat),
 	})
 
 	t.emit(audit.Event(KindDelegationStarted, t.parentID(), childID, 0, map[string]any{
@@ -178,6 +179,26 @@ func (t *Tool) spawn(task string) (tools.Result, error) {
 		// through the agent to make it work.
 		Audit: map[string]any{"subagent_id": childID},
 	}, nil
+}
+
+// modelVisionFor is the vision gate handed to one child.
+//
+// It is a function rather than a bool for the same reason the parent's is: the answer
+// belongs to the model that will actually be asked. A delegation may have been routed
+// to another route (see resolveChild), so reading the **parent's** answer here would be
+// a judgement about a request the parent is not making — and it would be wrong in the
+// direction that matters, because a model that cannot see would be sent a picture.
+//
+// A model the catalogue does not know answers false, which is the safe direction: a
+// model nobody declared `vision` for is a model nobody promised could see.
+func (t *Tool) modelVisionFor(chat model.ChatModel) func() bool {
+	return func() bool {
+		if chat == nil {
+			return false
+		}
+		ref, known := t.Catalog.Find(chat.ModelName(), chat.ProviderName())
+		return known && ref.Vision
+	}
 }
 
 // newChildSession builds the child's session: empty apart from the scope

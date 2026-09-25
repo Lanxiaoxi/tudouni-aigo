@@ -39,7 +39,7 @@ func (responsesDialect) onTheWireMessage(message map[string]any, replayReasoning
 }
 
 func (responsesDialect) encode(request dialectRequest) (map[string]any, error) {
-	instructions, items, err := splitResponsesInput(request.messages)
+	instructions, items, err := splitResponsesInput(request.messages, request.images)
 	if err != nil {
 		return nil, err
 	}
@@ -130,14 +130,18 @@ func responsesTools(tools []map[string]any) []map[string]any {
 //     output text dropped**, because the endpoint re-derives the model's own text
 //     from the item list and rejects a message item that carries text the model
 //     never produced.
-func splitResponsesInput(messages []map[string]any) (string, []map[string]any, error) {
+//
+// `loader` is used for a user turn's pictures and nothing else: this protocol's
+// picture block (`input_image`) is a content part of a `message` item, so it exists
+// only where a body is built from parts.
+func splitResponsesInput(messages []map[string]any, loader ImageLoader) (string, []map[string]any, error) {
 	instructions := ""
 	items := make([]map[string]any, 0, len(messages))
 
 	for _, message := range messages {
 		switch role, _ := message["role"].(string); role {
 		case "system":
-			text, _ := message["content"].(string)
+			text := textBlocksFrom(message["content"])
 			if instructions != "" && text != "" {
 				instructions += "\n\n"
 			}
@@ -147,14 +151,14 @@ func splitResponsesInput(messages []map[string]any) (string, []map[string]any, e
 			items = append(items, map[string]any{
 				"type":    "function_call_output",
 				"call_id": firstString(message, "tool_call_id"),
-				"output":  stringifyContent(message["content"]),
+				"output":  responsesToolOutput(message["content"]),
 			})
 
 		case "assistant":
 			// The text of an assistant turn is sent back as an `output_text`
 			// item: it is the model's own output being replayed, not new input,
 			// and the two have different type names.
-			if text := stringifyContent(message["content"]); text != "" && !hasToolCalls(message) {
+			if text := textBlocksFrom(message["content"]); text != "" && !hasToolCalls(message) {
 				items = append(items, responsesMessage("assistant", "output_text", text))
 			}
 			for _, item := range responsesFunctionCalls(message["tool_calls"]) {
@@ -162,7 +166,7 @@ func splitResponsesInput(messages []map[string]any) (string, []map[string]any, e
 			}
 
 		default:
-			items = append(items, responsesMessage(role, "input_text", stringifyContent(message["content"])))
+			items = append(items, responsesUserItem(role, message["content"], loader))
 		}
 	}
 
@@ -170,6 +174,55 @@ func splitResponsesInput(messages []map[string]any) (string, []map[string]any, e
 		return "", nil, AsFatal("every message in this request was a system prompt, and the Responses protocol needs at least one conversation item")
 	}
 	return instructions, items, nil
+}
+
+// responsesUserItem renders one non-assistant item, pictures included.
+//
+// The picture spelling here is `input_image` with an `image_url` string, which is
+// neither of the other two protocols' form: it is flat (no nested `source`), and
+// the URL is a data URL. Producing the chat completions block here, or the Messages
+// block, would be a request the endpoint refuses by naming the part type.
+func responsesUserItem(role string, content any, loader ImageLoader) map[string]any {
+	parts, ok := content.([]any)
+	if !ok {
+		return responsesMessage(role, "input_text", textBlocksFrom(content))
+	}
+	blocks := make([]any, 0, len(parts))
+	for _, entry := range parts {
+		if image, isImage := readImagePart(entry); isImage {
+			body, reason, ok := loadImage(image, loader)
+			if !ok {
+				blocks = append(blocks, map[string]any{"type": "input_text", "text": reason})
+				continue
+			}
+			blocks = append(blocks, map[string]any{
+				"type":      "input_image",
+				"image_url": dataURL(image.MIME, body),
+			})
+			continue
+		}
+		if object, isObject := entry.(map[string]any); isObject {
+			if text, _ := object["text"].(string); text != "" {
+				blocks = append(blocks, map[string]any{"type": "input_text", "text": text})
+				continue
+			}
+		}
+		blocks = append(blocks, map[string]any{"type": "input_text", "text": stringifyContent(entry)})
+	}
+	return map[string]any{"type": "message", "role": role, "content": blocks}
+}
+
+// responsesToolOutput renders one tool result's body.
+//
+// A string, for the same reason the Messages shape's tool result is one: this
+// protocol's `function_call_output` takes text, and a picture arriving inside a
+// tool result (an MCP server returning one) has nowhere else to go, so it is
+// described in words.
+func responsesToolOutput(content any) string {
+	if text, ok := content.(string); ok {
+		return text
+	}
+	return textBlocksFrom(content)
 }
 
 // responsesMessage renders one message item.

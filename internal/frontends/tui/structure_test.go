@@ -218,7 +218,7 @@ func TestAModalNeverGrowsTheFramePastTheTerminal(t *testing.T) {
 			}
 			m.pendingPermission = map[string]any{
 				"id": "p", "tool": "shell", "risk": "high", "arguments": arguments,
-				"remember_hint": strings.Repeat("consequence sentence ", 3),
+				"remember_hint":   strings.Repeat("consequence sentence ", 3),
 				"allow_trust_all": true, "trust_all_hint": strings.Repeat("trust hint ", 4),
 			}
 		},
@@ -340,7 +340,7 @@ func TestNoScreenAsksForAKeyTheTableDoesNotHave(t *testing.T) {
 			"session": map[string]any{"id": "20260917-120000-abcd", "workspace": "/w/tudouni",
 				"messages": 12, "steps": 4, "resumed": true},
 			"model": map[string]any{"current": "deepseek/deepseek-chat", "provider": "deepseek",
-				"selected": "deepseek/deepseek-v4-pro",
+				"selected":  "deepseek/deepseek-v4-pro",
 				"reasoning": map[string]any{"thinking": true, "effort": "high"}},
 			"counters": map[string]any{"runs": 2, "model_calls": 6, "tool_calls": 9,
 				"model_ok": 6, "permission_waits": 1, "asks": 2},
@@ -662,6 +662,144 @@ func TestBriefReadsWhatEachToolIsAbout(t *testing.T) {
 	}
 	if got := briefValue("todo_write", true); got != i18n.T("brief.yes") {
 		t.Errorf("a boolean should read as a word, got %q", got)
+	}
+}
+
+// ── pictures in a message ─────────────────────────────────────────────────────
+
+// TestTheAttachedPictureLeavesARow.
+//
+// The row is the only evidence the user has that their screenshot was picked up: the
+// answer that comes back is prose either way, and without this line "the model read my
+// picture" and "the model read my sentence" look identical on screen.
+func TestTheAttachedPictureLeavesARow(t *testing.T) {
+	withColour(t)
+	m := filledModel(120, 36)
+
+	m.handleEvent(map[string]any{
+		"kind": "image_attached", "status": "attached",
+		"name": "shot.png", "path": "docs/shot.png",
+		"width": 1280, "height": 720, "bytes": 40960,
+	})
+
+	text := transcriptText(m)
+	for _, wanted := range []string{"shot.png", "1280×720", "40KB"} {
+		if !strings.Contains(text, wanted) {
+			t.Errorf("the row does not mention %q:\n%s", wanted, text)
+		}
+	}
+}
+
+// TestARefusedPictureIsSaidOutLoud is the row that matters most.
+//
+// A model that has not declared `vision` runs the turn **without** the picture, so the
+// answer is about the words alone. Silence here would leave the user reading an answer
+// to a question they did not ask, with nothing on screen to explain it.
+func TestARefusedPictureIsSaidOutLoud(t *testing.T) {
+	withColour(t)
+	m := filledModel(120, 36)
+
+	m.handleEvent(map[string]any{
+		"kind": "image_attached", "status": "refused",
+		"names": []any{"shot.png", "diagram.png"},
+		"model": "glm-5.3",
+	})
+
+	text := transcriptText(m)
+	for _, wanted := range []string{"shot.png", "diagram.png", "glm-5.3"} {
+		if !strings.Contains(text, wanted) {
+			t.Errorf("the refusal does not mention %q:\n%s", wanted, text)
+		}
+	}
+}
+
+// TestTheBadNewsSurvivesQuietMode.
+//
+// Quiet mode exists to keep twenty read-only calls from flooding the screen, and it
+// drops the four permission outcomes that mean "it ran without asking". A refused
+// picture is not that: it is one row per message, and it is the only thing that says
+// the model never saw the screenshot. Filtering it would make the feature silently
+// broken on every model without `vision` — which is most of them.
+func TestTheBadNewsSurvivesQuietMode(t *testing.T) {
+	withColour(t)
+	m := filledModel(120, 36)
+	m.quiet = true
+
+	m.handleEvent(map[string]any{
+		"kind": "image_attached", "status": "refused",
+		"names": []any{"shot.png"}, "model": "glm-5.3",
+	})
+
+	if !strings.Contains(transcriptText(m), "shot.png") {
+		t.Errorf("quiet mode swallowed the refusal:\n%s", transcriptText(m))
+	}
+}
+
+// TestTheOtherOutcomesAreNamed: a file that is not really a picture, one left out by
+// the cap. Both are things only the user can fix, so both have to say which file.
+func TestTheOtherOutcomesAreNamed(t *testing.T) {
+	withColour(t)
+	for _, testCase := range []struct {
+		status string
+		want   []string
+	}{
+		{"skipped", []string{"fake.png", "not a picture"}},
+		{"over_limit", []string{"4", "shot-d.png"}},
+	} {
+		t.Run(testCase.status, func(t *testing.T) {
+			m := filledModel(120, 36)
+			m.handleEvent(map[string]any{
+				"kind": "image_attached", "status": testCase.status,
+				"path": "fake.png", "reason": "not a picture",
+				"limit": 4, "rest": 2,
+				"paths": []any{"shot-d.png", "shot-e.png"},
+			})
+			text := transcriptText(m)
+			for _, wanted := range testCase.want {
+				if !strings.Contains(text, wanted) {
+					t.Errorf("the row does not mention %q:\n%s", wanted, text)
+				}
+			}
+		})
+	}
+}
+
+// TestARestoredPictureIsNamedInTheTranscript.
+//
+// `/resume` replays a session's messages, and a message whose body is a parts array
+// used to replay as the bare sentence that came with it. A question about a picture
+// with no sign that there was one is the one thing a replay exists to prevent.
+func TestARestoredPictureIsNamedInTheTranscript(t *testing.T) {
+	m := testModel()
+	m.restoreMessages(map[string]any{"messages": []any{
+		map[string]any{
+			"role": "user",
+			"content": []any{
+				map[string]any{"type": "text", "text": "看看这个"},
+				map[string]any{
+					"type": "image", "artifact_id": "art_1",
+					"name": "shot.png", "width": 800, "height": 600,
+				},
+			},
+		},
+	}})
+
+	var restored string
+	for index := range m.transcript {
+		if m.transcript[index].kind == "user" {
+			restored = stripANSI(strings.Join(m.renderEntry(index, 90), "\n"))
+		}
+	}
+	if restored == "" {
+		t.Fatal("the restored message never reached the transcript")
+	}
+	if !strings.Contains(restored, "看看这个") {
+		t.Errorf("the words were lost: %q", restored)
+	}
+	// The picture is the point: a replay that showed only the sentence would make a
+	// question about a screenshot read as a question about nothing.
+	if !strings.Contains(restored, "shot.png") {
+		t.Errorf("the picture was dropped from the replay: %q", restored)
 	}
 }
 

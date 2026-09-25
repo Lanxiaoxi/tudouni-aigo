@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/content"
 	"github.com/Lanxiaoxi/tudouni-aigo/prompts"
 )
 
@@ -326,9 +327,21 @@ func DigestMessages(messages []map[string]any, start int, stop *int, limit int) 
 //     preview);
 //   - **tool** only the reference line;
 //   - anything else (a system aside like `[model changed: …]`) as-is.
+//
+// A body is read through `content.Describe`, never through a type assertion, and the
+// difference is a picture: `message["content"].(string)` yields "" for an array, and an
+// array is what a message with an image in it has. So a user turn that said "分析这张
+// 图" and attached a screenshot would enter the summary as **nothing at all** — and the
+// summary is the only record of that stretch of history the model keeps, which makes it
+// the one place where losing a fact is permanent.
 func DescribeMessage(message map[string]any) string {
 	role, _ := message["role"].(string)
 	text, _ := message["content"].(string)
+	if text == "" {
+		// Documents what the helper above is for: an image body has no string form, and
+		// the described form names the picture instead of dropping it.
+		text = content.Describe(message["content"])
+	}
 
 	if role == "tool" {
 		if text == "" {

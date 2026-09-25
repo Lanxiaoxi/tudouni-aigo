@@ -39,6 +39,14 @@ type Representation string
 const (
 	// RepresentationMetadata gives facts about the body and no body at all.
 	RepresentationMetadata Representation = "metadata"
+	// RepresentationThumbnail is a downscaled copy of a picture.
+	//
+	// It sits between metadata and preview, and it is only ever set on an image
+	// item: a text body has nothing between "the head of it" and "the facts about
+	// it". The rung exists because an image cannot be **truncated** — half a JPEG
+	// is not half an image — so the only honest way to make a picture cheaper
+	// without losing the picture is to send a smaller one.
+	RepresentationThumbnail Representation = "thumbnail"
 	// RepresentationPreview is a truncated head.
 	RepresentationPreview Representation = "preview"
 	// RepresentationRange is a line interval.
@@ -47,8 +55,17 @@ const (
 	RepresentationFull Representation = "full"
 )
 
-// representationOrder runs cheapest first, so this one list **is** the
-// degradation order. Writing the order twice is how the two copies drift.
+// representationOrder is the **text** ladder, cheapest first.
+//
+// Thumbnail is deliberately not in it. The ladder is not one order: a text body
+// walks full → range → preview → metadata, and a picture walks full → thumbnail →
+// metadata. Writing them as one list was tried and produces a rung either kind can
+// land on but only one kind can use — a "thumbnail" of a log file, or a "range" of
+// a JPEG — and the degradation loop then moves an item without shrinking it, which
+// is invisible in both the level and the token bill.
+//
+// The per-kind step is NextLevel below; this list stays the text ladder so the
+// existing behaviour of every text artifact is byte-for-byte unchanged.
 var representationOrder = [...]Representation{
 	RepresentationMetadata,
 	RepresentationPreview,
@@ -56,31 +73,86 @@ var representationOrder = [...]Representation{
 	RepresentationFull,
 }
 
-// Rank is the position in the order. Degrading means rank-1.
+// Rank is a total order over every level, cheapest first, with the image rung
+// sitting where its cost sits.
+//
+// **Nothing derives the next level from this number.** That was tried, and it
+// broke the moment a second ladder existed: `Degraded` indexed the text-only array
+// with a rank that counted the image rung, so `full` stepped down to `full` and
+// degradation became an item that moved without shrinking — the exact failure this
+// ladder is built to make impossible. Rank answers "which of these two is
+// cheaper"; the steps are written out in Degraded and NextLevel.
 func (r Representation) Rank() int {
 	switch r {
 	case RepresentationMetadata:
 		return 0
-	case RepresentationPreview:
+	case RepresentationThumbnail:
 		return 1
-	case RepresentationRange:
+	case RepresentationPreview:
 		return 2
-	case RepresentationFull:
+	case RepresentationRange:
 		return 3
+	case RepresentationFull:
+		return 4
 	default:
 		return -1
 	}
 }
 
-// Degraded steps down one level. **Already at metadata returns itself**, and the
-// caller reads that as "there is nothing left to give" — which is how it decides
-// to evict instead.
+// Degraded steps down one rung of the **text** ladder. **Already at metadata
+// returns itself**, and the caller reads that as "there is nothing left to give" —
+// which is how it decides to evict instead.
+//
+// Images do not go through here: see NextLevel, which is what the degradation loop
+// calls. It is `limit`ed to the text ladder on purpose — a picture sitting on
+// "full" must step to the thumbnail rung, and sending it through this function
+// would step it to "range", which renders the same bytes back.
 func (r Representation) Degraded() Representation {
-	rank := r.Rank()
-	if rank <= 0 {
+	switch r {
+	case RepresentationFull:
+		return RepresentationRange
+	case RepresentationRange:
+		return RepresentationPreview
+	case RepresentationPreview:
+		return RepresentationMetadata
+	default:
+		// Metadata is the floor; a picture's rungs and an unknown name both stay
+		// put here, and NextLevel is what moves them.
 		return r
 	}
-	return representationOrder[rank-1]
+}
+
+// NextLevel is the rung below this one **for this kind of body**, and it is the
+// only step the degradation loop is allowed to take.
+//
+// The two ladders:
+//
+//	text   full → range → preview → metadata → (evicted)
+//	image  full → thumbnail → metadata → (evicted)
+//
+// Why one function rather than a method on the representation: which rung comes
+// next is a fact about the *body*, and a representation on its own cannot know
+// whether it is describing a JPEG or a log file. Putting the decision on the
+// representation was the first shape tried, and it produced a "range" level on an
+// image (which renders the same bytes back, so degradation ran and nothing shrank)
+// and a "thumbnail" level on a text body (which is not a thing).
+func (r Representation) NextLevel(isImage bool) Representation {
+	if !isImage {
+		return r.Degraded()
+	}
+	switch r {
+	case RepresentationFull:
+		return RepresentationThumbnail
+	case RepresentationThumbnail:
+		return RepresentationMetadata
+	default:
+		// An image sitting on a text-only rung (a level restored from a session
+		// file written before pictures had their own ladder, say) steps to metadata
+		// rather than through a rung that cannot shrink a picture. Metadata is also
+		// the answer at metadata itself, and the caller reads that as "nothing left
+		// to give".
+		return RepresentationMetadata
+	}
 }
 
 // ParseRepresentation accepts the wire form.
@@ -91,7 +163,7 @@ func (r Representation) Degraded() Representation {
 // becomes a phenomenon nobody can reproduce.
 func ParseRepresentation(value string) (Representation, error) {
 	switch Representation(value) {
-	case RepresentationMetadata, RepresentationPreview,
+	case RepresentationMetadata, RepresentationThumbnail, RepresentationPreview,
 		RepresentationRange, RepresentationFull:
 		return Representation(value), nil
 	}
@@ -100,7 +172,8 @@ func ParseRepresentation(value string) (Representation, error) {
 }
 
 func representationNames() []string {
-	names := make([]string, 0, len(representationOrder))
+	names := make([]string, 0, len(representationOrder)+1)
+	names = append(names, string(RepresentationThumbnail))
 	for _, value := range representationOrder {
 		names = append(names, string(value))
 	}
@@ -182,6 +255,12 @@ func artifactSourceFromJSON(raw any) ArtifactSource {
 //   - Chars is the body length. It lives here rather than being counted on
 //     demand because the budget needs it on every step, and counting means
 //     reading the body into memory.
+//
+// Artifact also carries the two facts an image needs and a text body does not:
+// a byte size, and a mime type. They are not a separate type of artifact — an
+// image is an artifact whose type is "image" and whose body is bytes rather than
+// text — because the whole rest of the system (identity, dedupe, the manifest,
+// degradation, eviction) is about "a body on disk" and needs no second copy.
 type Artifact struct {
 	ID         string
 	Type       string
@@ -189,7 +268,15 @@ type Artifact struct {
 	ContentRef string
 	Metadata   map[string]any
 	CreatedAt  float64
-	Chars      int
+	// Chars is the body length **in characters**, which is the file-size measure a
+	// text artifact is described by. It is 0 for an image: a byte stream is not
+	// made of characters, and counting runes over a JPEG produces a number that
+	// looks like a size and is not one.
+	Chars int
+	// Bytes is the body length in bytes, for every artifact. It is what an image's
+	// size is reported from, and it is the fallback measure for a text body whose
+	// rune count nobody needs.
+	Bytes int
 }
 
 // ToJSON is the session-file form.
@@ -206,12 +293,13 @@ func (a Artifact) ToJSON() map[string]any {
 		"metadata":    metadata,
 		"created_at":  a.CreatedAt,
 		"chars":       a.Chars,
+		"bytes":       a.Bytes,
 	}
 }
 
 func artifactFromJSON(raw any) Artifact {
 	object, _ := raw.(map[string]any)
-	return Artifact{
+	artifact := Artifact{
 		ID:         textOf(object["id"]),
 		Type:       textOrDefault(object["type"], "text"),
 		Source:     artifactSourceFromJSON(object["source"]),
@@ -219,8 +307,56 @@ func artifactFromJSON(raw any) Artifact {
 		Metadata:   objectOf(object["metadata"]),
 		CreatedAt:  floatOf(object["created_at"]),
 		Chars:      intOf(object["chars"]),
+		Bytes:      intOf(object["bytes"]),
 	}
+	// A session file written before `bytes` existed has a text artifact with no
+	// byte count. The rune count stands in for it, which is the honest reading:
+	// for the bodies those files hold, the two numbers were the same fact.
+	if artifact.Bytes == 0 && !artifact.IsImage() {
+		artifact.Bytes = artifact.Chars
+	}
+	return artifact
 }
+
+// IsImage reports whether this artifact's body is a picture.
+//
+// The test is the type, never the mime metadata: mime is a fact the read path
+// recorded, while the type is what decides how the body may be rendered and
+// degraded, and a body whose mime sniffing failed is still an image.
+func (a Artifact) IsImage() bool { return a.Type == TypeImage }
+
+// Size is the body size in the measure that suits this artifact: bytes for a
+// picture, characters for text.
+func (a Artifact) Size() int {
+	if a.IsImage() {
+		return a.Bytes
+	}
+	return a.Chars
+}
+
+// MetadataString reads one metadata field as a string. Absent and non-string are
+// both the empty answer, because metadata is untyped by design.
+func (a Artifact) MetadataString(key string) string { return textOf(a.Metadata[key]) }
+
+// MetadataInt reads one metadata field as an int.
+func (a Artifact) MetadataInt(key string) int { return intOf(a.Metadata[key]) }
+
+// TypeImage is the artifact type of a picture. It is a named constant because
+// three places test it (the renderer, the degradation ladder and the vision gate)
+// and a string literal repeated three times is how one of them drifts.
+const TypeImage = "image"
+
+// Image metadata keys. They live in Metadata rather than in new Artifact fields
+// because they are "facts the tool knew and this layer cannot derive" — exactly
+// what that bag is for — and because an older session file that lacks them reads
+// as "unknown", which is the correct answer.
+const (
+	MetaMIME     = "mime"
+	MetaWidth    = "width"
+	MetaHeight   = "height"
+	MetaName     = "name"
+	MetaVariants = "variants"
+)
 
 // ContextItem is "how the model should see this information right now".
 //

@@ -747,6 +747,89 @@ func TestTheParentRouteIsTheDefault(t *testing.T) {
 	}
 }
 
+// TestAChildsVisionGateReadsTheChildsOwnModel.
+//
+// A delegation may be routed to another model (see resolveChild), so the child's
+// answer to "may pictures be sent" has to be about the model **it** is about to ask.
+// Reading the parent's answer would be a claim about a request the parent is not
+// making — and it errs in the direction that matters, because a model that cannot see
+// would be sent the picture.
+//
+// The three readings are checked together because they are one rule:
+//
+//	the child's model declares vision   → true
+//	the child's model does not          → false
+//	the child's model is not in the catalog → false (nobody declared it)
+func TestAChildsVisionGateReadsTheChildsOwnModel(t *testing.T) {
+	cases := []struct {
+		name     string
+		catalog  state.Registry
+		modelID  string
+		provider string
+		want     bool
+	}{
+		{
+			name: "declares vision",
+			catalog: state.Registry{Providers: []state.Provider{{
+				Name: "p", Models: []state.ModelRef{{ID: "seer", Vision: true}},
+			}}},
+			modelID: "seer", provider: "p", want: true,
+		},
+		{
+			name: "does not declare vision",
+			catalog: state.Registry{Providers: []state.Provider{{
+				Name: "p", Models: []state.ModelRef{{ID: "blind", Vision: false}},
+			}}},
+			modelID: "blind", provider: "p", want: false,
+		},
+		{
+			name: "the model is not in the catalog",
+			catalog: state.Registry{Providers: []state.Provider{{
+				Name: "p", Models: []state.ModelRef{{ID: "other", Vision: true}},
+			}}},
+			modelID: "unknown", provider: "p", want: false,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			tool := &Tool{Config: Config{Catalog: testCase.catalog}}
+			chat := &namedChat{model: testCase.modelID, provider: testCase.provider}
+			if got := tool.modelVisionFor(chat)(); got != testCase.want {
+				t.Errorf("modelVisionFor(%s) = %v, want %v", testCase.modelID, got, testCase.want)
+			}
+		})
+	}
+
+	// A child built without a client cannot ask anything, so the gate answers false
+	// rather than panicking on a nil interface.
+	tool := &Tool{Config: Config{}}
+	if tool.modelVisionFor(nil)() {
+		t.Error("a child with no client reported that pictures may be sent")
+	}
+}
+
+// namedChat is a client that only knows its own name, which is all the vision gate
+// reads.
+type namedChat struct {
+	model    string
+	provider string
+}
+
+func (c *namedChat) Complete([]map[string]any, []map[string]any,
+	model.CompleteOptions) (model.ModelResponse, error) {
+	return model.ModelResponse{}, nil
+}
+
+func (c *namedChat) SwitchModel(string) bool       { return true }
+func (c *namedChat) Install(model.Route) bool      { return true }
+func (c *namedChat) SetReasoning(bool, string)     {}
+func (c *namedChat) ModelName() string             { return c.model }
+func (c *namedChat) ProviderName() string          { return c.provider }
+func (c *namedChat) BaseURL() string               { return "http://localhost" }
+func (c *namedChat) Route() model.Route            { return model.Route{Name: c.provider, Model: c.model} }
+func (c *namedChat) SameEndpoint(model.Route) bool { return true }
+
 // errNoRoute is a resolver failure for the tests above.
 type errNoRoute struct{}
 

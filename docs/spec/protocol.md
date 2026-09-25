@@ -159,11 +159,12 @@ delta 只是让它更早出现。
 一个不少。这一条让"审计 = 协议"在字节层面成立，而好处很实际：`--audit` 能看到的东西
 你的界面都能看到，两边永远对得上。
 
-八种 `kind`：
+`kind` 列表如下。**前端必须忽略不认识的 kind 和字段**，不许崩 —— 这份表只保证
+"这个版本会发哪些"，下一版加一个 kind 不该让旧前端炸掉。
 
 | kind | 你会关心的字段 |
 |---|---|
-| `run_started` | `user_input`（预览） |
+| `run_started` | `user_input`（预览）、`model`、`provider`、`thinking`、`effort`、`effort_levels` |
 | `model_call` | `status`（ok/error/fatal）、`attempt`、`duration_ms`、`backoff_ms`、`prompt_tokens`/`cached_tokens`/`miss_tokens`/`completion_tokens`、`tool_calls`、**`reasoning`（全文）**、`streamed`/`stream_chunks`/`streamed_chars`（流式时才有） |
 | `tool_call` | `tool`、`call_id`、`tool_index`、`arguments`（**200 字符预览**） |
 | `tool_result` | `tool`、`call_id`、`tool_index`、`status`、`chars`、`duration_ms`、`parallel`、工具自带字段 |
@@ -171,6 +172,23 @@ delta 只是让它更早出现。
 | `tool_batch` | `calls`、`wall_ms`、`tools`（只有并发批次才有这条） |
 | `run_finished` | `stop_reason`、`duration_ms` |
 | `delta_reset` | 只有 `run_id` / `step`：**这一步的流式正文作废了**（重试、或者网关不接受 `stream_options` 时的重发）。见 3.8 |
+| `context_degraded` | `items`、`estimated`、`limit`、`fixed`、`changes`（`full->range` 这样的列表）：这一步因为超预算把哪些 Artifact 降了档。**正文不进审计**（它还在盘上） |
+| `context_compacted` | `folded`、`folded_total`、`messages`、`summary_id`、`summary_chars`、`generation`、`before`、`after`、`duration_ms`、`model`：这一次把最早的多少条历史折成了摘要。**摘要正文也不进审计**（它是一份 Artifact） |
+| `goal_round` | `decision` 等：目标驱动这一轮排了还是跳了、为什么。见 `internal/runtime/goal_driver.go` |
+| `image_attached` | `status` + 该状态自己的字段，见下。一次 `status` 有四种取值，它们回答的是同一个问题（"这条消息里被点名的图片怎么样了"）的四个结果，所以是一个 kind 加一个字段，而不是四件事件 —— 拆开的话，读的人要再把三件合起来才能数出"一共点名了几张" |
+
+**`image_attached` 的四种 `status`**：
+
+| status | 字段 | 意思 |
+|---|---|---|
+| `attached` | `artifact_id`、`name`、`path`、`mime`、`bytes`、`width`、`height` | 图片已进上下文（`artifact_id` 是它的条目） |
+| `skipped` | `path`、`reason` | 点名了但没进来：不是一个真图片、超过单张上限、读不了。**只有用户能修**，所以说清是哪个文件 |
+| `over_limit` | `limit`、`rest`、`paths` | 一次点名了太多张，超出的这些没进来。**被点名的列出来**，不只是个数 |
+| `refused` | `names`、`model` | 当前模型不能收图片（目录里没声明 `vision`），所以**一张都没进来**。这一轮照跑，回答只关于文字 —— 所以这条事件是"模型从没看过那张截图"的**唯一**证据 |
+
+最后这一条尤其要注意：`refused` 时**不报错**。报错会让这个功能在所有没声明
+`vision` 的模型上不可用，而"悄悄丢掉图片"是唯一事后无法发现的失败（模型会照着
+上下文里的文字自信地编一段关于图片的回答）。所以是"照跑 + 说清楚"。
 
 **四件要记住的**：
 

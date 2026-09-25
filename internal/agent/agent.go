@@ -198,6 +198,18 @@ type Config struct {
 	// Processor turns one tool execution into artifacts. It travels with Context:
 	// without a store to collect into, it has nowhere to put anything.
 	Processor *context.ToolResultProcessor
+	// Vision reports whether the model in use can be sent pictures.
+	//
+	// It is a function rather than a bool because the answer changes with the
+	// session's model, and the agent outlives a model switch. Nil means "nobody
+	// declared", which is read as **false**: the safe direction is to refuse a
+	// picture rather than to send one to a model that silently ignores it, because
+	// the second outcome is an answer about a picture nobody looked at.
+	//
+	// It is an injected predicate rather than the catalogue entry itself so this
+	// package does not have to know what a catalogue is — the same reason Context
+	// and Ask are injected.
+	Vision func() bool
 }
 
 // Agent runs one session's turns.

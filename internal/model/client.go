@@ -139,6 +139,14 @@ type OpenAICompatible struct {
 
 	thinking bool
 	effort   string
+	// images fetches the bytes a picture part points at. It is how this package
+	// gets base64 without knowing what an artifact store is: the layer that owns
+	// the store supplies this function, and the wire code stays free of it.
+	//
+	// Nil is a real state — a test adapter, or a runtime with no context layer —
+	// and a picture then becomes a sentence naming the file rather than an empty
+	// block. See internal/model/media.go.
+	images ImageLoader
 }
 
 // Options configures a new adapter.
@@ -155,6 +163,10 @@ type Options struct {
 	// Timeout is how long one request may take. A streamed answer can legitimately
 	// take minutes, so this is generous.
 	Timeout time.Duration
+	// Images resolves a picture part to its bytes. It is the only way this package
+	// ever sees a picture, and it is optional: without it a picture is described in
+	// words instead of being sent.
+	Images ImageLoader
 }
 
 // New creates an adapter.
@@ -190,6 +202,7 @@ func New(options Options) (*OpenAICompatible, error) {
 		route:    route,
 		thinking: options.Thinking,
 		effort:   options.Effort,
+		images:   options.Images,
 	}, nil
 }
 
@@ -386,6 +399,11 @@ func (m *OpenAICompatible) completeOnce(messages []map[string]any, tools []map[s
 		tools:    tools,
 		stream:   sink != nil,
 		knobs:    knobs,
+		// The pictures of this request, resolvable to bytes. It is handed to the
+		// dialect rather than resolved here because a part names an artifact id,
+		// and only the dialect knows what its own protocol wants done with the
+		// bytes — base64 next to a media type, a data URL, or a nested `source`.
+		images: m.images,
 		// Asked for only when the protocol has the parameter at all, and only
 		// while this gateway has not already refused it. Both halves are needed:
 		// the first stops the Messages shape from being sent a chat completions

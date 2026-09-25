@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -71,17 +72,19 @@ const (
 
 // NewArtifactID derives a stable id from content.
 func NewArtifactID(content string) string {
-	return "art_" + contentDigest(content)[:HashChars]
+	return "art_" + contentDigest([]byte(content))[:HashChars]
 }
 
 // contentDigest is the sha256 of the body in hex.
 //
-// Go strings are byte sequences and are not validated as UTF-8, so arbitrary
-// bytes pass through unharmed. The Python original needed an explicit
-// "surrogatepass" here for the same reason: computing a hash must not be the
-// place where saving a tool result fails.
-func contentDigest(content string) string {
-	sum := sha256.Sum256([]byte(content))
+// The body is bytes rather than a string because a picture has no characters:
+// re-encoding a JPEG through a Go string would not round-trip, and every id in
+// the store would then depend on an encoding. Go strings *are* byte sequences and
+// are not validated as UTF-8, so the text path passes through unharmed — the
+// Python original needed an explicit "surrogatepass" for the same reason:
+// computing a hash must not be the place where saving a tool result fails.
+func contentDigest(body []byte) string {
+	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -225,7 +228,7 @@ func (s *ArtifactStore) saveManifestLocked() error {
 	return os.Rename(temporary, s.ManifestPath())
 }
 
-// Create takes a body in and returns its Artifact.
+// Create takes a text body in and returns its Artifact.
 //
 // Body first, metadata second: the id is known before anything is written
 // (content-addressed), so the write order is "body, then index". The other order
@@ -233,17 +236,36 @@ func (s *ArtifactStore) saveManifestLocked() error {
 // that state has to be handled as "the body is gone" on the read side. In this
 // order it cannot arise.
 func (s *ArtifactStore) Create(content, artifactType string, source ArtifactSource, metadata map[string]any) (Artifact, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.createLocked(content, artifactType, source, metadata)
+	return s.CreateBytes([]byte(content), artifactType, source, metadata)
 }
 
-func (s *ArtifactStore) createLocked(content, artifactType string, source ArtifactSource, metadata map[string]any) (Artifact, error) {
+// CreateBytes takes a body in as bytes and returns its Artifact.
+//
+// It is the same door as Create, and a picture comes through this one because a
+// picture is a byte stream: a JPEG read into a Go string is not invalid UTF-8 in
+// the sense that matters for hashing (Go strings are byte sequences), but
+// `runeLen` over it counts replacement characters and the body would then be
+// *described* by a number that is not its size. So an image is stored, hashed and
+// measured as bytes from end to end, and only the dialect that has to put it on a
+// wire ever turns it into text.
+//
+// **The base64 never reaches here.** That is the design's central rule: what goes
+// into the store is the file's own bytes, and the encoding happens once, in the
+// adapter, for the one request that needs it. Storing base64 would inflate the
+// body by a third and make every later turn of the session carry the same picture
+// again.
+func (s *ArtifactStore) CreateBytes(body []byte, artifactType string, source ArtifactSource, metadata map[string]any) (Artifact, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.createLocked(body, artifactType, source, metadata)
+}
+
+func (s *ArtifactStore) createLocked(body []byte, artifactType string, source ArtifactSource, metadata map[string]any) (Artifact, error) {
 	s.ensureLoadedLocked()
 	if artifactType == "" {
 		artifactType = "text"
 	}
-	digest := contentDigest(content)
+	digest := contentDigest(body)
 	// The key uses the **short** hash, and it must be exactly as long as what
 	// dedupeKey reads back off disk — otherwise "created just now" and "left by a
 	// previous session" do not match, and the symptom is a duplicate artifact
@@ -274,7 +296,7 @@ func (s *ArtifactStore) createLocked(content, artifactType string, source Artifa
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return Artifact{}, err
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := os.WriteFile(path, body, 0o644); err != nil {
 		return Artifact{}, err
 	}
 
@@ -282,6 +304,11 @@ func (s *ArtifactStore) createLocked(content, artifactType string, source Artifa
 	for name, value := range metadata {
 		copied[name] = value
 	}
+	// Chars is a rune count and Bytes is a byte count, and they are two numbers
+	// rather than one because a picture has no characters: counting runes over a
+	// JPEG produces a plausible-looking size that is not the file's. An image
+	// artifact therefore reports 0 chars and its real byte count, and `Size()`
+	// picks the right one for the kind.
 	artifact := Artifact{
 		ID:         artifactID,
 		Type:       artifactType,
@@ -289,11 +316,15 @@ func (s *ArtifactStore) createLocked(content, artifactType string, source Artifa
 		ContentRef: path,
 		Metadata:   copied,
 		CreatedAt:  s.Clock(),
-		Chars:      runeLen(content),
+		Chars:      runeLen(string(body)),
+		Bytes:      len(body),
+	}
+	if artifactType == TypeImage {
+		artifact.Chars = 0
 	}
 	s.items[artifactID] = artifact
 	s.order = append(s.order, artifactID)
-	s.rememberLocked(artifactID, content)
+	s.rememberLocked(artifactID, string(body))
 	s.byKey[key] = artifactID
 	return artifact, s.saveManifestLocked()
 }
@@ -310,6 +341,40 @@ func (s *ArtifactStore) disambiguateLocked(base string) string {
 			return candidate
 		}
 	}
+}
+
+// UpdateMetadata rewrites one artifact's metadata and the index.
+//
+// It exists for the one case where a fact about a body is discovered **after** the
+// body is stored: a picture's thumbnail, which cannot be made until the bytes have
+// been identified and measured. The alternative — passing the thumbnail in at
+// creation time — would mean attaching an image in two steps (inspect, then store),
+// and the first step would have to be a second implementation of "read this file
+// and decide whether it is a picture" for every caller.
+//
+// The body is never touched. Only the metadata changes, so the content-addressed id
+// stays correct: it is derived from the bytes, and the bytes are the same bytes.
+// An unknown id is an error rather than a silent no-op, because the only caller is
+// holding an artifact it just stored.
+func (s *ArtifactStore) UpdateMetadata(artifact Artifact) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureLoadedLocked()
+
+	if _, present := s.items[artifact.ID]; !present {
+		return fmt.Errorf("no artifact %s to update", artifact.ID)
+	}
+	copied := map[string]any{}
+	for name, value := range artifact.Metadata {
+		copied[name] = value
+	}
+	// The id, type, source, body reference and timestamps are the store's to keep:
+	// a caller that passed a copy carrying stale values would otherwise silently
+	// re-point the artifact at another body.
+	stored := s.items[artifact.ID]
+	stored.Metadata = copied
+	s.items[artifact.ID] = stored
+	return s.saveManifestLocked()
 }
 
 // Delete removes one artifact: body file and index entry. A missing id is not an
@@ -352,6 +417,24 @@ func (s *ArtifactStore) Get(artifactID string) (Artifact, bool) {
 	return artifact, ok
 }
 
+// Exists reports whether this artifact has a body on disk.
+//
+// It is a separate question from Get, and the renderer needs it as such: "the
+// index knows about this artifact" and "the bytes are really there" are different
+// facts, and Get answers only the first. Answering them with one call is how a
+// deleted body renders as an empty picture instead of as a sentence saying it is
+// gone.
+func (s *ArtifactStore) Exists(artifactID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureLoadedLocked()
+	if _, present := s.items[artifactID]; !present {
+		return false
+	}
+	_, err := os.Stat(s.refPath(artifactID))
+	return err == nil
+}
+
 // All returns every artifact in creation order. It does not read bodies.
 func (s *ArtifactStore) All() []Artifact {
 	s.mu.Lock()
@@ -372,29 +455,51 @@ func (s *ArtifactStore) Len() int {
 	return len(s.items)
 }
 
-// Content returns the whole body, or false when it cannot be fetched.
+// Content returns the whole body as text, or false when it cannot be fetched.
 //
 // It does not raise, for the same reason the budget tolerates a missing body: a
 // reference whose artifact was deleted is a session-file problem, not a reason
 // to abort the turn.
+//
+// **It refuses an image.** A picture has no text body, and the `string` answer
+// would be the raw JPEG handed to a caller that asked for text — which is how a
+// picture ends up rendered into a prompt as mojibake. Callers that want the bytes
+// of any body ask for Bytes; this one is "the text of this artifact", and an
+// image does not have one.
 func (s *ArtifactStore) Content(artifactID string) (string, bool) {
+	artifact, known := s.Get(artifactID)
+	if !known || artifact.IsImage() {
+		return "", false
+	}
+	raw, ok := s.Bytes(artifactID)
+	if !ok {
+		return "", false
+	}
+	return string(raw), true
+}
+
+// Bytes returns the whole body as bytes, for any kind of artifact.
+//
+// One read path for both kinds, because "the body on disk" is one thing: the text
+// callers above and the image callers below differ in what they do with the bytes,
+// not in how they get them.
+func (s *ArtifactStore) Bytes(artifactID string) ([]byte, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureLoadedLocked()
 
 	if text, ok := s.cache[artifactID]; ok {
-		return text, true
+		return []byte(text), true
 	}
 	if _, present := s.items[artifactID]; !present {
-		return "", false
+		return nil, false
 	}
 	raw, err := os.ReadFile(s.refPath(artifactID))
 	if err != nil {
-		return "", false
+		return nil, false
 	}
-	text := string(raw)
-	s.rememberLocked(artifactID, text)
-	return text, true
+	s.rememberLocked(artifactID, string(raw))
+	return raw, true
 }
 
 // Lines splits the body, or reports that it cannot be fetched.

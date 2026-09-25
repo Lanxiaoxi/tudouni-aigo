@@ -647,7 +647,13 @@ func printHistory(session *state.Session) {
 
 	for index, message := range session.Messages {
 		role, _ := message["role"].(string)
-		content, _ := message["content"].(string)
+		// Read through `state.MessageText`, not through a type assertion on the body:
+		// an assertion yields "" for an array, and an array is what a message carrying
+		// a picture has — so this row would print as a blank one. `--history` is the
+		// command a person runs to find out what a session actually contained, and a
+		// message that shows nothing is indistinguishable from one that said nothing.
+		// The helper names the picture instead.
+		content, _ := state.MessageText(message)
 		preview := clipFlat(content, historyPreviewChars)
 		prefix := fmt.Sprintf("%3d %-9s ", index, role)
 

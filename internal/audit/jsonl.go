@@ -39,6 +39,22 @@ const (
 	// questions, and merging them would make "--audit" unable to say whether an
 	// autonomous loop ever actually ran.
 	KindGoalRound = "goal_round"
+	// KindImageAttached records one picture entering a session's context, or one
+	// that was named and not attached.
+	//
+	// It is a kind of its own rather than a `tool_call`, because the picture was
+	// not produced by a tool the model chose — the user named a file and the
+	// runtime picked it up. Reading it back, "which pictures did this session
+	// carry, and what happened to the ones that did not make it" is a question
+	// about the context, and it has to be answerable without inferring it from
+	// artifact types.
+	//
+	// The same kind carries the refusals and the skips, discriminated by `status`:
+	// "attached", "skipped", "over_limit", "refused". One kind with a status field
+	// is deliberate — the four are one event ("a picture was named") with four
+	// outcomes, and splitting them would make a reader merge three of them back
+	// together to count how many were named at all.
+	KindImageAttached = "image_attached"
 )
 
 // Event builds one audit record with the fields every record carries.

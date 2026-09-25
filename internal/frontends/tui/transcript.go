@@ -510,6 +510,87 @@ func batchLine(payload map[string]any) renderLine {
 	}}
 }
 
+// imageLine is the row a picture leaves behind when it is attached, skipped or
+// refused.
+//
+// It is drawn **inside the turn** rather than as a startup notice, and the two bad
+// outcomes are the reason: the turn runs either way. When a picture is refused
+// because the model cannot see one, or skipped because the file is not really an
+// image, the answer that comes back is about the words alone — and without this row
+// nothing on the screen would say the picture was never looked at. The attached case
+// exists for the same reason in reverse: the user sees their screenshot was picked up
+// rather than having to infer it from the answer.
+//
+// The status decides the mark and the colour: attached is a process line, and
+// anything else warns.
+func imageLine(payload map[string]any) renderLine {
+	status, _ := protocol.String(payload, "status")
+	if status == "" {
+		status = "attached"
+	}
+	if status != "attached" {
+		return renderLine{segments: []seg{
+			{text: "  ", role: "process"},
+			{text: imageBadNews(payload, status), role: "warn"},
+		}}
+	}
+
+	name, _ := protocol.String(payload, "name")
+	if name == "" {
+		name, _ = protocol.String(payload, "path")
+	}
+	size := humanSize(intOf(payload["bytes"]))
+	width, height := intOf(payload["width"]), intOf(payload["height"])
+	text := ""
+	if width > 0 && height > 0 {
+		text = i18n.T("event.image.attached", "name", name, "width", width, "height", height, "size", size)
+	} else {
+		// The dimensions are omitted rather than shown as `0×0`: a made-up size reads
+		// as a measured one.
+		text = i18n.T("event.image.attached_plain", "name", name, "size", size)
+	}
+	return renderLine{segments: []seg{
+		{text: "  ", role: "process"},
+		{text: text, role: "process"},
+	}}
+}
+
+// imageBadNews renders the three outcomes that are not "it worked".
+func imageBadNews(payload map[string]any, status string) string {
+	switch status {
+	case "skipped":
+		path, _ := protocol.String(payload, "path")
+		reason, _ := protocol.String(payload, "reason")
+		return i18n.T("event.image.skipped", "path", path, "reason", reason)
+	case "over_limit":
+		limit := intOf(payload["limit"])
+		rest := intOf(payload["rest"])
+		return i18n.T("event.image.over_limit",
+			"limit", limit, "rest", rest, "paths", strings.Join(wordsOf(payload["paths"]), i18n.T("list.separator")))
+	default:
+		// "refused": the model in use cannot be sent pictures. It names them, because
+		// "which picture" is the question that follows — the user may want to switch
+		// models and ask again.
+		names := strings.Join(wordsOf(payload["names"]), i18n.T("list.separator"))
+		model, _ := protocol.String(payload, "model")
+		return i18n.T("event.image.refused", "names", names, "model", model)
+	}
+}
+
+// humanSize renders a byte count for one screen row.
+func humanSize(bytes int) string {
+	switch {
+	case bytes <= 0:
+		return "?"
+	case bytes >= 1024*1024:
+		return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
+	case bytes >= 1024:
+		return fmt.Sprintf("%dKB", bytes/1024)
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
 // thinkingBody renders the reasoning text as a quote block: the sunken
 // background bounds it and the vertical bar marks the edge. Both paths — first
 // paint and Ctrl+T expand — go through this one constructor, so folding a block

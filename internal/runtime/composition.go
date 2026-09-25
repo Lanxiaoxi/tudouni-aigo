@@ -271,6 +271,12 @@ type Runtime struct {
 	// ContextValue is the session's context ledger: which artifacts are in play,
 	// at what level, and what has been folded away.
 	ContextValue *context.Manager
+	// Workspace is the boundary around the directory the agent works in. It is
+	// kept on the runtime rather than passed to each caller because attach-time
+	// work (resolving a picture the user named) has to go through the **same**
+	// boundary as the file tools: a second path check is how one door ends up
+	// guarded and another does not.
+	Workspace *tools.Workspace
 	// Skills is the loaded-skill board, which the payload tail renders from.
 	Skills *builtin.SkillBoard
 	// Goal is the session's long-running objective: the board the goal tools write
@@ -397,10 +403,20 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		}
 	}
 
+	// The picture loader is created **empty** and filled in once the context layer
+	// exists. The order is forced by the dependencies rather than chosen: the chat
+	// adapter needs the model's window to build its route, and the window comes
+	// from the catalogue — so the adapter (and therefore the loader it carries) is
+	// built before the artifact store it will read pictures from. Requests are
+	// built long after assembly has finished, so the field is written once and read
+	// only later.
+	images := &artifactImages{}
+
 	chat, err := model.New(model.Options{
 		Route:    routeOf(chosenProvider, chosen, session.SessionID),
 		Thinking: modelState.Thinking(),
 		Effort:   modelState.Effort(),
+		Images:   images.Load,
 	})
 	if err != nil {
 		return nil, err
@@ -428,6 +444,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		Resumed:        options.Resumed,
 		ModelState:     modelState,
 		Catalog:        catalog,
+		Workspace:      workspace,
 		mcpNames:       mcpNames,
 		httpClient:     &http.Client{Timeout: 120 * time.Second},
 		startedAt:      time.Now(),
@@ -688,6 +705,9 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		return nil, err
 	}
 	runtimeValue.ContextValue = ctxManager
+	// The loader gets its store now that the store exists. See where it was
+	// created for why the two are not built together.
+	images.manager = ctxManager
 	for _, artifactID := range missingBodies {
 		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "context",
 			i18n.T("notice.context.missing_body", "id", artifactID)))
@@ -761,6 +781,16 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		OnFatal:    runtimeValue.RecoverAuth,
 		Context:    ctxManager,
 		Processor:  processor,
+		// The vision gate, and it is a **function** rather than the value it
+		// returns: the model can be switched mid-session, and a bool captured here
+		// would answer for the model this session started on. The renderer consults
+		// it on every render, which is what makes "attached while a vision model was
+		// in use, then switched away" behave rather than fail.
+		//
+		// A model that has not declared `vision` answers false, so the safe
+		// direction is the default: a picture is described in words instead of being
+		// sent to a model nobody promised could see, and the session keeps working.
+		Vision: runtimeValue.modelVision,
 	})
 	runtimeValue.OnEventHook = options.OnEventHook
 	return runtimeValue, nil
@@ -1406,8 +1436,14 @@ func (r *Runtime) ClearStop() {}
 func (r *Runtime) MarkStop() {}
 
 // RunTurn implements protocol.Runtime.
+//
+// The opening message is composed here rather than passed through as a bare string,
+// because this is the one point where a user's text can be scanned for pictures:
+// `attachPictures` resolves whatever the message names, stores the bytes, and
+// returns the body — which is a plain string whenever nothing was attached, so a
+// session that never used the feature sends exactly what it always sent.
 func (r *Runtime) RunTurn(text string) (string, error) {
-	return r.Agent.Run(text)
+	return r.Agent.RunMessages(r.turnMessages(text))
 }
 
 // SetAutopilot implements protocol.Runtime.

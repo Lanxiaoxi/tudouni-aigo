@@ -824,6 +824,19 @@ func (m *model) handleEvent(payload map[string]any) {
 		if m.current != nil {
 			m.currentAppend(batchLine(payload))
 		}
+	case "image_attached":
+		// It arrives **before `run_started`**, because the attachment is made while the
+		// user's message is being composed — so `m.current` is usually nil and
+		// `currentAppend` lands the row as a standalone notice just above the turn it
+		// belongs to. That is the right place for it either way: what it reports happened
+		// to the message, not during the model's work.
+		//
+		// It is not filtered by quiet mode, unlike the tool lines. Quiet mode exists to
+		// keep twenty read-only calls from flooding the screen; a picture that was
+		// **refused** is one row per message and is the only evidence the model never saw
+		// the screenshot. Silencing it would leave a user with an answer about their
+		// words and no way to tell why.
+		m.currentAppend(imageLine(payload))
 	case "run_finished":
 		reason, _ := protocol.String(payload, "stop_reason")
 		duration, _ := protocol.Int(payload, "duration_ms")
@@ -1558,6 +1571,17 @@ func noticesOf(payload map[string]any) []noticeRecord {
 	return out
 }
 
+// textOf reads a restored message's body for the transcript.
+//
+// It is `state.MessageText`'s job done here rather than called from there, and the
+// duplication is on purpose: this package turns a body into **rows to draw**, and the
+// two have already drifted once (the runtime's read returns a boolean, this one has to
+// produce a line either way).
+//
+// **A picture is named, not dropped.** A restored message that carried a screenshot
+// would otherwise replay as the bare sentence that came with it — so a session
+// reopened with `/resume` shows a question about a picture with no sign that there was
+// one, which is the one thing a replay exists to prevent.
 func textOf(record map[string]any) string {
 	switch content := record["content"].(type) {
 	case string:
@@ -1565,15 +1589,54 @@ func textOf(record map[string]any) string {
 	case []any:
 		var parts []string
 		for _, item := range content {
-			if part, ok := item.(map[string]any); ok {
-				if text, ok := part["text"].(string); ok {
-					parts = append(parts, text)
-				}
+			part, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if text, ok := part["text"].(string); ok {
+				parts = append(parts, text)
+				continue
+			}
+			if kind, _ := part["type"].(string); kind == "image" {
+				parts = append(parts, imageLabelOf(part))
 			}
 		}
 		return strings.Join(parts, "")
 	default:
 		return ""
+	}
+}
+
+// imageLabelOf names one picture part of a restored body.
+//
+// The label is in English, like every other line the interface draws — the model's
+// copy of it lives in `internal/content` and is deliberately not read from here, so
+// that changing what the **model** is told cannot change what the interface shows.
+func imageLabelOf(part map[string]any) string {
+	name, _ := part["name"].(string)
+	if name == "" {
+		name, _ = part["mime"].(string)
+	}
+	if name == "" {
+		name = "image"
+	}
+	width, height := intOfField(part["width"]), intOfField(part["height"])
+	if width > 0 && height > 0 {
+		return i18n.T("image.label.sized", "name", name, "width", width, "height", height)
+	}
+	return i18n.T("image.label", "name", name)
+}
+
+func intOfField(value any) int {
+	switch number := value.(type) {
+	case int:
+		return number
+	case int64:
+		return int(number)
+	case float64:
+		return int(number)
+	default:
+		return 0
 	}
 }
 

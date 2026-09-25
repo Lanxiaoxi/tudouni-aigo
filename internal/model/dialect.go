@@ -148,6 +148,12 @@ type dialect interface {
 	// reasoning was actually asked for and the endpoint has shown it wants it — see
 	// ReasoningKnobs.ReplayReasoning, which is what the second parameter carries to
 	// the one dialect that takes the message list whole.
+	//
+	// **A picture is not handled here.** This method decides which of a message's
+	// fields survive; turning one of them into this protocol's image syntax is done
+	// by the dialect's own encoder, which has the request (and therefore the image
+	// loader) in hand. Splitting it that way is what stops two of the three dialects
+	// from carrying a parameter only one of them can use.
 	onTheWireMessage(message map[string]any, replayReasoning bool) map[string]any
 }
 
@@ -158,6 +164,12 @@ type dialectRequest struct {
 	tools    []map[string]any
 	stream   bool
 	knobs    ReasoningKnobs
+	// images fetches the bytes a picture part points at. It is how the wire layer
+	// gets base64 without knowing what an artifact store is, and it is handed
+	// down from the adapter, which was handed it at construction. Nil means "no
+	// store is wired up", and a picture then becomes a sentence rather than an
+	// empty block — see internal/model/media.go.
+	images ImageLoader
 	// includeStreamUsage is whether to ask for token usage on a streamed request.
 	//
 	// It is computed by the transport, which owns the one fact this depends on
