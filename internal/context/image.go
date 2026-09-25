@@ -7,15 +7,16 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
-	"net/http"
-	"path/filepath"
-	"strconv"
 	"strings"
 
-	// The decoders are registered for their side effect: `image.DecodeConfig` and
-	// `image.Decode` only know a format whose package has been linked in, and a
-	// missing registration shows up as "unknown image format" on a file that is
-	// perfectly readable by every other program on the machine.
+	// The decoders are registered for their side effect: `image.Decode` only knows
+	// a format whose package has been linked in, and a missing registration shows
+	// up as "unknown image format" on a file that is perfectly readable by every
+	// other program on the machine.
+	//
+	// `image.DecodeConfig` — the header-only read behind `content.InspectImage` —
+	// lives with the rest of the shared knowledge in `internal/content`, which
+	// registers the same three for the same reason.
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -41,23 +42,6 @@ import (
 // The encoding happens in the provider adapter, at the last possible moment, and
 // this package never sees it.
 const (
-	// MaxImageBytes is how large an image file may be before it is refused.
-	//
-	// Five megabytes is the smallest published request-side limit of the three
-	// protocols this program speaks (the Messages shape's per-image cap, in its
-	// base64 form, which is a third larger than the file). Refusing here rather
-	// than letting the endpoint refuse is the difference between a sentence the
-	// user can act on and a 400 from a gateway.
-	MaxImageBytes = 5 * 1024 * 1024
-
-	// MaxImagePixels caps the decoded area.
-	//
-	// It is a **decompression-bomb guard**, not a quality judgement: a 20000×20000
-	// PNG is a few hundred kilobytes on disk and 1.6GB in memory once decoded, and
-	// this program decodes every image it accepts in order to measure it. Refusing
-	// the file costs a message; decoding it costs the process.
-	MaxImagePixels = 40_000_000
-
 	// ThumbnailMaxDimension is the long edge of a thumbnail.
 	//
 	// 1024 is chosen against the providers rather than against the screen: the two
@@ -71,6 +55,22 @@ const (
 	// where JPEG stops being visibly worse for a picture that is already a quarter
 	// of the original's width.
 	ThumbnailJPEGQuality = 80
+)
+
+// The two acceptance ceilings are **not** declared here: they live in
+// `internal/content`, beside the part types, because a tool that reads a picture has
+// to refuse an oversized file before reading it into memory — and a tool may not
+// import this package (see the note on ToolResultProcessor: the processor is the
+// only writer, and a tool that knew about the artifact store would be a second one).
+//
+// Two declarations would be two answers, and the symptom is a file that passes one
+// door and is refused by the next. These aliases exist so this package keeps reading
+// naturally without owning the numbers.
+const (
+	// MaxImageBytes is how large a picture file may be before it is refused.
+	MaxImageBytes = content.MaxImageBytes
+	// MaxImagePixels caps the decoded area (a decompression-bomb guard).
+	MaxImagePixels = content.MaxImagePixels
 )
 
 // MetaThumbnailID is the metadata key naming a picture's thumbnail artifact.
@@ -87,103 +87,21 @@ const MetaThumbnailID = "thumbnail_id"
 // JPEG.
 const MetaThumbnailMIME = "thumbnail_mime"
 
-// imageMIMEs are the formats this program accepts, and the only names it will put
-// on a wire as a media type.
+// What a picture is, what it may weigh and how big it may be are answered by
+// `internal/content` — see the note there. This layer only adds what needs the
+// store: the thumbnail, the cost, and the artifact.
 //
-// The list is the intersection of "the three protocols accept it" and "this build
-// can measure it". WebP is deliberately absent: no stdlib decoder means no
-// dimensions and no thumbnail, and accepting a format that can only ever be sent
-// at full size and estimated from its byte count is a worse deal than saying so.
-var imageMIMEs = map[string]bool{
-	"image/png":  true,
-	"image/jpeg": true,
-	"image/gif":  true,
-}
+// `IsImagePath`, the accepted media types and the three refusals used to be
+// declared here as well. They were **moved** rather than copied, because a tool
+// that reads a picture has to make the same refusals before it hands bytes on, and
+// a tool may not import this package (see ToolResultProcessor: the processor is the
+// only writer, so a tool that knew about the store would be a second one). Two
+// declarations would be two answers, and the symptom is a file that passes one door
+// and is refused by the next.
 
-// imageExtensions is what "this token is a picture" is decided on when scanning a
-// message for paths.
-//
-// It is an extension test rather than a content test on purpose: the scan sees a
-// sentence, and the only cheap question it can ask about a word in it is "does
-// this look like a file name". The expensive question — "is it really a PNG" — is
-// asked once, after the file has been read.
-var imageExtensions = map[string]bool{
-	".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
-}
-
-// IsImagePath reports whether a path's extension names a picture this program
-// handles.
-func IsImagePath(path string) bool {
-	return imageExtensions[strings.ToLower(filepath.Ext(strings.TrimSpace(path)))]
-}
-
-// imageInfo is what was learned by looking at a file's bytes.
-type imageInfo struct {
-	MIME      string
-	Width     int
-	Height    int
-	Decodable bool
-}
-
-// inspectImage identifies a byte stream as a picture, or refuses it.
-//
-// The mime type comes from the **bytes**, never from the file name: a `.png` that
-// is really a JPEG is common enough (a screenshot tool renaming its output, a file
-// downloaded twice), and a media type that disagrees with the data is refused by
-// the endpoint with a message about the media type rather than about the file.
-//
-// Dimensions are read with `DecodeConfig`, which parses headers only. That is
-// deliberate: the full decode happens once, for the thumbnail, and only when a
-// thumbnail is actually wanted.
-func inspectImage(body []byte) (imageInfo, error) {
-	if len(body) == 0 {
-		return imageInfo{}, fmt.Errorf("the file is empty")
-	}
-	sniffed := http.DetectContentType(body)
-	// `DetectContentType` answers `image/png`, `image/jpeg` and `image/gif`
-	// exactly; a subtype it reports (`image/bmp`) is not one of the three this
-	// program speaks, and neither is the `application/octet-stream` it gives for
-	// anything it does not know.
-	mime := strings.TrimSpace(strings.SplitN(sniffed, ";", 2)[0])
-	if !imageMIMEs[mime] {
-		return imageInfo{}, fmt.Errorf("its content is %s, which is not one of the picture formats this program handles (%s)",
-			mime, strings.Join(imageMIMENames(), ", "))
-	}
-
-	info := imageInfo{MIME: mime}
-	config, _, err := image.DecodeConfig(bytes.NewReader(body))
-	if err != nil {
-		// A header it cannot parse means the file is truncated or corrupt. Saying
-		// so is better than sending it: the endpoint would refuse it anyway, and
-		// the refusal that arrives from there names the media type.
-		return info, fmt.Errorf("its %s header could not be read: %v", mime, err)
-	}
-	info.Width, info.Height = config.Width, config.Height
-	info.Decodable = true
-	if info.Width <= 0 || info.Height <= 0 {
-		return info, fmt.Errorf("it claims a %dx%d size", info.Width, info.Height)
-	}
-	if info.Width*info.Height > MaxImagePixels {
-		return info, fmt.Errorf("it decodes to %dx%d, which is over the %d-pixel ceiling (a picture this large is a few hundred kilobytes on disk and gigabytes in memory)",
-			info.Width, info.Height, MaxImagePixels)
-	}
-	return info, nil
-}
-
-func imageMIMENames() []string {
-	names := make([]string, 0, len(imageMIMEs))
-	for name := range imageMIMEs {
-		names = append(names, name)
-	}
-	// A fixed order so the sentence is the same every time it is printed.
-	for left := 0; left < len(names); left++ {
-		for right := left + 1; right < len(names); right++ {
-			if names[right] < names[left] {
-				names[left], names[right] = names[right], names[left]
-			}
-		}
-	}
-	return names
+// inspectImage is the shared check under the name this layer has always called it.
+func inspectImage(body []byte) (content.ImageInfo, error) {
+	return content.InspectImage(body)
 }
 
 // makeThumbnail produces a smaller copy of a picture.
@@ -213,10 +131,13 @@ func imageMIMENames() []string {
 // (see ImageCost), which is what the budget measures and what the ladder has to
 // reduce. So the gate is the one that matches the accounting, and the caller decides
 // it — this function only reports what it made.
-func makeThumbnail(body []byte, info imageInfo) (thumbnail, bool) {
-	if !info.Decodable {
-		return thumbnail{}, false
-	}
+func makeThumbnail(body []byte, info content.ImageInfo) (thumbnail, bool) {
+	// There is no "is it decodable" test here any more, and its absence is the
+	// point: reaching this function means `content.InspectImage` already read the
+	// header, and a header it cannot parse is an error there rather than a flag
+	// here. The decode below is the real gate — a body whose header parses but
+	// whose pixels do not still ends up with no thumbnail, which is the honest
+	// answer.
 	if info.Width <= ThumbnailMaxDimension && info.Height <= ThumbnailMaxDimension {
 		return thumbnail{}, false
 	}
@@ -264,7 +185,7 @@ type thumbnail struct {
 // size, for the reason makeThumbnail documents at length. A thumbnail that does not
 // reduce that is a rung that moves the level without shrinking the request, which is
 // invisible in both the level and the token bill.
-func (t thumbnail) worthStoring(original imageInfo, originalBytes int) bool {
+func (t thumbnail) worthStoring(original content.ImageInfo, originalBytes int) bool {
 	before := ImageCost(artifactImage{
 		Width: original.Width, Height: original.Height, Bytes: originalBytes,
 	})
@@ -524,18 +445,20 @@ func ImageLabelFor(artifact Artifact) string {
 	return content.ImageLabel(imageReference(artifact, content.VariantOriginal))
 }
 
-// sizeText renders a byte count the way a person reads it.
+// sizeText renders a byte count for the sentences this layer produces, and it
+// keeps the one thing `content.HumanSize` does not have: an **empty string for an
+// unknown size**.
+//
+// That difference is load-bearing rather than cosmetic. The callers are rendering
+// lines that omit the size when it is not known ("`[Image: shot.png]`" rather than
+// "`[Image: shot.png 0B]`"), and a `0B` there reads as a measured zero — a picture
+// that really is empty — which is a claim nobody made. So the formatting is shared
+// and the "unknown" case stays here.
 func sizeText(bytes int) string {
-	switch {
-	case bytes <= 0:
+	if bytes <= 0 {
 		return ""
-	case bytes >= 1024*1024:
-		return strconv.FormatFloat(float64(bytes)/(1024*1024), 'f', 1, 64) + "MB"
-	case bytes >= 1024:
-		return strconv.Itoa(bytes/1024) + "KB"
-	default:
-		return strconv.Itoa(bytes) + "B"
 	}
+	return content.HumanSize(bytes)
 }
 
 // AttachImage stores a picture's bytes and returns its artifact.

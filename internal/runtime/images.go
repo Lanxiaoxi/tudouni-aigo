@@ -240,7 +240,7 @@ func (r *Runtime) storePicture(path string) (context.Artifact, error) {
 	}
 	if info.Size() > int64(context.MaxImageBytes) {
 		return context.Artifact{}, fmt.Errorf("它是 %s，超过单张图片 %s 的上限",
-			sizeLabel(int(info.Size())), sizeLabel(context.MaxImageBytes))
+			content.HumanSize(int(info.Size())), content.HumanSize(context.MaxImageBytes))
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -250,26 +250,6 @@ func (r *Runtime) storePicture(path string) (context.Artifact, error) {
 		Tool: "attach_image",
 		Path: r.displayPath(path),
 	})
-}
-
-// sizeLabel renders a byte count the way a person reads it.
-//
-// A second copy of the same three-line formatting the context layer already has,
-// and it is deliberate: this one describes a file **before** it is read (from
-// `Stat`), while that one describes an artifact. Sharing either across the package
-// boundary would mean exporting a formatter from the context layer for a sentence
-// about a file it never saw.
-func sizeLabel(bytes int) string {
-	switch {
-	case bytes <= 0:
-		return "0B"
-	case bytes >= 1024*1024:
-		return fmt.Sprintf("%.1fMB", float64(bytes)/(1024*1024))
-	case bytes >= 1024:
-		return fmt.Sprintf("%dKB", bytes/1024)
-	default:
-		return fmt.Sprintf("%dB", bytes)
-	}
 }
 
 // displayPath is the path as the user wrote it, for the metadata a person reads.

@@ -89,6 +89,34 @@ type ImageRef struct {
 	Variant Variant
 }
 
+// What this program accepts as one picture.
+//
+// They live here, beside the part types, because **two layers need the same
+// answer** and neither may own it alone: a tool that reads a picture has to refuse
+// an oversized file *before* reading it into memory, and the artifact layer has to
+// refuse it again on the way in. A ceiling declared in either one would leave the
+// other free to disagree, and the symptom of two answers is a file that passes one
+// door and is refused by the next — which reads as a bug in whichever door the
+// person happened to look at.
+const (
+	// MaxImageBytes is how large a picture file may be before it is refused.
+	//
+	// Five megabytes is the smallest published request-side limit of the three
+	// protocols this program speaks (the Messages shape's per-image cap, in its
+	// base64 form, which is a third larger than the file). Refusing here rather
+	// than letting the endpoint refuse is the difference between a sentence the
+	// user can act on and a 400 from a gateway.
+	MaxImageBytes = 5 * 1024 * 1024
+
+	// MaxImagePixels caps the decoded area.
+	//
+	// It is a **decompression-bomb guard**, not a quality judgement: a 20000×20000
+	// PNG is a few hundred kilobytes on disk and 1.6GB in memory once decoded, and
+	// this program decodes every image it accepts in order to measure it. Refusing
+	// the file costs a message; decoding it costs the process.
+	MaxImagePixels = 40_000_000
+)
+
 // Part is one piece of a body: exactly one of Text or Image is set.
 //
 // Two fields rather than an interface, because a Part is written to the session

@@ -28,6 +28,21 @@ import (
 type Result struct {
 	// Text is what goes back to the model.
 	Text string
+	// Images are pictures this call produced, and they are **not** text: a tool
+	// that read a screenshot returns the bytes here, not a base64 string.
+	//
+	// The distinction is the whole point of the field. Base64 in `Text` would be
+	// counted by the estimator as characters (a megabyte of "text" that is not
+	// text), would be stored in the session file and re-sent with it on every later
+	// turn, and would arrive at the model as an undecodable wall of letters rather
+	// than as a picture. What travels here is the file's own bytes; the encoding
+	// happens once, in the provider adapter, for the one request that needs it.
+	//
+	// A tool does **not** decide that these become artifacts, and it does not name
+	// them: turning bytes into an artifact is the context layer's single writer
+	// (see `context.ToolResultProcessor` and `context.AttachImage`), and a second
+	// place that mints ids is how "which artifact is this" stops having one answer.
+	Images []ImageContent
 	// Audit carries the facts only this tool knows — an exit code, how a question
 	// was answered, which skill action happened. The agent cannot derive them, and
 	// they are what makes the audit log worth reading.
@@ -36,6 +51,25 @@ type Result struct {
 
 // TextResult is the common case: a string and nothing extra.
 func TextResult(text string) Result { return Result{Text: text} }
+
+// ImageContent is one picture a tool produced, before it is an artifact.
+//
+// It carries no media type and no dimensions on purpose. Both are facts about the
+// bytes, and `context.AttachImage` derives both by looking at them — a tool that
+// declared `image/png` for a JPEG would put a media type on the wire that the
+// endpoint checks against the payload and refuses. One place that decides what a
+// picture is beats two that can disagree.
+type ImageContent struct {
+	// Body is the file's own bytes.
+	Body []byte
+	// Name is what a person calls this picture (`architecture.png`). It becomes
+	// the label the model reads, which is how it says *which* picture it means
+	// when a message carries more than one.
+	Name string
+	// Path is where it came from, for the artifact's metadata — the field
+	// somebody reads afterwards to answer "where did this come from".
+	Path string
+}
 
 // Handler runs one call. The arguments have already been validated against the
 // tool's schema, so the handler may read them without re-checking types.

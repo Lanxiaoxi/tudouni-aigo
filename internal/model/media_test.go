@@ -3,6 +3,7 @@ package model
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -298,6 +299,93 @@ func TestATextOnlyRequestIsUnchanged(t *testing.T) {
 	}
 	if sent[1]["content"] != "hello" {
 		t.Errorf("the user body changed: %#v", sent[1]["content"])
+	}
+}
+
+// TestAPictureFromAToolResultIsEncodedByEveryProtocol.
+//
+// The existing tests cover a picture in the user's **opening** turn. A picture a
+// tool read sits somewhere else entirely — after the tool results, in a message of
+// its own (see `agent.imageMessage` for why it cannot live inside the result) — and
+// that position is what this pins, because two of the three protocols treat it
+// differently from the opening turn.
+//
+// It also carries `__runtime_note`, this program's own marker, which is the same
+// class of field as the `artifact_id` that once earned a fatal 400 from a gateway:
+//
+//	Extra inputs are not permitted, field: 'messages[5].artifact_id'
+//
+// The chat completions shape takes the message list whole and filters it through a
+// whitelist, so the marker must not survive. The other two rebuild each item field
+// by field and cannot carry it in the first place — this checks all three rather
+// than assuming the two mechanisms agree.
+func TestAPictureFromAToolResultIsEncodedByEveryProtocol(t *testing.T) {
+	answers := map[Style]string{
+		StyleOpenAI:    `{"choices":[{"message":{"content":"ok"}}]}`,
+		StyleAnthropic: `{"content":[{"type":"text","text":"ok"}]}`,
+		StyleResponses: `{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}`,
+	}
+
+	for style, answer := range answers {
+		t.Run(string(style), func(t *testing.T) {
+			body := testPNG(t)
+			server, bodies, _ := dialectGateway(t, answer)
+			adapter := newTestAdapter(t, Options{
+				Route:  route(server.URL, "m", style),
+				Images: imageLoaderFor(body),
+			})
+
+			// The shape the agent actually composes: the tool's own result first,
+			// then the picture in a message of its own, marked as the runtime's.
+			messages := []map[string]any{
+				{"role": "user", "content": "看下图"},
+				{"role": "assistant", "content": nil, "tool_calls": []any{
+					map[string]any{"id": "c1", "function": map[string]any{
+						"name": "read_image", "arguments": `{"path":"shot.png"}`,
+					}},
+				}},
+				{"role": "tool", "tool_call_id": "c1", "content": "已读取图片 shot.png"},
+				{
+					"role":           "user",
+					"__runtime_note": true,
+					"content":        pictureMessage()["content"],
+				},
+			}
+
+			if _, err := adapter.Complete(messages, nil, CompleteOptions{}); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+
+			// The assertions read the **whole request as JSON**, not a flattened
+			// view of it, and that is not laziness — the three protocols bury the
+			// picture at different depths (`image_url.url` here, `source.data`
+			// there), so any helper that walks one shape misses the others. The
+			// first version of this test used the shared `bodyOf` helper, which
+			// reads top-level string keys, and it reported "no picture" for two
+			// protocols that had sent one.
+			raw, err := json.Marshal((*bodies)[0])
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			sent := string(raw)
+
+			// The picture's own bytes, base64-encoded, whatever the envelope.
+			if !strings.Contains(sent, base64.StdEncoding.EncodeToString(body)) {
+				t.Fatalf("the picture's bytes are not on the wire: %s", sent)
+			}
+			// And the label, so the model can say *which* picture it means.
+			if !strings.Contains(sent, "shot.png") {
+				t.Errorf("the label did not reach the request: %s", sent)
+			}
+
+			// This program's own marker did not.
+			if strings.Contains(sent, "__runtime_note") {
+				t.Errorf("this program's own field reached the endpoint: %s", sent)
+			}
+			if strings.Contains(sent, "artifact_id") {
+				t.Errorf("the artifact id reached the endpoint: %s", sent)
+			}
+		})
 	}
 }
 

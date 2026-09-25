@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/content"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
@@ -748,6 +749,14 @@ type prepared struct {
 	status      string
 	result      string
 	audit       map[string]any
+	// images are the pictures this call produced, carried as bytes until
+	// `toolMessage` turns them into artifacts.
+	//
+	// They are held here rather than stored inside the handler because a tool may
+	// not touch the artifact store: the processor is the only writer, so a tool that
+	// minted ids would be a second one, and "which artifact is this picture" would
+	// stop having a single answer.
+	images []tools.ImageContent
 }
 
 // runBatch executes every call the model asked for in one turn.
@@ -824,7 +833,126 @@ func (a *Agent) runBatch(calls []model.ToolCall) error {
 	for i := range batch {
 		a.Session.Append(a.toolMessage(&batch[i]))
 	}
+	// The pictures this batch read come **after every result**, in one message. See
+	// imageMessage for why that position rather than inside the tool result, and
+	// why after all of them rather than between two.
+	if message := a.imageMessage(batch); message != nil {
+		a.Session.Append(message)
+	}
 	return nil
+}
+
+// imageMessage carries the pictures one batch of tool calls produced.
+//
+// ## Why they travel as a user message rather than inside the tool result
+//
+// Because one of the three protocols forbids the obvious place. A `role: "tool"`
+// message in the chat completions shape takes text only, and an image there is
+// refused with
+//
+//	Image URLs are only allowed for messages with role 'user'
+//
+// — which is the shape this program talks to most, including the route its own
+// author runs on. The other two *would* take a picture inside the result
+// (`tool_result` and `function_call_output` both have a block form for it), and
+// using that where it works would be two paths for one thing; the second path is
+// where the levels, the budget and the encoding drift apart.
+//
+// A user message is a position all three accept, and it is **the same position a
+// picture the user names in their own message ends up in** — which is the design
+// rather than a coincidence:
+//
+//	user names a path ──┐
+//	                    ├→ ImageArtifact → ImagePart → Context → LLM
+//	read_image(path) ───┘
+//
+// So everything downstream already works: the budget prices the picture by area,
+// the ladder shrinks it to a thumbnail before dropping it, the renderer re-points
+// it at whatever level the ledger decides, and the three dialects encode it as the
+// user-turn part they each already know how to build.
+//
+// ## Why after all the results, not between two of them
+//
+// The chat completions shape requires every `tool_calls` entry to be answered
+// before the conversation moves on, so a user message wedged between two tool
+// results makes the request invalid — on the endpoint this program talks to most.
+// All the results first, then the pictures they produced.
+//
+// ## Why it is marked as a runtime note
+//
+// `RuntimeNoteKey` is what `IsHumanTurn` reads, and the scan stops at the first
+// message that is neither `tool` nor `assistant`. An unmarked image message would
+// therefore become the evidence that "a person asked for this" — and in an
+// autonomous goal round that is exactly the authorization the marker exists to
+// withhold: a round could then start, redefine or resume a goal on its own
+// authority, because it had read a picture.
+func (a *Agent) imageMessage(batch []prepared) map[string]any {
+	var pictures []tools.ImageContent
+	for index := range batch {
+		pictures = append(pictures, batch[index].images...)
+	}
+	if len(pictures) == 0 {
+		return nil
+	}
+
+	if a.Context == nil || a.Context.Store == nil {
+		// No artifact store, so a picture cannot travel: the only way left would be
+		// base64 inside the text, which is the shape this whole feature exists to
+		// avoid. Say so rather than letting the tool's own sentence ("已读取图片 …")
+		// read as though the model had seen it.
+		return map[string]any{
+			"role":               "user",
+			"content":            "（上面那个工具读到了图片，但本会话没有 context 层，图片无法进入上下文。）",
+			state.RuntimeNoteKey: true,
+		}
+	}
+
+	body := content.Content{}
+	seen := map[string]bool{}
+	for _, picture := range pictures {
+		artifact, err := context.AttachImage(a.Context.Store, picture.Body, context.ArtifactSource{
+			Tool: "read_image",
+			Path: picture.Path,
+		})
+		if err != nil {
+			// One picture that cannot be stored must not lose the others, and the
+			// model is told **which** one: a bare "it failed" sends it looking for a
+			// problem it cannot see.
+			a.reportToStderr(fmt.Sprintf("read_image could not store %s: %v", picture.Path, err))
+			body = body.WithText(fmt.Sprintf("（%s 读到了，但没能存进上下文：%v）", picture.Name, err))
+			continue
+		}
+		// One file read twice is one artifact — the store is content-addressed — so
+		// appending both would put two identical picture blocks in the request while
+		// the ledger holds a single item. The model would pay twice for one picture
+		// and the budget would count it once, and **under-counting is the dangerous
+		// direction**: the request goes out over the window and the 400 that follows
+		// reads like "context too long" with nothing visibly over.
+		//
+		// `runtime.attachPictures` drops a second naming of one artifact for the same
+		// reason, so the two paths agree — a picture is the same picture however it
+		// arrived.
+		if seen[artifact.ID] {
+			continue
+		}
+		seen[artifact.ID] = true
+		// The same ledger entry a user's own attachment gets — dynamic and
+		// unpinned, because that is what every other tool result is, and the ladder
+		// has a thumbnail to offer before it drops a picture.
+		a.Context.Add(artifact.ID, context.AddOptions{Quiet: true})
+		body = body.WithImage(context.ImageRefFor(artifact, content.VariantOriginal))
+	}
+	if body.IsEmpty() {
+		return nil
+	}
+	// No text part when every picture arrived: the renderer puts `[Image: name
+	// 1280×720]` in front of each one, which is what tells the model *which*
+	// picture it is looking at.
+	return map[string]any{
+		"role":               "user",
+		"content":            body.ToParts(),
+		state.RuntimeNoteKey: true,
+	}
 }
 
 // inspect resolves one call: which tool, which arguments, and whether they are even
@@ -912,6 +1040,12 @@ func (a *Agent) runOne(item *prepared) {
 	}
 	item.audit["chars"] = len([]rune(text))
 	item.result = text
+	// The pictures this call produced, kept as bytes until `toolMessage` can turn
+	// them into artifacts. A failed call keeps none: the handler may have filled
+	// them in before failing, and half a result is worse than none.
+	if status == statusOK {
+		item.images = result.Images
+	}
 
 	a.reportToolResult(item, durationMs, status == statusOK)
 }

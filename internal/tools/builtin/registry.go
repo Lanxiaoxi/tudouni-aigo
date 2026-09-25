@@ -77,6 +77,14 @@ func CreateRegistry(assembly Assembly) (*Result, error) {
 			return nil, err
 		}
 	}
+	// read_image sits beside the file tools rather than inside NewFileTools, and the
+	// separation is the design rather than tidiness: those four return **text** and
+	// this one returns bytes, and a reader who sees them in one list would reasonably
+	// assume they work the same way. See the tool's own comment for why a picture
+	// cannot travel as text.
+	if err := registry.Register(NewReadImage(assembly.Workspace)); err != nil {
+		return nil, err
+	}
 	if err := registry.Register(NewGetCurrentTime()); err != nil {
 		return nil, err
 	}
