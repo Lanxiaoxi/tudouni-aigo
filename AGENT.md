@@ -49,7 +49,7 @@ Makefile 的每条 recipe 都走 `go run ./tools/release`，因为本仓库在 W
 ## 版本号约定
 
 版本号只有一个来源：仓库根的 `VERSION` 文件，发布时用 `-ldflags -X` 编进二进制。
-**每次改代码都要按改动大小同步更新 `VERSION`**，否则 `--version` 报的是旧号：
+**改 Go 源码就要按改动大小同步更新 `VERSION`**，否则 `--version` 报的是旧号：
 
 | 改动性质 | 版本变化 | 例子 |
 | --- | --- | --- |
@@ -58,6 +58,36 @@ Makefile 的每条 recipe 都走 `go run ./tools/release`，因为本仓库在 W
 | 修复、微调、文案、主题、注释、文档、重构 | 修订号 +1 | 修一个渲染 bug、改一句提示语、整理代码 |
 
 一次提交里混了几种改动，取最大的那一档。版本号改动本身不单独提交，跟代码放在一起。
+
+### `VERSION` 只管 Go 运行时，`desktop/` 有自己的版本
+
+**只改 `desktop/` 下的东西，就不要动 `VERSION`。**
+
+`desktop/tudouni-aigo-desktop/` 是一个独立项目（Tauri 2 + React 前端），它自己的版本号
+与运行时的版本号是**两个独立的轴**，这不是重复而是设计：桌面端是「换一个前端」，它和
+运行时的发布节奏本来就不同步，`init` 里也没有运行时版本字段，两者是分别显示的
+（见 `desktop/tudouni-aigo-desktop-design/desktop-app.md` 决策 1）。
+
+所以：
+
+- **`VERSION`（仓库根）** 覆盖 Go 运行时：`cmd/`、`internal/`、`tools/`、`packaging/`、
+  `prompts/`。只有改了这些才按上表升它。
+- **桌面端自己的版本** 在 `desktop/tudouni-aigo-desktop/` 里，改的时候这几处必须一起改、
+  且保持一致：
+
+  | 文件 | 处数 |
+  | --- | --- |
+  | `package.json` | 1 |
+  | `package-lock.json` | 2（根 `version` + `packages.""` 里的那个） |
+  | `src-tauri/tauri.conf.json` | 1 |
+  | `src-tauri/Cargo.toml` | 1 |
+  | `src-tauri/Cargo.lock` | 1（只改 `name = "tudouni-aigo-desktop"` 那个 `[[package]]`；同名号的第三方 crate 不要碰） |
+
+- 两边都改了（例如动了 `internal/protocol/` 的协议形状、桌面端跟着适配）才两边都升。
+
+判断标准很简单：**改完之后 `git diff --stat -- '*.go'` 是不是空的**。是空的，就没碰 Go，
+`VERSION` 也不该动。桌面端的改动无论多大，都不构成升 `VERSION` 的理由——那会让
+`--version` 报出一个没有任何 Go 代码变化支撑的号，而真正发 Go 版的时候又得再升一次。
 
 ## 测试约定
 

@@ -32,6 +32,10 @@ tools/vendor/rg/**/rg.exe
 .DS_Store
 Thumbs.db
 
+# An IME/WebView2 subprocess drops this next to whatever directory an
+# application was launched from. It is not our output.
+debug.log
+
 # Session state, never committed
 .tudouni/
 
