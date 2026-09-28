@@ -287,7 +287,13 @@ export function ToolBody({ entry }: { entry: Extract<Entry, { kind: 'tool' }> })
           <div className="etb-label">{t('entry.output')}</div>
           {/* The audit keeps a character count, not the body: a tool result is
               routinely hundreds of thousands of characters and copying it here
-              would make the log a second copy of the conversation. */}
+              would make the log a second copy of the conversation. What the
+              runtime does send since the `preview` field is one flattened line
+              from the head — enough to answer "what did it actually do"
+              without the body. */}
+          {entry.result.preview ? (
+            <div className="terminal etb-preview">{entry.result.preview}</div>
+          ) : null}
           <div className="terminal">
             <span className="tl-dim">
               {t('entry.toolChars', { n: formatTokens(entry.result.chars) })} ·{' '}
@@ -385,11 +391,25 @@ function PermEntry({ entry }: { entry: Extract<Entry, { kind: 'perm' }> }) {
 
 function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
   const t = useT();
+  const quiet = useApp((s) => s.quiet);
   const manual = useApp((s) => s.reasoningOpen[entry.id]);
   const toggle = useApp((s) => s.toggleReasoning);
   // While streaming it is forced open and updates live; once the stream stops it
   // returns to the person's own choice, which defaults to folded.
-  const open = entry.streaming ? true : manual === true;
+  //
+  // **Quiet is the exception, and that is the whole point of the mode.** Quiet
+  // mode folds tool calls into a one-line brief so a long turn stays readable,
+  // and a block that opens itself the moment the model starts thinking puts a
+  // wall of text back on screen — the one thing the mode exists to prevent. The
+  // TUI folds its thinking line in quiet mode for exactly this reason
+  // (`internal/frontends/tui/view.go`, `thinkingFolded`), and the two front ends
+  // are meant to read the same.
+  //
+  // The forced-open rule stays for normal mode: there, watching the reasoning
+  // arrive line by line is the point. Under quiet, a person who *does* want to
+  // read it still can — `Ctrl+T`, or a press on the head — because the manual
+  // choice is consulted in both modes.
+  const open = quiet ? manual === true : entry.streaming ? true : manual === true;
 
   return (
     <div className="e-reason">

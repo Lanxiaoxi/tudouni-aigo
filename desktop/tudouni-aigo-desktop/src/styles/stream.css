@@ -229,6 +229,18 @@
   letter-spacing: var(--tracking-label);
 }
 
+/* The one-line preview under OUTPUT. One line on purpose — it answers "what
+   did this call do", and the count line below it says how much there is. The
+   runtime already flattened and truncated the text; `ellipsis` is the front
+   end's own guard for a narrow rail. */
+.etb-preview {
+  font-size: var(--text-code);
+  color: var(--fg-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* quiet 形态：一行一次调用，不展示明细 */
 .quiet-line {
   display: flex;

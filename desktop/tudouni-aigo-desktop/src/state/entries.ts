@@ -52,6 +52,12 @@ export interface ToolResultState {
   durationMs: number;
   exitCode: number | null;
   parallel: boolean;
+  /** One flattened line from the result's head, sent by the runtime since the
+   *  `preview` field was added. Null on events that predate it, on entries
+   *  rebuilt from an old session, and where the runtime sent nothing — all
+   *  three render as "no preview", never as an empty string pretending to be
+   *  one. */
+  preview: string | null;
 }
 
 /**
@@ -403,6 +409,7 @@ export function reduceEvent(
         durationMs: typeof ev.duration_ms === 'number' ? ev.duration_ms : 0,
         exitCode: typeof ev.exit_code === 'number' ? ev.exit_code : null,
         parallel: ev.parallel === true,
+        preview: typeof ev.preview === 'string' && ev.preview !== '' ? ev.preview : null,
       };
 
       let attached = false;
