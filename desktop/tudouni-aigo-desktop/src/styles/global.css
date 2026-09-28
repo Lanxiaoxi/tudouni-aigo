@@ -162,6 +162,17 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
      here is also what keeps these rows from re-wrapping mid-transition. */
   width: var(--rail-w);
   min-height: 0;
+  /* **The rail's surface is the whole column, so it has to fill it.** Without a
+     height the rail is only as tall as its content, and everything below the last
+     row falls through to the wrapper — which paints nothing — leaving the window
+     background (`--bg`) under half the rail. In the light theme that is a white
+     strip below the blocks; in the dark theme a near-miss dark, which is how it
+     stayed unnoticed. `100%` resolves because `.app-rail` is a flex item in the
+     stretched row and therefore has a definite height.
+     It is not only about colour: `.app-rail` clips (`overflow: hidden`), so a
+     content-sized rail was also clipped instead of scrolling its own list once
+     the content outran the column. */
+  height: 100%;
   border-left: 1px solid var(--border-subtle);
   background: var(--bg-secondary);
   display: flex;
@@ -175,6 +186,9 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
 .app-leftbar {
   width: var(--rail-w);
   min-height: 0;
+  /* Same as `.app-sidebar` above, and the two must stay in step: the rail's
+     surface is the whole column, or half of it is a different colour. */
+  height: 100%;
   border-right: 1px solid var(--border-subtle);
   background: var(--bg-secondary);
   display: flex;

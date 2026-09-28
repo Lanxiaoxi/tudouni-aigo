@@ -201,6 +201,90 @@ async function main() {
     throw new Error(`the composer is not aligned with the conversation column: ${L.cpBoxX} vs ${L.convBox.x}`);
   }
 
+  // ---- 1b-bis. a rail's surface is the whole column, not just its content ----
+  //
+  // This is a regression test for a defect that every other assertion here was
+  // blind to. Both rails were sized by their **content**, so the rail element
+  // stopped at its last row: below that the wrapper painted nothing and the
+  // window's own background showed through — white under the light theme, a
+  // near-miss dark under the dark one. Nothing threw, no element was missing and
+  // the layout was still closed; half of each rail was simply a different colour.
+  //
+  // The claim is therefore about **geometry**, and the probe is placed at the
+  // bottom of the column, well past the last row — exactly where the rail used to
+  // end. What it reads is not the rail's own `height` (a size can be right while
+  // the paint is not) but the colour a point there actually resolves to, walking
+  // up from the topmost element to the first ancestor that paints anything. So
+  // the assertion is "the surface under the rail's bottom pixel is the rail's",
+  // which is the thing a person sees.
+  const railSurface = await evaluate(`(() => {
+    const main = document.querySelector('.app-main');
+    if (!main) return null;
+    const mainBox = main.getBoundingClientRect();
+    const probeY = Math.round(mainBox.bottom - 8);
+    const read = (sel) => {
+      const rail = document.querySelector(sel);
+      if (!rail) return null;
+      const b = rail.getBoundingClientRect();
+      const x = Math.round(b.x + b.width / 2);
+      const hit = document.elementFromPoint(x, probeY);
+      // The first ancestor that paints — a transparent wrapper is not an answer.
+      let node = hit, painted = null, by = null;
+      while (node) {
+        const c = getComputedStyle(node);
+        if (c.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+          painted = c.backgroundColor;
+          by = node.className || node.tagName;
+          break;
+        }
+        node = node.parentElement;
+      }
+      return {
+        h: Math.round(b.height),
+        probeY,
+        painted,
+        by: String(by),
+        railBg: getComputedStyle(rail).backgroundColor,
+      };
+    };
+    return JSON.stringify({
+      mainH: Math.round(mainBox.height),
+      // Which element the point lands on, so a failure can name the culprit.
+      hitAtBottom: (() => {
+        const el = document.elementFromPoint(4, probeY);
+        return el ? String(el.className || el.tagName) : null;
+      })(),
+      left: read('.app-leftbar'),
+      right: read('.app-sidebar'),
+    });
+  })()`);
+  console.log('rail surface:', railSurface);
+  const RS = JSON.parse(railSurface ?? '{}');
+  if (!RS.left || !RS.right) throw new Error('a rail is missing, so its surface cannot be measured');
+  for (const [name, rail] of [['left', RS.left], ['right', RS.right]]) {
+    // Content-sized is the defect: the rail stops short of the column.
+    if (Math.abs(rail.h - RS.mainH) > 1) {
+      throw new Error(
+        `the ${name} rail does not span the column: ${rail.h}px of ${RS.mainH}px — the window background shows below it`,
+      );
+    }
+    // And the point past its last row must resolve to the rail's own colour.
+    if (rail.painted !== rail.railBg) {
+      throw new Error(
+        `the ${name} rail's bottom pixel is not painted by the rail: ${rail.painted} from "${rail.by}" vs the rail's ${rail.railBg}`,
+      );
+    }
+    // `--bg` is what the window paints, and it is what leaked through before.
+    const windowBg = await evaluate(
+      `getComputedStyle(document.querySelector('.app')).backgroundColor`,
+    );
+    if (rail.painted === windowBg) {
+      throw new Error(
+        `the ${name} rail's bottom pixel shows the window background (${windowBg}) instead of the rail surface`,
+      );
+    }
+  }
+
   // ---- 1c. the composer is two rows in one box, with exactly two controls ----
   //
   // These are facts about structure and geometry that a CSS edit can quietly
@@ -923,6 +1007,102 @@ async function main() {
   if (aa.turnStatus.includes('in progress')) {
     throw new Error(`the turn head still reads "in progress" after the answer: ${aa.turnStatus}`);
   }
+
+  // ---- 2b. quiet mode folds the thinking block even while it streams ----
+  //
+  // This is a regression test for a defect the mode's own name made invisible:
+  // quiet folds tool calls into a one-line brief, and then a block that opened
+  // itself the moment the model started thinking put a wall of text back on the
+  // screen — the one thing the mode exists to prevent. The TUI has always folded
+  // its thinking line under quiet (`internal/frontends/tui/view.go`), so the two
+  // front ends disagreed about what the mode means.
+  //
+  // The forced-open rule is deliberately kept for **normal** mode, and that half
+  // is asserted too: removing it there would be a different defect (a live
+  // reasoning block you can no longer watch arrive). And the manual choice has to
+  // win in both modes, or quiet would be a mode you cannot read your way out of.
+  //
+  // A fresh run is driven here rather than reusing the finished turn above,
+  // because `streaming` is the field under test: only a block that is still being
+  // written is forced open in normal mode, and a settled one would pass this by
+  // accident.
+  await apply({
+    v: 1,
+    t: 'event',
+    kind: 'run_started',
+    session_id: 's-render',
+    run_id: 'r-2',
+    step: 0,
+    ts: '2026-01-01T00:00:05Z',
+    model: 'deepseek-chat',
+    provider: 'deepseek',
+  });
+  await apply({
+    v: 1,
+    t: 'delta',
+    session_id: 's-render',
+    run_id: 'r-2',
+    step: 0,
+    channel: 'reasoning',
+    text: 'let me think about the reconnect race carefully',
+    reset: false,
+  });
+
+  // The **last** block: run 1's finalized reasoning is still on screen above this
+  // one, and reading the first would be reading the wrong turn.
+  const reasonState = () =>
+    evaluate(`(() => {
+    const all = [...document.querySelectorAll('.e-reason')];
+    const last = all[all.length - 1];
+    if (!last) return JSON.stringify({ present: false });
+    const fold = last.querySelector('.collapse');
+    return JSON.stringify({
+      present: true,
+      count: all.length,
+      open: fold ? !fold.classList.contains('is-collapsed') : null,
+      foldH: fold ? Math.round(fold.getBoundingClientRect().height) : null,
+      streaming: window.__aigoStore.getState().entries.filter((e) => e.kind === 'reason').pop()?.streaming ?? null,
+      quiet: window.__aigoStore.getState().quiet,
+    });
+  })()`);
+
+  const normalReason = JSON.parse((await reasonState()) ?? '{}');
+  console.log('reasoning, normal mode, live:', JSON.stringify(normalReason));
+  if (!normalReason.present) throw new Error('no reasoning block to measure');
+  if (normalReason.streaming !== true) {
+    throw new Error('the reasoning block is not streaming, so the forced-open rule is not under test');
+  }
+  if (normalReason.open !== true) {
+    throw new Error('normal mode closed a live reasoning block: watching it arrive is the point of the mode');
+  }
+
+  await evaluate(`(() => { window.__aigoStore.getState().setQuiet(true); return true; })()`);
+  await sleep(300);
+  const quietReason = JSON.parse((await reasonState()) ?? '{}');
+  console.log('reasoning, quiet mode, live:', JSON.stringify(quietReason));
+  // The defect: a live block that forces itself open under quiet.
+  if (quietReason.open !== false) {
+    throw new Error(
+      `quiet mode still opened the live reasoning block (open=${quietReason.open}, height=${quietReason.foldH})`,
+    );
+  }
+  if (!(quietReason.foldH <= 1)) {
+    throw new Error(`the folded reasoning block still has height ${quietReason.foldH}`);
+  }
+
+  // The manual choice still wins under quiet: a person who wants to read it can.
+  await evaluate(
+    `(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 't', ctrlKey: true, bubbles: true })); return true; })()`,
+  );
+  await sleep(300);
+  const openedReason = JSON.parse((await reasonState()) ?? '{}');
+  console.log('reasoning, quiet mode, after Ctrl+T:', JSON.stringify(openedReason));
+  if (openedReason.open !== true) {
+    throw new Error('Ctrl+T does not open the reasoning block under quiet: the mode became unreadable');
+  }
+
+  await evaluate(`(() => { window.__aigoStore.getState().setQuiet(false); return true; })()`);
+  await sleep(200);
 
   // ---- 3. the approval modal ----
   await apply({
