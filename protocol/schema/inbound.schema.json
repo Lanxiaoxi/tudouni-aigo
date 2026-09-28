@@ -33,6 +33,21 @@
     },
     "required": ["v", "t"]
   },
+  "session_delete": {
+    "summary": [
+      "**删除一个已保存的会话文件**。运行中的回合先结束（与 session_switch 同一条规矩）——",
+      "回合还在往文件里追加时删文件，就是在制造半截记录。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "session_delete"},
+      "session_id": {
+        "type": "string",
+        "doc": "要删哪个会话。委派子代理的会话（sub- 前缀）会被拒绝——它们属于父会话的任务，单独删掉会让审计断线。"
+      }
+    },
+    "required": ["v", "t", "session_id"]
+  },
   "interrupt": {
     "summary": "**中断当前这一轮。** 不是收摊，也不是取消已经发出去的那一步。",
     "fields": {

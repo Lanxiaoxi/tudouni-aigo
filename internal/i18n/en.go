@@ -854,6 +854,8 @@ var catalog = map[string]string{
 	"channels.session.bad_id":         "[session] invalid id: {name} — only letters, digits, underscores and hyphens (1-64 characters). /resume without an argument lets you pick from a list.",
 	"channels.session.switch_failed":  "[session] could not switch (the current session is unchanged): {problem}",
 	"channels.session.close_failed":   "error closing the previous session's runtime: {problem}",
+	"channels.session.delete_failed":  "[session] could not delete {name} (nothing was removed): {problem}",
+	"channels.session.deleted":        "[session] deleted {name}.",
 	"channels.run_failed":             "[turn failed] {problem}",
 	"channels.runtime.open_failed":    "[start-up] the runtime could not be assembled, so no session was opened: {problem}",
 	"channels.status.no_session":      "[status] no session yet.",
@@ -1024,5 +1026,6 @@ var catalog = map[string]string{
 	"store.shrunk":           "session {name} went from {before} messages to {after}; this store only appends, it does not delete or rewrite.",
 	"store.newer_version":    "session {name} was written by a newer version (file version={version}, the highest this program knows is {known}); upgrade the program before opening it, otherwise the format may be misread.",
 	"store.missing_file":     "session file does not exist: {path}",
+	"store.delete_child":     "session {name} belongs to a delegated agent and cannot be deleted on its own; delete its parent session instead.",
 	"session.prompt_missing": "the system prompt file does not exist: {file}\nit is not an optional file — the agent sends it to the model on every turn.",
 }

@@ -129,6 +129,38 @@ func (s *SessionStore) Exists(id string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// Delete removes one session file.
+//
+// Delegated subagent sessions are refused, not skipped: a `sub-` file belongs
+// to a task in its parent's transcript, and removing it by name would leave
+// the parent's tool_call pointing at a result nobody can read any more — the
+// audit trail dies quietly instead of loudly. The picker never lists them, so
+// a request to delete one is a bug on the caller's side, and refusing is the
+// cheapest way to find out.
+//
+// The watermark is dropped with the file. A later Save for the same id would
+// otherwise believe everything is already on disk and append onto a fresh file
+// whose head record was never written.
+func (s *SessionStore) Delete(id string) error {
+	if IsChildSessionID(id) {
+		return fmt.Errorf("%s", missingKey("store.delete_child", "name", id))
+	}
+	path, err := s.Path(id)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s", missingKey("store.missing_file", "path", path))
+		}
+		return err
+	}
+	delete(s.watermark, id)
+	return nil
+}
+
 // ListIDs returns the ids of every session file, sorted.
 //
 // It includes delegated subagents. A caller that is offering sessions for a

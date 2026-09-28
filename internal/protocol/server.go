@@ -87,6 +87,9 @@ type Factory func(sessionID string) (Runtime, error)
 type Bootstrap struct {
 	// SessionSummaries lists the saved sessions, for the picker.
 	SessionSummaries func() []map[string]any
+	// DeleteSession removes one saved session. A nil hook refuses to delete —
+	// the same fail-closed rule the nil Factory follows for switching.
+	DeleteSession func(id string) error
 	// Factory builds a runtime for a session id. A nil factory refuses to switch.
 	Factory Factory
 	// Autopilot is the process-level switch; a new runtime is assembled with it.
@@ -304,6 +307,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 
 	case InSessionList:
 		s.sendSessions()
+
+	case InSessionDelete:
+		s.deleteSession(message)
 
 	case InSetAutopilot:
 		on, _ := Bool(message, "on")
@@ -1004,6 +1010,87 @@ func (s *Server) switchSession(message map[string]any) {
 	s.mu.Unlock()
 
 	s.emitOpening()
+}
+
+// deleteSession removes one saved session file.
+//
+// The running turn finishes first, for the same reason switchSession waits: the
+// file is appended to while a turn runs, and deleting it under the writer is how
+// a half line happens.
+//
+// Deleting the **mounted** session replaces it with a fresh one rather than
+// leaving the front end on a session whose file is gone. The replacement is
+// opened before the old runtime is closed (the same order switchSession keeps),
+// so a failure to assemble the new one loses nothing — the old runtime stays
+// mounted, and because the store dropped the deleted id's watermark, its next
+// save re-writes the whole file: the delete heals itself instead of leaving a
+// session that exists in memory only.
+func (s *Server) deleteSession(message map[string]any) {
+	raw, present := message["session_id"]
+	sessionID := ""
+	if present && raw != nil {
+		text, ok := raw.(string)
+		if !ok {
+			s.notice("warn", "session", i18n.T("channels.session.needs_string"))
+			return
+		}
+		sessionID = text
+	}
+	if sessionID == "" {
+		s.notice("warn", "session", i18n.T("channels.session.delete_failed",
+			"name", sessionID, "problem", "no session id was given"))
+		return
+	}
+
+	if s.bootstrap.DeleteSession == nil {
+		// Fail-closed, like a nil Factory: a runtime wired without a deleter
+		// refuses rather than guessing at one.
+		s.notice("warn", "session", i18n.T("channels.session.delete_failed",
+			"name", sessionID, "problem", "this runtime cannot delete sessions"))
+		return
+	}
+
+	s.joinTurn()
+
+	current := s.current()
+	wasCurrent := current != nil && current.SessionID() == sessionID
+
+	if err := s.bootstrap.DeleteSession(sessionID); err != nil {
+		s.notice("warn", "session", i18n.T("channels.session.delete_failed",
+			"name", sessionID, "problem", err.Error()))
+		return
+	}
+
+	if wasCurrent && s.bootstrap.Factory != nil {
+		next, err := s.bootstrap.Factory("")
+		if err != nil {
+			s.notice("warn", "session", i18n.T("channels.session.switch_failed",
+				"problem", err.Error()))
+			s.sendSessions()
+			return
+		}
+		if err := current.Close(); err != nil {
+			warn("%s", i18n.T("channels.session.close_failed", "problem", err.Error()))
+		}
+		s.Attach(next)
+		s.pending.abandonAll()
+
+		s.mu.Lock()
+		s.stop = false
+		s.answer = ""
+		s.lastRunID = ""
+		s.lastStep = 0
+		s.mu.Unlock()
+
+		s.emitOpening()
+	} else {
+		// Not the mounted session: the picker just needs the new list. Sent even
+		// on the wasCurrent path above — emitOpening already refreshed the
+		// transcript, but the list itself is what the row was deleted from.
+		s.sendSessions()
+	}
+
+	s.notice("info", "session", i18n.T("channels.session.deleted", "name", sessionID))
 }
 
 // OnEvent forwards one audit record.

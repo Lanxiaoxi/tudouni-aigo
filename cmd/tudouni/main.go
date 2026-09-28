@@ -170,6 +170,8 @@ func run(argv []string) int {
 			return openRuntime(booted, sessionID, hooks, opts)
 		}, func() []map[string]any {
 			return runtime.SessionSummaries(booted.Store, runtime.SessionListLimit)
+		}, func(id string) error {
+			return booted.Store.Delete(id)
 		}, opts.session, opts.autopilot, opts.stream, opts.debug)
 	}
 

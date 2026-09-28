@@ -52,6 +52,7 @@ const (
 	InQuestionResponse   = "question_response"
 	InSessionSwitch      = "session_switch"
 	InSessionList        = "session_list"
+	InSessionDelete      = "session_delete"
 	InInterrupt          = "interrupt"
 	InSetAutopilot       = "set_autopilot"
 	InSetModel           = "set_model"

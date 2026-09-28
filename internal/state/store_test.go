@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -119,5 +120,99 @@ func TestIsChildSessionIDDoesNotClaimOrdinarySessions(t *testing.T) {
 		if !IsChildSessionID(id) {
 			t.Errorf("IsChildSessionID(%q) = false", id)
 		}
+	}
+}
+
+// TestDeleteRemovesTheFileAndTheWatermark covers the happy path and the part that
+// is easy to forget: the watermark. A delete that left the mark in place would
+// make the next Save for the same id append onto a fresh file whose head record
+// was never written — the session would look loaded but replay to nothing.
+func TestDeleteRemovesTheFileAndTheWatermark(t *testing.T) {
+	store, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session := NewEmptySession("20260101-120000")
+	session.Append(map[string]any{"role": "user", "content": "hello"})
+	if err := store.Save(session); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if !store.Exists(session.SessionID) {
+		t.Fatal("the session file is not there after a save")
+	}
+
+	if err := store.Delete(session.SessionID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if store.Exists(session.SessionID) {
+		t.Error("the file survived Delete")
+	}
+
+	// A fresh session reusing the id saves from scratch: the head record has to
+	// be written again, which only happens when the watermark is really gone.
+	second := NewEmptySession(session.SessionID)
+	second.Append(map[string]any{"role": "user", "content": "again"})
+	if err := store.Save(second); err != nil {
+		t.Fatalf("save after delete: %v", err)
+	}
+	reloaded, err := store.Load(session.SessionID)
+	if err != nil {
+		t.Fatalf("load after re-save: %v", err)
+	}
+	if len(reloaded.Messages) != 1 {
+		t.Errorf("re-saved session has %d messages, want 1 (the head record was not rewritten)", len(reloaded.Messages))
+	}
+}
+
+// TestDeleteRefusesDelegatedSessions is the fail-closed half: a `sub-` file
+// belongs to a task in its parent's transcript, and a delete request naming one
+// is a caller bug, not something to perform.
+func TestDeleteRefusesDelegatedSessions(t *testing.T) {
+	store, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(NewSession("sub-parent-1", t.TempDir())); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if err := store.Delete("sub-parent-1"); err == nil {
+		t.Fatal("Delete accepted a delegated session id")
+	}
+	if !store.Exists("sub-parent-1") {
+		t.Error("the child session file was removed anyway")
+	}
+}
+
+// TestDeleteRefusesBadIDs exercises the path-traversal guard: the id is spliced
+// into a file name, so the check in Path is what keeps `../` out.
+func TestDeleteRefusesBadIDs(t *testing.T) {
+	store, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"", "../escape", "a/b", "with space"} {
+		if err := store.Delete(id); err == nil {
+			t.Errorf("Delete(%q) succeeded", id)
+		}
+	}
+}
+
+// TestDeleteReportsAMissingFile: deleting something that is not there is a
+// distinct error from deleting something forbidden — a front end showing the
+// list has already filtered out files that do not exist, so this case arriving
+// means the list and the store disagreed, and the message should say which file.
+func TestDeleteReportsAMissingFile(t *testing.T) {
+	store, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Delete("20260101-120000")
+	if err == nil {
+		t.Fatal("Delete succeeded on a file that does not exist")
+	}
+	if !strings.Contains(err.Error(), "20260101-120000") {
+		t.Errorf("the error does not name the file: %v", err)
 	}
 }

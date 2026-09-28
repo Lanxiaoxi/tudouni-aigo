@@ -48,11 +48,13 @@ type RuntimeOpener func(sessionID string, hooks RuntimeHooks) (Runtime, error)
 // partially written handshake has to guess, and the guess is always worse than
 // being told.
 func Main(opener RuntimeOpener, summaries func() []map[string]any,
+	deleter func(id string) error,
 	initialSession string, autopilot, stream, debug bool) int {
 
 	transport := OpenStdio()
 	server := NewServer(transport, Bootstrap{
 		SessionSummaries: summaries,
+		DeleteSession:    deleter,
 		Autopilot:        autopilot,
 		Stream:           stream,
 		Debug:            debug,
