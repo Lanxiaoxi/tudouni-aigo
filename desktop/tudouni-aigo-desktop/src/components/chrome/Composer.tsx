@@ -1,11 +1,32 @@
 import { useEffect, useRef } from 'react';
-import { CornerDownLeft, Square } from 'lucide-react';
+import { ArrowUp, Plus, Square } from 'lucide-react';
 import { selectPhase, useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
-import { Kbd, Tip, BusyDots } from '@/components/ui/kit';
+import { Tip } from '@/components/ui/kit';
 
 /**
  * §1·7 The composer: a multi-line editor with a caret and history.
+ *
+ * **Two rows inside one box.** The upper row is the input and nothing else; the
+ * lower row is the controls — a `+` at the left edge and the action at the right.
+ * That split is the reference design's, and the reason it is worth having is
+ * that the input row stays a plain place to type: no button shares its line, so
+ * the text never starts to the right of something and never reflows when a
+ * control's label changes.
+ *
+ * Only two controls, on purpose. The reference has four (attach, permission,
+ * model, send); this build has no attachment channel to offer, and permission
+ * and model already have their own statements in the session bar above — a
+ * second copy here would be a control for a fact that is already on screen. The
+ * `+` opens the command palette, the same panel `Ctrl+K` opens, which is what
+ * the reference's plus does in spirit: one entry point to everything else.
+ *
+ * There is **no hint line below the box**. What used to live there is either
+ * already elsewhere (the key list is in `/help` and on the first screen) or is
+ * transient and now shares the control row: a refused drop, a blocked runtime,
+ * a drag in progress. Those three are statements, not hints, so they are still
+ * said — a drop refusal especially, since a path the runtime cannot resolve sits
+ * in the sentence looking exactly like one that worked.
  *
  * Keys follow the capability list. This layer is the only place allowed to carry
  * emacs-style bindings:
@@ -41,6 +62,7 @@ export function Composer() {
   const dragging = useApp((s) => s.dragging);
   const dropNotice = useApp((s) => s.dropNotice);
   const setDropNotice = useApp((s) => s.setDropNotice);
+  const openPanel = useApp((s) => s.openPanel);
   const blocked = modal !== null;
   const running = phase === 'running' && !blocked;
 
@@ -164,6 +186,7 @@ export function Composer() {
   return (
     <div className="composer">
       <div className={`cp-box${blocked ? ' is-blocked' : ''}`}>
+        {/* Row 1: the input, alone on its line. */}
         <textarea
           ref={taRef}
           rows={1}
@@ -175,73 +198,74 @@ export function Composer() {
           aria-label={t('composer.placeholder')}
         />
 
-        <div className="cp-tools">
-          {running ? (
-            <Tip label="Esc">
-              <button type="button" className="btn btn-secondary btn-compact" onClick={interrupt}>
-                <Square size={11} />
-                <span>{t('composer.interrupt')}</span>
-              </button>
-            </Tip>
-          ) : (
-            <Tip label={<Kbd>⏎</Kbd>}>
-              <button
-                type="button"
-                className="btn btn-primary btn-compact"
-                onClick={submitDraft}
-                disabled={blocked || draft.trim() === ''}
-              >
-                <CornerDownLeft size={11} />
-                <span>{t('composer.send')}</span>
-              </button>
-            </Tip>
-          )}
-        </div>
-      </div>
-
-      <div className="cp-hint">
-        {blocked ? (
-          <span>{t('composer.hint.modal')}</span>
-        ) : dropNotice !== null ? (
-          // A refused path is said out loud: it would otherwise sit in the
-          // sentence looking exactly like one that worked, and the reader would
-          // believe their file had been sent.
-          <span className="cp-drop-warn">
-            <span className="faint">·</span>
-            {dropNotice.reason === 'no-workspace'
-              ? t('composer.dropNoWorkspace', { names: dropNotice.rejected.join(', ') })
-              : t('composer.dropOutside', { names: dropNotice.rejected.join(', ') })}
+        {/* Row 2: the controls, and only two of them. */}
+        <div className="cp-row">
+          <Tip label={t('composer.tools')}>
             <button
               type="button"
-              className="btn btn-ghost btn-compact"
-              onClick={() => setDropNotice(null)}
+              className="cp-add"
+              aria-label={t('composer.tools')}
+              aria-keyshortcuts="Control+K"
+              disabled={blocked}
+              // The command palette, which is the same panel `Ctrl+K` opens —
+              // the button and the shortcut are one thing, so they share one
+              // action rather than each having its own way in.
+              onClick={() => openPanel('commands')}
             >
-              {t('common.close')}
+              <Plus size={16} />
             </button>
-          </span>
-        ) : dragging ? (
-          <span>{t('composer.dropHint')}</span>
-        ) : (
-          <>
-            <span>{t('composer.hint.send')}</span>
-            <span className="faint">·</span>
-            <span>
-              <Kbd>Ctrl K</Kbd> {t('topbar.commands')}
+          </Tip>
+
+          {/* The transient statements that used to live in a hint row under the
+              box. They belong on this row because they are about what is
+              happening to *this* input, and because a row of standing hints is
+              noise a person reads once and then has to look past forever. */}
+          {blocked ? (
+            <span className="cp-note">{t('composer.hint.modal')}</span>
+          ) : dropNotice !== null ? (
+            <span className="cp-note is-warn">
+              {dropNotice.reason === 'no-workspace'
+                ? t('composer.dropNoWorkspace', { names: dropNotice.rejected.join(', ') })
+                : t('composer.dropOutside', { names: dropNotice.rejected.join(', ') })}
+              <button
+                type="button"
+                className="btn btn-ghost btn-compact"
+                onClick={() => setDropNotice(null)}
+              >
+                {t('common.close')}
+              </button>
             </span>
-            <span className="faint">·</span>
-            <span>
-              <Kbd>Ctrl B</Kbd> {t('key.sidebar')}
-            </span>
+          ) : dragging ? (
+            <span className="cp-note">{t('composer.dropHint')}</span>
+          ) : null}
+
+          <div className="cp-actions">
             {running ? (
-              <>
-                <span className="faint">·</span>
-                <span>
-                  <BusyDots /> {t('phase.running')}
-                </span>
-              </>
-            ) : null}
-          </>
-        )}
+              <Tip label="Esc">
+                <button
+                  type="button"
+                  className="cp-send is-stop"
+                  onClick={interrupt}
+                  aria-label={t('composer.interrupt')}
+                >
+                  <Square size={13} />
+                </button>
+              </Tip>
+            ) : (
+              <Tip label={t('composer.send')}>
+                <button
+                  type="button"
+                  className="cp-send"
+                  onClick={submitDraft}
+                  disabled={blocked || draft.trim() === ''}
+                  aria-label={t('composer.send')}
+                >
+                  <ArrowUp size={16} />
+                </button>
+              </Tip>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

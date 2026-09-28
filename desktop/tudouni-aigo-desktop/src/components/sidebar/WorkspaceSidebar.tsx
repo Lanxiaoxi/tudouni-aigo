@@ -47,7 +47,12 @@ export function WorkspaceSidebar() {
   const removeWorkspace = useApp((s) => s.removeWorkspace);
   const switchSession = useApp((s) => s.switchSession);
   const requestSessionList = useApp((s) => s.requestSessionList);
-  const setSidebarVisible = useApp((s) => s.setSidebarVisible);
+  // The **left** rail's setter. This button used to call `setSidebarVisible`,
+  // which is the right-hand rail's — so hiding the workspace list hid the goal /
+  // tasks / skills / jobs / MCP rail instead and left this one on screen. The two
+  // rails are deliberately separate preferences (`store.ts`), and this is exactly
+  // the mistake that separation is there to make impossible.
+  const setLeftbarVisible = useApp((s) => s.setLeftbarVisible);
 
   /** Why the last workspace that was offered could not be taken. Local: nothing
    *  about it reached the runtime, and it is a statement about this list. */
@@ -96,7 +101,7 @@ export function WorkspaceSidebar() {
             type="button"
             className="lb-icon"
             aria-label={t('lb.collapse')}
-            onClick={() => setSidebarVisible(false)}
+            onClick={() => setLeftbarVisible(false)}
           >
             <PanelLeftClose size={15} />
           </button>

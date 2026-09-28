@@ -5,6 +5,7 @@ import { useApp } from '@/state/store';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
 import { useFileDrop } from '@/hooks/useFileDrop';
+import { useInputModality } from '@/hooks/useInputModality';
 import { useSidebarHiddenByCss } from '@/hooks/useLayout';
 import { applySystemTheme, watchSystemTheme } from '@/theme';
 
@@ -29,6 +30,9 @@ export function App() {
   useRuntimeBridge();
   useGlobalKeys();
   useFileDrop();
+  // Publishes `data-input-mode` on <html>, which is what tells a pointer-driven
+  // focus from a keyboard one. `:focus-visible` cannot do it for a text field.
+  useInputModality();
 
   const ready = useApp((s) => s.ready);
   const sidebarVisible = useApp((s) => s.sidebarVisible);
@@ -83,29 +87,71 @@ export function App() {
         <TitleBar />
         <TopBar />
         <SessionBar />
-        {showSummary ? <CollapsedSummary /> : null}
+        {/* Folded rather than conditionally rendered, like the rails: the row
+            replaces the right rail, so having the rail slide away while this
+            snapped into existence read as two unrelated events. `inert` while
+            folded rather than `aria-hidden`, because the row is full of buttons. */}
+        <div className={`collapse${showSummary ? '' : ' is-collapsed'}`} inert={!showSummary}>
+          <div>
+            <CollapsedSummary />
+          </div>
+        </div>
 
         <div className="app-main">
-          {showLeftbar ? <WorkspaceSidebar /> : null}
-          <main className="app-stream">
-            {/* A start-up failure outranks everything: without a runtime there
-                is no session to show, and the reason plus the two ways out are
-                the only useful thing on screen. */}
-            {startupProblem !== null ? (
-              <StartupProblem />
-            ) : !ready ? (
-              <Booting />
-            ) : showWelcome ? (
-              <Welcome notices={handshakeNotices} />
-            ) : (
-              <StreamView />
-            )}
-          </main>
-          {showSidebar ? <Sidebar /> : null}
+          {/* Each rail sits inside a clipping wrapper that owns the width, so
+              collapsing is a transition rather than an unmount.
+              **A conditionally rendered element has nothing to transition** — it
+              appears and disappears between frames — which is why the rails are
+              now always mounted and only their wrapper's width changes. The inner
+              element keeps its full width so its text does not reflow on the way
+              out; the wrapper's `overflow: hidden` is what slides it out of view.
+
+              `inert` when collapsed is not decoration: the controls are still in
+              the DOM, so without it Tab would walk into a rail nobody can see. */}
+          <div
+            className={`app-rail app-rail-left${showLeftbar ? '' : ' is-collapsed'}`}
+            inert={!showLeftbar}
+          >
+            <WorkspaceSidebar />
+          </div>
+
+          {/* The conversation column: the transcript **and the composer**. They
+              are one region, not two. A composer is where you speak into the
+              conversation, so it belongs to it — and putting it outside meant
+              the input box was as wide as the window while the text it was
+              continuing was 980px in the middle of it.
+
+              The status bar is deliberately *not* in here: it reports on the
+              whole application (phase, autopilot, usage, the audit log), not on
+              this column, so it stays a sibling and spans the window. */}
+          <div className="app-conversation">
+            <main className="app-stream">
+              {/* A start-up failure outranks everything: without a runtime there
+                  is no session to show, and the reason plus the two ways out are
+                  the only useful thing on screen. */}
+              {startupProblem !== null ? (
+                <StartupProblem />
+              ) : !ready ? (
+                <Booting />
+              ) : showWelcome ? (
+                <Welcome notices={handshakeNotices} />
+              ) : (
+                <StreamView />
+              )}
+            </main>
+
+            <Composer />
+          </div>
+
+          <div
+            className={`app-rail app-rail-right${showSidebar ? '' : ' is-collapsed'}`}
+            inert={!showSidebar}
+          >
+            <Sidebar />
+          </div>
         </div>
 
         <StatusBar />
-        <Composer />
       </div>
 
       <PanelHost />

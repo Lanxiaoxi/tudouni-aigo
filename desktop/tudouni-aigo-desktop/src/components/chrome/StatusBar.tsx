@@ -114,7 +114,14 @@ export function StatusBar() {
     <footer className="statusbar">
       <div className="st-left">
         <span className="st-phase" style={{ color: PHASE_TONE[phase] }}>
-          <svg width="6" height="6" viewBox="0 0 6 6" aria-hidden>
+          {/* The dot breathes **only while the phase is running**, and that is the
+              distinction component-states §7 draws: it forbids a breathing light
+              as a way of showing that a badge's *state* changed ("运行中→完成只改
+              色"), which is a transition a person misses if it animates and
+              misreads if it loops. "A turn is in flight right now" is not a state
+              change, it is a continuing condition, and the only other sign of it
+              is text that reads the same at 0s and at 60s. */}
+          <svg width="6" height="6" viewBox="0 0 6 6" aria-hidden className={phase === 'running' ? 'is-working' : undefined}>
             <circle cx="3" cy="3" r="3" fill="currentColor" />
           </svg>
           {phaseLabel}

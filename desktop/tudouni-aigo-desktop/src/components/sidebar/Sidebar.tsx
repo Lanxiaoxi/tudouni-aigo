@@ -187,13 +187,27 @@ function Block({
         <span className="sr-only">{collapsed ? t('block.expand') : t('block.collapse')}</span>
       </div>
 
-      {!collapsed ? (
-        isEmpty ? (
-          <EmptyState compact title={emptyTitle} hint={emptyHint} />
-        ) : (
-          <div className="sb-block-body">{children}</div>
-        )
-      ) : null}
+      {/* The body is **kept mounted** and folded with `.collapse`, rather than
+          being conditionally rendered. A conditionally rendered element has
+          nothing to transition — it is there in one frame and gone in the next —
+          so an expand/collapse animation requires the element to stay and only
+          its height to change.
+
+          `inert` while folded, not `aria-hidden`: these bodies contain buttons
+          (and, for a block, a whole list), and `aria-hidden` over focusable
+          content is the "aria-hidden-focus" violation — a screen reader is told
+          to ignore something the Tab key still reaches. `inert` removes it from
+          both the accessibility tree and the tab order, which is what "folded"
+          actually means. */}
+      <div className={`collapse${collapsed ? ' is-collapsed' : ''}`} inert={collapsed}>
+        <div>
+          {isEmpty ? (
+            <EmptyState compact title={emptyTitle} hint={emptyHint} />
+          ) : (
+            <div className="sb-block-body">{children}</div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

@@ -1,8 +1,15 @@
 /* ============================================================
    tudouni-aigo · 全局与布局骨架
-   区域高度总账（desktop-ui-spec.md §9.1）：
-     整屏 = 标题栏 + 顶栏 + 会话栏 +（折叠摘要行）+ 正文 + 状态栏 + 输入框
-   正文是唯一 1fr 行，其余 auto。任何面板都不得把状态栏/输入框挤出可视区。
+   区域高度总账：
+     整屏 = 标题栏 + 顶栏 + 会话栏 +（折叠摘要行）+ 会话列 + 状态栏
+   会话列（正文 + 输入框）是唯一 1fr 行，其余 auto。
+
+   输入框属于**会话列**，不属于窗口外壳：它是往对话里说话的地方，所以它和
+   正文同宽、同列。状态栏则相反 —— 它说的是整个应用的状态（相位、autopilot、
+   用量、审计日志），所以它横跨窗口，在两条侧栏**下方**，两条侧栏不延伸到底边。
+
+   任何面板都不得把状态栏或输入框挤出可视区：会话列一路 min-height:0，
+   正文是其中唯一可伸缩的行。
    ============================================================ */
 
 *,
@@ -57,15 +64,26 @@ a {
   text-decoration: none;
 }
 
-/* focus 只对键盘生效（component-states §0） */
+/* focus 只对键盘生效（component-states §0）
+   用 `data-input-mode` 而不是 `:focus-visible`：浏览器对 `<textarea>`/`<input>`
+   会在**任何**聚焦下都匹配 `:focus-visible`（输入光标本身要让人看得见），所以
+   单靠它无法区分「点进来」和「Tab 进来」。模态由 `useInputModality` 显式记录。 */
 :focus {
   outline: none;
 }
 
-:focus-visible {
+html[data-input-mode='keyboard'] :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);
+}
+
+/* The composer's own box opts out of this ring entirely — it is 980px wide, and
+   a ring around it is a rectangle around a third of the window rather than an
+   indication of where the keyboard is. It draws its own, outside the border, and
+   only for the keyboard. */
+html[data-input-mode='keyboard'] .composer textarea:focus-visible {
+  box-shadow: none;
 }
 
 /* ---------- 滚动条 ---------- */
@@ -124,8 +142,25 @@ a {
   overflow: hidden;
 }
 
+/* 会话列：正文 + 输入框。
+   它是 app-main 里唯一可伸缩的列（侧栏都是 flex: none），所以正文和输入框
+   一起占据侧栏之间的空间，并且一起被夹在顶栏和状态栏之间 —— 输入框变高时
+   压缩的是正文，不是状态栏。 */
+.app-conversation {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .app-sidebar {
-  flex: 0 0 268px;
+  /* A **definite** width, taken from the wrapper's variable so there is exactly
+     one number per rail. The rail is a plain block now, not a flex item: it is
+     `.app-rail` that participates in the row's flex layout, and a definite width
+     here is also what keeps these rows from re-wrapping mid-transition. */
+  width: var(--rail-w);
   min-height: 0;
   border-left: 1px solid var(--border-subtle);
   background: var(--bg-secondary);
@@ -138,13 +173,53 @@ a {
    and for the same reason — it is a fixed column beside the one flexible row,
    so the height budget in the header of this file still closes. */
 .app-leftbar {
-  flex: 0 0 244px;
+  width: var(--rail-w);
   min-height: 0;
   border-right: 1px solid var(--border-subtle);
   background: var(--bg-secondary);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ---------- 侧栏的收起 / 展开 ---------- */
+/**
+ * The clipping wrapper that owns a rail's width.
+ *
+ * A rail is **never unmounted** — a conditionally rendered element has nothing to
+ * transition, it simply appears and disappears between two frames. So both rails
+ * stay in the tree and only this wrapper's width goes from full to zero, with the
+ * inner rail keeping its definite width so its rows never reflow on the way out.
+ *
+ * The width is a `px` value on both sides of the transition, and that is not
+ * incidental: `width: max-content` -> `0` would be an **intrinsic keyword**
+ * against a length, which CSS cannot interpolate, so the collapse would jump
+ * instead of animating. `var(--rail-w)` is a length, so it interpolates.
+ *
+ * `width` is a **layout** property, which `tokens.css` puts on the forbidden list
+ * — the deviation is deliberate and argued at `.collapse` (global.css): that ban
+ * exists so animation cannot fight the user's own scrolling, and a rail toggled
+ * by a button involves no scrolling. No version of a rail sliding away avoids a
+ * relayout of the row.
+ */
+.app-rail {
+  flex: 0 0 auto;
+  width: var(--rail-w);
+  min-height: 0;
+  overflow: hidden;
+  transition: width var(--motion-base) var(--ease-standard);
+}
+
+.app-rail-left {
+  --rail-w: 244px;
+}
+
+.app-rail-right {
+  --rail-w: 268px;
+}
+
+.app-rail.is-collapsed {
+  width: 0;
 }
 
 /* ---------- 通用小工具 ---------- */
@@ -265,6 +340,62 @@ a {
   }
 }
 
+/* ============================================================
+   动效词汇
+   ============================================================ */
+
+/**
+ * 可动画的「展开 / 收起」，高度由内容决定。
+ *
+ * `grid-template-rows: 0fr -> 1fr` 是唯一能在**不测量高度**的前提下过渡到未知
+ * 高度的做法：`height: auto` 不可过渡，而在 JS 里量 `scrollHeight` 再写回像素，
+ * 会把布局读写成两趟并让首帧抖动。`min-height: 0` 是必需的——grid 的子项默认
+ * `min-height: auto`，不肯收缩到内容以下，0fr 就永远压不到零。
+ *
+ * **这条规则是对 tokens.css 里那行「禁止 width/height」的有意例外**，理由在
+ * `docs/component-states.md` §0 的语境里：那条禁令针对的是滚动驱动动画、
+ * 位移动画和视差，它们的问题是会跟用户的滚动位置打架。这里没有滚动参与——
+ * 是人按了一下开关，只过渡这一个属性，因此不存在「动画与输入争抢」的情况。
+ * 代价（一次布局重排）在收起/展开这种一次性交互里可以忽略。
+ *
+ * 元素**不卸载**：条件渲染意味着元素瞬间出现/消失，没有任何东西可过渡。所以
+ * `open` 变的是 class，不是有没有这个节点。
+ */
+.collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--motion-base) var(--ease-standard);
+}
+
+.collapse > * {
+  /* 不收这一条，0fr 会被内容的 min-height 顶开 */
+  min-height: 0;
+  overflow: hidden;
+}
+
+.collapse.is-collapsed {
+  grid-template-rows: 0fr;
+}
+
+/**
+ * 「正在工作」的状态点：`opacity` 呼吸，不做位移动画。
+ *
+ * 只在相位是 running 时挂上（见 StatusBar），所以它表示的是「正在跑」，而不是
+ * 某个 badge 的状态翻转——后者 component-states §7 明确禁止呼吸灯。
+ */
+@keyframes breathe {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.is-working {
+  animation: breathe 1.2s var(--ease-standard) infinite alternate;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -273,15 +404,27 @@ a {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+  /* 收缩/展开在减弱动效下直接到位：过渡已被上面归零，这里把「收起」写成
+     毫不含糊的零高度，免得某个时长常量将来被改大后它又慢慢动起来。 */
+  .collapse,
+  .collapse.is-collapsed {
+    transition: none !important;
+  }
 }
 
 /* ---------- 窄窗降级 ---------- */
+/* Both rules below target `.app-rail`, not the rails inside it, and that is now
+   load-bearing: the rails are plain blocks clipped by the wrapper, so a
+   `flex-basis` on them would do nothing (they are not flex items any more) and
+   `display: none` on them would leave the wrapper's 244/268px of empty strip
+   behind. The width lives in the wrapper's `--rail-w`, so that is what
+   narrow windows change. */
 @media (max-width: 1180px) {
-  .app-sidebar {
-    flex-basis: 236px;
+  .app-rail-right {
+    --rail-w: 236px;
   }
-  .app-leftbar {
-    flex-basis: 216px;
+  .app-rail-left {
+    --rail-w: 216px;
   }
 }
 
@@ -290,8 +433,7 @@ a {
    asks the stylesheet for this rule rather than guessing (`useLayout.ts`), which
    is what keeps the two from disagreeing and blanking the screen. */
 @media (max-width: 1024px) {
-  .app-sidebar,
-  .app-leftbar {
+  .app-rail {
     display: none;
   }
 }

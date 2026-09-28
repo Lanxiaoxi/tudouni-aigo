@@ -1,3 +1,4 @@
+import { PanelLeft, PanelLeftClose } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useApp, selectAskOn } from '@/state/store';
 import { useT } from '@/i18n/useT';
@@ -29,9 +30,36 @@ export function SessionBar() {
   const askOn = useApp(useShallow(selectAskOn));
   const openPanel = useApp((s) => s.openPanel);
 
+  // The left rail's toggle. It sits **outside** the rail on purpose: a control
+  // that lives inside the thing it hides cannot bring that thing back, so the
+  // rail's own collapse button left `Ctrl+L` as the only way home — not
+  // something a mouse user can discover. Here it is always on screen, in the row
+  // that names the session, immediately above the rail it folds.
+  const leftbarVisible = useApp((s) => s.leftbarVisible);
+  const toggleLeftbar = useApp((s) => s.toggleLeftbar);
+  const railToggle = (
+    <Tip label={leftbarVisible ? t('lb.collapse') : t('lb.show')}>
+      <button
+        type="button"
+        className="rail-toggle"
+        aria-label={leftbarVisible ? t('lb.collapse') : t('lb.show')}
+        aria-expanded={leftbarVisible}
+        aria-keyshortcuts="Control+L"
+        onClick={toggleLeftbar}
+      >
+        {leftbarVisible ? <PanelLeftClose size={14} /> : <PanelLeft size={14} />}
+      </button>
+    </Tip>
+  );
+
   if (!session) {
+    // The toggle is rendered in this state too. Before the handshake lands there
+    // are no facts to show, and leaving the button out of the placeholder would
+    // make it appear only once a runtime answered — which is exactly when
+    // somebody who hid the rail is least likely to look here for it.
     return (
       <div className="sessionbar">
+        {railToggle}
         <span className="sb-label">{t('session.label')}</span>
         <span className="muted">—</span>
       </div>
@@ -46,6 +74,8 @@ export function SessionBar() {
 
   return (
     <div className="sessionbar">
+      {railToggle}
+
       <div className="sb-group">
         <span className="sb-label">{t('session.label')}</span>
         <Fact mono title="session id">

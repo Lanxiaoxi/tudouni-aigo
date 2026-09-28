@@ -6,10 +6,12 @@
  * On some Windows machines esbuild's own cleanup of its temp file fails with
  * "Access is denied" (a scanner or indexer holding the handle), and the build
  * dies after transforming everything — `vite:esbuild-transpile remove ... Access
- * is denied`. It is not caused by anything in this project: the untouched
- * reference prototype under `desktop/tudouni-aigo-desktop-design/webui/` fails
- * identically on the same machine. Pointing `TEMP`/`TMP` at a directory we own
- * avoids it, and costs nothing when the machine does not have the problem.
+ * is denied`. It is not caused by anything in this project: an unrelated Vite
+ * project on the same machine failed identically, which is how it was diagnosed
+ * (the design document kept a nested prototype at the time; it has since been
+ * removed — see `desktop-app.md` §2 — and the workaround stands on its own).
+ * Pointing `TEMP`/`TMP` at a directory we own avoids it, and costs nothing when
+ * the machine does not have the problem.
  *
  * The steps are the same ones `npm run build` documents: `tsc -b`, then
  * `vite build`. Type checking runs first and its failure stops the build, so a

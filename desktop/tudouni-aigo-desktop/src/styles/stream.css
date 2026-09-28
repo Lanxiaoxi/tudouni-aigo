@@ -60,7 +60,8 @@
   flex: none;
 }
 
-/* 折叠箭头 */
+/* 折叠箭头：旋转走 `--motion-base`，与被它控制的收起/展开同步。
+   `--motion-fast` 会明显快于高度过渡，看起来像箭头先动、内容后到。 */
 .caret {
   display: inline-flex;
   align-items: center;
@@ -72,7 +73,7 @@
   flex: none;
   cursor: pointer;
   transition:
-    transform var(--motion-fast) var(--ease-out),
+    transform var(--motion-base) var(--ease-standard),
     background-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out);
 }

@@ -344,6 +344,10 @@ export const en = {
   'composer.placeholder': 'Say something…  Enter sends, Shift+Enter newlines',
   'composer.blocked': 'Resolve the prompt above first',
   'composer.send': 'Send',
+  /** The `+` at the left of the control row: it opens the command palette, the
+   *  same panel `Ctrl+K` does. Named for what it offers rather than for the
+   *  glyph, since a bare "+" says nothing about where it leads. */
+  'composer.tools': 'Commands and panels',
   'composer.hint.send': 'Enter send · Shift+Enter newline · Esc interrupt',
   'composer.hint.modal': 'The runtime is blocked by a modal — answer it to continue',
   'composer.dropHint': 'Drop a file to insert its path, or drop it in the workspace — pictures are attached by naming their path',

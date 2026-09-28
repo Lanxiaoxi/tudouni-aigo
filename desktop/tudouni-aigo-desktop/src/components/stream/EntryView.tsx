@@ -225,7 +225,18 @@ function ToolEntry({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
         ) : null}
       </div>
 
-      {open ? <ToolBody entry={entry} /> : null}
+      {/* Kept mounted and folded, not conditionally rendered: an element that
+          appears and disappears between frames has nothing to transition. The
+          wrapper is *outside* `ToolBody` rather than inside it, because quiet
+          mode reuses `ToolBody` and would otherwise get the fold too.
+          `inert` while folded keeps this body out of the tab order as well as the
+          accessibility tree — the tool body holds no controls today, but the
+          reasoning body's neighbours do and the two must not differ in kind. */}
+      <div className={`collapse${open ? '' : ' is-collapsed'}`} inert={!open}>
+        <div>
+          <ToolBody entry={entry} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -236,8 +247,11 @@ function ToolEntry({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
  */
 export function ToolBody({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
   const t = useT();
+  // No entrance animation of its own: the fold wrapper at the call site owns the
+  // reveal, and this body is kept mounted, so a `reveal` here would fire once on
+  // page load for every tool row and never again.
   return (
-    <div className="e-tool-body reveal">
+    <div className="e-tool-body">
       <div className="etb-label">{t('entry.params')}</div>
       <div className="terminal">{entry.arguments || '—'}</div>
 
@@ -402,7 +416,15 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
         <span className="er-count">Ctrl T</span>
       </div>
 
-      {open ? <div className="e-reason-body">{entry.text}</div> : null}
+      {/* Same kept-mounted fold as the tool body above. The reasoning text is the
+          one that benefits most: it is forced open while streaming and folds when
+          the stream stops, so the transition is what makes "it just collapsed"
+          legible rather than looking like the text vanished. */}
+      <div className={`collapse${open ? '' : ' is-collapsed'}`} inert={!open}>
+        <div>
+          <div className="e-reason-body">{entry.text}</div>
+        </div>
+      </div>
     </div>
   );
 }

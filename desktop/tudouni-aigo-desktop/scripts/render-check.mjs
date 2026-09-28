@@ -67,7 +67,26 @@ async function main() {
       awaitPromise: true,
     });
     if (r.result?.exceptionDetails) {
-      problems.push(`eval threw: ${r.result.exceptionDetails.text}`);
+      // Reported here, not only into `problems`. `problems` is printed at the
+      // very end of the run, so an assertion that threw while evaluating a probe
+      // used to abort with its own message and take the cause with it: the
+      // failure read "the composer is not inside the conversation column" when
+      // what actually happened was a `TypeError` in the probe itself.
+      const detail =
+        r.result.exceptionDetails.exception?.description ?? r.result.exceptionDetails.text;
+      problems.push(`eval threw: ${detail}`);
+      console.error(`  eval threw: ${detail}`);
+      return undefined;
+    }
+    if (r.result?.result?.value === undefined) {
+      // The third way this returns nothing, and the one that cost a real
+      // debugging session: a CDP-level **error** reply (`{id, error}`), which
+      // leaves `r.result` undefined entirely — so neither branch above fires and
+      // the caller just sees `undefined`. It is not hypothetical: it is what a
+      // probe attached to a stale browser instance returns, and it read exactly
+      // like "the element is not there".
+      console.error(`  eval returned nothing; raw reply: ${JSON.stringify(r).slice(0, 400)}`);
+      problems.push(`eval returned nothing: ${JSON.stringify(r).slice(0, 200)}`);
       return undefined;
     }
     return r.result?.result?.value;
@@ -111,6 +130,220 @@ async function main() {
   if (m.childCount <= 0) throw new Error('the React tree did not mount');
   if (!m.hasApp) throw new Error('the app shell is missing');
   if (!m.booting) throw new Error('with no runtime attached the UI should show its booting phase');
+
+  // ---- 1b. the conversation column owns the composer, the status bar spans the window ----
+  //
+  // A layout is not testable by asserting that elements exist — they all existed
+  // in the old shape too. What has to be asserted is the *relationship*: which
+  // container each region belongs to, and where the sidebars stop. Those are
+  // facts about the DOM tree, and they are exactly what a CSS edit can silently
+  // undo while every element stays on screen.
+  const layout = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const conv = q('.app-conversation');
+    const main = q('.app-main');
+    const sb = q('.statusbar');
+    const box = (el) => { const r = el?.getBoundingClientRect(); return r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } : null; };
+    const convBox = box(conv);
+    const statusBox = box(sb);
+    return JSON.stringify({
+      // The composer must be a descendant of the conversation column, and NOT a
+      // direct child of the shell — that is the whole change.
+      composerInConversation: !!conv?.querySelector('.composer'),
+      composerIsShellChild: !!q('.app > .composer'),
+      composerInMain: !!main?.querySelector(':scope > .composer'),
+      // The status bar must be the shell's own child, after .app-main, so it
+      // spans the window including under both rails.
+      statusIsShellChild: !!q('.app > .statusbar'),
+      statusAfterMain: !!(main && sb && (main.compareDocumentPosition(sb) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      // And it must not be inside the conversation column.
+      statusInConversation: !!conv?.querySelector('.statusbar'),
+      convBox,
+      statusBox,
+      viewportW: window.innerWidth,
+      viewportH: window.innerHeight,
+      streamInnerW: Math.round(q('.stream-inner')?.getBoundingClientRect().width ?? 0),
+      cpBoxX: box(q('.cp-box'))?.x ?? null,
+    });
+  })()`);
+  console.log('layout:', layout);
+  const L = JSON.parse(layout ?? '{}');
+
+  if (!L.composerInConversation) {
+    throw new Error('the composer is not inside the conversation column');
+  }
+  if (L.composerIsShellChild || L.composerInMain) {
+    throw new Error('the composer is still a window-level region, not part of the conversation');
+  }
+  if (!L.statusIsShellChild || !L.statusAfterMain) {
+    throw new Error('the status bar is not a window-spanning row after the conversation');
+  }
+  if (L.statusInConversation) {
+    throw new Error('the status bar moved into the conversation column instead of spanning the window');
+  }
+  // The status bar spans the whole window, so it starts at x=0 and is as wide as
+  // the viewport — the rails must not extend past it to the bottom.
+  if (L.statusBox && (L.statusBox.x !== 0 || L.statusBox.w !== L.viewportW)) {
+    throw new Error(`the status bar does not span the window: ${JSON.stringify(L.statusBox)} of ${L.viewportW}px`);
+  }
+  // The conversation column is above it, and together they close the height
+  // budget: the composer sits inside the column, so column bottom == status top.
+  if (L.convBox && L.statusBox) {
+    const convBottom = L.convBox.y + L.convBox.h;
+    if (Math.abs(convBottom - L.statusBox.y) > 1) {
+      throw new Error(`a gap between the conversation column (${convBottom}) and the status bar (${L.statusBox.y})`);
+    }
+    if (L.convBox.h <= 0) throw new Error('the conversation column has no height');
+  }
+  // The box you type into lines up with the text above it. Two numbers in two
+  // stylesheets have to agree for this, so it is worth an assertion.
+  if (L.cpBoxX !== null && Math.abs(L.cpBoxX - L.convBox.x) > 40) {
+    throw new Error(`the composer is not aligned with the conversation column: ${L.cpBoxX} vs ${L.convBox.x}`);
+  }
+
+  // ---- 1c. the composer is two rows in one box, with exactly two controls ----
+  //
+  // These are facts about structure and geometry that a CSS edit can quietly
+  // undo while every element stays present: the input and the buttons are all
+  // still in the DOM if the box goes back to `flex-direction: row`, it just
+  // stops being two rows. Three claims are worth asserting:
+  //
+  //   - the input is on its own line (its bottom is above the control row);
+  //   - there are exactly two controls, a plus and an action, and nothing else;
+  //   - there is no hint row below the box.
+  const composer = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const box = (el) => { const r = el?.getBoundingClientRect(); return r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), bottom: Math.round(r.bottom) } : null; };
+    const cpBox = q('.cp-box');
+    const ta = q('.composer textarea');
+    const row = q('.cp-row');
+    const add = q('.cp-add');
+    const send = q('.cp-send');
+    return JSON.stringify({
+      boxBox: box(cpBox),
+      taBox: box(ta),
+      rowBox: box(row),
+      addBox: box(add),
+      sendBox: box(send),
+      boxDirection: cpBox ? getComputedStyle(cpBox).flexDirection : null,
+      // Every focusable control in the composer, named, so a third one shows up
+      // by name rather than as a changed count.
+      controls: [...(cpBox?.querySelectorAll('button') ?? [])].map((b) => b.className),
+      // The removed pieces.
+      hintRow: !!q('.cp-hint'),
+      toolsRow: !!q('.cp-tools'),
+      // The input must be the first child, so nothing sits to its left.
+      textareaIsFirst: cpBox?.firstElementChild?.tagName === 'TEXTAREA',
+    });
+  })()`);
+  console.log('composer:', composer);
+  const C = JSON.parse(composer ?? '{}');
+
+  if (C.boxDirection !== 'column') {
+    throw new Error(`the composer box is not a column of rows: flex-direction is ${C.boxDirection}`);
+  }
+  if (!C.textareaIsFirst) {
+    throw new Error('the textarea is not the first child of the composer box');
+  }
+  // The input row must sit above the control row — that is the whole shape.
+  if (!(C.taBox && C.rowBox)) {
+    throw new Error('could not measure the composer rows');
+  }
+  if (C.taBox.bottom > C.rowBox.y) {
+    throw new Error(`the input overlaps the control row: input bottom ${C.taBox.bottom}, row top ${C.rowBox.y}`);
+  }
+  if (C.taBox.w < 100) throw new Error(`the input is not a full-width line: width ${C.taBox.w}`);
+  // The two ends of the control row.
+  if (!C.addBox) throw new Error('the plus button is missing');
+  if (!C.sendBox) throw new Error('the send button is missing');
+  if (Math.abs(C.addBox.y - C.sendBox.y) > 2) {
+    throw new Error('the plus and the action are not on the same row');
+  }
+  if (C.addBox.x >= C.sendBox.x) {
+    throw new Error('the plus is not at the left end of the control row');
+  }
+  // Exactly two controls, and no others.
+  if (C.controls.length !== 2) {
+    throw new Error(`expected 2 composer controls, found ${C.controls.length}: ${JSON.stringify(C.controls)}`);
+  }
+  if (C.hintRow) throw new Error('the hint row below the composer is still rendered');
+  if (C.toolsRow) throw new Error('the old single-row tools container is still rendered');
+  // ---- the composer ring is for the keyboard only ----
+  //
+  // The first version of this assertion measured the box's `borderColor`, which
+  // could never have caught the defect: the ring is drawn with `outline` (and, in
+  // an earlier revision, with a `box-shadow` on the textarea itself). So it has to
+  // measure all three surfaces, and it has to drive real input modalities —
+  // `ta.focus()` in script matches `:focus-visible` no matter what, which is
+  // precisely the confusion that produced the bug.
+  //
+  // Simulated pointer and key events are what set `data-input-mode`, so this also
+  // covers the hook that distinguishes them.
+  const focusProbe = await evaluate(`(() => {
+    const ta = document.querySelector('.composer textarea');
+    const box = document.querySelector('.cp-box');
+    if (!ta || !box) return null;
+    const read = () => {
+      const b = getComputedStyle(box);
+      const t = getComputedStyle(ta);
+      return {
+        outline: b.outlineStyle + ' ' + b.outlineWidth + ' ' + b.outlineColor,
+        outlineIsNone: b.outlineStyle === 'none' || b.outlineWidth === '0px',
+        boxShadow: b.boxShadow,
+        textareaShadow: t.boxShadow,
+        mode: document.documentElement.getAttribute('data-input-mode'),
+      };
+    };
+    const out = {};
+    // 1. A pointer press, then focus — the case that must show nothing.
+    window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    ta.focus();
+    out.afterClick = read();
+    // 2. A keypress, then focus — the case that must show a ring.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    ta.blur();
+    ta.focus();
+    out.afterKey = read();
+    // 3. Back to the pointer, to prove it clears again.
+    window.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    ta.blur();
+    ta.focus();
+    out.backToPointer = read();
+    ta.blur();
+    return JSON.stringify(out);
+  })()`);
+  console.log('composer ring:', focusProbe);
+  const FR = JSON.parse(focusProbe ?? '{}');
+  if (!FR.afterClick) throw new Error('the composer ring probe found no composer');
+  if (FR.afterClick.mode !== 'pointer') {
+    throw new Error(`a pointer press did not set the pointer mode: ${FR.afterClick.mode}`);
+  }
+  // The defect: a ring after a click.
+  if (!FR.afterClick.outlineIsNone || FR.afterClick.textareaShadow !== 'none') {
+    throw new Error(
+      `clicking into the composer still draws a ring (outline ${FR.afterClick.outline}, textarea shadow ${FR.afterClick.textareaShadow})`,
+    );
+  }
+  if (FR.afterKey.mode !== 'keyboard') {
+    throw new Error(`a keypress did not set the keyboard mode: ${FR.afterKey.mode}`);
+  }
+  // Not the defect, but the accessibility half of it: the keyboard must still
+  // get an indication, or removing the ring for the mouse removed it for everyone.
+  if (FR.afterKey.outlineIsNone) {
+    throw new Error('the keyboard reaches the composer with no visible focus indication at all');
+  }
+  if (FR.backToPointer.outlineIsNone === false) {
+    throw new Error('the ring did not clear when the pointer was used again');
+  }
+
+  // ---- 1d. (moved) ----
+  // The fold check lives further down, immediately after the sidebar's blocks
+  // exist. It sat here first and its probe returned `null`, because at this point
+  // no `ui(state)` has arrived and the right rail is still empty — a runtime
+  // ordering fact that `node --check` cannot see, and the `null` surfaced as
+  // "no .collapse element", which read like a markup problem rather than a
+  // too-early probe.
 
   // ---- 2. drive the real store with real payloads ----
   // `window.__aigoStore` is set by `main.tsx` (dev builds only) and is the very
@@ -249,6 +482,105 @@ async function main() {
       throw new Error(`the left sidebar offers "${absent}", which has nothing behind it`);
     }
   }
+
+  // ---- the two rails are independent, and hiding one is reversible ----
+  //
+  // This is a regression test for a real defect, and the shape of it is why it
+  // needs to exist: the left rail's collapse button called `setSidebarVisible`,
+  // which is the **right** rail's setter. Nothing threw, nothing logged, no
+  // element went missing — pressing the button simply hid a different rail and
+  // left the one being pointed at on screen. Type checking cannot see it (both
+  // setters take a boolean) and neither can the CSS audit.
+  //
+  // **Visibility is measured, not inferred from the DOM.** Both rails are now
+  // permanently mounted (an unmounted element has nothing to animate, so the
+  // collapse is a width transition on a clipping wrapper). `!!querySelector` was
+  // the old test and it is now true in every state, which would have made this
+  // whole section pass while asserting nothing. So the wrapper's measured width
+  // is what gets checked.
+  //
+  // The sleeps are longer than the transition (`--motion-base`, 180ms) on
+  // purpose: measuring mid-transition gives an arbitrary number between the two
+  // ends, which is exactly the kind of flake that gets a test deleted.
+  const railState = () =>
+    evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const w = (s) => { const el = q(s); if (!el) return null; return Math.round(el.getBoundingClientRect().width); };
+    const st = window.__aigoStore.getState();
+    return JSON.stringify({
+      leftW: w('.app-rail-left'),
+      rightW: w('.app-rail-right'),
+      leftCollapsed: !!q('.app-rail-left')?.classList.contains('is-collapsed'),
+      rightCollapsed: !!q('.app-rail-right')?.classList.contains('is-collapsed'),
+      leftInert: q('.app-rail-left')?.hasAttribute('inert') ?? null,
+      toggle: !!q('.sessionbar .rail-toggle'),
+      toggleInTopbar: !!q('.topbar .rail-toggle'),
+      toggleFirstInBar: q('.sessionbar')?.firstElementChild?.classList.contains('rail-toggle') ?? null,
+      store: { leftbarVisible: st.leftbarVisible, sidebarVisible: st.sidebarVisible },
+    });
+  })()`);
+
+  // A rail wider than this is on screen; narrower is folded away. Well clear of
+  // the transition's endpoints so a partially-completed animation cannot pass.
+  const WIDE = 100;
+  const FOLDED = 2;
+
+  const beforeToggle = await railState();
+  console.log('both rails, before hiding:', beforeToggle);
+  const bt = JSON.parse(beforeToggle ?? '{}');
+  if (!(bt.leftW > WIDE) || !(bt.rightW > WIDE)) {
+    throw new Error(`both rails should start wide, got left=${bt.leftW} right=${bt.rightW}`);
+  }
+  if (bt.leftCollapsed || bt.rightCollapsed) throw new Error('a rail starts in the collapsed state');
+  if (!bt.toggle) {
+    throw new Error('no rail toggle in the session bar: hiding the left rail would be a one-way trip');
+  }
+  if (bt.toggleInTopbar) throw new Error('the rail toggle is still in the top bar');
+  if (bt.toggleFirstInBar !== true) {
+    throw new Error('the rail toggle is not the first element in the session bar');
+  }
+
+  // Press the left rail's own collapse button, as a person would.
+  await evaluate(`(() => {
+    document.querySelector('.lb-head .lb-icon').click();
+    return true;
+  })()`);
+  await sleep(500);
+
+  const afterHide = await railState();
+  console.log('after hiding the left rail:', afterHide);
+  const ah = JSON.parse(afterHide ?? '{}');
+  if (ah.leftW > FOLDED) throw new Error(`the left rail did not fold away: width ${ah.leftW}`);
+  if (ah.rightW < WIDE) {
+    throw new Error(`hiding the left rail also hid the right one (width ${ah.rightW}) — the two setters are crossed`);
+  }
+  if (ah.rightCollapsed) throw new Error('the left rail collapsed the right one');
+  if (ah.store.sidebarVisible !== true) {
+    throw new Error("the left rail wrote the right rail's preference");
+  }
+  if (ah.store.leftbarVisible !== false) {
+    throw new Error('the left rail did not write its own preference');
+  }
+  // A folded rail is still in the DOM, so it must be out of the tab order too.
+  if (ah.leftInert !== true) {
+    throw new Error('the folded left rail is still reachable by Tab: no `inert`');
+  }
+
+  // And back, with the mouse only. A rail whose restore path is a keyboard
+  // shortcut is a rail a mouse user cannot get back.
+  await evaluate(`(() => {
+    document.querySelector('.sessionbar .rail-toggle').click();
+    return true;
+  })()`);
+  await sleep(500);
+
+  const afterShow = await railState();
+  console.log('after restoring the left rail:', afterShow);
+  const as = JSON.parse(afterShow ?? '{}');
+  if (!(as.leftW > WIDE)) throw new Error(`the left rail did not come back: width ${as.leftW}`);
+  if (!(as.rightW > WIDE)) throw new Error('restoring the left rail took the right one with it');
+  if (as.store.leftbarVisible !== true) throw new Error('the restore did not reach the preference');
+  if (as.leftInert) throw new Error('the restored left rail is still inert');
 
   // The session list, as the runtime answers it. `messages`, `steps`, `todos`
   // and `preview` are all computed by the runtime — this rail counts nothing
@@ -412,6 +744,69 @@ async function main() {
   if (!sb.sidebarText.includes('3/60')) throw new Error('the goal round count is missing');
   if (!sb.sidebarText.includes('uncollected')) throw new Error('the uncollected job is not flagged');
   if (!sb.sidebarText.includes('pdf-tools')) throw new Error('the loaded skill is missing');
+
+  // ---- a fold animates, so its content stays mounted ----
+  //
+  // This sits here rather than with the composer because it needs a block to
+  // exist, and the right rail is empty until `ui(state)` lands above.
+  //
+  // The expand/collapse work rests on one property: a folded body stays in the
+  // DOM with its height driven to zero, rather than being unmounted. Unmounting
+  // is what the code used to do (`{open ? <Body/> : null}`), and an element that
+  // appears and disappears between frames has nothing to interpolate — so the
+  // animation would be a silent no-op, because both end states look identical.
+  // That is why the two facts are asserted together: a leaf inside the fold must
+  // still be queryable *and* the fold must have no height.
+  const fold = await evaluate(`(() => {
+    const block = document.querySelector('.sb-block');
+    if (!block) return null;
+    const head = block.querySelector('.sb-block-head');
+    const foldEl = block.querySelector('.collapse');
+    const countRows = () => block.querySelectorAll('.sb-row, .sb-empty, .sb-goal, .sb-progress').length;
+    const snapshot = () => ({
+      collapsed: foldEl?.classList.contains('is-collapsed') ?? null,
+      h: foldEl ? Math.round(foldEl.getBoundingClientRect().height) : null,
+      rows: countRows(),
+      inert: foldEl?.hasAttribute('inert') ?? null,
+    });
+    const openState = snapshot();
+    head.click();
+    return new Promise((resolve) => setTimeout(() => {
+      const closed = snapshot();
+      head.click();
+      setTimeout(() => resolve(JSON.stringify({
+        openState, closed, reopened: snapshot(), hasFoldElement: !!foldEl,
+      })), 600);
+    }, 600));
+  })()`);
+  console.log('fold:', fold);
+  const FO = JSON.parse(fold ?? '{}');
+  if (fold === null) {
+    throw new Error('no sidebar block to fold: `ui(state)` did not produce one');
+  }
+  if (!FO.hasFoldElement) {
+    throw new Error('no .collapse element in a sidebar block: the fold is not using the animated wrapper');
+  }
+  if (!(FO.openState?.h > 0)) {
+    throw new Error(`an expanded sidebar block has no height: ${JSON.stringify(FO.openState)}`);
+  }
+  if (!(FO.closed?.h <= 1)) {
+    throw new Error(`folding a sidebar block left it with height ${FO.closed?.h}`);
+  }
+  if (FO.closed?.rows !== FO.openState?.rows) {
+    throw new Error(
+      `folding removed content from the DOM (${FO.openState?.rows} -> ${FO.closed?.rows}): the fold unmounts instead of collapsing`,
+    );
+  }
+  if (FO.closed?.inert !== true) {
+    throw new Error('a folded sidebar block is still reachable by Tab: no `inert`');
+  }
+  if (!(FO.reopened?.h > 0)) {
+    throw new Error('the block did not expand again');
+  }
+  if (FO.reopened?.collapsed !== false) {
+    throw new Error('the block did not return to the expanded class');
+  }
 
   // a full turn: run_started -> model_call -> tool_call -> tool_result -> answer
   await apply({
@@ -616,13 +1011,16 @@ async function main() {
   // decoration. `server.go: switchSession` calls `pending.abandonAll()`, so
   // switching a session abandons the request the runtime is blocked on, and it
   // waits on that id forever. Restarting the child under a prompt is worse.
+  //
+  // Measured by width, not by presence: the rail is permanently mounted now, so
+  // a presence check here would assert nothing at all.
   const railDuringModal = await evaluate(`(() => {
     const bar = document.querySelector('.app-leftbar');
     const buttons = [...bar.querySelectorAll('button')];
     return JSON.stringify({
       // The rail stays readable: the prompt takes the *actions*, not the
       // information about where you are.
-      visible: !!bar,
+      width: Math.round(document.querySelector('.app-rail-left')?.getBoundingClientRect().width ?? 0),
       text: (bar.innerText ?? '').replace(/\\s+/g,' ').toLowerCase(),
       enabled: buttons.filter((b) => !b.disabled).length,
       total: buttons.length,
@@ -630,7 +1028,7 @@ async function main() {
   })()`);
   console.log('left rail during a prompt:', railDuringModal);
   const rm = JSON.parse(railDuringModal ?? '{}');
-  if (!rm.visible) throw new Error('the left rail vanished behind a prompt');
+  if (!(rm.width > 100)) throw new Error(`the left rail is not on screen behind a prompt: width ${rm.width}`);
   if (!rm.text.includes('project')) {
     throw new Error('the rail stopped saying which workspace is current behind a prompt');
   }

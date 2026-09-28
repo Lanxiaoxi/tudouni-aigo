@@ -188,6 +188,36 @@
   color: var(--fg-faint);
 }
 
+/* The left rail's toggle, at the head of the session bar.
+   `flex: none` keeps it from being squeezed when the facts to its right are
+   long, and its position **first** is what makes it dependable: the session bar
+   scrolls horizontally (`overflow-x: auto`, scrollbar hidden), so anything
+   further along can be scrolled out of view — but the resting scroll position is
+   the leading edge, which is where this sits. That is the property the rail's
+   own collapse button lacked: it was inside the thing it hid, so hiding the rail
+   removed it from the tree and left `Ctrl+L` as the only way back.
+   No `sep` follows it: the gap plus the button's own padding is enough, and a
+   separator here would read as delimiting a *fact* rather than a control. */
+.sessionbar .rail-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  margin-right: var(--space-1);
+  flex: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.sessionbar .rail-toggle:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
 .sessionbar .sb-right {
   margin-left: auto;
   display: flex;
@@ -419,28 +449,75 @@
 }
 
 /* ---------------- §1·7 输入框 ---------------- */
+/* The composer lives **inside the conversation column**, below the transcript and
+   above the status bar. It is not a window-level region any more, and the two
+   consequences are visible here:
+
+     - its inner width is capped to the same 980px the transcript uses, so the box
+       you type into lines up with the text it is continuing. Before, the box was
+       as wide as the window while the conversation was 980px in the middle of it;
+     - `border-top` is kept, but it now separates the composer from the
+       transcript rather than from the sidebars — which is the boundary a reader
+       actually crosses when moving between reading and typing. */
 .composer {
   flex: none;
   border-top: 1px solid var(--border-subtle);
   background: var(--bg);
-  padding: var(--space-3) var(--space-4) var(--space-3);
+  /* The horizontal padding matches `.stream-inner`'s, and that is the point: both
+     children below cap at 980px, so equal padding is what makes the box's left
+     edge land on the same pixel as the first character of the transcript. With
+     16px here against the transcript's 20px, the box would sit 4px wider on each
+     side — small enough to look like a rendering quirk rather than a mismatch,
+     which is exactly the kind of thing that never gets reported. */
+  padding: var(--space-3) var(--space-5) var(--space-3);
 }
 
+/* The composer's inner width is capped to the **same** 980px the transcript uses,
+   and its horizontal padding matches `.stream-inner`'s. Both have to agree: the
+   transcript centres itself in the conversation column, so an uncapped box would
+   span the whole column and its left edge would drift away from the text on any
+   window wider than about 1020px. Two numbers, one relationship — which is why
+   they are written next to each other rather than left to be rediscovered.
+
+   The box is a column of two rows: the input, then the controls. `flex-direction:
+   column` plus `align-items: stretch` is what keeps row 1 a full-width line — a
+   `row` here would put the buttons back beside the text, which is the layout this
+   replaced. */
 .composer .cp-box {
   max-width: 980px;
   margin: 0 auto;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--bg-secondary);
   transition: border-color var(--motion-fast) var(--ease-out);
 }
 
-.composer .cp-box:focus-within {
-  border-color: var(--accent-border);
+/* A keyboard ring drawn **outside** the box, and nothing at all for a pointer.
+
+   The box used to wear a green border for as long as the caret was inside it,
+   which on a wide window drew a 980px green rectangle around the whole composer —
+   more attention than the thing you are typing into deserves, and it read as a
+   state the composer was *in* rather than as "the keyboard is here".
+
+   **`:focus-visible` cannot make that distinction here, and the first version of
+   this rule assumed it could.** Browsers deliberately match `:focus-visible` for a
+   `<textarea>` whenever it is focused, whatever the input that got it there — the
+   caret always needs locating, so suppressing its indicator on a click was judged
+   worse than showing it. Measured, not guessed: with the caret in the box,
+   `matches(':focus-visible')` is `true` after a mousedown as well as after Tab.
+   So `:has(textarea:focus-visible)` lit the ring on a click, which is exactly
+   what it was written to prevent.
+
+   The modality now comes from `data-input-mode` on `<html>`, set by
+   `useInputModality` from capture-phase `pointerdown`/`keydown`. It is an
+   `outline` so the ring sits outside the box and moves no layout. */
+html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
 }
 
 .composer .cp-box.is-blocked {
@@ -458,34 +535,128 @@
   font-size: var(--text-body);
   line-height: var(--leading-body);
   font-family: var(--font-sans);
+  /* The input is the first thing on its own line, so it carries no indent of its
+     own: the row's padding is the only inset, which is why the text lines up with
+     the `+` below it. */
+  padding: 0 var(--space-1);
 }
 
 .composer textarea::placeholder {
   color: var(--fg-faint);
 }
 
-.composer .cp-tools {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: none;
-}
-
-.composer .cp-hint {
-  max-width: 980px;
-  margin: var(--space-2) auto 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--text-caption);
-  color: var(--fg-faint);
-}
-
-.composer .cp-hint .cp-drop-warn {
+/* Row 2: one `+` on the left, the action on the right, and any transient
+   statement in between. `min-height` keeps the row from collapsing when the
+   middle is empty (which is the common case), so the box does not change height
+   between "quiet" and "a drop was refused". */
+.composer .cp-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 28px;
+}
+
+.composer .cp-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  color: var(--fg-secondary);
+  background: var(--bg-muted);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.composer .cp-add:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--fg);
+}
+
+/* Press feedback: `transform` is on the allowed list, so the button dips rather
+   than merely darkening. `--motion-fast` for the press and the release alike —
+   a slow release reads as lag, not as weight. */
+.composer .cp-add:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.composer .cp-add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* The transient statements. They share the control row rather than a line of
+   their own below the box, and they only ever appear when something needs
+   saying — a blocked runtime, a refused drop, a drag in flight. */
+.composer .cp-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer .cp-note.is-warn {
   color: var(--warning);
+}
+
+.composer .cp-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+  flex: none;
+}
+
+/* The send button: a filled circle, the same 28px target as the `+` so the two
+   ends of the row balance. Disabled is the *same* shape at lower opacity rather
+   than a different control, so the row does not shift when the draft goes from
+   empty to one character. */
+.composer .cp-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  /* A real colour, not the `clearRoles` sentinel: this glyph sits *on* the
+     accent, and a sentinel would leave the default foreground on it — the
+     hardest combination to read in a dark terminal, and just as wrong here. */
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.composer .cp-send:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.composer .cp-send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.composer .cp-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* While a turn runs the same button stops it, and it is stated by shape and
+   colour, never by colour alone. */
+.composer .cp-send.is-stop {
+  background: var(--destructive);
+  color: #ffffff;
+}
+
+.composer .cp-send.is-stop:hover {
+  filter: brightness(0.92);
 }
 
 /* The window is the drop target (`dragDropEnabled: true` is what makes the OS
