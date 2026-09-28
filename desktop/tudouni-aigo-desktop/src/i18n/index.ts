@@ -1,0 +1,427 @@
+/**
+ * Interface copy.
+ *
+ * **English only**, and that is a deliberate decision, not an omission.
+ *
+ * The runtime is English-only by construction — `internal/i18n` says so in its
+ * package comment ("This build speaks English only"), the language-switching
+ * machinery has been removed on purpose, and `en.go` is the only catalogue. A
+ * desktop front end that offered a second language would be promising something
+ * the thing behind it cannot deliver: half the screen would switch and the other
+ * half (every `notice.text`, every approval hint) would not.
+ *
+ * That last point is the load-bearing one: text the runtime wrote — a notice, a
+ * `remember_hint`, a `trust_all_hint` — is displayed **verbatim**. Translating it
+ * would both invent a second source for the same fact and break the rule that
+ * those hints are not altered by one character.
+ *
+ * Keys are grouped by the region that reads them.
+ */
+
+export const en = {
+  /* ---------------- application ---------------- */
+  'app.name': 'tudouni-aigo',
+  'app.booting': 'Starting the runtime…',
+  'app.bootingSlow': 'First launch takes a moment — waiting for the runtime handshake.',
+  'app.name.you': 'you',
+
+  /* ---------------- start-up failure ---------------- */
+  'startup.title': 'The runtime could not be started',
+  'startup.retry': 'Try again',
+  'startup.stderr': "What the runtime printed (stderr, last lines)",
+
+  /* ---------------- title bar ---------------- */
+  'titlebar.minimize': 'Minimize',
+  'titlebar.maximize': 'Maximize',
+  'titlebar.restore': 'Restore',
+  'titlebar.close': 'Close',
+
+  /* ---------------- top bar ---------------- */
+  'topbar.workspaceTip': 'Workspace path',
+  'topbar.palettePlaceholder': 'Type a command or search…',
+  'topbar.commands': 'Command palette',
+  'topbar.pickWorkspace': 'Choose workspace…',
+  'topbar.menu': 'Menu',
+
+  /* ---------------- session bar ---------------- */
+  'session.label': 'Session',
+  'session.resumed': 'resumed',
+  'session.fresh': 'new',
+  'session.model': 'model',
+  'session.route': 'route',
+  'session.thinking': 'thinking',
+  'session.thinkingOn': 'on',
+  'session.thinkingOff': 'off',
+  'session.effort': 'effort',
+  'session.maxSteps': 'step cap',
+  'session.permScope': 'asks on',
+  'session.permAuto': 'all auto',
+  'session.permNone': 'nothing',
+
+  /* ---------------- phases ---------------- */
+  'phase.booting': 'Starting',
+  'phase.idle': 'Idle',
+  'phase.idleNever': 'Idle · nothing said yet',
+  'phase.running': 'Running',
+  'phase.done': 'Done',
+  'phase.stepLimit': 'Step limit reached',
+  'phase.failed': 'Failed',
+  'phase.interrupted': 'Interrupted',
+  /** The turn finished with no text at all. Not a failure, and not "done"
+   *  either: "Done" over a blank body reads as "your answer was lost". */
+  'phase.empty': 'Ended with an empty response',
+  /** The turn was cut off because the runtime process went away. Its own word:
+   *  "Done" would claim the answer finished and "Failed" would blame the model. */
+  'phase.runtimeGone': 'Runtime exited',
+  /** The composer's stop button. Distinct from `phase.interrupted`, which names
+   *  the *result* of an interrupt; this is the action that causes one. */
+  'composer.interrupt': 'Stop',
+  'status.step': 'step {n} / {max}',
+  'status.autopilot': 'autopilot',
+  'status.quiet': 'quiet',
+  'status.jobs': 'jobs',
+  'status.jobsUncollected': 'uncollected',
+  'status.subagents': 'subagents',
+  'status.context': 'context',
+  'status.contextUnknown': '{used} tok · window unknown',
+  /** Shown when the provider has not reported a count for a successful call
+   *  yet. The context layer's local estimate is never substituted here. */
+  'status.contextNoPrompt': 'context · no request measured yet',
+  'status.contextEstimate': 'context estimate · {used} tok · {percent} of the window',
+  'status.cache': 'cache',
+  'status.elapsed': 'turn',
+  'status.span': 'span',
+  'status.audit': 'audit log',
+  'status.runtimeGone': 'Runtime exited (code {code})',
+  'status.runtimeEnded': 'Runtime ended',
+
+  /* ---------------- first screen ---------------- */
+  'welcome.greeting': 'Hi, {name}',
+  'welcome.greetingAnon': 'Hi',
+  'welcome.meta': 'desktop v{desktop} · runtime {runtime}',
+  'welcome.where': '{model} · {workspace}',
+  'welcome.start': 'Start here: describe what you want, or reopen the last session.',
+  'welcome.recent': 'Recent sessions',
+  'welcome.recentEmpty': 'No past sessions',
+  'welcome.recentEmptyHint': 'Sessions are written under .tudouni/ in this workspace.',
+  'welcome.keys': 'Keybindings',
+  'welcome.slotEmpty': 'empty',
+
+  /* ---------------- stream entries ---------------- */
+  'entry.turn': 'Turn {n}',
+  'entry.turnRunning': 'in progress',
+  'entry.turnDone': 'ended · completed',
+  'entry.turnFailed': 'ended · failed',
+  'entry.turnInterrupted': 'ended · interrupted',
+  'entry.turnStepLimit': 'ended · step limit',
+  'entry.turnEmpty': 'ended · empty response',
+  'entry.you': 'you',
+  'entry.assistant': 'model',
+  'entry.model': 'model call',
+  'entry.modelRetry': 'retry · waiting {ms}ms',
+  'entry.modelMetrics': '{ms} · in {input} · cached {cached}',
+  'entry.modelNoMetrics': 'in progress',
+  'entry.toolResultOk': 'done',
+  'entry.toolResultError': 'error',
+  'entry.toolResultInvalid': 'bad arguments',
+  'entry.toolResultDenied': 'not run',
+  'entry.toolChars': '{n} chars',
+  'entry.toolExit': 'exit {n}',
+  'entry.toolDuration': '{ms}',
+  'entry.denied': 'not run — the runtime refused this call',
+  'entry.batch': 'concurrent batch · {count} calls · wall {ms}ms',
+  'entry.perm': 'permission',
+  'entry.output': 'output',
+  'entry.permAuto': 'autopilot',
+  'entry.permRule': 'rule remembered: {rule}',
+  'entry.permRemembered': 'remembered: {rules}',
+  'entry.permWaited': 'waited {ms}',
+  'entry.permNoWait': 'no wait',
+  'entry.reasonCollapsed': 'reasoning · {n} chars',
+  'entry.reasonLive': 'reasoning · {n} chars · live',
+  'entry.quietRollup': '{n} tool calls collapsed',
+  'entry.quietHint': 'switch to detail with /quiet',
+  'entry.showDetail': 'detail',
+  'entry.params': 'params',
+  'entry.builtin': 'built-in',
+  'entry.external': 'external',
+  'entry.parallelSafe': 'parallel-safe',
+  'entry.occupiesInput': 'holds input',
+  'entry.unknown': 'unknown',
+
+  /* ---------------- left sidebar: workspaces and sessions ---------------- */
+  'lb.workspaces': 'Workspaces',
+  'lb.sessions': 'Sessions',
+  'lb.newSession': 'New session',
+  'lb.newSessionHint': 'Start from a clean context',
+  'lb.addWorkspace': 'Add a workspace…',
+  'lb.refreshSessions': 'Re-read the session list',
+  'lb.collapse': 'Hide this sidebar',
+  'lb.show': 'Show the workspace sidebar',
+  'lb.current': 'current',
+  'lb.currentHint': 'The runtime is working in this directory',
+  'lb.forget': 'Forget',
+  'lb.forgetHint': 'Remove from this list. The directory itself is not touched.',
+  'lb.emptyWorkspaces.title': 'No workspace listed',
+  'lb.emptyWorkspaces.hint': 'Add the directory the runtime should work in.',
+  'lb.emptySessions.title': 'No past session',
+  'lb.emptySessions.hint': 'Sessions are written under .tudouni/ in this workspace.',
+  'lb.sessionsUnread': 'Could not read the session list',
+  'lb.workspaceBad': 'Cannot be used',
+  'lb.openWorkspace': 'Open this workspace',
+
+  /* ---------------- sidebar blocks ---------------- */
+  'block.goal': 'Goal',
+  'block.tasks': 'Tasks',
+  'block.skills': 'Loaded skills',
+  'block.jobs': 'Background jobs',
+  'block.mcp': 'MCP',
+  'block.more': '(+{n} more)',
+  'block.collapse': 'Collapse',
+  'block.expand': 'Expand',
+
+  'empty.goal.title': 'No goal',
+  'empty.goal.hint': 'A long-term goal shows its phase and round count here.',
+  'empty.tasks.title': 'No tasks yet',
+  'empty.tasks.hint': 'Steps the model breaks out appear here with their status.',
+  'empty.skills.title': 'No skill loaded',
+  'empty.skills.hint': 'Matched skills load automatically and show up here.',
+  'empty.jobs.title': 'No background jobs',
+  'empty.jobs.hint': 'Long commands sent to the background show uncollected results here.',
+  'empty.mcp.title': 'Nothing attached',
+  'empty.mcp.hint': 'Open /mcp to load an external tool server.',
+
+  'goal.armed': 'armed',
+  'goal.disarmed': 'disarmed',
+  'goal.rounds': 'rounds {text}',
+  'goal.limitReached': 'round limit reached',
+  'goal.blocked': 'blocked: {reason}',
+  'goal.pause': 'Pause',
+  'goal.resume': 'Resume',
+  'goal.clear': 'Clear',
+
+  'jobs.uncollected': 'uncollected',
+  'jobs.running': 'running',
+  'jobs.done': 'done',
+  'jobs.killed': 'killed',
+  'jobs.exit': 'exit {n}',
+  'jobs.seconds': '{n}s',
+
+  'mcp.loaded': 'running',
+  'mcp.unload': 'configured, not running',
+  'mcp.failed': 'connection failed',
+  'mcp.tools': '{n} tools',
+  'mcp.load': 'Load',
+  'mcp.unloadAction': 'Unload',
+  'mcp.where': 'launch',
+
+  'tasks.progress': '{done} / {total}',
+  'tasks.pending': 'pending',
+  'tasks.inProgress': 'in progress',
+  'tasks.done': 'done',
+
+  /* ---------------- panels ---------------- */
+  'panel.commands.title': 'Command palette',
+  'panel.commands.placeholder': 'Type a command name or keyword (prefix filter)',
+  'panel.commands.empty': 'No matching command',
+  'panel.commands.argGroup': 'Run with this argument',
+  'panel.commands.runWith': 'run with this argument',
+  'panel.model.title': 'Model',
+  'panel.model.current': 'current',
+  'panel.model.route': 'route',
+  'panel.model.window': 'window',
+  'panel.model.alias': 'legacy name',
+  'panel.model.aliases': 'Legacy names',
+  'panel.model.vision': 'vision',
+  'panel.effort.title': 'Reasoning effort',
+  'panel.effort.note':
+    'The list is sent by the runtime per model — never hardcoded here.',
+  'panel.resume.title': 'Sessions',
+  'panel.resume.empty': 'The runtime reported no sessions',
+  'panel.resume.messages': '{n} messages',
+  'panel.resume.steps': '{n} steps',
+  'panel.mcp.title': 'MCP servers',
+  'panel.mcp.empty': 'No server configured',
+  'panel.mcp.notes': 'This batch',
+  'panel.skills.title': 'Skills',
+  'panel.skills.empty': 'No skill available',
+  'panel.skills.skipped': 'skipped',
+  'panel.skills.loaded': 'loaded',
+  /** The catalogue minus the loaded set: what could still be loaded. */
+  'panel.skills.available': 'Available to load',
+  'panel.skills.refresh': 'Re-read the skill directories',
+  'panel.skills.problems': 'Problems',
+  'panel.skills.shadowed': 'Shadowed',
+  'panel.help.title': 'Help',
+  'panel.help.commands': 'Commands',
+  'panel.help.keys': 'Keybindings',
+  'panel.subagents.title': 'Subagents & jobs',
+  'panel.subagents.empty': 'No subagent in flight',
+  'panel.audit.title': 'Audit & wiring',
+  'panel.audit.path': 'Log path',
+  'panel.audit.workspace': 'Workspace',
+  'panel.audit.desktopVersion': 'Desktop version',
+  'panel.audit.runtimeVersion': 'Runtime version',
+  'panel.audit.protocol': 'Protocol',
+  'panel.audit.dropped': 'Lines rejected by the decoder',
+  'panel.audit.droppedNote':
+    'Malformed or unknown: half a line, usage prose on stdout, a type this build does not know.',
+  'panel.audit.late': 'Late messages dropped',
+  'panel.audit.lateNote':
+    'A turn-scoped message from another turn. Session-level records (pictures, compaction, goal rounds, delegations) are never counted here — their run_id does not name a turn.',
+  'panel.audit.provider': 'Provider',
+  'panel.audit.contextWindow': 'Context window',
+  'panel.audit.permissions': 'Non-default permissions',
+  'panel.audit.granted': 'Granted this session',
+  'panel.audit.none': 'none',
+  'panel.audit.agentsMd': 'AGENT.md',
+  'panel.close': 'Close',
+
+  /* ---------------- in-stream blocks ---------------- */
+  'inblock.status.title': 'Current status',
+  'inblock.tools.title': 'Tools & permissions',
+  'inblock.context.title': 'Context ledger',
+  'inblock.compact.title': 'Compaction result',
+  'inblock.section': 'Group',
+  'inblock.key': 'Key',
+  'inblock.value': 'Value',
+  'inblock.tokens': 'token',
+  'inblock.noContext': 'no context management in this runtime',
+  'inblock.noContextLayer': 'no context layer in this runtime',
+  'inblock.degraded': '{n} items degraded',
+  'inblock.note': 'Note',
+  'inblock.used': 'Used',
+  'inblock.window': 'Window',
+  'inblock.before': 'Before',
+  'inblock.after': 'After',
+  'inblock.folded': 'Folded',
+  'inblock.totalFolded': 'Total folded',
+  'inblock.summaryChars': 'Summary chars',
+  'inblock.duration': 'Duration',
+  'inblock.status': 'Status',
+  'inblock.remembered': 'rule remembered',
+  'inblock.notRemembered': 'asked every time',
+  'inblock.denied': 'denied',
+  'inblock.auto': 'auto',
+  'inblock.ask': 'ask',
+
+  /* ---------------- approval modal ---------------- */
+  'perm.title': 'Waiting for your approval',
+  'perm.subtitle': 'The runtime is blocked here until you decide.',
+  'perm.tool': 'Tool',
+  'perm.origin': 'Origin',
+  'perm.risk': 'Risk',
+  'perm.params': 'Arguments (full, never truncated)',
+  'perm.safety': 'Safety',
+  'perm.hintLabel': 'From the runtime',
+  'perm.action.allow': 'Allow',
+  'perm.action.deny': 'Deny',
+  'perm.action.always': 'Always allow',
+  'perm.action.allowAll': 'Allow all',
+  'perm.denySameAsClose': 'Deny is the same as closing',
+  'perm.escalate': 'High-risk call — read the arguments character by character.',
+  'perm.callId': 'call',
+
+  'risk.low': 'LOW',
+  'risk.medium': 'MED',
+  'risk.high': 'HIGH',
+
+  /* ---------------- question modal ---------------- */
+  'q.title': 'Waiting for your answer',
+  'q.subtitle': 'The runtime is blocked here until you answer.',
+  'q.multi': 'multi-select',
+  'q.single': 'single choice',
+  'q.options': 'Options',
+  'q.freeText': 'Free text',
+  'q.freeTextPlaceholder': 'Type your answer…',
+  'q.skip': 'Skip',
+  'q.submit': 'Submit',
+  'q.freeTextPriority': 'Free text wins over the selection',
+  'q.noOptions': 'No preset options — answer in free text.',
+  'q.pickAtLeastOne': 'Pick an option, type an answer, or use “Skip”.',
+
+  /* ---------------- composer ---------------- */
+  'composer.placeholder': 'Say something…  Enter sends, Shift+Enter newlines',
+  'composer.blocked': 'Resolve the prompt above first',
+  'composer.send': 'Send',
+  'composer.hint.send': 'Enter send · Shift+Enter newline · Esc interrupt',
+  'composer.hint.modal': 'The runtime is blocked by a modal — answer it to continue',
+  'composer.dropHint': 'Drop a file to insert its path, or drop it in the workspace — pictures are attached by naming their path',
+  'composer.dropOutside': 'not in this workspace, so the runtime could not read it: {names}',
+  'composer.dropNoWorkspace': 'no workspace yet, so nothing can be checked: {names}',
+
+  /* ---------------- commands ---------------- */
+  'cmd.new.desc': 'Start from a clean context',
+  'cmd.resume.desc': 'List past sessions, newest first',
+  'cmd.audit.desc': 'Where session and audit files land on disk',
+  'cmd.exit.desc': 'Ask the runtime to shut down',
+  'cmd.help.desc': 'The full version of this table',
+  'cmd.skills.desc': 'Includes skipped skills and why',
+  'cmd.autopilot.desc': 'Run without asking for approval',
+  'cmd.quiet.desc': 'Collapse tool calls into a one-line brief',
+  'cmd.status.desc': 'Insert a status snapshot into the stream',
+  'cmd.tools.desc': 'List tools, risk level, remembered rules',
+  'cmd.context.desc': 'Token usage and the compaction ledger',
+  'cmd.compact.desc': 'Compact history; deletes nothing',
+  'cmd.model.desc': 'Same-name models on different routes listed separately',
+  'cmd.thinking.desc': 'Whether the model reasons before answering',
+  'cmd.effort.desc': 'Options change with the current model',
+  'cmd.mcp.desc': 'Three states, and load / unload a server',
+  'cmd.goal.desc': 'Inspect and control the long-term goal',
+
+  /* ---------------- keys ---------------- */
+  'key.send': 'Send',
+  'key.newline': 'Newline in the input',
+  'key.esc': 'Close modal / interrupt turn / deny',
+  'key.exit': 'Quit',
+  'key.move': 'Move in a list / scroll the stream',
+  'key.thinking': 'Collapse or expand reasoning',
+  'key.sidebar': 'Collapse or expand the sidebar',
+  'key.leftbar': 'Collapse or expand the workspace sidebar',
+  'key.palette': 'Open the command palette',
+  'key.skills': 'Open the skills panel',
+  'key.edit': 'Line start/end, delete word/line, word move',
+  'key.pick': 'Confirm / close / numeric pick in a panel',
+  'key.history': 'Browse input history',
+  'key.quiet': 'Toggle quiet mode',
+
+  /* ---------------- misc ---------------- */
+  'common.close': 'Close',
+  'common.cancel': 'Cancel',
+  'common.confirm': 'Confirm',
+  'common.none': 'none',
+  'common.unknown': 'unknown',
+  'common.count': '{n} items',
+  'common.working': 'working',
+  'common.loading': 'loading…',
+  'common.sidebarHidden': 'Sidebar hidden',
+  'common.show': 'Show',
+  'common.jumpLatest': 'Jump to latest',
+  'common.andMore': 'and {n} more',
+
+  /* ---------------- stream ---------------- */
+  /** The scroll region's accessible name. It is also the `aria-live` region, so
+   *  new answers and notices are announced rather than silently appearing. */
+  'stream.label': 'Session transcript',
+} as const;
+
+export type TKey = keyof typeof en;
+
+export type Translate = (key: TKey, params?: Record<string, string | number>) => string;
+
+/** Minimal interpolation: `{name}` only. No plurals, no genders — predictable
+ *  and enough. */
+export function interpolate(
+  template: string,
+  params?: Record<string, string | number>,
+): string {
+  if (!params) return template;
+  return template.replace(/\{(\w+)\}/g, (whole, name: string) => {
+    const value = params[name];
+    return value === undefined ? whole : String(value);
+  });
+}
+
+export function makeT(): Translate {
+  return (key, params) => interpolate(en[key] ?? key, params);
+}

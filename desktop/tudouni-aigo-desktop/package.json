@@ -1,0 +1,40 @@
+{
+  "name": "tudouni-aigo-desktop",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "tudouni-aigo desktop client — Tauri 2 shell + React front end driving the Go runtime over the JSONL stdio protocol",
+  "scripts": {
+    "dev": "vite",
+    "build": "node scripts/build.mjs",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "node tests/run.mjs",
+    "audit:css": "node scripts/class-audit.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "runtime:stage": "node scripts/stage-runtime.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "lucide-react": "^0.469.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.4",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}
