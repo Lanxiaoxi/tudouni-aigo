@@ -83,8 +83,14 @@
   color-scheme: dark;
 
   --bg:            #0F172A;  /* 窗口底色 */
-  --bg-secondary:  #131B30;
+  /* Kept identical to --bg-card on purpose: rails (`--bg-secondary`) and the
+     block panels they hold (`--bg-card`) must read as ONE surface — the rail
+     never changes colour when blocks fold, so half the rail looked like a
+     different panel before. A distinct secondary shade is available to header
+     bars and other flat chrome instead. */
+  --bg-secondary:  #1B2336;
   --bg-card:       #1B2336;
+  --bg-elevated:   #212A40;  /* 浮层（dialog / popover / kbd）专用，比面板亮一档 */
   --bg-muted:      #272F42;  /* hover 底 / 嵌套面 */
   --bg-inverse:    #F8FAFC;  /* 深色 tooltip 上的反向 */
 
@@ -126,6 +132,7 @@
   --bg:            #FFFFFF;
   --bg-secondary:  #F8FAFC;
   --bg-card:       #F8FAFC;
+  --bg-elevated:   #FFFFFF;  /* 浮层专用：浅色下比面板亮一档即纯白 */
   --bg-muted:      #F1F5F9;
   --bg-inverse:    #1E293B;
 

@@ -677,7 +677,7 @@ table.table td.mono {
 
 /* ---------------- §8 浮层 ---------------- */
 .overlay-surface {
-  background: var(--bg-card);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-overlay);
@@ -817,7 +817,7 @@ table.table td.mono {
   max-height: calc(100vh - 96px);
   display: flex;
   flex-direction: column;
-  background: var(--bg-card);
+  background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-modal);
@@ -1089,7 +1089,7 @@ table.table td.mono {
   border: 1px solid var(--border);
   border-bottom-width: 2px;
   border-radius: var(--radius-xs);
-  background: var(--bg-card);
+  background: var(--bg-elevated);
   color: var(--fg-faint);
   font-family: var(--font-mono);
   font-size: 10px;
