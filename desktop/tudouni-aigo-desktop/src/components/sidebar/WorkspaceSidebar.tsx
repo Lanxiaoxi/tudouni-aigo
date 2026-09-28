@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, X } from 'lucide-react';
+import { ChevronRight, FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { checkWorkspace, chooseWorkspaceDirectory } from '@/runtime/tauri';
@@ -47,6 +47,11 @@ export function WorkspaceSidebar() {
   const removeWorkspace = useApp((s) => s.removeWorkspace);
   const switchSession = useApp((s) => s.switchSession);
   const requestSessionList = useApp((s) => s.requestSessionList);
+  const deleteSession = useApp((s) => s.deleteSession);
+  // The session list folds on its own; the workspace list above it does not
+  // follow, because "where am I" must survive folding the conversation list.
+  const sessionsCollapsed = useApp((s) => s.sessionsCollapsed);
+  const toggleSessionsCollapsed = useApp((s) => s.toggleSessionsCollapsed);
   // The **left** rail's setter. This button used to call `setSidebarVisible`,
   // which is the right-hand rail's — so hiding the workspace list hid the goal /
   // tasks / skills / jobs / MCP rail instead and left this one on screen. The two
@@ -57,6 +62,10 @@ export function WorkspaceSidebar() {
   /** Why the last workspace that was offered could not be taken. Local: nothing
    *  about it reached the runtime, and it is a statement about this list. */
   const [refusal, setRefusal] = useState<string | null>(null);
+  /** The session row whose delete button is armed. One press arms it, a second
+   *  press within the row confirms; anything else disarms. Delete is
+   *  irreversible, so a single misclick must not be enough. */
+  const [armedDelete, setArmedDelete] = useState<string | null>(null);
 
   // A blocking modal is blocking. Switching a session abandons every pending
   // request the runtime is holding (`server.go: switchSession` →
@@ -224,7 +233,18 @@ export function WorkspaceSidebar() {
         {/* ---------------- sessions ---------------- */}
         <section className="lb-section">
           <div className="lb-section-head">
-            <span className="lb-title">{t('lb.sessions')}</span>
+            <button
+              type="button"
+              className="lb-section-toggle"
+              aria-expanded={!sessionsCollapsed}
+              onClick={toggleSessionsCollapsed}
+            >
+              <ChevronRight size={13} className={`caret${sessionsCollapsed ? '' : ' caret-open'}`} />
+              <span className="lb-title">{t('lb.sessions')}</span>
+              <span className="sr-only">
+                {sessionsCollapsed ? t('lb.unfoldSessions') : t('lb.foldSessions')}
+              </span>
+            </button>
             <Tip label={t('lb.refreshSessions')}>
               <button
                 type="button"
@@ -238,52 +258,91 @@ export function WorkspaceSidebar() {
             </Tip>
           </div>
 
-          {!listed ? (
-            <div className="lb-note">{t('common.loading')}</div>
-          ) : sessionList.length === 0 ? (
-            <EmptyState
-              compact
-              title={t('lb.emptySessions.title')}
-              hint={t('lb.emptySessions.hint')}
-            />
-          ) : (
-            <div className="lb-rows">
-              {sessionList.map((item) => {
-                const isCurrent = item.id === currentSessionId;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`lb-session${isCurrent ? ' is-current' : ''}`}
-                    disabled={blocked || isCurrent}
-                    aria-current={isCurrent ? 'true' : undefined}
-                    onClick={() => switchSession(item.id)}
-                  >
-                    <span className="lb-session-top">
-                      <span className="lb-session-id">{item.id}</span>
-                      {/* `modified_at` is epoch **seconds**; null means the file
-                          could not be read, and then there is no time to show. */}
-                      <span className="lb-session-time">
-                        {item.modifiedAt === null
-                          ? t('common.unknown')
-                          : formatRelative(item.modifiedAt * 1000)}
-                      </span>
-                    </span>
-                    {/* Both computed by the runtime. `todos` is ready-made
-                        progress text, and an empty string means there is no task
-                        list — not zero of something. */}
-                    <span className="lb-session-meta">
-                      {t('panel.resume.messages', { n: item.messages })}
-                      {' · '}
-                      {t('panel.resume.steps', { n: item.steps })}
-                      {item.todos ? ` · ${item.todos}` : ''}
-                    </span>
-                    <span className="lb-session-preview">{item.preview}</span>
-                  </button>
-                );
-              })}
+          {/* Folded like the right rail's blocks: kept mounted, only the height
+              changes, and `inert` keeps Tab out of what nobody can see. The list
+              is not dismounted on fold, so folding never re-reads anything. */}
+          <div
+            className={`collapse${sessionsCollapsed ? ' is-collapsed' : ''}`}
+            inert={sessionsCollapsed}
+          >
+            <div>
+              {!listed ? (
+                <div className="lb-note">{t('common.loading')}</div>
+              ) : sessionList.length === 0 ? (
+                <EmptyState
+                  compact
+                  title={t('lb.emptySessions.title')}
+                  hint={t('lb.emptySessions.hint')}
+                />
+              ) : (
+                <div className="lb-rows">
+                  {sessionList.map((item) => {
+                    const isCurrent = item.id === currentSessionId;
+                    const armed = armedDelete === item.id;
+                    return (
+                      <div key={item.id} className="lb-session-wrap">
+                        <button
+                          type="button"
+                          className={`lb-session${isCurrent ? ' is-current' : ''}`}
+                          disabled={blocked || isCurrent}
+                          aria-current={isCurrent ? 'true' : undefined}
+                          onClick={() => switchSession(item.id)}
+                        >
+                          <span className="lb-session-top">
+                            <span className="lb-session-id">{item.id}</span>
+                            {/* `modified_at` is epoch **seconds**; null means the file
+                                could not be read, and then there is no time to show. */}
+                            <span className="lb-session-time">
+                              {item.modifiedAt === null
+                                ? t('common.unknown')
+                                : formatRelative(item.modifiedAt * 1000)}
+                            </span>
+                          </span>
+                          {/* Both computed by the runtime. `todos` is ready-made
+                              progress text, and an empty string means there is no task
+                              list — not zero of something. */}
+                          <span className="lb-session-meta">
+                            {t('panel.resume.messages', { n: item.messages })}
+                            {' · '}
+                            {t('panel.resume.steps', { n: item.steps })}
+                            {item.todos ? ` · ${item.todos}` : ''}
+                          </span>
+                          <span className="lb-session-preview">{item.preview}</span>
+                        </button>
+                        {/* Delete the file, not the row: the runtime waits for the
+                            running turn, then re-sends the list. No optimistic
+                            removal — the row goes when the runtime says so. Two
+                            presses, because a delete cannot be undone. */}
+                        <Tip label={armed ? t('lb.deleteConfirm') : t('lb.deleteSession')}>
+                          <button
+                            type="button"
+                            className={`lb-icon lb-row-action${armed ? ' is-armed' : ''}`}
+                            aria-label={
+                              armed ? t('lb.deleteConfirm') : t('lb.deleteSession')
+                            }
+                            disabled={blocked}
+                            onClick={() => {
+                              if (armed) {
+                                setArmedDelete(null);
+                                deleteSession(item.id);
+                              } else {
+                                setArmedDelete(item.id);
+                              }
+                            }}
+                            onMouseLeave={() => {
+                              if (armedDelete === item.id) setArmedDelete(null);
+                            }}
+                          >
+                            {armed ? <X size={12} /> : <Trash2 size={12} />}
+                          </button>
+                        </Tip>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </section>
       </div>
     </aside>

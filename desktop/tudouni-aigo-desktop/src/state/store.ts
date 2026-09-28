@@ -284,6 +284,13 @@ export interface AppStore {
   reasoningOpen: Record<string, boolean>;
   toolOpen: Record<string, boolean>;
   /**
+   * The left rail's session list, folded on its own. A front-end preference:
+   * the protocol has no opinion on how a rail is arranged. The workspace list
+   * above it never folds with it — the two answer different questions, and
+   * "where am I" has to survive folding the conversation list.
+   */
+  sessionsCollapsed: boolean;
+  /**
    * Bookmarked workspaces.
    *
    * **A front-end preference, and it has to be.** The protocol carries no
@@ -357,6 +364,8 @@ export interface AppStore {
   toggleLeftbar(): void;
   setLeftbarVisible(v: boolean): void;
   toggleBlock(k: SidebarBlockKey): void;
+  /** Fold or unfold the left rail's session list. Persisted like the rails. */
+  toggleSessionsCollapsed(): void;
   toggleReasoning(id: string): void;
   toggleTool(id: string): void;
   /** Remove one in-stream block. It touches the stream, no data. */
@@ -367,6 +376,9 @@ export interface AppStore {
 
   switchSession(id: string | null): void;
   requestSessionList(): void;
+  /** Delete one saved session. The list updates when the runtime's next
+   *  `sessions` arrives — never on send (no optimistic removal). */
+  deleteSession(id: string): void;
   setAutopilot(on: boolean): void;
   chooseModel(model: string): void;
   chooseEffort(effort: string): void;
@@ -409,6 +421,9 @@ type Prefs = {
   leftbarVisible: boolean;
   blockCollapsed: Record<SidebarBlockKey, boolean>;
   blockTouched: Partial<Record<SidebarBlockKey, boolean>>;
+  /** The left rail's session list, folded on its own. The workspace list above
+   *  it stays — "where am I" must survive folding the conversation list. */
+  sessionsCollapsed: boolean;
   workspaces: string[];
 };
 
@@ -419,6 +434,7 @@ function loadPrefs(): Prefs {
     leftbarVisible: true,
     blockCollapsed: { ...EMPTY_BLOCKS },
     blockTouched: {},
+    sessionsCollapsed: false,
     workspaces: [],
   };
   try {
@@ -431,6 +447,7 @@ function loadPrefs(): Prefs {
       leftbarVisible: parsed.leftbarVisible ?? fallback.leftbarVisible,
       blockCollapsed: { ...EMPTY_BLOCKS, ...(parsed.blockCollapsed ?? {}) },
       blockTouched: parsed.blockTouched ?? {},
+      sessionsCollapsed: parsed.sessionsCollapsed ?? fallback.sessionsCollapsed,
       // Filtered rather than trusted: this is localStorage, it outlives every
       // build, and a stray non-string in it would reach `path.split` and take
       // the sidebar down with it.
@@ -481,6 +498,7 @@ function persistPrefs(s: AppStore): void {
         leftbarVisible: s.leftbarVisible,
         blockCollapsed: s.blockCollapsed,
         blockTouched: s.blockTouched,
+        sessionsCollapsed: s.sessionsCollapsed,
         workspaces: s.workspaces,
       }),
     );
@@ -602,6 +620,7 @@ export const useApp = create<AppStore>((set, get) => ({
   blockAutoExpanded: {},
   reasoningOpen: {},
   toolOpen: {},
+  sessionsCollapsed: prefs.sessionsCollapsed,
   workspaces: prefs.workspaces,
 
   draft: '',
@@ -1079,6 +1098,11 @@ export const useApp = create<AppStore>((set, get) => ({
     persistPrefs(get());
   },
 
+  toggleSessionsCollapsed() {
+    set({ sessionsCollapsed: !get().sessionsCollapsed });
+    persistPrefs(get());
+  },
+
   toggleReasoning(id) {
     const cur = get().reasoningOpen;
     set({ reasoningOpen: { ...cur, [id]: !cur[id] } });
@@ -1144,6 +1168,15 @@ export const useApp = create<AppStore>((set, get) => ({
   requestSessionList() {
     set({ listedSessions: false });
     busSend({ v: 1, t: 'session_list' });
+  },
+
+  deleteSession(id) {
+    // No optimistic removal: the row leaves the list when the runtime's next
+    // `sessions` arrives, because the delete can fail (a locked file, a
+    // `sub-` id) and a row that vanished on send would be a lie. Deleting the
+    // mounted session makes the runtime replace it and re-send the opening
+    // triple, which `applyRuntimeMessage` already handles as a fresh session.
+    busSend({ v: 1, t: 'session_delete', session_id: id });
   },
 
   setAutopilot(on) {

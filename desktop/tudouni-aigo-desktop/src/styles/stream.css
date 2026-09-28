@@ -502,6 +502,34 @@
   border-top: 1px solid var(--border-subtle);
 }
 
+/* GFM: tables, task lists, strikethrough (remark-gfm output) */
+.md table {
+  border-collapse: collapse;
+  font-size: var(--text-code);
+}
+
+.md th,
+.md td {
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.md th {
+  font-weight: 600;
+  background: var(--bg-muted);
+}
+
+.md del {
+  color: var(--fg-faint);
+}
+
+.md input[type='checkbox'] {
+  accent-color: var(--accent);
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
 /* ---------------- 12. 附加 / 系统行 ---------------- */
 .e-note {
   display: flex;
@@ -836,6 +864,28 @@
   min-height: 24px;
 }
 
+/* The session section's head is itself the fold toggle (the workspace section's
+   is not — its list is short and must stay readable). Styled as the head itself
+   so the whole row presses, like the right rail's block heads. */
+.lb-section-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--radius-xs);
+}
+
+.lb-section-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .lb-section-head .lb-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -960,6 +1010,29 @@
 
 /* ---------------- session rows ---------------- */
 
+/* The row is now a wrapper (session button + delete button side by side). The
+   wrapper owns the hover background so it reads as one row; the session button
+   keeps its own current-state styling. */
+.lb-session-wrap {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.lb-session-wrap:hover {
+  background: var(--bg-muted);
+}
+
+.lb-session-wrap .lb-session {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lb-session-wrap:hover .lb-session:not(.is-current) {
+  background: none;
+}
+
 .lb-session {
   display: flex;
   flex-direction: column;
@@ -1037,4 +1110,29 @@
 
 .lb-session.is-current .lb-session-preview {
   color: var(--fg-secondary);
+}
+
+/* The delete button sits beside the session button, revealed on hover — and
+   never hidden from the keyboard (`:focus-within`), because a control that only
+   a pointer can reach is a control half the keyboard's users cannot use. */
+.lb-session-wrap .lb-row-action {
+  flex: none;
+  align-self: center;
+  margin-right: var(--space-1);
+  opacity: 0;
+  color: var(--fg-faint);
+}
+
+.lb-session-wrap:hover .lb-row-action,
+.lb-session-wrap:focus-within .lb-row-action {
+  opacity: 1;
+}
+
+/* Armed: the second press will really delete, so the button says so — the
+   destructive colour, and the icon has already swapped to an X. Colour alone
+   never carries it: the tooltip, the aria-label and the icon all change too. */
+.lb-session-wrap .lb-row-action.is-armed {
+  opacity: 1;
+  color: var(--destructive);
+  background: var(--destructive-subtle);
 }

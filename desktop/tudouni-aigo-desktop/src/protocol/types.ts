@@ -800,6 +800,10 @@ export type FrontendMsg =
    *  exist means a new session too. */
   | { v: number; t: 'session_switch'; session_id?: string | null }
   | { v: number; t: 'session_list' }
+  /** Delete one saved session. The runtime waits for the running turn, deletes
+   *  the file, then re-sends `sessions`. Deleting the mounted session makes it
+   *  open a fresh one and re-send the opening triple. */
+  | { v: number; t: 'session_delete'; session_id: string }
   | { v: number; t: 'interrupt' }
   | { v: number; t: 'set_autopilot'; on: boolean }
   | { v: number; t: 'set_model'; model: string }
