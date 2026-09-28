@@ -1,0 +1,157 @@
+/* ============================================================
+   tudouni-aigo · Design Tokens
+   Tauri 2 + React · Agent Runtime 桌面端 · 双模（跟随系统）
+   来源：design-system/tudouni-aigo/MASTER.md
+   约束：禁止滚动动画；动效仅限微交互（见 --motion-*）
+   单位：一律逻辑像素（logical px），禁止 devicePixelRatio 换算
+   ============================================================ */
+
+:root {
+  /* ---------- 字体族（本地打包，见 fonts.css） ---------- */
+  --font-sans: "IBM Plex Sans", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", "Consolas", "SF Mono", monospace;
+  --font-feature-mono: "liga" 1, "calt" 1;  /* JetBrains Mono 连字 */
+
+  /* ---------- 字阶（桌面端固定 px，不做 rem 缩放） ---------- */
+  --text-display: 20px;   /* 空态 / 大数字，mono 600 */
+  --text-h1:      15px;   /* 面板标题，sans 600 */
+  --text-h2:      13px;   /* 区块标题，sans 600 */
+  --text-body:    13px;   /* 正文 / 控件，sans 400 */
+  --text-compact: 12px;   /* 表格、列表、label，sans 400 */
+  --text-caption: 11px;   /* 辅助说明 / badge / tooltip，sans 400 */
+  --text-code:    12.5px; /* 终端、代码、diff、路径，mono 400 */
+
+  --leading-tight: 1.3;
+  --leading-body:  1.55;
+  --leading-code:  1.5;
+
+  --tracking-label: 0.02em;   /* 英文大写 label 用 +0.02em；中文不额外加 */
+
+  /* ---------- 间距（4px 半步基准，密度中高） ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* 常用组合 */
+  --control-pad-x: 10px;     /* 按钮 / 输入框水平内边距 */
+  --control-h: 28px;         /* 常规控件高度 */
+  --control-h-compact: 24px; /* 表格内嵌控件 / 紧凑行 */
+  --row-h: 28px;             /* 列表 / 表格行高 */
+  --row-h-compact: 24px;     /* 终端、log 行 */
+  --panel-pad: 12px;         /* 卡片 / 面板内边距 */
+
+  /* ---------- 圆角（克制，终端与代码块为 0） ---------- */
+  --radius-none: 0;
+  --radius-xs: 3px;    /* badge / tag */
+  --radius-sm: 4px;    /* 按钮 / chip / checkbox */
+  --radius-md: 6px;    /* 输入框 / 下拉 / tooltip */
+  --radius-lg: 8px;    /* 卡片 / 面板 / popover */
+  --radius-xl: 12px;   /* 对话框窗口 */
+
+  /* ---------- 阴影（扁平体系，仅浮层使用） ---------- */
+  --shadow-none: none;
+  --shadow-overlay: 0 8px 24px rgba(2, 6, 23, 0.35), 0 2px 6px rgba(2, 6, 23, 0.25);
+  --shadow-modal:   0 16px 48px rgba(2, 6, 23, 0.45), 0 4px 12px rgba(2, 6, 23, 0.3);
+
+  /* ---------- 动效（只允许微交互；禁滚动驱动动画） ---------- */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 280ms;
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);  /* 进入：快出缓停 */
+  --ease-in:   cubic-bezier(0.4, 0, 1, 1);     /* 退出：快进 */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  /* 仅可动画属性：background-color, border-color, color, opacity, transform
+     禁止：width/height/top/left（布局属性），页面滚动视差，stagger 入场编排 */
+
+  /* ---------- 层级 ---------- */
+  --z-titlebar: 100;
+  --z-sticky:   200;   /* 表头 / 侧栏 */
+  --z-popover:  400;   /* dropdown / menu */
+  --z-dialog:   500;
+  --z-tooltip:  600;   /* 永远最顶 */
+}
+
+/* ============================================================
+   深色（默认。逻辑：Code Dark + Run Green）
+   ============================================================ */
+:root, :root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:            #0F172A;  /* 窗口底色 */
+  --bg-secondary:  #131B30;
+  --bg-card:       #1B2336;
+  --bg-muted:      #272F42;  /* hover 底 / 嵌套面 */
+  --bg-inverse:    #F8FAFC;  /* 深色 tooltip 上的反向 */
+
+  --fg:            #F8FAFC;
+  --fg-secondary:  #CBD5E1;
+  --fg-muted:      #94A3B8;
+  --fg-faint:      #64748B;  /* placeholder / disabled 文字 */
+  --fg-on-accent:  #0F172A;
+
+  --border:        #334155;  /* 常规描边 */
+  --border-strong: #475569;  /* 输入框 / 可拖拽分隔 */
+  --border-subtle: #232D45;  /* 面板分割线 */
+
+  --accent:        #22C55E;
+  --accent-hover:  #4ADE80;
+  --accent-active: #16A34A;
+  --accent-subtle: rgba(34, 197, 94, 0.14);   /* 选中行 / badge 底 */
+  --accent-border: rgba(34, 197, 94, 0.45);
+
+  --info:          #60A5FA;  --info-subtle:    rgba(96, 165, 250, 0.14);
+  --warning:       #F59E0B;  --warning-subtle: rgba(245, 158, 11, 0.15);
+  --destructive:   #EF4444;  --destructive-subtle: rgba(239, 68, 68, 0.14);
+  --success:       #22C55E;  --success-subtle: var(--accent-subtle);
+
+  --ring:          rgba(34, 197, 94, 0.55);
+  --focus-ring:    0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+
+  --terminal-bg:   #020617;  /* 终端 / 代码块专用更深底 */
+  --scrollbar-thumb: #3A4560;
+}
+
+/* ============================================================
+   浅色（跟随系统切换，JS 见 docs/tauri-native-spec.md §4）
+   ============================================================ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:            #FFFFFF;
+  --bg-secondary:  #F8FAFC;
+  --bg-card:       #F8FAFC;
+  --bg-muted:      #F1F5F9;
+  --bg-inverse:    #1E293B;
+
+  --fg:            #0F172A;
+  --fg-secondary:  #334155;
+  --fg-muted:      #64748B;
+  --fg-faint:      #94A3B8;
+  --fg-on-accent:  #0F172A;
+
+  --border:        #E2E8F0;
+  --border-strong: #CBD5E1;
+  --border-subtle: #F1F5F9;
+
+  --accent:        #16A34A;  /* 浅底上用深一档保证 4.5:1 */
+  --accent-hover:  #15803D;
+  --accent-active: #14532D;
+  --accent-subtle: rgba(22, 163, 74, 0.10);
+  --accent-border: rgba(22, 163, 74, 0.40);
+
+  --info:          #2563EB;  --info-subtle:    rgba(37, 99, 235, 0.08);
+  --warning:       #B45309;  --warning-subtle: rgba(180, 83, 9, 0.10);
+  --destructive:   #DC2626;  --destructive-subtle: rgba(220, 38, 38, 0.08);
+  --success:       #16A34A;  --success-subtle: var(--accent-subtle);
+
+  --ring:          rgba(22, 163, 74, 0.45);
+  --focus-ring:    0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+
+  --terminal-bg:   #0F172A;  /* 终端 / 代码块保持深色（约定俗成） */
+  --scrollbar-thumb: #CBD5E1;
+}

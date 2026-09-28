@@ -1,0 +1,7 @@
+# Build output and installed dependencies. This is a nested npm project (the
+# protocol-driven UI prototype the design document refers to as the reference
+# implementation), so it needs its own ignore file — the repository root's does
+# not reach in here, and without this `node_modules/` alone is ~7,500 files.
+node_modules/
+dist/
+*.tsbuildinfo

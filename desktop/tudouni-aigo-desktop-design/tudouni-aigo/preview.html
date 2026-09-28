@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<title>tudouni-aigo · Design Tokens 预览</title>
+<style>
+  /* —— 内联复刻 tokens.css（预览用） —— */
+  :root {
+    --font-sans: "IBM Plex Sans", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+    --text-display: 20px; --text-h1: 15px; --text-h2: 13px; --text-body: 13px;
+    --text-compact: 12px; --text-caption: 11px; --text-code: 12.5px;
+    --leading-tight: 1.3; --leading-body: 1.55; --leading-code: 1.5;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+    --control-pad-x: 10px; --control-h: 28px; --control-h-compact: 24px;
+    --row-h: 28px; --row-h-compact: 24px; --panel-pad: 12px;
+    --radius-none: 0; --radius-xs: 3px; --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 12px;
+    --shadow-overlay: 0 8px 24px rgba(2,6,23,.35), 0 2px 6px rgba(2,6,23,.25);
+    --shadow-modal: 0 16px 48px rgba(2,6,23,.45), 0 4px 12px rgba(2,6,23,.3);
+    --motion-fast: 120ms; --motion-base: 180ms; --motion-slow: 280ms;
+    --ease-out: cubic-bezier(.16,1,.3,1); --ease-in: cubic-bezier(.4,0,1,1); --ease-standard: cubic-bezier(.2,0,0,1);
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg:#0F172A; --bg-secondary:#131B30; --bg-card:#1B2336; --bg-muted:#272F42; --bg-inverse:#F8FAFC;
+    --fg:#F8FAFC; --fg-secondary:#CBD5E1; --fg-muted:#94A3B8; --fg-faint:#64748B; --fg-on-accent:#0F172A;
+    --border:#334155; --border-strong:#475569; --border-subtle:#232D45;
+    --accent:#22C55E; --accent-hover:#4ADE80; --accent-active:#16A34A;
+    --accent-subtle:rgba(34,197,94,.14); --accent-border:rgba(34,197,94,.45);
+    --info:#60A5FA; --info-subtle:rgba(96,165,250,.14);
+    --warning:#F59E0B; --warning-subtle:rgba(245,158,11,.15);
+    --destructive:#EF4444; --destructive-subtle:rgba(239,68,68,.14);
+    --success:#22C55E; --success-subtle:var(--accent-subtle);
+    --ring:rgba(34,197,94,.55);
+    --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+    --terminal-bg:#020617; --scrollbar-thumb:#3A4560;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg:#FFFFFF; --bg-secondary:#F8FAFC; --bg-card:#F8FAFC; --bg-muted:#F1F5F9; --bg-inverse:#1E293B;
+    --fg:#0F172A; --fg-secondary:#334155; --fg-muted:#64748B; --fg-faint:#94A3B8; --fg-on-accent:#0F172A;
+    --border:#E2E8F0; --border-strong:#CBD5E1; --border-subtle:#F1F5F9;
+    --accent:#16A34A; --accent-hover:#15803D; --accent-active:#14532D;
+    --accent-subtle:rgba(22,163,74,.10); --accent-border:rgba(22,163,74,.40);
+    --info:#2563EB; --info-subtle:rgba(37,99,235,.08);
+    --warning:#B45309; --warning-subtle:rgba(180,83,9,.10);
+    --destructive:#DC2626; --destructive-subtle:rgba(220,38,38,.08);
+    --success:#16A34A; --success-subtle:var(--accent-subtle);
+    --ring:rgba(22,163,74,.45);
+    --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
+    --terminal-bg:#0F172A; --scrollbar-thumb:#CBD5E1;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: var(--font-sans); font-size: var(--text-body); line-height: var(--leading-body);
+    padding: var(--space-6) var(--space-8); max-width: 1180px; margin: 0 auto;
+  }
+  h1 { font-family: var(--font-mono); font-size: var(--text-display); font-weight: 600; margin-bottom: var(--space-1); }
+  .sub { color: var(--fg-muted); font-size: var(--text-compact); margin-bottom: var(--space-6); }
+  h2 {
+    font-size: var(--text-h1); font-weight: 600; margin: var(--space-8) 0 var(--space-4);
+    padding-bottom: var(--space-2); border-bottom: 1px solid var(--border-subtle);
+  }
+  h3 { font-size: var(--text-h2); font-weight: 600; margin: var(--space-5) 0 var(--space-3); color: var(--fg-secondary); }
+
+  /* 主题切换 */
+  .themebar { position: fixed; top: 12px; right: 16px; display: flex; gap: 6px; z-index: 99; }
+  .themebar button {
+    height: 24px; padding: 0 10px; font: 500 var(--text-caption)/1 var(--font-sans);
+    color: var(--fg-secondary); background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out);
+  }
+  .themebar button:hover { background: var(--bg-muted); }
+  .themebar button.on { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--fg); }
+
+  /* 色板 */
+  .swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: var(--space-3); }
+  .swatch { display: flex; align-items: center; gap: var(--space-3); padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); }
+  .swatch .chip { width: 34px; height: 34px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); flex: none; }
+  .swatch .name { font-size: var(--text-compact); font-weight: 600; }
+  .swatch .hex { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--fg-muted); }
+  .group-label { grid-column: 1/-1; font-size: var(--text-caption); color: var(--fg-faint); text-transform: uppercase; letter-spacing: var(--tracking-label); margin-top: var(--space-2); }
+
+  /* 字体样张 */
+  .type-row { display: flex; align-items: baseline; gap: var(--space-4); padding: 6px 0; border-bottom: 1px dashed var(--border-subtle); }
+  .type-row .meta { width: 190px; flex: none; font-family: var(--font-mono); font-size: var(--text-caption); color: var(--fg-muted); }
+  .type-sans-display { font-family: var(--font-mono); font-size: var(--text-display); font-weight: 600; }
+  .type-sans-h1 { font-size: var(--text-h1); font-weight: 600; }
+  .type-sans-body { font-size: var(--text-body); }
+  .type-sans-compact { font-size: var(--text-compact); }
+  .type-sans-caption { font-size: var(--text-caption); color: var(--fg-muted); }
+  .type-code {
+    font-family: var(--font-mono); font-size: var(--text-code); line-height: var(--leading-code);
+    background: var(--terminal-bg); color: #E2E8F0; padding: 10px 12px; border-radius: var(--radius-md);
+    white-space: pre; overflow-x: auto; margin-top: var(--space-2);
+  }
+  .tok-k { color: #60A5FA; } .tok-s { color: #4ADE80; } .tok-f { color: #F59E0B; } .tok-c { color: #64748B; }
+
+  /* 间距 / 圆角 / 动效 */
+  .hstack { display: flex; align-items: flex-end; gap: var(--space-3); flex-wrap: wrap; }
+  .space-demo { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+  .space-demo .bar { height: 12px; background: var(--accent-subtle); border: 1px solid var(--accent-border); border-radius: 2px; }
+  .space-demo .lbl { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--fg-muted); }
+  .radius-demo { width: 56px; height: 40px; background: var(--bg-muted); border: 1px solid var(--border-strong); }
+  .token-code {
+    font-family: var(--font-mono); font-size: var(--text-compact); background: var(--bg-card);
+    border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); line-height: 1.7; overflow-x: auto;
+  }
+
+  /* 组件样张 */
+  .btn {
+    display: inline-flex; align-items: center; height: var(--control-h); padding: 0 var(--control-pad-x);
+    border-radius: var(--radius-sm); border: 1px solid transparent; font: 500 var(--text-compact)/1 var(--font-sans);
+    cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out);
+  }
+  .btn-primary { background: var(--accent); color: var(--fg-on-accent); }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary:active { background: var(--accent-active); }
+  .btn-secondary { background: var(--bg-muted); color: var(--fg); }
+  .btn-secondary:hover { filter: brightness(.95); }
+  .btn-ghost { background: transparent; color: var(--fg-secondary); }
+  .btn-ghost:hover { background: var(--bg-muted); }
+  .btn-destructive { background: var(--destructive); color: #fff; }
+  .btn-disabled { opacity: .4; cursor: not-allowed; }
+  .btn-demo-row { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 7px;
+    border-radius: var(--radius-xs); font-size: var(--text-caption); font-weight: 500;
+  }
+  .badge i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .badge-success { background: var(--success-subtle); color: var(--success); }
+  .badge-warning { background: var(--warning-subtle); color: var(--warning); }
+  .badge-destructive { background: var(--destructive-subtle); color: var(--destructive); }
+  .badge-info { background: var(--info-subtle); color: var(--info); }
+  .badge-neutral { background: var(--bg-muted); color: var(--fg-muted); }
+
+  .input-demo {
+    height: var(--control-h); padding: 0 var(--control-pad-x); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md); background: transparent; color: var(--fg); font: 400 var(--text-body)/1 var(--font-sans);
+    display: inline-flex; align-items: center; gap: 8px; min-width: 220px;
+  }
+  .input-demo.focused { border-color: var(--accent-border); box-shadow: var(--focus-ring); }
+  .input-demo .kbd, .kbd {
+    font-family: var(--font-mono); font-size: var(--text-caption); color: var(--fg-faint);
+    border: 1px solid var(--border); border-bottom-width: 2px; border-radius: var(--radius-xs); padding: 1px 5px; background: var(--bg-card);
+  }
+
+  /* 终端样张 */
+  .terminal { background: var(--terminal-bg); border-radius: var(--radius-md); padding: 10px 12px; font-family: var(--font-mono); font-size: var(--text-code); line-height: var(--leading-code); color: #E2E8F0; overflow-x: auto; }
+  .terminal .t-green { color: #4ADE80; } .terminal .t-dim { color: #64748B; } .terminal .t-blue { color: #60A5FA; }
+  .terminal .t-yellow { color: #FBBF24; } .terminal .t-red { color: #F87171; }
+
+  /* App Shell 布局示意 */
+  .shell {
+    border: 1px solid var(--border-strong); border-radius: var(--radius-lg); overflow: hidden;
+    display: grid; grid-template-rows: 36px 1fr; height: 380px; background: var(--bg);
+  }
+  .shell-titlebar {
+    display: flex; align-items: center; padding: 0 12px; gap: 8px;
+    background: var(--bg-secondary); border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--font-mono); font-size: var(--text-caption); color: var(--fg-muted);
+  }
+  .shell-titlebar .win-controls { margin-left: auto; display: flex; gap: 14px; color: var(--fg-faint); }
+  .shell-body { display: grid; grid-template-columns: 200px 1fr; min-height: 0; }
+  .shell-side { background: var(--bg-secondary); border-right: 1px solid var(--border-subtle); padding: 8px; overflow: auto; }
+  .side-item {
+    display: flex; align-items: center; gap: 7px; height: var(--row-h); padding: 0 8px;
+    border-radius: var(--radius-sm); font-size: var(--text-compact); color: var(--fg-secondary); cursor: pointer;
+    transition: background-color var(--motion-fast) var(--ease-out);
+  }
+  .side-item:hover { background: var(--bg-muted); }
+  .side-item.selected { background: var(--accent-subtle); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
+  .side-label { font-size: var(--text-caption); color: var(--fg-faint); padding: 6px 8px 2px; }
+  .shell-main { display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+  .shell-tabs { display: flex; border-bottom: 1px solid var(--border-subtle); background: var(--bg-secondary); }
+  .tab { padding: 0 14px; height: 32px; display: flex; align-items: center; gap: 8px; font-size: var(--text-compact); color: var(--fg-muted); cursor: pointer; border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+  .shell-content { padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 78%; padding: 8px 12px; border-radius: var(--radius-lg); font-size: var(--text-compact); }
+  .msg-user { align-self: flex-end; background: var(--accent-subtle); border: 1px solid var(--accent-border); }
+  .msg-agent { align-self: flex-start; background: var(--bg-card); border: 1px solid var(--border); }
+  .msg .role { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--fg-faint); display: block; margin-bottom: 3px; }
+
+  .cmdk {
+    margin-top: 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-xl);
+    background: var(--bg-card); box-shadow: var(--shadow-modal); overflow: hidden;
+  }
+  .cmdk-input { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); font-size: var(--text-compact); color: var(--fg-faint); }
+  .cmdk-item { display: flex; align-items: center; gap: 10px; padding: 7px 14px; font-size: var(--text-compact); cursor: pointer; }
+  .cmdk-item.sel { background: var(--accent-subtle); }
+  .cmdk-item .kbd { margin-left: auto; }
+
+  table.spec { border-collapse: collapse; width: 100%; font-size: var(--text-compact); }
+  table.spec th { text-align: left; font-weight: 600; color: var(--fg-muted); padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: var(--text-caption); }
+  table.spec td { padding: 5px 10px; border-bottom: 1px solid var(--border-subtle); }
+  table.spec td.mono, .mono { font-family: var(--font-mono); font-size: var(--text-caption); }
+</style>
+</head>
+<body>
+
+<div class="themebar">
+  <button class="on" onclick="setTheme('light',this)">浅色</button>
+  <button onclick="setTheme('dark',this)">深色</button>
+</div>
+
+<h1>tudouni-aigo · Design Tokens</h1>
+<div class="sub">Tauri 2 + React · Agent Runtime 桌面端 · 跟随系统双模 · 密度中高 · 微交互动效 · 依据 design-system/tudouni-aigo/MASTER.md</div>
+
+<h2>1 · 配色 Token（双模对照）</h2>
+<div class="swatch-grid" id="swatches"></div>
+
+<h2>2 · 字体方案（本地打包）</h2>
+<div class="type-row"><span class="meta">--font-mono · display 20/600 · JetBrains Mono</span><span class="type-sans-display">Agent Runtime · 会话 03</span></div>
+<div class="type-row"><span class="meta">--font-sans · h1 15/600 · IBM Plex Sans</span><span class="type-sans-h1">设置 / 模型供应商</span></div>
+<div class="type-row"><span class="meta">--font-sans · body 13/400</span><span class="type-sans-body">当前会话正在等待模型响应，你可以继续输入下一条指令，消息会按顺序排队执行。</span></div>
+<div class="type-row"><span class="meta">--font-sans · compact 12/400 · 表格/列表</span><span class="type-sans-compact">deepseek-chat · 128 tokens · 1.2s · 已完成</span></div>
+<div class="type-row"><span class="meta">--font-sans · caption 11/400 · 辅助说明</span><span class="type-sans-caption">悬停查看详情 · 双击标题栏最大化</span></div>
+<div class="type-code"><span class="tok-c">// 代码 / 终端 / diff —— JetBrains Mono 12.5px, 连字开启</span>
+<span class="tok-k">const</span> session = <span class="tok-k">await</span> runtime.<span class="tok-f">spawn</span>(<span class="tok-s">"codex"</span>, { cwd: <span class="tok-s">"~/projects/aigo"</span> });
+<span class="tok-k">if</span> (session.status === <span class="tok-s">"running"</span>) logs.<span class="tok-f">pipe</span>(terminal);  <span class="tok-c">// =></span></div>
+
+<h2>3 · 间距 / 圆角 / 层级</h2>
+<h3>间距（4px 半步基准）</h3>
+<div class="hstack" id="spaces"></div>
+<h3>圆角（克制体系，终端/代码块为 0）</h3>
+<div class="hstack" id="radii"></div>
+<h3>层级</h3>
+<table class="spec">
+  <tr><th>token</th><th>值</th><th>用途</th></tr>
+  <tr><td class="mono">--z-titlebar</td><td class="mono">100</td><td>自绘标题栏</td></tr>
+  <tr><td class="mono">--z-sticky</td><td class="mono">200</td><td>sticky 表头 / 侧栏</td></tr>
+  <tr><td class="mono">--z-popover</td><td class="mono">400</td><td>dropdown / context menu</td></tr>
+  <tr><td class="mono">--z-dialog</td><td class="mono">500</td><td>对话框 / 命令面板</td></tr>
+  <tr><td class="mono">--z-tooltip</td><td class="mono">600</td><td>tooltip 永远最顶</td></tr>
+</table>
+
+<h2>4 · 动效规范（只允许微交互）</h2>
+<div class="token-code">--motion-fast: 120ms   <span style="color:var(--fg-faint)">/* hover / 状态切换 */</span>
+--motion-base: 180ms   <span style="color:var(--fg-faint)">/* 浮层开合、tab 指示条 */</span>
+--motion-slow: 280ms   <span style="color:var(--fg-faint)">/* 仅入场上限 */</span>
+--ease-out: cubic-bezier(.16,1,.3,1)   <span style="color:var(--fg-faint)">/* 进入 */</span>
+--ease-in:  cubic-bezier(.4,0,1,1)     <span style="color:var(--fg-faint)">/* 退出，永远比进入快 */</span>
+可动画属性: background-color | border-color | color | opacity | transform
+禁止: 滚动驱动动画 / stagger 编排 / width-height-top-left 动画 / spinner</div>
+
+<h2>5 · 组件状态样张</h2>
+<h3>按钮</h3>
+<div class="btn-demo-row">
+  <button class="btn btn-primary">运行 Agent</button>
+  <button class="btn btn-secondary">保存配置</button>
+  <button class="btn btn-ghost">查看日志</button>
+  <button class="btn btn-destructive">终止会话</button>
+  <button class="btn btn-primary btn-disabled">操作中…</button>
+  <span style="font-size:var(--text-caption);color:var(--fg-faint)">hover/active/focus-visible 均只在 120ms 内变色，无位移</span>
+</div>
+<h3>输入框（右为 focus 态）/ 快捷键提示</h3>
+<div class="btn-demo-row">
+  <div class="input-demo">输入指令…</div>
+  <div class="input-demo focused">修复 auth 模块的 token 过期问题<span class="kbd">⏎ 发送</span></div>
+  <span class="kbd">Ctrl K</span><span class="kbd">Ctrl `</span><span class="kbd">Ctrl B</span>
+</div>
+<h3>Badge（状态语义）</h3>
+<div class="btn-demo-row">
+  <span class="badge badge-success"><i></i>运行中</span>
+  <span class="badge badge-info"><i></i>排队</span>
+  <span class="badge badge-warning"><i></i>等待确认</span>
+  <span class="badge badge-destructive"><i></i>错误</span>
+  <span class="badge badge-neutral"><i></i>已停止</span>
+</div>
+<h3>终端 / 日志（两模式均保持深色）</h3>
+<div class="terminal"><span class="t-green">aigo</span> <span class="t-dim">❯</span> runtime status
+  <span class="t-blue">session-03</span>  <span class="t-green">running</span>   <span class="t-dim">model=deepseek-chat tokens=12,847</span>
+  <span class="t-blue">session-04</span>  <span class="t-yellow">waiting</span>   <span class="t-dim">approval required: fs.write</span>
+  <span class="t-blue">session-01</span>  <span class="t-red">failed</span>      <span class="t-dim">exit code 1 · retry 2/3</span></div>
+
+<h2>6 · 应用界面结构示意（非落地页）</h2>
+<div class="shell">
+  <div class="shell-titlebar">
+    <span>●</span><span>tudouni-aigo — workspace/aigo</span>
+    <span class="win-controls"><span>—</span><span>▢</span><span style="color:var(--destructive)">✕</span></span>
+  </div>
+  <div class="shell-body">
+    <div class="shell-side">
+      <div class="side-label">会话</div>
+      <div class="side-item selected">▸ session-03 · running</div>
+      <div class="side-item">▸ session-04 · waiting</div>
+      <div class="side-item">▸ session-01 · failed</div>
+      <div class="side-label">工具</div>
+      <div class="side-item">终端</div>
+      <div class="side-item">文件树</div>
+      <div class="side-item">设置</div>
+    </div>
+    <div class="shell-main">
+      <div class="shell-tabs">
+        <div class="tab active">Agent</div>
+        <div class="tab">终端</div>
+        <div class="tab">Diff</div>
+        <span style="margin-left:auto;align-self:center;padding-right:12px"><span class="badge badge-success"><i></i>running</span></span>
+      </div>
+      <div class="shell-content">
+        <div class="msg msg-user"><span class="role">user</span>把鉴权模块从单 PASSWORD 改成多用户 SQLite，先给我方案。</div>
+        <div class="msg msg-agent"><span class="role">agent · session-03</span>已完成迁移：users 表 + token 绑定 user_id，旧数据可丢弃。涉及 3 个文件，diff 已就绪，等待你确认后应用。</div>
+        <div class="cmdk">
+          <div class="cmdk-input">输入命令或搜索…<span class="kbd" style="margin-left:auto">esc</span></div>
+          <div class="cmdk-item sel">新建会话<span class="kbd">Ctrl N</span></div>
+          <div class="cmdk-item">切换模型供应商…<span class="kbd">Ctrl M</span></div>
+          <div class="cmdk-item">打开终端面板<span class="kbd">Ctrl `</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const tokens = [
+    ['group','背景'],
+    ['bg','--bg','窗口底色'],['bg-secondary','--bg-secondary','次级面'],['bg-card','--bg-card','卡片 / 浮层底'],['bg-muted','--bg-muted','hover / 嵌套面'],['terminal-bg','--terminal-bg','终端专用'],
+    ['group','文字'],
+    ['fg','--fg','主文字'],['fg-secondary','--fg-secondary','次级'],['fg-muted','--fg-muted','辅助'],['fg-faint','--fg-faint','placeholder / disabled'],
+    ['group','描边'],
+    ['border','--border','常规'],['border-strong','--border-strong','输入框 / 分隔'],['border-subtle','--border-subtle','面板分割线'],
+    ['group','Accent'],
+    ['accent','--accent','主操作'],['accent-hover','--accent-hover','hover'],['accent-active','--accent-active','active'],['accent-subtle','--accent-subtle','选中底 / badge'],
+    ['group','语义色'],
+    ['info','--info','信息'],['warning','--warning','警告'],['destructive','--destructive','错误 / 危险'],['success','--success','成功 / 运行中'],
+  ];
+  const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const el = document.getElementById('swatches');
+  tokens.forEach(([name, varName, desc]) => {
+    if (name === 'group') {
+      el.insertAdjacentHTML('beforeend', `<div class="group-label">${varName.replace('背景','背景 Surface').replace('文字','文字 Text').replace('描边','描边 Border').replace('语义色','语义 Semantic')}</div>`);
+      return;
+    }
+    const v = cssVar(varName);
+    el.insertAdjacentHTML('beforeend',
+      `<div class="swatch"><span class="chip" style="background:${v}"></span><span><span class="name">${name}</span><br><span class="hex">${varName} · ${v}</span></span></div>`);
+  });
+  // 间距
+  [['--space-1','4'],['--space-2','8'],['--space-3','12'],['--space-4','16'],['--space-5','20'],['--space-6','24'],['--space-8','32']].forEach(([t,v]) => {
+    document.getElementById('spaces').insertAdjacentHTML('beforeend',
+      `<div class="space-demo"><div class="bar" style="width:${v}px"></div><span class="lbl">${t}</span></div>`);
+  });
+  [['--radius-none','0'],['--radius-xs','3'],['--radius-sm','4'],['--radius-md','6'],['--radius-lg','8'],['--radius-xl','12']].forEach(([t,v]) => {
+    document.getElementById('radii').insertAdjacentHTML('beforeend',
+      `<div class="space-demo"><div class="radius-demo" style="border-radius:${v}px"></div><span class="lbl">${t}</span></div>`);
+  });
+  function setTheme(t, btn) {
+    document.documentElement.dataset.theme = t;
+    document.querySelectorAll('.themebar button').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    // 重建色板（取新主题的值）
+    el.innerHTML = '';
+    tokens.forEach(([name, varName]) => {
+      if (name === 'group') {
+        el.insertAdjacentHTML('beforeend', `<div class="group-label">${varName}</div>`);
+        return;
+      }
+      const v = cssVar(varName);
+      el.insertAdjacentHTML('beforeend',
+        `<div class="swatch"><span class="chip" style="background:${v}"></span><span><span class="name">${name}</span><br><span class="hex">${varName} · ${v}</span></span></div>`);
+    });
+  }
+</script>
+</body>
+</html>

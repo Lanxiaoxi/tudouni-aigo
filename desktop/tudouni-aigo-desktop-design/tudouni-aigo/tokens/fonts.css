@@ -1,0 +1,49 @@
+/* ============================================================
+   tudouni-aigo · 本地字体打包（禁止 Google Fonts CDN）
+   字体文件放 src/assets/fonts/（Tauri 打包进二进制），
+   此处用相对路径引用；两份字体均为 SIL OFL 许可，可自由再分发。
+   ============================================================ */
+
+/* IBM Plex Sans —— UI 正文（300/400/500/600/700） */
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("../assets/fonts/IBMPlexSans-Regular.woff2") format("woff2"),
+       url("../assets/fonts/IBMPlexSans-Regular.ttf") format("truetype");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("../assets/fonts/IBMPlexSans-Medium.woff2") format("woff2"),
+       url("../assets/fonts/IBMPlexSans-Medium.ttf") format("truetype");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("../assets/fonts/IBMPlexSans-SemiBold.woff2") format("woff2"),
+       url("../assets/fonts/IBMPlexSans-SemiBold.ttf") format("truetype");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+
+/* JetBrains Mono —— 标题 / 代码 / 终端 / 数字（400/500/600/700） */
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../assets/fonts/JetBrainsMono-Regular.woff2") format("woff2"),
+       url("../assets/fonts/JetBrainsMono-Regular.ttf") format("truetype");
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../assets/fonts/JetBrainsMono-Medium.woff2") format("woff2"),
+       url("../assets/fonts/JetBrainsMono-Medium.ttf") format("truetype");
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../assets/fonts/JetBrainsMono-SemiBold.woff2") format("woff2"),
+       url("../assets/fonts/JetBrainsMono-SemiBold.ttf") format("truetype");
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+
+/* 获取字体（放仓库后删注释核对）：
+   - JetBrains Mono : https://www.jetbrains.com/lp/mono/ （下 ZIP，取 ttf/woff2）
+   - IBM Plex Sans    : https://github.com/IBM/plex/releases （取 IBM-Plex-Sans/fonts/complete/woff2） */
