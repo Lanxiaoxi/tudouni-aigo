@@ -1058,6 +1058,11 @@ func (a *Agent) reportToolResult(item *prepared, durationMs int, ok bool) {
 		"status":      item.status,
 		"chars":       len([]rune(item.result)),
 		"duration_ms": durationMs,
+		// A one-line preview of the result. A front end shows a count and a
+		// duration, and neither answers "what did it actually do"; the audit
+		// line has carried this shape for debug output all along. Same limit,
+		// same flattening, and the body still never travels in the event.
+		"preview": preview(item.result, AuditPreviewLimit),
 	}
 	if item.parallel {
 		// The audit's timing has to tell a batch's overlapping durations from a
