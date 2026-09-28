@@ -31,6 +31,8 @@ use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -222,6 +224,16 @@ fn spawn(
         .stdout(Stdio::piped())
         // A pipe, never `null` and never inherited: see the module comment.
         .stderr(Stdio::piped());
+
+    // The runtime is a console program, and a GUI parent has no console for it
+    // to inherit — so without this flag Windows mints a fresh console window
+    // ("the black box") that stays up for the life of the child. The pipes
+    // above carry everything the bridge needs; the console itself is dead
+    // weight. 0x08000000 is CREATE_NO_WINDOW, which has no std binding.
+    #[cfg(windows)]
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
 
     let mut child = command
         .spawn()
@@ -569,8 +581,15 @@ fn runtime_version(binary: String) -> Result<Option<String>, String> {
         resolve_binary(Some(&binary))?
     };
 
-    let output = Command::new(&path)
-        .arg("--version")
+    // Same CREATE_NO_WINDOW flag as spawn(): the welcome screen runs this from
+    // a GUI process, and without the flag a console window flashes on screen.
+    #[cfg(windows)]
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut version_command = Command::new(&path);
+    version_command.arg("--version");
+    #[cfg(windows)]
+    version_command.creation_flags(CREATE_NO_WINDOW);
+    let output = version_command
         .output()
         .map_err(|e| format!("could not run {}: {e}", path.display()))?;
 
