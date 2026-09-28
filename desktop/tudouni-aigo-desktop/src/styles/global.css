@@ -1,0 +1,297 @@
+/* ============================================================
+   tudouni-aigo · 全局与布局骨架
+   区域高度总账（desktop-ui-spec.md §9.1）：
+     整屏 = 标题栏 + 顶栏 + 会话栏 +（折叠摘要行）+ 正文 + 状态栏 + 输入框
+   正文是唯一 1fr 行，其余 auto。任何面板都不得把状态栏/输入框挤出可视区。
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden; /* 单窗口应用，整屏不滚动，只有区域内部滚 */
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  color: var(--info);
+  text-decoration: none;
+}
+
+/* focus 只对键盘生效（component-states §0） */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- 滚动条 ---------- */
+.scroll {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------- 应用骨架 ---------- */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.app-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+/* 正文区：唯一可伸缩行 */
+.app-stream {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+.app-sidebar {
+  flex: 0 0 268px;
+  min-height: 0;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The left rail: workspaces and sessions. Same construction as `.app-sidebar`
+   and for the same reason — it is a fixed column beside the one flexible row,
+   so the height budget in the header of this file still closes. */
+.app-leftbar {
+  flex: 0 0 244px;
+  min-height: 0;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---------- 通用小工具 ---------- */
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: var(--font-feature-mono);
+  font-size: var(--text-code);
+  font-variant-ligatures: contextual;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: var(--font-feature-mono);
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.faint {
+  color: var(--fg-faint);
+}
+
+.dim {
+  color: var(--fg-secondary);
+}
+
+.caption {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.compact {
+  font-size: var(--text-compact);
+}
+
+.strong {
+  font-weight: 600;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.row-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+}
+
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  flex: none;
+}
+
+.sep-v {
+  height: 1px;
+  background: var(--border-subtle);
+  width: 100%;
+}
+
+/* 内容收缩 / 展开的轻量过渡：只用 opacity，不动布局 */
+.reveal {
+  animation: reveal var(--motion-slow) var(--ease-out) 1;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------- 窄窗降级 ---------- */
+@media (max-width: 1180px) {
+  .app-sidebar {
+    flex-basis: 236px;
+  }
+  .app-leftbar {
+    flex-basis: 216px;
+  }
+}
+
+/* Below the window's own minimum width the two rails cannot both fit beside a
+   usable transcript, so both go and the summary row takes over. The JS side
+   asks the stylesheet for this rule rather than guessing (`useLayout.ts`), which
+   is what keeps the two from disagreeing and blanking the screen. */
+@media (max-width: 1024px) {
+  .app-sidebar,
+  .app-leftbar {
+    display: none;
+  }
+}
