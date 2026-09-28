@@ -105,8 +105,10 @@
         "type": "string",
         "enum": ["run_started", "model_call", "tool_call", "tool_result",
                  "permission", "tool_batch", "run_finished", "delta_reset",
-                 "context_degraded", "context_compacted", "image_attached"],
-        "doc": "**就是 audit/events.py 那几种**，不新造。`delta_reset` 是流式加进来的第八种：它记的是\"重试/重发之前，界面上那段增量作废了\"——**审计里没有 delta 的正文**（那会让日志变成第二个会话文件），所以这一条是\"屏幕上出现过的东西后来被丢了\"唯一的痕迹。`context_degraded` 是 Context 预算加进来的第九种：它记的是\"这一步因为超预算把哪些 Artifact 降了档\"（`full→range→preview→metadata→removed`），字段是 items/estimated/limit/changes —— **正文不进审计**（它还在盘上，抄一遍就是第二个会话文件）。`context_compacted` 是历史压缩加进来的第十种：它记的是\"这一次把最早的多少条历史折成了一份摘要\"，字段是 folded/folded_total/messages/summary_id/summary_chars/generation/before/after/duration_ms/model —— **摘要正文同样不进审计**（它是一份 Artifact），所以这一条回答的是\"上下文为什么突然小了\"。"
+                 "context_degraded", "context_compacted", "image_attached",
+                 "goal_round", "subagent_started", "subagent_problem",
+                 "delegation_started", "delegation_finished"],
+        "doc": "**就是 internal/audit 那几种**，不新造。`delta_reset` 是流式加进来的第八种：它记的是\"重试/重发之前，界面上那段增量作废了\"——**审计里没有 delta 的正文**（那会让日志变成第二个会话文件），所以这一条是\"屏幕上出现过的东西后来被丢了\"唯一的痕迹。`context_degraded` 是 Context 预算加进来的第九种：它记的是\"这一步因为超预算把哪些 Artifact 降了档\"（`full→range→preview→metadata→removed`），字段是 items/estimated/limit/changes/fixed —— **正文不进审计**（它还在盘上，抄一遍就是第二个会话文件）。`context_compacted` 是历史压缩加进来的第十种：它记的是\"这一次把最早的多少条历史折成了一份摘要\"，字段是 folded/folded_total/messages/summary_id/summary_chars/generation/before/after/duration_ms/model —— **摘要正文同样不进审计**（它是一份 Artifact），所以这一条回答的是\"上下文为什么突然小了\"。`image_attached` 第十一种：一张被点名的图片的四种去向，靠 `status` 区分（attached / skipped / over_limit / refused）—— 同一个 kind 带一个 status 是有意的，四种是\"一张图被点名\"这一个事件的不同结局。`goal_round` 第十二种：目标循环这一步的决定（queued / started / skipped + 原因）。`subagent_started` / `subagent_problem` / `delegation_started` / `delegation_finished` 是最后四种，来自 internal/subagent。**注意它们的 `run_id`**：`goal_round` / `image_attached` / `context_compacted` 是空串，而两条 `delegation_*` 是**子代理的 id**（父代理对自己委派的记账）—— 所以前端**不能**拿 `run_id` 去和当前回合配对，那会把它们全部误判成晚到消息。"
       },
       "session_id": {"type": "string"},
       "run_id": {"type": "string"},
@@ -127,8 +129,8 @@
       "t": {"type": "string", "const": "ui"},
       "kind": {
         "type": "string",
-        "enum": ["run_finished", "state", "status", "tools", "mcp", "compacted", "context"],
-        "doc": "run_finished = 这一轮的正文（answer + run_id）；state = 面板数据快照（todos/skills/skill_catalog/jobs/mcp/agents_md/messages/steps/model）；status = `/status` 要的那一屏（回答入站的 status）；tools = `/tools` 的清单（回答入站的 tools）；mcp = `/mcp` 的清单（回答入站的 mcp）；compacted = `/compact` 那一次的结果（回答入站的 compact，字段 `compaction`）；context = `/context` 那一屏（回答入站的 context，字段 `context`）。七种都**不进审计**。"
+        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context"],
+        "doc": "run_finished = 这一轮的正文（answer + run_id）；state = 面板数据快照（todos/skills/skill_catalog/jobs/mcp/agents_md/messages/steps/model）；status = `/status` 要的那一屏（回答入站的 status）；tools = `/tools` 的清单（回答入站的 tools）；mcp = `/mcp` 的清单（回答入站的 mcp）；skills = `/skills` 的清单（回答入站的 skills：`skills` 是这个会话**能加载**的全量目录，`active` 才是**已加载**的名字 —— 两者不能混，详见 `skills` 那条）；compacted = `/compact` 那一次的结果（回答入站的 compact，字段 `compaction`）；context = `/context` 那一屏（回答入站的 context，字段 `context`）。八种都**不进审计**。"
       },
       "answer": {
         "type": "string",
@@ -144,7 +146,27 @@
       },
       "skills": {
         "type": "array",
-        "doc": "**只有 kind=state 有**。已加载技能的指针：`[{\"name\": \"...\", \"digest\": \"...\"}]`（没有正文 —— 正文是 L2，只有模型调 load_skill 才拿得到）。"
+        "doc": "**kind=state 和 kind=skills 都有，但含义不同，必须分开读**：`ui(state)` 里是**已加载技能的指针**（`[{\"name\": \"...\", \"digest\": \"...\"}]`，digest 只在这里给）；`ui(skills)` 里是**这个会话能加载的全量目录**（`[{\"name\": \"...\", \"description\": \"...\"}]`，没有 digest）。正文都不到这里 —— 正文是 L2，只有模型调 load_skill 才拿得到。**\"已加载\"以 `active` 为准，不是这个数组**：把目录当成已加载，会让\"目录减去已加载\"永远是空集。"
+      },
+      "active": {
+        "type": "array",
+        "items": {"type": "string"},
+        "doc": "**只有 kind=skills 有**。**已加载**的技能名，按加载顺序（`skills.ActiveNames` —— \"ActiveNames is the loaded skills in load order\"）。它和同一个消息里的 `skills`（能加载的目录）是**两个不同的事实**：前者是\"现在装着哪些\"，后者是\"能装哪些\"。"
+      },
+      "roots": {
+        "type": "array",
+        "items": {"type": "string"},
+        "doc": "**只有 kind=skills 有**。这次扫描走过的技能根目录。给\"我改的文件到底生效没有\"这个问题的答案：候选目录有六个，命中哪一个全看这份清单。"
+      },
+      "problems": {
+        "type": "array",
+        "items": {"type": "string"},
+        "doc": "**只有 kind=skills 有**。读技能目录时遇到的问题，**已经是给读的整句**（`skills.RenderProblem` 在 runtime 里渲染好了）—— 句子属于界面语言，让每个前端各带一份同样的 switch 就是第二份事实。"
+      },
+      "shadowed": {
+        "type": "array",
+        "items": {"type": "string"},
+        "doc": "**只有 kind=skills 有**。被同名技能盖掉的那些文件（同样是渲染好的整句）。\"我明明改了它\"最常见的解释就在这一格里。"
       },
       "skill_catalog": {
         "type": "array",
@@ -227,12 +249,15 @@
         "type": "array",
         "doc": [
           "**只有 kind=mcp 有**。MCP server 的挂载情况，**全量**（不是增量 —— 面板每次按全量重画，",
-          "省掉「增量怎么合并」那一整类 bug）：`[{\"name\": ..., \"state\": \"loaded|unload|failed\",",
-          "\"tools\": 12, \"error\": \"...\", \"where\": \"npx …\"}]`。",
+          "省掉「增量怎么合并」那一整类 bug）：`[{\"name\": ..., \"state\": \"loaded|unload\",",
+          "\"tools\": 12, \"where\": \"npx …\"}]`。",
           "`where` 是给人看的一句话：本地是命令行，远程**只到 `scheme://host`** —— URL 里可能有令牌，",
           "而这一格会进面板、进快照、进日志。",
-          "三个 state 是**三个不同的问题**：`loaded` 在跑（左栏那块只数这个）、`unload` 配置里有但没跑、",
-          "`failed` 我们试过没成（原因在 `error` 里）。**后两种不能合成一种**：它们的下一步完全不同。"
+          "两个 state 是**两个不同的问题**：`loaded` 在跑（左栏那块只数这个）、`unload` 配置里有但没跑。",
+          "**\"我们试过没成\"没有单独的 state** —— `mcpInventory` 只写得出上面两个，",
+          "加载失败是 `mcp_notes` 里的一句整话（`server \\`x\\` did not connect (…)`）。",
+          "前端由此**不能**把\"没加载\"和\"加载失败\"画成一样：句子在，就贴在那一行旁边。",
+          "（schema 早先在这里列过 `failed` / `error` 两个实现里不存在的状态，已删。）"
         ]
       },
       "mcp_notes": {
@@ -257,12 +282,18 @@
       "context": {
         "type": "object",
         "doc": [
-          "**kind=context 有；kind=compacted 里也附一份**（压缩前后各看一眼才有意义）。两组事实的合并：",
-          "`active` / `folded` / `messages` / `summary_id` / `generation` / `updated_at` / `summary_chars`",
-          "来自 `session.metadata` 里那块压缩状态（它跨进程活着）；`window` 是当前模型的窗口；",
-          "`context` 是 `ContextManager.stats()` 的原样（artifacts / items / open / removed / pinned /",
-          "estimated_tokens / limit_tokens / compact_threshold / degraded / version）。",
-          "**合并发生在 runtime 里**，前端拿到的是可以直接渲染的一份 —— 它不该知道这两半各自住在谁身上。"
+          "**kind=context 有；kind=compacted 里也附一份**（压缩前后各看一眼才有意义）。",
+          "**注意这一格本身不是 ledger —— 它是个容器**：真正的 ledger 在 `context` 里面",
+          "（`context.context`），`ContextManager.stats()` 的原样（artifacts / items / compact /",
+          "open / removed / pinned / stable / dynamic / estimated_tokens / limit_tokens /",
+          "compact_threshold / degraded / version）。**`degraded` 是个数，不是布尔**（`len(LastDegraded)`）。",
+          "容器上另外两组事实：`window` 是当前模型的窗口，`messages` 是会话里的消息条数；",
+          "`active` / `folded` / `summary_id` / `generation` / `summary_chars` 来自 `session.metadata`",
+          "里那块压缩状态（它跨进程活着）。",
+          "**没有上下文管理层时**，整个容器是空对象或不发 —— 前端必须说\"这里没有上下文管理\"，",
+          "**不能**画一排 0：一排 0 读起来是\"开着但什么也没做\"，那是另一个、并且是假的陈述。",
+          "**合并发生在 runtime 里**，前端拿到的是可以直接渲染的一份 —— 它不该知道这两半各自住在谁身上。",
+          "（schema 早先在这里列过 `updated_at`：`contextPayload()` 从来不发这个键，已删。）"
         ]
       }
     },

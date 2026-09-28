@@ -1093,9 +1093,12 @@ func (s *Server) OnEvent(record map[string]any) {
 	// over, which is the one time it is useless.
 	//
 	// **These two records arrive on this path, not the child's.** They are the
-	// parent's own account of having delegated: their `run_id` is the parent's turn
-	// and their `session_id` is the parent's session. Putting this in `forwardChild`
-	// reads correctly and does nothing, because that branch never sees these kinds.
+	// parent's own account of having delegated: their `session_id` is the
+	// parent's session. Their `run_id`, however, is the **child's** id, not the
+	// parent's turn (`internal/subagent/spawn.go` passes `childID`), so a front
+	// end must not use it to attribute these rows to a turn. Putting this in
+	// `forwardChild` reads correctly and does nothing, because that branch never
+	// sees these kinds.
 	//
 	// It hears about the two transitions rather than about every child event, so a
 	// subagent that makes forty tool calls sends one extra snapshot, not forty.
