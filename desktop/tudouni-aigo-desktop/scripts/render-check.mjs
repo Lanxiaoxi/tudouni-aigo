@@ -792,7 +792,12 @@ async function main() {
       { risk: 'high', disposition: 'ask' },
     ],
     agents_md: [{ path: 'AGENT.md', lines: 12, status: 'loaded' }],
-    mcp: [{ name: 'fs', state: 'loaded', tools: 12, where: 'npx fs-server' }],
+    mcp: [
+      { name: 'fs', state: 'loaded', tools: 12, where: 'npx fs-server' },
+      // A second server that is configured but not running, so the row's
+      // "Load" action (as opposed to "Unload") is actually rendered.
+      { name: 'github', state: 'unload', tools: 0, where: 'https://api.github.com' },
+    ],
     goal: {
       id: 'g1',
       objective: 'fix the reconnect',
@@ -828,6 +833,168 @@ async function main() {
   if (!sb.sidebarText.includes('3/60')) throw new Error('the goal round count is missing');
   if (!sb.sidebarText.includes('uncollected')) throw new Error('the uncollected job is not flagged');
   if (!sb.sidebarText.includes('pdf-tools')) throw new Error('the loaded skill is missing');
+
+  // ---- the MCP row's own load/unload control ----
+  //
+  // Two things are checked here and neither can fail loudly on its own:
+  //
+  //   - **each server has a button, and it says the right action.** A running
+  //     server is one you unload; a configured one is one you load. Getting them
+  //     backwards is invisible to every other assertion (the row still renders,
+  //     the text still reads as English) and pressing it would do the opposite
+  //     of what it says.
+  //   - **the row does not overflow.** The rail is 233px wide here and 201px
+  //     once the window narrows past 1180. This row already overflowed at the
+  //     narrow width *before* a button was added — the long state wording took
+  //     131px of it on its own — and a row that overflows is clipped, so the
+  //     control silently sits past the edge where nothing can click it. Measured
+  //     with `scrollWidth` because that is the number the layout actually has.
+  const mcpRail = await evaluate(`(() => {
+    const blocks = [...document.querySelectorAll('.sb-block')];
+    const mcp = blocks.find((b) => (b.querySelector('.sbh-title')?.textContent ?? '') === 'MCP');
+    if (!mcp) return JSON.stringify({ error: 'no MCP block' });
+    const rows = [...mcp.querySelectorAll('.sb-row')].map((row) => {
+      const button = row.querySelector('.mcp-act');
+      return {
+        name: row.querySelector('.sbr-main')?.textContent?.trim() ?? '',
+        state: row.querySelector('.badge')?.textContent?.trim() ?? '',
+        buttonText: button ? (button.textContent ?? '').trim() : null,
+        buttonLabel: button ? (button.getAttribute('aria-label') ?? '') : null,
+        buttonW: button ? Math.round(button.getBoundingClientRect().width) : null,
+        // The whole row versus the space it is given.
+        over: row.scrollWidth - row.clientWidth,
+        client: row.clientWidth,
+      };
+    });
+    return JSON.stringify(rows);
+  })()`);
+  console.log('mcp rail rows:', mcpRail);
+  const mcpRows = JSON.parse(mcpRail ?? '[]');
+  if (mcpRows.error) throw new Error(`no MCP block in the rail: ${mcpRows.error}`);
+  if (mcpRows.length !== 2) {
+    throw new Error(`expected 2 MCP rows in the rail, got ${mcpRows.length}`);
+  }
+  for (const row of mcpRows) {
+    if (row.buttonText === null) {
+      throw new Error(`the MCP row for "${row.name}" has no load/unload button`);
+    }
+    // The action word is the *other* state's answer.
+    const expectedAction = row.state === 'running' ? 'Unload' : 'Load';
+    if (row.buttonText !== expectedAction) {
+      throw new Error(
+        `the button on "${row.name}" (state "${row.state}") says "${row.buttonText}", ` +
+          `expected "${expectedAction}"`,
+      );
+    }
+    // A bare "Load" is ambiguous to a screen reader; the name has to be in there.
+    if (!row.buttonLabel.includes(row.name)) {
+      throw new Error(
+        `the button's accessible name does not say which server: "${row.buttonLabel}"`,
+      );
+    }
+    // A control squeezed below its own hit target is on screen but not usable.
+    if (!(row.buttonW >= 22)) {
+      throw new Error(`the button on "${row.name}" collapsed to ${row.buttonW}px`);
+    }
+    if (row.over > 0) {
+      throw new Error(
+        `the rail MCP row for "${row.name}" overflows its ${row.client}px by ${row.over}px — ` +
+          `the button is outside the row where it cannot be clicked`,
+      );
+    }
+  }
+  // One of each state, so both actions were actually rendered.
+  const actions = mcpRows.map((r) => r.buttonText).sort();
+  if (JSON.stringify(actions) !== JSON.stringify(['Load', 'Unload'])) {
+    throw new Error(`expected one Load and one Unload row, got ${JSON.stringify(actions)}`);
+  }
+
+  // Press the "Load" button and check what actually reached the store.
+  //
+  // Rendering a button is not the same as wiring one, and the difference is
+  // invisible here: the row would look identical either way. So the click is
+  // performed and the store is read — `mcpPending` is the front end's own record
+  // that a request went out, and `uiState` must be untouched, because a request
+  // is not allowed to make the screen claim a server is up before the runtime
+  // has answered.
+  const pressed = await evaluate(`(() => {
+    const rows = [...document.querySelectorAll('.app-sidebar .sb-row')];
+    const loadRow = rows.find((r) => (r.querySelector('.mcp-act')?.textContent ?? '').trim() === 'Load');
+    if (!loadRow) return JSON.stringify({ error: 'no Load button' });
+    const name = loadRow.querySelector('.sbr-main')?.textContent?.trim() ?? '';
+    // The mark must be clear before the press, or the assertion below would pass
+    // on a leftover from something else.
+    const before = [...window.__aigoStore.getState().mcpPending];
+    loadRow.querySelector('.mcp-act').click();
+    return JSON.stringify({ name, before, after: [...window.__aigoStore.getState().mcpPending] });
+  })()`);
+  console.log('mcp rail, after pressing Load:', pressed);
+  const pr = JSON.parse(pressed ?? '{}');
+  if (pr.error) throw new Error(`could not press the rail's load button: ${pr.error}`);
+  if (pr.before.length !== 0) {
+    throw new Error(`a server was already marked in flight before any press: ${pr.before}`);
+  }
+  if (!pr.after.includes(pr.name)) {
+    throw new Error(
+      `pressing "Load" on "${pr.name}" did not reach the store: mcpPending = ${JSON.stringify(pr.after)}`,
+    );
+  }
+  // Read the DOM on the next tick: React commits asynchronously, so reading the
+  // row in the same tick as the click would see the state before the press.
+  await sleep(150);
+  const afterPress = await evaluate(`(() => {
+    const rows = [...document.querySelectorAll('.app-sidebar .sb-row')];
+    const loadRow = rows.find((r) => (r.querySelector('.mcp-act')?.getAttribute('aria-label') ?? '').startsWith('Waiting'));
+    if (!loadRow) return JSON.stringify({ error: 'the pressed row is not marked as waiting' });
+    const button = loadRow.querySelector('.mcp-act');
+    return JSON.stringify({
+      name: loadRow.querySelector('.sbr-main')?.textContent?.trim() ?? '',
+      state: loadRow.querySelector('.badge')?.textContent?.trim() ?? '',
+      disabled: button.disabled,
+      label: button.getAttribute('aria-label'),
+      dots: !!button.querySelector('.dots'),
+    });
+  })()`);
+  console.log('mcp rail, while the request is out:', afterPress);
+  const ap = JSON.parse(afterPress ?? '{}');
+  if (ap.error) throw new Error(ap.error);
+  // The press is not allowed to have written a runtime fact: the badge is still
+  // whatever `ui(state)` said, never what the request hopes for.
+  if (ap.state !== 'not loaded') {
+    throw new Error(`the press changed the row's state to "${ap.state}": that is an optimistic update`);
+  }
+  // While the request is out the button says so and refuses a second press.
+  if (ap.disabled !== true) {
+    throw new Error('the button stayed pressable while its request was still in flight');
+  }
+  if (!ap.dots) {
+    throw new Error('the waiting button shows no busy indicator (component-states §0 Loading)');
+  }
+  // The waiting label has to name the server, and it has to be *interpolated*:
+  // an unfilled `{name}` reads aloud as "brace name" and would sail past every
+  // check above (the label is a non-empty string either way). This is the shape
+  // of bug that got through once already.
+  if (!ap.label.includes(ap.name) || ap.label.includes('{name}')) {
+    throw new Error(
+      `the waiting label did not substitute the server name: "${ap.label}" for "${ap.name}"`,
+    );
+  }
+  // Put the store back so the checks below see a clean screen.
+  await evaluate(`(() => {
+    window.__aigoStore.getState().applyRuntimeMessage({ v: 1, t: 'ui', kind: 'mcp', mcp_servers: [
+      { name: 'fs', state: 'loaded', tools: 12, where: 'npx fs-server' },
+      { name: 'github', state: 'unload', tools: 0, where: 'https://api.github.com' },
+    ], mcp_notes: [] });
+    return true;
+  })()`);
+  await sleep(150);
+  // The reply released the mark, so the row is pressable again.
+  const released = await evaluate(
+    `JSON.stringify(window.__aigoStore.getState().mcpPending)`,
+  );
+  if (released !== '[]') {
+    throw new Error(`the runtime's reply did not release the in-flight mark: ${released}`);
+  }
 
   // ---- a fold animates, so its content stays mounted ----
   //
@@ -1194,6 +1361,16 @@ async function main() {
   //
   // Measured by width, not by presence: the rail is permanently mounted now, so
   // a presence check here would assert nothing at all.
+  //
+  // The rule is about **runtime** actions, not about buttons: the two local-only
+  // controls may stay live, because neither touches anything the runtime is
+  // holding. One is the rail's own collapse toggle; the other is the sessions
+  // fold, which is a preference (`persistPrefs`) and sends no message at all.
+  // This used to count enabled buttons and allow exactly one, which was true
+  // only until the fold toggle was added — since then it failed on an untouched
+  // codebase, which is how it was found. Naming the allowed controls is what
+  // keeps it from going stale again: a new button fails this unless somebody
+  // decides, here, that it is local.
   const railDuringModal = await evaluate(`(() => {
     const bar = document.querySelector('.app-leftbar');
     const buttons = [...bar.querySelectorAll('button')];
@@ -1202,7 +1379,14 @@ async function main() {
       // information about where you are.
       width: Math.round(document.querySelector('.app-rail-left')?.getBoundingClientRect().width ?? 0),
       text: (bar.innerText ?? '').replace(/\\s+/g,' ').toLowerCase(),
-      enabled: buttons.filter((b) => !b.disabled).length,
+      live: buttons.filter((b) => !b.disabled).map((b) => {
+        const cls = typeof b.className === 'string' ? b.className : '';
+        return {
+          local: cls.includes('lb-section-toggle') || cls.includes('lb-icon'),
+          what: (b.getAttribute('aria-label') ?? b.innerText ?? '').replace(/\\s+/g,' ').trim().slice(0, 40),
+          cls: cls.split(' ')[0],
+        };
+      }),
       total: buttons.length,
     });
   })()`);
@@ -1212,10 +1396,15 @@ async function main() {
   if (!rm.text.includes('project')) {
     throw new Error('the rail stopped saying which workspace is current behind a prompt');
   }
-  // The only button that may stay live is the rail's own collapse toggle: it
-  // touches nothing the runtime is holding.
-  if (rm.enabled > 1) {
-    throw new Error(`${rm.enabled} rail controls stayed live behind a prompt`);
+  // Everything still live must be a control this front end owns outright. A
+  // `lb-icon` that starts a workspace or re-reads sessions is disabled above, so
+  // reaching this with one enabled means a real action escaped the prompt.
+  const escaped = (rm.live ?? []).filter((b) => !b.local);
+  if (escaped.length > 0) {
+    throw new Error(
+      `${escaped.length} rail control(s) stayed live behind a prompt: ` +
+        escaped.map((b) => `"${b.what}" (.${b.cls})`).join(', '),
+    );
   }
   await evaluate(`(() => { window.__aigoStore.getState().answerPermission('deny'); return true; })()`);
   await sleep(200);

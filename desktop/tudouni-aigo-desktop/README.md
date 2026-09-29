@@ -228,6 +228,51 @@ Two things that are easy to get backwards here:
 | 12 | Single instance: a second launch focuses the window | `lib.rs` — registered **first**, which the plugin's own docs require |
 | 13 | Streaming is asked for on every attach, because the runtime does not stream its stdio front end unless told to and this interface is built around `delta` | `attachRuntime()` in `runtime/tauri.ts` (`--stream`), `applyDelta` in `state/entries.ts` |
 | 14 | The left sidebar is workspaces + sessions only — no sign-in, no plugin market; the workspace list is a front-end preference while the current workspace is a runtime fact | `components/sidebar/WorkspaceSidebar.tsx`, `workspaces` / `leftbarVisible` in `state/store.ts`, `workspace_check` in `lib.rs` |
+| 15 | Each MCP server in the rail carries its own load/unload button, so mounting one is no longer `/mcp`-only. The rail's row shows **less** than the panel's row on purpose — see below | `McpRow` in `components/sidebar/Sidebar.tsx`, `mcpPending` in `state/store.ts`, `.mcp-act` in `styles/stream.css` |
+
+### 15 · The rail's MCP row, and why it is narrower than the panel's
+
+The right rail already answered "which servers are configured, which are
+running"; the next question — "then start it" — was a `/mcp` command away. So
+the action moved onto the row.
+
+The rail is **233px** wide, and **201px** once the window narrows past 1180px
+(the rail drops to 236px there). Measured with the real stylesheet, before
+anything was added:
+
+- the panel's wording for the not-running state, `configured, not running`, is
+  **131px** of a 233px row on its own;
+- the row **already overflowed** at 1180px by 25px, squeezing the tools count to
+  0–1px.
+
+Adding a button to that leaves no room for both the tools count and the long
+state word: keeping them overflows at *every* width (39px at 1440), and an
+overflowing row is clipped — the button ends up past the edge where nothing can
+click it. The choices that fit keep either the tools count *or* the long state
+word, never both.
+
+So the rail shows `name · state · action`, and:
+
+- the **tools count stays in `/mcp`**, where the panel has room for it;
+- the state uses its short form, which is the runtime's own word
+  (`mcp.not_loaded`, "not loaded") — the same fact in the same vocabulary, not a
+  second one;
+- the button is `flex: none`. `.btn` is `flex-shrink: 1` by default, and without
+  the pin the row squeezes the button to 13–16px instead of 22px: still on
+  screen, no longer a usable target.
+
+`mcpPending` is **not** an optimistic update: it records that this front end has
+just sent a request, never what a server's state is. The badge still comes only
+from `ui(state)`, and the mark is released by the runtime's own `ui(mcp)` reply
+(or by `runtime_exited`, so a dead child cannot leave a button disabled by an
+answer that will never come).
+
+`scripts/render-check.mjs` asserts all of it: both action words render, each
+button's accessible name contains its server, the button keeps ≥22px, the row
+does not overflow, and pressing "Load" reaches `mcpPending` without touching
+`uiState`. The overflow and the label-interpolation checks are there because
+both failures are invisible otherwise — a clipped control still renders, and an
+unfilled `{name}` is still a non-empty string.
 
 ---
 

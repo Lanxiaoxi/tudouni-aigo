@@ -212,11 +212,27 @@ export const en = {
   'jobs.seconds': '{n}s',
 
   'mcp.loaded': 'running',
+  /** The panel's wording: it has room to spell out that configuration exists. */
   'mcp.unload': 'configured, not running',
+  /** The rail's wording for the same state. The rail is 233px wide and this row
+   *  also carries an action button, so the long form above does not fit — it
+   *  measured 131px of a 233px row on its own, and the row already overflowed at
+   *  the narrow-window width before anything was added. The short form is the
+   *  runtime's own (`mcp.not_loaded`, "not loaded"), so it is the same fact in
+   *  the same words, not a second vocabulary. */
+  'mcp.notLoaded': 'not loaded',
   'mcp.failed': 'connection failed',
   'mcp.tools': '{n} tools',
   'mcp.load': 'Load',
   'mcp.unloadAction': 'Unload',
+  /** The rail's button: the visible word is the action, and the accessible name
+   *  has to say *which* server — a column of bare "Load"s reads as nothing at
+   *  all to a screen reader. */
+  'mcp.loadServer': 'Load {name}',
+  'mcp.unloadServer': 'Unload {name}',
+  /** While a load/unload is out. The button shows dots; this is its accessible
+   *  name, because "…" announced on its own says nothing. */
+  'mcp.pending': 'Waiting for the runtime — {name}',
   'mcp.where': 'launch',
 
   'tasks.progress': '{done} / {total}',

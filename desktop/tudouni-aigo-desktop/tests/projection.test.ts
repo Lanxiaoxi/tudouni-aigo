@@ -1133,6 +1133,7 @@ function resetStore(): void {
     listedSessions: false,
     mcp: [],
     mcpNotes: [],
+    mcpPending: [],
     skills: [],
     skillCatalog: [],
     tools: [],
@@ -1240,6 +1241,80 @@ test('mcp puts the servers in an array, and is only sent because a person asked'
   const mcp = sent.find((msg) => msg.t === 'mcp') as Extract<FrontendMsg, { t: 'mcp' }>;
   assert.deepEqual(mcp.servers, ['fs']);
   assert.equal(mcp.action, 'load');
+});
+
+test('a load marks the server in flight, and the runtime\'s reply releases it', () => {
+  const sent = captureOutbound();
+  resetStore();
+
+  // Nothing in flight to start with — the initial value is empty, and that
+  // matters: a row that began life looking like it was already waiting would
+  // disable its button for a request nobody made.
+  assert.deepEqual(useApp.getState().mcpPending, []);
+
+  // A snapshot has arrived, so `fs` is on screen as running.
+  useApp.getState().applyRuntimeMessage({
+    v: 1,
+    t: 'ui',
+    kind: 'state',
+    ...STATE_PAYLOAD,
+  } as never);
+
+  useApp.getState().requestMcp('load', ['fs', 'web']);
+  // Both named servers are marked. This is the front end's own fact ("I just
+  // sent this"), not a claim about the servers — which is why it can be known
+  // before the runtime has answered.
+  assert.deepEqual([...useApp.getState().mcpPending].sort(), ['fs', 'web']);
+
+  // The row's own state is untouched by the request: still whatever
+  // `ui(state)` last said. Marking a server in flight must not make the screen
+  // say it is up (or down) before the runtime has answered.
+  assert.equal(useApp.getState().uiState?.mcp.find((s) => s.name === 'fs')?.state, 'loaded');
+  assert.equal(useApp.getState().uiState?.mcp.find((s) => s.name === 'web')?.state, 'unload');
+
+  // The runtime answers with the payload that follows an `mcp` message. That
+  // reply is what releases the marks; a timer must never do it, because the
+  // round trip waits the running turn out and has no fixed length.
+  useApp.getState().applyRuntimeMessage({
+    v: 1,
+    t: 'ui',
+    kind: 'mcp',
+    mcp_servers: [{ name: 'fs', state: 'loaded', tools: 12, where: 'npx fs-server' }],
+    mcp_notes: [],
+  } as never);
+
+  assert.deepEqual(useApp.getState().mcpPending, []);
+  // And the servers list is the runtime's, not the request's.
+  assert.deepEqual(useApp.getState().mcp.map((s) => s.name), ['fs']);
+});
+
+test('listing is not marked in flight, because it changes nothing', () => {
+  captureOutbound();
+  resetStore();
+
+  // `list` only draws the panel; marking it would grey the row's button for a
+  // request that cannot change any server.
+  useApp.getState().requestMcp('list', ['fs']);
+  assert.deepEqual(useApp.getState().mcpPending, []);
+});
+
+test('a dead runtime releases the marks instead of leaving the button disabled forever', () => {
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().requestMcp('load', ['fs']);
+  assert.deepEqual(useApp.getState().mcpPending, ['fs']);
+
+  // No reply can arrive now, so a mark left behind would be a button disabled
+  // by an answer that will never come.
+  useApp.getState().applyRuntimeMessage({
+    v: 1,
+    t: 'runtime_exited',
+    code: 1,
+    requested: false,
+  } as never);
+
+  assert.deepEqual(useApp.getState().mcpPending, []);
 });
 
 test('answering a permission sends the decision and does not update the display', () => {

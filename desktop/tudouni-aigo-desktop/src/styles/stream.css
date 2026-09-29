@@ -752,6 +752,27 @@
   text-decoration-color: var(--fg-faint);
 }
 
+/* The rail MCP row's load/unload control.
+   `flex: none` is load-bearing, not tidiness: `.btn` is `flex-shrink: 1` by
+   default, so without it the button is the first thing the row squeezes once the
+   name and the state badge have taken their space — measured at 13–16px instead
+   of 22px, i.e. a control that is still on screen but no longer clickable. The
+   row has no room to give, so the button keeps its size and the name is what
+   gives way (`.sbr-main` already ellipsises).
+   It also never hides: the left rail reveals its row actions on hover, but that
+   rule has a focus-within half for a reason — a control only a pointer can reach
+   is one half the keyboard cannot use. Here it is a named action on a row that
+   already exists, so it simply stays visible. */
+.sb-row .mcp-act {
+  flex: none;
+  padding: 0 var(--space-2);
+  color: var(--fg-muted);
+}
+
+.sb-row .mcp-act:hover:not(:disabled) {
+  color: var(--fg);
+}
+
 .sb-progress {
   display: flex;
   align-items: center;

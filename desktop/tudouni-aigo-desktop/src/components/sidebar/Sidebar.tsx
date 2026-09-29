@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { Bot, CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
+import { CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
 import { BLOCK_CAP, useApp, type SidebarBlockKey } from '@/state/store';
 import { useT } from '@/i18n/useT';
-import { Badge, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
+import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
 import { oneLine } from '@/utils/format';
 import type { JobState } from '@/protocol/types';
 import type { VmGoal, VmJob, VmMcp, VmTask } from '@/runtime/adapt';
@@ -331,8 +331,34 @@ function JobRow({ job }: { job: VmJob }) {
 
 /* ---------------- MCP ---------------- */
 
+/**
+ * One MCP server in the rail — with the action on the row.
+ *
+ * Load/unload used to be reachable only through `/mcp` (the panel, or typing the
+ * command). But this block already answers "what is configured, what is
+ * running", and the next question — "then start it" — was a command away. So the
+ * button is here.
+ *
+ * **This row shows less than the panel's version of the same server, on
+ * purpose.** It is 233px wide, and 201px once the window narrows below 1180
+ * (the rail goes to 236px there). Measured with the real stylesheet: the panel's
+ * wording for the not-running state ("configured, not running") is 131px of the
+ * row on its own and the row **already** overflowed at 1180 before anything was
+ * added; with a button next to it, keeping the tools count too squeezes that
+ * count to 2px — invisible. So the tools count stays in `/mcp`, where there is
+ * room for it, and the state uses its short form.
+ *
+ * The short form is not a second vocabulary: `mcp.not_loaded` is the runtime's
+ * own word for this state (`internal/i18n/en.go`), and it names the same fact.
+ */
 function McpRow({ server }: { server: VmMcp }) {
   const t = useT();
+  // Whether *this* front end has a request out for this server — not whether it
+  // is up. The badge below is the only thing that answers that, and it comes
+  // from `ui(state)` alone.
+  const pending = useApp((s) => s.mcpPending.includes(server.name));
+  const requestMcp = useApp((s) => s.requestMcp);
+
   const tone =
     server.state === 'loaded' ? 'success' : server.state === 'failed' ? 'destructive' : 'neutral';
   // The three states are three different questions and must not be merged.
@@ -340,24 +366,49 @@ function McpRow({ server }: { server: VmMcp }) {
     server.state === 'loaded'
       ? t('mcp.loaded')
       : server.state === 'unload'
-        ? t('mcp.unload')
+        ? t('mcp.notLoaded')
         : t('mcp.failed');
+
+  const loaded = server.state === 'loaded';
+  // `failed` is tolerated on the wire but this runtime never sends it (see
+  // `McpState`), and it gets no button — the same choice the panel makes: asking
+  // again is a decision, and the reason is already on the row.
+  const actionable = server.state === 'loaded' || server.state === 'unload';
+  // The action word is the *other* state's answer: a running server is one you
+  // unload. Kept as the visible text, with the server named in the accessible
+  // name — a column of bare "Load"s reads as nothing to a screen reader.
+  const action = loaded ? t('mcp.unloadAction') : t('mcp.load');
+  const what = loaded
+    ? t('mcp.unloadServer', { name: server.name })
+    : t('mcp.loadServer', { name: server.name });
 
   return (
     <div className="sb-row">
-      <Bot size={12} className="muted" />
       <span className="sbr-main" title={server.where}>
         <span className="mono">{server.name}</span>
         {server.state === 'failed' && server.error ? (
           <span className="faint"> · {oneLine(server.error, 28)}</span>
         ) : null}
       </span>
-      <span className="sbr-aside">
-        {server.state === 'failed' ? '' : t('mcp.tools', { n: server.tools })}
-      </span>
       <Badge tone={tone} dot={false}>
         {label}
       </Badge>
+      {actionable ? (
+        <button
+          type="button"
+          className="btn btn-ghost btn-compact mcp-act"
+          // Disabled while the request is out: mounting waits the running turn
+          // out and then connects, which is seconds, and a second press on a
+          // server already coming up is not a second decision. Busy dots rather
+          // than a spinner (component-states §0 Loading), and the accessible
+          // name says what is being waited for.
+          disabled={pending}
+          aria-label={pending ? t('mcp.pending', { name: server.name }) : what}
+          onClick={() => requestMcp(loaded ? 'unload' : 'load', [server.name])}
+        >
+          {pending ? <BusyDots /> : action}
+        </button>
+      ) : null}
     </div>
   );
 }

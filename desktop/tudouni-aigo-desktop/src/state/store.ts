@@ -237,6 +237,18 @@ export interface AppStore {
   grantedPrefixes: string[];
   mcp: VmMcp[];
   mcpNotes: string[];
+  /**
+   * Servers with a load/unload request in flight.
+   *
+   * Mounting is a real round trip: the runtime waits the running turn out and
+   * then connects, which can take seconds. A row that looked untouched for that
+   * long invites a second press on a server that is already coming up.
+   *
+   * This is not an optimistic update: it claims nothing about the server's
+   * state — the badge still comes only from `ui(state)`. It states one fact
+   * this front end really has, which is that it just sent the request.
+   */
+  mcpPending: string[];
   skills: VmSkill[];
   /** Everything this session can load (`ui(skills).skills`) — the catalogue.
    *  Distinct from `skills`, which is what is *loaded*. */
@@ -599,6 +611,7 @@ export const useApp = create<AppStore>((set, get) => ({
   grantedPrefixes: [],
   mcp: [],
   mcpNotes: [],
+  mcpPending: [],
   skills: [],
   skillAvailable: [],
   skillActive: [],
@@ -796,7 +809,14 @@ export const useApp = create<AppStore>((set, get) => ({
           }
           case 'mcp': {
             const projected = projectMcpMsg(msg);
-            set({ mcp: projected.servers, mcpNotes: projected.notes });
+            // This is the runtime answering an `mcp` message, so whatever this
+            // front end had in flight has been answered. The reply carries no
+            // request id, so the marks are released as a batch rather than one
+            // by one; a person pressing two rows before the first answers would
+            // see the first reply clear both. That is a cosmetic early release
+            // and never a claim about a server — the state on the row still
+            // comes from this payload alone.
+            set({ mcp: projected.servers, mcpNotes: projected.notes, mcpPending: [] });
             // The runtime's own notes go into the stream, verbatim.
             if (projected.notes.length > 0) {
               set({
@@ -976,6 +996,10 @@ export const useApp = create<AppStore>((set, get) => ({
           activeRunId: null,
           // Cleared so the next turn is not attributed against a dead run.
           lastRunId: null,
+          // Nothing will answer an MCP request now, so the marks must go: a
+          // button left disabled by a reply that can never arrive is worse than
+          // one that lets the person press again after the runtime is back.
+          mcpPending: [],
         });
         break;
       }
@@ -1207,6 +1231,19 @@ export const useApp = create<AppStore>((set, get) => ({
   },
 
   requestMcp(action, servers) {
+    // A load/unload is a real round trip — the runtime waits the running turn
+    // out and then connects, which is seconds — so the row marks it as in
+    // flight. `list` changes nothing and answers immediately, so it is not worth
+    // marking.
+    //
+    // This is **not** an optimistic update: it claims nothing about the server's
+    // state, only that this front end has just sent the request. The state still
+    // comes from `ui(state)` and from nowhere else.
+    if (action !== 'list') {
+      const pending = new Set(get().mcpPending);
+      for (const name of servers) pending.add(name);
+      set({ mcpPending: [...pending] });
+    }
     busSend({ v: 1, t: 'mcp', action, servers });
   },
 
@@ -1258,6 +1295,9 @@ export const useApp = create<AppStore>((set, get) => ({
       runtimeExit: null,
       startupProblem: null,
       stderrTail: [],
+      // A request in flight belonged to the child being replaced, so its mark
+      // goes with it — the new runtime has never heard of it.
+      mcpPending: [],
       // The session list belongs to the workspace we are leaving, so it is
       // dropped rather than carried over and shown against the new one.
       sessionList: [],
