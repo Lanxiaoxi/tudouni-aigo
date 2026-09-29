@@ -109,6 +109,8 @@ src/
     bus.ts               the Runtime interface (send / subscribe / dispose)
     tauri.ts             ★ the only place that talks to a real runtime
     adapt.ts             real protocol -> view models (pure functions)
+    dragdrop.ts          a dropped path: workspace check, insertion (pure)
+    paste.ts             a pasted picture: sniffing, gates, chips (pure)
   state/
     entries.ts           stream entry model and reduction
     store.ts             zustand: runtime facts and preferences, kept apart
@@ -192,10 +194,18 @@ flag is the *TUI's* palette and is deliberately not wired in.
 
 **Images are attached by writing their path into the sentence.** That is the only
 channel that exists — the runtime recognises a path in the text itself; there is
-no upload command and no markup. A drop inserts the path rather than trying to
-ship bytes down a channel that is not there.
+no upload command and no markup. Everything below is a way of getting a path into
+the sentence, never a way of shipping bytes down a channel that is not there.
 
-Two things that are easy to get backwards here:
+Three ways in, and they differ only in where the path comes from:
+
+| Way in | What it does |
+| --- | --- |
+| Type it | The original mechanism. Nothing in the front end is involved. |
+| **Drop** a file | Inserts the absolute path Tauri hands over. |
+| **Paste** a picture | Writes the clipboard's bytes into the workspace and inserts the **workspace-relative** path. |
+
+Two things about the drop path are easy to get backwards:
 
 - **`dragDropEnabled` must be `true`** in `tauri.conf.json`, despite the name.
   `true` is what makes Tauri take the OS drop, so the WebView does not navigate
@@ -207,6 +217,50 @@ Two things that are easy to get backwards here:
 - **The handler is at the window level** (`hooks/useFileDrop.ts`), not on the
   composer: a drop can land anywhere in the window, and only a real path can be
   checked against the workspace.
+
+### Pasting a picture
+
+A screenshot from `Win+Shift+S`, or an image copied out of a browser, reaches the
+clipboard as **bytes** — and a WebView has no filesystem. So the bytes go to the
+Rust side (`image_stash`, sent as a raw request body rather than base64), become
+a file under `<workspace>/.tudouni/paste/`, and the returned path is written into
+the draft. From there it is the ordinary mechanism: the runtime scans the
+sentence, resolves the path inside the workspace, and attaches the picture.
+
+Five things worth knowing before changing any of it:
+
+- **A paste of text must keep behaving exactly as it did.** The handler returns
+  before `preventDefault` unless the clipboard really holds an `image/*` item, so
+  pasting a sentence, a path or a snippet is untouched. This is the regression the
+  feature can least afford — the composer is the one control a person uses
+  constantly.
+- **The file goes under `.tudouni/`, not into the project tree.** It has to be
+  *inside the workspace* (`Workspace.SafePath` is the boundary, so `%TEMP%` would
+  produce a path that can never be attached), and it must not show up in
+  `git status`. That directory is cleared on every start, which is safe because it
+  is a **staging area**: a picture that was sent already lives in the runtime's
+  content-addressed artifact store.
+- **The bytes decide the format**, never the clipboard's declared type — a `.png`
+  that is really a JPEG is common, and the runtime sniffs the same way.
+- **The chips are derived from the draft text** (`ImageTray` +
+  `referencedImages`). The text is the only thing that gets sent, so deleting a
+  path drops its chip, and a chip can never claim a picture that is not going
+  anywhere. Dismissing a chip edits the **sentence**, not a list of attachments.
+- **`referencedImages` is a port of the runtime's scanner**, not a `includes`
+  check. A path in a sentence may be wrapped in punctuation or glued to Chinese
+  prose, so the runtime offers several readings and lets the filesystem pick —
+  and the tray has to agree with it in both directions, or it would miss an
+  attachment that happened or claim one that did not.
+
+`Ctrl+V` is the only entry point. There is deliberately **no attach button**: the
+DOM cannot read a picture off the clipboard on demand, so a button would need the
+clipboard plugin and would sometimes do nothing — worse than no button.
+
+> **On Linux**, pasting image *data* may not work at all: WebKitGTK could not read
+> an `image/*` clipboard entry until WebKit commit 301877 (2025-10-21), so an
+> older system WebKitGTK yields no items and nothing is pasted. Windows/WebView2
+> is unaffected. The fallback would be `tauri-plugin-clipboard-manager`, which
+> returns RGBA pixels rather than PNG bytes and would need an encoder as well.
 
 ---
 
@@ -229,6 +283,7 @@ Two things that are easy to get backwards here:
 | 13 | Streaming is asked for on every attach, because the runtime does not stream its stdio front end unless told to and this interface is built around `delta` | `attachRuntime()` in `runtime/tauri.ts` (`--stream`), `applyDelta` in `state/entries.ts` |
 | 14 | The left sidebar is workspaces + sessions only — no sign-in, no plugin market; the workspace list is a front-end preference while the current workspace is a runtime fact | `components/sidebar/WorkspaceSidebar.tsx`, `workspaces` / `leftbarVisible` in `state/store.ts`, `workspace_check` in `lib.rs` |
 | 15 | Each MCP server in the rail carries its own load/unload button, so mounting one is no longer `/mcp`-only. The rail's row shows **less** than the panel's row on purpose — see below | `McpRow` in `components/sidebar/Sidebar.tsx`, `mcpPending` in `state/store.ts`, `.mcp-act` in `styles/stream.css` |
+| 16 | `Ctrl+V` pastes a picture: the bytes are written into the workspace and the path goes into the sentence. Ten pictures per message, five megabytes each — the runtime's own ceilings, mirrored | `hooks/useClipboardPaste.ts`, `runtime/paste.ts`, `components/chrome/ImageTray.tsx`, `image_stash` in `lib.rs` |
 
 ### 15 · The rail's MCP row, and why it is narrower than the panel's
 

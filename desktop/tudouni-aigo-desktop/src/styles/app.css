@@ -545,6 +545,84 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   color: var(--fg-faint);
 }
 
+/* The pasted pictures, above the input.
+   `flex-wrap` rather than a scroller: the box grows by a row when the chips do
+   not fit, which keeps every chip reachable without a second scroll region
+   inside a box that already has one. `gap` comes from `.cp-box`'s own `gap`, so
+   the tray sits the same distance from the input as the control row does. */
+.composer .cp-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* One chip: thumbnail, name, size, dismiss.
+   `max-width` is what keeps a long generated name from pushing the dismiss
+   button out of reach — the name itself is ellipsised below. */
+.composer .cp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 260px;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}
+
+/* A fixed box with `object-fit: cover`, so a very wide screenshot and a very tall
+   one take the same room. Without it the row's height would depend on which
+   picture was pasted, and the input would jump around as chips come and go. */
+.composer .cp-chip-thumb {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  object-fit: cover;
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+}
+
+.composer .cp-chip-name {
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer .cp-chip-size {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+}
+
+.composer .cp-chip-drop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.composer .cp-chip-drop:hover {
+  background: var(--bg);
+  color: var(--fg);
+}
+
 /* Row 2: one `+` on the left, the action on the right, and any transient
    statement in between. `min-height` keeps the row from collapsing when the
    middle is empty (which is the common case), so the box does not change height

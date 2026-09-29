@@ -42,7 +42,15 @@ export function isHosted(): boolean {
    Tauri IPC, imported lazily
    ============================================================ */
 
-async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+async function tauriInvoke<T>(
+  cmd: string,
+  // `Uint8Array` as well as an object, because one command takes the **bytes
+  // themselves** as its payload (`image_stash`). Tauri sends a `Uint8Array`
+  // argument as a raw body rather than a JSON value, which is the whole point:
+  // five megabytes of picture as base64 is 6.7MB of text, and as a JSON number
+  // array it is over 20MB.
+  args?: Record<string, unknown> | Uint8Array,
+): Promise<T> {
   const mod = await import('@tauri-apps/api/core');
   return mod.invoke<T>(cmd, args);
 }
@@ -355,4 +363,41 @@ export async function checkWorkspace(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** What the bridge hands back after writing a pasted picture. */
+export interface StashedImage {
+  /** Workspace-relative, with forward slashes — the string that goes into the
+   *  sentence and that the runtime's scanner will resolve. */
+  path: string;
+  name: string;
+  mime: string;
+  bytes: number;
+}
+
+/**
+ * Write a pasted picture into the workspace and get its path back.
+ *
+ * The bytes go as the **raw request body** (`invoke` with a `Uint8Array`), not as
+ * base64 inside a JSON argument: five megabytes as base64 is 6.7MB of text, and
+ * as a JSON number array it is over 20MB. That also means no second named
+ * argument can travel with the call — the payload *is* the picture — which is why
+ * the Rust side takes the workspace from the bridge rather than from here.
+ *
+ * This is the only place a paste touches the disk, and it deliberately does no
+ * checking of its own: the gates (workspace present, format, size) are applied
+ * before the call, by `runtime/paste.ts`, so a refusal can be a sentence the
+ * person reads immediately instead of an error string from across the IPC. The
+ * Rust side re-checks all three anyway — it is a different process, and the first
+ * check is in a different language.
+ *
+ * Rejections are surfaced rather than swallowed: every one of them is a reason
+ * the picture did not attach, and a paste that silently does nothing is the
+ * failure this feature can least afford.
+ */
+export async function stashImage(bytes: Uint8Array): Promise<StashedImage> {
+  if (!isHosted()) {
+    throw new Error('pictures can only be pasted into the desktop application');
+  }
+  return tauriInvoke<StashedImage>('image_stash', bytes);
 }

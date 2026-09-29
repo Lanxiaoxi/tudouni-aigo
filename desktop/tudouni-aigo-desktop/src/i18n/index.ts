@@ -373,6 +373,22 @@ export const en = {
   'composer.dropHint': 'Drop a file to insert its path, or drop it in the workspace — pictures are attached by naming their path',
   'composer.dropOutside': 'not in this workspace, so the runtime could not read it: {names}',
   'composer.dropNoWorkspace': 'no workspace yet, so nothing can be checked: {names}',
+  /** The row of pasted pictures above the input. Its accessible name, not a
+   *  visible heading: the chips are self-explanatory beside the box. */
+  'composer.images': 'Pasted pictures',
+  'composer.removeImage': 'Remove this picture',
+  'composer.pasteNoWorkspace': 'no workspace yet, so there is nowhere to put the picture',
+  'composer.pasteAtCapacity':
+    'this message already carries {limit} pictures, which is the limit for one message',
+  'composer.pasteTooLarge': 'that picture is {size}, over the {limit} ceiling for one picture',
+  'composer.pasteNotAnImage':
+    'the clipboard’s image data is not a PNG, JPEG or GIF — those are the three formats this program can measure',
+  /** Not a refusal: the turn still runs, with the path in the sentence. Said
+   *  because the alternative is a person attaching a screenshot, getting an
+   *  answer about the words, and having to work out why. */
+  'composer.pasteNoVision':
+    'the model in use ({model}) cannot be shown pictures — this one is named in the sentence but will not be sent',
+  'composer.pasteFailed': 'the picture could not be written: {reason}',
 
   /* ---------------- commands ---------------- */
   'cmd.new.desc': 'Start from a clean context',

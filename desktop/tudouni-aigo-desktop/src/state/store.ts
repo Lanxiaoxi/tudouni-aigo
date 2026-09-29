@@ -72,11 +72,13 @@ import {
   type VmTool,
 } from '@/runtime/adapt';
 import { send as busSend } from '@/runtime/bus';
+import { insertPathAtCaret, type PastedImage } from '@/runtime/paste';
 import { samePath } from '@/utils/format';
 import {
   attachRuntime,
   chooseWorkspaceDirectory,
   quitApp,
+  stashImage,
   type BridgeOptions,
 } from '@/runtime/tauri';
 
@@ -122,6 +124,35 @@ export type ModalEntry =
   | { kind: 'question'; req: QuestionRequestMsg };
 
 export type ModalState = ModalEntry | null;
+
+/**
+ * What the composer's control row is currently saying, as a **code plus its
+ * parameters** rather than a finished sentence.
+ *
+ * Codes rather than text because the sentence is `i18n`'s job and the store has
+ * no business holding English; parameters rather than pre-joined strings because
+ * a list of file names is punctuation the translation owns. The renderer turns
+ * one of these into one line.
+ *
+ * `warn` versus `info` is carried here because it is a property of the *fact*,
+ * not of the rendering: a refused drop and "a drag is over the window" are
+ * different kinds of statement, and deciding that in CSS would make the styling
+ * the source of truth.
+ */
+export type ComposerNotice =
+  /** Paths dropped from outside the workspace, or with no workspace at all. */
+  | { code: 'drop-outside'; names: string[]; tone: 'warn' }
+  | { code: 'drop-no-workspace'; names: string[]; tone: 'warn' }
+  /** A paste refused before anything was written. */
+  | { code: 'paste-no-workspace'; tone: 'warn' }
+  | { code: 'paste-at-capacity'; limit: number; tone: 'warn' }
+  | { code: 'paste-too-large'; size: string; limit: string; tone: 'warn' }
+  | { code: 'paste-not-an-image'; tone: 'warn' }
+  /** The picture was written, but the model cannot be shown one. Not a refusal:
+   *  the turn still runs, exactly as the runtime's own `refused` row says. */
+  | { code: 'paste-no-vision'; model: string; tone: 'info' }
+  /** The bridge refused or failed to write it. The runtime's sentence, verbatim. */
+  | { code: 'paste-failed'; reason: string; tone: 'warn' };
 
 /** The session as the handshake describes it. Flat on the wire, kept flat here. */
 export interface SessionInfo {
@@ -326,13 +357,28 @@ export interface AppStore {
   /** An OS drag is currently over the window. Purely local, purely visual. */
   dragging: boolean;
   /**
-   * Why a dropped path was refused.
+   * The one thing the composer has to say about the current input.
    *
-   * Local, not a runtime fact: the runtime never saw the drop. It is kept so the
-   * refusal can be *said*, because a path that the runtime cannot resolve sits
-   * in the sentence looking exactly like one that worked.
+   * Local, not a runtime fact: the runtime never saw the drop or the paste. It is
+   * kept so a refusal can be *said*, because a path the runtime cannot resolve
+   * sits in the sentence looking exactly like one that worked.
+   *
+   * A single slot rather than one field per source, because these are all answers
+   * to the same question ("what just happened to this input?") and the control row
+   * has room for one. Two fields would mean two statements competing for the same
+   * space, and the loser would be silently invisible.
    */
-  dropNotice: { rejected: string[]; reason: 'outside' | 'no-workspace' } | null;
+  composerNotice: ComposerNotice | null;
+  /**
+   * Pictures pasted into the current draft.
+   *
+   * A **front-end preference**, not a runtime fact: the runtime never hears about
+   * a chip. The chips are drawn from these, but *which* are drawn is decided by
+   * the draft text (`referencedImages`), because the text is the only thing that
+   * gets sent — so deleting a path from the sentence drops its chip, and there is
+   * no second source of truth to fall out of step.
+   */
+  pastedImages: PastedImage[];
 
   /* ---------------- actions ---------------- */
   send(msg: FrontendMsg): void;
@@ -365,8 +411,30 @@ export interface AppStore {
   interrupt(): void;
   /** A file drag entered or left the window. */
   setDragging(on: boolean): void;
-  /** Record (or clear) why a dropped path was refused. */
-  setDropNotice(notice: { rejected: string[]; reason: 'outside' | 'no-workspace' } | null): void;
+  /** Record (or clear) what the composer is saying about this input. */
+  setComposerNotice(notice: ComposerNotice | null): void;
+  /**
+   * Write one pasted picture into the workspace and put its path in the draft.
+   *
+   * `bytes` are the clipboard's, already checked by the caller against the three
+   * gates in `runtime/paste.ts` — the checks live there because they must produce
+   * a sentence, and a store action has no way to render one.
+   *
+   * `at` is the caret the insertion goes to. It is passed in rather than read from
+   * the DOM here because this module never touches the DOM, and because the caller
+   * (the paste handler) is the one that knows where the caret was at the moment
+   * the paste happened.
+   *
+   * **Returns where the caret should go**, or `null` when nothing was inserted
+   * (a refusal, or the bridge failing). The caller owns the textarea, so it is the
+   * caller that moves the caret; handing the number back is how the two stay in
+   * step without this module reaching into a DOM node it does not own.
+   */
+  stashPastedImage(bytes: Uint8Array, at: number): Promise<number | null>;
+  /** Forget one stashed picture. Called when its chip is dismissed. */
+  forgetPastedImage(path: string): void;
+  /** Drop every stashed picture and release their preview URLs. */
+  clearPastedImages(): void;
 
   openPanel(p: PanelKind | null): void;
   setQuiet(q: boolean): void;
@@ -640,7 +708,8 @@ export const useApp = create<AppStore>((set, get) => ({
   history: [],
   historyCursor: null,
   dragging: false,
-  dropNotice: null,
+  composerNotice: null,
+  pastedImages: [],
 
   /* ==========================================================
      Outbound
@@ -1020,8 +1089,58 @@ export const useApp = create<AppStore>((set, get) => ({
     set({ dragging: on });
   },
 
-  setDropNotice(notice) {
-    set({ dropNotice: notice });
+  setComposerNotice(notice) {
+    set({ composerNotice: notice });
+  },
+
+  async stashPastedImage(bytes, at) {
+    // No optimistic chip: the picture does not exist until the bridge has written
+    // it, and a chip drawn before that would name a path the runtime cannot
+    // resolve. So the order is write, then insert, then remember.
+    let stashed;
+    try {
+      stashed = await stashImage(bytes);
+    } catch (err) {
+      // The bridge's own sentence, verbatim. It is already written for a person
+      // ("the clipboard's image data is not a PNG, JPEG or GIF…"), and inventing
+      // a second wording here would be a second fact.
+      set({ composerNotice: { code: 'paste-failed', reason: String(err), tone: 'warn' } });
+      return null;
+    }
+
+    const image: PastedImage = {
+      path: stashed.path,
+      name: stashed.name,
+      bytes: stashed.bytes,
+      mime: stashed.mime,
+      // A preview the WebView can render without the asset protocol: the bytes are
+      // already here, and `blob:` is in the CSP's `img-src`. The URL is owned by
+      // this store, so `forgetPastedImage`/`clearPastedImages` revoke it — a
+      // pasted picture that is never sent would otherwise be pinned in memory for
+      // the life of the window.
+      url: URL.createObjectURL(new Blob([bytes as BlobPart], { type: stashed.mime })),
+    };
+
+    const current = get();
+    const { text, caret } = insertPathAtCaret(current.draft, at, image.path);
+    set({
+      draft: text,
+      historyCursor: null,
+      pastedImages: [...current.pastedImages, image],
+    });
+    return caret;
+  },
+
+  forgetPastedImage(path) {
+    const images = get().pastedImages;
+    const doomed = images.find((image) => image.path === path);
+    if (doomed) URL.revokeObjectURL(doomed.url);
+    set({ pastedImages: images.filter((image) => image.path !== path) });
+  },
+
+  clearPastedImages() {
+    for (const image of get().pastedImages) URL.revokeObjectURL(image.url);
+    set({ pastedImages: [] });
   },
 
   historyNav(dir) {
@@ -1050,12 +1169,21 @@ export const useApp = create<AppStore>((set, get) => ({
     if (text === '') return;
     // A modal is blocking: nothing may be sent over the top of one.
     if (get().modal !== null) return;
+    // The pictures have done their job the moment the sentence goes out: what
+    // travels is the **path**, and the runtime reads the file itself. So the
+    // stash and its preview URLs are released here rather than held — a chip for
+    // a message that has already been sent would be a claim about the draft, and
+    // the draft is now empty.
+    for (const image of get().pastedImages) URL.revokeObjectURL(image.url);
     set({
       entries: [...get().entries, { kind: 'user', id: nextId('user'), text, atMs: Date.now() }],
       draft: '',
       history: [...get().history, text].slice(-100),
       historyCursor: null,
       hasSpoken: true,
+      pastedImages: [],
+      // Whatever was said about this input has been answered by sending it.
+      composerNotice: null,
     });
     busSend({ v: 1, t: 'user_message', text });
   },
@@ -1303,6 +1431,17 @@ export const useApp = create<AppStore>((set, get) => ({
       sessionList: [],
       listedSessions: false,
     });
+    // Pasted pictures belong to the workspace we are leaving, and the reason is
+    // structural rather than tidy: the path in the sentence is
+    // **workspace-relative** (`.tudouni/paste/...`), so in the new directory the
+    // very same string names a different place or nothing at all. Keeping the
+    // chips would draw a preview of a file the runtime can no longer resolve.
+    //
+    // The **draft text is left alone**, deliberately: it is the person's own
+    // typing, and clearing it is not this action's business. The path in it now
+    // resolves to nothing, which is exactly how the runtime treats any path that
+    // was deleted since — a word in a sentence.
+    get().clearPastedImages();
     await startRuntime({ workspace: path });
   },
 

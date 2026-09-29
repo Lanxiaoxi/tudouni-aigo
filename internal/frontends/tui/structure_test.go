@@ -805,6 +805,12 @@ func TestTheBadNewsSurvivesQuietMode(t *testing.T) {
 
 // TestTheOtherOutcomesAreNamed: a file that is not really a picture, one left out by
 // the cap. Both are things only the user can fix, so both have to say which file.
+//
+// The `limit` here is **deliberately not** `content.MaxImagesPerMessage`. What this
+// case is about is that the number the runtime put in the payload is the number that
+// reaches the row; a literal that happened to equal the real cap would pass for the
+// wrong reason, and would start failing the day the cap moved — reporting a rendering
+// change when nothing about the rendering changed.
 func TestTheOtherOutcomesAreNamed(t *testing.T) {
 	withColour(t)
 	for _, testCase := range []struct {
@@ -812,14 +818,14 @@ func TestTheOtherOutcomesAreNamed(t *testing.T) {
 		want   []string
 	}{
 		{"skipped", []string{"fake.png", "not a picture"}},
-		{"over_limit", []string{"4", "shot-d.png"}},
+		{"over_limit", []string{"7", "shot-d.png"}},
 	} {
 		t.Run(testCase.status, func(t *testing.T) {
 			m := filledModel(120, 36)
 			m.handleEvent(map[string]any{
 				"kind": "image_attached", "status": testCase.status,
 				"path": "fake.png", "reason": "not a picture",
-				"limit": 4, "rest": 2,
+				"limit": 7, "rest": 2,
 				"paths": []any{"shot-d.png", "shot-e.png"},
 			})
 			text := transcriptText(m)

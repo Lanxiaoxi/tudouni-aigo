@@ -28,6 +28,7 @@
 //!    more reliable than "register early and hope".
 
 use std::collections::VecDeque;
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -38,6 +39,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// How long a graceful shutdown is given before the child is killed.
@@ -50,6 +52,72 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 /// How many stderr lines to keep for the local diagnostics panel. This is not
 /// protocol data and is never shown as session content.
 const STDERR_RING: usize = 200;
+
+/// Where a pasted picture is stashed, under the workspace.
+///
+/// It has to be **inside the workspace**, and that is not a preference: the
+/// runtime resolves a picture named in the user's sentence through
+/// `tools.Workspace.SafePath`, which refuses anything outside the working
+/// directory. A file written to `%TEMP%` would produce a path that looks
+/// perfectly ordinary in the sentence and can never be attached.
+///
+/// `.tudouni/` specifically, because that is already this program's per-workspace
+/// state directory (sessions, the audit log, artifacts, job output) and it is in
+/// the repository's `.gitignore`. Writing screenshots into the user's project tree
+/// would leave them in `git status` for a feature whose whole point is being
+/// cheap to use.
+const PASTE_DIR: &str = ".tudouni";
+const PASTE_SUBDIR: &str = "paste";
+
+/// The per-picture ceiling, mirroring `content.MaxImageBytes`
+/// (`internal/content/content.go`). The front end checks the same number before
+/// it ever sends bytes; this is the second door, and it exists because the first
+/// one is in a different process.
+const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
+/// The three formats the runtime can measure: the bytes that identify each, the
+/// extension to store it under, and the media type to report.
+///
+/// The signature is what decides, **not** the extension or the type the front end
+/// sent. A clipboard entry carries a name and a declared type, and both are
+/// claims: a `.png` that is really a JPEG is common (a screenshot tool renaming
+/// its output, a file downloaded twice), and a file whose extension disagrees
+/// with its bytes is refused downstream with a message about the media type
+/// rather than the file. The runtime sniffs with `http.DetectContentType`; this
+/// is the same decision from the same evidence.
+///
+/// The three travel together in one row rather than in three tables, because they
+/// are one decision — three parallel lists is how one of them ends up disagreeing
+/// with the others.
+///
+/// WebP is deliberately absent, for the same reason `content.ImageMIMEs` leaves
+/// it out: no decoder means no dimensions and no thumbnail, so accepting it here
+/// would produce a file that is stashed and then refused.
+struct ImageSignature {
+    signature: &'static [u8],
+    extension: &'static str,
+    mime: &'static str,
+}
+
+const IMAGE_SIGNATURES: [ImageSignature; 3] = [
+    ImageSignature {
+        signature: &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+        extension: "png",
+        mime: "image/png",
+    },
+    ImageSignature {
+        signature: &[0xff, 0xd8, 0xff],
+        extension: "jpg",
+        mime: "image/jpeg",
+    },
+    // `GIF8` covers both GIF87a and GIF89a: they differ in the two bytes after
+    // this signature, and both are accepted.
+    ImageSignature {
+        signature: &[0x47, 0x49, 0x46, 0x38],
+        extension: "gif",
+        mime: "image/gif",
+    },
+];
 
 /// A line read from the child, forwarded verbatim.
 #[derive(Clone, Serialize)]
@@ -86,6 +154,15 @@ struct BridgeState {
     child: Option<Child_>,
     /// True once the front end says a listener is in place.
     listening: bool,
+    /// Where the current child was started.
+    ///
+    /// Kept here rather than passed in on each call because `image_stash` has to
+    /// write **inside the workspace**, and the workspace is a fact this layer
+    /// already owns — it is the child's working directory. Taking it from the
+    /// caller instead would make a front end able to name the directory a file is
+    /// written into, which is exactly the kind of trust this boundary exists to
+    /// withhold.
+    workspace: Option<PathBuf>,
 }
 
 struct Child_ {
@@ -256,6 +333,9 @@ fn spawn(
         let _ = previous.child.wait();
     }
 
+    // Recorded before the child is stored, so `image_stash` can never observe a
+    // running child with a stale workspace.
+    guard.workspace = Some(workspace.clone());
     guard.child = Some(Child_ {
         child,
         stdin: Some(stdin),
@@ -264,6 +344,36 @@ fn spawn(
         stderr: VecDeque::new(),
     });
     drop(guard);
+
+    // Pasted pictures from the last run are cleared out now, and this is the only
+    // moment it is safe to do so: nothing is in flight yet, and no draft refers to
+    // them.
+    //
+    // What makes clearing safe at all is that the directory is a **staging area
+    // and not the storage**. A picture that was sent has already been copied into
+    // the runtime's content-addressed artifact store
+    // (`<workspace>/.tudouni/artifacts/<session>/`), which is what the session
+    // file references and what `/resume` reads back; the file here is only what
+    // the path in the sentence pointed at when the turn ran. So a stale path in an
+    // old session resolves to nothing, and the runtime's scanner treats a word
+    // that names no file as a word — which is exactly what it does for any path a
+    // person typed that has since been deleted.
+    //
+    // Without this, every screenshot anyone ever pasted would stay in the
+    // workspace for the life of the project.
+    let staging = workspace.join(PASTE_DIR).join(PASTE_SUBDIR);
+    if let Err(error) = fs::remove_dir_all(&staging) {
+        // A failure here is not worth refusing to start over: the directory may
+        // simply not exist yet, which is the ordinary case on a first run.
+        if error.kind() != std::io::ErrorKind::NotFound {
+            let _ = app.emit(
+                "runtime://stderr",
+                LinePayload {
+                    line: format!("could not clear {}: {error}", staging.display()),
+                },
+            );
+        }
+    }
 
     // ---- stdout: one JSON line at a time, queued until attach ----
     {
@@ -649,6 +759,158 @@ fn workspace_check(path: String) -> Option<String> {
     })
 }
 
+/// One picture written into the workspace, as the front end needs it back.
+#[derive(Clone, Serialize)]
+struct StashedImage {
+    /// The **workspace-relative** path, with forward slashes.
+    ///
+    /// Relative because that is what the runtime will be handed: the user's
+    /// sentence carries this string, `Workspace.SafePath` resolves it against the
+    /// child's working directory, and every notice and rendered label shows the
+    /// relative form. An absolute path in the prompt would be long, would name
+    /// this machine, and would break the moment the workspace moved.
+    ///
+    /// Forward slashes always: on Windows a backslash in a prompt reads as an
+    /// escape character to anybody who copies it into code, and the runtime's
+    /// scanner accepts both separators.
+    path: String,
+    name: String,
+    mime: String,
+    bytes: usize,
+}
+
+/// Which of the accepted formats these bytes really are.
+///
+/// Decided from the **bytes**, never from the name or the declared type, because
+/// both of those are claims. The runtime sniffs the same way
+/// (`content.InspectImage`), so a file accepted here is one that layer accepts —
+/// which is the point of asking at all rather than letting the refusal arrive a
+/// round trip later.
+fn sniff_image(bytes: &[u8]) -> Option<&'static ImageSignature> {
+    IMAGE_SIGNATURES
+        .iter()
+        .find(|known| bytes.len() >= known.signature.len() && &bytes[..known.signature.len()] == known.signature)
+}
+
+/// Write a pasted picture into the workspace and hand back its path.
+///
+/// ## Why this command exists at all
+///
+/// The runtime's only way to receive a picture is a **path in the user's
+/// sentence** (`internal/runtime/images.go`: there is no upload command and no
+/// markup). A drop already has an absolute path from the OS; a paste does not,
+/// because the clipboard carries bytes and a WebView has no filesystem. So the
+/// bytes come here, become a file **inside the workspace**, and the front end
+/// writes the returned path into the sentence. That is the whole feature.
+///
+/// ## Why the raw body
+///
+/// `InvokeBody::Raw`, not a JSON string. Five megabytes as base64 is 6.7MB of
+/// text; as a JSON number array it is over 20MB. Tauri supports a raw body on
+/// every platform this ships for (windows/amd64, linux/amd64), and the front end
+/// passes a `Uint8Array` directly.
+///
+/// ## What is deliberately not here
+///
+/// **No width or height.** Measuring a picture means parsing a PNG/JPEG/GIF
+/// header, which would be a second image implementation in this file — and the
+/// runtime already reports both on its `image_attached` row, measured by the one
+/// decoder that exists. Reporting a number this layer guessed is worse than
+/// reporting none.
+///
+/// **No thumbnail.** The runtime's degradation ladder already shrinks a picture
+/// before dropping it, and the front end renders its own preview from the bytes
+/// it already has. A third copy on disk would be a third thing to keep in step.
+///
+/// ## Why there is no session argument
+///
+/// The payload **is** the bytes, so there is nowhere to put a second named
+/// argument — `invoke` with a raw body carries no JSON object alongside it. That
+/// is a constraint, and it happens to be the right shape anyway: a session
+/// subdirectory would only separate files that are all cleared at the same
+/// moment (see the staging-area note in `spawn`), and the workspace is taken from
+/// the bridge rather than from the caller precisely so that no
+/// caller-supplied string ever reaches this path.
+#[tauri::command]
+fn image_stash(app: AppHandle, request: Request<'_>) -> Result<StashedImage, String> {
+    let bytes = match request.body() {
+        InvokeBody::Raw(bytes) => bytes.clone(),
+        // A JSON body means the front end sent a string or an array of numbers.
+        // Refused rather than decoded: accepting it would silently double the
+        // cost of every paste and leave the fast path unused.
+        InvokeBody::Json(_) => {
+            return Err("a pasted picture must be sent as raw bytes, not as JSON".to_string())
+        }
+    };
+
+    if bytes.is_empty() {
+        return Err("the clipboard held an empty picture".to_string());
+    }
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return Err(format!(
+            "the picture is {} bytes, over the {} byte ceiling for one picture",
+            bytes.len(),
+            MAX_IMAGE_BYTES
+        ));
+    }
+
+    let known = sniff_image(&bytes).ok_or_else(|| {
+        "the clipboard's image data is not a PNG, JPEG or GIF — those are the three \
+         formats this program can measure"
+            .to_string()
+    })?;
+    let (extension, mime) = (known.extension, known.mime);
+
+    // The workspace comes from the bridge — it is the child's working directory,
+    // a fact this layer already owns — and never from the caller. Letting a front
+    // end name the directory would be letting it choose where a file is written.
+    let workspace = {
+        let state: State<Bridge> = app.state();
+        let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+        guard.workspace.clone()
+    };
+    let workspace =
+        workspace.ok_or("no workspace is open, so there is nowhere to put the picture")?;
+
+    let directory = workspace.join(PASTE_DIR).join(PASTE_SUBDIR);
+    fs::create_dir_all(&directory)
+        .map_err(|e| format!("could not create {}: {e}", directory.display()))?;
+
+    // The name is generated here, and that is a security property rather than
+    // tidiness: the clipboard's own name is attacker-influenced text that can
+    // contain a separator or `..`, and it is never used to build this path.
+    // Epoch milliseconds keep the names ordered and collision-free in practice;
+    // the counter covers two pastes inside the same millisecond.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis())
+        .unwrap_or(0);
+    let mut target = directory.join(format!("paste-{stamp}.{extension}"));
+    let mut counter = 1;
+    while target.exists() {
+        target = directory.join(format!("paste-{stamp}-{counter}.{extension}"));
+        counter += 1;
+    }
+
+    fs::write(&target, &bytes).map_err(|e| format!("could not write {}: {e}", target.display()))?;
+
+    let relative = target
+        .strip_prefix(&workspace)
+        .map_err(|_| "the picture was written outside the workspace".to_string())?
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    Ok(StashedImage {
+        name: target
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        path: relative,
+        mime: mime.to_string(),
+        bytes: bytes.len(),
+    })
+}
+
 /// The last stderr lines, for the local "the runtime would not start" panel.
 #[tauri::command]
 fn runtime_stderr(app: AppHandle) -> Vec<String> {
@@ -702,6 +964,7 @@ pub fn run() {
             runtime_stderr,
             os_user_name,
             workspace_check,
+            image_stash,
         ])
         .on_window_event(|window, event| {
             // Closing the window asks the runtime to finish first, so a turn in

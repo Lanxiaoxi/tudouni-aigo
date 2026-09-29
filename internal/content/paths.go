@@ -43,7 +43,15 @@ import (
 // hundred file names — would otherwise build a request that cannot be sent. Past
 // the cap the **first** ones are attached and the rest are named in the payload
 // note, so the model is told they exist rather than silently not seeing them.
-const MaxImagesPerMessage = 4
+//
+// The number is the one a **person** can reach deliberately, which is why it is
+// ten and not the four it used to be: a desktop front end that accepts a paste
+// puts every screenshot the user made in one message, and a ceiling they hit
+// while doing exactly what the feature invites is a ceiling that reads as a bug.
+// The reason the cap exists has not changed — the hundred-file glob is still
+// refused at ten — so what moved is only where the line sits between "one
+// person's message" and "a script's output".
+const MaxImagesPerMessage = 10
 
 // imageExtensions is the set a path is recognised by.
 //

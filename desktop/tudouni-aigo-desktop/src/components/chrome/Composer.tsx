@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { ArrowUp, Plus, Square } from 'lucide-react';
-import { selectPhase, useApp } from '@/state/store';
+import { selectPhase, useApp, type ComposerNotice } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
+import { ImageTray } from '@/components/chrome/ImageTray';
+import { useClipboardPaste } from '@/hooks/useClipboardPaste';
 
 /**
  * §1·7 The composer: a multi-line editor with a caret and history.
@@ -60,9 +62,10 @@ export function Composer() {
   const ready = useApp((s) => s.ready);
   const phase = useApp(selectPhase);
   const dragging = useApp((s) => s.dragging);
-  const dropNotice = useApp((s) => s.dropNotice);
-  const setDropNotice = useApp((s) => s.setDropNotice);
+  const composerNotice = useApp((s) => s.composerNotice);
+  const setComposerNotice = useApp((s) => s.setComposerNotice);
   const openPanel = useApp((s) => s.openPanel);
+  const onPaste = useClipboardPaste(taRef);
   const blocked = modal !== null;
   const running = phase === 'running' && !blocked;
 
@@ -186,6 +189,12 @@ export function Composer() {
   return (
     <div className="composer">
       <div className={`cp-box${blocked ? ' is-blocked' : ''}`}>
+        {/* The pasted pictures, above the input. They are a *reading* of the
+            draft, not a second list of attachments: a chip is drawn while its
+            path is still in the sentence and gone the moment it is not. See
+            `ImageTray`. */}
+        <ImageTray />
+
         {/* Row 1: the input, alone on its line. */}
         <textarea
           ref={taRef}
@@ -193,6 +202,10 @@ export function Composer() {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
+          // A paste of text is left entirely alone: the handler returns before
+          // `preventDefault` unless the clipboard really holds a picture. See
+          // `hooks/useClipboardPaste.ts`.
+          onPaste={onPaste}
           placeholder={blocked ? t('composer.blocked') : t('composer.placeholder')}
           disabled={blocked}
           aria-label={t('composer.placeholder')}
@@ -219,18 +232,20 @@ export function Composer() {
           {/* The transient statements that used to live in a hint row under the
               box. They belong on this row because they are about what is
               happening to *this* input, and because a row of standing hints is
-              noise a person reads once and then has to look past forever. */}
+              noise a person reads once and then has to look past forever.
+
+              One slot, rendered from a code: the store holds the fact and the
+              wording lives in i18n, so a new reason to speak needs no new field
+              and no new branch here beyond its sentence. */}
           {blocked ? (
             <span className="cp-note">{t('composer.hint.modal')}</span>
-          ) : dropNotice !== null ? (
-            <span className="cp-note is-warn">
-              {dropNotice.reason === 'no-workspace'
-                ? t('composer.dropNoWorkspace', { names: dropNotice.rejected.join(', ') })
-                : t('composer.dropOutside', { names: dropNotice.rejected.join(', ') })}
+          ) : composerNotice !== null ? (
+            <span className={`cp-note${composerNotice.tone === 'warn' ? ' is-warn' : ''}`}>
+              {noticeText(t, composerNotice)}
               <button
                 type="button"
                 className="btn btn-ghost btn-compact"
-                onClick={() => setDropNotice(null)}
+                onClick={() => setComposerNotice(null)}
               >
                 {t('common.close')}
               </button>
@@ -269,4 +284,34 @@ export function Composer() {
       </div>
     </div>
   );
+}
+
+/**
+ * One notice, as the sentence it says.
+ *
+ * A function rather than a field on the notice, because the store has no business
+ * holding English and the parameters are punctuation the translation owns (a list
+ * of file names, a byte count). `switch` over the code with no `default`: a new
+ * code has to be given a sentence, and TypeScript's exhaustiveness check is what
+ * enforces that rather than a fallback that would print nothing.
+ */
+function noticeText(t: ReturnType<typeof useT>, notice: ComposerNotice): string {
+  switch (notice.code) {
+    case 'drop-outside':
+      return t('composer.dropOutside', { names: notice.names.join(', ') });
+    case 'drop-no-workspace':
+      return t('composer.dropNoWorkspace', { names: notice.names.join(', ') });
+    case 'paste-no-workspace':
+      return t('composer.pasteNoWorkspace');
+    case 'paste-at-capacity':
+      return t('composer.pasteAtCapacity', { limit: notice.limit });
+    case 'paste-too-large':
+      return t('composer.pasteTooLarge', { size: notice.size, limit: notice.limit });
+    case 'paste-not-an-image':
+      return t('composer.pasteNotAnImage');
+    case 'paste-no-vision':
+      return t('composer.pasteNoVision', { model: notice.model });
+    case 'paste-failed':
+      return t('composer.pasteFailed', { reason: notice.reason });
+  }
 }

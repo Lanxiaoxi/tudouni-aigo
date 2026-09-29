@@ -24,6 +24,7 @@ await build({
   entryPoints: [
     resolve(here, 'projection.test.ts'),
     resolve(here, 'contract.test.ts'),
+    resolve(here, 'paste.test.ts'),
   ],
   outdir: outDir,
   // `.mjs`, because package.json declares `"type": "module"` and the sources are
@@ -52,6 +53,7 @@ const result = spawnSync(
     '--test',
     resolve(outDir, 'projection.test.mjs'),
     resolve(outDir, 'contract.test.mjs'),
+    resolve(outDir, 'paste.test.mjs'),
   ],
   {
     stdio: 'inherit',

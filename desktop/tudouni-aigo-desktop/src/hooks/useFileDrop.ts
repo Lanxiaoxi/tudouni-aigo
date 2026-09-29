@@ -56,12 +56,13 @@ export function useFileDrop(): void {
             // Said out loud rather than dropped: a path the runtime cannot
             // resolve would sit in the sentence looking like it worked, and the
             // reader would believe their file had been sent.
-            s.setDropNotice({
-              rejected,
-              reason: unknownWorkspace ? 'no-workspace' : 'outside',
-            });
+            s.setComposerNotice(
+              unknownWorkspace
+                ? { code: 'drop-no-workspace', names: rejected, tone: 'warn' }
+                : { code: 'drop-outside', names: rejected, tone: 'warn' },
+            );
           } else if (accepted.length > 0) {
-            s.setDropNotice(null);
+            s.setComposerNotice(null);
           }
         });
         // The effect may have been torn down while the import was in flight.
