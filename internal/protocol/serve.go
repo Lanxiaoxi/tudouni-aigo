@@ -30,6 +30,26 @@ type RuntimeHooks struct {
 	// is printed underneath it, on stderr, by a process whose stdin nobody is
 	// reading. See `openRuntime` in cmd/tudouni.
 	Channels Channels
+	// Report is where an instruction a person has to **act on** goes when it is
+	// produced **while a session is already running**: today, the device code and
+	// the verification URI of the managed-token login (`--ericai`).
+	//
+	// **A message, not stderr, and that is the whole point.** This mode's stderr is
+	// drained and dropped by the front end that started this process (see
+	// Client.Start), so writing the login instructions there is indistinguishable
+	// from not writing them at all: the runtime polls for a device code for its
+	// full five-minute timeout while the screen shows nothing, and the symptom
+	// reads as "the session hung". A person cannot finish a login they were never
+	// shown.
+	//
+	// Only the **mid-session** half arrives here. A login that happens at open is
+	// run once the opening triple has been sent — see Server.emitOpening — so its
+	// instructions travel the same way and never wait behind a handshake that is
+	// not being written yet.
+	//
+	// Nil means "nobody asked", and the runtime then writes to its own stderr, which
+	// is the right answer for an in-process front end that owns a terminal.
+	Report func(level, text string)
 }
 
 // RuntimeOpener builds a runtime for one session.
@@ -39,6 +59,36 @@ type RuntimeHooks struct {
 // layer: the day the runtime is assembled differently, or lives in another
 // process, or is a stub in a test, nothing here changes.
 type RuntimeOpener func(sessionID string, hooks RuntimeHooks) (Runtime, error)
+
+// AuthStartup is what a runtime implements when it manages a credential and wants
+// to check it before the first turn.
+//
+// Optional, like the goal hooks and DrainAuthNotices: a runtime that knows nothing
+// about tokens does not implement it, and nothing in this layer has to know what a
+// token is. The call is **separated from assembly on purpose** — see StartAuth.
+type AuthStartup interface {
+	StartupAuth()
+}
+
+// StartAuth asks a runtime to check its credential at open, and does nothing when
+// it does not manage one.
+//
+// **Why this is not called while the runtime is being assembled.** It used to be,
+// and the cost was paid by the person: an interactive login blocks for up to its
+// full device-code timeout, so doing it during assembly holds back the whole
+// opening handshake — under `--runtime-stdio` the front end has drawn nothing at all,
+// and the code the person is asked to type expires before the screen that could show
+// it ever appears.
+//
+// Called once the opening has been sent instead, the instruction reaches a front end
+// that is already drawing, and the check is a JWT decode plus, at most, one refresh
+// in the ordinary case. Both callers do it this way: `Server.emitOpening` for the
+// child process, `cli.Run` for the in-process REPL.
+func StartAuth(runtime Runtime) {
+	if starter, ok := runtime.(AuthStartup); ok {
+		starter.StartupAuth()
+	}
+}
 
 // Main is the entry point for `--runtime-stdio`: the mode a front end starts as a
 // child process.
@@ -74,6 +124,10 @@ func Main(opener RuntimeOpener, summaries func() []map[string]any,
 			// pipe, so an approval has to travel as a message rather than be printed
 			// at whatever terminal this child happens to share.
 			Channels: server.Channels(),
+			// Same reasoning, and the same failure without it: this mode's stderr is
+			// drained by the front end (see Client.Start), so an instruction written
+			// there reaches nobody. See RuntimeHooks.Report.
+			Report: server.reporter,
 		})
 	}
 	server.bootstrap.Factory = open

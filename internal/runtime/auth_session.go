@@ -107,22 +107,49 @@ func (r *Runtime) initAuth(enabled bool) {
 // StartupAuth is the `--ericai` check at open: refresh before the first turn, so a
 // stale token never survives into a session.
 //
-// It runs at open rather than in the entry point because both halves have to
-// happen in the process that owns the client — the file is written *and* the key is
-// installed — and because the interactive login's instructions have to travel
-// somewhere a person can see them. At this point that is stderr: the interface has
-// drawn nothing yet, and the entry point's terminal is still an ordinary one.
+// It runs in the process that owns the client, because both halves have to happen
+// there — the file is written *and* the new key is installed on the client that is
+// about to send requests. **When** it runs is the caller's decision, and that is
+// deliberate: `protocol.StartAuth` is called by `Server.emitOpening`, right after
+// the opening triple, and by `cli.Run`, which prints the notices itself and so has
+// to run the check before that.
 //
-// The outcome is **queued rather than sent**, because the protocol has not opened
-// yet: it becomes one of the start-up notices, which travel with the handshake.
+// Where the outcome travels depends on whether a front end is listening (see
+// Runtime.report):
+//
+//   - nobody (an in-process front end that owns a terminal): it is queued as one of
+//     the start-up notices, which travel with `init`;
+//   - a front end on the other end of a pipe: sent as a `notice` immediately, since
+//     by the time the caller runs this the handshake is already out and rewriting
+//     `init` is not a thing that can happen.
 func (r *Runtime) StartupAuth() {
 	if r.auth == nil {
 		return
 	}
 	status, detail := r.refresh(false)
-	if text := joinAuth(status, detail); text != "" {
-		r.notices = append(r.notices, notice(authLevel(detail), "auth", text))
+	text := joinAuth(status, detail)
+	if text == "" {
+		return
 	}
+	if r.report != nil {
+		r.report(authLevel(detail), text)
+		return
+	}
+	r.notices = append(r.notices, notice(authLevel(detail), "auth", text))
+}
+
+// reporter is where the interactive login's instructions go, nil-safely.
+//
+// Without a front end to hand them to, this process's own stderr is the only place
+// left — and it is the **right** place for an in-process front end, which owns the
+// terminal it is drawing on. Under `--runtime-stdio` it is the wrong one: the child's
+// stderr is drained by its parent, so a login written there is a login nobody can
+// finish. That is what the injected report exists to fix; see Options.Report.
+func (r *Runtime) reporter() Reporter {
+	if r.report == nil {
+		return func(line string) { fmt.Fprintln(os.Stderr, line) }
+	}
+	return func(line string) { r.report("info", line) }
 }
 
 // authCheck runs before every model call, through the agent's
@@ -237,7 +264,7 @@ func (r *Runtime) refresh(force bool) (status, detail string) {
 	result, err := RefreshEricAI(RefreshOptions{
 		Path:     auth.path,
 		Force:    force,
-		Reporter: func(line string) { fmt.Fprintln(os.Stderr, line) },
+		Reporter: r.reporter(),
 	})
 	if err != nil {
 		auth.mu.Unlock()

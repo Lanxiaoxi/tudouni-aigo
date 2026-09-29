@@ -672,6 +672,28 @@ func (s *Server) notice(level, code, text string) {
 	})
 }
 
+// reporter is where an instruction a person has to **act on** goes when it is
+// produced while a session is already running: today, the device code and its
+// verification URI from a managed-token login (`--ericai`).
+//
+// It is a hook rather than a direct call because the runtime must not know how to
+// reach a front end — see RuntimeHooks.Report. The `code` is `auth` for the same
+// reason `DrainAuthNotices` uses it: the front end draws the sentence verbatim and
+// logs it under the credential's own kind, and this layer still knows nothing about
+// what a token is.
+//
+// **Only the mid-session half comes through here.** A check made at open is run by
+// `emitOpening`, after the handshake is on the wire, so it arrives as an ordinary
+// notice too rather than being folded into `init` — see Server.emitOpening and
+// StartAuth. Both halves therefore reach a person the same way, which is the point:
+// there is one delivery path for instructions, not two.
+func (s *Server) reporter(level, text string) {
+	if level == "" {
+		level = "info"
+	}
+	s.notice(level, "auth", text)
+}
+
 // openFailureNotice carries the reason a runtime could not be assembled out of this
 // process, for `Main` to send before it exits.
 //
@@ -717,6 +739,18 @@ func (s *Server) emitOpening() {
 	// The first snapshot carries the skill catalog; later ones do not. Scanning
 	// the skill directory costs real time, and the result almost never changes.
 	s.Send(s.stateMessage(true))
+
+	// The credential check, and it is **after** the opening rather than inside the
+	// assembly. That ordering is the whole point: an interactive login blocks for up
+	// to its device-code timeout, and the instruction a person has to act on comes
+	// out of it. Run while the runtime is being assembled, it holds back every
+	// message above — so a front end that has drawn nothing has nowhere to show the
+	// code, and the code expires before the screen that could show it exists. Here,
+	// the handshake is already out and the instructions travel as an ordinary notice.
+	//
+	// It runs for a session switch too, which is right: the switch built a new client
+	// holding whatever key the config had at that moment.
+	StartAuth(runtime)
 }
 
 func (s *Server) stateMessage(withCatalog bool) map[string]any {

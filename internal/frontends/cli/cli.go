@@ -222,6 +222,17 @@ func Run(options Options) int {
 			return false
 		}
 		current = value
+		// The credential check, and it belongs **here** rather than in the assembly.
+		// It runs once the runtime exists and before anything is printed, so an
+		// interactive login's instructions — which this front end shows on its own
+		// stderr, because it owns the terminal — land in `init.notices`, where
+		// `emitNotices` picks them up in the right order. Run during assembly instead,
+		// it would hold the whole start-up back for up to the device-code timeout.
+		//
+		// Both paths come through here, the first open and a `/resume` switch, which
+		// is right: a switch built a new client holding whatever key the config had at
+		// that moment.
+		protocol.StartAuth(value)
 		return true
 	}
 	if !open(sessionID) {

@@ -379,6 +379,12 @@ func openRuntime(booted runtime.Booted, sessionID string,
 		ShouldStop:  hooks.ShouldStop,
 		OnDelta:     hooks.OnDelta,
 		OnEventHook: hooks.OnEvent,
+		// Where a login's instructions go. Nil for the in-process front ends, which
+		// is a real answer rather than a gap: those own a terminal, so the runtime's
+		// own stderr is the right place and the sentence is printed there. Under
+		// `--runtime-stdio` that stderr is drained by the parent, which is why the
+		// protocol layer supplies a reporter that turns each line into a notice.
+		Report: hooks.Report,
 	})
 	if err != nil {
 		var noModel *runtime.NoModelError

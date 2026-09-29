@@ -227,6 +227,17 @@ type Options struct {
 
 	// ShouldStop is the per-turn cancellation flag.
 	ShouldStop func() bool
+	// Report is where an instruction a person has to **act on** goes once the
+	// session is running: today, the device code and verification URI of the
+	// managed-token login (`--ericai`).
+	//
+	// Nil means "this process's own stderr", which is the right answer for an
+	// in-process front end that owns a terminal, and useless under
+	// `--runtime-stdio` — there the child's stderr is drained and dropped by the
+	// front end that started it (see protocol.Client.Start), so a login waiting on
+	// a code nobody was shown looks exactly like a session that has hung. See
+	// protocol.RuntimeHooks.Report.
+	Report func(level, text string)
 	// OnDelta reports stream increments. The step is the runtime's own, because a
 	// front end cannot derive which step is streaming from the audit stream: a
 	// step's `model_call` record is written after that step's chunks.
@@ -267,6 +278,12 @@ type Runtime struct {
 	// every method that reads it treats nil as "not mine to manage". See
 	// auth_session.go.
 	auth *ericAuth
+	// report is where an instruction a person has to act on goes once the session
+	// is running: today, the device code and URI of the managed-token login. Nil
+	// means "this process's own stderr", which is right for an in-process front end
+	// and useless under `--runtime-stdio`, where stderr is drained by the parent.
+	// See Options.Report.
+	report func(level, text string)
 
 	// ContextValue is the session's context ledger: which artifacts are in play,
 	// at what level, and what has been folded away.
@@ -448,6 +465,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		mcpNames:       mcpNames,
 		httpClient:     &http.Client{Timeout: 120 * time.Second},
 		startedAt:      time.Now(),
+		report:         options.Report,
 	}
 	if runtimeValue.MaxSteps == 0 {
 		runtimeValue.MaxSteps = agent.DefaultMaxSteps
@@ -486,14 +504,18 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// run and told a full-screen interface nothing, because its stderr is dropped.
 	//
 	// `--ericai` decides whether any of this exists: with the flag the token is
-	// checked here, before the first turn, and again before every later model call
-	// (authCheck). Without it there is no auth state at all, so the check below is
-	// a nil read and an authentication failure is reported like any other fatal
-	// error.
+	// checked before the first turn, and again before every later model call
+	// (authCheck). Without it there is no auth state at all, so an authentication
+	// failure is reported like any other fatal error.
+	//
+	// **The check itself is not run here.** It used to be, and that was wrong for
+	// one reason: this function returns before the handshake is emitted, so an
+	// interactive login would block `init` for its whole five-minute timeout — and
+	// the instructions a person has to act on would arrive only after the device
+	// code had already expired. Whoever knows the right moment calls it instead:
+	// the protocol server, right after `emitOpening` (see Server.emitOpening), and
+	// `cli.Run`, which prints the notices itself and so has to run the check first.
 	runtimeValue.initAuth(options.EricAI)
-	if options.EricAI {
-		runtimeValue.StartupAuth()
-	}
 
 	memory, err := MemoryFromPermissions()
 	if err != nil {

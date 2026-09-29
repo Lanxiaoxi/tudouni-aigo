@@ -26,9 +26,11 @@ import (
 // result was a login that *could not be completed*: the runtime sat waiting up to
 // five minutes for a device code the person was never shown.
 //
-// So the caller decides. The line REPL passes a reporter that writes to stderr;
-// the protocol server passes one that turns each line into a notice the front end
-// draws in the transcript.
+// So the caller decides, and both callers inject one (see Runtime.reporter):
+// `cli.Run` passes one that writes to this process's stderr, because it owns the
+// terminal it is drawing on, and the protocol server passes one that turns each
+// line into a notice — under `--runtime-stdio` the child's stderr is drained by its
+// parent, so a login written there is a login nobody can finish.
 type Reporter func(line string)
 
 // authReport is the nil-safe form of Reporter.
@@ -43,8 +45,7 @@ func (r authReport) Report(line string) {
 	r.reporter(line)
 }
 
-// `--ericai` and the in-session `/ericai`: the built-in EricAI login and token
-// refresh.
+// `--ericai`: the built-in EricAI login and token refresh.
 //
 // The provider's key is a JWT issued by an EricSSO (Microsoft MSAL) flow, and it
 // expires roughly hourly (measured: about 70 minutes). This module checks it,

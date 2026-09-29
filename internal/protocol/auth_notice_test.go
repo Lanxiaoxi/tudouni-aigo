@@ -86,3 +86,70 @@ func TestARuntimeWithoutCredentialNoticesIsStillFine(t *testing.T) {
 		}
 	}
 }
+
+// startupAuthRuntime records that the opening asked it to check the credential, and
+// what had already crossed the wire at that moment.
+type startupAuthRuntime struct {
+	stubRuntime
+	checked bool
+	sawInit bool
+	out     *strings.Builder
+}
+
+func (r *startupAuthRuntime) StartupAuth() {
+	r.checked = true
+	r.sawInit = strings.Contains(r.out.String(), `"t":"init"`)
+}
+
+// TestTheCredentialCheckRunsAfterTheOpeningIsOnTheWire is the ordering this whole
+// arrangement exists for.
+//
+// The check can block for a device-code timeout, and the instruction the person has
+// to act on comes out of it. Run while the runtime is being assembled, the handshake
+// is held back for that whole time: under `--runtime-stdio` the front end has been
+// sent nothing, so it has nothing on screen to show a code in — and the code expires
+// before the screen that could show it exists. Run once the opening is out, the
+// instruction arrives as an ordinary notice on a front end that is already drawing.
+func TestTheCredentialCheckRunsAfterTheOpeningIsOnTheWire(t *testing.T) {
+	var out strings.Builder
+	runtimeValue := &startupAuthRuntime{out: &out}
+	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
+	server.Attach(runtimeValue)
+
+	server.emitOpening()
+
+	if !runtimeValue.checked {
+		t.Fatal("the opening never asked the runtime to check its credential")
+	}
+	if !runtimeValue.sawInit {
+		t.Error("the check ran before `init` was sent: a person would be shown a login code that expires while the screen is still empty")
+	}
+}
+
+// TestAMidSessionInstructionTravelsAsACredentialNotice — the delivery path for the
+// other half: a login opened by the pre-request check, once the session is running.
+//
+// It is a notice like any other, with the code that says which kind, because that is
+// the only channel a front end draws sentences from — and this process's stderr does
+// not reach a person under `--runtime-stdio`.
+func TestAMidSessionInstructionTravelsAsACredentialNotice(t *testing.T) {
+	var out strings.Builder
+	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
+
+	server.reporter("info", "[ericai]   open:  https://microsoft.com/devicelogin")
+
+	messages := sentMessages(t, &out)
+	if len(messages) != 1 {
+		t.Fatalf("sent %d messages, want 1", len(messages))
+	}
+	if TypeOf(messages[0]) != OutNotice {
+		t.Fatalf("the instruction went out as %v, want a notice", TypeOf(messages[0]))
+	}
+	if code, _ := messages[0]["code"].(string); code != "auth" {
+		t.Errorf("code = %v, want auth — the front end reads the code to know which kind of sentence this is", messages[0]["code"])
+	}
+	text, _ := messages[0]["text"].(string)
+	if !strings.Contains(text, "devicelogin") {
+		t.Errorf("the instruction lost its text: %v", messages[0])
+	}
+}
