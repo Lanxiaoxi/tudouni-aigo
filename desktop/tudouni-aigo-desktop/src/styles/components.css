@@ -1005,6 +1005,198 @@ table.table td.mono {
   flex: none;
 }
 
+/* ---------------- §11 设置面板（启动参数） ----------------
+
+   One group, and it is a start-up group: `--ericai` and `--max-steps` are read
+   while the runtime is being assembled, so applying one restarts the child. Every
+   rule below is in service of that being legible rather than surprising:
+   the value in force is stated separately from the draft, and the confirmation is
+   inline (component-states.md §danger: a destructive confirm is a popover, not a
+   modal — the two modals belong to questions the runtime is waiting on). */
+
+.set-hint {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+.set-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.set-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.set-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.set-desc {
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-secondary);
+  word-break: break-word;
+}
+
+/* The switch. Deliberately **not** `.st-toggle`: that shape is defined as
+   `.statusbar .st-toggle`, so borrowing the name would produce a button with no
+   rule at all — and the class audit cannot see it, because the name *is* defined
+   somewhere in the stylesheet. */
+.set-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.set-toggle:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.set-toggle.is-on {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.set-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.set-control {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 96px;
+}
+
+.set-input {
+  width: 100%;
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.set-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.set-input.is-invalid {
+  border-color: var(--destructive);
+}
+
+.set-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.set-error {
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--destructive);
+  word-break: break-word;
+}
+
+/* What is actually on the command line right now. Mono, and never merged into
+   the controls above: a remembered value must not read as "this is on". */
+.set-running {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  font-size: var(--text-caption);
+}
+
+.set-running dt {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.set-running dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--fg-secondary);
+  word-break: break-all;
+}
+
+.set-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.set-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--warning);
+}
+
+/* The confirmation, inline. Its own surface and its own border, because it
+   replaces the actions row: there is exactly one thing to decide here. */
+.set-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+}
+
+.set-confirm-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.set-confirm-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .cmdk-empty {
   padding: var(--space-6) var(--space-4);
   text-align: center;

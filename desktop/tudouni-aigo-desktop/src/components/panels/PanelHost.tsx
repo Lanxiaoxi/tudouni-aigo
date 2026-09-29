@@ -12,6 +12,7 @@ import {
   SkillsPanel,
   SubagentsPanel,
 } from './panels';
+import { SettingsPanel } from './SettingsPanel';
 
 /**
  * §5 Panel host.
@@ -49,6 +50,7 @@ export function PanelHost() {
           {panel === 'help' ? <HelpPanel /> : null}
           {panel === 'subagents' ? <SubagentsPanel /> : null}
           {panel === 'audit' ? <AuditPanel /> : null}
+          {panel === 'settings' ? <SettingsPanel /> : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

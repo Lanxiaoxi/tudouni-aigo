@@ -113,7 +113,8 @@ export type PanelKind =
   | 'skills'
   | 'help'
   | 'subagents'
-  | 'audit';
+  | 'audit'
+  | 'settings';
 
 export type SidebarBlockKey = 'goal' | 'tasks' | 'skills' | 'jobs' | 'mcp';
 
@@ -153,6 +154,24 @@ export type ComposerNotice =
   | { code: 'paste-no-vision'; model: string; tone: 'info' }
   /** The bridge refused or failed to write it. The runtime's sentence, verbatim. */
   | { code: 'paste-failed'; reason: string; tone: 'warn' };
+
+/**
+ * What the running child was actually started with.
+ *
+ * **A record of this front end's own act, not a claim about the runtime.** It says
+ * "this is the argv I passed", which is a fact this window really has — the runtime
+ * sends nothing back about it, and `init` has no field for it. That is exactly why
+ * it is safe to draw: it is not a second source for anything the runtime states.
+ *
+ * It is what the settings panel shows. A remembered preference is *not*: a value
+ * remembered for next time must never read as "this is on now".
+ */
+export interface LaunchArgs {
+  /** `--ericai` was on the command line. */
+  ericai: boolean;
+  /** `--max-steps <n>`, or null when the flag was left off. */
+  maxSteps: number | null;
+}
 
 /** The session as the handshake describes it. Flat on the wire, kept flat here. */
 export interface SessionInfo {
@@ -350,6 +369,24 @@ export interface AppStore {
    */
   workspaces: string[];
 
+  /* ---------------- start-up arguments ---------------- */
+  /**
+   * What the child that is running now was started with.
+   *
+   * The settings panel draws **this**, not the remembered default, because this is
+   * the one that is true right now. See `LaunchArgs`.
+   */
+  launch: LaunchArgs;
+  /**
+   * The remembered defaults the *next* child is started with.
+   *
+   * Kept apart from `launch` deliberately, and the two are never merged in the
+   * display: a value remembered for next time must not read as "this is on now",
+   * the same way a bookmarked workspace must not read as the current one.
+   */
+  ericaiDefault: boolean;
+  maxStepsDefault: number | null;
+
   /* ---------------- composer ---------------- */
   draft: string;
   history: string[];
@@ -481,6 +518,27 @@ export interface AppStore {
   removeWorkspace(path: string): void;
   /** Look up a tool's facts for stream rows. Returns null when unknown. */
   toolFacts(name: string): ToolFacts | null;
+
+  /**
+   * Restart the child with the given start-up arguments, and remember them.
+   *
+   * **A restart rather than a message**, and that is forced by the runtime rather
+   * than chosen here: `--ericai` decides at open which route the session manages
+   * (`internal/runtime/composition.go`, `Options.EricAI`), and `--max-steps` is
+   * read into the agent at assembly. Neither can be honoured by a running child, so
+   * "apply" means "start another one".
+   *
+   * The caller is responsible for having asked first — this is the act, not the
+   * confirmation. It is not allowed to run while a turn is in flight or while a
+   * blocking prompt is up (see the settings panel), because the bridge's restart
+   * path **kills** the previous child rather than waiting for it, and a kill
+   * mid-turn can leave an assistant message whose tool results never arrived —
+   * a session that can never be sent to again.
+   *
+   * Resolves once the bridge has accepted the new child. A failure lands in
+   * `startupProblem`, which is already the one place a start-up refusal is shown.
+   */
+  applyLaunch(next: LaunchArgs): Promise<void>;
 }
 
 const EMPTY_BLOCKS: Record<SidebarBlockKey, boolean> = {
@@ -505,6 +563,18 @@ type Prefs = {
    *  it stays — "where am I" must survive folding the conversation list. */
   sessionsCollapsed: boolean;
   workspaces: string[];
+  /**
+   * Start-up arguments, as remembered *defaults for the next start*.
+   *
+   * These are preferences in the only sense that is honest here: they decide what
+   * the next child is started with. They are **not** what is running — that comes
+   * from `launch`, which records the arguments this session's child was actually
+   * given. The two are drawn together in the settings panel and are never
+   * conflated, for the same reason the workspace list and `init.workspace` are
+   * not: a remembered value that nothing is using must not read as "this is on".
+   */
+  ericaiDefault: boolean;
+  maxStepsDefault: number | null;
 };
 
 function loadPrefs(): Prefs {
@@ -516,6 +586,14 @@ function loadPrefs(): Prefs {
     blockTouched: {},
     sessionsCollapsed: false,
     workspaces: [],
+    // Off, and not because of a coin toss: this flag lets the runtime rewrite
+    // `providers.ericai.api_key` in the person's own configuration file and keep a
+    // refresh token under `~/.tudouni/`. That is not something to switch on for
+    // somebody who has never heard of it.
+    ericaiDefault: false,
+    // Null is "no `--max-steps` on the command line", which is how the runtime's
+    // own default applies. A remembered number would silently outrank it.
+    maxStepsDefault: null,
   };
   try {
     const raw = localStorage.getItem('aigo.prefs');
@@ -534,6 +612,19 @@ function loadPrefs(): Prefs {
       workspaces: (parsed.workspaces ?? []).filter(
         (entry): entry is string => typeof entry === 'string' && entry.trim() !== '',
       ),
+      // Same rule as `workspaces`, and for the same reason: this is localStorage,
+      // it outlives every build, and a string where a boolean belongs would reach
+      // a `?` branch that treats any truthy value as "on".
+      ericaiDefault: parsed.ericaiDefault === true,
+      // A positive whole number, or nothing. Zero and negatives are refused here
+      // rather than passed on: the Rust side only forwards `> 0` (see `spawn`), so
+      // remembering one would display a value that is silently not in force.
+      maxStepsDefault:
+        typeof parsed.maxStepsDefault === 'number' &&
+        Number.isInteger(parsed.maxStepsDefault) &&
+        parsed.maxStepsDefault > 0
+          ? parsed.maxStepsDefault
+          : null,
     };
   } catch {
     return fallback;
@@ -580,6 +671,8 @@ function persistPrefs(s: AppStore): void {
         blockTouched: s.blockTouched,
         sessionsCollapsed: s.sessionsCollapsed,
         workspaces: s.workspaces,
+        ericaiDefault: s.ericaiDefault,
+        maxStepsDefault: s.maxStepsDefault,
       }),
     );
   } catch {
@@ -703,6 +796,13 @@ export const useApp = create<AppStore>((set, get) => ({
   toolOpen: {},
   sessionsCollapsed: prefs.sessionsCollapsed,
   workspaces: prefs.workspaces,
+
+  // Nothing has been started yet, so "no flags" is the honest initial value
+  // rather than a guess at what the first start will pass. `startRuntime` writes
+  // the real one the moment the bridge accepts it.
+  launch: { ericai: false, maxSteps: null },
+  ericaiDefault: prefs.ericaiDefault,
+  maxStepsDefault: prefs.maxStepsDefault,
 
   draft: '',
   history: [],
@@ -1461,6 +1561,31 @@ export const useApp = create<AppStore>((set, get) => ({
     persistPrefs(get());
   },
 
+  async applyLaunch(next) {
+    // The restart reuses the two arguments this session is already running with
+    // — the workspace and, implicitly, everything else — and changes only the two
+    // this panel owns. Reading the workspace from `session` rather than from a
+    // remembered value is deliberate: `init.workspace` is the runtime's own answer
+    // about where it is, and it is the only thing entitled to say so.
+    const workspace = get().session?.workspace ?? '';
+    set({
+      // Remembered first, and unconditionally: these are the defaults the *next*
+      // open uses, and a restart that fails must not silently drop the choice the
+      // person just made.
+      ericaiDefault: next.ericai,
+      maxStepsDefault: next.maxSteps,
+    });
+    persistPrefs(get());
+    // `launch` is written by `startRuntime` and not here, because it records what
+    // the bridge actually accepted. Writing it now would claim a child that may
+    // never have started.
+    await startRuntime({
+      ...(workspace === '' ? {} : { workspace }),
+      ericai: next.ericai,
+      maxSteps: next.maxSteps ?? undefined,
+    });
+  },
+
   toolFacts(name) {
     // `ui(tools)` is the richer source — it also carries the disposition and
     // the command argument — but it is only ever sent because somebody asked
@@ -1506,6 +1631,17 @@ export async function startRuntime(options: Partial<BridgeOptions> = {}): Promis
   useApp.setState({ startupProblem: null });
   try {
     await attachRuntime(options);
+    // Recorded **after** the bridge accepted it, and only then: this is what the
+    // settings panel draws as "this session's start-up arguments", and a refusal
+    // (a missing binary, a workspace the runtime will not take) means there is no
+    // child for those arguments to belong to. Writing them first would have the
+    // panel describe a process that does not exist.
+    useApp.setState({
+      launch: {
+        ericai: options.ericai === true,
+        maxSteps: options.maxSteps ?? null,
+      },
+    });
   } catch (err) {
     useApp.setState({ startupProblem: describeFailure(err) });
   }

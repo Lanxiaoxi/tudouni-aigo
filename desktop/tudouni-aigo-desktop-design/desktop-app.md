@@ -58,7 +58,9 @@ Rust 层刻意**只做字节搬运**：它把一行 JSON 原样交给 WebView，
 ### 3.2 启动契约（照抄 `internal/protocol/client.go` 的四条细节）
 
 1. **用绝对路径的同一个可执行文件**，不是从 PATH 找 `tudouni-aigo`。PATH 上的另一个构建是另一个程序，症状是「子进程立刻退出，我只读到 EOF」。
-2. 参数：`--runtime-stdio`。可选追加 `--session <id>`、`--autopilot`、`--max-steps <n>`、`--stream`。
+2. 参数：`--runtime-stdio`。可选追加 `--session <id>`、`--autopilot`、`--max-steps <n>`、`--stream`、`--ericai`。
+
+   **`--ericai` 只能在这里给**，不能事后用消息改：它决定这个会话纳管哪条路由（`Options.EricAI` 的注释写明是**开门时的决定**，中途 `/model` 切到那条路由也不会纳管），`--max-steps` 同理（装配时读进 agent）。所以桌面端把它们做成「确认后重启子进程」，而不是一个即时生效的设置 —— 见 `panels/SettingsPanel.tsx`。
 3. **工作目录 = 工作区**。运行时把 cwd 当作工作区（`paths.WorkspaceDir()`），文件工具的边界就是它。桌面端必须显式设 `current_dir`，不能沿用 App 自己的启动目录。
 4. **stderr 必须被读走并丢弃**（不是 `null`、不是关闭）。给它一个管道持续 drain：关闭的描述符会让子进程在写诊断时以莫名其妙的方式失败；而把 stderr 接到 App 自己的 stderr 上，在 GUI 里根本看不见。真正要给人看的东西运行时会走 `notice` 消息。
 
@@ -365,7 +367,7 @@ src/
     chrome/      TitleBar / TopBar / SessionBar / CollapsedSummary / StatusBar / Composer
     stream/      12 类条目 + 流内大屏块 + quiet 分组
     sidebar/     5 区块
-    panels/      命令面板 + 8 面板
+    panels/      命令面板 + 9 面板（第 9 个是设置：只放启动参数）
     modals/      审批、提问
     ui/          原语包装 / 控件 / Markdown
   i18n/          桌面端自己的界面文案（**全英文**，见 §10 决策 2）

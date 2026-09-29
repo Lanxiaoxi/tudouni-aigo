@@ -1173,3 +1173,43 @@
   color: var(--destructive);
   background: var(--destructive-subtle);
 }
+
+/* ---------------- the rail's foot ---------------- */
+
+/* Outside `.lb-scroll` on purpose: this is a fixed row, so it cannot be pushed
+   off the bottom by a long workspace or session list — the same reason the head
+   is `flex: none`. It carries the settings affordance, which holds the arguments
+   the runtime process was started with, and that belongs beside the workspace
+   list rather than in the command palette (see WorkspaceSidebar's comment). */
+.lb-foot {
+  flex: none;
+  padding: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.lb-foot-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.lb-foot-btn:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.lb-foot-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

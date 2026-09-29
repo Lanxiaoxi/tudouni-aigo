@@ -157,6 +157,7 @@ export const en = {
   'lb.addWorkspace': 'Add a workspace…',
   'lb.refreshSessions': 'Re-read the session list',
   'lb.collapse': 'Hide this sidebar',
+  'lb.settings': 'Settings',
   'lb.show': 'Show the workspace sidebar',
   'lb.foldSessions': 'Fold the session list',
   'lb.unfoldSessions': 'Unfold the session list',
@@ -295,6 +296,36 @@ export const en = {
   'panel.audit.granted': 'Granted this session',
   'panel.audit.none': 'none',
   'panel.audit.agentsMd': 'AGENT.md',
+
+  /* ---------------- settings ---------------- */
+  'panel.settings.title': 'Settings',
+  'panel.settings.note':
+    'What this session can change. Start-up arguments need a new runtime process, so applying one restarts it.',
+  'panel.settings.launch': 'Start-up arguments',
+  'panel.settings.launchHint':
+    'These are the arguments the running runtime was started with. Changing one restarts it — the runtime decides them at open and cannot be told later.',
+  'panel.settings.inForce': 'in force',
+  'panel.settings.notInForce': 'restart to apply',
+  'panel.settings.running': 'Running now',
+  'panel.settings.ericai': 'EricAI token',
+  'panel.settings.ericaiDesc':
+    'Keep this session’s EricAI token fresh: check it at start-up, and refresh it before any request that would otherwise go out with a stale one.',
+  'panel.settings.ericaiEffect':
+    'Turning this on lets the runtime rewrite providers.ericai.api_key in your configuration file and keep a refresh token under ~/.tudouni/.',
+  'panel.settings.maxSteps': 'Step cap',
+  'panel.settings.maxStepsDesc':
+    'How many model calls one turn may take. Empty means the runtime’s own default.',
+  'panel.settings.maxStepsDefault': 'runtime default',
+  'panel.settings.maxStepsInvalid': 'A whole number above zero, or empty.',
+  'panel.settings.apply': 'Apply and restart',
+  'panel.settings.restart': 'Restart the runtime?',
+  'panel.settings.restartWhy':
+    'The runtime is reading these at open, so it has to be started again. The turn on screen is finished; the session is kept.',
+  'panel.settings.restartYes': 'Restart',
+  'panel.settings.restartNo': 'Cancel',
+  'panel.settings.blockedTurn': 'A turn is in flight — finish or stop it first.',
+  'panel.settings.blockedModal': 'Answer the prompt first.',
+  'panel.settings.blockedBooting': 'The runtime is still starting.',
   'panel.close': 'Close',
 
   /* ---------------- in-stream blocks ---------------- */

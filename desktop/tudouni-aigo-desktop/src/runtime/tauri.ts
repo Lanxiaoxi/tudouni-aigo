@@ -79,6 +79,19 @@ export interface BridgeOptions {
   stream?: boolean;
   /** `--autopilot`. */
   autopilot?: boolean;
+  /** `--ericai`: manage the EricAI token for this session.
+   *
+   *  A start-up argument and **not** a setting, which is not a matter of taste:
+   *  the runtime decides at open which route the session manages, and a session
+   *  moved onto that route afterwards is deliberately not taken over
+   *  (`internal/runtime/composition.go`, `Options.EricAI`). So it can only be
+   *  passed when the child is started — which is why changing it restarts the
+   *  child rather than sending a message.
+   *
+   *  Absent and `false` are the same thing. It is never defaulted to true: turning
+   *  it on lets this process rewrite `providers.ericai.api_key` in the person's own
+   *  configuration and keep a refresh token under `~/.tudouni/`. */
+  ericai?: boolean;
 }
 
 /** Read the runtime's version. The binary path is optional: the Rust side knows
@@ -254,6 +267,11 @@ export async function attachRuntime(options: Partial<BridgeOptions> = {}): Promi
       // stream, so the default has to be spelled out here.
       stream: options.stream ?? true,
       autopilot: options.autopilot ?? null,
+      // `?? null` rather than `?? false`, and it makes no difference to the child —
+      // the Rust side only adds `--ericai` for `Some(true)`. The distinction lives
+      // here so that "nobody said" stays visible: this is the one flag that lets
+      // the runtime write to the person's configuration file.
+      ericai: options.ericai ?? null,
     },
   });
 }

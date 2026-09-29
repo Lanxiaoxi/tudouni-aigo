@@ -193,6 +193,24 @@ pub struct AttachOptions {
     max_steps: Option<i64>,
     stream: Option<bool>,
     autopilot: Option<bool>,
+    /// `--ericai`: manage the session's EricAI token.
+    ///
+    /// A start-up argument rather than a setting, because that is what the runtime
+    /// makes it: `--ericai` decides at open which route this session manages, and a
+    /// session switched onto that route later is deliberately *not* taken over
+    /// (`internal/runtime/composition.go`, `Options.EricAI`). So the flag has to be
+    /// on the command line — passing it in a message would be asking for something
+    /// the runtime does not do.
+    ///
+    /// `None` and `Some(false)` mean the same thing here and that is deliberate:
+    /// absent is how a boolean flag is absent, and there is no third state to
+    /// express.
+    ///
+    /// It is **not** defaulted to true anywhere. Turning it on lets this process
+    /// rewrite `providers.ericai.api_key` in the person's own configuration and
+    /// store a refresh token under `~/.tudouni/`, which is not a thing to do on
+    /// somebody's behalf without their asking.
+    ericai: Option<bool>,
 }
 
 /// Where the runtime binary lives.
@@ -293,6 +311,11 @@ fn spawn(
     }
     if options.autopilot == Some(true) {
         command.arg("--autopilot");
+    }
+    // Present or absent, like `--stream`: a boolean flag given a value would have
+    // to be spelled `--ericai=true`, and it is never given one.
+    if options.ericai == Some(true) {
+        command.arg("--ericai");
     }
 
     command

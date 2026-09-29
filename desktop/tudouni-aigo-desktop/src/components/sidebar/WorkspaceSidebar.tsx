@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { ChevronRight, FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, Settings, Trash2, X } from 'lucide-react';
 import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { checkWorkspace, chooseWorkspaceDirectory } from '@/runtime/tauri';
@@ -58,6 +58,10 @@ export function WorkspaceSidebar() {
   // rails are deliberately separate preferences (`store.ts`), and this is exactly
   // the mistake that separation is there to make impossible.
   const setLeftbarVisible = useApp((s) => s.setLeftbarVisible);
+  // The settings panel. It lives at the foot of this rail because what it holds
+  // is the same kind of decision as the workspace above it — what the runtime
+  // process *is* — rather than a per-turn control like the status bar's.
+  const openPanel = useApp((s) => s.openPanel);
 
   /** Why the last workspace that was offered could not be taken. Local: nothing
    *  about it reached the runtime, and it is a statement about this list. */
@@ -344,6 +348,27 @@ export function WorkspaceSidebar() {
             </div>
           </div>
         </section>
+      </div>
+
+      {/* The settings affordance, at the foot of the rail rather than in the
+          command palette. Two reasons, and the second is the load-bearing one:
+          it sits next to the workspace list because what it holds is the same
+          kind of decision (what the runtime process is), and the palette's
+          seventeen commands are a fixed, load-ordered set — `commands.ts`
+          spells the number out and a test asserts it. Adding an eighteenth entry
+          there would rewrite a sentence whose whole point is that it is exact. */}
+      <div className="lb-foot">
+        <Tip label={t('lb.settings')}>
+          <button
+            type="button"
+            className="lb-foot-btn"
+            disabled={blocked}
+            onClick={() => openPanel('settings')}
+          >
+            <Settings size={14} />
+            <span>{t('lb.settings')}</span>
+          </button>
+        </Tip>
       </div>
     </aside>
   );

@@ -118,7 +118,7 @@ src/
     chrome/              title bar, top bar, session bar, summary, status bar, composer
     stream/              the 12 entry kinds, in-stream blocks, quiet grouping
     sidebar/             the left rail (workspaces, sessions) + the 5 right-hand blocks
-    panels/              command palette + 8 panels
+    panels/              command palette + 9 panels (the 9th is settings)
     modals/              approval, question
     ui/                  primitives, markdown
   i18n/                  English only (see below)
@@ -284,6 +284,7 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 14 | The left sidebar is workspaces + sessions only — no sign-in, no plugin market; the workspace list is a front-end preference while the current workspace is a runtime fact | `components/sidebar/WorkspaceSidebar.tsx`, `workspaces` / `leftbarVisible` in `state/store.ts`, `workspace_check` in `lib.rs` |
 | 15 | Each MCP server in the rail carries its own load/unload button, so mounting one is no longer `/mcp`-only. The rail's row shows **less** than the panel's row on purpose — see below | `McpRow` in `components/sidebar/Sidebar.tsx`, `mcpPending` in `state/store.ts`, `.mcp-act` in `styles/stream.css` |
 | 16 | `Ctrl+V` pastes a picture: the bytes are written into the workspace and the path goes into the sentence. Ten pictures per message, five megabytes each — the runtime's own ceilings, mirrored | `hooks/useClipboardPaste.ts`, `runtime/paste.ts`, `components/chrome/ImageTray.tsx`, `image_stash` in `lib.rs` |
+| 17 | Settings holds **start-up arguments only** (`--ericai`, `--max-steps`), at the foot of the left rail; applying one restarts the child, after an inline confirmation. No theme switch, and no eighteenth command | `panels/SettingsPanel.tsx`, `applyLaunch` in `state/store.ts`, `ericai` in `lib.rs` / `runtime/tauri.ts`, `.lb-foot` in `styles/stream.css` |
 
 ### 15 · The rail's MCP row, and why it is narrower than the panel's
 
