@@ -46,8 +46,8 @@ func TestTheMessagesStreamKeepsThePromptUsage(t *testing.T) {
 	if response.Usage == nil {
 		t.Fatal("the stream reported no usage at all")
 	}
-	if response.Usage.PromptTokens != 1000 || response.Usage.CachedTokens != 800 {
-		t.Errorf("usage = %+v, want the prompt side kept from message_start", *response.Usage)
+	if response.Usage.PromptTokens != 1800 || response.Usage.CachedTokens != 800 {
+		t.Errorf("usage = %+v, want the prompt side kept from message_start (input 1000 + cache_read 800)", *response.Usage)
 	}
 	if response.Usage.CompletionTokens != 42 {
 		t.Errorf("completion = %d, want the final output count from message_delta",

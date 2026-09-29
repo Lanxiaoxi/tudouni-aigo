@@ -133,6 +133,53 @@ func TestALogWithNoDurationsStillSummarizes(t *testing.T) {
 	}
 }
 
+// TestHitRateNeverExceedsOneHundredPercent guards the shape of the ratio, not one
+// arithmetic case.
+//
+// The status bar showed 3426% on a Messages route because the two numbers reaching
+// here were the cache read and the *uncached remainder* rather than the cache read
+// and the whole input. That mistake is now fixed in the normaliser, but the failure
+// mode is worth pinning: a hit rate is a part over the whole, and a value above 100%
+// is not a surprisingly good cache — it is arithmetic on two quantities that do not
+// nest.
+func TestHitRateNeverExceedsOneHundredPercent(t *testing.T) {
+	for _, testCase := range []struct {
+		prompt, cached int
+		want           string
+	}{
+		{200050, 200000, "100%"},
+		{1000, 500, "50%"},
+		{1000, 0, "0%"},
+		{0, 0, "—"},
+	} {
+		got := HitRate(testCase.prompt, testCase.cached)
+		if got != testCase.want {
+			t.Errorf("HitRate(%d, %d) = %q, want %q", testCase.prompt, testCase.cached, got, testCase.want)
+		}
+	}
+}
+
+// TestSummarizeKeepsCachedInsidePrompt is the same invariant one layer down: the
+// totals the ledger adds up must still nest, or HitRate's own guard is the only
+// thing between a broken normaliser and a four-digit percentage on screen.
+func TestSummarizeKeepsCachedInsidePrompt(t *testing.T) {
+	events := []map[string]any{
+		{"kind": "model_call", "status": "ok", "prompt_tokens": 200050, "cached_tokens": 200000,
+			"miss_tokens": 50, "completion_tokens": 10},
+		{"kind": "model_call", "status": "ok", "prompt_tokens": 1800, "cached_tokens": 800,
+			"miss_tokens": 1000, "completion_tokens": 20},
+	}
+	usage, _ := Summarize(events)["usage"].(map[string]any)
+	prompt := numberOfField(usage, "prompt")
+	cached := numberOfField(usage, "cached")
+	if cached > prompt {
+		t.Fatalf("cached (%d) exceeds prompt (%d): the hit rate would read over 100%%", cached, prompt)
+	}
+	if got := HitRate(prompt, cached); got != "99%" {
+		t.Errorf("hit rate = %q, want 99%%", got)
+	}
+}
+
 // numberOfField reads a numeric field out of a summary map, with the assertion
 // failing loudly rather than reading zero — a test that silently compared zero
 // against zero would pass on an empty block.

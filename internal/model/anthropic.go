@@ -514,15 +514,33 @@ func readContentBlocks(blocks []any, usage *TokenUsage) ModelResponse {
 // and a normaliser that only knew the chat completions spelling would report every
 // cached token as a miss. That failure is silent — the number would simply look
 // worse than it is — which is why it is worth the mapping.
+//
+// **`input_tokens` is not the whole input.** In this protocol it counts only the
+// portion after the last cache breakpoint, and the cache is reported separately:
+// `cache_read_input_tokens` for what was served from it, and
+// `cache_creation_input_tokens` for what was written to it. The three are
+// *additive*, unlike the OpenAI shapes where `cached_tokens` is a subset of
+// `prompt_tokens`/`input_tokens`. So `PromptTokens` here is the **total** input,
+// which is what every other dialect already puts in that field — and what the two
+// readings built on it assume: `HitRate` (cached/prompt) and `MissTokens`
+// (prompt-cached, i.e. everything the cache did not serve, writes included).
+//
+// Reading `input_tokens` straight into `PromptTokens` — which is what this used
+// to do — made the hit rate `cache_read / uncached`, a ratio with no meaning that
+// routinely exceeded 100% (a measured session reported 3426%), and made
+// `MissTokens` always zero on a cached route.
 func extractAnthropicUsage(raw any) *TokenUsage {
 	block, ok := raw.(map[string]any)
 	if !ok {
 		return nil
 	}
+	uncached := intOf(block["input_tokens"])
+	cached := intOf(block["cache_read_input_tokens"])
+	written := intOf(block["cache_creation_input_tokens"])
 	usage := &TokenUsage{
-		PromptTokens:     intOf(block["input_tokens"]),
+		PromptTokens:     uncached + cached + written,
 		CompletionTokens: intOf(block["output_tokens"]),
-		CachedTokens:     intOf(block["cache_read_input_tokens"]),
+		CachedTokens:     cached,
 	}
 	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.CachedTokens == 0 {
 		// A usage object with nothing in it is the `message_start` event, whose
@@ -547,6 +565,11 @@ func extractAnthropicUsage(raw any) *TokenUsage {
 // zero in all three fields, so what reaches here carries at least one measurement,
 // and keeping a stale-completion figure is not a possibility — the later event is
 // the one that reports completions.
+//
+// `PromptTokens` is the sum of this protocol's three additive input counters, and
+// it is folded as one number rather than counter by counter: the delta carries
+// none of them, so the only question here is whether this block measured the input
+// at all, and the sum answers it exactly as the raw `input_tokens` did.
 func (a *responseAccumulator) mergeUsage(usage *TokenUsage) {
 	if a.usage == nil {
 		a.usage = usage

@@ -111,6 +111,13 @@ func Summarize(events []map[string]any) map[string]any {
 
 // HitRate is the display form of the cache hit rate.
 //
+// The two arguments are the **totals** across the calls being summarised: every
+// input token, and the subset a cache served. The normalisers in `internal/model`
+// are what make "subset" true for all three dialects — the Messages protocol
+// reports cache reads beside the uncached remainder rather than inside it, and a
+// caller that paired those without adding them produced a ratio above 100%.
+// Keeping that arithmetic in one place is why this stays a two-argument division.
+//
 // With no input tokens it is an em dash, not 0%. 0% would read as "the cache is
 // misconfigured" when in fact no cache lookup has happened yet, and those two
 // must be distinguishable.

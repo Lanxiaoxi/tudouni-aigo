@@ -414,14 +414,46 @@ func TestAnthropicUsageMapsTheCacheField(t *testing.T) {
 	if response.Usage == nil {
 		t.Fatal("no usage was read from the response")
 	}
-	if response.Usage.PromptTokens != 100 || response.Usage.CompletionTokens != 20 {
-		t.Errorf("usage = %+v, want 100/20", *response.Usage)
+	// This protocol's three input counters are additive, so the total is 195 —
+	// not the 100 that `input_tokens` alone reads as. Getting that wrong is what
+	// made the hit rate exceed 100%, because the ratio divided by the uncached
+	// remainder instead of by the whole input.
+	if response.Usage.PromptTokens != 195 || response.Usage.CompletionTokens != 20 {
+		t.Errorf("usage = %+v, want 195/20 (input+cache_read+cache_creation)", *response.Usage)
 	}
 	if response.Usage.CachedTokens != 90 {
 		t.Errorf("CachedTokens = %d, want 90", response.Usage.CachedTokens)
 	}
-	if got := response.Usage.MissTokens(); got != 10 {
-		t.Errorf("MissTokens = %d, want 10", got)
+	// Everything the cache did not serve: the 100 uncached tokens plus the 5 that
+	// were written to it.
+	if got := response.Usage.MissTokens(); got != 105 {
+		t.Errorf("MissTokens = %d, want 105", got)
+	}
+}
+
+// TestAnthropicHitRateStaysBelowOne is the regression test for the status bar
+// reading 3426%.
+//
+// On this protocol the cache read is reported apart from `input_tokens`, so a
+// long cached context with a short new question sends `input_tokens: 50` and
+// `cache_read_input_tokens: 200000`. Dividing one by the other without adding
+// them is not a hit rate — it is a number that grows with how *well* the cache
+// works, which is why it showed 34× rather than 91%.
+func TestAnthropicHitRateStaysBelowOne(t *testing.T) {
+	server, _, _ := dialectGateway(t, `{"content":[{"type":"text","text":"ok"}],
+		"usage":{"input_tokens":50,"output_tokens":20,"cache_read_input_tokens":200000,"cache_creation_input_tokens":0}}`)
+	adapter := newTestAdapter(t, Options{Route: route(server.URL, "m", StyleAnthropic)})
+
+	usage := completeOnce(t, adapter).Usage
+	if usage == nil {
+		t.Fatal("no usage was read from the response")
+	}
+	if usage.CachedTokens > usage.PromptTokens {
+		t.Fatalf("CachedTokens (%d) exceeds PromptTokens (%d): the hit rate would be over 100%%",
+			usage.CachedTokens, usage.PromptTokens)
+	}
+	if got := usage.MissTokens(); got != 50 {
+		t.Errorf("MissTokens = %d, want 50 (only the uncached part)", got)
 	}
 }
 

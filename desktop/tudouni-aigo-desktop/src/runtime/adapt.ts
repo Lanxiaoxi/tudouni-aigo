@@ -895,9 +895,16 @@ function textOf(content: unknown): string {
    Display helpers that need a protocol fact
    ============================================================ */
 
-/** `internal/state/status.go:117` (`HitRate`) — with no input tokens it is an em
+/** `internal/state/status.go:124` (`HitRate`) — with no input tokens it is an em
  *  dash, not 0%: "no lookup has happened yet" and "the cache is broken" are
- *  different statements. */
+ *  different statements.
+ *
+ *  The two fields are the ledger's **totals**: `prompt` is every input token and
+ *  `cached` is the subset a cache served, a nesting the Go normalisers establish
+ *  for all three dialects (`internal/model/anthropic.go` is the one that has to
+ *  add, because the Messages protocol reports the cache read beside the uncached
+ *  remainder rather than inside it). Dividing them without that nesting is what
+ *  once put 3426% on the status bar. */
 export function cacheHitRate(usage: Record<string, number>): number | null {
   const prompt = usage['prompt'] ?? 0;
   const cached = usage['cached'] ?? 0;

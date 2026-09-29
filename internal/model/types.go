@@ -80,13 +80,23 @@ func AsFatal(format string, args ...any) error {
 }
 
 // TokenUsage is what one call cost.
+//
+// The three fields answer the same questions in every dialect, which is the point
+// of the normalisation: `PromptTokens` is the **total input** (cached and uncached
+// alike), `CachedTokens` is the part a prompt cache served, and the difference is
+// what had to be computed. The dialects disagree about how the provider spells
+// this — the OpenAI shapes nest a subset inside the prompt count, the Anthropic
+// Messages shape reports the cached read *beside* it and expects the reader to add
+// — and reconciling that here is what keeps `HitRate` and `MissTokens` from having
+// to know which endpoint answered.
 type TokenUsage struct {
 	PromptTokens     int
 	CachedTokens     int
 	CompletionTokens int
 }
 
-// MissTokens is the part of the prompt that was not served from cache.
+// MissTokens is the part of the prompt that was not served from cache — including
+// whatever was newly written to it, which is computed rather than read back.
 func (u TokenUsage) MissTokens() int {
 	if u.PromptTokens > u.CachedTokens {
 		return u.PromptTokens - u.CachedTokens
