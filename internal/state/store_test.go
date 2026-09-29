@@ -2,6 +2,8 @@ package state
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -214,5 +216,192 @@ func TestDeleteReportsAMissingFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "20260101-120000") {
 		t.Errorf("the error does not name the file: %v", err)
+	}
+}
+
+// TestLoadSummaryMatchesLoad is the contract the session list is built on: the
+// cheap scan has to agree with a full Load on every number the list prints, or
+// the picker lies about the session it is offering.
+func TestLoadSummaryMatchesLoad(t *testing.T) {
+	store, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session := NewEmptySession("20260101-120000")
+	session.CreatedAt = 1700000000
+	session.Metadata["todos"] = []any{
+		map[string]any{"content": "first", "status": "completed"},
+		map[string]any{"content": "second", "status": "pending"},
+	}
+	session.Append(map[string]any{"role": "user", "content": "  hello   world  "})
+	if err := store.Save(session); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	// A second round: more messages, changed metadata (a fresh `meta` record, and
+	// readers take the last one), and a `ctx` record — the kind of line the
+	// summary scan exists to skip.
+	session.Append(map[string]any{"role": "assistant", "content": "hi"})
+	session.Append(map[string]any{"role": "user", "content": "second question"})
+	session.Metadata["todos"] = []any{
+		map[string]any{"content": "first", "status": "completed"},
+		map[string]any{"content": "second", "status": "completed"},
+	}
+	session.Context = map[string]any{"artifacts": []any{"art_1"}}
+	if err := store.Save(session); err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+
+	loaded, err := store.Load("20260101-120000")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	summary, err := store.LoadSummary("20260101-120000", 40)
+	if err != nil {
+		t.Fatalf("LoadSummary: %v", err)
+	}
+
+	if summary.CreatedAt != loaded.CreatedAt {
+		t.Errorf("CreatedAt = %v, want %v", summary.CreatedAt, loaded.CreatedAt)
+	}
+	if summary.Messages != len(loaded.Messages) {
+		t.Errorf("Messages = %d, want %d", summary.Messages, len(loaded.Messages))
+	}
+	if summary.Steps != loaded.StepCount() {
+		t.Errorf("Steps = %d, want %d", summary.Steps, loaded.StepCount())
+	}
+	if summary.Preview != "hello world" {
+		t.Errorf("Preview = %q, want %q (folded, first user message)", summary.Preview, "hello world")
+	}
+	// The metadata a todo line is drawn from has to be the **last** record's, not
+	// the first: the list showing stale task state is exactly what a resumed
+	// session then contradicts.
+	todos, _ := summary.Metadata["todos"].([]any)
+	if len(todos) != 2 {
+		t.Fatalf("summary metadata has %v, want the last meta record", summary.Metadata)
+	}
+	last, _ := todos[1].(map[string]any)
+	if last["status"] != "completed" {
+		t.Errorf("summary metadata is the first meta record, want the last: %v", todos)
+	}
+	if _, modified := store.FileTimes("20260101-120000"); modified == nil || *modified != summary.ModifiedAt {
+		t.Errorf("ModifiedAt = %v, want the file mtime %v", summary.ModifiedAt, modified)
+	}
+}
+
+// TestLoadSummaryTruncatesThePreview pins the cap: the preview exists to be one
+// line in a picker, and a session that opens with a pasted log must not put the
+// log in the list. The ellipsis is the same one the old list code added.
+func TestLoadSummaryTruncatesThePreview(t *testing.T) {
+	store, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := NewEmptySession("20260101-120000")
+	session.Append(map[string]any{"role": "user", "content": strings.Repeat("x", 100)})
+	if err := store.Save(session); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	summary, err := store.LoadSummary("20260101-120000", 40)
+	if err != nil {
+		t.Fatalf("LoadSummary: %v", err)
+	}
+	want := strings.Repeat("x", 40) + "…"
+	if summary.Preview != want {
+		t.Errorf("Preview = %q, want %q", summary.Preview, want)
+	}
+}
+
+// TestLoadSummarySkipsTheFirstTextlessUserMessage: the preview is the first user
+// message **with text**, which is what the list showed before. A user record
+// whose body has no describable text (an empty parts array) must not become an
+// empty preview while a later message had one.
+func TestLoadSummarySkipsTheFirstTextlessUserMessage(t *testing.T) {
+	store, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := NewEmptySession("20260101-120000")
+	session.Append(map[string]any{"role": "user", "content": []any{}})
+	session.Append(map[string]any{"role": "user", "content": "the real question"})
+	if err := store.Save(session); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	summary, err := store.LoadSummary("20260101-120000", 40)
+	if err != nil {
+		t.Fatalf("LoadSummary: %v", err)
+	}
+	if summary.Preview != "the real question" {
+		t.Errorf("Preview = %q, want %q", summary.Preview, "the real question")
+	}
+}
+
+// TestLoadSummaryRefusesANewerFile matches Load: a file written by a version
+// that knows records this one does not is refused, not guessed at. The check has
+// to fire on the `head` record in particular, because that is the line the
+// summary scan reads before anything else.
+func TestLoadSummaryRefusesANewerFile(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSessionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "20260101-120000"+Suffix)
+	body := fmt.Sprintf(`{"v":%d,"type":"head","session_id":"20260101-120000","created_at":1}`, StateVersion+1) + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadSummary("20260101-120000", 40); err == nil {
+		t.Fatal("LoadSummary accepted a file from a newer version")
+	}
+	if _, err := store.Load("20260101-120000"); err == nil {
+		t.Fatal("Load accepted a file from a newer version")
+	}
+}
+
+// TestLoadSummarySurvivesHalfLines: a process killed mid-write leaves a line
+// that is not JSON. Load skips it and so must the summary — one broken tail must
+// not make the session unreadable in the picker.
+func TestLoadSummarySurvivesHalfLines(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewSessionStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := NewEmptySession("20260101-120000")
+	session.CreatedAt = 1700000000
+	session.Append(map[string]any{"role": "user", "content": "before the crash"})
+	if err := store.Save(session); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	path := filepath.Join(dir, "20260101-120000"+Suffix)
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"v":1,"type":"msg","message":{"role":"assis`); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+
+	summary, err := store.LoadSummary("20260101-120000", 40)
+	if err != nil {
+		t.Fatalf("LoadSummary: %v", err)
+	}
+	if summary.Messages != 1 || summary.Preview != "before the crash" {
+		t.Errorf("summary = %+v, want the intact records only", summary)
+	}
+}
+
+// TestLoadSummaryReportsAMissingFile: the error has to be the same shape Load
+// produces, because the session list prints it verbatim in place of the preview
+// and a caller cannot tell the two apart.
+func TestLoadSummaryReportsAMissingFile(t *testing.T) {
+	store, err := NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadSummary("20260101-120000", 40); err == nil {
+		t.Fatal("LoadSummary succeeded on a file that does not exist")
 	}
 }

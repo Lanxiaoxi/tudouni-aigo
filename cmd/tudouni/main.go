@@ -553,11 +553,14 @@ func listSessions() int {
 	nameWidth, countWidth := 0, 0
 	for _, id := range ids {
 		row := sessionRow{id: id}
-		if session, err := booted.Store.Load(id); err == nil {
+		// The summary path, not a full Load: a session file is mostly `ctx`
+		// records, and everything this table prints is in the summary. Reading
+		// the transcripts made the command take seconds on a real workspace.
+		if summary, err := booted.Store.LoadSummary(id, 0); err == nil {
 			row.loaded = true
-			row.count = len(session.Messages)
-			row.steps = session.StepCount()
-			if line := builtin.NewTodoBoard(session.Metadata).ProgressLine(); line != "" {
+			row.count = summary.Messages
+			row.steps = summary.Steps
+			if line := builtin.NewTodoBoard(summary.Metadata).ProgressLine(); line != "" {
 				row.todos = i18n.T("sessions.list.todos", "line", line)
 			}
 		}

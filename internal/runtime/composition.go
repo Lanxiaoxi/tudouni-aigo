@@ -111,6 +111,12 @@ const subagentMaxDepth = subagent.DefaultMaxDepth
 // timestamp, and sorting by id would put it in the wrong place — while the
 // question the list answers is "which one was I working on", and that is almost
 // always the most recent.
+//
+// Each file is read **once**, through `LoadSummary`, which skips the `ctx`
+// records that make up the bulk of a session file. The list used to load every
+// session twice — once to sort, once to describe — and each load parsed the whole
+// transcript; on a workspace with a few dozen sessions that was seconds of work
+// for forty characters of preview per row.
 func SessionSummaries(store *state.SessionStore, limit int) []map[string]any {
 	// Delegated agents share this store, and their sessions are not sessions
 	// anybody resumes: one belongs to a task that is already over, and picking it
@@ -118,19 +124,19 @@ func SessionSummaries(store *state.SessionStore, limit int) []map[string]any {
 	// name, so drawing the picker never has to open one.
 	ids := store.ListParentIDs()
 	type entry struct {
+		summary  *state.SessionSummary
+		err      error
 		created  float64
-		modified *float64
 		id       string
 	}
 	entries := make([]entry, 0, len(ids))
 	for _, id := range ids {
-		session, err := store.Load(id)
+		summary, err := store.LoadSummary(id, PreviewChars)
 		created := 0.0
 		if err == nil {
-			created = session.CreatedAt
+			created = summary.CreatedAt
 		}
-		_, modified := store.FileTimes(id)
-		entries = append(entries, entry{created: created, modified: modified, id: id})
+		entries = append(entries, entry{summary: summary, err: err, created: created, id: id})
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].created > entries[j].created })
 
@@ -146,51 +152,32 @@ func SessionSummaries(store *state.SessionStore, limit int) []map[string]any {
 			"steps":      0,
 			"todos":      "",
 			"preview":    "",
+			"modified_at": nil,
 		}
-		if item.modified != nil {
-			row["modified_at"] = *item.modified
-		} else {
-			row["modified_at"] = nil
-		}
-
-		session, err := store.Load(item.id)
-		if err != nil {
+		if item.err != nil {
 			// A file that cannot be read stays in the list with the reason in place
 			// of the preview. Dropping it would hide a real problem, and the user
-			// asking "why is one session gone" has no way to find out.
-			row["preview"] = i18n.T("session.preview.unreadable", "kind", err.Error())
+			// asking "why is one session gone" has no way to find out. The mtime is
+			// still reported when the file exists: a newer-version file is readable
+			// enough to be stated, and the old list showed its modified time.
+			if _, modified := store.FileTimes(item.id); modified != nil {
+				row["modified_at"] = *modified
+			}
+			row["preview"] = i18n.T("session.preview.unreadable", "kind", item.err.Error())
 			out = append(out, row)
 			continue
 		}
-		row["messages"] = len(session.Messages)
-		row["steps"] = session.StepCount()
-		if line := todoProgressLine(session.Metadata); line != "" {
+		summary := item.summary
+		row["modified_at"] = summary.ModifiedAt
+		row["messages"] = summary.Messages
+		row["steps"] = summary.Steps
+		if line := todoProgressLine(summary.Metadata); line != "" {
 			row["todos"] = line
 		}
-		row["preview"] = firstUserPreview(session)
+		row["preview"] = summary.Preview
 		out = append(out, row)
 	}
 	return out
-}
-
-func firstUserPreview(session *state.Session) string {
-	for _, message := range session.Messages {
-		role, _ := message["role"].(string)
-		if role != "user" {
-			continue
-		}
-		text, ok := state.MessageText(message)
-		if !ok {
-			continue
-		}
-		text = strings.Join(strings.Fields(text), " ")
-		runes := []rune(text)
-		if len(runes) > PreviewChars {
-			return string(runes[:PreviewChars]) + "…"
-		}
-		return text
-	}
-	return ""
 }
 
 func todoProgressLine(metadata map[string]any) string {

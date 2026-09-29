@@ -16,6 +16,7 @@ package state
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -477,6 +478,171 @@ func (s *SessionStore) Load(id string) (*Session, error) {
 	}
 	s.mu.Unlock()
 	return session, nil
+}
+
+// SessionSummary is the subset of a session file the picker and the welcome
+// screen need: enough to name, order, and describe a session without holding it
+// in memory.
+//
+// It exists because a session file is mostly `ctx` records — in one measured
+// session, 47 MB of the 52 MB file — and `Load` parses every one of them. The
+// session list asked only for numbers and a 40-character preview, and paid the
+// cost of the whole transcript, twice (once to sort, once to describe).
+type SessionSummary struct {
+	CreatedAt float64
+	// ModifiedAt is the file's mtime, or 0 when the file cannot be stated. It is
+	// the same value `FileTimes` reports; the field saves the list a second stat
+	// per session, not a second opinion about what "modified" means.
+	ModifiedAt float64
+	// Messages counts every stored message, exactly like `len(session.Messages)`
+	// after a `Load`: records whose message field is malformed still occupy a
+	// line and still count.
+	Messages int
+	// Steps counts assistant messages, like `Session.StepCount`.
+	Steps int
+	Metadata map[string]any
+	// Preview is the first user message's text, already whitespace-folded and
+	// truncated — the shape the picker draws. An empty string means the session
+	// has no describable user message.
+	Preview string
+}
+
+// SummaryPreviewChars bounds the preview `LoadSummary` extracts. The list's own
+// cap is 40 characters; the slack means the caller can re-trim without reading
+// the file again, while a message that is mostly one long paste still cannot
+// drag megabytes into the summary.
+const SummaryPreviewChars = 256
+
+// ctxRecordPrefix is the leading bytes of an encoded `ctx` record.
+//
+// `encodeRecord` writes a `map[string]any` through `encoding/json`, which sorts
+// map keys, so a context record — `{"context":…,"type":"ctx","v":1}` — always
+// starts with these bytes. A `ctx` record is the bulk of a real session file (one
+// measured session kept 47 MB of its 52 MB in them) and a summary never reads
+// one, so recognising it here keeps those bytes out of the JSON decoder entirely.
+//
+// It is a fast path, not a correctness requirement: a line that does not match
+// falls through to the typed decode below, which handles every record shape. The
+// version check a skipped line misses is still performed on the `head` record —
+// always the first line of a file, and never a `ctx` record.
+var ctxRecordPrefix = []byte(`{"context":`)
+
+// summaryRecord is the wire shape of one session record as `LoadSummary` sees
+// it. Fields it does not declare — above all `context`, which is the bulk of a
+// real file — are scanned and dropped by `encoding/json` without being decoded,
+// which is the whole reason this type exists.
+type summaryRecord struct {
+	V         float64        `json:"v"`
+	Type      string         `json:"type"`
+	CreatedAt float64        `json:"created_at"`
+	Metadata  map[string]any `json:"metadata"`
+	Message   map[string]any `json:"message"`
+}
+
+// LoadSummary reads just enough of a session file to fill a SessionSummary.
+//
+// The scan differs from `Load` in two deliberate ways. It keeps the **first**
+// user message with text rather than every message: that is the preview, and the
+// first real message of a conversation is never a later `ctx` or tool record. And
+// it never materialises a `ctx` record — the context is references to artifacts
+// on disk, can be the bulk of the file, and nothing in a summary looks at it.
+//
+// Errors match `Load`: a missing file is a `store.missing_file` key, a line that
+// does not parse is skipped, and a file written by a newer version is refused
+// rather than guessed at.
+func (s *SessionStore) LoadSummary(id string, previewChars int) (*SessionSummary, error) {
+	path, err := s.Path(id)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%s", missingKey("store.missing_file", "path", path))
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	if previewChars <= 0 {
+		previewChars = SummaryPreviewChars
+	}
+	summary := &SessionSummary{Metadata: map[string]any{}}
+	scanner := bufio.NewScanner(file)
+	// The buffer cap is derived from the file's own size, so no line can ever
+	// exceed it and a huge `ctx` record is skipped rather than failing the read.
+	// Parsing is still cheap: the record is never unmarshalled.
+	maxLine := 16 << 20
+	if info, err := file.Stat(); err == nil {
+		summary.ModifiedAt = float64(info.ModTime().Unix())
+		if size := int(info.Size()) + 1; size > maxLine {
+			maxLine = size
+		}
+	}
+	if maxLine > 256<<20 {
+		maxLine = 256 << 20
+	}
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
+	for scanner.Scan() {
+		data := scanner.Bytes()
+		if len(data) == 0 {
+			continue
+		}
+		// Fast path for `ctx` records: skip the line before the decoder sees it.
+		// See ctxRecordPrefix for why this is safe to miss.
+		if bytes.HasPrefix(data, ctxRecordPrefix) {
+			continue
+		}
+		// One typed decode per line. The struct has no `context` field, so a
+		// record carrying one is scanned without a single allocation for its
+		// value, where a `map[string]any` decode would copy all of it. `Bytes`
+		// rather than `Text` for the same reason one level up: no second copy.
+		var record summaryRecord
+		if err := json.Unmarshal(data, &record); err != nil {
+			// A line that does not parse is a half line from a killed write, and
+			// skipping it is exactly what Load does.
+			continue
+		}
+		if int(record.V) > StateVersion {
+			return nil, fmt.Errorf("%s", missingKey("store.newer_version",
+				"name", id, "version", int(record.V), "known", StateVersion))
+		}
+		switch record.Type {
+		case RecordHead:
+			summary.CreatedAt = record.CreatedAt
+		case RecordMeta:
+			// The last one wins, exactly like Load: metadata is rewritten as a
+			// fresh record whenever it changes, and readers take the newest.
+			if record.Metadata != nil {
+				summary.Metadata = record.Metadata
+			}
+		case RecordMsg:
+			if record.Message == nil {
+				// A record whose message field is not an object is a line Load
+				// would not append either; the counts have to agree with it.
+				continue
+			}
+			summary.Messages++
+			role, _ := record.Message["role"].(string)
+			if role == "assistant" {
+				summary.Steps++
+			}
+			if role == "user" && summary.Preview == "" {
+				if text, ok := MessageText(record.Message); ok {
+					text = strings.Join(strings.Fields(text), " ")
+					runes := []rune(text)
+					if len(runes) > previewChars {
+						text = string(runes[:previewChars]) + "…"
+					}
+					summary.Preview = text
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return summary, nil
 }
 
 // Read walks a session file record by record without replaying it.
