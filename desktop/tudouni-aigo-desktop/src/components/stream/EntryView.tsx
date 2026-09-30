@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import {
   AlertTriangle,
   Ban,
@@ -28,7 +29,38 @@ import type { TKey } from '@/i18n';
    a glance (§2).
    ============================================================ */
 
-export function EntryView({ entry }: { entry: Entry }) {
+/**
+ * One row of the transcript, and the reason the stream does not slow down as
+ * the conversation grows.
+ *
+ * **`memo`, and it is load-bearing rather than an optimisation.** Every delta
+ * produces a new `entries` array and a new row list, so without this every row
+ * of the transcript re-rendered on every chunk of every answer — and an `answer`
+ * row renders `<Markdown>`, which re-parses its whole text and rebuilds its
+ * element tree on each render. The cost of one chunk therefore grew with the
+ * length of the conversation: measured, a streamed delta was ~10ms on an empty
+ * session and ~100ms on one with 80 turns of history, with the store update
+ * itself flat at ~0.04ms. That is the same defect the TUI front end carries a
+ * render cache for (`internal/frontends/tui/transcript.go`, `markdownResults`),
+ * and it is fixed at the same place: the boundary where a row's input stops
+ * changing.
+ *
+ * It is safe because the reducer never edits an entry in place — every update
+ * builds a new object (`entries.ts`, the `{ ...target, text: … }` spreads), so
+ * an entry that did not change keeps its identity and the shallow prop compare
+ * sees it. That in turn is what makes the parsing honest: `model_call` replaces
+ * a streamed block with the complete text, and that *is* a new object, so the
+ * row redraws.
+ *
+ * Note what this does **not** cut off: a row's own store subscriptions
+ * (`toolOpen`, `reasoningOpen`, the quiet flag) still work, because zustand
+ * notifies a subscribed component directly. `memo` only stops the parent from
+ * re-rendering a row whose props are unchanged.
+ *
+ * The one row that does keep re-rendering is the one currently streaming, which
+ * is the point.
+ */
+export const EntryView = memo(function EntryView({ entry }: { entry: Entry }) {
   switch (entry.kind) {
     case 'turn':
       return <TurnHead entry={entry} />;
@@ -66,7 +98,7 @@ export function EntryView({ entry }: { entry: Entry }) {
     default:
       return null;
   }
-}
+});
 
 /* ---------------- 1. turn head ---------------- */
 

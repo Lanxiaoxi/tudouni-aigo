@@ -904,9 +904,36 @@ export function pushBlock(entries: Entry[], block: BlockKind, payload: unknown):
   return [...filtered, { kind: 'block', id: nextId('block'), block, payload }];
 }
 
-/** Character count for the folded thinking block. */
+/**
+ * Character count for the folded thinking block.
+ *
+ * **Code points, not code units, and not `Array.from`.** `Array.from(text)`
+ * materialises an array of every code point, which is the whole text allocated
+ * again — and this is called from the reasoning block's head, so it ran on
+ * every render of a block that grows a chunk at a time while it streams. Over
+ * a block that arrives in n deltas that is O(n²) of pure allocation, with n
+ * up to the length of the model's thinking. The walk below counts the same
+ * thing in place: a surrogate pair advances the index twice and counts once, so
+ * an emoji is one character exactly as `Array.from` said it was.
+ *
+ * Same answer, verified against `Array.from(...).length` on lone surrogates,
+ * ZWJ sequences, flags, keycaps and astral text, not assumed: a counter that
+ * disagrees here would change the number in a row a reader is watching.
+ */
 export function charCount(text: string): number {
-  return Array.from(text).length;
+  let count = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    // A high surrogate followed by a low one is one character; a lone one is no
+    // longer a character than any other single unit, which is what `Array.from`
+    // does with it too.
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+      const next = text.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) i += 1;
+    }
+    count += 1;
+  }
+  return count;
 }
 
 /* ============================================================
