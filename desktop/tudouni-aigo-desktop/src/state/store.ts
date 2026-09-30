@@ -1130,9 +1130,31 @@ export const useApp = create<AppStore>((set, get) => {
         maxSteps: options.maxSteps ?? null,
       };
 
+      // **The default is passed on, not only recorded.** Computing it above and
+      // then handing the caller's `options` straight through made the two
+      // disagree in exactly the case the default exists for — opening a saved
+      // session from the list, which names no workspace. The bridge then fell
+      // back to the *process's* working directory, which for a packaged
+      // application is its own install directory, and started the child there.
+      // Nothing failed loudly: the session file is not in that directory, and
+      // `ResolveSession` reads an id with no file as *a new session with that
+      // name* (`internal/runtime/composition.go`). So the screen moved to a
+      // different, empty conversation, in a workspace nobody asked for, while
+      // the row that was clicked stayed where it was. Written down but never
+      // spawned in, the default was decoration.
+      //
+      // An empty string is left out rather than sent, because the two mean
+      // different things to the bridge: absent is "the directory the app was
+      // started in" — the only honest answer when there is no session yet to
+      // take one from — while `Some("")` is refused as "not a directory".
+      const attach: Partial<BridgeOptions> = {
+        ...options,
+        ...(workspace === '' ? {} : { workspace }),
+      };
+
       let key: string | null;
       try {
-        key = await attachRuntime(options);
+        key = await attachRuntime(attach);
       } catch (err) {
         // A refusal here belongs to the session that was being opened rather
         // than to the window: with one open already, taking over the screen

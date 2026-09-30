@@ -1784,3 +1784,103 @@ test('a session row and a workspace row are never confused for one another', () 
     });
 });
 
+/* ============================================================
+   Which directory a new child is started in
+   ============================================================ */
+
+/**
+ * Every `runtime_attach` the store makes, while a fake Tauri host is installed.
+ *
+ * The workspace is a **start-up argument** and not a message: it is the child's
+ * working directory, and the runtime takes it as the workspace
+ * (`paths.WorkspaceDir()`). So "which conversation did we open" and "which
+ * directory did we open it in" are one call, and this is the only way to see the
+ * second half from here — the store's own `workspace` field records what it
+ * *believed*, which is precisely what can be wrong.
+ *
+ * `isHosted()` is what makes `attachRuntime` a real call rather than a null
+ * return, so the host has to exist for the length of the test and is removed
+ * afterwards: the rest of this file relies on there being no bridge at all.
+ */
+async function attachCalls<T>(body: () => Promise<T>): Promise<{ options: Record<string, unknown> }[]> {
+  const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+  const previous = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    __TAURI_INTERNALS__: {
+      invoke(cmd: string, args: Record<string, unknown>) {
+        calls.push({ cmd, args });
+        if (cmd === 'runtime_attach') return 100 + calls.length;
+        if (cmd === 'runtime_stderr') return [];
+        return null;
+      },
+    },
+  };
+  try {
+    await body();
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+  }
+  return calls
+    .filter((call) => call.cmd === 'runtime_attach')
+    .map((call) => call.args.options as Record<string, unknown>);
+}
+
+test('a child is started in the workspace of the session that asked for it', () => {
+  resetStore();
+  applyInit();
+
+  // The row a person clicks in the rail. It names a session and no directory —
+  // the directory is the one the child that owns that list is already in, and
+  // only the store knows it.
+  //
+  // Leaving it out of the `runtime_attach` call is not a harmless omission: the
+  // bridge then falls back to the *process's* working directory, which for a
+  // packaged application is where it is installed. The session file is not
+  // there, and the runtime reads an id with no file as **a new session with that
+  // name** (`internal/runtime/composition.go`, `ResolveSession`), so the child
+  // starts a different, empty conversation and reports `init.workspace` from
+  // there — the screen moves to an unrelated workspace while the row that was
+  // clicked stays put. This is that bug, pinned.
+  return attachCalls(async () => {
+    await useApp.getState().openSession('s-2');
+  }).then((calls) => {
+    assert.equal(calls.length, 1, 'one click opens one child');
+    assert.equal(calls[0]?.sessionId, 's-2');
+    assert.equal(
+      calls[0]?.workspace,
+      'C:/work/proj',
+      'the directory must travel with the session, not be left to the process',
+    );
+  });
+});
+
+test('starting a conversation from the first screen stays where the window is', () => {
+  resetStore();
+  applyInit();
+
+  // `/new` names no session and no directory, and it means "here": the same
+  // default, for the same reason.
+  return attachCalls(async () => {
+    await useApp.getState().openSession(null);
+  }).then((calls) => {
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.workspace, 'C:/work/proj');
+    // And no session id at all: a null id *is* the new-session request.
+    assert.equal(calls[0]?.sessionId, null);
+  });
+});
+
+test('with nothing open there is no workspace to name, and the flag is left out', () => {
+  // No session, so there is no directory the runtime reported — and inventing
+  // one would be worse than the app's own directory. Absent is the bridge's
+  // documented "the directory the app was started in"; `Some("")` is refused
+  // there as "not a directory", so the two must not be conflated.
+  useApp.setState({ sessions: {}, order: [], activeKey: null });
+
+  return attachCalls(async () => {
+    await useApp.getState().attachSession({});
+  }).then((calls) => {
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.workspace, null);
+  });
+});
