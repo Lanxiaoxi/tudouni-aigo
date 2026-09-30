@@ -138,13 +138,21 @@ export function App() {
             <main className="app-stream">
               {/* A start-up failure outranks everything: without a runtime there
                   is no session to show, and the reason plus the two ways out are
-                  the only useful thing on screen. */}
+                  the only useful thing on screen.
+
+                  **A missing session outranks "not ready", and the order here
+                  is load-bearing.** With nothing open there is no child to boot,
+                  so `ready` can never become true and `<Booting />` would be a
+                  sentence about a process that does not exist — "Starting the
+                  runtime…" over a runtime that nobody started. That is exactly
+                  what a launch with no workspace to go back to would show, which
+                  is now a normal state rather than an impossible one. */}
               {startupProblem !== null ? (
                 <StartupProblem />
-              ) : !ready ? (
-                <Booting />
               ) : showWelcome ? (
                 <Welcome notices={handshakeNotices} />
+              ) : !ready ? (
+                <Booting />
               ) : (
                 <StreamView />
               )}

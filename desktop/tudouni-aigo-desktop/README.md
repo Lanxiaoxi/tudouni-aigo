@@ -105,9 +105,36 @@ directories the runtime refuses (home, a volume root, an ancestor of home) are
 rejected here too, with a message — otherwise the refusal arrives as an exit code
 2 after writing to a stderr nobody is reading.
 
-The app must be started from a directory that is a valid workspace — **not** your
-home directory, a volume root, or an ancestor of home. Those are refused before
-the child starts.
+**Where the first session opens is never decided by where the app was started.**
+That used to be the fallback: a launch with no workspace passed the bridge
+nothing, and the bridge read "nothing" as `std::env::current_dir()` — which for a
+packaged application is its own install folder. The session file is not there,
+and the runtime reads a session id with no file as *a new session with that
+name*, so the window came up in a directory nobody chose and nothing failed
+loudly. So the rule is now explicit, and there is no fourth case:
+
+1. **Something was remembered and still works** → the first session opens there.
+2. **Something was remembered and no longer works** — deleted, unmounted, or a
+   directory the runtime refuses (home, a volume root, an ancestor of home) →
+   **no child is started**, and the reason is printed on the first screen, which
+   stays usable because the workspace list beside it never depended on it.
+3. **Nothing was remembered** (a first launch) → nothing is started, and the
+   first screen asks. There is no honest directory to guess.
+
+The remembered value is `lastWorkspace` in `localStorage`, written from
+`init.workspace` — the runtime's own answer about where a session is — and never
+from a path the front end assembled. It follows the session you are *looking at*,
+so a background conversation's `init` cannot move it. It is deliberately not
+cleared when its directory disappears (a drive can be plugged back in); picking a
+workspace overwrites it, and the check at start-up reports it.
+
+The same rule protects every later attach: with no caller-named workspace, no
+active session, and nothing remembered, `attachSession` **refuses** rather than
+letting the bridge fall back. See `resolveAttachWorkspace` in `state/store.ts`.
+
+Directories the runtime refuses (home, a volume root, an ancestor of home) are
+rejected before the child starts, so the refusal is a sentence rather than an exit
+code 2 written to a stderr nobody is reading.
 
 ---
 
@@ -313,6 +340,7 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 15 | Each MCP server in the rail carries its own load/unload button, so mounting one is no longer `/mcp`-only. The rail's row shows **less** than the panel's row on purpose — see below | `McpRow` in `components/sidebar/Sidebar.tsx`, `mcpPending` in `state/store.ts`, `.mcp-act` in `styles/stream.css` |
 | 16 | `Ctrl+V` pastes a picture: the bytes are written into the workspace and the path goes into the sentence. Ten pictures per message, five megabytes each — the runtime's own ceilings, mirrored | `hooks/useClipboardPaste.ts`, `runtime/paste.ts`, `components/chrome/ImageTray.tsx`, `image_stash` in `lib.rs` |
 | 17 | Settings holds **start-up arguments only** (`--ericai`, `--max-steps`), at the foot of the left rail; applying one restarts the child, after an inline confirmation. No theme switch, and no eighteenth command | `panels/SettingsPanel.tsx`, `applyLaunch` in `state/store.ts`, `ericai` in `lib.rs` / `runtime/tauri.ts`, `.lb-foot` in `styles/stream.css` |
+| 18 | **A launch opens the workspace last worked in.** Remembered from `init.workspace` (the runtime's own answer), never from a path the front end assembled, and it follows the session on screen rather than the last one opened. With nothing remembered — or nothing that still works — **no child is started** and the first screen says why, instead of falling back to the app's own directory | `lastWorkspace` / `rememberWorkspace` / `resolveAttachWorkspace` in `state/store.ts`, `openFirstSession` in `runtime/useRuntime.ts` (`workspace_check`), `StartupNotice` in `components/Welcome.tsx` |
 
 ### 6 · Why the rail is not capped, and why `step n / N` is not a fraction
 

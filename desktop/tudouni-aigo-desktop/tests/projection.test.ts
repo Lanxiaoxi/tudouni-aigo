@@ -1870,17 +1870,40 @@ test('starting a conversation from the first screen stays where the window is', 
   });
 });
 
-test('with nothing open there is no workspace to name, and the flag is left out', () => {
-  // No session, so there is no directory the runtime reported — and inventing
-  // one would be worse than the app's own directory. Absent is the bridge's
-  // documented "the directory the app was started in"; `Some("")` is refused
-  // there as "not a directory", so the two must not be conflated.
-  useApp.setState({ sessions: {}, order: [], activeKey: null });
+test('with nothing open and nothing remembered, no child is started at all', () => {
+  // **This used to assert the opposite, and the assertion was the bug written
+  // down.** It required exactly one `runtime_attach` with `workspace: null`,
+  // reasoning that an absent workspace is the bridge's documented "the directory
+  // the app was started in" — which for a packaged application is its own install
+  // folder. So the omission was not a neutral act; it *selected* a directory
+  // nobody named. The runtime then read the session id as a new name (no file in
+  // that directory) and reported `init.workspace` from there, so the screen moved
+  // somewhere unrelated and nothing failed.
+  //
+  // The contract now is that a missing workspace is a **refusal**, not a
+  // fallback: there is no honest directory to guess, so no child is started and
+  // the first screen asks. See `resolveAttachWorkspace`.
+  useApp.setState({ sessions: {}, order: [], activeKey: null, lastWorkspace: null });
+
+  return attachCalls(async () => {
+    await useApp.getState().attachSession({});
+  }).then((calls) => {
+    assert.equal(calls.length, 0, 'no workspace means no child');
+    // And the person is told, because `/new` and the rail's button both land here.
+    assert.deepEqual(useApp.getState().startupNotice, { code: 'no-workspace' });
+  });
+});
+
+test('a remembered workspace is what a first attach goes to', () => {
+  // The other half of the same contract: with nothing open but something
+  // remembered, the child is started **there** — named explicitly, rather than
+  // left to the bridge's fallback.
+  useApp.setState({ sessions: {}, order: [], activeKey: null, lastWorkspace: 'C:/remembered' });
 
   return attachCalls(async () => {
     await useApp.getState().attachSession({});
   }).then((calls) => {
     assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.workspace, null);
+    assert.equal(calls[0]?.workspace, 'C:/remembered');
   });
 });

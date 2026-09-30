@@ -2,6 +2,7 @@ import { useLayoutEffect } from 'react';
 import { useApp } from '@/state/store';
 import {
   attachRuntimeListener,
+  checkWorkspace,
   initBridge,
   isHosted,
   readRuntimeVersion,
@@ -88,12 +89,65 @@ export function useRuntimeBridge(): void {
       if (cancelled) return;
       useApp.getState().setRuntimeInfo({ version, userName });
 
-      // The first session. Every later one is opened from the interface.
-      await useApp.getState().attachSession({});
+      // The first session, in the workspace last worked in. Every later session
+      // is opened from the interface.
+      await openFirstSession(() => cancelled);
     })();
 
     return () => {
       cancelled = true;
     };
   }, []);
+}
+
+/**
+ * Start this launch's first session, in the workspace last worked in.
+ *
+ * **The workspace is always named explicitly here, and that is the point of the
+ * function.** Leaving it out does not mean "no opinion" — it means the bridge
+ * falls back to the *process's* working directory, which for a packaged
+ * application is its own install folder. That is what used to happen, and the
+ * symptom was the one thing this cannot be allowed to do: a launch coming up in
+ * a directory nobody chose, with no session file in it and nothing said about
+ * why. So the three outcomes are each spelled out rather than left to a fallback:
+ *
+ *   1. **Something was remembered and still works** → a child is started there.
+ *   2. **Something was remembered and no longer works** → the directory was
+ *      deleted, unmounted, or is one the runtime refuses (home, a volume root, an
+ *      ancestor of home). **Nothing is started**, and the reason goes on the
+ *      first screen — which is still fully usable, because the workspace list
+ *      beside it never depended on this. Reporting is the improvement: the old
+ *      path opened the wrong workspace silently.
+ *   3. **Nothing was remembered** (a first launch) → nothing is started. There
+ *      is no honest directory to guess, so the first screen asks.
+ *
+ * The check is `workspace_check` — the same rule `spawn` applies, shared rather
+ * than reimplemented — so a directory is never accepted here and refused by the
+ * runtime a moment later. It costs one round trip, once per launch.
+ */
+async function openFirstSession(isCancelled: () => boolean): Promise<void> {
+  const store = useApp.getState();
+  const remembered = store.lastWorkspace;
+
+  // Nothing to go back to. The first screen is the answer, and it is where
+  // somebody picks the place they will be working in.
+  if (remembered === null) return;
+
+  const refusal = await checkWorkspace(remembered);
+  if (isCancelled()) return;
+
+  if (refusal !== null) {
+    // Kept on the first screen rather than covering the window: the interface
+    // runs perfectly well, it just has no conversation open yet — and a
+    // full-screen error for something a click can fix would be a lie about the
+    // state of the application.
+    useApp.getState().setStartupNotice({
+      code: 'last-workspace-gone',
+      path: remembered,
+      reason: refusal,
+    });
+    return;
+  }
+
+  await useApp.getState().attachSession({ workspace: remembered });
 }

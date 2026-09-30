@@ -30,6 +30,21 @@ export const en = {
   'startup.retry': 'Try again',
   'startup.stderr': "What the runtime printed (stderr, last lines)",
 
+  /* ---------------- start-up notice ----------------
+   *
+   * Not a failure: the application runs, nothing is open yet, and this says why.
+   * `{path}` is the workspace last worked in; `{reason}` is the runtime's own
+   * sentence, passed through verbatim — it is the authority on why it refuses a
+   * directory, and paraphrasing it here would be a second copy of that rule. */
+  'notice.lastWorkspaceGone':
+    'Nothing was opened: the workspace last used is no longer available — {path}. {reason}',
+  'notice.pickWorkspace': 'Pick a workspace in the list to start, or add one.',
+  /** No session to inherit a workspace from and nothing remembered, so a child
+   *  was not started. A refusal rather than a failure: the app is fine, it just
+   *  has nowhere to work. */
+  'notice.noWorkspace':
+    'No workspace is open, so nothing was started. Choose one below, or add a directory.',
+
   /* ---------------- title bar ---------------- */
   'titlebar.minimize': 'Minimize',
   'titlebar.maximize': 'Maximize',

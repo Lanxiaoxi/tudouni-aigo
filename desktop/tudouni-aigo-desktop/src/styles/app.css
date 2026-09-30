@@ -806,6 +806,14 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   color: var(--fg-secondary);
 }
 
+/* Why nothing is open. It takes the `wi-start` slot rather than adding a line,
+   and it is drawn in the warning colour because it states that something the
+   person expects to be true is not: this is not the workspace they left. Colour
+   never carries that alone — the sentence says it outright. */
+.welcome-id .wi-notice {
+  color: var(--warning);
+}
+
 .welcome-block > .wb-head {
   display: flex;
   align-items: center;

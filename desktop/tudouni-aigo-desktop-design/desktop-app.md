@@ -68,6 +68,8 @@ Rust 层刻意**只做字节搬运**：它把一行 JSON 原样交给 WebView，
 
    **`--ericai` 只能在这里给**，不能事后用消息改：它决定这个会话纳管哪条路由（`Options.EricAI` 的注释写明是**开门时的决定**，中途 `/model` 切到那条路由也不会纳管），`--max-steps` 同理（装配时读进 agent）。所以桌面端把它们做成「确认后重启子进程」，而不是一个即时生效的设置 —— 见 `panels/SettingsPanel.tsx`。
 3. **工作目录 = 工作区**。运行时把 cwd 当作工作区（`paths.WorkspaceDir()`），文件工具的边界就是它。桌面端必须显式设 `current_dir`，不能沿用 App 自己的启动目录。
+
+   > **已落地（desktop 0.8.0）。** 这句话原先只是约束，没有对应的默认值：不传工作区时桥会落到 `std::env::current_dir()`，也就是 App 自己的安装目录——而会话文件不在那里，运行时把「有 id 没文件」读成**同名新会话**（`ResolveSession`），于是窗口静默换到另一个工作区，什么都不报。现在的规则是显式的三选一，没有第四个分支：**记着的那个还能用 → 就在那里开；记着的不能用了 → 一个子进程都不开，理由写在首屏（工作区列表照常可用）；什么都没记 → 不开，首屏来问。** 记的值来自 `init.workspace`（运行时自己的回答），且跟随**屏幕上那个**会话，后台会话的 `init` 不会把它挪走。实现在 `src/state/store.ts` 的 `resolveAttachWorkspace` / `rememberWorkspace`、`src/runtime/useRuntime.ts` 的 `openFirstSession`（复用 `workspace_check` 校验）。目录消失时**故意不清**这个值（盘可能插回来），选一次工作区就覆盖它。
 4. **stderr 必须被读走并丢弃**（不是 `null`、不是关闭）。给它一个管道持续 drain：关闭的描述符会让子进程在写诊断时以莫名其妙的方式失败；而把 stderr 接到 App 自己的 stderr 上，在 GUI 里根本看不见。真正要给人看的东西运行时会走 `notice` 消息。
 
 > 关于第 4 点的落地建议：drain 的同时**保留最近 N 行环形缓冲**，仅用于「运行时启动失败」的本地诊断面板。这不是协议的一部分，不要把它当业务数据。

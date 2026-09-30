@@ -25,6 +25,7 @@ await build({
     resolve(here, 'projection.test.ts'),
     resolve(here, 'contract.test.ts'),
     resolve(here, 'paste.test.ts'),
+    resolve(here, 'workspace.test.ts'),
   ],
   outdir: outDir,
   // `.mjs`, because package.json declares `"type": "module"` and the sources are

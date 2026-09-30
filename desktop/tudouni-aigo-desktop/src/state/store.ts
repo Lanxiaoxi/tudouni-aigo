@@ -174,6 +174,27 @@ export type ComposerNotice =
   | { code: 'paste-failed'; reason: string; tone: 'warn' };
 
 /**
+ * Why the window came up with nothing open.
+ *
+ * A code rather than a sentence, for the same reason `ComposerNotice` is: the
+ * words belong to `i18n`. It exists because "nothing opened" now has a cause
+ * that is a *decision* rather than a failure — the workspace last worked in is
+ * gone, or the runtime refused it — and the first screen is where a person is
+ * standing when they need to be told. It is drawn there instead of covering the
+ * window, because unlike `startupProblem` it is not a reason the application
+ * cannot run: the workspace list beside it works.
+ */
+export type StartupNotice =
+  /** The remembered workspace is gone, or the runtime refuses it. `path` is the
+   *  one remembered, so the sentence can name it. */
+  | { code: 'last-workspace-gone'; path: string; reason: string }
+  /** Something asked for a session and there was no workspace to put it in —
+   *  no active session, and nothing remembered. The refusal is deliberate (see
+   *  `attachSession`), so it has to be visible: a button that does nothing at
+   *  all is the failure mode this whole change exists to remove. */
+  | { code: 'no-workspace' };
+
+/**
  * What a child was actually started with.
  *
  * **A record of this front end's own act, not a claim about the runtime.** It says
@@ -491,6 +512,15 @@ export interface AppStore {
    * explanation is the honest thing rather than a note on one row.
    */
   startupProblem: string | null;
+  /**
+   * Why nothing was opened at start-up, when that is worth saying.
+   *
+   * Separate from `startupProblem` because the two are read differently. A
+   * `startupProblem` covers the window — there is no runtime, so there is
+   * nothing else to show. This one rides on the **first screen**, beside a
+   * workspace list that works: see `StartupNotice`.
+   */
+  startupNotice: StartupNotice | null;
 
   /* ---------------- modals / panels ---------------- */
   /** The request being answered right now — the head of `pendingModals`. */
@@ -558,6 +588,20 @@ export interface AppStore {
    * active session is in it) but they are never conflated.
    */
   workspaces: string[];
+  /**
+   * The workspace the **next** launch should open: the one last worked in.
+   *
+   * Also a front-end preference, and also kept apart from `workspaces` — this
+   * one is a *default*, and it may name a directory that was never bookmarked.
+   * It is written from `init.workspace` (the runtime's own answer about where a
+   * session is) rather than from a path this front end assembled, so what is
+   * remembered is somewhere a runtime has actually opened. `null` on a first
+   * launch, which is what makes the first screen the right thing to show.
+   *
+   * See `Prefs.lastWorkspace` for why it is never cleared when its directory
+   * disappears.
+   */
+  lastWorkspace: string | null;
 
   /* ---------------- remembered start-up arguments ---------------- */
   /**
@@ -578,8 +622,32 @@ export interface AppStore {
   /* ---------------- actions ---------------- */
 
   /**
-   * Start a new session's child, in the given workspace (or the active session's
-   * workspace, or the app's own directory).
+   * Record the workspace the next launch should open, and persist it.
+   *
+   * Called with the runtime's own `init.workspace` for the session in front —
+   * never with a path this front end assembled — so what is remembered is a
+   * directory a runtime has actually opened, not a request that may never have
+   * been carried out.
+   */
+  rememberWorkspace(path: string): void;
+  /**
+   * Say why the window came up empty, when that needs saying.
+   *
+   * Distinct from `startupProblem`: that one is a failure that covers the
+   * screen, because without a runtime there is nothing to show. This is a
+   * *note* that belongs on the first screen — nothing opened, and here is why —
+   * while the workspace list stays perfectly usable.
+   */
+  setStartupNotice(notice: StartupNotice | null): void;
+
+  /**
+   * Start a new session's child.
+   *
+   * The workspace is, in order: the caller's, the active session's (from
+   * `init.workspace` — the runtime's own answer), the remembered one. **There is
+   * no fourth fallback.** A session with no workspace is not started at all:
+   * handing the bridge nothing makes it use the *process's* working directory,
+   * which for a packaged application is its own install folder.
    *
    * **It adds a session; it does not replace one.** That is the change that makes
    * the first target scenario work: opening a second conversation while the
@@ -787,6 +855,27 @@ type Prefs = {
   sessionsCollapsed: boolean;
   workspaces: string[];
   /**
+   * The workspace the **next** start should open, i.e. the one last worked in.
+   *
+   * Kept apart from `workspaces`, which is the list of places a person can go.
+   * The two answer different questions and may hold different things: this one
+   * is a *default*, it is allowed to name a directory that was never
+   * bookmarked, and it is cleared when the directory stops being usable rather
+   * than lingering as a row that would refuse to open.
+   *
+   * It is written from `init.workspace` — the runtime's own answer about where
+   * it is — and never from a path this front end assembled. That is the whole
+   * point: a value remembered from a request that was never carried out would
+   * pin the next launch to a directory no runtime ever opened, which is the bug
+   * this is fixing rather than a new instance of it.
+   *
+   * `null` means "nothing remembered", which is what a first launch has. The
+   * first launch then shows the first screen instead of a workspace: there is
+   * no honest directory to guess, and the app's own working directory — its
+   * install folder — is the one guess that is always wrong.
+   */
+  lastWorkspace: string | null;
+  /**
    * Start-up arguments, as remembered *defaults for the next start*.
    *
    * These are preferences in the only sense that is honest here: they decide what
@@ -807,6 +896,10 @@ function loadPrefs(): Prefs {
     blockTouched: {},
     sessionsCollapsed: false,
     workspaces: [],
+    // A first launch has nowhere to go back to, and inventing a directory for
+    // it would be worse than opening nothing: the honest answer is the first
+    // screen, where a person picks a place.
+    lastWorkspace: null,
     // Off, and not because of a coin toss: this flag lets the runtime rewrite
     // `providers.ericai.api_key` in the person's own configuration file and keep a
     // refresh token under `~/.tudouni/`. That is not something to switch on for
@@ -833,6 +926,16 @@ function loadPrefs(): Prefs {
       workspaces: (parsed.workspaces ?? []).filter(
         (entry): entry is string => typeof entry === 'string' && entry.trim() !== '',
       ),
+      // Same filter, same reason, and one more: this value decides which child
+      // gets started at launch, so a non-string here is not a cosmetic problem.
+      // **Not checked against the filesystem**, though — that is `workspace_check`
+      // at start-up, which is where a directory that has since been deleted can
+      // be answered about. Reading a directory from here would make module load
+      // do I/O, and this whole function has to work in a plain browser.
+      lastWorkspace:
+        typeof parsed.lastWorkspace === 'string' && parsed.lastWorkspace.trim() !== ''
+          ? parsed.lastWorkspace
+          : null,
       // Same rule as `workspaces`, and for the same reason: this is localStorage,
       // it outlives every build, and a string where a boolean belongs would reach
       // a `?` branch that treats any truthy value as "on".
@@ -895,6 +998,7 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
         blockTouched: s.blockTouched,
         sessionsCollapsed: s.sessionsCollapsed,
         workspaces: s.workspaces,
+        lastWorkspace: s.lastWorkspace,
         ericaiDefault: s.ericaiDefault,
         maxStepsDefault: s.maxStepsDefault,
       }),
@@ -990,6 +1094,38 @@ function wakePolling(key: string): void {
 /** The active session's bucket, or null when nothing is open. */
 export function activeRuntime(s: AppStore): SessionRuntime | null {
   return s.activeKey === null ? null : (s.sessions[s.activeKey] ?? null);
+}
+
+/**
+ * Which workspace a child about to be started should be given.
+ *
+ * Three answers, in order of how directly a person said them:
+ *
+ *   1. **The caller's** — pressing a workspace row, or `/resume` naming one.
+ *   2. **The active session's**, from `init.workspace`. "New conversation"
+ *      almost always means "here", and the runtime's own answer about where a
+ *      session is open is the only thing entitled to say where here is.
+ *   3. **The remembered one** — the workspace last worked in.
+ *
+ * And then **nothing**: the empty string, which callers must treat as "do not
+ * start a child at all" rather than as a value to pass on. That last part is
+ * not a detail. An absent workspace reaches the bridge as `None`, whose
+ * documented meaning is "the directory the application was started in" — for a
+ * packaged app, its own install folder. That is how a launch with nothing
+ * recalled ended up opening a workspace nobody chose, and it is the one
+ * fallback that can never be right.
+ *
+ * Pure, and exported, so the precedence can be asserted without a bridge.
+ */
+export function resolveAttachWorkspace(
+  requested: string | undefined,
+  active: string | undefined,
+  remembered: string | null,
+): string {
+  for (const candidate of [requested, active, remembered ?? undefined]) {
+    if (typeof candidate === 'string' && candidate.trim() !== '') return candidate;
+  }
+  return '';
 }
 
 /* ------------------------------------------------------------
@@ -1093,6 +1229,7 @@ export const useApp = create<AppStore>((set, get) => {
     desktopVersion: __DESKTOP_VERSION__,
     userName: '',
     startupProblem: null,
+    startupNotice: null,
 
     modal: null,
     pendingModals: [],
@@ -1107,6 +1244,7 @@ export const useApp = create<AppStore>((set, get) => {
     toolOpen: {},
     sessionsCollapsed: prefs.sessionsCollapsed,
     workspaces: prefs.workspaces,
+    lastWorkspace: prefs.lastWorkspace,
 
     ericaiDefault: prefs.ericaiDefault,
     maxStepsDefault: prefs.maxStepsDefault,
@@ -1118,12 +1256,35 @@ export const useApp = create<AppStore>((set, get) => {
        ========================================================== */
     async attachSession(options = {}) {
       const s = get();
-      // The workspace defaults to the active session's, because "new
-      // conversation" almost always means "here". `samePath` style reading of
-      // `init.workspace` is deliberate: that is the runtime's own answer about
-      // where a session is, and it is the only thing entitled to say so.
-      const workspace =
-        options.workspace ?? activeRuntime(s)?.workspace ?? '';
+      // Where the child goes. The precedence — caller, then the active session's
+      // own answer, then the remembered one — is `resolveAttachWorkspace`, and it
+      // is pure so that it can be asserted without a bridge.
+      const workspace = resolveAttachWorkspace(
+        options.workspace,
+        activeRuntime(s)?.workspace,
+        s.lastWorkspace,
+      );
+
+      // **Nothing to go on means nothing is started.** Not a fallback to
+      // something plausible: the only thing left is the bridge's `None`, whose
+      // documented meaning is "the directory the application was started in" —
+      // for a packaged application, its own install folder. That is how a launch
+      // with no workspace open came up in a directory nobody chose, with the
+      // session file nowhere in it. `ResolveSession` then reads an id with no
+      // file as *a new session with that name*, so nothing failed loudly either;
+      // the screen simply moved somewhere else. A refusal is visible and this
+      // was not, which is the whole difference.
+      //
+      // The caller is told by the empty return, so nothing is left looking like
+      // it worked. But a caller is not a person — `/new` and the rail's "new
+      // session" button both land here when no workspace is remembered, and a
+      // button that silently does nothing is exactly the failure this change is
+      // meant to remove. So the reason is said on the first screen, which is
+      // where the workspace list is.
+      if (workspace === '') {
+        set({ startupNotice: { code: 'no-workspace' } });
+        return null;
+      }
 
       const launch: LaunchArgs = {
         ericai: options.ericai === true,
@@ -1142,15 +1303,7 @@ export const useApp = create<AppStore>((set, get) => {
       // different, empty conversation, in a workspace nobody asked for, while
       // the row that was clicked stayed where it was. Written down but never
       // spawned in, the default was decoration.
-      //
-      // An empty string is left out rather than sent, because the two mean
-      // different things to the bridge: absent is "the directory the app was
-      // started in" — the only honest answer when there is no session yet to
-      // take one from — while `Some("")` is refused as "not a directory".
-      const attach: Partial<BridgeOptions> = {
-        ...options,
-        ...(workspace === '' ? {} : { workspace }),
-      };
+      const attach: Partial<BridgeOptions> = { ...options, workspace };
 
       let key: string | null;
       try {
@@ -1207,7 +1360,16 @@ export const useApp = create<AppStore>((set, get) => {
         // A new session is being shown, so any window-level refusal it was
         // preceded by is no longer what the screen is about.
         startupProblem: null,
+        // And so is the note about nothing having been opened, if there was one.
+        startupNotice: null,
       }));
+
+      // A child is running in this directory — the bridge does not hand back a
+      // key otherwise — and it is now the one on screen. That is the plainest
+      // available statement that this is where work is happening, so it is what
+      // the next launch should open. `init.workspace` refines it a moment later
+      // with the runtime's own canonical answer.
+      get().rememberWorkspace(workspace);
 
       // The session list is what the left rail draws saved conversations from,
       // and a fresh child is the only thing that can answer for this workspace.
@@ -1226,6 +1388,12 @@ export const useApp = create<AppStore>((set, get) => {
       // difference between this and `session_switch`, which made the runtime
       // rebuild itself and abandon whatever it was waiting on.
       set({ activeKey: key, panel: null });
+      // The session being looked at is the one this window is working in, so its
+      // workspace is what the next launch should open. Without this, "last used"
+      // would mean "last opened", and focusing a session in another workspace is
+      // precisely how somebody changes which one that is.
+      const workspace = s.sessions[key]?.workspace ?? '';
+      if (workspace !== '') get().rememberWorkspace(workspace);
     },
 
     async detachSession(key) {
@@ -1302,6 +1470,32 @@ export const useApp = create<AppStore>((set, get) => {
 
     setStartupProblem(problem) {
       set({ startupProblem: problem });
+    },
+
+    setStartupNotice(notice) {
+      set({ startupNotice: notice });
+    },
+
+    rememberWorkspace(path) {
+      const trimmed = path.trim();
+      // Nothing to remember. An empty string here is a caller passing through a
+      // value it did not have, which is not a statement that the remembered
+      // workspace should be forgotten — so it is ignored rather than honoured.
+      //
+      // There is deliberately no "forget" action either. A remembered workspace
+      // that has since been deleted is **reported** at start-up (`workspace_check`
+      // answers about it) rather than erased, because a directory can come back:
+      // an unplugged drive, an unmounted share, a folder mid-rename. It also
+      // heals itself the moment somebody picks a workspace, since `init.workspace`
+      // then overwrites it.
+      if (trimmed === '') return;
+      // `samePath` rather than `!==`: the runtime echoes the directory back with
+      // its own casing and separators, so a strict comparison would make every
+      // ordinary `init` look like a change and write localStorage each time.
+      const remembered = get().lastWorkspace;
+      if (remembered !== null && samePath(remembered, trimmed)) return;
+      set({ lastWorkspace: trimmed });
+      persistPrefs(get());
     },
 
     pushStderr(key, line) {
@@ -1414,6 +1608,15 @@ export const useApp = create<AppStore>((set, get) => {
             // longer true.
             problem: null,
           });
+          // The runtime's own answer about where this session is, which is what
+          // the next launch should open — **when this is the session on screen.**
+          // A background session's `init` must not move the remembered workspace
+          // out from under the person, who is working in the one they can see.
+          // Compared with `samePath` so that the ordinary case (the bridge's
+          // string, echoed back) is not a write at all.
+          if (get().activeKey === key && init.workspace.trim() !== '') {
+            get().rememberWorkspace(init.workspace);
+          }
           // The first screen shows the four most recent sessions, and only this
           // message ever asks for them. Without it those slots stay empty until
           // somebody opens `/resume`, and `Ctrl+1..9` has nothing to switch to.
