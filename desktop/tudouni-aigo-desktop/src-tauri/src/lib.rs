@@ -27,7 +27,7 @@
 //!    load timing is not ours to control. Queueing and flushing in order is
 //!    more reliable than "register early and hope".
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -119,9 +119,27 @@ const IMAGE_SIGNATURES: [ImageSignature; 3] = [
     },
 ];
 
-/// A line read from the child, forwarded verbatim.
+/// Which child a message belongs to.
+///
+/// Minted by the bridge, monotonic, and **never derived from a session id**. A
+/// new session's id is chosen by the runtime and only arrives in `init`, so at
+/// the moment the child is started there is no id to name it by. This key is the
+/// handle the front end holds for one session's process, and it is also the
+/// capability to tear that process down — holding it is what lets a caller act
+/// on that session and nothing else.
+type ChildKey = u64;
+
+/// A line read from the child, forwarded verbatim, tagged with its origin.
+///
+/// The tag is load-bearing and cannot be inferred from the line: `session_load`,
+/// every `ui` kind, `notice`, `sessions` and both blocking requests carry **no**
+/// `session_id` (see `protocol/schema/outbound.schema.json`). A front end that
+/// tried to attribute them by reading the payload would attribute the approval
+/// prompt to the wrong session, which hangs the one it actually came from —
+/// the runtime waits on that id forever.
 #[derive(Clone, Serialize)]
 struct LinePayload {
+    key: ChildKey,
     line: String,
 }
 
@@ -130,8 +148,18 @@ struct LinePayload {
 /// runtime died".
 #[derive(Clone, Serialize)]
 struct ExitPayload {
+    key: ChildKey,
     code: i32,
     requested: bool,
+}
+
+/// One diagnostic line from a child. Separate from `runtime://line` because it
+/// is not protocol data, and tagged for the same reason: a start-up failure has
+/// to be attributable to the session whose binary would not start.
+#[derive(Clone, Serialize)]
+struct StderrPayload {
+    key: ChildKey,
+    line: String,
 }
 
 #[derive(Default)]
@@ -139,30 +167,35 @@ struct Bridge {
     inner: Mutex<BridgeState>,
 }
 
-/// The child, and whether the front end is listening.
+/// Every running child, and whether the front end is listening.
 ///
-/// Both live under one lock because they are coupled. The front end announces
-/// its listener in the same layout effect that starts the runtime afterwards, so
-/// "listening" is routinely set while there is no child yet — and a line read at
-/// that moment has to end up in the queue rather than out to nobody. Keeping the
-/// flag inside `Child_` made that impossible to express: there was nothing to
-/// set it on, the announcement was refused, and every line the child sent was
-/// queued forever. The UI sat in its booting phase with a perfectly healthy
-/// runtime behind it.
+/// **One session, one child.** The runtime takes its working directory as the
+/// workspace and `--session` names the conversation, so a session is a process
+/// rather than something a message can move — and two of them run in parallel by
+/// both existing at once. That is the whole of the multi-session design; there is
+/// no in-process multiplexing to add here.
+///
+/// Everything lives under one lock because the pieces are coupled. The front end
+/// announces its listener in the same layout effect that starts the runtime
+/// afterwards, so "listening" is routinely set while there is no child yet — and a
+/// line read at that moment has to end up in the queue rather than out to nobody.
+/// Keeping the flag inside one child made that impossible to express: there was
+/// nothing to set it on, the announcement was refused, and every line the child
+/// sent was queued forever. The UI sat in its booting phase with a perfectly
+/// healthy runtime behind it. The flag is therefore **process-wide** — there is
+/// one WebView, and it registers one set of listeners — while the queues are
+/// per-child.
 #[derive(Default)]
 struct BridgeState {
-    child: Option<Child_>,
+    /// Live children, by key. A key leaves this map only when its child is
+    /// reaped, so membership *is* "this session has a process right now".
+    children: HashMap<ChildKey, Child_>,
+    /// The next key to hand out. Monotonic, never reused: a front end that
+    /// still holds a stale key must be told "no such child" rather than have a
+    /// newer session answer for the old one.
+    next_key: ChildKey,
     /// True once the front end says a listener is in place.
     listening: bool,
-    /// Where the current child was started.
-    ///
-    /// Kept here rather than passed in on each call because `image_stash` has to
-    /// write **inside the workspace**, and the workspace is a fact this layer
-    /// already owns — it is the child's working directory. Taking it from the
-    /// caller instead would make a front end able to name the directory a file is
-    /// written into, which is exactly the kind of trust this boundary exists to
-    /// withhold.
-    workspace: Option<PathBuf>,
 }
 
 struct Child_ {
@@ -177,6 +210,28 @@ struct Child_ {
     /// Lines read before the front end attached, flushed in order on attach.
     queue: VecDeque<String>,
     stderr: VecDeque<String>,
+    /// Where this child was started.
+    ///
+    /// Kept per child rather than passed in on each call because `image_stash`
+    /// has to write **inside the workspace**, and the workspace is a fact this
+    /// layer already owns — it is the child's working directory. Taking it from
+    /// the caller instead would make a front end able to name the directory a
+    /// file is written into, which is exactly the kind of trust this boundary
+    /// exists to withhold.
+    ///
+    /// It is per child and not per bridge because with several sessions open the
+    /// two are no longer the same thing: a paste made while looking at session B
+    /// has to land in B's workspace, which is not necessarily A's.
+    workspace: PathBuf,
+    /// This child's slice of the paste staging area, cleared when it exits.
+    ///
+    /// **Per child, and that is a data-loss fix rather than tidiness.** The
+    /// staging directory used to be wiped on every start, which with one session
+    /// was the only moment nothing was in flight. With several, starting B would
+    /// delete a picture pasted into A that A's runtime had not read yet — and
+    /// nothing would say so: the path in A's sentence would simply resolve to no
+    /// file, which the runtime treats as an ordinary word.
+    staging: PathBuf,
 }
 
 /// Options the front end passes to `runtime_attach`.
@@ -265,11 +320,21 @@ fn resolve_binary(explicit: Option<&str>) -> Result<PathBuf, String> {
     ))
 }
 
-/// Start the child, replacing any previous one.
+/// Start one child and return the key that names it.
+///
+/// **It does not touch any other child.** That is the change multi-session
+/// needs: this used to kill whatever was running first, because `runtime_attach`
+/// meant "restart", which was the only way to change the workspace a single
+/// process was in. Now each call adds a session beside the others, and the
+/// caller gets back a key it can send to, wait on, and shut down.
+///
+/// Ending a session is therefore a separate act (`runtime_shutdown`), and
+/// nothing here reaches for it implicitly. A session that is running a turn when
+/// somebody opens another one keeps its turn.
 fn spawn(
     app: &AppHandle,
     options: &AttachOptions,
-) -> Result<(), String> {
+) -> Result<ChildKey, String> {
     let binary = resolve_binary(options.binary.as_deref())?;
 
     // The workspace is the child's working directory, and it is not optional:
@@ -343,60 +408,64 @@ fn spawn(
     let stdout = child.stdout.take().ok_or("the child has no stdout")?;
     let stderr = child.stderr.take().ok_or("the child has no stderr")?;
 
-    let state: State<Bridge> = app.state();
-    let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+    // The key is minted and the child registered under the bridge lock, so
+    // `image_stash` can never observe a child whose workspace has not been
+    // recorded yet.
+    let (key, live_staging) = {
+        let state: State<Bridge> = app.state();
+        let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+        guard.next_key += 1;
+        let key = guard.next_key;
 
-    // If a child is already running, take it down before replacing it. A second
-    // runtime in the same workspace would write the same files.
-    if let Some(previous) = guard.child.as_mut() {
-        previous.requested = true;
-        // Straight to the kill: this path is a restart, not a shutdown, and the
-        // new child needs the workspace to itself now.
-        let _ = previous.child.kill();
-        let _ = previous.child.wait();
-    }
+        // This child's own slice of the staging area. Per key, so that clearing
+        // one session's leftovers cannot take a picture another session is
+        // about to send.
+        let staging = workspace
+            .join(PASTE_DIR)
+            .join(PASTE_SUBDIR)
+            .join(key.to_string());
 
-    // Recorded before the child is stored, so `image_stash` can never observe a
-    // running child with a stale workspace.
-    guard.workspace = Some(workspace.clone());
-    guard.child = Some(Child_ {
-        child,
-        stdin: Some(stdin),
-        requested: false,
-        queue: VecDeque::new(),
-        stderr: VecDeque::new(),
-    });
-    drop(guard);
+        guard.children.insert(
+            key,
+            Child_ {
+                child,
+                stdin: Some(stdin),
+                requested: false,
+                queue: VecDeque::new(),
+                stderr: VecDeque::new(),
+                workspace: workspace.clone(),
+                staging: staging.clone(),
+            },
+        );
 
-    // Pasted pictures from the last run are cleared out now, and this is the only
-    // moment it is safe to do so: nothing is in flight yet, and no draft refers to
-    // them.
+        // Which staging directories belong to somebody: every live child's, plus
+        // the one just registered. Collected under the same lock so a concurrent
+        // start cannot have its directory removed by this sweep.
+        let live: HashSet<PathBuf> = guard
+            .children
+            .values()
+            .map(|current| current.staging.clone())
+            .collect();
+        (key, live)
+    };
+
+    // Leftovers from runs that are over are swept now, and this is the only
+    // moment it is safe to do so: nothing is in flight for those sessions, and no
+    // draft refers to them.
     //
     // What makes clearing safe at all is that the directory is a **staging area
     // and not the storage**. A picture that was sent has already been copied into
     // the runtime's content-addressed artifact store
     // (`<workspace>/.tudouni/artifacts/<session>/`), which is what the session
     // file references and what `/resume` reads back; the file here is only what
-    // the path in the sentence pointed at when the turn ran. So a stale path in an
-    // old session resolves to nothing, and the runtime's scanner treats a word
+    // the path in the sentence pointed at when the turn ran. So a stale path in
+    // an old session resolves to nothing, and the runtime's scanner treats a word
     // that names no file as a word — which is exactly what it does for any path a
     // person typed that has since been deleted.
     //
     // Without this, every screenshot anyone ever pasted would stay in the
     // workspace for the life of the project.
-    let staging = workspace.join(PASTE_DIR).join(PASTE_SUBDIR);
-    if let Err(error) = fs::remove_dir_all(&staging) {
-        // A failure here is not worth refusing to start over: the directory may
-        // simply not exist yet, which is the ordinary case on a first run.
-        if error.kind() != std::io::ErrorKind::NotFound {
-            let _ = app.emit(
-                "runtime://stderr",
-                LinePayload {
-                    line: format!("could not clear {}: {error}", staging.display()),
-                },
-            );
-        }
-    }
+    sweep_staging(app, &workspace, &live_staging);
 
     // ---- stdout: one JSON line at a time, queued until attach ----
     {
@@ -418,7 +487,12 @@ fn spawn(
                         if line.trim().is_empty() {
                             continue;
                         }
-                        forward_line(&app, line);
+                        // The key is the only thing that says whose line this is.
+                        // `session_load` and `ui` carry no `session_id`, so a
+                        // front end that tried to read attribution off the
+                        // payload would get it wrong for exactly the messages
+                        // that matter most.
+                        forward_line(&app, key, line);
                     }
                     Err(_) => break,
                 }
@@ -445,7 +519,7 @@ fn spawn(
                         }
                         let state: State<Bridge> = app.state();
                         if let Ok(mut guard) = state.inner.lock() {
-                            if let Some(current) = guard.child.as_mut() {
+                            if let Some(current) = guard.children.get_mut(&key) {
                                 if current.stderr.len() >= STDERR_RING {
                                     current.stderr.pop_front();
                                 }
@@ -453,7 +527,7 @@ fn spawn(
                             }
                         }
                         // Diagnostics, not business data: a separate channel.
-                        let _ = app.emit("runtime://stderr", LinePayload { line });
+                        let _ = app.emit("runtime://stderr", StderrPayload { key, line });
                     }
                     Err(_) => break,
                 }
@@ -463,8 +537,13 @@ fn spawn(
 
     // ---- wait: report the exit code and whether we asked for it ----
     //
-    // This is the only place the child is reaped, which is why `runtime_shutdown`
+    // This is the only place a child is reaped, which is why `runtime_shutdown`
     // polls instead of calling `wait()`: two waiters on one handle would race.
+    //
+    // The slot is removed here and only here, so membership in `children` means
+    // "this session has a process right now". A caller that acts on a key the
+    // bridge no longer holds is told so rather than being silently answered by a
+    // newer session.
     {
         let app = app.clone();
         thread::spawn(move || {
@@ -475,20 +554,20 @@ fn spawn(
                         Ok(guard) => guard,
                         Err(_) => break None,
                     };
-                    match guard.child.as_mut() {
+                    match guard.children.get_mut(&key) {
                         Some(current) => match current.child.try_wait() {
                             Ok(Some(status)) => {
                                 let requested = current.requested;
-                                guard.child = None;
+                                guard.children.remove(&key);
                                 break Some((status.code().unwrap_or(-1), requested));
                             }
                             Ok(None) => {}
                             Err(_) => {
-                                guard.child = None;
+                                guard.children.remove(&key);
                                 break Some((-1, false));
                             }
                         },
-                        // Replaced by a restart, or already reaped: nothing to say.
+                        // Already reaped or shut down: nothing to say.
                         None => break None,
                     }
                 }
@@ -501,12 +580,56 @@ fn spawn(
                 // its equivalent. `requested` is not optional: a requested
                 // shutdown and a crash both exit with code 0, so it is the only
                 // thing that tells "the session ended" from "the runtime died".
-                let _ = app.emit("runtime://exited", ExitPayload { code, requested });
+                let _ = app.emit("runtime://exited", ExitPayload { key, code, requested });
             }
         });
     }
 
-    Ok(())
+    Ok(key)
+}
+
+/// Remove staging directories that belong to no live child.
+///
+/// Leftovers are swept when a session starts, which used to be "when the runtime
+/// starts" and was safe because there was only one. With several sessions that
+/// moment is no longer quiescent: another session may be mid-paste, and its file
+/// has to survive this one's start. So the sweep is by **membership** — anything
+/// not owned by a live child is a leftover — rather than by "everything except
+/// mine".
+///
+/// A failure is reported on the diagnostics channel and nothing more: refusing to
+/// start a session because an old screenshot could not be deleted would trade a
+/// real capability for a tidy directory.
+fn sweep_staging(app: &AppHandle, workspace: &Path, live: &HashSet<PathBuf>) {
+    let root = workspace.join(PASTE_DIR).join(PASTE_SUBDIR);
+    let entries = match fs::read_dir(&root) {
+        Ok(entries) => entries,
+        // The ordinary case on a first run.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            report_stderr(app, 0, format!("could not read {}: {error}", root.display()));
+            return;
+        }
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if live.contains(&path) {
+            continue;
+        }
+        if let Err(error) = fs::remove_dir_all(&path) {
+            report_stderr(app, 0, format!("could not clear {}: {error}", path.display()));
+        }
+    }
+}
+
+/// Put a diagnostic line on the same channel the children's stderr uses.
+///
+/// `key` 0 means "the bridge itself, not a session" — the front end has no
+/// session bucket to file it under, which is exactly right for a directory that
+/// could not be read.
+fn report_stderr(app: &AppHandle, key: ChildKey, line: String) {
+    let _ = app.emit("runtime://stderr", StderrPayload { key, line });
 }
 
 /// Forward one line: straight to the WebView once attached, otherwise queued.
@@ -515,7 +638,11 @@ fn spawn(
 /// sent before the WebView has a listener, and the WebView's load timing is not
 /// ours to control. `init` -> `session_load` -> `ui(state)` is a fixed opening
 /// triple, and losing the first one leaves the UI in its booting phase forever.
-fn forward_line(app: &AppHandle, line: String) {
+///
+/// The queue is per child, because the race is per child: the first session is
+/// started by the same layout effect that registers the listener, while a later
+/// one is started long after the listener exists.
+fn forward_line(app: &AppHandle, key: ChildKey, line: String) {
     let state: State<Bridge> = app.state();
 
     let attached = {
@@ -525,17 +652,17 @@ fn forward_line(app: &AppHandle, line: String) {
         };
         if guard.listening {
             true
-        } else if let Some(current) = guard.child.as_mut() {
+        } else if let Some(current) = guard.children.get_mut(&key) {
             current.queue.push_back(line.clone());
             false
         } else {
-            // The child was replaced or shut down between the read and here.
+            // Shut down between the read and here.
             return;
         }
     };
 
     if attached {
-        let _ = app.emit("runtime://line", LinePayload { line });
+        let _ = app.emit("runtime://line", LinePayload { key, line });
     }
 }
 
@@ -571,23 +698,41 @@ fn unsafe_workspace(dir: &Path) -> Option<&'static str> {
    Commands
    ============================================================ */
 
-/// Start the runtime and begin forwarding. Idempotent: calling it again with a
-/// different workspace restarts the child in that directory.
+/// Start one session's runtime and begin forwarding it.
+///
+/// **It adds a session; it does not replace one.** Calling it twice gives two
+/// running sessions, which is what a person who opens a second conversation
+/// while the first is working is asking for. The returned key is that session's
+/// handle for as long as its process lives, and the front end passes it back on
+/// every call that acts on that session.
+///
+/// Every failure here is something the person can act on — no binary, a
+/// workspace the runtime refuses, no permission to execute it — so they are
+/// returned as sentences rather than as an exit code somewhere. They belong to
+/// the session being opened and to no other: a refusal to start B must not take
+/// over a screen where A is running.
 #[tauri::command]
-fn runtime_attach(app: AppHandle, options: AttachOptions) -> Result<(), String> {
+fn runtime_attach(app: AppHandle, options: AttachOptions) -> Result<ChildKey, String> {
     spawn(&app, &options)
 }
 
-/// Write one protocol line to the child's stdin.
+/// Write one protocol line to **one** session's stdin.
 ///
-/// The line arrives already encoded (including `v`), so nothing here parses it:
-/// whatever the front end decided is what goes out.
+/// The key is required. Without it the write would go to whichever session
+/// happened to be first, and a misdirected `user_message` runs a turn in the
+/// wrong conversation — the kind of mistake that is invisible until somebody
+/// reads the transcript. The line itself arrives already encoded (including
+/// `v`), so nothing here parses it: whatever the front end decided is what goes
+/// out, and to whom is decided by the key.
 #[tauri::command]
-fn runtime_send(app: AppHandle, line: String) -> Result<(), String> {
+fn runtime_send(app: AppHandle, key: ChildKey, line: String) -> Result<(), String> {
     let state: State<Bridge> = app.state();
     let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-    let current = guard.child.as_mut().ok_or("the runtime is not running")?;
-    let stdin = current.stdin.as_mut().ok_or("the runtime is shutting down")?;
+    let current = guard
+        .children
+        .get_mut(&key)
+        .ok_or("that session's runtime is not running")?;
+    let stdin = current.stdin.as_mut().ok_or("that session's runtime is shutting down")?;
     stdin
         .write_all(line.as_bytes())
         .and_then(|_| stdin.write_all(b"\n"))
@@ -608,61 +753,101 @@ fn runtime_send(app: AppHandle, line: String) -> Result<(), String> {
 #[tauri::command]
 fn runtime_attach_listener(app: AppHandle) -> Result<usize, String> {
     let state: State<Bridge> = app.state();
-    let pending: Vec<String> = {
+    // Every child's queue, because the announcement is process-wide and the
+    // queues are not. Flushing only one would release the first session's opening
+    // triple while leaving a second session's `init` stranded until its next
+    // line arrived — and there is no next line until the front end sends
+    // something, which it will not do before it has seen `init`.
+    let pending: Vec<(ChildKey, String)> = {
         let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
         guard.listening = true;
-        match guard.child.as_mut() {
-            Some(current) => current.queue.drain(..).collect(),
-            None => Vec::new(),
-        }
+        guard
+            .children
+            .iter_mut()
+            .flat_map(|(key, current)| {
+                let key = *key;
+                current.queue.drain(..).map(move |line| (key, line))
+            })
+            .collect()
     };
     let count = pending.len();
-    for line in pending {
-        let _ = app.emit("runtime://line", LinePayload { line });
+    for (key, line) in pending {
+        let _ = app.emit("runtime://line", LinePayload { key, line });
     }
     Ok(count)
 }
 
-/// Ask for a graceful shutdown, then make sure the child is gone.
+/// Ask one session — or every session — to finish, then make sure it is gone.
 ///
-/// `shutdown` lets the current turn finish — it is not an interrupt. Killing
+/// `shutdown` lets the current turn finish; it is not an interrupt. Killing
 /// mid-turn leaves an assistant message with tool calls and no results, and that
-/// session can never be sent to again.
+/// session can never be sent to again. So this is the polite path, and the
+/// timeout below is the fallback that keeps a window closable.
 ///
-/// Only the waiter thread calls `wait`, and it clears the shared slot when it
-/// does. This function therefore polls that slot rather than waiting on its own
-/// handle: two waiters on one child is a race with no upside.
+/// **`None` means every session** (the window is closing, so nothing survives
+/// anyway) and `Some(key)` means one. Per-session shutdown exists because
+/// closing one conversation is not a reason to end another: with several open,
+/// "stop this one" and "stop everything" are different acts.
+///
+/// Only the waiter thread calls `wait`, and it removes the slot when it does.
+/// This function therefore polls the slots rather than waiting on its own
+/// handles: two waiters on one child is a race with no upside.
 #[tauri::command]
-fn runtime_shutdown(app: AppHandle) -> Result<(), String> {
+fn runtime_shutdown(app: AppHandle, key: Option<ChildKey>) -> Result<(), String> {
     let state: State<Bridge> = app.state();
 
-    // Take the handle out of the shared slot rather than cloning it: `ChildStdin`
-    // is not cloneable, and moving it out is what makes closing the pipe
-    // possible — which is the second half of the shutdown contract, since EOF on
-    // stdin takes the same path through the server loop as the message does.
-    let mut stdin = {
+    // Take the handles out rather than cloning them: `ChildStdin` is not
+    // cloneable, and moving it out is what makes closing the pipe possible —
+    // which is the second half of the shutdown contract, since EOF on stdin takes
+    // the same path through the server loop as the message does.
+    let pipes: Vec<ChildStdin> = {
         let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-        match guard.child.as_mut() {
-            Some(current) => {
-                current.requested = true;
-                current.stdin.take()
+        let targets: Vec<ChildKey> = match key {
+            Some(key) => {
+                if guard.children.contains_key(&key) {
+                    vec![key]
+                } else {
+                    vec![]
+                }
             }
-            None => None,
+            None => guard.children.keys().copied().collect(),
+        };
+        let mut pipes = Vec::with_capacity(targets.len());
+        for target in targets {
+            if let Some(current) = guard.children.get_mut(&target) {
+                current.requested = true;
+                if let Some(pipe) = current.stdin.take() {
+                    pipes.push(pipe);
+                }
+            }
         }
+        pipes
     };
 
-    if let Some(pipe) = stdin.as_mut() {
+    // One `shutdown` line per session, written before any of them is dropped: the
+    // sessions are independent, so asking them in the same pass costs nothing and
+    // lets them finish their turns concurrently. Doing this session by session
+    // would serialise N times the time a turn takes.
+    for mut pipe in pipes {
         let _ = pipe.write_all(b"{\"v\":1,\"t\":\"shutdown\"}\n");
         let _ = pipe.flush();
+        // Dropping the handle closes the pipe.
+        drop(pipe);
     }
-    // Dropping the handle closes the pipe.
-    drop(stdin);
 
+    // Then wait for all of them at once, with one deadline for the whole set.
+    //
+    // A per-session deadline would be N × 30s to close a window with N sessions
+    // open, and the person watching would read that as a hang. The budget belongs
+    // to the act of closing, not to each child.
     let deadline = Instant::now() + SHUTDOWN_TIMEOUT;
     loop {
         let still_running = {
             let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-            guard.child.is_some()
+            match key {
+                Some(key) => guard.children.contains_key(&key),
+                None => !guard.children.is_empty(),
+            }
         };
         if !still_running {
             return Ok(());
@@ -672,8 +857,17 @@ fn runtime_shutdown(app: AppHandle) -> Result<(), String> {
             // is real and is stated in the design: a kill mid-turn can leave a
             // session unsendable.
             let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-            if let Some(current) = guard.child.as_mut() {
-                let _ = current.child.kill();
+            match key {
+                Some(key) => {
+                    if let Some(current) = guard.children.get_mut(&key) {
+                        let _ = current.child.kill();
+                    }
+                }
+                None => {
+                    for current in guard.children.values_mut() {
+                        let _ = current.child.kill();
+                    }
+                }
             }
             return Ok(());
         }
@@ -683,19 +877,27 @@ fn runtime_shutdown(app: AppHandle) -> Result<(), String> {
 
 /// The kill switch, for when the timeout is not enough.
 #[tauri::command]
-fn runtime_kill(app: AppHandle) -> Result<(), String> {
+fn runtime_kill(app: AppHandle, key: Option<ChildKey>) -> Result<(), String> {
     let state: State<Bridge> = app.state();
     let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-    match guard.child.as_mut() {
-        Some(current) => {
+    let targets: Vec<ChildKey> = match key {
+        Some(key) => {
+            if guard.children.contains_key(&key) {
+                vec![key]
+            } else {
+                vec![]
+            }
+        }
+        None => guard.children.keys().copied().collect(),
+    };
+    for target in targets {
+        if let Some(mut current) = guard.children.remove(&target) {
             current.requested = true;
             let _ = current.child.kill();
             let _ = current.child.wait();
-            guard.child = None;
-            Ok(())
         }
-        None => Ok(()),
     }
+    Ok(())
 }
 
 /// The runtime's own version, from `--version`.
@@ -845,17 +1047,32 @@ fn sniff_image(bytes: &[u8]) -> Option<&'static ImageSignature> {
 /// before dropping it, and the front end renders its own preview from the bytes
 /// it already has. A third copy on disk would be a third thing to keep in step.
 ///
-/// ## Why there is no session argument
+/// ## Why the session arrives as a header
 ///
 /// The payload **is** the bytes, so there is nowhere to put a second named
-/// argument — `invoke` with a raw body carries no JSON object alongside it. That
-/// is a constraint, and it happens to be the right shape anyway: a session
-/// subdirectory would only separate files that are all cleared at the same
-/// moment (see the staging-area note in `spawn`), and the workspace is taken from
-/// the bridge rather than from the caller precisely so that no
+/// argument — `invoke` with a raw body carries no JSON object alongside it. With
+/// one session that was fine; with several it is not, because the picture has to
+/// land in the workspace of the session whose draft it is going into. So the key
+/// travels as an `x-tudouni-key` header, which Tauri exposes through
+/// `Request::headers()` and which costs nothing alongside a raw body.
+///
+/// A missing or unknown key is **refused**, never guessed. Guessing the first
+/// child would write the file into a workspace the draft is not in, and the
+/// sentence would then name a path that resolves to nothing — a paste that
+/// silently did nothing, which is this feature's worst failure mode.
+///
+/// The workspace still comes from the bridge rather than from the caller: the
+/// key selects among workspaces this layer already owns, and no
 /// caller-supplied string ever reaches this path.
 #[tauri::command]
 fn image_stash(app: AppHandle, request: Request<'_>) -> Result<StashedImage, String> {
+    let key = request
+        .headers()
+        .get("x-tudouni-key")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<ChildKey>().ok())
+        .ok_or("this paste did not say which session it belongs to")?;
+
     let bytes = match request.body() {
         InvokeBody::Raw(bytes) => bytes.clone(),
         // A JSON body means the front end sent a string or an array of numbers.
@@ -884,18 +1101,22 @@ fn image_stash(app: AppHandle, request: Request<'_>) -> Result<StashedImage, Str
     })?;
     let (extension, mime) = (known.extension, known.mime);
 
-    // The workspace comes from the bridge — it is the child's working directory,
-    // a fact this layer already owns — and never from the caller. Letting a front
-    // end name the directory would be letting it choose where a file is written.
-    let workspace = {
+    // The workspace and the staging directory both come from the child — its
+    // working directory and its own slice of the staging area, facts this layer
+    // already owns — and never from the caller. Letting a front end name the
+    // directory would be letting it choose where a file is written; letting it
+    // omit one would leave the picture to land in an arbitrary session's
+    // workspace.
+    let (workspace, directory) = {
         let state: State<Bridge> = app.state();
         let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-        guard.workspace.clone()
+        let current = guard
+            .children
+            .get(&key)
+            .ok_or("that session's runtime is not running, so there is nowhere to put the picture")?;
+        (current.workspace.clone(), current.staging.clone())
     };
-    let workspace =
-        workspace.ok_or("no workspace is open, so there is nowhere to put the picture")?;
 
-    let directory = workspace.join(PASTE_DIR).join(PASTE_SUBDIR);
     fs::create_dir_all(&directory)
         .map_err(|e| format!("could not create {}: {e}", directory.display()))?;
 
@@ -934,17 +1155,22 @@ fn image_stash(app: AppHandle, request: Request<'_>) -> Result<StashedImage, Str
     })
 }
 
-/// The last stderr lines, for the local "the runtime would not start" panel.
+/// The last stderr lines of one child, for the local "the runtime would not
+/// start" panel.
+///
+/// Per session, because a start-up failure belongs to the session whose binary
+/// would not start. A single shared ring would mix two sessions' diagnostics and
+/// then show them under whichever one the person happened to be looking at.
 #[tauri::command]
-fn runtime_stderr(app: AppHandle) -> Vec<String> {
+fn runtime_stderr(app: AppHandle, key: ChildKey) -> Vec<String> {
     let state: State<Bridge> = app.state();
     // Bound to a local before returning: the guard borrows `state`, and a
     // `match` used directly as the tail expression would keep its temporary
     // alive past the end of the block.
     let lines = match state.inner.lock() {
         Ok(guard) => guard
-            .child
-            .as_ref()
+            .children
+            .get(&key)
             .map(|current| current.stderr.iter().cloned().collect())
             .unwrap_or_default(),
         Err(_) => Vec::new(),
@@ -960,10 +1186,23 @@ fn runtime_stderr(app: AppHandle) -> Vec<String> {
 pub fn run() {
     tauri::Builder::default()
         // Single instance (decision 12): a second launch focuses the existing
-        // window instead of starting a second runtime. The workspace state under
-        // `<workspace>/.tudouni/` — permissions, mcp.json, sessions, the audit
-        // log, artifacts — is written by both, so two runtimes on one workspace
-        // would fight over it.
+        // window instead of starting a second copy of the application.
+        //
+        // **The reason is narrower than it used to say, and the correction
+        // matters for reading the rest of this file.** It claimed that two
+        // instances would "fight over" everything under `<workspace>/.tudouni/`
+        // — sessions, the audit log, artifacts, `mcp.json`. Checked against the
+        // runtime, that is not true: session files and audit logs are per
+        // session id, artifacts and job output are per session id, and
+        // `mcp.json` is only ever read. What *is* shared is
+        // `permissions.json`, which every runtime rewrites whole (read → modify
+        // → rename) whenever somebody presses "always allow" — and one
+        // application already runs several runtimes, so that is a property of
+        // separate processes rather than of separate applications.
+        //
+        // What this plugin still buys is the thing a desktop app should have
+        // anyway: launching it twice focuses the window you already have instead
+        // of opening a second one over it.
         //
         // It is registered **before** every other plugin, which the plugin's own
         // documentation requires: its setup creates the hidden window that
@@ -990,12 +1229,17 @@ pub fn run() {
             image_stash,
         ])
         .on_window_event(|window, event| {
-            // Closing the window asks the runtime to finish first, so a turn in
+            // Closing the window asks every session to finish first, so a turn in
             // flight is not cut in half.
             //
+            // `None` is "all of them", which is right here and only here: the
+            // window is going away, so no session survives regardless, and asking
+            // them one after another would multiply the wait by the number of
+            // conversations open.
+            //
             // The wait has to come off the event loop. `runtime_shutdown` blocks
-            // for up to `SHUTDOWN_TIMEOUT` (30s) polling for the child to exit,
-            // and running it here — synchronously, on the thread that pumps
+            // for up to `SHUTDOWN_TIMEOUT` (30s) polling for the children to
+            // exit, and running it here — synchronously, on the thread that pumps
             // window events — freezes the window for that whole time with no
             // repaint and no explanation. The design's own answer is the one
             // below: refuse the close, finish in the background, then close for
@@ -1005,7 +1249,7 @@ pub fn run() {
                 let window = window.clone();
                 let app = window.app_handle().clone();
                 thread::spawn(move || {
-                    let _ = runtime_shutdown(app);
+                    let _ = runtime_shutdown(app, None);
                     // `destroy` rather than `close`: this is the second pass
                     // through the same event, and re-emitting a close request
                     // would land right back here and refuse it again.

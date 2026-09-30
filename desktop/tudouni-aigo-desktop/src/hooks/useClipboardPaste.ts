@@ -32,7 +32,7 @@
  */
 
 import { useCallback, type ClipboardEvent, type RefObject } from 'react';
-import { useApp, type ComposerNotice } from '@/state/store';
+import { activeRuntime, useApp, type ComposerNotice } from '@/state/store';
 import {
   MAX_IMAGE_BYTES,
   classify,
@@ -68,22 +68,27 @@ export function useClipboardPaste(
       e.preventDefault();
 
       const state = useApp.getState();
-      const workspace = state.session?.workspace ?? '';
+      // The workspace and the draft both come from the session on screen: the
+      // path is inserted into *that* conversation's sentence, and whether it is
+      // inside the workspace is a question only that session can answer.
+      const rt = activeRuntime(state);
+      const workspace = rt?.session?.workspace ?? rt?.workspace ?? '';
       // The caret is tracked **here** rather than re-read from the DOM inside the
       // loop. The store's `set` re-renders the textarea, and until that render
       // lands `selectionStart` still describes the old string — so a second
       // picture pasted in the same gesture would be inserted at a position that
       // belongs to the previous text. The store hands back where the caret went,
       // and that is what the next insertion is placed against.
-      let at = taRef.current?.selectionStart ?? state.draft.length;
+      let at = taRef.current?.selectionStart ?? rt?.draft.length ?? 0;
 
       void (async () => {
         // How many pictures this front end would actually send: the ones still
         // named in the sentence. Counting stashed-but-deleted ones would refuse a
         // paste for pictures that are not going anywhere.
+        const existingNow = useApp.getState();
         let existing = referencedImages(
-          useApp.getState().draft,
-          useApp.getState().pastedImages,
+          activeRuntime(existingNow)?.draft ?? '',
+          activeRuntime(existingNow)?.pastedImages ?? [],
         ).length;
 
         for (const picture of pictures) {
@@ -135,8 +140,10 @@ export function useClipboardPaste(
         //
         // An unknown model says nothing: `vision` absent is not `vision: false`,
         // and claiming either would be inventing a fact.
-        const current = useApp.getState().models.find((model) => model.current);
-        useApp.getState().setComposerNotice(
+        const finalState = useApp.getState();
+        const active = activeRuntime(finalState);
+        const current = active?.models.find((model) => model.current);
+        finalState.setComposerNotice(
           current && !current.vision
             ? { code: 'paste-no-vision', model: current.id, tone: 'info' }
             : null,

@@ -169,9 +169,22 @@ func SaveApprovals(tools []string, prefixes []security.Rule) error {
 		return err
 	}
 
+	// `cfg` is read fresh here, and the two remembered sets are **unioned** with
+	// what it holds rather than written over it.
+	//
+	// That is what keeps several runtimes on one workspace from losing each
+	// other's rules: this process loaded its copy of the file when it started, so
+	// anything another session granted since then exists only on disk — and a
+	// write that replaced the file with this process's own set would delete it
+	// with nothing to say so. The file has no revocation path (the in-memory
+	// memory can only grant), so a union is always the correct merge.
+	//
+	// It **narrows** the window rather than closing it: two writers inside the
+	// same few microseconds can still lose one. Closing it needs a file lock,
+	// which is recorded in the design as the optional second step.
 	object := map[string]any{
 		"auto_approve":       cfg.AutoApprove,
-		"auto_approve_tools": dedupe(tools),
+		"auto_approve_tools": dedupe(append(append([]string(nil), cfg.AutoApproveTools...), tools...)),
 		"deny_tools":         cfg.DenyTools,
 	}
 	if len(cfg.ShellAllow) > 0 {

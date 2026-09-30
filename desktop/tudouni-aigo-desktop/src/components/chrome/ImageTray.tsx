@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { useApp } from '@/state/store';
+import { NO_PASTED, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { formatBytes, referencedImages, removePathFromDraft } from '@/runtime/paste';
@@ -31,9 +31,12 @@ import { formatBytes, referencedImages, removePathFromDraft } from '@/runtime/pa
  */
 export function ImageTray() {
   const t = useT();
-  const draft = useApp((s) => s.draft);
+  // The draft and its pictures belong to the session being shown: the path in
+  // the sentence is workspace-relative, so a chip from another conversation
+  // would name a file this one cannot resolve.
+  const draft = useSessionField((rt) => rt.draft, '');
   const setDraft = useApp((s) => s.setDraft);
-  const pastedImages = useApp((s) => s.pastedImages);
+  const pastedImages = useSessionField((rt) => rt.pastedImages, NO_PASTED);
   const forgetPastedImage = useApp((s) => s.forgetPastedImage);
 
   const shown = referencedImages(draft, pastedImages);

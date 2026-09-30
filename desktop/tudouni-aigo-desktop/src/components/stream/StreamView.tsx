@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown } from 'lucide-react';
-import { useApp } from '@/state/store';
+import { NO_ENTRIES, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { EntryView } from './EntryView';
 import { QuietGroup } from './QuietGroup';
@@ -54,8 +54,11 @@ function buildRows(entries: Entry[], quiet: boolean): Row[] {
 
 export function StreamView() {
   const t = useT();
-  const entries = useApp((s) => s.entries);
-  const quiet = useApp((s) => s.quiet);
+  // The transcript and its shape both come from the session being shown. Quiet
+  // mode is per session now: it says how *this conversation's* tool calls are
+  // drawn, so switching conversations switching it is the point.
+  const entries = useSessionField((rt) => rt.entries, NO_ENTRIES);
+  const quiet = useSessionField((rt) => rt.quiet, false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);

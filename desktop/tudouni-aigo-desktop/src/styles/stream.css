@@ -1174,6 +1174,82 @@
   background: var(--destructive-subtle);
 }
 
+/* ---------------- session status dots ---------------- */
+/*
+   What each dot means, and why the fourth colour exists, is in `SessionDot`.
+   Three things about the styling are deliberate:
+
+   - **No animation.** `component-states.md` §7 forbids expressing a state
+     change with a breathing light, and the status bar's own `.is-working` has a
+     specific justification this would destroy: several dots pulsing at once is
+     not "a turn is in flight", it is noise. A change of state changes the
+     colour (`--motion-fast`) and nothing else.
+   - **`flex: none`.** The dot must not be squeezed: the session id beside it is
+     the flexible cell, and a 6px circle shrunk to 2px is a mark nobody can read.
+   - **An optical nudge, not a layout one.** `margin-top: 1px` aligns the circle
+     with the x-height of the id beside it. It is on the dot rather than on the
+     row so the row's own baseline stays what the other rows use.
+*/
+.lb-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+/* Waiting on a person: the only state where nothing at all happens until
+   somebody acts. */
+.lb-dot.is-asking {
+  background: var(--warning);
+}
+
+/* Broken. Reserved for "you did not stop it and it failed" — `interrupted`,
+   `step_limit` and `empty` are blue, or pressing Esc three times would earn
+   three red dots. */
+.lb-dot.is-broken {
+  background: var(--destructive);
+}
+
+.lb-dot.is-running {
+  background: var(--success);
+}
+
+/* Finished, and nobody has looked. The state a three-colour scheme cannot
+   express, and the one that matters most with several sessions open. */
+.lb-dot.is-unseen {
+  background: var(--info);
+}
+
+/* ---------------- workspace attention badge ---------------- */
+
+/*
+   How many sessions in that workspace want a person. The session dots' answer at
+   a coarser grain, and it exists for what a dot cannot do: a dot in a workspace
+   nobody is looking at is invisible — which is exactly the case once two
+   workspaces are open, and the question "is anything waiting for me over there"
+   has no other place to be written.
+
+   `flex: none` for the same reason the MCP rail's action button pins it: a
+   `flex-shrink: 1` badge in a squeezed row collapses to an unreadable sliver
+   while still technically being on screen.
+*/
+.lb-attention {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+}
+
 /* ---------------- the rail's foot ---------------- */
 
 /* Outside `.lb-scroll` on purpose: this is a fixed row, so it cannot be pushed

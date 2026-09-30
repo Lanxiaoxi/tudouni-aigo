@@ -1,6 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ChevronRight, FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, Settings, Trash2, X } from 'lucide-react';
-import { useApp } from '@/state/store';
+import {
+  activeRuntime,
+  NO_SESSION_LIST,
+  selectRowStatusKey,
+  selectWorkspaceAttentionKey,
+  useApp,
+  type RowStatus,
+} from '@/state/store';
+import { SessionDot } from '@/components/sidebar/SessionDot';
 import { useT } from '@/i18n/useT';
 import { checkWorkspace, chooseWorkspaceDirectory } from '@/runtime/tauri';
 import { Logo } from '@/components/ui/Logo';
@@ -36,16 +44,20 @@ import { baseName, formatRelative, samePath } from '@/utils/format';
 export function WorkspaceSidebar() {
   const t = useT();
   const workspaces = useApp((s) => s.workspaces);
-  const currentWorkspace = useApp((s) => s.session?.workspace ?? '');
-  const sessionList = useApp((s) => s.sessionList);
-  const listed = useApp((s) => s.listedSessions);
-  const currentSessionId = useApp((s) => s.session?.id ?? null);
+  // "Where am I" is answered by the session on screen: with several open there
+  // is no single workspace for the window, and this rail's first row names the
+  // one the transcript below belongs to.
+  const rt = useApp(activeRuntime);
+  const currentWorkspace = rt?.session?.workspace ?? rt?.workspace ?? '';
+  const sessionList = rt?.sessionList ?? NO_SESSION_LIST;
+  const listed = rt?.listedSessions ?? false;
+  const currentSessionId = rt?.session?.id ?? null;
   const modal = useApp((s) => s.modal);
 
   const enterWorkspace = useApp((s) => s.enterWorkspace);
   const addWorkspace = useApp((s) => s.addWorkspace);
   const removeWorkspace = useApp((s) => s.removeWorkspace);
-  const switchSession = useApp((s) => s.switchSession);
+  const openSession = useApp((s) => s.openSession);
   const requestSessionList = useApp((s) => s.requestSessionList);
   const deleteSession = useApp((s) => s.deleteSession);
   // The session list folds on its own; the workspace list above it does not
@@ -62,6 +74,44 @@ export function WorkspaceSidebar() {
   // is the same kind of decision as the workspace above it — what the runtime
   // process *is* — rather than a per-turn control like the status bar's.
   const openPanel = useApp((s) => s.openPanel);
+
+  /**
+   * The status of every live session, keyed by the runtime's own session id.
+   *
+   * A `Map` built from a compact string, for the same reason the selector
+   * returns a string: the saved list is keyed by id and the store is keyed by
+   * child key, and rebuilding the map on every render of this rail is fine — the
+   * *string* is what decides whether there is a render at all.
+   */
+  const statusKey = useApp(selectRowStatusKey);
+  const statusBySessionId = useMemo(() => {
+    const out = new Map<string, RowStatus>();
+    for (const part of statusKey.split(',')) {
+      if (part === '') continue;
+      const at = part.lastIndexOf(':');
+      out.set(part.slice(0, at), part.slice(at + 1) as RowStatus);
+    }
+    return out;
+  }, [statusKey]);
+
+  /**
+   * How many sessions in each workspace want attention.
+   *
+   * This is the session dot's answer at a coarser grain, and it exists because
+   * of what a dot cannot say: **a dot in a workspace you are not looking at.**
+   * Somebody working in B has no way to notice that A finished something, or is
+   * waiting on an approval — the session rows for A are not even on screen.
+   */
+  const attentionKey = useApp(selectWorkspaceAttentionKey);
+  const attentionByWorkspace = useMemo(() => {
+    const out = new Map<string, number>();
+    if (attentionKey === '') return out;
+    for (const part of attentionKey.split('\u0001')) {
+      const at = part.lastIndexOf('\u0000');
+      out.set(part.slice(0, at), Number(part.slice(at + 1)));
+    }
+    return out;
+  }, [attentionKey]);
 
   /** Why the last workspace that was offered could not be taken. Local: nothing
    *  about it reached the runtime, and it is a statement about this list. */
@@ -127,7 +177,7 @@ export function WorkspaceSidebar() {
             type="button"
             className="btn btn-outline btn-block"
             disabled={blocked}
-            onClick={() => switchSession(null)}
+            onClick={() => void openSession(null)}
           >
             <Plus size={13} />
             {t('lb.newSession')}
@@ -178,6 +228,7 @@ export function WorkspaceSidebar() {
               {rows.map((path) => {
                 const isCurrent = currentWorkspace !== '' && samePath(currentWorkspace, path);
                 const bookmarked = workspaces.some((p) => samePath(p, path));
+                const attention = attentionByWorkspace.get(path) ?? 0;
                 return (
                   <div
                     key={path}
@@ -193,6 +244,23 @@ export function WorkspaceSidebar() {
                       onClick={() => void enterWorkspace(path)}
                     >
                       <span className="lb-row-name">{baseName(path)}</span>
+                      {/* The count of sessions in this workspace that want a
+                          person — asking, broken, or finished and unlooked-at.
+                          It is the session dots' answer at a coarser grain, and
+                          it exists for what a dot cannot do: a dot in a
+                          workspace nobody is looking at is invisible, which is
+                          exactly the case with two workspaces open. Running
+                          sessions are deliberately excluded: they need nothing. */}
+                      {attention > 0 ? (
+                        <span
+                          className="lb-attention"
+                          role="img"
+                          aria-label={t('lb.attention', { n: attention })}
+                          title={t('lb.attention', { n: attention })}
+                        >
+                          {attention}
+                        </span>
+                      ) : null}
                       {isCurrent ? (
                         <span className="lb-current" title={t('lb.currentHint')}>
                           {t('lb.current')}
@@ -290,9 +358,17 @@ export function WorkspaceSidebar() {
                           className={`lb-session${isCurrent ? ' is-current' : ''}`}
                           disabled={blocked || isCurrent}
                           aria-current={isCurrent ? 'true' : undefined}
-                          onClick={() => switchSession(item.id)}
+                          onClick={() => void openSession(item.id)}
                         >
                           <span className="lb-session-top">
+                            {/* The dot is **leftmost**, not on the right: the
+                                right edge of this row holds the delete button,
+                                and a status mark sharing a corner with a
+                                destructive control is one misread away from
+                                deleting a conversation. The left is free — a
+                                session row carries no icon, unlike a workspace
+                                row. */}
+                            <SessionDot status={statusBySessionId.get(item.id) ?? 'idle'} />
                             <span className="lb-session-id">{item.id}</span>
                             {/* `modified_at` is epoch **seconds**; null means the file
                                 could not be read, and then there is no time to show. */}

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
-import { useApp } from '@/state/store';
+import { activeRuntime, NO_ENTRIES, NO_NOTES, useApp } from '@/state/store';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
 import { useFileDrop } from '@/hooks/useFileDrop';
@@ -34,11 +34,17 @@ export function App() {
   // focus from a keyboard one. `:focus-visible` cannot do it for a text field.
   useInputModality();
 
-  const ready = useApp((s) => s.ready);
+  // Everything the transcript draws comes from **the session being shown**, and
+  // with several open that is a bucket rather than the store. `activeRuntime` is
+  // the one place that says which; a background session's stream keeps landing in
+  // its own bucket whether or not anybody is looking at it.
+  const rt = useApp(activeRuntime);
+  const activeKey = useApp((s) => s.activeKey);
+  const ready = rt?.ready ?? false;
+  const entries = rt?.entries ?? NO_ENTRIES;
+  const handshakeNotices = rt?.handshakeNotices ?? NO_NOTES;
   const sidebarVisible = useApp((s) => s.sidebarVisible);
   const leftbarVisible = useApp((s) => s.leftbarVisible);
-  const entries = useApp((s) => s.entries);
-  const handshakeNotices = useApp((s) => s.handshakeNotices);
   const startupProblem = useApp((s) => s.startupProblem);
   const dragging = useApp((s) => s.dragging);
 
@@ -60,7 +66,11 @@ export function App() {
   // stream, because `session_load` rebuilds the stream the moment after `init`
   // and would take them with it.
   const hasConversation = entries.some((entry) => entry.kind !== 'note');
-  const showWelcome = ready && !hasConversation;
+  // Two ways to reach the first screen, and the second one is what keeps closing
+  // the last session from parking the window on "Starting the runtime…" with
+  // nothing starting. With no session open there is nothing to boot, and the
+  // first screen is where a person starts one.
+  const showWelcome = activeKey === null || (ready && !hasConversation);
 
   // The sidebar has two independent off-switches: the person's preference, and
   // the stylesheet's 1024px rule — which is why the summary row cannot be driven

@@ -3,11 +3,18 @@ import { Bot, Download, Upload } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { notesByServer } from '@/runtime/adapt';
 import {
-  NO_EFFORT_LEVELS,
+  NO_ALIASES,
   NO_JOBS,
+  NO_MCP_ROWS,
+  NO_MODEL_ROWS,
+  NO_SESSION_LIST,
+  NO_SKILLS,
+  NO_STRINGS,
   NO_SUBAGENTS,
   selectAskOn,
+  selectEffortLevels,
   useApp,
+  useSessionField,
 } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
@@ -26,8 +33,10 @@ const closePanel = () => useApp.setState({ panel: null });
    ============================================================ */
 export function ModelPanel() {
   const t = useT();
-  const models = useApp((s) => s.models);
-  const aliases = useApp((s) => s.modelAliases);
+  // The catalogue belongs to the session's child — it is read from that child's
+  // configuration at open — so it comes from the session being shown.
+  const models = useSessionField((rt) => rt.models, NO_MODEL_ROWS);
+  const aliases = useSessionField((rt) => rt.modelAliases, NO_ALIASES);
   const chooseModel = useApp((s) => s.chooseModel);
 
   const rows = models;
@@ -122,10 +131,12 @@ export function EffortPanel() {
   // The shared empty constant keeps the snapshot's identity while the data is
   // missing; a fresh `[]` here would re-render forever.
   const levels = useApp(
-    useShallow((s) => s.uiState?.effortLevels ?? s.session?.effortLevels ?? NO_EFFORT_LEVELS),
+    useShallow((s) =>
+      selectEffortLevels(s, s.activeKey),
+    ),
   );
-  const current = useApp((s) => s.session?.effort ?? '');
-  const thinking = useApp((s) => s.session?.thinking ?? false);
+  const current = useSessionField((rt) => rt.session?.effort ?? '', '');
+  const thinking = useSessionField((rt) => rt.session?.thinking ?? false, false);
   const chooseEffort = useApp((s) => s.chooseEffort);
 
   const { active, setActive } = useListKeys({
@@ -185,15 +196,15 @@ export function EffortPanel() {
    ============================================================ */
 export function ResumePanel() {
   const t = useT();
-  const list = useApp((s) => s.sessionList);
-  const listed = useApp((s) => s.listedSessions);
-  const switchSession = useApp((s) => s.switchSession);
-  const currentId = useApp((s) => s.session?.id ?? null);
+  const list = useSessionField((rt) => rt.sessionList, NO_SESSION_LIST);
+  const listed = useSessionField((rt) => rt.listedSessions, false);
+  const openSession = useApp((s) => s.openSession);
+  const currentId = useSessionField((rt) => rt.session?.id ?? null, null);
 
   const { active, setActive } = useListKeys({
     count: list.length,
     onClose: closePanel,
-    onPick: (i) => list[i] && switchSession(list[i].id),
+    onPick: (i) => list[i] && void openSession(list[i].id),
   });
 
   return (
@@ -211,7 +222,7 @@ export function ResumePanel() {
               active={active === i}
               selected={item.id === currentId}
               onHover={() => setActive(i)}
-              onPick={() => switchSession(item.id)}
+              onPick={() => void openSession(item.id)}
               aside={
                 item.modifiedAt === null
                   ? t('common.unknown')
@@ -240,8 +251,11 @@ export function ResumePanel() {
    ============================================================ */
 export function McpPanel() {
   const t = useT();
-  const servers = useApp((s) => s.mcp);
-  const notes = useApp((s) => s.mcpNotes);
+  // Mounting is per session: each child connects its own servers, so the list
+  // below is that session's and a load in one conversation does not show in
+  // another's panel.
+  const servers = useSessionField((rt) => rt.mcp, NO_MCP_ROWS);
+  const notes = useSessionField((rt) => rt.mcpNotes, NO_STRINGS);
   const requestMcp = useApp((s) => s.requestMcp);
 
   // A server that would not connect has no state of its own on the wire — the
@@ -363,10 +377,10 @@ export function McpPanel() {
    ============================================================ */
 export function SkillsPanel() {
   const t = useT();
-  const loaded = useApp((s) => s.skills);
-  const available = useApp((s) => s.skillAvailable);
-  const problems = useApp((s) => s.skillProblems);
-  const shadowed = useApp((s) => s.skillShadowed);
+  const loaded = useSessionField((rt) => rt.skills, NO_SKILLS);
+  const available = useSessionField((rt) => rt.skillAvailable, NO_SKILLS);
+  const problems = useSessionField((rt) => rt.skillProblems, NO_STRINGS);
+  const shadowed = useSessionField((rt) => rt.skillShadowed, NO_STRINGS);
   const requestSkills = useApp((s) => s.requestSkills);
 
   const total = loaded.length + available.length;
@@ -528,8 +542,9 @@ export function HelpPanel() {
    ============================================================ */
 export function SubagentsPanel() {
   const t = useT();
-  const agents = useApp(useShallow((s) => s.uiState?.subagents ?? NO_SUBAGENTS));
-  const jobs = useApp(useShallow((s) => s.uiState?.jobs ?? NO_JOBS));
+  // Delegations and background jobs belong to one session's turn.
+  const agents = useSessionField((rt) => rt.uiState?.subagents ?? NO_SUBAGENTS, NO_SUBAGENTS);
+  const jobs = useSessionField((rt) => rt.uiState?.jobs ?? NO_JOBS, NO_JOBS);
 
   const { active, setActive } = useListKeys({
     count: agents.length,
@@ -602,14 +617,18 @@ export function SubagentsPanel() {
    ============================================================ */
 export function AuditPanel() {
   const t = useT();
-  const session = useApp((s) => s.session);
-  const snap = useApp((s) => s.uiState);
+  // Everything here except the two version numbers is a fact about **one**
+  // session: its audit path, its permission scope, its counts, its own decoder
+  // tally. The versions are window-level and read from the store.
+  const key = useApp((s) => s.activeKey);
+  const session = useSessionField((rt) => rt.session, null);
+  const snap = useSessionField((rt) => rt.uiState, null);
   const desktopVersion = useApp((s) => s.desktopVersion);
   const runtimeVersion = useApp((s) => s.runtimeVersion);
-  const dropped = useApp((s) => s.dropped);
-  const lateDropped = useApp((s) => s.lateDropped);
-  const status = useApp((s) => s.status);
-  const askOn = useApp(useShallow(selectAskOn));
+  const dropped = useSessionField((rt) => rt.dropped, 0);
+  const lateDropped = useSessionField((rt) => rt.lateDropped, 0);
+  const status = useSessionField((rt) => rt.status, null);
+  const askOn = useApp(useShallow((s) => selectAskOn(s, key)));
   // Two different facts, deliberately not merged:
   //   - `init.permissions` is the **config-level scope** — what `auto_approve`,
   //     `auto_approve_tools`, `shell_allow` say in the config file. It is fixed

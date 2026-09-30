@@ -42,8 +42,15 @@ import {
   type Entry,
   type LooseEvent,
 } from '@/state/entries';
-import { setRuntime } from '@/runtime/bus';
-import { useApp } from '@/state/store';
+import { registerRuntime, sendTo } from '@/runtime/bus';
+import {
+  activeRuntime,
+  createSessionBucket,
+  selectModalOrigin,
+  selectQueuedModals,
+  useApp,
+  type SessionRuntime,
+} from '@/state/store';
 import type { FrontendMsg } from '@/protocol/types';
 
 /* ============================================================
@@ -1096,10 +1103,28 @@ test('history reads role and content, and tolerates both content shapes', () => 
    the store: runtime facts vs. front-end preferences
    ============================================================ */
 
-/** Capture what the store tries to send, and keep the two groups apart. */
+/**
+ * The key the fake child is registered under.
+ *
+ * Every runtime fact is stored per session now, so a test needs a session before
+ * it can assert anything about one — and "which session was this sent to" is
+ * itself part of what several of these tests are checking.
+ */
+const KEY = 'k-1';
+
+/**
+ * Capture what the store tries to send **to this session**.
+ *
+ * A handle is registered for `KEY` rather than a single global runtime, which is
+ * the shape the real bridge has: one child per conversation, addressed by key.
+ * A message that went to a different key would not appear here, and that is the
+ * point — misdirecting a `user_message` is the failure this build has to make
+ * impossible.
+ */
 function captureOutbound(): FrontendMsg[] {
   const sent: FrontendMsg[] = [];
-  setRuntime({
+  registerRuntime({
+    key: KEY,
     send(msg) {
       sent.push(msg);
     },
@@ -1113,40 +1138,30 @@ function captureOutbound(): FrontendMsg[] {
   return sent;
 }
 
+/** Install one session and clear the window-level state around it. */
 function resetStore(): void {
   useApp.setState({
-    ready: false,
-    session: null,
-    entries: [],
-    handshakeNotices: [],
-    activeRunId: null,
-    lastRunId: null,
-    dropped: 0,
-    hasSpoken: false,
-    lastTurnMs: null,
-    uiState: null,
-    status: null,
-    context: null,
+    sessions: {
+      [KEY]: createSessionBucket(KEY, 'C:/work', { ericai: false, maxSteps: null }),
+    },
+    order: [KEY],
+    activeKey: KEY,
     modal: null,
+    pendingModals: [],
     panel: null,
-    sessionList: [],
-    listedSessions: false,
-    mcp: [],
-    mcpNotes: [],
-    mcpPending: [],
-    skills: [],
-    skillCatalog: [],
-    tools: [],
-    toolRegistry: [],
-    models: [],
-    modelAliases: [],
-    runtimeExit: null,
   });
 }
 
+/** The session being shown, with "there is one" folded into the assertion. */
+function rt(): SessionRuntime {
+  const bucket = activeRuntime(useApp.getState());
+  assert.ok(bucket, 'a session must be installed');
+  return bucket;
+}
+
 /** Feed the handshake, with the caller's overrides on top of the fixture. */
-function applyInit(overrides: Record<string, unknown> = {}): void {
-  useApp.getState().applyRuntimeMessage({ ...INIT_PAYLOAD, ...overrides } as never);
+function applyInit(overrides: Record<string, unknown> = {}, key = KEY): void {
+  useApp.getState().applyRuntimeMessage(key, { ...INIT_PAYLOAD, ...overrides } as never);
 }
 
 test('every outbound message carries the envelope version', () => {
@@ -1177,50 +1192,69 @@ test('absolute-state messages use `on`, not a toggle action', () => {
   assert.deepEqual(sent[1], { v: 1, t: 'set_autopilot', on: false });
 });
 
-test('a new session sends no session id at all, not a sentinel', () => {
+test('this front end never switches a session in place', async () => {
   const sent = captureOutbound();
   resetStore();
+  applyInit();
 
-  useApp.getState().switchSession(null);
+  // Decision 11 in the design was "`/new` sends no `session_id` at all, not the
+  // prototype's `"__new__"` sentinel". The mechanism has changed since and the
+  // point is now stronger: **the desktop front end does not send
+  // `session_switch` at all.** A conversation is a process, so opening one is a
+  // new child — there is no sentinel left to get wrong, because there is no
+  // message.
+  //
+  // That matters beyond tidiness: `session_switch` makes the runtime rebuild
+  // itself and call `pending.abandonAll()`, which is exactly the behaviour that
+  // stopped two conversations from running at once.
+  await useApp.getState().openSession(null);
+  await useApp.getState().enterWorkspace('C:/work/elsewhere');
 
-  assert.deepEqual(sent[0], { v: 1, t: 'session_switch' });
-  assert.equal('session_id' in (sent[0] as Record<string, unknown>), false);
+  assert.equal(
+    sent.filter((msg) => msg.t === 'session_switch').length,
+    0,
+    'a session is a process, not something a message can move',
+  );
 });
 
-test('switching sessions does not clear the screen before the runtime answers', () => {
+test('focusing a session sends nothing and clears nothing', () => {
   const sent = captureOutbound();
   resetStore();
 
-  // A conversation is on screen.
+  // A conversation is on screen, with a transcript.
   applyInit();
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'session_load',
     messages: [{ role: 'user', content: 'the old session' }],
   } as never);
-  const before = useApp.getState().entries;
+  const before = rt().entries;
   assert.ok(before.length > 0);
 
+  // A second conversation is open beside it.
+  const second = 'k-2';
+  useApp.setState((s) => ({
+    sessions: {
+      ...s.sessions,
+      [second]: createSessionBucket(second, 'C:/work', { ericai: false, maxSteps: null }),
+    },
+    order: [...s.order, second],
+  }));
+  useApp.getState().applyRuntimeMessage(second, { ...INIT_PAYLOAD, session_id: 's-2' } as never);
+
   // `init` asks for the session list on its way past (the first screen's four
-  // recent slots), so the switch is not necessarily the first line sent.
+  // recent slots), so the count is taken after the handshakes.
   const beforeCount = sent.length;
-  useApp.getState().switchSession('s-old');
-  const sentNow = sent.slice(beforeCount);
+  useApp.getState().focusSession(second);
 
-  // `internal/protocol/server.go`: "The old session survives untouched. A front
-  // end is **not allowed** to clear its screen when it sends this request,
-  // precisely so that a failure here does not look like 'my session is gone'."
-  //
-  // A failed switch sends nothing back, so an optimistic clear is unrecoverable.
-  assert.deepEqual(useApp.getState().entries, before);
-
-  // The switch itself still went out, with the id.
-  const switchMsg = sentNow.find((msg) => msg.t === 'session_switch') as Extract<
-    FrontendMsg,
-    { t: 'session_switch' }
-  >;
-  assert.ok(switchMsg, 'the switch must still be sent');
-  assert.equal(switchMsg.session_id, 's-old');
+  // **This replaces the old "a switch must not clear the screen" test**, and the
+  // rule is now trivial rather than delicate: focusing is local, so there is no
+  // request that could fail and leave the screen blank. What used to be a
+  // discipline ("do not clear optimistically") is now a property of the design.
+  assert.equal(useApp.getState().activeKey, second);
+  assert.equal(sent.length, beforeCount, 'focusing sends nothing');
+  // And the conversation that was on screen is untouched in its own bucket.
+  assert.deepEqual(useApp.getState().sessions[KEY]?.entries, before);
 });
 
 test('mcp puts the servers in an array, and is only sent because a person asked', () => {
@@ -1229,7 +1263,7 @@ test('mcp puts the servers in an array, and is only sent because a person asked'
 
   // Simply receiving protocol traffic must not send one: a front end that sent
   // it on its own initiative would make "the config widens itself" possible.
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'ui',
     kind: 'state',
@@ -1250,10 +1284,10 @@ test('a load marks the server in flight, and the runtime\'s reply releases it', 
   // Nothing in flight to start with — the initial value is empty, and that
   // matters: a row that began life looking like it was already waiting would
   // disable its button for a request nobody made.
-  assert.deepEqual(useApp.getState().mcpPending, []);
+  assert.deepEqual(rt().mcpPending, []);
 
   // A snapshot has arrived, so `fs` is on screen as running.
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'ui',
     kind: 'state',
@@ -1264,18 +1298,18 @@ test('a load marks the server in flight, and the runtime\'s reply releases it', 
   // Both named servers are marked. This is the front end's own fact ("I just
   // sent this"), not a claim about the servers — which is why it can be known
   // before the runtime has answered.
-  assert.deepEqual([...useApp.getState().mcpPending].sort(), ['fs', 'web']);
+  assert.deepEqual([...rt().mcpPending].sort(), ['fs', 'web']);
 
   // The row's own state is untouched by the request: still whatever
   // `ui(state)` last said. Marking a server in flight must not make the screen
   // say it is up (or down) before the runtime has answered.
-  assert.equal(useApp.getState().uiState?.mcp.find((s) => s.name === 'fs')?.state, 'loaded');
-  assert.equal(useApp.getState().uiState?.mcp.find((s) => s.name === 'web')?.state, 'unload');
+  assert.equal(rt().uiState?.mcp.find((s) => s.name === 'fs')?.state, 'loaded');
+  assert.equal(rt().uiState?.mcp.find((s) => s.name === 'web')?.state, 'unload');
 
   // The runtime answers with the payload that follows an `mcp` message. That
   // reply is what releases the marks; a timer must never do it, because the
   // round trip waits the running turn out and has no fixed length.
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'ui',
     kind: 'mcp',
@@ -1283,9 +1317,9 @@ test('a load marks the server in flight, and the runtime\'s reply releases it', 
     mcp_notes: [],
   } as never);
 
-  assert.deepEqual(useApp.getState().mcpPending, []);
+  assert.deepEqual(rt().mcpPending, []);
   // And the servers list is the runtime's, not the request's.
-  assert.deepEqual(useApp.getState().mcp.map((s) => s.name), ['fs']);
+  assert.deepEqual(rt().mcp.map((s) => s.name), ['fs']);
 });
 
 test('listing is not marked in flight, because it changes nothing', () => {
@@ -1295,7 +1329,7 @@ test('listing is not marked in flight, because it changes nothing', () => {
   // `list` only draws the panel; marking it would grey the row's button for a
   // request that cannot change any server.
   useApp.getState().requestMcp('list', ['fs']);
-  assert.deepEqual(useApp.getState().mcpPending, []);
+  assert.deepEqual(rt().mcpPending, []);
 });
 
 test('a dead runtime releases the marks instead of leaving the button disabled forever', () => {
@@ -1303,34 +1337,34 @@ test('a dead runtime releases the marks instead of leaving the button disabled f
   resetStore();
 
   useApp.getState().requestMcp('load', ['fs']);
-  assert.deepEqual(useApp.getState().mcpPending, ['fs']);
+  assert.deepEqual(rt().mcpPending, ['fs']);
 
   // No reply can arrive now, so a mark left behind would be a button disabled
   // by an answer that will never come.
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'runtime_exited',
     code: 1,
     requested: false,
   } as never);
 
-  assert.deepEqual(useApp.getState().mcpPending, []);
+  assert.deepEqual(rt().mcpPending, []);
 });
 
 test('answering a permission sends the decision and does not update the display', () => {
   const sent = captureOutbound();
   resetStore();
 
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'ui',
     kind: 'state',
     ...STATE_PAYLOAD,
   } as never);
-  assert.equal(useApp.getState().uiState?.autopilot, true);
+  assert.equal(rt().uiState?.autopilot, true);
 
   // A modal opens and is answered.
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'permission_request',
     id: 'p1',
@@ -1355,14 +1389,89 @@ test('answering a permission sends the decision and does not update the display'
 
   // No optimistic update: the runtime's snapshot is still the only thing that
   // has written these facts.
-  assert.equal(useApp.getState().uiState?.autopilot, true);
+  assert.equal(rt().uiState?.autopilot, true);
+});
+
+test('an answer goes back to the session that asked, not to the one on screen', () => {
+  const first: FrontendMsg[] = [];
+  const second: FrontendMsg[] = [];
+  registerRuntime({ key: KEY, send: (m) => first.push(m), subscribe: () => () => undefined, dispose: () => undefined });
+  registerRuntime({ key: 'k-2', send: (m) => second.push(m), subscribe: () => () => undefined, dispose: () => undefined });
+
+  resetStore();
+  const other = 'k-2';
+  useApp.setState((s) => ({
+    sessions: {
+      ...s.sessions,
+      [other]: createSessionBucket(other, 'C:/work', { ericai: false, maxSteps: null }),
+    },
+    order: [...s.order, other],
+  }));
+  useApp.getState().applyRuntimeMessage(other, { ...INIT_PAYLOAD, session_id: 's-2' } as never);
+
+  // **The second session asks while the first is the one on screen.** That is
+  // the whole case: a prompt with several conversations open belongs to a
+  // session the reader may not be looking at.
+  useApp.getState().applyRuntimeMessage(other, {
+    v: 1,
+    t: 'permission_request',
+    id: 'p-second',
+    call_id: 'c1',
+    tool: 'shell',
+    risk: 'high',
+    arguments: { command: 'rm -rf /' },
+    remember: null,
+    remember_hint: null,
+    allow_trust_all: false,
+    trust_all_hint: null,
+  } as never);
+
+  assert.equal(useApp.getState().activeKey, KEY, 'the display did not move');
+  assert.equal(useApp.getState().modal?.kind, 'permission');
+
+  useApp.getState().answerPermission('allow');
+
+  // The reply goes to **k-2**, the child the runtime is blocked on. Getting this
+  // wrong is the failure this design exists to make impossible: the asker waits
+  // on that id forever (the runtime has no timeout), while the session that
+  // never asked receives a decision about a call it does not have.
+  assert.equal(second.filter((m) => m.t === 'permission_response').length, 1);
+  assert.equal(first.filter((m) => m.t === 'permission_response').length, 0);
+  assert.equal((second.find((m) => m.t === 'permission_response') as { id: string }).id, 'p-second');
+});
+
+test('an approval labels which conversation it came from', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'permission_request',
+    id: 'p1',
+    call_id: 'c1',
+    tool: 'shell',
+    risk: 'high',
+    arguments: {},
+    remember: null,
+    remember_hint: null,
+    allow_trust_all: false,
+    trust_all_hint: null,
+  } as never);
+
+  // The workspace's base name and the runtime's own session id. Not the bridge
+  // key: a reader cannot do anything with `k-1`, and the id is what names the
+  // conversation everywhere else on screen.
+  const origin = selectModalOrigin(useApp.getState(), KEY);
+  assert.ok(origin.includes('s-1'), `the session id must be in it, got ${origin}`);
+  assert.equal(selectQueuedModals(useApp.getState()), 0, 'one request is not a queue');
 });
 
 test('answering a question distinguishes skip from an answer', () => {
   const sent = captureOutbound();
   resetStore();
 
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'question_request',
     id: 'q1',
@@ -1385,39 +1494,39 @@ test('the store never writes a runtime fact on its own', () => {
   resetStore();
 
   // The only way these fields change is a message from the runtime.
-  assert.equal(useApp.getState().uiState, null);
+  assert.equal(rt().uiState, null);
   useApp.getState().setAutopilot(true);
-  assert.equal(useApp.getState().uiState, null);
+  assert.equal(rt().uiState, null);
 
-  useApp.getState().applyRuntimeMessage({ v: 1, t: 'ui', kind: 'state', ...STATE_PAYLOAD } as never);
-  assert.equal(useApp.getState().uiState?.autopilot, true);
+  useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'ui', kind: 'state', ...STATE_PAYLOAD } as never);
+  assert.equal(rt().uiState?.autopilot, true);
 });
 
 test('runtime_exited records the code and whether it was requested', () => {
   captureOutbound();
   resetStore();
 
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'runtime_exited',
     code: 0,
     requested: false,
   } as never);
 
-  assert.deepEqual(useApp.getState().runtimeExit, { code: 0, requested: false });
+  assert.deepEqual(rt().runtimeExit, { code: 0, requested: false });
 });
 
 test('quiet mode is a preference and survives protocol traffic', () => {
   captureOutbound();
   resetStore();
 
-  const before = useApp.getState().quiet;
+  const before = rt().quiet;
   useApp.getState().toggleQuiet();
-  assert.equal(useApp.getState().quiet, !before);
+  assert.equal(rt().quiet, !before);
 
-  useApp.getState().applyRuntimeMessage({ v: 1, t: 'ui', kind: 'state', ...STATE_PAYLOAD } as never);
+  useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'ui', kind: 'state', ...STATE_PAYLOAD } as never);
   // A snapshot refresh must not reach into presentation choices.
-  assert.equal(useApp.getState().quiet, !before);
+  assert.equal(rt().quiet, !before);
   useApp.getState().setQuiet(before);
 });
 
@@ -1433,7 +1542,7 @@ test('the handshake notices survive the session_load that follows them', () => {
 
   // The runtime sends these two back to back, unconditionally. `session_load`
   // rebuilds the whole transcript, which used to take the diagnostics with it.
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'session_load',
     messages: [
@@ -1442,7 +1551,7 @@ test('the handshake notices survive the session_load that follows them', () => {
     ],
   } as never);
 
-  const state = useApp.getState();
+  const state = rt();
   // The runtime's own sentence, verbatim, still on screen.
   assert.equal(state.handshakeNotices.length, 1);
   assert.equal(state.handshakeNotices[0].code, 'grep.missing_binary');
@@ -1463,8 +1572,8 @@ test('init.tools feeds the risk lookup, before ui(tools) is ever asked for', () 
   applyInit();
 
   // No `ui(tools)` has arrived — only the handshake has.
-  assert.equal(useApp.getState().tools.length, 0);
-  assert.equal(useApp.getState().toolRegistry.length, 2);
+  assert.equal(rt().tools.length, 0);
+  assert.equal(rt().toolRegistry.length, 2);
 
   // A tool row is drawn from these facts, so `shell` must already be HIGH.
   const facts = useApp.getState().toolFacts('shell');
@@ -1475,14 +1584,14 @@ test('init.tools feeds the risk lookup, before ui(tools) is ever asked for', () 
   assert.equal(facts?.external, null);
 
   // And the row really does carry it once a tool call arrives.
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'event',
     kind: 'run_started',
     run_id: 'r1',
     step: 0,
   } as never);
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'event',
     kind: 'tool_call',
@@ -1494,7 +1603,7 @@ test('init.tools feeds the risk lookup, before ui(tools) is ever asked for', () 
     arguments: '{"command":"ls"}',
   } as never);
 
-  const row = useApp.getState().entries.find((entry) => entry.kind === 'tool');
+  const row = rt().entries.find((entry) => entry.kind === 'tool');
   assert.equal((row as Extract<Entry, { kind: 'tool' }>)?.risk, 'high');
 
   // An unknown tool stays unknown rather than defaulting to low.
@@ -1510,14 +1619,14 @@ test('the config-level permission scope is kept, and is not the live one', () =>
   });
 
   // This is what the audit panel reads for "non-default permissions".
-  assert.deepEqual(useApp.getState().session?.permissions, {
+  assert.deepEqual(rt().session?.permissions, {
     auto_approve: ['low'],
     shell_allow: ['git status'],
   });
 
   // The live snapshot is a different fact and carries no config scope at all.
-  useApp.getState().applyRuntimeMessage({ v: 1, t: 'ui', kind: 'state', ...STATE_PAYLOAD } as never);
-  const live = useApp.getState().uiState?.permission;
+  useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'ui', kind: 'state', ...STATE_PAYLOAD } as never);
+  const live = rt().uiState?.permission;
   assert.deepEqual(live?.autoApprove, []);
   assert.deepEqual(live?.shellAllow, []);
   // …but it does carry what was released while the session ran.
@@ -1574,7 +1683,7 @@ test('forgetting a workspace does not move the runtime out of it', () => {
   // Being *listed* and being *current* are two different things: the runtime is
   // still in that directory, and `init.workspace` still says so. A version that
   // cleared the session here would be reporting a move that never happened.
-  assert.equal(useApp.getState().session?.workspace, INIT_PAYLOAD.workspace);
+  assert.equal(rt().session?.workspace, INIT_PAYLOAD.workspace);
   assert.equal(sent.length, beforeCount);
 });
 
@@ -1582,12 +1691,12 @@ test('entering the workspace the runtime is already in does not restart it', () 
   const sent = captureOutbound();
   resetStore();
   applyInit();
-  useApp.getState().applyRuntimeMessage({
+  useApp.getState().applyRuntimeMessage(KEY, {
     v: 1,
     t: 'session_load',
     messages: [{ role: 'user', content: 'still here' }],
   } as never);
-  const before = useApp.getState().entries;
+  const before = rt().entries;
   assert.ok(before.length > 0);
 
   // A restart would throw away a live session to arrive at the same directory —
@@ -1597,29 +1706,45 @@ test('entering the workspace the runtime is already in does not restart it', () 
     .getState()
     .enterWorkspace(String(INIT_PAYLOAD.workspace).toUpperCase())
     .then(() => {
-      assert.equal(useApp.getState().entries, before);
-      assert.ok(useApp.getState().session, 'the session must survive');
+      assert.equal(rt().entries, before);
+      assert.ok(rt().session, 'the session must survive');
     });
 });
 
-test('entering another workspace clears the old session before the child restarts', () => {
-  captureOutbound();
+test('entering another workspace opens beside the current one, and clears nothing', () => {
+  const sent = captureOutbound();
   resetStore();
   applyInit();
-  useApp.setState({ sessionList: [{ id: 's-1' }] as never, listedSessions: true });
+  useApp.setState((s) => ({
+    sessions: {
+      ...s.sessions,
+      [KEY]: { ...s.sessions[KEY]!, sessionList: [{ id: 's-1' } as never], listedSessions: true },
+    },
+  }));
 
   return useApp
     .getState()
     .enterWorkspace('C:/work/elsewhere')
     .then(() => {
       const s = useApp.getState();
-      // Everything that belonged to the old workspace goes: the session, the
-      // transcript and the session list, which was read from the *old*
-      // directory's `.tudouni/` and would otherwise be shown against the new one.
-      assert.equal(s.session, null);
-      assert.deepEqual(s.entries, []);
-      assert.deepEqual(s.sessionList, []);
-      assert.equal(s.listedSessions, false);
+
+      // **This reverses what this test used to assert**, and the reversal is the
+      // whole point of the change. It used to demand that the old session, its
+      // transcript and its session list were all cleared "before the child
+      // restarts" — because with one process, going to another workspace meant
+      // replacing the one that was running. That is precisely the behaviour the
+      // second target scenario needs to stop: a conversation at work must not be
+      // torn down because somebody looked at a different directory.
+      //
+      // So the old conversation survives, untouched, in its own bucket.
+      assert.ok(s.sessions[KEY], 'the conversation that was open must survive');
+      assert.deepEqual(s.sessions[KEY]?.sessionList, [{ id: 's-1' }]);
+      assert.equal(s.sessions[KEY]?.listedSessions, true);
+      assert.equal(s.sessions[KEY]?.session?.workspace, INIT_PAYLOAD.workspace);
+
+      // And nothing was switched in place: a workspace is a process, so this is
+      // a new child or nothing at all.
+      assert.equal(sent.filter((msg) => msg.t === 'session_switch').length, 0);
     });
 });
 
@@ -1628,16 +1753,34 @@ test('a session row and a workspace row are never confused for one another', () 
   resetStore();
   applyInit();
 
-  // `session_switch` is what a session row sends — the process stays put. The
-  // workspace rail must not reach for this, and the session rail must not
-  // restart the child: they are the two halves of this sidebar and the
-  // difference is exactly "a message" versus "a new process".
+  // The two halves of the left rail do different things, and the difference is
+  // now "which process" rather than "a message versus a process":
+  //
+  //   - a **session row** opens a conversation. If a child already holds it,
+  //     that child is focused and *nothing is sent*; otherwise a new child is
+  //     started.
+  //   - a **workspace row** goes to a directory. If a conversation is already
+  //     live there, it is focused; otherwise a new child is started in it.
+  //
+  // What neither one may do is reach for `session_switch`, which makes the
+  // runtime rebuild itself and abandon whatever it was waiting on.
   const beforeCount = sent.length;
-  useApp.getState().switchSession('s-other');
-  const switched = sent.slice(beforeCount).filter((msg) => msg.t === 'session_switch');
-  assert.equal(switched.length, 1);
-  assert.equal((switched[0] as { session_id?: string }).session_id, 's-other');
-  // The process was not touched: no restart happened.
-  assert.ok(useApp.getState().session, 'switching a session keeps the runtime');
+
+  // A session row for the conversation already on screen: pure focus.
+  useApp.getState().focusSession(KEY);
+  assert.equal(sent.length, beforeCount, 'focusing the current session sends nothing');
+  assert.equal(useApp.getState().activeKey, KEY);
+
+  // A workspace row for the directory a live child is already in: also pure
+  // focus, and this is the rule the old test was reaching for — going to where
+  // the runtime already is must not restart it.
+  return useApp
+    .getState()
+    .enterWorkspace(String(INIT_PAYLOAD.workspace))
+    .then(() => {
+      assert.equal(sent.length, beforeCount, 'entering the current workspace sends nothing');
+      assert.equal(sent.filter((msg) => msg.t === 'session_switch').length, 0);
+      assert.ok(rt().session, 'the running conversation is untouched');
+    });
 });
 

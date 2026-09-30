@@ -1,7 +1,7 @@
 # tudouni-aigo · desktop
 
-The Tauri 2 + React desktop client. It drives the **existing** Go runtime as a
-separate process over the same JSONL stdio protocol the TUI uses — this is a
+The Tauri 2 + React desktop client. It drives the **existing** Go runtime as
+separate processes over the same JSONL stdio protocol the TUI uses — this is a
 different front end, not a second kernel.
 
 ```
@@ -10,10 +10,21 @@ different front end, not a second kernel.
 │  UI, state, i18n                  process, IPC, window    │
 └──────────────────────────────────┬────────────────────────┘
                                    │ stdin/stdout: JSONL, one line per message
-                        tudouni-aigo --runtime-stdio
-                                   │
-                       agent loop / tools / permissions / model
+              ┌────────────────────┼────────────────────┐
+   tudouni-aigo --runtime-stdio            …one per session…
+     cwd = workspace A                      cwd = workspace B
+              │                                        │
+   agent loop / tools / permissions / model   (its own)
 ```
+
+**One session, one child process.** A workspace is the child's working
+directory and `--session` names the conversation, so a session is a process
+rather than something a message can move — and two of them run in parallel by
+both existing at once. The bridge mints a `ChildKey` for each, tags every event
+with it, and the front end keeps one bucket of runtime facts per key. The
+protocol and the runtime are unchanged by this; the full reasoning, the
+alternatives and the shared-file analysis are in
+`../tudouni-aigo-desktop-design/multi-session-parallel.md`.
 
 Authority for everything below: `../tudouni-aigo-desktop-design/desktop-app.md`,
 the design system under `../tudouni-aigo-desktop-design/tudouni-aigo/`, and — for
@@ -123,7 +134,7 @@ src/
     ui/                  primitives, markdown
   i18n/                  English only (see below)
   styles/                tokens -> components -> app -> stream
-src-tauri/src/lib.rs     the child process, JSONL, exit codes, single instance
+src-tauri/src/lib.rs     the child processes, JSONL, exit codes, single instance
 tests/                   projection tests + a real-binary end-to-end check
 ```
 
@@ -157,20 +168,37 @@ halves differ in where their facts come from and the difference is load-bearing:
   "listed" and "current" are never conflated. Adding or forgetting one sends
   nothing.
 - The **session list** is entirely the runtime's: `sessions.items` answers
-  `session_list`, and `session_switch` is what moves between them — in place,
-  with the process untouched. `messages`, `steps`, `todos` and `preview` are all
-  computed by the runtime; this rail counts nothing itself and never reads a
-  session file.
+  `session_list`, and opening one is either **focusing the child that already
+  holds it** (which sends nothing at all) or **starting a child on it**.
+  `messages`, `steps`, `todos` and `preview` are all computed by the runtime;
+  this rail counts nothing itself and never reads a session file.
+
+  **This rail does not send `session_switch`.** That message makes the runtime
+  rebuild itself and call `pending.abandonAll()`, which is exactly what stopped
+  two conversations from running at once. The protocol keeps it for the TUI and
+  the CLI; here, a conversation is a process.
+
+**A session is a process, so the rail can show what each one is doing.** Each
+row carries a status dot at its left edge — asking, broken, running, or
+finished-and-unlooked-at — and a workspace row carries a count of the sessions
+inside it that want a person. Without that, opening a second conversation would
+be a way to lose track of the first: the dot is the only place that answers "is
+anything waiting for me" while you are looking at something else. Colour is
+never the whole signal (every dot has an accessible name), the dots do not pulse
+(`component-states.md` §7, and several of them breathing at once is noise rather
+than a continuing condition), and a session that is merely idle draws nothing.
 
 Neither a sign-in nor a plugin market is drawn. There is no account behind this
 window and the runtime has no plugin registry — its extensibility is MCP servers
 and skills, which are the right-hand sidebar's business. A control for either
 would be a control for something that cannot happen.
 
-Every action in the rail is inert while a blocking prompt is up, and that is not
-cosmetic: `server.go: switchSession` calls `pending.abandonAll()`, so switching
-away abandons the request the runtime is blocked on — and it waits on that id
-forever. The same goes for restarting the child under a prompt.
+The rail's actions are inert while a blocking prompt is up, and one of them
+still has to be: starting a new session under a prompt is a way to lose track of
+what is waiting. What is **gone** is the old blanket rule, which existed because
+switching a session abandoned the request the runtime was blocked on. Focusing a
+session sends nothing now, and answering a prompt goes back to the session that
+asked — so with two conversations waiting, both can be answered.
 
 **The two blocking modals are fail-closed.** No auto-skip, no timeout, no
 guessing. Approval shows the arguments in full and the runtime's two hints
@@ -272,19 +300,42 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 2 | English only | `i18n/index.ts` |
 | 3 | Greeting carries the OS user name, omitted when unavailable | `os_user_name` in `lib.rs` |
 | 4 | No theme panel; 17 commands | `commands.ts`, `theme.ts`, `panels/PanelHost.tsx` |
-| 5 | `status` polled when a turn ends and while something is outstanding, throttled | `POLL_FLOOR_MS`, `throttled()` in `store.ts` |
-| 6 | Block caps are a front-end constant (5 rows), documented in the design system | `BLOCK_CAP` in `store.ts` |
+| 5 | `status` polled when a turn ends and while something is outstanding, throttled — **per session**, so a busy conversation cannot starve a quiet one | `POLL_FLOOR_MS`, `pollState` / `throttled()` in `store.ts` |
+| 6 | The right rail's blocks are **not capped**: every row is listed and the rail scrolls. The `(+N more)` footnote is gone | `Sidebar.tsx` (the block bodies), `.sidebar-inner`'s `overflow-y: auto` in `styles/stream.css`. This reverses an earlier decision — see below |
 | 7 | Subagent rows: `seconds` / `steps` / `tool_calls` / `provider` | `projectSubagents` in `adapt.ts` |
 | 8 | `subagent` is a HIGH-risk tool; risk is read from the runtime, never hard-coded | `toolFacts()` in `store.ts` |
 | 9 | Drop inserts a path; workspace-outside refused with a message | `hooks/useFileDrop.ts`, `runtime/dragdrop.ts`, `dragDropEnabled: true` in `tauri.conf.json` |
 | 10 | Approval button visibility follows `remember` / `allow_trust_all` | `modals/PermissionModal.tsx` |
-| 11 | `/new` sends no `session_id` at all, not a sentinel | `commands.ts`, `switchSession` in `store.ts` |
+| 11 | `/new` opens a **new session** — a new child process — rather than sending a `session_switch` | `commands.ts` (`openSession`), `attachSession` in `store.ts`. The desktop front end never sends `session_switch` at all: it rebuilds the runtime and abandons what it is waiting on |
 | 12 | Single instance: a second launch focuses the window | `lib.rs` — registered **first**, which the plugin's own docs require |
 | 13 | Streaming is asked for on every attach, because the runtime does not stream its stdio front end unless told to and this interface is built around `delta` | `attachRuntime()` in `runtime/tauri.ts` (`--stream`), `applyDelta` in `state/entries.ts` |
 | 14 | The left sidebar is workspaces + sessions only — no sign-in, no plugin market; the workspace list is a front-end preference while the current workspace is a runtime fact | `components/sidebar/WorkspaceSidebar.tsx`, `workspaces` / `leftbarVisible` in `state/store.ts`, `workspace_check` in `lib.rs` |
 | 15 | Each MCP server in the rail carries its own load/unload button, so mounting one is no longer `/mcp`-only. The rail's row shows **less** than the panel's row on purpose — see below | `McpRow` in `components/sidebar/Sidebar.tsx`, `mcpPending` in `state/store.ts`, `.mcp-act` in `styles/stream.css` |
 | 16 | `Ctrl+V` pastes a picture: the bytes are written into the workspace and the path goes into the sentence. Ten pictures per message, five megabytes each — the runtime's own ceilings, mirrored | `hooks/useClipboardPaste.ts`, `runtime/paste.ts`, `components/chrome/ImageTray.tsx`, `image_stash` in `lib.rs` |
 | 17 | Settings holds **start-up arguments only** (`--ericai`, `--max-steps`), at the foot of the left rail; applying one restarts the child, after an inline confirmation. No theme switch, and no eighteenth command | `panels/SettingsPanel.tsx`, `applyLaunch` in `state/store.ts`, `ericai` in `lib.rs` / `runtime/tauri.ts`, `.lb-foot` in `styles/stream.css` |
+
+### 6 · Why the rail is not capped, and why `step n / N` is not a fraction
+
+Both of these were inherited from the terminal front end, where the constraint
+that produced them is real. Neither constraint exists here.
+
+**The rail's blocks list every row.** The TUI caps a block at `railMaxRows` and
+folds the rest into `(+N more)` (`internal/frontends/tui/rail.go`) because its
+rail is a **fixed-height column, not a scroll container** — the comment says so
+outright: what does not fit can only be cut, or a block becomes unreachable. The
+desktop rail is a scroll container (`.sidebar-inner` is `overflow-y: auto`), so
+cutting rows hides content the reader could simply have scrolled to. The unifying
+rule is still "nothing is silently truncated": rows may not be hidden with CSS,
+only scrolled to.
+
+**The status bar reports cumulative steps, with no denominator.** `session.steps`
+is `ui(state).steps` — the count of `assistant` messages in the whole session
+(`Session.StepCount()`), so it only ever grows and a resumed session starts high.
+`session.maxSteps` is `init.max_steps` — `--max-steps`, the budget for **one
+turn**, which the agent's loop resets every turn (`internal/agent/agent.go`).
+Pairing them printed `step 497 / 120`. Per-turn progress is the turn head's job
+and already shows `entry.step / entry.maxSteps`; the cap itself stays where it
+belongs, on the session bar (`step cap`) and in the settings panel (`--max-steps`).
 
 ### 15 · The rail's MCP row, and why it is narrower than the panel's
 

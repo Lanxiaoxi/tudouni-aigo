@@ -20,8 +20,14 @@
 | 级别 | 数量 | 已修 |
 |---|---|---|
 | P0 | 10 | 0 |
-| P1 | 15 | 0 |
+| P1 | 17 | 2 |
 | P2 | 23 | 0 |
+
+> P1-16 / P1-17 是第二轮用户反馈新增的两条（底栏 `step n / N`、右栏 `(+N more)`），
+> 都带着"用户已拍板"的结论，不是待议项。
+> **两条都已落地（文档侧 + 代码侧）**：`StatusBar.tsx` 只报累计 steps、`Sidebar.tsx`
+> 不再截断区块内容，`BLOCK_CAP` / `block.more` / `.list-more` / `More` 全部删除。
+> 其余各条仍指代码未改。
 
 **一句话结论**：工程纪律很好（纯函数投影、无兜底值、fail-closed 模态、无乐观更新、CSS 走 token、注释解释"为什么"），但**协议层是"照记忆写的"而不是照着权威抄的**，且测试夹具由前端自己手写、与实现犯了同一个错，于是互证通过。README 里"已修复"的三个缺陷中有两个在真实时序下依然存在。
 
@@ -256,6 +262,47 @@
 - 修法：不要用 `??` 顶替。缺 provider 数就显示 unknown；要显示估算就单独一格并标明是估算。
 - **验收**：一个回合都还没跑完时状态栏不显示百分比；跑完后显示的是 provider 的数。
 
+### [ ] P1-16 底栏 `step n / N` 把"会话累计"和"单回合预算"拼在一格 —— 出现 `step 497 / 120` **[用户反馈，已定结论]**
+
+- **现象**：状态栏左段显示 `step 497 / 120`。分子超过分母，读起来像计数溢出或算错。
+- **证据**（两个数根本不是同一件事）：
+  - **分子**：`src/components/chrome/StatusBar.tsx:121` 的 `session?.steps ?? 0` ← `ui(state).steps` ← `internal/runtime/composition.go:1527` 的 `r.SessionValue.StepCount()`；而 `internal/state/session.go:56-67` 写明它**统计会话里所有 `assistant` 消息**，即"这个会话一共跑了多少次模型往返"。它随会话单调递增，`/resume` 恢复的长会话天然很大——497 就是这么来的。前端落点：`src/state/store.ts:2276`（每次 `ui(state)` 覆盖）、字段注释 `src/state/store.ts:212-214`（"Cumulative steps for this session"）。
+  - **分母**：`StatusBar.tsx:122` 的 `session?.maxSteps ?? 0` ← `init.max_steps`（`internal/runtime/composition.go:1502`、`src/state/store.ts:1382`），语义是 `--max-steps`，即**一个回合**最多允许几次模型调用（`internal/agent/agent.go:23` `DefaultMaxSteps = 120`，在 `agent.go:400` 的 `for a.step = 0; a.step < a.MaxSteps` 里**按回合重置**）。
+  - 因此 `497 / 120` 不是溢出，是把"会话累计"和"单回合预算"当成了同一维度的两个数。
+- **与两个参照前端都不一致**：
+  - TUI 底栏读的是 `m.current.steps`（`internal/frontends/tui/view.go:848-851`），每收到一次 `model_call` 自增、`finishTurn` 后 `m.current = nil`（`model.go:711`、`model.go:932-935`），且 `current == nil || steps == 0` 时**整个不画**；
+  - 桌面端自己的回合头 `src/components/stream/EntryView.tsx:111-113` 用的是 `entry.step / entry.maxSteps`（由 `bumpStep`，`src/state/entries.ts:681-692` 逐事件推进），**那才是每回合的正确数**。
+  - 也就是说底栏这一格既与 TUI 不一致，又与自家回合头不是同一个数——而且两者陈述的是同一件事，属于重复展示。
+- **附带**：`maxSteps > 0` 就无条件渲染（`StatusBar.tsx:155`），所以空会话会显示 `step 0 / 120`；TUI 在这种情况下什么都不画。
+- **文档就是错的来源**：`desktop/tudouni-aigo-desktop-design/multi-session-parallel.md:564` 的表格把这一格标成 `session.steps / session.maxSteps`。**改代码时必须连这一行一起改**，否则下一个人会照它改回去。
+- **决策（用户已定）**：左下角**去掉上限**，只显示这段对话的累计 steps。即去掉分母 `maxSteps`，保留累计值。
+- **修法**：
+  1. `StatusBar.tsx`：删掉 `maxSteps` 的读取与 `status.step` 的两参数调用，只渲染累计数。
+  2. `i18n`：`'status.step': 'step {n} / {max}'`（`src/i18n/index.ts:79`）需要一个单参数的兄弟 key。**注意 `status.step` 目前是共用的**——`EntryView.tsx:112` 的回合头也在用它，所以**不要就地改这条 key**（会连带改掉回合头），新增一条 key 给底栏，或让回合头继续用原 key。
+  3. 文案措辞要能读出不带上限的语义（例如 `N steps`），否则一个孤零零的 `step 497` 仍然像"第 497 / 未知"。
+  4. `maxSteps` 在别处仍有正当用途（会话栏 `SessionBar.tsx:132-133` 的 `step cap` 事实、设置面板的 `--max-steps`），**只动状态栏这一处**。
+- **不要顺手改成"当前回合的 step"**：那是回合头的职责，底栏放累计值是本次的决定；两处都画同一个数才是真正的冗余。
+- **验收**：在恢复的长会话（累计 400+）里打开窗口，底栏不出现大于分母的分式；跑完一个回合后数字继续累计。
+
+### [ ] P1-17 右栏 `(+N more)`：cap 是 TUI 的约束，桌面端是滚动容器，不该继承 **[用户反馈，已定结论]**
+
+- **现象**：右侧栏五个区块各自只画前 5 行，其余折成 `(+N more)`。桌面端本该有的滚动条下方，这个标记既没必要又和 TUI 看起来是一回事。
+- **证据**（cap 的来源与 TUI 的必要性）：
+  - 前端四处：`src/components/sidebar/Sidebar.tsx:80-83`（todos）、`:99-108`（skills）、`:123-126`（jobs）、`:138-141`（mcp），都是 `slice(0, BLOCK_CAP)` + `<More count={len - BLOCK_CAP} />`；`More` 在 `:220-223` 渲染 `t('block.more')`；常量 `src/state/store.ts:113` `export const BLOCK_CAP = 5;`；文案 `src/i18n/index.ts:199` `'block.more': '(+{n} more)'`；样式 `src/styles/components.css:367`。
+  - TUI 侧同样的东西是 `internal/frontends/tui/rail.go:71` 的 `railMaxRows = 6` 与 `:222-250` 的 `clipBlock`，它存在的理由写在注释里：`renderRail` 画的是**固定高度的列、不是滚动容器**，装不下就只能砍，否则某个区块永远够不着。**这是终端的能力约束，不是设计偏好。**
+  - 桌面端没有这个约束：`.sidebar-inner` 是 `overflow-y: auto`（`src/styles/stream.css:628-638`），列表再长也只是滚动，砍掉反而让用户看不到本可以滚到的东西。
+  - 注意 TUI 侧还有一层"终端没高度"的兜底：`rail.go:203-215` 在整列装不下时逐行截断并标 `rail.more`。桌面端没有对应的场景，所以两处都无需要保留。
+- **文档就是错的来源**：`desktop/tudouni-aigo-desktop-design/desktop-app.md:439`（§7.3 正文）与 `:556`（§10 决策 6）把"各区块 5 行 + `(+N more)`"写成了设计系统的一部分，`:581`（§11 实施顺序第 5 条）又要求"上限常量按决策 6 落进设计系统"。**三处都要改**，否则文档与实现互相打架。
+- **决策（用户已定）**：右侧栏**去掉 cap**，有多少列多少——桌面端的设计思想就是"能滚就不砍"。
+- **修法**：
+  1. `Sidebar.tsx`：四处 `slice(0, BLOCK_CAP)` 改为直接 map 全量；删掉四处 `<More>` 与 `More` 组件本身；删掉 `BLOCK_CAP` 的 import。
+  2. `src/state/store.ts:113`：删掉 `BLOCK_CAP`（及 `:107-115` 那段"决策 6"的注释）。
+  3. `src/i18n/index.ts:199`：删掉 `'block.more'`，并核对 `TKey` 联合类型不会因此报错（它是从 catalog 推出来的）。
+  4. `src/styles/components.css:367`：删掉 `.list-more`（`class-audit.mjs` 查的是"有 className 没样式"，反向的孤儿样式它不报，但要顺手清掉）。
+  5. **`Block` 的折叠与 `inert` 不动**——那套是对的（保留 DOM + 高度归零，见 `Sidebar.tsx:185-206` 的注释），只是不再截断内容行。
+- **已核实的无风险点**：`scripts/render-check.mjs`、`tests/`、`src/` 全仓搜过，**没有任何断言或测试依赖 `BLOCK_CAP` / `block.more` / `.list-more`**（`render-check.mjs` 对右栏只断言 5 个区块的标题顺序、`3/60` 目标轮次、`uncollected` 徽章、`pdf-tools` 技能名与 MCP 行宽，见 `:816-830`），所以去掉 cap 不会碰坏现有校验。
+- **验收**：喂一个 8 项的 `todos`（`render-check.mjs:754-760` 现在只喂 2 项），五条以上的任务全部出现在 DOM 里，没有任何 `(+N more)` 文本，右栏可以滚到底。
+
 ---
 
 ## P2 · 小问题
@@ -283,6 +330,19 @@
 - [ ] **技能面板两处 i18n key 用错**：`panel.help.commands` 用在了技能目录标题上（`src/components/panels/panels.tsx:379`），刷新按钮用了 `cmd.skills.desc`（`:421`）。
 - [ ] **无 `aria-live`**：相位切换、新通知、流式回答对读屏器全部静默。
 - [ ] **其他小项**：Welcome 的 `⏎/⇧` 与帮助面板的 `Enter/Shift` 写法不一致；`TitleBar` 算了 `isMaximized()` 却忽略结果；`PermissionModal` 在渲染 Description 的同时设 `aria-describedby={undefined}`；`applyStateSnapshot` 里 `provider: snap.modelProvider || session.provider` 用了 `||`（空串会回退，语义上应显式判 null）；66 个 CSS 类未被引用；8 处硬编码颜色（终端区可辩护，但缺少 `--terminal-fg`/ANSI token 可用）。
+- [ ] **P1-17 落地后的遗留**：`.list-more`（`src/styles/components.css:367`）与 `'block.more'`（`src/i18n/index.ts:199`）会变成无引用；`scripts/class-audit.mjs` 只查"有 className 没样式"这一个方向，孤儿样式与孤儿 key 都得手动清。
+- [ ] **P1-16 落地后的遗留**：`status.step` 仍是共用 key（回合头 `EntryView.tsx:112` 与底栏 `StatusBar.tsx:156`）。若底栏改用新 key，记得确认 `entry.turnStepLimit` 那条链路没被连带改动。
+
+---
+
+## 第二轮用户反馈（已定结论，不是待议项）
+
+这两条来自实际使用，**用户已给出结论**，实现时按结论做，不必再论证是否该做：
+
+1. **底栏去掉单回合上限，只保留对话累计 steps**（P1-16）。
+2. **右栏去掉区块内容上限，有多少列多少**（P1-17）。理由就是桌面端与 TUI 的差别：TUI 的栏是固定高度、不可滚（`internal/frontends/tui/rail.go` 的 `railMaxRows` 与 `clipBlock` 的注释写明这是终端能力约束），桌面端的 `.sidebar-inner` 本来就是滚动容器，砍掉的内容用户本可以滚到。
+
+两条都牵动设计文档，一起改（见下节）。
 
 ---
 
@@ -319,7 +379,42 @@
 - [ ] **批次 5（回合与切换的收尾语义）**：P0-3、P0-4、P1-4。
 - [ ] **批次 6（两处一行改动、交互收益最大）**：P0-7（target guard）、P1-6（isComposing）。
 - [ ] **批次 7（文档与现实对齐）**：P0-8。`dragDropEnabled` 改回 `true` 并用 `onDragDropEvent()` 实现插入路径；或者同时改掉注释、README 与配置。**不能让文档描述一个不存在的功能。**
-- [ ] **批次 8（剩余 + 土壤）**：其余 P1 与 P2；并**同步设计文档与 `protocol/schema/outbound.schema.json`**（ui kind 7→8、event kind 11→14、context 容器的 `updated_at`、MCP 的 `failed`/`error`）。这一条排在最后，但它是前面一半问题的成因——文档落后于运行时时，前端只能靠记忆写。
+- [ ] **批次 8（用户已拍板的两条呈现改动）**：P1-16 + P1-17。两条都是一处渲染逻辑 + 一处常量 + 一处文案，且**必须同批改设计文档**（见下）。P1-17 顺带清掉 `.list-more` / `block.more` 两个孤儿。
+- [ ] **批次 9（剩余 + 土壤）**：其余 P1 与 P2；并**同步设计文档与 `protocol/schema/outbound.schema.json`**（ui kind 7→8、event kind 11→14、context 容器的 `updated_at`、MCP 的 `failed`/`error`）。这一条排在最后，但它是前面一半问题的成因——文档落后于运行时时，前端只能靠记忆写。
+
+---
+
+## 需要同步修改的设计文档（P1-16 / P1-17）
+
+这两条的成因**有一半在文档里**：文档把 TUI 的终端约束当成了桌面端的设计，前端照着抄。所以改代码时同步改文档，否则下一个人会照着改回去。
+
+**文档与代码都已改完**（见"状态"列）——这两条随多会话那次改动一起落地了，因为它们正落在同一批文件里（`StatusBar.tsx` / `Sidebar.tsx` / `store.ts` / `i18n` / `styles`）。
+
+| 文件 | 位置 | 原本写的 | 现在写的 | 状态 |
+| --- | --- | --- | --- | --- |
+| `desktop/tudouni-aigo-desktop-design/desktop-app.md` | §7.3 正文 | "内容有上限，装不下时**从底部丢弃并标 `(+N more)`**，不许静默截断" | 右栏**不设内容上限**，超出由滚动承接；并说明这与 TUI 的差别是"终端固定列 vs 桌面滚动容器"，不是审美。"不许静默截断"**保留**，约束对象变成"不许用 CSS 藏行" | ✅ 已改 |
+| 同上 | §7.3 引用块 | "**决策 6：写死在前端常量（各区块 5 行）**" | 指明 `caps` 在协议里仍不存在，但结论是**"前端不造这个上限"**；原决策 6 作废，指向 §10 | ✅ 已改 |
+| 同上 | §7.4 状态栏左段 | "阶段 + 当前动作或结算文案 + `step n / N`" | "……+ **对话累计 steps**"，加三条说明：只报累计不报上限、回合进度归回合头、上限事实在会话栏与设置面板 | ✅ 已改 |
+| 同上 | §10 决策 6 | 原整行 | 整行标注**已作废**并写明新结论与新理由 | ✅ 已改 |
+| 同上 | §10 开头 | "以下 12 条在评审中已拍板" | 补一句"**#6 已被后续的实际使用推翻**" | ✅ 已改 |
+| 同上 | §5.3 对照表（`caps` 行） | "没有 `caps`（上限是前端呈现层的事，可由设计系统定）" | 追加提醒：没有 `caps` 的结论是"协议不管列表长度"，**不是**"前端自己定一个长度" | ✅ 已改 |
+| 同上 | §11 第 5 条 | "上限常量按决策 6 落进设计系统" | "右栏不设内容上限（决策 6 已作废），因此**没有上限常量要落进设计系统**" | ✅ 已改 |
+| `desktop/tudouni-aigo-desktop-design/multi-session-parallel.md` | 状态栏来源表 | `step n / N` ← `session.steps` / `session.maxSteps` | `steps`（累计，**不配上限**）← `session.steps`（全会话 `assistant` 消息数） | ✅ 已改 |
+| 同上 | 表后说明段 | 只讲"两个函数必须一起加参数" | 追加一段解释为什么这一格不配上限（两个维度、`StepCount()` vs 每回合循环） | ✅ 已改 |
+| `desktop/tudouni-aigo-desktop/README.md` | 决策表第 6 行 | "Block caps are a front-end constant (5 rows) \| `BLOCK_CAP` in `store.ts`" | "The right rail's blocks are **not capped**: every row is listed and the rail scrolls. The `(+N more)` footnote is gone"，Where 列换成 `Sidebar.tsx` + `.sidebar-inner` | ✅ 已改 |
+| 同上 | 决策 15 之前 | （无） | 新增 `### 6 · Why the rail is not capped, and why step n / N is not a fraction`，把两条的成因（TUI 的固定列、`StepCount()` vs 每回合 `MaxSteps`）写在代码旁 | ✅ 已改 |
+| 同上 | Verification 段 | 描述 `render-check.mjs` 覆盖的右栏断言 | ⚠️ **未做**：`render-check.mjs` 仍只喂 2 项 `todos`，没有"超过 5 项全部列出"的断言。这一条是**遗留项**（见下） | ⏳ 未做 |
+
+另外两处**不是文档而是代码注释**，同样是"照错的前提写的"，已经随代码一起改掉：
+
+- `src/state/store.ts`：`BLOCK_CAP` 常量连同它上方那段"Decision 6 / the protocol has no `caps`"的说明一起删除了。
+- `src/components/sidebar/Sidebar.tsx`：文件头注释改成"**There is no content cap.**"，并写明这与 TUI 的差别（固定高列 vs 滚动容器）。
+
+### 落地后仍遗留的一件小事
+
+**`render-check.mjs` 没有为"不截断"补断言。** 现在右栏的行为靠的是"没有代码去截断"，而不是一条断言守着它——将来有人把 `slice(0, N)` 加回来，没有任何检查会红。补法：喂 8 项 `todos`，断言 8 行都在 DOM 里、且没有 `(+N more)` 文本。`/model` 那类面板的行数断言已有先例可抄。
+
+另外 `'status.step'` 现在是**回合头专用**（`EntryView.tsx` 的 `entry.step / entry.maxSteps`），状态栏改用新加的 `'status.steps'`（不带分母）。两者不要再合并：合并回去就是把两个维度重新拼成一个分式。
 
 ---
 

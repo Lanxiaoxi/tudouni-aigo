@@ -76,7 +76,27 @@ export const en = {
   /** The composer's stop button. Distinct from `phase.interrupted`, which names
    *  the *result* of an interrupt; this is the action that causes one. */
   'composer.interrupt': 'Stop',
+  /** The turn head's per-turn progress: "step 3 of this turn's 120". Both
+   *  numbers come from the entry (`entry.step` / `entry.maxSteps`), so the
+   *  fraction is meaningful — the denominator is the budget *this* turn is
+   *  spending. */
   'status.step': 'step {n} / {max}',
+  /** The status bar's cumulative count, and it deliberately has **no
+   *  denominator**.
+   *
+   *  It used to reuse `status.step` with `session.steps` over
+   *  `session.maxSteps`, which are two different quantities: the numerator is
+   *  every assistant message in the conversation (cumulative, and large on a
+   *  resumed session), the denominator is `--max-steps` — how many model calls
+   *  **one turn** may take, reset each turn. Written as a fraction it reads
+   *  `step 497 / 120`, which is not an overflow but two units wearing one
+   *  shape. The word "steps" carries the absence of a limit; a bare `step 497`
+   *  would still read as "497 of something unknown".
+   *
+   *  The cap is not a secret — it lives in the session bar's `step cap` and in
+   *  the settings panel's `--max-steps`. The status bar does not need a third
+   *  place to restate it. */
+  'status.steps': '{n} steps',
   'status.autopilot': 'autopilot',
   'status.quiet': 'quiet',
   'status.jobs': 'jobs',
@@ -175,13 +195,27 @@ export const en = {
   'lb.workspaceBad': 'Cannot be used',
   'lb.openWorkspace': 'Open this workspace',
 
+  /* The session status dots. Each one has to read as a sentence, because the
+     colour alone is not a signal anybody should be asked to interpret — see
+     `SessionDot`. */
+  'lb.dot.asking': 'Waiting for you: an approval or a question',
+  'lb.dot.broken': 'Stopped with an error',
+  'lb.dot.running': 'Working now',
+  'lb.dot.unseen': 'Finished — you have not looked at it yet',
+  'lb.attention': '{n} need your attention',
+
+  /* Which conversation a blocking request belongs to, and how many are behind
+     it. Both exist because a prompt with several sessions open is otherwise
+     anonymous — see `selectModalOrigin`. */
+  'modal.from': 'from',
+  'modal.queued': '{n} more waiting',
+
   /* ---------------- sidebar blocks ---------------- */
   'block.goal': 'Goal',
   'block.tasks': 'Tasks',
   'block.skills': 'Loaded skills',
   'block.jobs': 'Background jobs',
   'block.mcp': 'MCP',
-  'block.more': '(+{n} more)',
   'block.collapse': 'Collapse',
   'block.expand': 'Expand',
 
@@ -311,7 +345,7 @@ export const en = {
   'panel.settings.ericaiDesc':
     'Keep this session’s EricAI token fresh: check it at start-up, and refresh it before any request that would otherwise go out with a stale one.',
   'panel.settings.ericaiEffect':
-    'Turning this on lets the runtime rewrite providers.ericai.api_key in your configuration file and keep a refresh token under ~/.tudouni/.',
+    'Turning this on lets the runtime rewrite providers.ericai.api_key in your configuration file and keep a refresh token under ~/.tudouni/. Keep it on in one session at a time: every session writes that same file, and two of them refreshing at once overwrite each other.',
   'panel.settings.maxSteps': 'Step cap',
   'panel.settings.maxStepsDesc':
     'How many model calls one turn may take. Empty means the runtime’s own default.',

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
-import { BLOCK_CAP, useApp, type SidebarBlockKey } from '@/state/store';
+import { NO_SKILLS, useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
 import { oneLine } from '@/utils/format';
@@ -12,19 +12,30 @@ import type { VmGoal, VmJob, VmMcp, VmTask } from '@/runtime/adapt';
  * Goal → Tasks → Loaded skills → Background jobs → MCP.
  *
  * Each block is: title + count badge + content rows + empty-state text + a
- * pointer. Overflow is dropped **from the bottom** and labelled `(+N more)` —
- * never silently truncated.
+ * pointer.
  *
- * The cap is a front-end constant (decision 6): the protocol has no `caps`, and
- * asking the runtime for a presentation number would be asking it to know about
- * this screen. It is documented in the design system alongside `BLOCK_CAP`.
+ * **There is no content cap.** Decision 6 used to put one here — five rows each,
+ * with the rest collapsed into `(+N more)` — and it was wrong for this surface,
+ * for the reason the TUI's equivalent is right for that one: the reference front
+ * end draws a **fixed-height, non-scrolling** column (`internal/frontends/tui/
+ * rail.go`, `railMaxRows` / `clipBlock`), so it has to clip or a block becomes
+ * unreachable. This rail scrolls (`.sidebar-inner` is `overflow-y: auto`), so
+ * clipping here only hides rows the reader could have scrolled to — it was a
+ * terminal constraint carried across by mistake.
+ *
+ * "Never silently truncated" still holds, and now it means something narrower:
+ * nothing hides rows with CSS instead of showing them.
  */
 export function Sidebar() {
   const t = useT();
-  const snap = useApp((s) => s.uiState);
+  // The right rail describes **this conversation**: its goal, its tasks, its
+  // loaded skills, its background jobs, its MCP servers. Every one of those is a
+  // property of a session rather than of the window, so the whole rail follows
+  // the session on screen.
+  const snap = useSessionField((rt) => rt.uiState, null);
   // The merged loaded set (from `ui(skills).active` + `ui(state)` pointers),
   // not the snapshot's own pointer list.
-  const loadedSkills = useApp((s) => s.skills);
+  const loadedSkills = useSessionField((rt) => rt.skills, NO_SKILLS);
 
   if (!snap) {
     return (
@@ -73,10 +84,9 @@ export function Sidebar() {
               {t('tasks.progress', { done: doneTasks, total: snap.todos.length })}
             </span>
           </div>
-          {snap.todos.slice(0, BLOCK_CAP).map((task, index) => (
+          {snap.todos.map((task, index) => (
             <TaskRow key={`${task.content}-${index}`} task={task} />
           ))}
-          <More count={snap.todos.length - BLOCK_CAP} />
         </Block>
 
         {/* 3 · Loaded skills.
@@ -92,7 +102,7 @@ export function Sidebar() {
           emptyTitle={t('empty.skills.title')}
           emptyHint={t('empty.skills.hint')}
         >
-          {loadedSkills.slice(0, BLOCK_CAP).map((skill) => (
+          {loadedSkills.map((skill) => (
             <div key={skill.name} className="sb-row">
               {/* The description only exists in the first snapshot's catalog, so
                   it may legitimately be null. */}
@@ -101,7 +111,6 @@ export function Sidebar() {
               </span>
             </div>
           ))}
-          <More count={loadedSkills.length - BLOCK_CAP} />
         </Block>
 
         {/* 4 · Background jobs */}
@@ -116,10 +125,9 @@ export function Sidebar() {
           emptyTitle={t('empty.jobs.title')}
           emptyHint={t('empty.jobs.hint')}
         >
-          {snap.jobs.slice(0, BLOCK_CAP).map((job) => (
+          {snap.jobs.map((job) => (
             <JobRow key={job.id} job={job} />
           ))}
-          <More count={snap.jobs.length - BLOCK_CAP} />
         </Block>
 
         {/* 5 · MCP */}
@@ -131,10 +139,9 @@ export function Sidebar() {
           emptyTitle={t('empty.mcp.title')}
           emptyHint={t('empty.mcp.hint')}
         >
-          {snap.mcp.slice(0, BLOCK_CAP).map((server) => (
+          {snap.mcp.map((server) => (
             <McpRow key={server.name} server={server} />
           ))}
-          <More count={snap.mcp.length - BLOCK_CAP} />
         </Block>
       </div>
     </aside>
@@ -210,12 +217,6 @@ function Block({
       </div>
     </section>
   );
-}
-
-function More({ count }: { count: number }) {
-  const t = useT();
-  if (count <= 0) return null;
-  return <div className="list-more">{t('block.more', { n: count })}</div>;
 }
 
 /* ---------------- Goal ---------------- */
@@ -356,7 +357,9 @@ function McpRow({ server }: { server: VmMcp }) {
   // Whether *this* front end has a request out for this server — not whether it
   // is up. The badge below is the only thing that answers that, and it comes
   // from `ui(state)` alone.
-  const pending = useApp((s) => s.mcpPending.includes(server.name));
+  // Per session: an in-flight mount belongs to the session that asked for it,
+  // and a request sent from one conversation must not grey out another's row.
+  const pending = useSessionField((rt) => rt.mcpPending.includes(server.name), false);
   const requestMcp = useApp((s) => s.requestMcp);
 
   const tone =

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useApp } from '@/state/store';
+import { activeRuntime, useApp } from '@/state/store';
 import { appendPaths, partitionDrop } from '@/runtime/dragdrop';
 import { isHosted } from '@/runtime/tauri';
 
@@ -46,11 +46,16 @@ export function useFileDrop(): void {
           const paths = payload.paths ?? [];
           if (paths.length === 0) return;
 
-          const workspace = s.session?.workspace ?? '';
+          // The workspace and the draft both belong to the session on screen:
+          // the path is inserted into *that* conversation's sentence, and
+          // whether it is inside the workspace is a question only that session's
+          // child can answer.
+          const rt = activeRuntime(s);
+          const workspace = rt?.session?.workspace ?? rt?.workspace ?? '';
           const { accepted, rejected, unknownWorkspace } = partitionDrop(paths, workspace);
 
           if (accepted.length > 0) {
-            s.setDraft(appendPaths(s.draft, accepted));
+            s.setDraft(appendPaths(rt?.draft ?? '', accepted));
           }
           if (rejected.length > 0) {
             // Said out loud rather than dropped: a path the runtime cannot

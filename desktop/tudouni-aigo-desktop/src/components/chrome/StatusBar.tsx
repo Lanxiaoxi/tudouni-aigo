@@ -1,5 +1,14 @@
 import { Boxes, Bot, CircleSlash, FolderOpen, Gauge, HardDrive, Layers, Zap } from 'lucide-react';
-import { selectPhase, useApp, useUsage, type AppStore } from '@/state/store';
+import {
+  NO_JOBS,
+  NO_SUBAGENTS,
+  selectPhase,
+  selectUsage,
+  useApp,
+  useSessionField,
+  type AppStore,
+  type UsageView,
+} from '@/state/store';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { Tip } from '@/components/ui/kit';
@@ -56,58 +65,68 @@ const PHASE_KEY: Record<Phase, TKey> = {
  * that ended without text, or because the child died — and they are exactly the
  * ones the phase word cannot explain on its own.
  */
-export function selectAction(s: AppStore): string | null {
-  const phase = selectPhase(s);
+export function selectAction(s: AppStore, key: string | null): string | null {
+  const phase = selectPhase(s, key);
+  const bucket = key === null ? null : (s.sessions[key] ?? null);
 
   if (phase === 'running') {
-    for (let i = s.entries.length - 1; i >= 0; i -= 1) {
-      const entry = s.entries[i];
+    for (let i = (bucket?.entries.length ?? 0) - 1; i >= 0; i -= 1) {
+      const entry = bucket!.entries[i];
       if (entry.kind === 'tool') return entry.tool;
       if (entry.kind === 'model') return 'model call';
     }
     return null;
   }
 
-  if (!s.ready) return null;
+  if (!bucket?.ready) return null;
 
   // Only the phases whose name is not self-explanatory get a second line.
   if (phase === 'empty') return 'the model returned no text';
   if (phase === 'runtime_gone') {
-    return s.runtimeExit === null
+    return bucket.runtimeExit === null
       ? 'the runtime process ended'
-      : `the runtime process ended (code ${s.runtimeExit.code})`;
+      : `the runtime process ended (code ${bucket.runtimeExit.code})`;
   }
   return null;
 }
 
 export function StatusBar() {
   const t = useT();
-  const phase = useApp(selectPhase);
-  const action = useApp(selectAction);
-  const session = useApp((s) => s.session);
-  const snap = useApp((s) => s.uiState);
-  const autopilot = useApp((s) => s.uiState?.autopilot ?? false);
-  const quiet = useApp((s) => s.quiet);
-  const hasSpoken = useApp((s) => s.hasSpoken);
-  const runtimeExit = useApp((s) => s.runtimeExit);
-  const lastTurnMs = useApp((s) => s.lastTurnMs);
+  // **The whole row is a statement about one conversation**, so every cell comes
+  // from the session being shown. That includes the usage numbers on the right:
+  // they are fetched per session (`ui(status)` reads that session's audit log),
+  // and a row that kept the first session's figures while the transcript changed
+  // under it would be the most misleading thing on screen — it would look
+  // perfectly normal.
+  const key = useApp((s) => s.activeKey);
+  const phase = useApp((s) => selectPhase(s, key));
+  const action = useApp((s) => selectAction(s, key));
+  const session = useSessionField((rt) => rt.session, null);
+  const snap = useSessionField((rt) => rt.uiState, null);
+  const autopilot = useSessionField((rt) => rt.uiState?.autopilot ?? false, false);
+  const quiet = useSessionField((rt) => rt.quiet, false);
+  const hasSpoken = useSessionField((rt) => rt.hasSpoken, false);
+  const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
+  const lastTurnMs = useSessionField((rt) => rt.lastTurnMs, null);
   const openPanel = useApp((s) => s.openPanel);
   const setAutopilot = useApp((s) => s.setAutopilot);
   const toggleQuiet = useApp((s) => s.toggleQuiet);
 
-  const usage = useUsage();
+  const usage: UsageView = useApp((s) => selectUsage(s, key));
 
   // "Never spoken" and "idle" are two different labels.
   const phaseLabel =
     phase === 'idle' && !hasSpoken ? t('phase.idleNever') : t(PHASE_KEY[phase]);
 
+  // Cumulative only. The cap is read from `session.maxSteps` — but deliberately
+  // not drawn here: it is a per-turn budget, and pairing it with a cumulative
+  // count is the mistake `status.steps` describes.
   const step = session?.steps ?? 0;
-  const maxSteps = session?.maxSteps ?? 0;
 
-  const jobs = snap?.jobs ?? [];
+  const jobs = snap?.jobs ?? NO_JOBS;
   const outstanding = jobs.filter((job) => job.outstanding).length;
   const uncollected = jobs.filter((job) => job.uncollected).length;
-  const subagents = snap?.subagents ?? [];
+  const subagents = snap?.subagents ?? NO_SUBAGENTS;
   const audit = session?.auditPath ?? '';
 
   return (
@@ -135,8 +154,13 @@ export function StatusBar() {
           <span className="st-action dim">{action}</span>
         ) : null}
 
-        {maxSteps > 0 ? (
-          <span className="st-step">{t('status.step', { n: step, max: maxSteps })}</span>
+        {/* The conversation's **cumulative** step count, with no denominator.
+            See `status.steps` for why: the numerator is every assistant message
+            in the session and the denominator is this turn's budget, so a
+            fraction of the two reads `step 497 / 120`. The turn's own progress
+            is on the turn head, where both numbers come from the same entry. */}
+        {step > 0 ? (
+          <span className="st-step">{t('status.steps', { n: step })}</span>
         ) : null}
       </div>
 

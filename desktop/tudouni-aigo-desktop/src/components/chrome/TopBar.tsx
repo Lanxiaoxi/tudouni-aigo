@@ -1,5 +1,5 @@
 import { FolderOpen, Search } from 'lucide-react';
-import { useApp } from '@/state/store';
+import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { formatPath } from '@/utils/format';
@@ -18,9 +18,12 @@ import { formatPath } from '@/utils/format';
  */
 export function TopBar() {
   const t = useT();
-  const workspace = useApp((s) => s.session?.workspace ?? '');
+  // The workspace shown is the one the **active session** is in. With several
+  // open there is no single answer for the window, and the session bar right
+  // below names which conversation this is about.
+  const workspace = useSessionField((rt) => rt.session?.workspace ?? rt.workspace, '');
   const openPanel = useApp((s) => s.openPanel);
-  const runtimeExit = useApp((s) => s.runtimeExit);
+  const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
   const pickWorkspace = useApp((s) => s.pickWorkspace);
 
   return (

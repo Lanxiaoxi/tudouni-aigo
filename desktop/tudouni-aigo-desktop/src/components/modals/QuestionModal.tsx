@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Check, MessageCircleQuestion, SkipForward } from 'lucide-react';
-import { useApp } from '@/state/store';
+import { selectModalOrigin, selectQueuedModals, useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge } from '@/components/ui/kit';
 import { isTypingTarget } from '@/hooks/useListKeys';
@@ -24,6 +24,11 @@ export function QuestionModal() {
   const t = useT();
   const modal = useApp((s) => s.modal);
   const answer = useApp((s) => s.answerQuestion);
+  // Same as the approval modal: with several conversations open, a question
+  // whose session is not named is a question about an unknown session — and the
+  // answer goes to whichever one asked, so knowing which is not cosmetic.
+  const origin = useApp((s) => (s.modal ? selectModalOrigin(s, s.modal.key) : ''));
+  const queued = useApp(selectQueuedModals);
 
   const open = modal?.kind === 'question';
   const req = open ? modal.req : null;
@@ -133,6 +138,34 @@ export function QuestionModal() {
                   {req.multi_select ? t('q.multi') : t('q.single')}
                 </Badge>
               </div>
+
+              {/* Which conversation asked, and whether another request is
+                  queued behind this one. Both are stated rather than implied:
+                  the answer goes back to the session that asked, so a reader
+                  who cannot tell which one that is cannot answer safely — and
+                  the queue is still invisible after this prompt is answered. */}
+              {origin || queued > 0 ? (
+                <div
+                  className="row"
+                  style={{
+                    gap: 'var(--space-2)',
+                    flexWrap: 'wrap',
+                    padding: '0 var(--space-4)',
+                    marginTop: 'calc(-1 * var(--space-2))',
+                  }}
+                >
+                  {origin ? (
+                    <span className="caption muted">
+                      {t('modal.from')} <span className="mono">{origin}</span>
+                    </span>
+                  ) : null}
+                  {queued > 0 ? (
+                    <Badge tone="neutral" dot={false}>
+                      {t('modal.queued', { n: queued })}
+                    </Badge>
+                  ) : null}
+                </div>
+              ) : null}
 
               <div className="dialog-body scroll">
                 <p style={{ fontSize: 'var(--text-body)', marginBottom: 'var(--space-3)' }}>

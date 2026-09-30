@@ -13,7 +13,7 @@
  * `hooks/useGlobalKeys.ts` and in each panel.
  */
 
-import { useApp } from '@/state/store';
+import { activeRuntime, useApp } from '@/state/store';
 import type { TKey } from '@/i18n';
 export interface CommandDef {
   id: string;
@@ -86,8 +86,10 @@ export function runCommand(id: string, arg?: string): void {
 
   switch (id) {
     case 'new':
-      // No sentinel: a missing session id *is* "a new session".
-      s.switchSession(null);
+      // No sentinel: a missing session id *is* "a new session". With one
+      // process per conversation this **opens** one rather than switching a
+      // running session, so whatever is already working keeps working.
+      void s.openSession(null);
       break;
 
     case 'resume':
@@ -115,8 +117,10 @@ export function runCommand(id: string, arg?: string): void {
       break;
 
     case 'autopilot':
-      // Absolute state, never a toggle sent blind: read the runtime's answer.
-      s.setAutopilot(!(s.uiState?.autopilot ?? false));
+      // Absolute state, never a toggle sent blind: read the runtime's answer —
+      // for **this** session, since autopilot is one of the flags a session
+      // carries rather than a mode the window is in.
+      s.setAutopilot(!(activeRuntime(s)?.uiState?.autopilot ?? false));
       break;
 
     case 'quiet':
@@ -146,7 +150,7 @@ export function runCommand(id: string, arg?: string): void {
 
     case 'thinking':
       if (arg === 'on' || arg === 'off') s.setThinking(arg === 'on');
-      else s.setThinking(!(s.session?.thinking ?? false));
+      else s.setThinking(!(activeRuntime(s)?.session?.thinking ?? false));
       break;
 
     case 'effort':

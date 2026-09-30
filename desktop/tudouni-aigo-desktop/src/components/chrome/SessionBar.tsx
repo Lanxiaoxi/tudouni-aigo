@@ -1,6 +1,6 @@
 import { PanelLeft, PanelLeftClose } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
-import { useApp, selectAskOn } from '@/state/store';
+import { useApp, useSessionField, selectAskOn } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Fact, Tip } from '@/components/ui/kit';
 import type { TKey } from '@/i18n';
@@ -23,11 +23,14 @@ import type { TKey } from '@/i18n';
  */
 export function SessionBar() {
   const t = useT();
-  const session = useApp((s) => s.session);
-  const autopilot = useApp((s) => s.uiState?.autopilot ?? false);
+  // Everything on this row is a statement about **one** conversation, so it all
+  // comes from the session being shown.
+  const key = useApp((s) => s.activeKey);
+  const session = useSessionField((rt) => rt.session, null);
+  const autopilot = useSessionField((rt) => rt.uiState?.autopilot ?? false, false);
   // `useShallow`: the selector builds a new array, and identity comparison would
   // otherwise re-render forever without ever committing.
-  const askOn = useApp(useShallow(selectAskOn));
+  const askOn = useApp(useShallow((s) => selectAskOn(s, key)));
   const openPanel = useApp((s) => s.openPanel);
 
   // The left rail's toggle. It sits **outside** the rail on purpose: a control

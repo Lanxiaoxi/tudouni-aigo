@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { ArrowUp, Plus, Square } from 'lucide-react';
-import { selectPhase, useApp, type ComposerNotice } from '@/state/store';
+import { selectPhase, useApp, useSessionField, type ComposerNotice } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { ImageTray } from '@/components/chrome/ImageTray';
@@ -52,17 +52,23 @@ export function Composer() {
   const t = useT();
   const taRef = useRef<HTMLTextAreaElement>(null);
 
-  const draft = useApp((s) => s.draft);
+  // **The draft belongs to the conversation, not to the window.** With two
+  // sessions open a person types into one, switches to answer something in the
+  // other, and comes back — and a shared draft would have interleaved the two
+  // sentences. The same goes for the notice about this input and for the
+  // history: all three are about "what I am saying here".
+  const key = useApp((s) => s.activeKey);
+  const draft = useSessionField((rt) => rt.draft, '');
   const setDraft = useApp((s) => s.setDraft);
   const submitDraft = useApp((s) => s.submitDraft);
   const historyNav = useApp((s) => s.historyNav);
   const interrupt = useApp((s) => s.interrupt);
   const modal = useApp((s) => s.modal);
   const panel = useApp((s) => s.panel);
-  const ready = useApp((s) => s.ready);
-  const phase = useApp(selectPhase);
+  const ready = useSessionField((rt) => rt.ready, false);
+  const phase = useApp((s) => selectPhase(s, key));
   const dragging = useApp((s) => s.dragging);
-  const composerNotice = useApp((s) => s.composerNotice);
+  const composerNotice = useSessionField((rt) => rt.composerNotice, null);
   const setComposerNotice = useApp((s) => s.setComposerNotice);
   const openPanel = useApp((s) => s.openPanel);
   const onPaste = useClipboardPaste(taRef);

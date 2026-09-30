@@ -364,13 +364,6 @@
   color: var(--fg-faint);
 }
 
-.list-more {
-  padding: 4px 8px;
-  font-size: var(--text-caption);
-  color: var(--fg-faint);
-  font-family: var(--font-mono);
-}
-
 /* ---------------- §5 表格 ---------------- */
 .table-wrap {
   min-height: 0;

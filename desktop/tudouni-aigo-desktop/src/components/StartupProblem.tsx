@@ -1,5 +1,5 @@
 import { RefreshCw, FolderOpen, TriangleAlert } from 'lucide-react';
-import { useApp } from '@/state/store';
+import { NO_STRINGS, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 
 /**
@@ -18,8 +18,11 @@ import { useT } from '@/i18n/useT';
 export function StartupProblem() {
   const t = useT();
   const problem = useApp((s) => s.startupProblem);
-  const stderrTail = useApp((s) => s.stderrTail);
-  const retryRuntime = useApp((s) => s.retryRuntime);
+  // The tail comes from whichever session is open, because that is whose child
+  // printed it. A window-level refusal (no binary at all) is preceded by a
+  // session, so this is normally that session's own diagnostics.
+  const stderrTail = useSessionField((rt) => rt.stderrTail, NO_STRINGS);
+  const retryStartup = useApp((s) => s.retryStartup);
   const pickWorkspace = useApp((s) => s.pickWorkspace);
 
   if (!problem) return null;
@@ -39,7 +42,7 @@ export function StartupProblem() {
       <div className="sp-reason mono">{problem}</div>
 
       <div className="sp-actions">
-        <button type="button" className="btn btn-secondary btn-compact" onClick={() => void retryRuntime()}>
+        <button type="button" className="btn btn-secondary btn-compact" onClick={() => void retryStartup()}>
           <RefreshCw size={11} />
           <span>{t('startup.retry')}</span>
         </button>

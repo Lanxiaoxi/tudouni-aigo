@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Pause, Zap } from 'lucide-react';
-import { selectPhase, useApp } from '@/state/store';
+import { selectPhase, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, Tip } from '@/components/ui/kit';
 import { PanelBody, PanelShell } from './PanelShell';
@@ -34,8 +34,11 @@ import { PanelBody, PanelShell } from './PanelShell';
 export function SettingsPanel() {
   const t = useT();
 
-  const launch = useApp((s) => s.launch);
-  const phase = useApp(selectPhase);
+  // What the **session on screen** was started with. Each session has its own
+  // argv, so this panel describes that one rather than "the runtime".
+  const key = useApp((s) => s.activeKey);
+  const launch = useSessionField((rt) => rt.launch, { ericai: false, maxSteps: null });
+  const phase = useApp((s) => selectPhase(s, key));
   const modal = useApp((s) => s.modal);
   const applyLaunch = useApp((s) => s.applyLaunch);
 

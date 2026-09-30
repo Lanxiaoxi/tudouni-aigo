@@ -1,5 +1,5 @@
 import { useShallow } from 'zustand/react/shallow';
-import { useApp, selectAskOn } from '@/state/store';
+import { useApp, useSessionField, selectAskOn } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 
@@ -12,9 +12,10 @@ import type { TKey } from '@/i18n';
  */
 export function CollapsedSummary() {
   const t = useT();
-  const snap = useApp((s) => s.uiState);
-  const autopilot = useApp((s) => s.uiState?.autopilot ?? false);
-  const askOn = useApp(useShallow(selectAskOn));
+  const key = useApp((s) => s.activeKey);
+  const snap = useSessionField((rt) => rt.uiState, null);
+  const autopilot = useSessionField((rt) => rt.uiState?.autopilot ?? false, false);
+  const askOn = useApp(useShallow((s) => selectAskOn(s, key)));
   const setSidebarVisible = useApp((s) => s.setSidebarVisible);
 
   if (!snap) {

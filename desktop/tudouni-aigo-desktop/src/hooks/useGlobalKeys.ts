@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { selectPhase, useApp } from '@/state/store';
+import { activeRuntime, selectPhase, useApp } from '@/state/store';
 
 /**
  * Global keys (the capability list).
@@ -49,7 +49,10 @@ export function useGlobalKeys(): void {
           useApp.setState({ panel: null });
           return;
         }
-        if (selectPhase(s) === 'running') {
+        // Esc interrupts **the session on screen** and nothing else. With
+        // several running, "stop" has to mean the one being watched — stopping
+        // a background conversation would be an act the person cannot see.
+        if (selectPhase(s, s.activeKey) === 'running') {
           e.preventDefault();
           s.interrupt();
         }
@@ -95,7 +98,9 @@ export function useGlobalKeys(): void {
             // Fold or unfold reasoning: applies to the last reasoning block in
             // the stream.
             e.preventDefault();
-            const last = [...s.entries].reverse().find((x) => x.kind === 'reason');
+            const last = [...(activeRuntime(s)?.entries ?? [])]
+              .reverse()
+              .find((x) => x.kind === 'reason');
             if (last) s.toggleReasoning(last.id);
             return;
           }
@@ -119,12 +124,17 @@ export function useGlobalKeys(): void {
             break;
         }
 
-        /* ---- Ctrl+1..9: switch session (a panel gets first refusal) ---- */
+        /* ---- Ctrl+1..9: focus a session (a panel gets first refusal) ----
+
+           Focusing rather than switching: with one process per conversation,
+           what this changes is which transcript is drawn. It sends nothing, so
+           it cannot disturb a turn that is running — in this session or in any
+           other. */
         if (/^[1-9]$/.test(e.key) && s.panel === null) {
-          const item = s.sessionList[Number(e.key) - 1];
+          const item = (activeRuntime(s)?.sessionList ?? [])[Number(e.key) - 1];
           if (item) {
             e.preventDefault();
-            s.switchSession(item.id);
+            void s.openSession(item.id);
           }
         }
         return;

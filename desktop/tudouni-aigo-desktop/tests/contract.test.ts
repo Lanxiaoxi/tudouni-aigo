@@ -25,8 +25,8 @@ import { resolve } from 'node:path';
 import { test } from 'node:test';
 
 import { decodeLine } from '@/protocol/types';
-import { setRuntime } from '@/runtime/bus';
-import { useApp } from '@/state/store';
+import { registerRuntime } from '@/runtime/bus';
+import { activeRuntime, createSessionBucket, useApp, type SessionRuntime } from '@/state/store';
 import type { Entry } from '@/state/entries';
 
 // Resolved from the project root, not from `import.meta.url`: the tests are
@@ -44,31 +44,24 @@ function readFixture(): unknown[] {
     .map((line) => JSON.parse(line));
 }
 
-/** Put the store back to its pre-handshake state. */
+/**
+ * The key the fake child is registered under.
+ *
+ * Every fact in this build is per session now, so a test needs a session before
+ * it can assert anything about one. A fresh bucket is exactly what
+ * `attachSession` installs once the bridge accepts a child, so building one here
+ * exercises the same shapes the real path produces.
+ */
+const KEY = 'k-1';
+
+/** Put the store back to its pre-handshake state, with one session installed. */
 function reset(): void {
   useApp.setState({
-    ready: false,
-    session: null,
-    entries: [],
-    handshakeNotices: [],
-    activeRunId: null,
-    lastRunId: null,
-    dropped: 0,
-    hasSpoken: false,
-    uiState: null,
-    status: null,
-    context: null,
-    tools: [],
-    toolRegistry: [],
-    grantedPrefixes: [],
-    skills: [],
-    skillAvailable: [],
-    skillActive: [],
-    skillCatalog: [],
-    models: [],
-    modelAliases: [],
-    sessionList: [],
-    listedSessions: false,
+    sessions: {
+      [KEY]: createSessionBucket(KEY, 'C:/work', { ericai: false, maxSteps: null }),
+    },
+    order: [KEY],
+    activeKey: KEY,
     modal: null,
     pendingModals: [],
     panel: null,
@@ -77,14 +70,28 @@ function reset(): void {
 }
 
 /** Feed every line of the capture through the decoder and the store, exactly as
- *  the real bridge does. */
-function replay(): void {
+ *  the real bridge does — tagged with the session the line came from, because
+ *  that tag is the only thing that says whose line it is. */
+function replay(key = KEY): void {
   for (const raw of readFixture()) {
     const decoded = decodeLine(JSON.stringify(raw));
     assert.notEqual(decoded.msg, null, 'every captured line must decode');
     assert.equal(decoded.fatal, undefined);
-    useApp.getState().applyRuntimeMessage(decoded.msg as never);
+    useApp.getState().applyRuntimeMessage(key, decoded.msg as never);
   }
+}
+
+/**
+ * The session being shown, with the assertion that it exists folded in.
+ *
+ * Every fact this build stores is per session, so a test that read
+ * `rt().context` before now reads `rt().context` — the difference
+ * being that this makes the session part of the assertion rather than implicit.
+ */
+function rt(): SessionRuntime {
+  const bucket = activeRuntime(useApp.getState());
+  assert.ok(bucket, 'a session must be installed');
+  return bucket;
 }
 
 test('the frozen capture still decodes line for line', () => {
@@ -112,7 +119,7 @@ test('the context ledger is nested, and every number survives the projection', (
   reset();
   replay();
 
-  const context = useApp.getState().context;
+  const context = rt().context;
   assert.ok(context, 'ui(context) must have produced a context');
 
   // These four come from the *inner* object. Reading the outer one — the old
@@ -137,7 +144,7 @@ test('`degraded` is a count on the wire, not a flag', () => {
   reset();
   replay();
 
-  const context = useApp.getState().context;
+  const context = rt().context;
   assert.ok(context);
   // The runtime sends `len(LastDegraded)` — a number. Declaring it `boolean` and
   // testing `typeof === 'boolean'` made it permanently null.
@@ -154,12 +161,12 @@ test('the handshake notices are still on screen after session_load', () => {
 
   replay();
 
-  const state = useApp.getState();
+  const bucket = rt();
   // `init` is followed immediately and unconditionally by `session_load`, which
   // rebuilds the stream. Keeping the notices in `entries` alone meant they were
   // wiped before the first frame was drawn.
-  assert.equal(state.handshakeNotices.length, init.notices.length);
-  const inStream = state.entries.filter((entry) => entry.kind === 'note');
+  assert.equal(bucket.handshakeNotices.length, init.notices.length);
+  const inStream = bucket.entries.filter((entry) => entry.kind === 'note');
   assert.equal(inStream.length, init.notices.length);
   assert.equal(
     (inStream[0] as Extract<Entry, { kind: 'note' }>).text,
@@ -178,6 +185,8 @@ test('the tool registry arrives with the handshake, not only with ui(tools)', ()
   // A `tool_call` event carries no risk of its own, so without the handshake's
   // registry every tool row's badge is permanently unknown — `ui(tools)` only
   // ever arrives because somebody opened the `/tools` screen.
+  // Per session: the registry is that child's tool set, and `toolFacts` reads
+  // the active one.
   const facts = useApp.getState().toolFacts('shell');
   assert.ok(facts, 'shell must be known');
   assert.equal(facts.risk, 'high');
@@ -187,8 +196,13 @@ test('the tool registry arrives with the handshake, not only with ui(tools)', ()
 test('the session list is asked for, so the first screen can fill its slots', () => {
   // The first screen shows the four most recent sessions; before this, nothing
   // ever requested them and `Ctrl+1..9` had nothing to switch to.
+  //
+  // The message goes to **this session's** runtime, which is what the fake
+  // handle stands in for: with one process per conversation, "who was asked" is
+  // as much a part of the assertion as "was anything asked".
   const sent: string[] = [];
-  setRuntime({
+  registerRuntime({
+    key: KEY,
     send(msg) {
       sent.push(msg.t);
     },

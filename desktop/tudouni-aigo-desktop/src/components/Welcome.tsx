@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Clock, Sparkles, Terminal } from 'lucide-react';
-import { useApp } from '@/state/store';
+import { NO_SESSION_LIST, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Kbd } from '@/components/ui/kit';
 import { NoteRow } from '@/components/stream/EntryView';
@@ -37,9 +37,9 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
   const userName = useApp((s) => s.userName);
   const desktopVersion = useApp((s) => s.desktopVersion);
   const runtimeVersion = useApp((s) => s.runtimeVersion);
-  const session = useApp((s) => s.session);
-  const sessionList = useApp((s) => s.sessionList);
-  const switchSession = useApp((s) => s.switchSession);
+  const session = useSessionField((rt) => rt.session, null);
+  const sessionList = useSessionField((rt) => rt.sessionList, NO_SESSION_LIST);
+  const openSession = useApp((s) => s.openSession);
   const openPanel = useApp((s) => s.openPanel);
 
   const recent = useMemo(
@@ -111,7 +111,11 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
                   key={item.id}
                   type="button"
                   className="recent-slot"
-                  onClick={() => switchSession(item.id)}
+                  // Opening a saved conversation from the first screen is the
+                  // same act as from the rail: focus the child that already has
+                  // it, or start one on it. It is not a switch of the running
+                  // session, which is why the name changed with the mechanism.
+                  onClick={() => void openSession(item.id)}
                 >
                   <span className="rs-top">
                     <span className="rs-id">{item.id}</span>

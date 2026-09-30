@@ -55,6 +55,12 @@
 
 Rust 层刻意**只做字节搬运**：它把一行 JSON 原样交给 WebView，把 WebView 发来的一行原样写进 stdin。任何在 Rust 里解析 `kind` 的冲动都会造出第二份协议定义，而它一定会漂。
 
+> **修订：一个会话一个子进程。** 上面那张表说的是"一层什么职责"，但它默认了"一个 App 一个运行时"。现在不是了：**每个会话有自己的子进程**，一个工作区里可以同时开着几个，切到另一个工作区也不会动已经开着的那几个。这条改动只落在两处——Rust 的 `BridgeState` 从"一个 child 槽位"变成 `children: HashMap<ChildKey, Child_>`，前端的 store 从一组单例字段变成 `sessions: Record<key, SessionRuntime>`——**协议和运行时一行都没改**。
+>
+> 为什么不动协议：`permission_request`、`question_request`、`ui`（8 种 kind）、`notice`、`sessions`、`session_load` 的 `required` 里**都没有 `session_id`**（`protocol/schema/outbound.schema.json`）。它们之所以不需要，正是因为一条连接只对应一个会话。要让一个进程带多个会话，就得给这些消息补字段——那是不兼容变更，而多进程方案能拿到同样的效果，代价是几个进程。完整的取舍见 `multi-session-parallel.md`。
+>
+> 于是**归属靠连接，不靠消息**：桥给每个 child 一个 `ChildKey`（自己 mint 的，不用 session id——新会话的 id 要等 `init` 才知道），三条事件通道都带上它，前端按 key 分发。
+
 ### 3.2 启动契约（照抄 `internal/protocol/client.go` 的四条细节）
 
 1. **用绝对路径的同一个可执行文件**，不是从 PATH 找 `tudouni-aigo`。PATH 上的另一个构建是另一个程序，症状是「子进程立刻退出，我只读到 EOF」。
@@ -70,30 +76,51 @@ Rust 层刻意**只做字节搬运**：它把一行 JSON 原样交给 WebView，
 
 运行时在进入读循环前就 `emitOpening()`，**第一条永远是 `init`**，紧跟 0 或 1 条 `session_load`。
 
-因此存在一个经典竞态：进程已起、`init` 已到，而 WebView 的监听器还没注册。桌面端用 `useRuntime.ts` 里的 `useLayoutEffect` 规避（Go 的 `Client` 则是在 `Start` 之前就装好 hooks）。
+因此存在一个经典竞态：进程已起、`init` 已到，而 WebView 的监听器还没注册。
 
-**Tauri 下的建议做法**：Rust 启动子进程后**先把收到的行推进一个队列**，直到 WebView 调用 `runtime_attach` 才开始转发，然后**按序 flush 队列**。这比「让前端尽量早注册」可靠——WebView 的加载时机不受我们控制。
+**实际做法（比原方案更严）**：Rust 启动子进程后**先把收到的行推进该 child 的队列**，直到 WebView 调用 `runtime_attach_listener` 才开始转发，然后**按序 flush**。队列是**每个 child 一份**——第一个会话由注册监听器的那同一个 layout effect 启动，而后面的会话是在监听器早就在位之后才启动的。
+
+前端这一侧的顺序是承重的，`useRuntime.ts` 里三步依次 `await`：
+
+1. `initBridge` 注册窗口的三个监听器；
+2. `attachRuntimeListener` 告诉桥"别再排队了"；
+3. 才启动第一个会话。
+
+**在第 1 步之前做第 2 步，等于没有监听器**：桥把开场三连 flush 进虚空，UI 永远停在 booting，而没有任何报错——这正是"一个被 `catch` 吞掉的错误 + 一句解释 UI 会停在 booting 的注释"造成的真实缺陷。
 
 ### 3.4 退出语义
 
 | 动作 | 含义 | 注意 |
 | --- | --- | --- |
 | `shutdown` | 收摊，**当前这一轮会跑完** | 不是打断。打断会留下「有 tool_calls 没有 tool_result」的助手消息，那个会话**永久不可再发送** |
-| 关闭窗口 | 先 `shutdown`，超时（Go 那边是 30s）再 `kill` | 超时兜底必须有，否则关不掉 |
-| `interrupt` | 中断当前这一轮 | 切在回合边界上，不是随时可停 |
+| 关闭窗口 | 对**所有**会话先 `shutdown`，超时（Go 那边是 30s）再 `kill` | 超时兜底必须有，否则关不掉 |
+| 关掉一个会话 | 只对**那一个** `shutdown` | 关掉一段对话不是结束另一段的理由 |
+| `interrupt` | 中断**当前显示的那个**会话的这一轮 | 切在回合边界上，不是随时可停 |
 | 子进程意外退出 | 前端必须**说出来** | 见下 |
 
-子进程死亡时，Go 的 `Client` 会合成一条 `{"v":1,"t":"runtime_exited"}`（**无负载**），退出码通过 `RuntimeExited()` 读回。桌面端的等价物：Rust 在 `child.wait()` 返回后 `emit("runtime_exited", {code, requested})`。
+子进程死亡时，Go 的 `Client` 会合成一条 `{"v":1,"t":"runtime_exited"}`（**无负载**），退出码通过 `RuntimeExited()` 读回。桌面端的等价物：Rust 在 `child.wait()` 返回后 `emit("runtime://exited", {key, code, requested})`。
 
-`requested` 这个布尔不能省：**「会话结束了」和「运行时死了」必须分开**——自己请求的关闭和 stdin 关闭导致的退出，退出码都是 0。
+`requested` 这个布尔不能省：**「会话结束了」和「运行时死了」必须分开**——自己请求的关闭和 stdin 关闭导致的退出，退出码都是 0。`key` 同样是必需的：这个陈述是关于**某一个**会话的。
+
+**超时预算是"关一次"的，不是"每个 child 的"**：`runtime_shutdown(None)` 并行收摊并共用一个 30s 期限。按每个 child 各算一次的话，开着 N 个会话就要等 N×30s，而那看起来就是卡死。
 
 ### 3.5 单实例（决策 12）
 
-用 `tauri-plugin-single-instance`：第二个实例**只把已有窗口拉回前台**并退出，**不启动新的运行时**。
+用 `tauri-plugin-single-instance`：第二个实例**只把已有窗口拉回前台**并退出，**不启动第二份应用**。
 
-理由是工作区状态：`<workspace>/.tudouni/` 下有 `permissions.json`、`mcp.json`、会话文件、审计日志和 artifacts。两个实例对同一工作区各跑一个运行时，会同时写这些文件。
+**理由比原文窄，而这个更正很重要**：原文说两个实例对同一工作区各跑一个运行时会"同时写"`permissions.json`、`mcp.json`、会话文件、审计日志和 artifacts。逐路径核实之后，只有一半成立：
 
-**附带要做的一件事**：单实例的「二次启动」参数要能传递（用户可能想用第二个实例打开**另一个工作区**）。建议二次启动只聚焦已有窗口；「换工作区」走应用内入口，另行处理。
+| 路径 | 真相 |
+| --- | --- |
+| 会话文件 `sessions/<id>.jsonl` | 按 id 分文件，`O_APPEND` |
+| 审计日志 `logs/<id>.jsonl` | 按 id 分文件，`O_APPEND` |
+| artifacts / jobs | 按 id 分目录 |
+| `mcp.json` | **只读**，`mcp load/unload` 也不改文件 |
+| **`permissions.json`** | 每次"总是允许"都整份重写（读 → 改 → rename）——**这是真冲突** |
+
+而最后那条与实例数无关：**一个应用本来就有多个运行时了**。所以插件保留的收益是"桌面上不该开两个窗口"这件正常的事，而 `permissions.json` 由运行时侧的并集重写处理（`internal/runtime/config.go` 的 `SaveApprovals`，见 §5.2 的说明）。
+
+**附带要做的一件事**：单实例的「二次启动」参数要能传递（用户可能想用第二个实例打开**另一个工作区**）。现在闭包把 `_argv`/`_cwd` 丢掉了；建议接上并交给第一个实例，而不是简单聚焦窗口。
 
 ---
 
@@ -123,7 +150,7 @@ Rust 层刻意**只做字节搬运**：它把一行 JSON 原样交给 WebView，
 | `t` | 必填键 | 语义要点 |
 | --- | --- | --- |
 | `user_message` | `text` | 跑一个回合 |
-| `session_switch` | （`session_id` 可选） | **原地换会话，进程不动**。`session_id` 缺失/`null` = **新会话**（id 由运行时分配）；给了 id 但文件不存在**也算新会话** |
+| `session_switch` | （`session_id` 可选） | **原地换会话，进程不动**。`session_id` 缺失/`null` = **新会话**（id 由运行时分配）；给了 id 但文件不存在**也算新会话**。<br>⚠️ **桌面端不再发这条消息**：它会让运行时重建自己并 `pending.abandonAll()`，而那正是"两个会话不能同时跑"的成因。桌面端的"换会话"现在是"聚焦另一个子进程"（不发消息）或"起一个新子进程"。协议保留它给 TUI 与 CLI，语义未变 |
 | `session_list` | —— | 回答是 `sessions` |
 | `interrupt` | —— | 中断当前轮 |
 | `set_autopilot` | `on`(bool) | **绝对状态，不是开关动作**，幂等 |
@@ -329,7 +356,7 @@ id, question, header, options[], multi_select
 | `ui(state)` 里 `mcp[{name, state: running\|configured\|failed, tool_count, launch, error}]` | `mcp[{name, state: loaded\|unload\|failed, tools, error, where}]` | 三态改名 |
 | `ui(state)` 里 `subagents[{id, label, model, depth, started_ms, calls, activity}]` | **已核实**（`internal/subagent/board.go` 的 `Panel()`）：`{id, label, model, provider, depth, seconds, steps, tool_calls, activity}`。没有 `started_ms`，是 **`seconds`**（相对时长）；也没有 `calls`，是 **`tool_calls`** 与 **`steps`** 两个字段 | 字段名要对齐；`provider` 是新增的（同名模型跨路由时用它区分） |
 | `ui(state)` 里 `context{used, window, percent}`、`cache_hit_rate`、`elapsed_ms`、`session_span_ms` | **`ui(state)` 里没有这些**。有 `messages`、`steps`、`model_window`。用量/缓存命中在 **`ui(status).usage`** 和 `ui(context)` 里 | 状态栏右半的取数**要改走 `/status`** |
-| `ui(state)` 里 `caps{...}`、`efforts[{id,label,description}]` | **没有 `caps`**（上限是前端呈现层的事，可由设计系统定）；`effort_levels` 是 **`string[]`**，不是对象数组 | 档位面板要自己配 label/description |
+| `ui(state)` 里 `caps{...}`、`efforts[{id,label,description}]` | **没有 `caps`**；`effort_levels` 是 **`string[]`**，不是对象数组 | 档位面板要自己配 label/description。**注意**：没有 `caps` 的结论是"协议不管列表长度"，而**不是**"前端自己定一个长度"——右栏不设上限（见 §7.3、§10 决策 6） |
 | `notice{level, key, text, params}` | `notice{level, code, text}` | 原型的「优先走 key」不成立：**文案已由运行时拼好**，前端直接用 `text` |
 | `sessions[{id, message_count, step_count, task_done, task_total, preview, modified_at}]` | `sessions[{session_id, messages, steps, todos, preview, modified_at}]`。`todos` 是**现成的进度文字**（空串 = 没有任务）；`modified_at` 是 **epoch 秒** | 排序键是 `created_at`（不在负载里），要展示的「最后一次聊」是 `modified_at` |
 | `ui(compacted){before, after, saved, summary, note}` | `compaction{status, folded, total_folded, summary_id, summary_chars, generation, before, after, duration_ms}` | **没有 `saved`**（自己减？不——那就成了自己推导，改为显示 before/after） |
@@ -376,10 +403,19 @@ src/
 
 ### 6.1 状态分层的硬规则
 
+**三个组，不是两个**——多会话给这张表加了第三根轴：
+
 | 组 | 例子 | 规则 |
 | --- | --- | --- |
 | **运行时事实** | 模型、思考、强度、autopilot、权限范围、任务、技能、后台任务、MCP、上下文、成本 | **只由 `applyRuntimeMessage` 写**，前端只存不造 |
-| **前端偏好** | 主题、安静模式、侧栏/思考块折叠、输入草稿、历史 | 前端自己的，不进协议 |
+| **每会话事实** | 上面那一整列，**加**输入草稿、历史、粘贴的图、安静模式、该会话的启动参数 | **住在 `sessions[key]` 桶里**；`activeKey` **只决定画哪个**，不决定写哪个 |
+| **前端偏好** | 侧栏/左右栏折叠、区块折叠、工作区收藏、条目折叠状态 | 前端自己的，不进协议 |
+
+三件事必须一起成立：
+
+- **一条消息的归属来自连接，不来自内容**（§3.1）。`applyRuntimeMessage(key, msg)` 的第一个参数是必需的，因为多数出站消息根本没有 `session_id` 可读。
+- **收到就写，不是"等到被显示才写"**。后台会话的 `init`、`session_load`、`event` 全都立刻落进它自己的桶——否则那段历史会取决于"你什么时候切过去看了一眼"。
+- **`activeKey` 只影响绘制**。唯一的例外是 `unseen`（左栏那个蓝点）：它在**回合结束时**如果是非当前会话就置位，在会话成为当前时清掉。那是一个关于"你看没看过"的事实，本来就只有切过去才成立。
 
 **禁止乐观更新**：点「总是允许」只发出站消息，等 `ui(state)` 回执才改显示。
 
@@ -389,20 +425,29 @@ src/
 - 本轮正文有**两次出口** (`delta` 流式 / `ui(run_finished).answer`)，**不能都当最终答案渲染**。流式期间用 `delta` 累积展示，收到 `answer` 后以 `answer` 为准替换。
 - `run_finished` 的 event 与 ui 两条消息顺序不保证，配对只靠 `run_id`。
 
-### 6.3 与 Rust 的接口（建议）
+### 6.3 与 Rust 的接口
+
+**实现后的形状**（下表是 `src-tauri/src/lib.rs` 的 `invoke_handler` 与 `src/runtime/tauri.ts` 的实际签名）。几乎每条命令都要一个 `key`——那是"对哪个会话做"的回答，缺了它就只能是"对某一个做"。
 
 | Tauri command / event | 方向 | 说明 |
 | --- | --- | --- |
-| `runtime_attach(opts)` | JS → Rust | 指定二进制路径、工作区、启动参数；开始转发 |
-| `runtime_send(line)` | JS → Rust | 写一行 JSON（含 `v`） |
-| `runtime_shutdown()` | JS → Rust | 优雅收摊并等待 |
-| `runtime_kill()` | JS → Rust | 超时兜底 |
-| `runtime_pick_workspace()` | JS → Rust | 目录选择（plugin-dialog） |
-| `runtime://line` | Rust → JS | 一行协议消息（原样字符串或已解析对象） |
-| `runtime://exited` | Rust → JS | `{code, requested}` |
-| `runtime://stderr` | Rust → JS | 仅诊断用，不是业务数据 |
+| `runtime_attach(opts) -> ChildKey` | JS → Rust | 指定二进制路径、工作区、启动参数；**返回这个会话的 key**。它**增加**一个会话，不动任何已有的 |
+| `runtime_attach_listener() -> usize` | JS → Rust | 声明监听器已就位，flush **所有** child 的队列。必须在启动第一个会话**之前** await |
+| `runtime_send(key, line)` | JS → Rust | 写一行 JSON（含 `v`）到**那一个** child |
+| `runtime_shutdown(key?)` | JS → Rust | `key` 省略 = 全部（关窗）；给了 = 只收那一个。优雅等待，共用一个 30s 期限 |
+| `runtime_kill(key?)` | JS → Rust | 同上，超时兜底 |
+| `runtime_stderr(key)` | JS → Rust | 那一个 child 的 stderr 尾巴（启动失败诊断） |
+| `image_stash(bytes)` + `x-tudouni-key` 头 | JS → Rust | 粘贴的图。payload 就是字节，所以 key **走 header**——写进哪个工作区由它决定，缺失即拒绝 |
+| `runtime_version(binary)` / `os_user_name()` / `workspace_check(path)` | JS → Rust | 进程级/无状态，**没有 key** |
+| `runtime://line` | Rust → JS | `{key, line}`，一行协议消息（原样字符串） |
+| `runtime://exited` | Rust → JS | `{key, code, requested}` |
+| `runtime://stderr` | Rust → JS | `{key, line}`，仅诊断用，不是业务数据 |
 
-转发**原样字符串**比在 Rust 里解析更保守：JS 端解析失败时按 §4.2 跳过并计数即可，不会因为 Rust 的严格反序列化而丢消息。
+三条要点：
+
+- **`key` 是桥自己 mint 的，不是 session id。** 新会话的 id 由运行时分配，要等 `init` 回来前端才知道，所以起进程的时候没有 id 可用。`key: u64` 单调递增、**永不复用**：一个陈旧的 key 必须被回答"没有这个 child"，而不是让一个更新的会话替它应答。
+- **事件必须带 key**，因为归属读不出来：`session_load`、8 种 `ui`、`notice`、`sessions`、以及两个阻塞请求的 `required` 里都**没有** `session_id`。按 payload 归属会把审批弹到错误的会话上——而运行时在它问过的那个 id 上**永远等下去**。
+- **转发原样字符串**比在 Rust 里解析更保守：JS 端解析失败时按 §4.2 跳过并计数即可，不会因为 Rust 的严格反序列化而丢消息。`key` 是这条规则唯一的例外——它由桥加上去，因为它本来就不在 payload 里。
 
 ---
 
@@ -436,11 +481,12 @@ src/
 
 Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有计数角标、空状态说明与引导。
 
-- 内容有上限，装不下时**从底部丢弃并标 `(+N more)`**，不许静默截断。
+- **右栏不设内容上限：有多少列多少，装不下由滚动承接。** `.sidebar-inner` 本来就是滚动容器（`overflow-y: auto`），所以"砍掉几行再标 `(+N more)`"在桌面端是多余的——被砍的那些本来滚一下就能看到。**这条与 TUI 不同，而且差别不是审美**：TUI 的栏是固定高度、不是滚动容器（`internal/frontends/tui/rail.go` 的 `railMaxRows` / `clipBlock` 注释写明"装不下就只能砍，否则某个区块永远够不着"），那是终端的能力约束，不该被桌面端继承。
+- **"不许静默截断"这条原则仍然有效**，只是约束的对象变了：不允许用 CSS 把行藏起来（`hidden`、零高度、`overflow: hidden` 而没有滚动条）。超出即可见地滚动。
 - 「首次出现有任务/有目标/有后台任务」自动展开一次，之后**以用户操作为准**——手动收起后不许被下一次状态刷新弹回来。
 - 窗口过窄时整体隐藏，由折叠摘要行接管。
 
-> `caps`（各区块上限）在真实协议里**不存在**，属于呈现层。**决策 6：写死在前端常量（各区块 5 行），并写进设计系统文档**——不要试图从运行时取。
+> `caps`（各区块上限）在真实协议里**不存在**，属于呈现层——这一点不变。但结论从"前端自己造一个上限"变成了**"前端不造这个上限"**。原决策 6（写死 5 行）作废，见 §10。
 
 ### 7.3b 左侧栏：工作区与会话
 
@@ -449,15 +495,35 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 它的两半来源不同，这个差别是承重的：
 
 - **工作区列表是前端偏好**。协议里没有工作区清单，也不该有：工作区**就是**子进程的 cwd，换工作区是**换进程**而不是发消息（§3.2）。运行时只声明**当前**在哪儿（`init.workspace`），列表拿它来标记当前项——所以「在列表里」和「是当前的」是两件事，永不合并；增删一条不发任何协议消息。当前工作区**即使没被收藏也一定是一行**：这一栏回答的第一个问题是「我在哪儿」，一份漏掉脚下这处的清单答的是另一个问题。
-- **会话列表完全是运行时的**：`session_list` 问，`sessions` 答，`session_switch` 原地切换、进程不动。`messages` / `steps` / `todos` / `preview` 全由运行时算好，前端一个都不自己数，也从不读会话文件。
+- **会话列表完全是运行时的**：`session_list` 问，`sessions` 答。`messages` / `steps` / `todos` / `preview` 全由运行时算好，前端一个都不自己数，也从不读会话文件。
+- **打开一个会话有两半，而且都不发 `session_switch`**：
+  - 已经有子进程持有它（`sessionId → key` 索引查得到）→ **聚焦它**。纯本地，**一个字节都不发**，不动任何进程。
+  - 没有 → `runtime_attach` 起一个新子进程。
+  - 唯一的例外是**删除**：`session_delete` 仍然要发给某个 child，而删掉一个正被另一个 child 打开的会话会从写入方脚下抽走文件——所以别的持有者先被收掉。
+
+**这一栏是"会话在干什么"唯一能被看见的地方。** 每个会话行左侧一个状态点（等你操作 / 坏了 / 在跑 / 停下来等你），工作区行一个"里面有几个会话要你处理"的计数。没有它，开第二个会话就是把它弄丢：这个点是你在看别处时唯一能回答"有没有东西在等我"的地方。
+
+- 颜色**从不单独承担含义**（每个点有可读的名字），点**不呼吸**（`component-states.md` §7；而且几个点同时闪是噪声，不是"正在进行"——状态栏那个呼吸点的理由不能照搬过来），**空闲不画点**（五十个灰点读起来像"全都没事"，其实什么都没说）。
 
 **不画登录，不画插件市场**：这个窗口后面没有账号，运行时也没有插件注册表——它的扩展面是 MCP 与技能，那是右侧栏的事。画出来就是一个「按了不会有任何事发生」的控件。
 
-**阻塞模态期间，这一栏的所有动作都是惰性的**，这不是装饰：`server.go: switchSession` 会调 `pending.abandonAll()`，切走就等于丢掉运行时正卡着等回答的那个请求 id，而它会**永远等下去**。弹审批时重启子进程同理。
+**阻塞模态期间，这一栏的动作要重新划范围**——旧规则"全部惰性"的理由已经消失：
+
+| 动作 | 有阻塞模态时 | 理由 |
+| --- | --- | --- |
+| 切换显示（聚焦另一个会话） | ✅ 允许 | 不发消息，不影响任何 pending id |
+| **其它会话的**审批 / 提问 | ✅ 允许 | 见 §4.6：回答回**发起它的那个 key** |
+| 新建会话 / 在一个会话上起子进程 | ❌ 禁止 | 新的 `attach` 不该在有人被卡住时发生 |
+| 关掉某个会话 | ❌ 禁止 | 会丢弃它自己的 pending |
+
+旧规则是"一律 inert"，理由是 `server.go: switchSession` 会调 `pending.abandonAll()`：切走就等于丢掉运行时正卡着等回答的那个请求 id，而它会**永远等下去**。桌面端不再发 `session_switch`，所以那一条不再适用于切换。留下的是两条各自独立的顾虑：起新进程，以及有人的请求正在被等。
 
 ### 7.4 状态栏
 
-- **左**：阶段（启动中/空闲/进行中/已完成/到步数上限/失败/被打断）+ 当前动作或结算文案 + `step n / N`。「从没说过话」与「空闲」是**两个文案**。
+- **左**：阶段（启动中/空闲/进行中/已完成/到步数上限/失败/被打断）+ 当前动作或结算文案 + **对话累计 steps**。「从没说过话」与「空闲」是**两个文案**。
+  - 这一格**只报累计，不报上限**。「这段对话一共跑了多少步」和「一个回合最多允许多少步」是两个维度的事，写成一个分式就会出现 `step 497 / 120` 那种分子大于分母的读数（累计值来自 `ui(state).steps`，是全会话的 `assistant` 消息数，会随 `/resume` 的长会话一路涨；`init.max_steps` 是 `--max-steps`，**每回合重置**）。
+  - 回合内的进度应当去回合头看（那里是 `entry.step / entry.maxSteps`，逐事件推进，且已经在那儿了）。**两处画同一个数是冗余**。
+  - 上限本身不是秘密，它的位置在**会话栏的 `step cap`**（`init.max_steps` 的事实）和**设置面板的 `--max-steps`**（可改）——状态栏没有第三个地方需要复述它。
 - **右**（窗口变窄时从右往左砍）：autopilot → 安静模式 → 后台任务角标（有未收结果时加重）→ 子代理角标 → 上下文用量（**窗口未知时只报用量**）→ 缓存命中率 → 耗时 → 审计日志路径。
 
 > ⚠️ 用量、缓存命中、耗时**不在 `ui(state)` 里**，要走 `ui(status).usage` / `ui(status).counters`。**决策 5：回合结束时拉一次 `status`，加上「有东西悬着」时拉一次**（沿用 `refresh_state` 的节流思路，下限约 2 秒）。`status` 会读一遍审计日志，**不能当心跳**。
@@ -544,7 +610,7 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 
 ## 10. 已定决策
 
-以下 12 条在评审中已拍板。**#7、#8 不再需要用户决策**——我在写文档时标记为「实现前需确认」，随后已在源码中找到确定答案，一并列在这里。
+以下 12 条在评审中已拍板。**#7、#8 不再需要用户决策**——我在写文档时标记为「实现前需确认」，随后已在源码中找到确定答案，一并列在这里。**#6 已被后续的实际使用推翻**（保留原编号与结论，见该行）。
 
 | # | 决策 | 依据 / 落地方式 |
 | --- | --- | --- |
@@ -553,13 +619,13 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 | 3 | **首屏问候带用户名**，从 OS 用户名取（Rust 侧读取） | 协议里没有 `user_name`。Windows 走 `%USERNAME%`，POSIX 走 `$USER`/`getpwuid`；取不到时**省略名字**而不是显示 `unknown` |
 | 4 | **删掉 `/theme` 面板**，主题只跟随系统 | 严格按 `docs/tauri-native-spec.md` §4「唯一主题来源，没有应用内手动切换」。`init` 也没有 `themes` 清单。**`--theme` 与 WebView 主题无关，不要接进来**（那是 TUI 配色）。命令表因此从 18 条变为 **17 条** |
 | 5 | **状态栏取数**：回合结束时拉一次 `status`，加上「有东西悬着」时拉一次（沿用 `refresh_state` 的节流思路） | 用量/缓存/耗时在 `ui(status)` 的 `usage`/`counters`，不在 `ui(state)`。`status` 会读一遍审计日志，**不能当心跳**；节流下限建议 2 秒（与 TUI 同一量级，见 `docs/spec/protocol.md`） |
-| 6 | **面板内容上限写死在前端常量**（各区块 5 行），并**写进设计系统文档** | 协议没有 `caps`。仍需遵守上游 spec 的规则：超限时**从底部丢弃并标 `(+N more)`**，不许静默截断 |
+| 6 | ~~**面板内容上限写死在前端常量**（各区块 5 行）~~ **已作废**：右栏**不设内容上限**，有多少列多少，超出由滚动承接 | 协议没有 `caps` 这一点不变；变了的是结论——**前端不造这个上限**，而不是造一个再标注"还有 N 条"。TUI 的同类上限（`railMaxRows`）是"固定高度、非滚动容器"的终端约束，桌面端的右栏是滚动容器，不继承它。原"超限时从底部丢弃并标 `(+N more)`"的做法一并取消；但"不许静默截断"仍然有效，指不许用 CSS 藏行 |
 | 7 | **子代理行字段已核实**：`{id, label, model, provider, depth, seconds, steps, tool_calls, activity}` | `internal/subagent/board.go` 的 `Board.Panel()`。原型的 `started_ms` 应为 **`seconds`**（已运行时长），`calls` 应为 **`tool_calls`**，另有 `steps` 与 `provider` |
 | 8 | **`subagent` 确认是一个工具**（风险 **HIGH**，`parallel_safe=false`、`interactive=true`），会出现在 `/tools` 清单里 | `internal/subagent/subagent.go`：`const DefaultToolName = "subagent"`、`Risk: security.RiskHigh`。它不在 `internal/tools/builtin/` 下注册（在 `internal/subagent` 包内构建后注册进注册表），所以当初按目录搜索没找到。它也**可能被 compose 改名**——界面要按 `init.tools[].name` 显示，不要硬编码 `"subagent"`。HIGH 意味着它会**弹审批**，审批模态里显示的是子任务的 prompt |
 | 9 | **拖入图片**：插入路径 + 缩略图，并额外做工作区外拦截与提示 | `internal/runtime/images.go` 的注释明确了机制：**用户只是在句子里写出路径**（`帮我看看这个截图 docs/shot.png`），运行时自己识别并附加；**没有上传命令、没有标记语言**。三条硬约束：路径走 `Workspace.SafePath`（**工作区外不附加**，有专门测试）、上限 **5MB**、**不问审批**。所以拖拽唯一正确的实现是**把路径插进输入框文本**，不能让前端「上传字节」——那是一条不存在的通道 |
 | 10 | **审批模态按字段显隐**：`remember` 有才显示「总是允许」；`allow_trust_all=true` 才显示「全部允许」；两者都无则只有允许/拒绝 | 详见 §4.6。`always_group` 覆盖哪些工具由运行时按 id 查它手里的快照，**前端不许自己带名单** |
-| 11 | **`/new` 发不带 `session_id` 的 `session_switch`**，丢弃原型的 `"__new__"` 哨兵 | `session_id` 缺失/`null` = 新会话；给的 id 不存在也算新会话。原型的哨兵虽然碰巧也能work，但语义是错的、且依赖巧合 |
-| 12 | **加 single-instance 插件**：第二个实例只把窗口拉回前台，不启新的运行时 | 工作区状态写在 `<workspace>/.tudouni/`（`permissions.json`、`mcp.json`、会话文件、审计日志、artifacts），两个实例写同一目录会冲突。`docs/tauri-native-spec.md` 只说了「单窗口」，未覆盖多实例，这条是对它的补充 |
+| 11 | **`/new` 开一个新会话（一个新子进程），不发 `session_switch`** | 原始结论是"发不带 `session_id` 的 `session_switch`，丢弃 `"__new__"` 哨兵"——哨兵那半仍然成立，但机制变了：桌面端**一条 `session_switch` 都不发**，因为它会让运行时重建自己并 `pending.abandonAll()`。协议保留它给 TUI/CLI |
+| 12 | **加 single-instance 插件**：第二个实例只把窗口拉回前台，不启第二份应用 | ⚠️ **理由已更正**。原文说两个实例会同时写 `permissions.json`、`mcp.json`、会话文件、审计日志和 artifacts；逐路径核实后只有 `permissions.json` 成立（其余按 id 分文件/目录，`mcp.json` 只读），而那条冲突与实例数无关——一个应用本来就有多个运行时。插件保留，但它现在买的是"桌面上不该开两个窗口"，不是文件安全 |
 
 ### 10.1 附带核实（原计划列为「未确认」，已查清）
 
@@ -578,7 +644,7 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 2. **桥**：Rust 侧启动/守护子进程 + JSONL 收发 + 队列 flush（§3.3）+ 退出码上报 + single-instance（决策 12）。
 3. **打通最小闭环**：`init` → `user_message` → `event` → `ui(run_finished)`，界面只要能显示流和答案。
 4. **两个阻塞模态**：审批、提问——fail-closed，先做对再做全（决策 10）。
-5. **面板与侧栏**：按 §7，先状态快照（`ui(state)`），再按需拉取（`/status` `/tools` `/context`）。上限常量按决策 6 落进设计系统。
+5. **面板与侧栏**：按 §7，先状态快照（`ui(state)`），再按需拉取（`/status` `/tools` `/context`）。右栏不设内容上限（决策 6 已作废），因此**没有上限常量要落进设计系统**。
 6. **设计系统**：token → 组件 → 排版约束（§8.3）。**不含主题切换面板**（决策 4）。
 7. **打包**：随包分发运行时（prompts/tools/vendored rg + 平台限制），版本一致性与真实二进制校验；首屏标识块接版本显示（决策 1）。
 

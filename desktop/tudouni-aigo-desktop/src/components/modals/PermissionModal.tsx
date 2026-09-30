@@ -1,8 +1,8 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { AlertOctagon, AlertTriangle, ShieldCheck } from 'lucide-react';
-import { useApp } from '@/state/store';
+import { selectModalOrigin, selectQueuedModals, useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
-import { Fact, RiskTag } from '@/components/ui/kit';
+import { Badge, Fact, RiskTag } from '@/components/ui/kit';
 import { formatArguments } from '@/utils/format';
 
 /**
@@ -31,6 +31,12 @@ export function PermissionModal() {
   const t = useT();
   const modal = useApp((s) => s.modal);
   const answer = useApp((s) => s.answerPermission);
+  // **Which conversation is asking, and whether another is waiting.** With one
+  // session this prompt was self-evidently about the only conversation there
+  // was; with several, an approval with no origin is a question about an
+  // unknown session — and a decision made for the wrong one.
+  const origin = useApp((s) => (s.modal ? selectModalOrigin(s, s.modal.key) : ''));
+  const queued = useApp(selectQueuedModals);
 
   const open = modal?.kind === 'permission';
   const req = open ? modal.req : null;
@@ -99,6 +105,22 @@ export function PermissionModal() {
                     {req.tool}
                   </Fact>
                   <Fact title={t('perm.callId')}>{req.call_id}</Fact>
+                  {/* Which conversation is asking. Shown only when it is
+                      knowable: a session whose `init` has not landed has no id
+                      yet, and an invented label would be worse than none. */}
+                  {origin ? (
+                    <Fact title={t('modal.from')}>
+                      {t('modal.from')} <span className="mono">{origin}</span>
+                    </Fact>
+                  ) : null}
+                  {/* And whether another one is waiting behind this. The queue
+                      has always held them; saying so is what keeps the second
+                      request from being a surprise after this one is answered. */}
+                  {queued > 0 ? (
+                    <Badge tone="neutral" dot={false}>
+                      {t('modal.queued', { n: queued })}
+                    </Badge>
+                  ) : null}
                 </div>
 
                 {req.risk === 'high' ? (

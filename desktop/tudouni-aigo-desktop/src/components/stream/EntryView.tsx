@@ -13,7 +13,7 @@ import {
   Sparkles,
   Wrench,
 } from 'lucide-react';
-import { useApp } from '@/state/store';
+import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, RiskTag } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
@@ -391,7 +391,7 @@ function PermEntry({ entry }: { entry: Extract<Entry, { kind: 'perm' }> }) {
 
 function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
   const t = useT();
-  const quiet = useApp((s) => s.quiet);
+  const quiet = useSessionField((rt) => rt.quiet, false);
   const manual = useApp((s) => s.reasoningOpen[entry.id]);
   const toggle = useApp((s) => s.toggleReasoning);
   // While streaming it is forced open and updates live; once the stream stops it
