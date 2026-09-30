@@ -10,7 +10,7 @@ import '@/styles/app.css';
 import '@/styles/stream.css';
 
 import { App } from './App';
-import { useApp } from '@/state/store';
+import { createSessionBucket, useApp } from '@/state/store';
 
 const host = document.getElementById('root');
 if (!host) throw new Error('#root not found');
@@ -26,6 +26,14 @@ if (!host) throw new Error('#root not found');
 // It is stripped from production builds by the `import.meta.env.DEV` guard.
 if (import.meta.env.DEV) {
   (window as unknown as { __aigoStore?: typeof useApp }).__aigoStore = useApp;
+  // The bucket factory too, and for the same reason: a session's runtime facts
+  // live in `sessions[key]`, and the only production path that creates a bucket
+  // is `attachSession`, which needs a real child process. A check running in a
+  // plain browser has no bridge, so without this it has no bucket to address its
+  // payloads to — and `applyRuntimeMessage` drops anything for a key that does
+  // not exist, silently, which is how a whole harness came to fail at `init`.
+  (window as unknown as { __aigoCreateBucket?: typeof createSessionBucket }).__aigoCreateBucket =
+    createSessionBucket;
 }
 
 createRoot(host).render(

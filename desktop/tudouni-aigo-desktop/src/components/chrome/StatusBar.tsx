@@ -1,4 +1,5 @@
 import { Boxes, Bot, CircleSlash, FolderOpen, Gauge, HardDrive, Layers, Zap } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   NO_JOBS,
   NO_SUBAGENTS,
@@ -112,7 +113,15 @@ export function StatusBar() {
   const setAutopilot = useApp((s) => s.setAutopilot);
   const toggleQuiet = useApp((s) => s.toggleQuiet);
 
-  const usage: UsageView = useApp((s) => selectUsage(s, key));
+  // `useShallow`, because `selectUsage` **builds a new object** on every call.
+  // zustand compares snapshots by identity, so a bare `useApp((s) =>
+  // selectUsage(s, key))` never compares equal: the store re-renders forever,
+  // React gives up with "Maximum update depth exceeded", and the error boundary
+  // takes the whole tree down — the window renders nothing at all. The rule is
+  // the one `store.ts` states above `selectAskOn`, and the three other call
+  // sites that need it (`CollapsedSummary`, `SessionBar`, `EffortPanel`) already
+  // follow it.
+  const usage: UsageView = useApp(useShallow((s) => selectUsage(s, key)));
 
   // "Never spoken" and "idle" are two different labels.
   const phaseLabel =

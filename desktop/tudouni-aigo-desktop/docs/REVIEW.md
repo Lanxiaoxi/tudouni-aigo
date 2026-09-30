@@ -403,7 +403,7 @@
 | 同上 | 表后说明段 | 只讲"两个函数必须一起加参数" | 追加一段解释为什么这一格不配上限（两个维度、`StepCount()` vs 每回合循环） | ✅ 已改 |
 | `desktop/tudouni-aigo-desktop/README.md` | 决策表第 6 行 | "Block caps are a front-end constant (5 rows) \| `BLOCK_CAP` in `store.ts`" | "The right rail's blocks are **not capped**: every row is listed and the rail scrolls. The `(+N more)` footnote is gone"，Where 列换成 `Sidebar.tsx` + `.sidebar-inner` | ✅ 已改 |
 | 同上 | 决策 15 之前 | （无） | 新增 `### 6 · Why the rail is not capped, and why step n / N is not a fraction`，把两条的成因（TUI 的固定列、`StepCount()` vs 每回合 `MaxSteps`）写在代码旁 | ✅ 已改 |
-| 同上 | Verification 段 | 描述 `render-check.mjs` 覆盖的右栏断言 | ⚠️ **未做**：`render-check.mjs` 仍只喂 2 项 `todos`，没有"超过 5 项全部列出"的断言。这一条是**遗留项**（见下） | ⏳ 未做 |
+| 同上 | Verification 段 | 描述 `render-check.mjs` 覆盖的右栏断言 | 已补断言：喂 8 项 `todos`，要求 8 行全部在 DOM 里、右栏文本中没有任何 `(+N more)`、计数角标是 `3/8`；同一处还断言状态栏读作 `2 steps` 且不含 `/` | ✅ 已改 |
 
 另外两处**不是文档而是代码注释**，同样是"照错的前提写的"，已经随代码一起改掉：
 

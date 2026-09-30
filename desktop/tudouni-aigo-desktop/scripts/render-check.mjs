@@ -444,9 +444,46 @@ async function main() {
   if (!storeReady) throw new Error('the app did not expose its store (is this a dev build?)');
   console.log('store: the instance the tree reads');
 
+  // ---- the session this harness drives ----
+  //
+  // Runtime facts live in `sessions[key]`, and `applyRuntimeMessage(key, msg)`
+  // **drops anything addressed to a key that does not exist** — deliberately, so
+  // a line in flight for a session whose child was shut down cannot resurrect a
+  // bucket nothing would reap. In a plain browser there is no bridge, so nothing
+  // ever calls `attachSession` and no bucket exists: every payload below would be
+  // discarded silently and the run would die at the first assertion with a
+  // message about the interface, not about the harness. So the bucket is made
+  // here, with the same factory the real path uses, and it is the one the tree
+  // draws because `activeKey` names it.
+  //
+  // The factory is exposed by `main.tsx` in dev builds for exactly this reason.
+  const KEY = 'k-render';
+  const harnessReady = await evaluate(`(() => {
+    const store = window.__aigoStore;
+    if (typeof window.__aigoCreateBucket !== 'function') return 'no bucket factory';
+    const bucket = window.__aigoCreateBucket(${JSON.stringify(KEY)}, 'C:/work/project', {
+      ericai: false,
+      maxSteps: null,
+    });
+    store.setState((s) => ({
+      sessions: { ...s.sessions, [${JSON.stringify(KEY)}]: bucket },
+      order: s.order.includes(${JSON.stringify(KEY)}) ? s.order : [...s.order, ${JSON.stringify(KEY)}],
+      activeKey: ${JSON.stringify(KEY)},
+    }));
+    window.__aigoKey = ${JSON.stringify(KEY)};
+    return 'ok';
+  })()`);
+  if (harnessReady !== 'ok') {
+    throw new Error(`the harness could not open a session bucket: ${harnessReady}`);
+  }
+  console.log(`session: driving bucket ${KEY}`);
+
+  /** The active session's bucket, in the page's own context. */
+  const RT = `window.__aigoStore.getState().sessions[window.__aigoKey]`;
+
   const apply = async (payload) => {
     const r = await evaluate(
-      `(() => { window.__aigoStore.getState().applyRuntimeMessage(${JSON.stringify(payload)}); return true; })()`,
+      `(() => { window.__aigoStore.getState().applyRuntimeMessage(window.__aigoKey, ${JSON.stringify(payload)}); return true; })()`,
     );
     if (r !== true) throw new Error(`failed to apply ${payload.t}`);
     await sleep(120);
@@ -498,7 +535,7 @@ async function main() {
     const q = (s) => document.querySelector(s);
     const txt = (s) => (q(s) ? q(s).innerText.replace(/\\s+/g,' ').slice(0,200) : null);
     return JSON.stringify({
-      ready: window.__aigoStore.getState().ready,
+      ready: ${RT}.ready,
       welcome: !!q('.welcome'),
       sessionbar: txt('.sessionbar'),
       statusbar: txt('.statusbar'),
@@ -734,7 +771,7 @@ async function main() {
     return JSON.stringify({
       welcome: !!q('.welcome'),
       note: txt('.e-note'),
-      notes: window.__aigoStore.getState().entries.filter((e) => e.kind === 'note').length,
+      notes: ${RT}.entries.filter((e) => e.kind === 'note').length,
     });
   })()`);
   console.log('after session_load:', afterLoad);
@@ -924,9 +961,9 @@ async function main() {
     const name = loadRow.querySelector('.sbr-main')?.textContent?.trim() ?? '';
     // The mark must be clear before the press, or the assertion below would pass
     // on a leftover from something else.
-    const before = [...window.__aigoStore.getState().mcpPending];
+    const before = [...${RT}.mcpPending];
     loadRow.querySelector('.mcp-act').click();
-    return JSON.stringify({ name, before, after: [...window.__aigoStore.getState().mcpPending] });
+    return JSON.stringify({ name, before, after: [...${RT}.mcpPending] });
   })()`);
   console.log('mcp rail, after pressing Load:', pressed);
   const pr = JSON.parse(pressed ?? '{}');
@@ -981,7 +1018,7 @@ async function main() {
   }
   // Put the store back so the checks below see a clean screen.
   await evaluate(`(() => {
-    window.__aigoStore.getState().applyRuntimeMessage({ v: 1, t: 'ui', kind: 'mcp', mcp_servers: [
+    window.__aigoStore.getState().applyRuntimeMessage(window.__aigoKey, { v: 1, t: 'ui', kind: 'mcp', mcp_servers: [
       { name: 'fs', state: 'loaded', tools: 12, where: 'npx fs-server' },
       { name: 'github', state: 'unload', tools: 0, where: 'https://api.github.com' },
     ], mcp_notes: [] });
@@ -990,10 +1027,122 @@ async function main() {
   await sleep(150);
   // The reply released the mark, so the row is pressable again.
   const released = await evaluate(
-    `JSON.stringify(window.__aigoStore.getState().mcpPending)`,
+    `JSON.stringify(${RT}.mcpPending)`,
   );
   if (released !== '[]') {
     throw new Error(`the runtime's reply did not release the in-flight mark: ${released}`);
+  }
+
+  // ---- the rail lists every row, and the status bar reports no fraction ----
+  //
+  // Two presentations that were inherited from the terminal front end, where
+  // the constraint behind each of them is real. Neither constraint exists here.
+  //
+  // **A block is not capped.** Decision 6 stopped each block at five rows and
+  // folded the rest into `(+N more)`; that cap came from the TUI's rail, which
+  // is a **fixed-height column that cannot scroll** (`internal/frontends/tui/
+  // rail.go`, `railMaxRows` / `clipBlock`), so it has to clip or a block becomes
+  // unreachable. This rail scrolls (`.sidebar-inner` is `overflow-y: auto`), so
+  // the cap only hid rows a reader could have scrolled to.
+  //
+  // **The step count has no denominator.** `session.steps` is
+  // `ui(state).steps` — every assistant message in the conversation, so it
+  // grows and a resumed session starts high. `session.maxSteps` is
+  // `init.max_steps` — `--max-steps`, the budget for **one turn**, which the
+  // agent's loop resets each turn. Printed as a fraction that reads
+  // `step 497 / 120`; the per-turn progress belongs on the turn head, where
+  // both numbers come from the same entry.
+  //
+  // Both failures are invisible without an assertion: a capped list renders
+  // perfectly, and so does an uncapped one — the difference is rows that are
+  // simply not there. So the count is checked against the payload, the
+  // `(+N more)` marker is checked absent, and the step cell is checked for the
+  // absence of a `/`.
+  const MANY = 8;
+  await apply({
+    v: 1,
+    t: 'ui',
+    kind: 'state',
+    todos: Array.from({ length: MANY }, (_, i) => ({
+      content: `task number ${i + 1}`,
+      status: i < 3 ? 'completed' : 'pending',
+    })),
+    skills: [],
+    skill_catalog: [],
+    jobs: [],
+    subagents: [],
+    messages: 4,
+    steps: 2,
+    model: 'deepseek-chat',
+    model_provider: 'deepseek',
+    model_window: 65536,
+    thinking: true,
+    effort: 'high',
+    effort_levels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    autopilot: false,
+    granted_tools: [],
+    granted_prefixes: [],
+    denied_tools: [],
+    risk_scope: [],
+    agents_md: [],
+    mcp: [],
+    goal: {
+      id: 'g1',
+      objective: 'fix the reconnect',
+      phase: 'active',
+      revision: 2,
+      rounds: 3,
+      max_rounds: 60,
+      rounds_text: '3/60',
+      limit_reached: false,
+      armed: true,
+      blocked_code: '',
+      blocked_message: '',
+    },
+  });
+
+  const uncapped = await evaluate(`(() => {
+    const blocks = [...document.querySelectorAll('.sb-block')];
+    const tasks = blocks.find((b) => (b.querySelector('.sbh-title')?.textContent ?? '') === 'Tasks');
+    const rows = tasks ? [...tasks.querySelectorAll('.sb-row')] : [];
+    const nums = rows.map((r) => Number((r.querySelector('.sbr-main')?.textContent ?? '').trim().replace('task number ', '')));
+    return JSON.stringify({
+      rowCount: rows.length,
+      // The rows actually present, by number, so a missing one is nameable.
+      nums: nums.filter((n) => Number.isFinite(n)),
+      railText: (document.querySelector('.app-sidebar')?.innerText ?? '').replace(/\\s+/g, ' '),
+      statusText: (document.querySelector('.statusbar .st-left')?.innerText ?? '').replace(/\\s+/g, ' '),
+    });
+  })()`);
+  console.log('uncapped rail:', uncapped);
+  const uc = JSON.parse(uncapped ?? '{}');
+  if (uc.rowCount !== MANY) {
+    throw new Error(
+      `the Tasks block drew ${uc.rowCount} of ${MANY} rows: the rail is still capping its content`,
+    );
+  }
+  for (let i = 1; i <= MANY; i += 1) {
+    if (!uc.nums.includes(i)) {
+      throw new Error(`task number ${i} is missing from the rail (drew ${JSON.stringify(uc.nums)})`);
+    }
+  }
+  // The marker itself, not merely a short list: `(+N more)` is what the cap
+  // used to say, and an unfilled `{n}` would still be a non-empty string.
+  if (/\(\+\s*\d+\s*more\)/i.test(uc.railText)) {
+    throw new Error(`the rail still prints a "(+N more)" marker: ${uc.railText}`);
+  }
+  if (!uc.railText.includes(`3/${MANY}`)) {
+    throw new Error(`the Tasks count badge does not name all ${MANY}: ${uc.railText}`);
+  }
+  // Cumulative steps, no denominator. A `/` in this cell is the `step 497 / 120`
+  // shape coming back.
+  if (!uc.statusText.includes('2 steps')) {
+    throw new Error(`the status bar does not report cumulative steps: "${uc.statusText}"`);
+  }
+  if (/\d+\s*\/\s*\d+/.test(uc.statusText)) {
+    throw new Error(
+      `the status bar still pairs a cumulative count with a per-turn cap: "${uc.statusText}"`,
+    );
   }
 
   // ---- a fold animates, so its content stays mounted ----
@@ -1228,8 +1377,8 @@ async function main() {
       count: all.length,
       open: fold ? !fold.classList.contains('is-collapsed') : null,
       foldH: fold ? Math.round(fold.getBoundingClientRect().height) : null,
-      streaming: window.__aigoStore.getState().entries.filter((e) => e.kind === 'reason').pop()?.streaming ?? null,
-      quiet: window.__aigoStore.getState().quiet,
+      streaming: ${RT}.entries.filter((e) => e.kind === 'reason').pop()?.streaming ?? null,
+      quiet: ${RT}.quiet,
     });
   })()`);
 
@@ -1321,7 +1470,7 @@ async function main() {
   const afterAnswerPerm = await evaluate(`(() => {
     return JSON.stringify({
       modalOpen: !!document.querySelector('.dialog'),
-      autopilot: window.__aigoStore.getState().uiState?.autopilot,
+      autopilot: ${RT}.uiState?.autopilot,
     });
   })()`);
   console.log('after answering:', afterAnswerPerm);
