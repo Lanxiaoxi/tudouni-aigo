@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { activeRuntime, selectPhase, useApp } from '@/state/store';
+import { encodeKey } from '@/runtime/terminalKeys';
 
 /**
  * Global keys (the capability list).
@@ -22,6 +23,25 @@ export function useGlobalKeys(): void {
       const inField =
         !!target &&
         (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable);
+
+      /* ---- An attached terminal owns the keyboard ----
+       *
+       * While a shell has the keyboard, every key that has a terminal meaning
+       * belongs to it — including `Ctrl+K`, `Ctrl+B`, `Ctrl+C` and Escape. The
+       * pane itself handles this (it `preventDefault`s and stops propagation),
+       * but that only covers the case where the pane has focus. Clicking the tab
+       * strip or the status bar moves focus away, and the window handler would
+       * then fold a rail, quit the app, or interrupt a turn **while somebody was
+       * typing at a shell** — the one state where the interface must look like a
+       * terminal and behave like one.
+       *
+       * `encodeKey` is the single definition of "has a terminal meaning", so this
+       * guard cannot drift from what the pane actually sends. */
+      if (activeRuntime(s)?.activeTerminalId != null && encodeKey(e) !== '') {
+        // Not `preventDefault`: the pane may still be about to handle it, and
+        // cancelling here would swallow the key before it gets there.
+        return;
+      }
 
       /* ---- Reload keys: suppressed, and they must be suppressed here ----
        *

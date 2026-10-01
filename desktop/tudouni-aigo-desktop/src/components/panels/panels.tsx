@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
-import { Bot, Download, Upload } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ArrowUp, Bot, Download, Folder, Plus, Upload, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { notesByServer } from '@/runtime/adapt';
 import {
   NO_ALIASES,
+  NO_FILE_ENTRIES,
   NO_JOBS,
   NO_MCP_ROWS,
   NO_MODEL_ROWS,
@@ -11,6 +12,7 @@ import {
   NO_SKILLS,
   NO_STRINGS,
   NO_SUBAGENTS,
+  NO_TERMINALS,
   selectAskOn,
   selectEffortLevels,
   useApp,
@@ -23,6 +25,7 @@ import { Badge, EmptyState, RiskTag } from '@/components/ui/kit';
 import { PanelBody, PanelRow, PanelShell } from './PanelShell';
 import { COMMANDS } from '@/commands';
 import { formatDuration, formatPath, formatRelative, formatTokens, oneLine } from '@/utils/format';
+import type { FileEntry } from '@/protocol/types';
 
 const closePanel = () => useApp.setState({ panel: null });
 
@@ -604,6 +607,242 @@ export function SubagentsPanel() {
               }
             >
               <span className="mono">{oneLine(job.command, 72)}</span>
+            </PanelRow>
+          ))
+        )}
+      </PanelBody>
+    </PanelShell>
+  );
+}
+
+/* ============================================================
+   Files. A browser, not a picker: Enter on a directory walks down.
+   ============================================================ */
+export function FilesPanel() {
+  const t = useT();
+  // The listing is per **session**, because it is what that child answered —
+  // and the child is what holds the workspace boundary the paths are relative
+  // to. Two sessions in different workspaces have unrelated trees.
+  const path = useSessionField((rt) => rt.filesPath, '');
+  const entries = useSessionField((rt) => rt.filesEntries, NO_FILE_ENTRIES);
+  const loading = useSessionField((rt) => rt.filesLoading, false);
+  const listFiles = useApp((s) => s.listFiles);
+
+  function open(entry: FileEntry) {
+    // A directory is **listed**; a file is **read**. Which one this is comes
+    // from the runtime's own `type`, never from a guess about the name — a
+    // symlink to a directory is reported as a directory, and a name with a dot
+    // in it is not evidence of anything.
+    if (entry.type === 'directory') listFiles(entry.path);
+    else useApp.getState().readFile(entry.path);
+  }
+
+  const { active, setActive } = useListKeys({
+    count: entries.length,
+    onClose: closePanel,
+    onPick: (i) => entries[i] && open(entries[i]),
+  });
+
+  // The parent step is the same arithmetic the runtime's own paths use: the
+  // empty string is the workspace root, and it is also its own parent. Walking
+  // up from the root stays put rather than producing `..`, which the runtime
+  // would refuse — a button that generates a refusal is a button that looks
+  // broken.
+  const parent = parentPath(path);
+
+  return (
+    <PanelShell
+      title={t('panel.files.title')}
+      count={entries.length}
+      note={path === '' ? t('panel.files.root') : path}
+    >
+      <PanelBody>
+        {path !== '' ? (
+          <button
+            type="button"
+            className="btn btn-ghost btn-compact"
+            style={{ margin: '0 var(--space-3) var(--space-2)' }}
+            onClick={() => listFiles(parent)}
+          >
+            <ArrowUp size={12} />
+            {t('panel.files.parent')}
+          </button>
+        ) : null}
+
+        {/* "Loading" and "empty" are different statements. A panel that drew the
+            second while the first was true would send somebody looking for files
+            that are there. */}
+        {loading ? (
+          <EmptyState title={t('panel.files.loading')} />
+        ) : entries.length === 0 ? (
+          <EmptyState title={t('panel.files.empty')} />
+        ) : (
+          entries.map((entry, i) => (
+            <PanelRow
+              key={entry.path}
+              index={i + 1}
+              active={active === i}
+              onHover={() => setActive(i)}
+              onPick={() => open(entry)}
+              aside={
+                entry.type === 'directory' ? (
+                  <Folder size={12} className="muted" />
+                ) : (
+                  <span className="caption faint mono">{formatBytes(entry.size)}</span>
+                )
+              }
+            >
+              <span className={entry.type === 'directory' ? 'strong' : 'mono'}>
+                {entry.name}
+                {entry.type === 'directory' ? '/' : ''}
+              </span>
+            </PanelRow>
+          ))
+        )}
+      </PanelBody>
+    </PanelShell>
+  );
+}
+
+/**
+ * The directory one level up, in the runtime's own vocabulary.
+ *
+ * The empty string is the workspace root **and** its own parent, so walking up
+ * from the top stays put. That is the boundary rule expressed as arithmetic on
+ * this side; the runtime refuses an escape anyway, and a front end that
+ * generated one would be inviting a refusal notice for a button that should
+ * simply stop.
+ */
+export function parentPath(path: string): string {
+  const trimmed = path.replace(/\/+$/, '');
+  if (trimmed === '') return '';
+  const at = trimmed.lastIndexOf('/');
+  return at < 0 ? '' : trimmed.slice(0, at);
+}
+
+/** A byte count as a person reads it. */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+/* ============================================================
+   Terminals. The list, and the one thing a client owns about a terminal.
+   ============================================================ */
+export function TerminalPanel() {
+  const t = useT();
+  const terminals = useSessionField((rt) => rt.terminals, NO_TERMINALS);
+  const attachedId = useSessionField((rt) => rt.activeTerminalId, null);
+  const pending = useSessionField((rt) => rt.terminalPending, NO_STRINGS);
+  const createTerminal = useApp((s) => s.createTerminal);
+  const killTerminal = useApp((s) => s.killTerminal);
+  const attachTerminal = useApp((s) => s.attachTerminal);
+  const [armed, setArmed] = useState<string | null>(null);
+
+  const { active, setActive } = useListKeys({
+    count: terminals.length,
+    onClose: closePanel,
+    // Enter **attaches**, and closing the panel is what makes the attach
+    // visible: the terminal view is the composer's replacement, so a panel left
+    // open over it would hide the thing that just changed.
+    onPick: (i) => {
+      const row = terminals[i];
+      if (!row) return;
+      attachTerminal(row.id);
+      closePanel();
+    },
+  });
+
+  return (
+    <PanelShell
+      title={t('panel.term.title')}
+      count={terminals.length}
+      note={t('panel.term.outline')}
+    >
+      <PanelBody>
+        <button
+          type="button"
+          className="btn btn-outline btn-block"
+          style={{ margin: '0 var(--space-3) var(--space-2)' }}
+          onClick={() => createTerminal()}
+        >
+          <Plus size={13} />
+          {t('panel.term.new')}
+        </button>
+
+        {terminals.length === 0 ? (
+          <EmptyState title={t('panel.term.empty')} />
+        ) : (
+          terminals.map((row, i) => (
+            <PanelRow
+              key={row.id}
+              index={i + 1}
+              active={active === i}
+              selected={row.id === attachedId}
+              onHover={() => setActive(i)}
+              onPick={() => {
+                attachTerminal(row.id);
+                closePanel();
+              }}
+              aside={
+                <>
+                  {/* The status comes from the runtime and from nowhere else.
+                      Three endings read three ways, and the third is why this
+                      cannot be a lookup: `killed`, `exited` with a code, and
+                      `exited` with no code are different facts — a killed shell
+                      did not choose an exit status, so printing 0 next to it
+                      would invent one. */}
+                  {row.status === 'running' ? (
+                    <Badge tone="success" dot={false}>
+                      {t('panel.term.running')}
+                    </Badge>
+                  ) : row.status === 'killed' ? (
+                    <Badge tone="warning" dot={false}>
+                      {t('panel.term.killed')}
+                    </Badge>
+                  ) : (
+                    <Badge tone="neutral" dot={false}>
+                      {row.exit_code === null || row.exit_code === undefined
+                        ? t('panel.term.exitedNoCode')
+                        : t('panel.term.exited', { code: row.exit_code })}
+                    </Badge>
+                  )}{' '}
+                  {/* End it. Two presses, like deleting a session: a kill takes
+                      down a whole process tree and cannot be undone. */}
+                  <button
+                    type="button"
+                    className={`btn btn-ghost btn-icon btn-compact${armed === row.id ? ' is-armed' : ''}`}
+                    aria-label={
+                      armed === row.id ? t('panel.term.killConfirm') : t('panel.term.kill')
+                    }
+                    disabled={row.status !== 'running' || pending.includes(row.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (armed === row.id) {
+                        setArmed(null);
+                        killTerminal(row.id);
+                      } else {
+                        setArmed(row.id);
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      if (armed === row.id) setArmed(null);
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </>
+              }
+            >
+              <div className="row" style={{ gap: 'var(--space-2)', alignItems: 'baseline' }}>
+                <span className="mono strong">{row.id}</span>
+                <span className="caption faint">
+                  {row.cwd === '' ? t('panel.term.cwdRoot') : row.cwd}
+                </span>
+                <span className="caption faint mono">{row.shell}</span>
+              </div>
             </PanelRow>
           ))
         )}

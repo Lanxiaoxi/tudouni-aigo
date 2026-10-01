@@ -5,12 +5,14 @@ import { CommandPalette } from './CommandPalette';
 import {
   AuditPanel,
   EffortPanel,
+  FilesPanel,
   HelpPanel,
   McpPanel,
   ModelPanel,
   ResumePanel,
   SkillsPanel,
   SubagentsPanel,
+  TerminalPanel,
 } from './panels';
 import { SettingsPanel } from './SettingsPanel';
 
@@ -51,6 +53,8 @@ export function PanelHost() {
           {panel === 'subagents' ? <SubagentsPanel /> : null}
           {panel === 'audit' ? <AuditPanel /> : null}
           {panel === 'settings' ? <SettingsPanel /> : null}
+          {panel === 'files' ? <FilesPanel /> : null}
+          {panel === 'terminal' ? <TerminalPanel /> : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

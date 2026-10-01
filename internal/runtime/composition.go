@@ -14,6 +14,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/files"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
@@ -24,6 +25,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/subagent"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/terminal"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
@@ -52,6 +54,13 @@ func hostTriple() (string, bool) {
 type Booted struct {
 	Store *state.SessionStore
 	Logs  *audit.JsonlSink
+	// Terminals owns this workspace's shells. It lives **here** rather than on a
+	// runtime, and that placement is the design's central structural point: a
+	// session can be switched, deleted or closed while a shell the person is
+	// running keeps going. `Booted` is created once per process and handed to every
+	// runtime that process mounts, so session and terminal end up as siblings under
+	// the workspace rather than parent and child.
+	Terminals *terminal.Manager
 }
 
 // Boot makes the directories and opens the two append-only stores.
@@ -65,7 +74,15 @@ func Boot() (Booted, error) {
 	if err != nil {
 		return Booted{}, err
 	}
-	return Booted{Store: store, Logs: logs}, nil
+	// The workspace boundary is resolved here, once, so the shells and the file
+	// tools are checked against the same object. A failure is fatal rather than a
+	// reason to start without one: a terminal with no boundary would be a shell
+	// that can be pointed anywhere, which is a worse outcome than not starting.
+	terminals, err := terminal.NewManager(paths.WorkspaceDir())
+	if err != nil {
+		return Booted{}, err
+	}
+	return Booted{Store: store, Logs: logs, Terminals: terminals}, nil
 }
 
 // ResolveSession picks the session a run should start on.
@@ -233,6 +250,15 @@ type Options struct {
 	// protocol server subscribes here; without it the audit log would be the only
 	// way to see what happened, and a front end would have nothing to draw.
 	OnEventHook func(record map[string]any)
+	// OnTerminalEvent carries one terminal event to the front end. See
+	// protocol.RuntimeHooks.OnTerminalEvent for why the destination is passed in
+	// rather than reached for: the shells are process-scoped and the connection is
+	// not.
+	//
+	// Nil is the ordinary case for an in-process front end with nowhere to draw a
+	// byte stream. The terminals still run and are still listed; only the stream
+	// has no reader.
+	OnTerminalEvent func(payload map[string]any)
 }
 
 // Runtime is one assembled session.
@@ -281,6 +307,15 @@ type Runtime struct {
 	// boundary as the file tools: a second path check is how one door ends up
 	// guarded and another does not.
 	Workspace *tools.Workspace
+	// Files answers `file_list` / `file_read`. It shares the boundary above rather
+	// than resolving the root again — see files.NewServiceFromWorkspace — so a
+	// front end browsing the workspace and the agent reading a file cannot end up
+	// with two different ideas of where the workspace is.
+	Files *files.Service
+	// Terminals owns this workspace's shells. It is **not** built here: it comes
+	// from `Booted`, which is created once per process, because a terminal has to
+	// outlive the session that happened to be mounted when it was created.
+	Terminals *terminal.Manager
 	// Skills is the loaded-skill board, which the payload tail renders from.
 	Skills *builtin.SkillBoard
 	// Goal is the session's long-running objective: the board the goal tools write
@@ -325,6 +360,9 @@ type Runtime struct {
 	// than an interface so the runtime does not have to know that a protocol
 	// server exists — it only knows somebody wants the records.
 	OnEventHook func(record map[string]any)
+	// onTerminalEvent is where a terminal's events go. It is kept as a field so
+	// that `Close` can unhook it — see the sink it installs in OpenRuntime.
+	onTerminalEvent func(payload map[string]any)
 }
 
 // PreflightCheck reports what the user has to fix before anything can run.
@@ -449,10 +487,16 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		ModelState:     modelState,
 		Catalog:        catalog,
 		Workspace:      workspace,
-		mcpNames:       mcpNames,
-		httpClient:     &http.Client{Timeout: 120 * time.Second},
-		startedAt:      time.Now(),
-		report:         options.Report,
+		// The file service shares the boundary just resolved rather than resolving
+		// the root a second time: two resolutions of one root are two objects that
+		// agree today and are free to stop agreeing tomorrow, and the day they
+		// disagree one door is guarded and the other is not.
+		Files:     files.NewServiceFromWorkspace(workspace),
+		Terminals: options.Booted.Terminals,
+		mcpNames:  mcpNames,
+		httpClient: &http.Client{Timeout: 120 * time.Second},
+		startedAt:  time.Now(),
+		report:     options.Report,
 	}
 	if runtimeValue.MaxSteps == 0 {
 		runtimeValue.MaxSteps = agent.DefaultMaxSteps
@@ -802,6 +846,23 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		Vision: runtimeValue.modelVision,
 	})
 	runtimeValue.OnEventHook = options.OnEventHook
+	runtimeValue.onTerminalEvent = options.OnTerminalEvent
+
+	// The terminal manager is process-scoped, so its sink has to be **pointed at
+	// this runtime's connection** rather than built with it. That is the whole
+	// reason `SetSink` exists: a session switch attaches a new runtime with a new
+	// connection while the shells keep running, and the events have to follow the
+	// connection.
+	//
+	// A nil hook leaves whatever sink was there, which is deliberate: an
+	// in-process front end (the REPL) that never asks for a terminal should not
+	// silently detach the sink a protocol front end installed on the same
+	// manager — the two can be alive in one process during a test.
+	if runtimeValue.Terminals != nil && options.OnTerminalEvent != nil {
+		runtimeValue.Terminals.SetSink(func(event terminal.Event) {
+			options.OnTerminalEvent(terminalEventPayload(event))
+		})
+	}
 	return runtimeValue, nil
 }
 
@@ -1538,6 +1599,13 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		"risk_scope":       r.riskScope(),
 		"agents_md":        agentsMDRows(r.SessionValue),
 		"mcp":              mcpRows,
+		// The workspace's terminals. They are carried on **this** snapshot
+		// although they belong to the workspace rather than the session, and that
+		// is the point: every tool result and every turn's end re-states the list,
+		// so a front end that started after a shell was created — or one that lost
+		// the `terminal_created` message — learns about it from the next snapshot
+		// instead of never.
+		"terminals": r.terminalsPanel(),
 		// Always present, in both the "there is one" and "there is not" shapes: a
 		// front end with two cases to draw has two places to get the empty one
 		// wrong.

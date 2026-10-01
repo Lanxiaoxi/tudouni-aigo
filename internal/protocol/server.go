@@ -180,6 +180,44 @@ type GoalCommander interface {
 	GoalCommand(action string) (map[string]any, error)
 }
 
+// FileService is what a runtime must provide for the workspace's file
+// capability.
+//
+// Optional, like every other feature interface here: a runtime that does not
+// implement it answers `file_list` / `file_read` with a notice saying so, which
+// beats a silent empty list — "this directory is empty" and "this build cannot
+// read files" look identical on screen, and the second one is a bug nobody
+// reports.
+//
+// Both methods return the payload the `ui` message carries, minus the envelope.
+// The protocol layer does not know what a directory entry is; it puts `v` / `t` /
+// `kind` on whatever comes back, the same way it does for `status` and `tools`.
+type FileService interface {
+	ListFiles(path string) (map[string]any, error)
+	ReadFile(path string) (map[string]any, error)
+}
+
+// TerminalService is what a runtime must provide for the workspace's terminals.
+//
+// It is five methods rather than one verb-and-arguments pair because a terminal
+// really does have five operations with different shapes, and collapsing them
+// would put a `switch` on the runtime side of a boundary whose whole job is to
+// keep that switch out of the protocol layer.
+//
+// `CreateTerminal` is the one that can fail with something to report — an
+// escaped cwd, a PTY that will not start — and it returns an error rather than an
+// empty row, because a front end given a row would remember an id for a shell that
+// does not exist.
+type TerminalService interface {
+	ListTerminals() []map[string]any
+	CreateTerminal(cwd string, cols, rows int) (map[string]any, error)
+	// TerminalInput has no return payload: a terminal is an asynchronous stream,
+	// not a request/response. See the schema's own note on `terminal_input`.
+	TerminalInput(id, data string) error
+	TerminalResize(id string, cols, rows int) error
+	TerminalKill(id string) error
+}
+
 // GoalRoundScheduler is what a runtime must provide to be asked whether another
 // round is allowed once a turn has finished.
 //
@@ -393,6 +431,27 @@ func (s *Server) Dispatch(message map[string]any) bool {
 
 	case InRefreshState:
 		s.Send(s.stateMessage(false))
+
+	case InFileList:
+		s.handleFileList(message)
+
+	case InFileRead:
+		s.handleFileRead(message)
+
+	case InTerminalList:
+		s.handleTerminalList()
+
+	case InTerminalCreate:
+		s.handleTerminalCreate(message)
+
+	case InTerminalInput:
+		s.handleTerminalInput(message)
+
+	case InTerminalResize:
+		s.handleTerminalResize(message)
+
+	case InTerminalKill:
+		s.handleTerminalKill(message)
 
 	case InUserMessage:
 		text, _ := String(message, "text")
@@ -670,6 +729,35 @@ func (s *Server) notice(level, code, text string) {
 		"v": VERSION, "t": OutNotice,
 		"level": level, "code": code, "text": text,
 	})
+}
+
+// SendTerminalEvent forwards one thing a terminal has to say.
+//
+// The payload arrives already shaped (see `runtime.terminalEventPayload`), because
+// what a terminal event *is* is a fact about terminals and this layer deliberately
+// does not know one when it sees it. All this adds is the envelope — the same
+// division of labour `ToolsMessage` and `StatusMessage` follow in the other
+// direction.
+//
+// It is called from the terminal's **own goroutines**, so it must not block: the
+// transport's write lock is the only thing it waits on, and `Send` already
+// swallows a write failure rather than propagating it. That matters more here than
+// anywhere else in the protocol, because a terminal whose reader stalled would
+// have its PTY fill and its shell freeze — a bug on this side wearing the costume
+// of a bug in the person's own command.
+//
+// A nil payload means "there is nothing to send", which is what an event kind this
+// build does not recognise produces. Inventing a message for it would be a line
+// the front end cannot parse.
+func (s *Server) SendTerminalEvent(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	envelope := map[string]any{"v": VERSION, "t": OutUI}
+	for key, value := range payload {
+		envelope[key] = value
+	}
+	s.Send(envelope)
 }
 
 // reporter is where an instruction a person has to **act on** goes when it is

@@ -59,6 +59,10 @@ var catalog = map[string]string{
 	"cmd.effort.detail":   "Without an argument it opens the picker; /effort <level> changes it directly",
 	"cmd.mcp.hint":        "MCP server switch",
 	"cmd.mcp.detail":      "Without an argument it opens the panel; /mcp load|unload <name> changes one directly",
+	"cmd.files.hint":      "Browse the workspace's files",
+	"cmd.files.detail":    "Without an argument it lists the workspace root; /files <path> lists a directory or shows a file",
+	"cmd.terminal.hint":   "Terminals in this workspace",
+	"cmd.terminal.detail": "Without an argument it opens the terminal list; /terminal <n> switches, /terminal new opens one, /terminal kill <n> ends one",
 	"cmd.compact.hint":    "Compact the history (nothing deleted)",
 	"cmd.context.hint":    "See the context and compaction ledger",
 	"cmd.compact.waiting": "[compact] started (one model call writes the summary; the result arrives shortly)…",
@@ -532,6 +536,41 @@ var catalog = map[string]string{
 	"skills.empty":  "No skills in this workspace (.tudouni/skills/<name>/SKILL.md)",
 	"skills.footer": "✓ = loaded  ·  Esc to close  ·  full list: tudouni-aigo --skills",
 
+	// --- the files panel ----------------------------------------------------
+	// `{path}` is a workspace-relative path, and the empty string means the
+	// workspace root itself — which is why the root case has its own key rather
+	// than rendering an empty placeholder.
+	"files.title":       "Files",
+	"files.root":        "(workspace root)",
+	"files.loading":     "Reading {path}…",
+	"files.empty":       "This directory is empty.",
+	"files.footer":      "↑↓ pick  ·  Enter open  ·  Backspace up  ·  Esc close",
+	"files.dir_marker":  "/",
+	"files.too_many":    "…and {n} more (the panel shows the first {shown})",
+	"files.read_head":   "{path} · {lines} lines · {chars} chars",
+	"files.read_cut":    "showing the first {chars} characters; the body is in the artifact store as {id}",
+	"files.read_failed": "Could not read {path}: {problem}",
+
+	// --- the terminal panel -------------------------------------------------
+	"cmd.terminal.need_id": "`/terminal kill` needs a terminal id (the list is `/terminal`).",
+	"cmd.terminal.unknown": "No such terminal: {rest} — `/terminal` lists them, `/terminal new` opens one.",
+
+	// --- the terminal panel -------------------------------------------------
+	"terminal.title":       "Terminal",
+	"terminal.empty":       "No terminal is open in this workspace. `/terminal new` opens one.",
+	"terminal.footer":      "↑↓ pick  ·  Enter attach  ·  k kill  ·  Esc close",
+	"terminal.running":     "running",
+	"terminal.exited":      "exited ({code})",
+	"terminal.exited_unknown": "exited",
+	"terminal.killed":      "killed",
+	"terminal.attach_head": "Terminal {id} · {shell} · {status}",
+	"terminal.attach_hint": "Typed keys go straight to the shell, byte for byte. Ctrl+\\ leaves the terminal (it is not closed).",
+	"terminal.detached":    "Left terminal {id}; it is still running.",
+	"terminal.killed_line": "Ended terminal {id}.",
+	"terminal.ended":       "Terminal {id} ended ({status}).",
+	"terminal.output_dropped": "[terminal {id}] some output was dropped: the interface could not keep up.",
+	"terminal.scrollback_cut": "[…earlier output scrolled out of this buffer…]",
+
 	// --- pickers ------------------------------------------------------------
 	"option.count.one":      "{n} item",
 	"option.count.other":    "{n} items",
@@ -874,6 +913,28 @@ var catalog = map[string]string{
 	"channels.mcp.unknown_action":     "[MCP] unrecognized action: {action} (only {actions})",
 	"channels.mcp.list_note":          "[MCP] current mounts (changing the config needs a restart)",
 	"channels.mcp.needs_name":         "[MCP] {action} needs a server name, one at a time",
+
+	// --- the workspace's file and terminal replies -------------------------
+	//
+	// Each of these is the sentence a person reads after a click that did not
+	// work. The two halves that repeat are deliberate: the first says whether
+	// there is a session at all, the second whether this build has the feature.
+	// They are different problems — one needs a session, the other needs a newer
+	// build — and merging them sends the first person off after the second's fix.
+	"channels.files.no_session":    "[files] no session yet.",
+	"channels.files.unsupported":   "[files] this runtime cannot read the workspace's files.",
+	"channels.files.needs_path":    "[files] reading a file needs a path; file_list with no path is the workspace root.",
+	"channels.files.list_failed":   "[files] could not list that directory: {problem}",
+	"channels.files.read_failed":   "[files] could not read that file: {problem}",
+
+	"channels.terminal.no_session":     "[terminal] no session yet.",
+	"channels.terminal.unsupported":    "[terminal] this runtime cannot run terminals.",
+	"channels.terminal.needs_id":       "[terminal] {action} needs a terminal id.",
+	"channels.terminal.needs_size":     "[terminal] resizing needs both cols and rows as whole numbers.",
+	"channels.terminal.create_failed":  "[terminal] could not open a terminal: {problem}",
+	"channels.terminal.input_failed":   "[terminal] could not write to {id}: {problem}",
+	"channels.terminal.resize_failed":  "[terminal] could not resize {id}: {problem}",
+	"channels.terminal.kill_failed":    "[terminal] could not end {id}: {problem}",
 
 	// --- the /context screen ------------------------------------------------
 	"context.title":        "Context and compaction",

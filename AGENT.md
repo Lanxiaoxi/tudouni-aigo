@@ -14,7 +14,9 @@
 | `internal/runtime/` | 运行时主体：`--runtime-stdio` 起的子进程，把 TUI 和智能体循环隔开 |
 | `internal/protocol/` | TUI ↔ runtime 的 JSONL 协议 |
 | `internal/agent/`、`internal/model/` | 智能体循环与各家模型客户端 |
-| `internal/tools/` | 工具实现（shell、读写文件、grep 等） |
+| `internal/tools/` | 工具实现（shell、读写文件、grep 等）；`tools.Workspace` 是工作区边界，文件和终端共用它 |
+| `internal/files/` | 前端侧的 Workspace 文件能力：一层目录清单 + 读一个 UTF-8 文件（`file_list`/`file_read`） |
+| `internal/terminal/` | Workspace 的终端：真 PTY（unix `creack/pty` / Windows ConPTY）、输出聚合、生命周期、进程组清理 |
 | `internal/security/`、`internal/process/` | 权限判定、风险分级、子进程策略 |
 | `internal/state/`、`internal/audit/`、`internal/context/` | 会话、工作区 `AGENT.md`、审计日志、上下文压缩与工件 |
 | `internal/config/`、`internal/paths/` | 配置文件、安装包内路径解析 |

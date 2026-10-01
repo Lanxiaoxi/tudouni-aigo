@@ -289,6 +289,19 @@ func (m model) renderBody(available int) string {
 	case m.overlay.kind != overlayNone:
 		body = lipgloss.Place(m.width, available, lipgloss.Center, lipgloss.Center,
 			m.renderOverlay(m.width-8, available))
+	case m.attached.id != "":
+		// Attached: the body is the shell's output rather than the conversation.
+		//
+		// It replaces the transcript instead of sharing the screen with it, and
+		// that is the honest choice given what this interface can render: the
+		// output is drawn as text with its escape sequences removed (see
+		// `terminalOutputLine`), so it is not a faithful terminal — it is a view of
+		// what the shell printed. Half a screen of it beside half a screen of chat
+		// would be worse at both jobs.
+		//
+		// The conversation is not lost: detaching brings it straight back, and
+		// nothing was removed from it while the shell had the screen.
+		body = m.renderTerminalView(available)
 	default:
 		body = m.renderBodySplit(available)
 	}

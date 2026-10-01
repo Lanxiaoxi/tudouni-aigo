@@ -33,6 +33,13 @@ func (m model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay.kind != overlayNone {
 		return m.handleOverlayKey(key)
 	}
+	// **Attached comes before the editor**, and that ordering is the whole of
+	// what makes a shell usable: every key below this line belongs to the input
+	// line, and a `Ctrl+C` that reached it would interrupt the interface instead
+	// of the command the person was trying to stop.
+	if m.attached.id != "" {
+		return m.handleAttachedKey(key)
+	}
 	return m.handleEditorKey(key)
 }
 
@@ -432,6 +439,58 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 		m.client.ListSkills()
 		return m, nil
 
+	case "/files":
+		// With no argument the browser opens at the workspace root; with one it
+		// opens there. Either way the panel is drawn immediately in its loading
+		// state — an empty frame beats a keypress that appears to do nothing while
+		// the runtime reads the directory.
+		//
+		// The argument is **not** validated here. Whether a path exists, is a
+		// directory, or escapes the workspace is the runtime's judgement (it is the
+		// end that holds the boundary), and a second check on this side would be a
+		// second answer — the one that eventually disagrees.
+		m.openFiles(strings.TrimSpace(rest))
+		return m, nil
+
+	case "/terminal":
+		// Four shapes, and the first is the panel: `/terminal` on its own lists
+		// what is running in this workspace.
+		switch strings.ToLower(firstWord(arguments)) {
+		case "":
+			m.overlay = overlay{kind: overlayTerminal, title: i18n.T("terminal.title")}
+			m.client.ListTerminals()
+			return m, nil
+		case "new":
+			m.client.CreateTerminal(strings.TrimSpace(strings.TrimPrefix(rest, arguments[0])), 0, 0)
+			return m, nil
+		case "kill":
+			if len(arguments) < 2 {
+				m.appendLine(renderLine{segments: []seg{
+					{text: i18n.T("cmd.terminal.need_id"), role: "warn"},
+				}}, "notice", "")
+				return m, nil
+			}
+			m.client.TerminalKill(arguments[1])
+			return m, nil
+		case "detach":
+			m.detach()
+			return m, nil
+		default:
+			// A bare number or id attaches, which is the one thing a person types
+			// repeatedly: `/terminal 1` is two keystrokes where `/terminal attach
+			// term-01` is five words.
+			id := arguments[0]
+			if row := m.terminalByIndex(id); row != nil {
+				m.attachTerminal(*row)
+				return m, nil
+			}
+			m.client.ListTerminals()
+			m.appendLine(renderLine{segments: []seg{
+				{text: i18n.T("cmd.terminal.unknown", "rest", rest), role: "warn"},
+			}}, "notice", "")
+			return m, nil
+		}
+
 	case "/goal":
 		// The runtime answers every shape of this command with a notice and a fresh
 		// snapshot, so the interface prints nothing itself: it has no idea what the
@@ -816,10 +875,30 @@ func (m model) handleOverlayKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// as unresponsive.
 		return m.commitOverlay()
 
+	case tea.KeyBackspace:
+		// Walking up in the file browser. Backspace rather than a key of its own
+		// because the gesture is "go back one level", and it is the one key every
+		// file picker a person has used binds that way.
+		if m.overlay.kind == overlayFiles {
+			if m.files.opened != nil {
+				// An opened file closes back to the directory it came from, so
+				// Backspace from a file and from its directory are one step apart
+				// rather than two different gestures.
+				m.files.opened = nil
+				return m, nil
+			}
+			if parent := parentPath(m.files.path); parent != m.files.path {
+				m.openFiles(parent)
+			}
+			return m, nil
+		}
+		return m, nil
+
 	case tea.KeyRunes:
 		// A picker honours the number keys: pressing the row number is picking
 		// that row, which is faster than walking down a long list.
-		if index, ok := parseNumber(string(key.Runes)); ok {
+		typed := string(key.Runes)
+		if index, ok := parseNumber(typed); ok {
 			if m.overlay.kind == overlayOptions || m.overlay.kind == overlaySessions ||
 				m.overlay.kind == overlayMCP || m.overlay.kind == overlaySkills {
 				if index >= 1 && index <= m.overlayCount() {
@@ -828,7 +907,14 @@ func (m model) handleOverlayKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		if string(key.Runes) == "q" {
+		// `k` ends the terminal under the cursor. It is a **separate key from
+		// Enter** on purpose: Enter attaches, and a panel where the same key both
+		// attaches to a shell and kills it would end a running command for
+		// somebody who meant to look at it.
+		if m.overlay.kind == overlayTerminal && typed == "k" {
+			return m.killTerminalUnderCursor()
+		}
+		if typed == "q" {
 			m.overlay = overlay{}
 			return m, nil
 		}
@@ -861,6 +947,16 @@ func (m model) overlayCount() int {
 		return len(m.mcpPanelRows())
 	case overlaySkills:
 		return len(m.skillRows)
+	case overlayFiles:
+		// An opened file is not a list: the cursor has nothing to move over, and
+		// reporting the directory's row count would let Up/Down scroll a cursor
+		// that is not drawn.
+		if m.files.opened != nil {
+			return 0
+		}
+		return len(m.filePanelRows())
+	case overlayTerminal:
+		return len(m.terminalPanelRows())
 	}
 	return 0
 }
@@ -978,8 +1074,106 @@ func (m model) commitOverlay() (tea.Model, tea.Cmd) {
 		// makes sense, and leaving it up after Enter would look like a selection.
 		m.overlay = overlay{}
 		return m, nil
+
+	case overlayFiles:
+		return m.commitFileBrowser()
+
+	case overlayTerminal:
+		return m.commitTerminalPicker()
 	}
 	return m, nil
+}
+
+// commitFileBrowser opens the row under the cursor.
+//
+// **Enter on a directory does not close the panel.** That is the one place this
+// differs from every other picker here, and it is the difference between a browser
+// and a list: walking down three directories would otherwise cost three `/files`
+// commands and two panel reopens. Enter on a file shows it in the panel, and
+// Backspace walks back up — see the key handler.
+func (m model) commitFileBrowser() (tea.Model, tea.Cmd) {
+	if m.files.opened != nil {
+		// Reading a file, so Enter has nothing to open. Closing here would be the
+		// one gesture a person is most likely to try while reading.
+		return m, nil
+	}
+	rows := m.filePanelRows()
+	if m.overlay.cursor >= len(rows) {
+		return m, nil
+	}
+	row := rows[m.overlay.cursor]
+	if row.isDir {
+		m.openFiles(row.path)
+		return m, nil
+	}
+	m.client.ReadFile(row.path)
+	// The cursor is reset rather than kept: the opened file replaces the list, and
+	// a cursor left pointing at where the file used to be would land on a
+	// different row when the directory is shown again.
+	m.overlay.cursor = 0
+	return m, nil
+}
+
+// commitTerminalPicker attaches the input line to the chosen terminal.
+func (m model) commitTerminalPicker() (tea.Model, tea.Cmd) {
+	rows := m.terminalPanelRows()
+	if m.overlay.cursor >= len(rows) {
+		return m, nil
+	}
+	row := rows[m.overlay.cursor]
+	m.overlay = overlay{}
+	m.attachTerminal(row)
+	return m, nil
+}
+
+// killTerminalUnderCursor ends the terminal the cursor is on.
+//
+// The line in the transcript is written by the **exit event**, not here: the
+// runtime is the only end that knows whether the process actually stopped, and a
+// "killed" line printed on this side would be a claim this interface cannot
+// support — a kill that was refused would still read as done.
+func (m model) killTerminalUnderCursor() (tea.Model, tea.Cmd) {
+	rows := m.terminalPanelRows()
+	if m.overlay.cursor >= len(rows) {
+		return m, nil
+	}
+	row := rows[m.overlay.cursor]
+	m.client.TerminalKill(row.id)
+	return m, nil
+}
+
+// openFiles switches the browser to a directory and asks for its listing.
+//
+// The panel is drawn immediately, in its loading state, and the listing replaces
+// it when the answer arrives. An empty frame beats a keypress that appears to do
+// nothing while the runtime reads the directory — and `loading` is what keeps the
+// empty frame from saying "this directory is empty", which is a different and
+// false statement.
+func (m *model) openFiles(path string) {
+	m.files = filePanel{path: path, loading: true}
+	m.overlay.kind = overlayFiles
+	m.overlay.cursor = 0
+	if m.client != nil {
+		m.client.ListFiles(path)
+	}
+}
+
+// parentPath is the directory one level up, in the workspace-relative vocabulary.
+//
+// The workspace root is the empty string, and it is also its own parent: `""` is
+// the top, so walking up from it stays put rather than producing a path that
+// escapes. That is the boundary rule stated as arithmetic, on this side of the
+// wire — the runtime refuses an escape anyway, and a front end that generated one
+// would be inviting a refusal notice for a key that should simply stop.
+func parentPath(path string) string {
+	trimmed := strings.TrimSuffix(path, "/")
+	if trimmed == "" {
+		return ""
+	}
+	if index := strings.LastIndex(trimmed, "/"); index >= 0 {
+		return trimmed[:index]
+	}
+	return ""
 }
 
 // settleOverlay clears the waiting line of the one panel that asks the runtime a

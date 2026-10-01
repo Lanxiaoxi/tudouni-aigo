@@ -27,7 +27,65 @@ const (
 	overlayMCP
 	overlaySessions
 	overlaySkills
+	// overlayFiles is the workspace browser. It is a **picker** in shape but not
+	// in meaning: Enter on a directory replaces the list rather than closing the
+	// panel, because browsing is a walk and a panel that closed on every step
+	// would cost one `/files` per directory.
+	overlayFiles
+	// overlayTerminal picks which shell the transcript's input line is attached
+	// to. It is the one panel whose choice outlives it — see `model.attached`.
+	overlayTerminal
 )
+
+// filePanel is the browser's position and what it is showing.
+//
+// The path and the entries are kept as plain values rather than as one struct
+// elsewhere because they are only ever read together, by `renderFilesPanel`, and
+// the list a snapshot needs is the same list the panel draws.
+type filePanel struct {
+	// path is the directory being listed, **workspace-relative**; the empty
+	// string is the workspace root. It is the path the runtime echoed back, not
+	// the one that was typed — see `runtime.ListFiles` for why that matters.
+	path string
+	// entries is the listing the runtime answered with, in its own order.
+	entries []any
+	// loading is true between the request and its answer, so the panel can say
+	// "reading…" instead of drawing an empty directory — which is a different
+	// and false statement.
+	loading bool
+	// opened is the file whose content is on screen, or "". A browser that could
+	// only list directories would make `/files src/main.go` answer nothing.
+	opened map[string]any
+}
+
+// terminalAttach is which shell the input line writes to.
+//
+// **It is a view state and not a fact about the terminal.** The runtime owns the
+// process, the cwd and the status; this only records "which one am I typing
+// into", which is exactly the one thing the design says a client may keep.
+type terminalAttach struct {
+	id     string
+	shell  string
+	status string
+	// scrollback is what this interface has seen of the output, newest last.
+	//
+	// It is **this end's** copy, and that is deliberate rather than a shortcut:
+	// the runtime does not keep one (see the package comment on avoiding a second
+	// terminal), so a front end that wants to show more than the last screenful
+	// has to hold it. The bound is what keeps a build log from growing without
+	// limit in a process the person is drawing with.
+	scrollback []string
+	// pendingBytes counts what has arrived for this terminal, so `/terminal`
+	// can say "5000 bytes since you last looked" rather than only showing the
+	// tail.
+	pendingBytes int
+	// exitCode is the runtime's last word on how it ended, or nil while it runs.
+	// Kept here as well as on the panel rows because an attached terminal's banner
+	// is drawn from this struct, and reaching into the list for one field is how
+	// the banner and the list end up disagreeing about a terminal they both
+	// describe.
+	exitCode any
+}
 
 // option is one row of a picker. The value is what goes back on the wire; the
 // row and the note are what a person reads.
@@ -606,8 +664,22 @@ func (m model) renderOverlay(width, height int) string {
 		return m.renderSessionPicker(width, height)
 	case overlaySkills:
 		return m.renderSkillsPanel(width, height)
+	case overlayFiles:
+		return m.renderFilesPanel(width, height)
+	case overlayTerminal:
+		return m.renderTerminalPanel(width, height)
 	}
 	return ""
+}
+
+// workspacePanel reports whether the panel on screen keeps its rows in a list this
+// interface holds rather than in `overlay.options`.
+//
+// The key handler asks this when deciding what a number key means and how big the
+// cursor may get. A second list of panel names at each call site is how one of
+// them ends up not knowing about a panel that was added later.
+func (m model) workspacePanel() bool {
+	return m.overlay.kind == overlayFiles || m.overlay.kind == overlayTerminal
 }
 
 // overlayFrameWidth is the widest a panel gets, and overlayInner the width its

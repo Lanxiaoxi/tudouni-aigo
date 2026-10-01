@@ -379,6 +379,12 @@ func openRuntime(booted runtime.Booted, sessionID string,
 		ShouldStop:  hooks.ShouldStop,
 		OnDelta:     hooks.OnDelta,
 		OnEventHook: hooks.OnEvent,
+		// Terminal output is process-scoped and the connection is not, so the
+		// destination is passed in rather than reached for. Under
+		// `--runtime-stdio` the protocol server supplies this; the in-process
+		// front ends leave it nil, because they have nowhere to draw a byte
+		// stream — the terminals still run and are still listed.
+		OnTerminalEvent: hooks.OnTerminalEvent,
 		// Where a login's instructions go. Nil for the in-process front ends, which
 		// is a real answer rather than a gap: those own a terminal, so the runtime's
 		// own stderr is the right place and the sentence is printed there. Under

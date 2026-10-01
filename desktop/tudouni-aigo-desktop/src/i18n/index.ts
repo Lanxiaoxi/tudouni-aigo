@@ -339,6 +339,36 @@ export const en = {
   'panel.skills.refresh': 'Re-read the skill directories',
   'panel.skills.problems': 'Problems',
   'panel.skills.shadowed': 'Shadowed',
+
+  /* ---- workspace: files ---- */
+  'panel.files.title': 'Files',
+  'panel.files.empty': 'This directory is empty',
+  'panel.files.loading': 'Reading the directory…',
+  'panel.files.root': 'workspace root',
+  'panel.files.parent': 'Up one level',
+  'panel.files.dir': 'directory',
+  'panel.files.lines': '{n} lines',
+  'panel.files.truncated':
+    'Showing the first {chars} characters. The whole body is stored as {id}.',
+  'panel.files.failed': 'Could not read it',
+  /* ---- workspace: terminals ---- */
+  'panel.term.title': 'Terminals',
+  'panel.term.empty': 'No terminal open in this workspace',
+  'panel.term.new': 'New terminal',
+  'panel.term.kill': 'End this terminal',
+  'panel.term.killConfirm': 'Press again to end it',
+  'panel.term.attach': 'Type into it',
+  'panel.term.detach': 'Leave the terminal (it keeps running)',
+  'panel.term.detached': 'You left the terminal. It is still running.',
+  'panel.term.running': 'running',
+  'panel.term.exited': 'exited ({code})',
+  'panel.term.exitedNoCode': 'exited',
+  'panel.term.killed': 'killed',
+  'panel.term.cwdRoot': 'workspace root',
+  'panel.term.hint':
+    'Keys go to the shell byte for byte: Ctrl+C interrupts its command, arrows move in it. Nothing is interpreted by this window.',
+  'panel.term.dropped': 'Earlier output scrolled out of this buffer.',
+  'panel.term.outline': 'The runtime keeps no output — this buffer is this window’s own.',
   'panel.help.title': 'Help',
   'panel.help.commands': 'Commands',
   'panel.help.keys': 'Keybindings',
@@ -505,6 +535,8 @@ export const en = {
   'cmd.effort.desc': 'Options change with the current model',
   'cmd.mcp.desc': 'Three states, and load / unload a server',
   'cmd.goal.desc': 'Inspect and control the long-term goal',
+  'cmd.files.desc': 'Browse the workspace files',
+  'cmd.terminal.desc': 'Terminals in this workspace',
 
   /* ---------------- keys ---------------- */
   'key.send': 'Send',

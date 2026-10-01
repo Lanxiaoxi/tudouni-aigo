@@ -30,6 +30,20 @@ type RuntimeHooks struct {
 	// is printed underneath it, on stderr, by a process whose stdin nobody is
 	// reading. See `openRuntime` in cmd/tudouni.
 	Channels Channels
+	// OnTerminalEvent carries one terminal event to the front end as the body of
+	// a `ui` message — the protocol layer adds the envelope.
+	//
+	// It is a hook like the others, and it has to be, for a reason specific to
+	// terminals: the objects that produce these events are **process-scoped** (a
+	// shell outlives the session that happened to be mounted when it was created),
+	// while the transport belongs to the connection. Passing the destination in is
+	// what lets a session switch move the events to a new front end without
+	// touching the shells — see `terminal.Manager.SetSink`.
+	//
+	// Nil means "nobody is listening", which is what an in-process front end with
+	// nowhere to draw them looks like. The terminals still run and can still be
+	// listed; only the byte stream has no reader.
+	OnTerminalEvent func(payload map[string]any)
 	// Report is where an instruction a person has to **act on** goes when it is
 	// produced **while a session is already running**: today, the device code and
 	// the verification URI of the managed-token login (`--ericai`).
@@ -124,6 +138,12 @@ func Main(opener RuntimeOpener, summaries func() []map[string]any,
 			// pipe, so an approval has to travel as a message rather than be printed
 			// at whatever terminal this child happens to share.
 			Channels: server.Channels(),
+			// Terminal output is the one stream that does **not** belong to a
+			// session, so its hook is wired here rather than derived from the
+			// runtime: the shells are process-scoped and the destination is the
+			// connection, which is exactly the pairing `RuntimeHooks.OnTerminalEvent`
+			// exists to express.
+			OnTerminalEvent: server.SendTerminalEvent,
 			// Same reasoning, and the same failure without it: this mode's stderr is
 			// drained by the front end (see Client.Start), so an instruction written
 			// there reaches nobody. See RuntimeHooks.Report.

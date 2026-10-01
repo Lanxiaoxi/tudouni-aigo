@@ -17,8 +17,18 @@
 /** Envelope version. `internal/protocol/messages.go:25`. */
 export const ENVELOPE_VERSION = 1;
 
-/** Semantic version of the conversation, carried as `init.protocol`. */
-export const PROTOCOL_VERSION = 3;
+/** Semantic version of the conversation, carried as `init.protocol`.
+ *
+ * **4** adds the workspace's two non-session capabilities: Files (`file_list`,
+ * `file_read`) and Terminal (`terminal_list`, `terminal_create`,
+ * `terminal_input`, `terminal_resize`, `terminal_kill`, plus the `terminal_*`
+ * and `files` / `file_read` kinds on the `ui` channel). It is additive in the
+ * same way 2 was: a front end that knows neither simply never asks, and one that
+ * does not recognise `terminal_output` ignores a kind it cannot draw — which is
+ * why the state snapshot also carries the terminal list, and why a terminal's
+ * whole life stays observable from `ui(state)` alone.
+ */
+export const PROTOCOL_VERSION = 4;
 
 /* ============================================================
    Shared vocabulary
@@ -347,6 +357,141 @@ export interface EventMsg extends EventEnvelope {
   [key: string]: unknown;
 }
 
+/* ---------------- workspace: files and terminals ---------------- */
+
+/** `file_list` rows. `path` is **workspace-relative** and is what gets sent
+ *  back; `name` is what gets shown. They are separate fields because a nested
+ *  row's path is not its name, and a front end that joined them itself would be
+ *  doing the path arithmetic the boundary exists to keep on the runtime's side. */
+export interface FileEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  /** Bytes, and 0 for a directory — not "unknown". */
+  size: number;
+}
+
+/** `ui(files)`. `path` is the **runtime's normalised** spelling, not the
+ *  request's: after `/./src/../src` the two differ, and the reply's is the one
+ *  that makes "where am I" answerable. */
+export interface UiFilesMsg {
+  v: number;
+  t: 'ui';
+  kind: 'files';
+  path: string;
+  entries: FileEntry[];
+}
+
+/**
+ * `ui(file_read)`.
+ *
+ * `content` is the **head** of the file (`runtime.FileReadPreviewChars`), not
+ * the whole body: the body is an Artifact on disk under `artifact_id`, for the
+ * same reason a tool result's is — a session file is appended to, so a body
+ * written into it costs its own size again every round.
+ */
+export interface UiFileReadMsg {
+  v: number;
+  t: 'ui';
+  kind: 'file_read';
+  path: string;
+  artifact_id: string;
+  content: string;
+  chars: number;
+  bytes: number;
+  /** Whether `content` is all of it. **Must be shown**: half a file presented
+   *  as the whole thing is the one silent failure this layer can produce. */
+  truncated: boolean;
+  total_lines: number;
+}
+
+/**
+ * One terminal, as the runtime reports it.
+ *
+ * A terminal belongs to the **workspace**, not to a session: switching or
+ * closing a conversation never ends one. That is why the list rides on
+ * `ui(state)` and on `ui(terminals)` rather than on anything session-shaped.
+ */
+export interface TerminalRow {
+  id: string;
+  /** The workspace root this terminal is bounded by. An absolute path. */
+  workspace: string;
+  /** Workspace-relative, the same vocabulary as `FileEntry.path`. */
+  cwd: string;
+  shell: string;
+  pid: number;
+  /**
+   * The runtime's state machine. **Never derived here** — a front end that
+   * decided "it is probably still running" would be a second answer to a
+   * question only the process's owner can answer.
+   *
+   * `starting` and `failed` do not exist on the wire: creation is synchronous,
+   * so a terminal is running by the time any answer travels, and a PTY that will
+   * not start produces an error rather than a row.
+   */
+  status: 'running' | 'exited' | 'killed';
+  /** Null while it runs, and **null after a kill**: a killed shell did not
+   *  choose an exit status, and printing 0 would make "we killed it" and "it
+   *  finished cleanly" the same row. */
+  exit_code: number | null;
+  created_at: number;
+  cols: number;
+  rows: number;
+}
+
+/** `ui(terminals)` — the full list, never a delta. */
+export interface UiTerminalsMsg {
+  v: number;
+  t: 'ui';
+  kind: 'terminals';
+  terminals: TerminalRow[];
+}
+
+/** `ui(terminal_created)` — the answer to a successful `terminal_create`. */
+export interface UiTerminalCreatedMsg {
+  v: number;
+  t: 'ui';
+  kind: 'terminal_created';
+  terminal: TerminalRow;
+  terminal_id: string;
+}
+
+/**
+ * `ui(terminal_output)` — one coalesced batch of PTY bytes.
+ *
+ * It carries the id and the data and **nothing else**, and that is deliberate:
+ * it is the one message sent thousands of times, so repeating a full row on
+ * every batch would multiply the cost of the only high-frequency thing here.
+ *
+ * `data` is an **increment**, not the accumulated output — accumulating is the
+ * client's job. Batches are cut on rune boundaries by the runtime, so a
+ * multi-byte character is never split across two of them.
+ */
+export interface UiTerminalOutputMsg {
+  v: number;
+  t: 'ui';
+  kind: 'terminal_output';
+  terminal_id: string;
+  data: string;
+}
+
+/**
+ * `ui(terminal_exit)` — the shell ended, whether it exited or was killed.
+ *
+ * This is the **only** report of an ending. A kill answered from the request
+ * that asked for it would be a second truth, and the two would disagree the
+ * first time a process refused to die.
+ */
+export interface UiTerminalExitMsg {
+  v: number;
+  t: 'ui';
+  kind: 'terminal_exit';
+  terminal_id: string;
+  terminal: TerminalRow;
+  reason: 'exited' | 'killed';
+  exit_code: number | null;
+}
+
 /* ---------------- ui payloads ---------------- */
 
 /** `ui(state).todos[]`. */
@@ -464,6 +609,10 @@ export interface UiStateMsg {
   agents_md: AgentsMdRow[];
   mcp: McpRow[];
   goal: GoalSnapshot;
+  /** The workspace's terminals, on every snapshot. Carried here as well as on
+   *  `ui(terminals)` so a front end that started after a shell was created — or
+   *  that lost a message — learns about it rather than never. */
+  terminals: TerminalRow[];
 }
 
 /** `ui(status).status` — grouped on purpose; the screen spans four layers. */
@@ -658,7 +807,13 @@ export type UiMsg =
   | UiContextMsg
   | UiCompactedMsg
   | UiSkillsMsg
-  | UiRunFinishedMsg;
+  | UiRunFinishedMsg
+  | UiFilesMsg
+  | UiFileReadMsg
+  | UiTerminalsMsg
+  | UiTerminalCreatedMsg
+  | UiTerminalOutputMsg
+  | UiTerminalExitMsg;
 
 /* ---------------- the rest ---------------- */
 
@@ -819,6 +974,24 @@ export type FrontendMsg =
   /** Only send this when you know something of yours is outstanding. */
   | { v: number; t: 'refresh_state' }
   | { v: number; t: 'mcp'; action: McpAction; servers: string[] }
+  /** List one directory level. An **empty** path is the workspace root — the
+   *  same value the runtime uses for "the workspace itself", so there is no
+   *  second spelling to keep in step. */
+  | { v: number; t: 'file_list'; path: string }
+  /** Read one file. The reply carries a preview plus an `artifact_id`; the whole
+   *  body stays on disk. */
+  | { v: number; t: 'file_read'; path: string }
+  | { v: number; t: 'terminal_list' }
+  /** Open a shell. `cwd` is workspace-relative and **may be omitted** (the
+   *  runtime then uses the workspace root); so may the size, which then becomes
+   *  the conventional 80x24. */
+  | { v: number; t: 'terminal_create'; cwd?: string; cols?: number; rows?: number }
+  /** Write raw bytes to a shell. **There is no reply** — the output arrives
+   *  asynchronously as `ui(terminal_output)`, which is why this is fire-and-
+   *  forget rather than a request/response. */
+  | { v: number; t: 'terminal_input'; terminal_id: string; data: string }
+  | { v: number; t: 'terminal_resize'; terminal_id: string; cols: number; rows: number }
+  | { v: number; t: 'terminal_kill'; terminal_id: string }
   | { v: number; t: 'shutdown' };
 
 /* ============================================================

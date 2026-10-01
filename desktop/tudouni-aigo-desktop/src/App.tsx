@@ -23,6 +23,7 @@ import { StartupProblem } from '@/components/StartupProblem';
 import { SessionProblem } from '@/components/SessionProblem';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { StreamView } from '@/components/stream/StreamView';
+import { TerminalView } from '@/components/terminal/TerminalView';
 import { PanelHost } from '@/components/panels/PanelHost';
 import { PermissionModal } from '@/components/modals/PermissionModal';
 import { QuestionModal } from '@/components/modals/QuestionModal';
@@ -54,6 +55,11 @@ export function App() {
   const leftbarVisible = useApp((s) => s.leftbarVisible);
   const startupProblem = useApp((s) => s.startupProblem);
   const dragging = useApp((s) => s.dragging);
+  // Which terminal this session's view is attached to, if any. It is read from
+  // the **session on screen** rather than from the window, because it is a
+  // per-session choice: attaching in one conversation must not take the
+  // keyboard away from another one's composer.
+  const attachedTerminalId = rt?.activeTerminalId ?? null;
 
   // One theme source: the system. Nothing to select, nothing to persist.
   useEffect(() => {
@@ -165,7 +171,14 @@ export function App() {
                   sentence about a process that does not exist — "Starting the
                   runtime…" over a runtime that nobody started. That is exactly
                   what a launch with no workspace to go back to would show, which
-                  is now a normal state rather than an impossible one. */}
+                  is now a normal state rather than an impossible one.
+
+                  **An attached terminal replaces the transcript**, and it is
+                  checked after the failure cases rather than before them: a
+                  window with no runtime has no shells either, so a start-up
+                  failure is still the right thing to show. See `TerminalView`
+                  for why the terminal takes the whole column rather than half of
+                  it. */}
               {startupProblem !== null ? (
                 <StartupProblem />
               ) : problem !== null ? (
@@ -174,12 +187,19 @@ export function App() {
                 <Welcome notices={handshakeNotices} />
               ) : !ready ? (
                 <Booting />
+              ) : attachedTerminalId !== null ? (
+                <TerminalView />
               ) : (
                 <StreamView />
               )}
             </main>
 
-            <Composer />
+            {/* The composer is the conversation's, and it is **not drawn while a
+                terminal is attached**: every keystroke in that state belongs to
+                the shell (see `TerminalView`), so a text box sitting under the
+                output would be a control that cannot accept input. Its `+` and
+                its send button would each be a gesture that does nothing. */}
+            {attachedTerminalId === null ? <Composer /> : null}
           </div>
 
           <div

@@ -187,10 +187,17 @@ export type Entry =
       /** The runtime's own sentence, displayed verbatim. */
       text: string;
     }
-  /** §5 large-text blocks: /status /tools /context /compact */
+  /** §5 large-text blocks: /status /tools /context /compact, plus one file
+   *  opened in the workspace browser.
+   *
+   *  `file` is here rather than in a viewer of its own because a file read is
+   *  the same shape as the other four: a large, self-contained payload that
+   *  belongs in the stream in arrival order, and whose whole is drawn by a
+   *  component that understands it. A second, parallel list for files would be
+   *  a second transcript to keep in step with this one. */
   | { kind: 'block'; id: string; block: BlockKind; payload: unknown };
 
-export type BlockKind = 'status' | 'tools' | 'context' | 'compact';
+export type BlockKind = 'status' | 'tools' | 'context' | 'compact' | 'file';
 
 /** Locate a tool call: `run_id` + `step` + `tool_index` is the triple the audit
  *  writes, so it is the triple that identifies the row. */

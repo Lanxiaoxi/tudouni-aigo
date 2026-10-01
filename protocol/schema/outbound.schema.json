@@ -133,8 +133,8 @@
       "t": {"type": "string", "const": "ui"},
       "kind": {
         "type": "string",
-        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context"],
-        "doc": "run_finished = 这一轮的正文（answer + run_id）；state = 面板数据快照（todos/skills/skill_catalog/jobs/mcp/agents_md/messages/steps/model）；status = `/status` 要的那一屏（回答入站的 status）；tools = `/tools` 的清单（回答入站的 tools）；mcp = `/mcp` 的清单（回答入站的 mcp）；skills = `/skills` 的清单（回答入站的 skills：`skills` 是这个会话**能加载**的全量目录，`active` 才是**已加载**的名字 —— 两者不能混，详见 `skills` 那条）；compacted = `/compact` 那一次的结果（回答入站的 compact，字段 `compaction`）；context = `/context` 那一屏（回答入站的 context，字段 `context`）。八种都**不进审计**。"
+        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "terminals", "terminal_created", "terminal_output", "terminal_exit"],
+        "doc": "run_finished = 这一轮的正文（answer + run_id）；state = 面板数据快照（todos/skills/skill_catalog/jobs/mcp/agents_md/messages/steps/model/**terminals**）；status = `/status` 要的那一屏（回答入站的 status）；tools = `/tools` 的清单（回答入站的 tools）；mcp = `/mcp` 的清单（回答入站的 mcp）；skills = `/skills` 的清单（回答入站的 skills：`skills` 是这个会话**能加载**的全量目录，`active` 才是**已加载**的名字 —— 两者不能混，详见 `skills` 那条）；compacted = `/compact` 那一次的结果（回答入站的 compact，字段 `compaction`）；context = `/context` 那一屏（回答入站的 context，字段 `context`）；files = 一层目录的清单（回答入站的 `file_list`）；file_read = 一个文件的读取结果（回答入站的 `file_read`）；terminals = 这个 workspace 的全量 Terminal 清单（回答入站的 `terminal_list`，也是 `terminal_create` **失败**时的回答）；terminal_created = `terminal_create` 成功，带新建的那一条；terminal_output = 终端输出的**异步增量**（没有对应的入站消息 —— 它是对 `terminal_input` 那一次写的后续，而不是它的答案）；terminal_exit = shell 结束（自己退的或被杀的，靠 `reason` 分）。**十四种都不进审计** —— 终端输出尤其不能：它是无限流，写进审计等于把日志变成第二个终端。"
       },
       "answer": {
         "type": "string",
@@ -299,6 +299,63 @@
           "**合并发生在 runtime 里**，前端拿到的是可以直接渲染的一份 —— 它不该知道这两半各自住在谁身上。",
           "（schema 早先在这里列过 `updated_at`：`contextPayload()` 从来不发这个键，已删。）"
         ]
+      },
+      "path": {
+        "type": "string",
+        "doc": "**kind=files / file_read 有**。这次回答针对哪个路径，**workspace-relative**，空串 = workspace 根。原样回给前端，好让一次异步回答能和自己发出的那个请求对上（前端可以同时展开两个目录）。**它是请求里的那个写法，不是解析后的绝对路径**：绝对路径属于 runtime 的边界实现，把它发出去只会诱导前端自己拼路径。"
+      },
+      "entries": {
+        "type": "array",
+        "doc": "**只有 kind=files 有**。一层目录的条目：`[{\"name\": \"main.go\", \"path\": \"src/main.go\", \"type\": \"file|directory\"}]`。**空数组 = 空目录**，不是「没读到」—— 后者会是一条 notice。条目按名字排序（目录优先），由 runtime 排好：前端各排一次就是两个顺序。`path` 是**相对于 workspace root 的完整路径**，不是一个名字：前端拿它直接发下一条 `file_list` / `file_read`，不用自己拼接（拼接是路径逃逸最常见的来源）。"
+      },
+      "artifact_id": {
+        "type": "string",
+        "doc": "**只有 kind=file_read 有**。正文在 Artifact Store 里的 id（和工具结果走的是同一套）。前端把它交给渲染层取全文，**不指望 `content` 带全文** —— 那正是这套机制要避免的事。"
+      },
+      "content": {
+        "type": "string",
+        "doc": "**只有 kind=file_read 有**。文件的**首部**（`runtime.FileReadPreviewChars` 个字符封顶），用来立刻画出几行，而不是等一次额外的 Artifact 取回。`truncated` 说它是不是全部。"
+      },
+      "chars": {
+        "type": "integer",
+        "doc": "**只有 kind=file_read 有**。正文的**字符数**（不是字节数）。和 `bytes` 分开是有意义的：一个 UTF-8 中文文件两者差三倍，而「这几行有多长」问的是前者。"
+      },
+      "bytes": {
+        "type": "integer",
+        "doc": "**只有 kind=file_read 有**。文件的字节数。"
+      },
+      "truncated": {
+        "type": "boolean",
+        "doc": "**只有 kind=file_read 有**。`content` 是不是被截过。**必须照实说**：前端把半份内容当成全部呈现，就是这一层唯一会产生的静默失败。"
+      },
+      "total_lines": {
+        "type": "integer",
+        "doc": "**只有 kind=file_read 有**。文件一共多少行（按 `\\n` 切，末尾那个换行不算一行）。"
+      },
+      "terminals": {
+        "type": "array",
+        "doc": "**只有 kind=terminals 有**。这个 workspace 的 Terminal **全量**清单：`[{`id`, `workspace`, `cwd`, `shell`, `pid`, `status`, `exit_code`, `created_at`, `cols`, `rows`}]`。**全量而非增量**，理由和 `mcp_servers` 一样：前端每次按全量重画，省掉「增量怎么合并」那一整类 bug。`cwd` 是 workspace-relative，`status` 是 runtime 的状态机（running/exited/killed），**前端不许自己推断**。`exit_code` 只在已结束时是数字，其余时候是 null —— 0 和「还没有退出码」是两件不同的事。已结束的 Terminal **留在清单里**：它们回答的是「我刚才在跑什么」，而一条行消失会把退出码和最后一屏输出一起删掉。"
+      },
+      "terminal": {
+        "type": "object",
+        "doc": "**kind=terminal_created / terminal_exit 有**。**这一条** Terminal 的完整行（形状与 `terminals[]` 的元素相同）。两条消息都带整行而不是只带 id，是为了让前端**替换**而不是**补丁**：一张行配一个状态字段，前端就得自己合并两次，而合并出来的状态迟早和 runtime 说的不一样。`terminal_created` 时 `status` 是 `running`；`terminal_exit` 时已经是 `exited` 或 `killed`，`exit_code` 也已经在里面。"
+      },
+      "terminal_id": {
+        "type": "string",
+        "doc": "**kind=terminal_output / terminal_created / terminal_exit 有**。这一条说的是哪个 Terminal，和 `terminals[].id` 是同一个 id。**output 是高频流，所以它只带 id 和数据，不重发整行**（见 `terminal` 那条）。"
+      },
+      "data": {
+        "type": "string",
+        "doc": "**只有 kind=terminal_output 有**。PTY 这一批读出来的字节（按 UTF-8 文本传，含 ANSI 转义序列）。**是增量，不是累计**：累计是客户端自己的事（一个环形缓冲）。按 buffer / flush 策略聚合过（见 `terminal.FlushInterval` / `FlushThreshold`），**不是一个字节一条消息**；批次永远切在合法 rune 边界上，所以一个汉字不会被劈成两条。**它不进审计、不进 Context、不进 Artifact、不进会话历史** —— 终端输出是无限流，写进任何一样都会把那份东西变成第二个终端。"
+      },
+      "exit_code": {
+        "type": "integer",
+        "nullable": true,
+        "doc": "**kind=terminal_exit 有**。shell 的退出码。**nullable 是有意的**：被杀掉、或平台拿不到退出码时是 null，而 null 和 0 读起来差别很大（一个「不知道」，一个「正常结束」）。它同时出现在 `terminal.exit_code` 里；这一格是给「不想解包整行」的调用方的便利，两处**永远同值**。"
+      },
+      "reason": {
+        "type": "string",
+        "doc": "**只有 kind=terminal_exit 有**。`exited`（shell 自己退的）还是 `killed`（有人在 `terminal_kill` 里结束了它）。**这个区分不能让前端猜**：一个 `exit` 命令和一个被杀的进程在 UI 上应该长得不一样，而两者的退出码可能都是 0 —— 实际上被杀的那个往往**没有**退出码（null）。"
       }
     },
     "required": ["v", "t", "kind"]

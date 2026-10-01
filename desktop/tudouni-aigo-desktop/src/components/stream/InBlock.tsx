@@ -10,6 +10,7 @@ import type {
   ToolRow,
   UiCompactedMsg,
   UiContextMsg,
+  UiFileReadMsg,
   UiStatusMsg,
   UiToolsMsg,
 } from '@/protocol/types';
@@ -36,7 +37,9 @@ export function InBlock({ entry }: { entry: Extract<Entry, { kind: 'block' }> })
         ? t('inblock.tools.title')
         : entry.block === 'context'
           ? t('inblock.context.title')
-          : t('inblock.compact.title');
+          : entry.block === 'file'
+            ? t('panel.files.title')
+            : t('inblock.compact.title');
 
   return (
     <section className="inblock">
@@ -58,8 +61,55 @@ export function InBlock({ entry }: { entry: Extract<Entry, { kind: 'block' }> })
         {entry.block === 'tools' ? <ToolsBlock p={entry.payload as UiToolsMsg} /> : null}
         {entry.block === 'context' ? <ContextBlock p={entry.payload as UiContextMsg} /> : null}
         {entry.block === 'compact' ? <CompactBlock p={entry.payload as UiCompactedMsg} /> : null}
+        {entry.block === 'file' ? <FileBlock p={entry.payload as UiFileReadMsg} /> : null}
       </div>
     </section>
+  );
+}
+
+/**
+ * One file opened from the workspace browser.
+ *
+ * Two facts are stated rather than implied, and both are the difference between
+ * a viewer and a liar:
+ *
+ *   - **the head is not the whole file.** `content` is the runtime's preview
+ *     (`runtime.FileReadPreviewChars`); when `truncated` is set, the row says so
+ *     *and* names the artifact holding the rest. Presenting 200 KB of a 2 MB file
+ *     as the file is the one silent failure this layer can produce.
+ *   - **the line count is the file's, not the preview's.** `total_lines` counts
+ *     the whole body, so it stays useful even when the text below is cut.
+ *
+ * The text is drawn as plain monospace, not through the markdown renderer: this
+ * is a file, and reformatting a `.go` file through the answer pipeline would
+ * reflow code somebody is trying to read.
+ */
+function FileBlock({ p }: { p: UiFileReadMsg }) {
+  const t = useT();
+  const content = typeof p.content === 'string' ? p.content : '';
+  const path = typeof p.path === 'string' ? p.path : '';
+
+  return (
+    <>
+      <div className="row" style={{ gap: 'var(--space-2)', alignItems: 'baseline' }}>
+        <span className="mono strong">{path === '' ? t('panel.files.root') : path}</span>
+        <span className="caption faint">
+          {t('panel.files.lines', { n: p.total_lines ?? 0 })}
+        </span>
+        {/* Bytes and characters are two numbers on purpose: a UTF-8 file of CJK
+            text is three times the bytes of its characters, and "how long is
+            this" asks the first while "how big is this" asks the second. */}
+        <span className="caption faint mono">{p.bytes ?? 0} B</span>
+      </div>
+
+      {p.truncated ? (
+        <div className="caption" style={{ color: 'var(--warning)' }}>
+          {t('panel.files.truncated', { chars: p.chars ?? 0, id: p.artifact_id ?? '' })}
+        </div>
+      ) : null}
+
+      <pre className="file-view mono">{content}</pre>
+    </>
   );
 }
 

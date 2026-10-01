@@ -1289,3 +1289,180 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ============================================================
+   The terminal view.
+   It replaces the transcript's column while a shell is attached
+   (`TerminalView`), so it is a full-height flex column rather than
+   a block: the output pane has to be the thing that scrolls, and
+   its measured height is what tells the runtime the PTY's size.
+   ============================================================ */
+
+.term-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* ---- the tab strip ---- */
+
+.term-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  overflow-x: auto;
+  flex: 0 0 auto;
+}
+
+.term-tab {
+  display: flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  flex: 0 0 auto;
+}
+
+.term-tab.is-current {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+
+.term-tab-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.term-tab.is-current .term-tab-main {
+  color: var(--fg);
+}
+
+/* The status word is the runtime's, and it is coloured by which
+   ending it was — not by anything computed here. */
+.term-tab[data-status='running'] .term-tab-state {
+  color: var(--success);
+}
+
+.term-tab[data-status='killed'] .term-tab-state {
+  color: var(--warning);
+}
+
+.term-tab[data-status='exited'] .term-tab-state {
+  color: var(--fg-faint);
+}
+
+.term-tab-state {
+  font-size: var(--text-caption);
+}
+
+.term-tab-close,
+.term-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.term-tab-close:hover:not(:disabled),
+.term-tab-add:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.term-tab-close:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ---- the output pane ---- */
+
+.term-pane-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.term-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-2) var(--space-3);
+  background: var(--terminal-bg);
+  color: var(--terminal-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: var(--leading-code);
+  /* `pre` rather than wrapping: a terminal does not reflow its lines, and a
+     wrapped progress bar or table would be unreadable in a different way on
+     every render. The pane scrolls horizontally instead. */
+  white-space: pre;
+  cursor: text;
+}
+
+.term-pane:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.term-line {
+  min-height: var(--leading-code);
+}
+
+.term-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  color: var(--fg-muted);
+}
+
+.term-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  flex: 0 0 auto;
+}
+
+/* ---- a file opened in the stream ---- */
+
+.file-view {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--terminal-bg);
+  color: var(--terminal-fg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: var(--leading-code);
+  /* Same reasoning as the terminal pane: source code does not reflow. */
+  white-space: pre;
+}

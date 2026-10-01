@@ -682,6 +682,100 @@ runtime 自己给出（就是 `model_call` 将要记的那个号），跟审计�
 **`folded` / `summary_id` / `generation` 住在会话里，`estimated_tokens` 那一组住在 Context
 里** —— 合并发生在 runtime 那一侧（`Runtime.compaction`），前端拿到的是可以直接渲染的一份。
 
+### 3.14 `file_list` / `file_read` —— 工作区的文件
+
+```json
+你 → {"v":1,"t":"file_list","path":"src"}
+你 ← {"v":1,"t":"ui","kind":"files","path":"src",
+      "entries":[{"name":"main.go","path":"src/main.go","type":"file","size":812},
+                 {"name":"components","path":"src/components","type":"directory","size":0}]}
+
+你 → {"v":1,"t":"file_read","path":"src/main.go"}
+你 ← {"v":1,"t":"ui","kind":"file_read","path":"src/main.go",
+      "artifact_id":"art_9f2c…","content":"package main\n…","chars":812,"bytes":812,
+      "truncated":false,"total_lines":31}
+```
+
+**`path` 一律是 workspace-relative，`""` 就是 workspace 根。** runtime 解析成
+`workspace.root + path`，并拒绝一切越过 root 的写法（`../../other-project`、指向外面的
+符号链接、Windows 上的 junction）。**客户端永远不要自己拼绝对路径** —— 拼接是路径逃逸最
+常见的来源，而边界是 runtime 的事。
+
+**`file_list` 是缺省的，`file_read` 的不是。** 不给 `path` 的目录请求就是"列根目录"，
+不给路径的读文件请求是**没说读哪个** —— 后者会被拒绝而不是猜一个，否则一个掉了参数的
+请求会看起来像一次成功的读。
+
+**`file_read` 不重新发明内容传输**：正文进 Artifact Store（和工具结果同一套），答复里带
+的是 `artifact_id` 加**首部**（`content`），不是全文。`truncated` **必须照实呈现** —— 把
+半份内容当成全份，是这一层唯一会产生的静默失败。
+
+**列目录只列一层**，条目按"目录在前、名字不分大小写"排好序（由 runtime 排，前端各排一次
+就是两个顺序）。行里的 `path` 是**完整的相对路径**，前端拿它直接发下一条请求。
+
+**它与 Agent 的 `read_file` / `list_files` 共用同一个边界对象**（`internal/tools.Workspace`），
+所以"agent 能读到的"和"侧栏能看到的"不会有一天对不上。
+
+### 3.15 `terminal_*` —— 工作区里的终端
+
+```json
+你 → {"v":1,"t":"terminal_list"}
+你 ← {"v":1,"t":"ui","kind":"terminals","terminals":[{"id":"term-01","workspace":"/ws",
+      "cwd":"backend","shell":"pwsh","pid":4242,"status":"running","exit_code":null,
+      "created_at":1770000000.0,"cols":80,"rows":24}]}
+
+你 → {"v":1,"t":"terminal_create","cwd":"backend","cols":120,"rows":40}
+你 ← {"v":1,"t":"ui","kind":"terminal_created","terminal":{…同一形状…},"terminal_id":"term-01"}
+   // 失败时**不是**上面这条，而是一句 notice + 一份没变过的全量 terminals
+
+你 → {"v":1,"t":"terminal_input","terminal_id":"term-01","data":"npm test\r"}
+你 ← {"v":1,"t":"ui","kind":"terminal_output","terminal_id":"term-01","data":"\r\n…"}
+   // 上面这条**没有**同步答复；它可能很多条、隔很久、也可能零条
+
+你 → {"v":1,"t":"terminal_resize","terminal_id":"term-01","cols":120,"rows":40}
+你 → {"v":1,"t":"terminal_kill","terminal_id":"term-01"}
+你 ← {"v":1,"t":"ui","kind":"terminal_exit","terminal_id":"term-01","reason":"killed",
+      "exit_code":null,"terminal":{…status 已经是 killed…}}
+```
+
+**终端是 runtime 管的长期资源，不是前端自己起的子进程。** 它属于 **workspace**，不属于
+session：切会话、关会话、删会话**都不会**结束一个终端。前端可以自己记的唯一一件事是
+"我现在在往哪一个里打字"。
+
+**`data` 是原始终端输入，runtime 不做任何解析。** 没有行缓冲、没有历史、没有"先补一个
+换行"。`Ctrl+C`、`Ctrl+D`、`Tab`、方向键、`Escape` 都是普通字节，该是什么意思由 PTY 那端
+的 shell 决定。**前端不许在这条路上保留自己的快捷键** —— 保留 `Ctrl+C` 当"关窗口"，就是
+让 shell 的作业控制不可达，而那是终端唯一存在的理由。
+
+**输出是异步、高频、聚合过的流。** 读不再是"写一个字节发一条消息"：runtime 按一个小定时
+器和大小阈值聚合，并且**永远切在合法 rune 边界上**，所以一个汉字不会被劈成两条。批次是
+**增量**，累计是客户端自己的事（一个环形缓冲）。
+
+**这条流不进任何别的东西**：不进审计、不进 Context、不进 ArtifactStore、不进会话历史。
+它是无限流，写进任何一样都会把那东西变成第二个终端。
+
+**`terminal_resize` 是必须能力，不是优化。** `vim`、`top`、`htop`、`less` 读尺寸并据此
+排版；不报尺寸，它们就按 80 列画在一个 200 列的面板里。非法尺寸（<= 0）被**忽略**而不是
+取一个"差不多的值" —— 推一个没人要过的尺寸过去，全屏程序会按错的宽度重画一次，而在屏幕
+上那看起来像渲染 bug。
+
+**`terminal_kill` 收整棵进程组。** `shell → npm → node` 是命令的常态，只杀最外层 shell
+留下 `node` 占着端口和锁文件，而屏幕上写着"已结束"。退出走 `ui(terminal_exit)`，**由
+runtime 发** —— 和 shell 自己退出时是同一条路。前端**不允许**通过"我发了 kill"推断它已经
+结束：runtime 才是"它还在不在跑"的唯一来源。
+
+**它会自己退。** shell 退出后 runtime 必须推出 `terminal_exit`（`reason` 分 `exited` /
+`killed`，`exit_code` 在没有退出码时是 **null** 而不是 0 —— 被杀掉的 shell 没有选过退出
+码，写 0 会让"我们杀了它"和"它正常结束"看起来一样）。已结束的终端**留在清单里**：它们
+回答的是"我刚才在跑什么"，而一条行消失会把退出码和最后一屏输出一起删掉。
+
+**它有默认值，且不该由客户端操心**：`cwd` 缺省是 workspace 根并受同一条边界检查；`shell`
+由 runtime 按平台决定（Unix 取 `$SHELL` 再退回 `/bin/sh`，Windows 用 PowerShell），协议里
+**没有** `shell` 字段 —— 有的话前端就得知道那程序在哪，而 Desktop 和 TUI 会各自说一套。
+
+**`ui(state)` 上还有一份全量 `terminals`。** 和 `terminal_list` 是同一个事实的第二个出口，
+不是冗余：快照在每次工具结果、每轮收尾都发，所以一个在 shell 建好之后才启动的前端 —— 或者
+丢过一条消息的前端 —— 会从下一份快照里知道它，而不是永远不知道。
+
 ## 4. 人机交互：两条会阻塞的消息
 
 **收到 `permission_request` / `question_request` 之后，runtime 会一直等你回应。**

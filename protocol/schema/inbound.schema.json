@@ -230,6 +230,153 @@
     "action"
   ]
 },
+  "file_list": {
+    "summary": "**列一层目录**，在当前 Workspace 下。",
+    "doc": [
+      "Files 的第一半，也是唯一需要「目录」这个概念的一半 —— 读文件走 `file_read`。",
+      "",
+      "`path` 是 **workspace-relative**：`src`、`src/components`、空串都合法，空值/缺省",
+      "表示 workspace 根。**runtime 解析成 `workspace.root + path`，并拒绝一切越过 root 的写法**",
+      "（`../../other-project`、指向外面的符号链接、Windows 上的 junction）。客户端永远不直接",
+      "操作 workspace 之外的路径，也永远不自己拼绝对路径：那是边界，不是约定。",
+      "",
+      "只列一层、不递归：递归一棵有 `node_modules` 的树会把一次点击变成几十兆的响应，",
+      "而「展开下一层」本来就是一个用户可以做的动作。目录项里不含大小和时间 —— 那需要",
+      "对每一项 stat 一次，而第一阶段不需要它。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "file_list"},
+      "path": {
+        "type": "string",
+        "doc": "要列哪个目录，相对于 workspace root。缺省或空串表示 workspace 根。"
+      }
+    },
+    "required": ["v", "t"]
+  },
+  "file_read": {
+    "summary": "读一个文件，**复用现有的 Artifact / Context 机制**。",
+    "doc": [
+      "它**不重新设计一套文件内容传输系统**：读到的正文进 Artifact Store，前端拿到的是",
+      "引用加上首部内容 —— 和 agent 的 `read_file` 走的是同一套东西。理由和那一侧一样：",
+      "会话文件是追加写的，把几兆正文写进去等于每轮抄一遍。",
+      "",
+      "响应是出站的 `ui` / `kind=file_read`，字段 `path` / `artifact_id` / `content` /",
+      "`chars` / `bytes` / `truncated` / `total_lines`。`content` 是**首部**（见",
+      "`FileReadPreviewChars`），不是全文；要全文就去 Artifact Store 取 `artifact_id`。",
+      "一条协议行里塞整份文件是这套设计明确要避免的事。",
+      "",
+      "非 UTF-8 的二进制文件会被拒绝并说明，而不是把字节当成文本发出去。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "file_read"},
+      "path": {
+        "type": "string",
+        "doc": "要读哪个文件，相对于 workspace root。**必须给** —— 读一个「没说的路径」不是一个可以猜的请求。"
+      }
+    },
+    "required": ["v", "t", "path"]
+  },
+  "terminal_list": {
+    "summary": "请 runtime 回一份 Terminal 清单（出站的 `ui` / `kind=terminals`）。",
+    "doc": [
+      "按 workspace 过滤：Terminal 属于 workspace，不属于 session，所以切换会话**不会**",
+      "让它们消失，也不该让它们重新出现。",
+      "",
+      "前端启动时问一次就够：此后每一条 `ui(state)` 快照都带着同一份清单，`terminal_state`",
+      "和 `terminal_exit` 也会在变化时推一条。这条消息存在的意义是「先问一次」，",
+      "而不是一个要轮询的接口。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "terminal_list"}
+    },
+    "required": ["v", "t"]
+  },
+  "terminal_create": {
+    "summary": "在 workspace 下开一个 Terminal（真 PTY + shell）。",
+    "doc": [
+      "同一个请求可能拿到两种回答，两者都是出站 `ui`：",
+      "  * `kind=terminal_created` —— 建成了，带这一条 Terminal 的完整行（和 `terminals` 里的形状相同）；",
+      "  * `kind=terminals` —— 建失败了（cwd 越界、PTY 起不来），带一份**没变过的全量清单**，",
+      "    以及一条 `notice` 说明原因。",
+      "",
+      "**失败不返回 `terminal_created`**，这是有意的：一张「已创建」的行配一个没有进程的",
+      "terminal，会让前端把 id 记下来，然后对着一份不存在的 PTY 发输入。",
+      "",
+      "`cwd` 相对于 workspace root，缺省为 workspace 根；越界由 runtime 拒绝。`cols` / `rows`",
+      "缺省是 80x24。**`shell` 不开放**：默认 shell 是 runtime 按平台决定的（Unix 取 `$SHELL`",
+      "再退回 `/bin/sh`，Windows 用 PowerShell），客户端不需要知道，也不需要关心。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "terminal_create"},
+      "cwd": {"type": "string", "doc": "相对 workspace root 的工作目录。缺省 = workspace 根。"},
+      "cols": {"type": "integer", "doc": "终端列数。缺省 80。"},
+      "rows": {"type": "integer", "doc": "终端行数。缺省 24。"}
+    },
+    "required": ["v", "t"]
+  },
+  "terminal_input": {
+    "summary": "把原始终端输入**原样**写进 PTY。",
+    "doc": [
+      "`data` 是**原始终端输入，runtime 层不做任何命令解析** —— 没有行缓冲、没有历史、",
+      "没有「先补一个换行」。`Ctrl+C`、`Ctrl+D`、`Tab`、方向键、`Escape` 都是普通字节，",
+      "该不该有特殊含义由 PTY 那一端的 shell 决定。",
+      "",
+      "这条消息**没有同步回答**：终端是「命令 → PTY → 异步输出流」，不是「输入 → 等完整输出 →",
+      "响应」。回包是随后的 `ui` / `kind=terminal_output`，而且可能是很多条、中间隔很久、",
+      "也可能是零条（`ls` 到一个空目录）。所以前端不许把它当成一次 RPC。",
+      "",
+      "`data` 允许是空串（键仍必须在）：一串空输入是合法的、也无害的，而拒绝它只会",
+      "让前端多一条要处理的错误路径."
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "terminal_input"},
+      "terminal_id": {"type": "string", "doc": "要写进哪个 Terminal。不认识的 id 回一条 notice，不静默丢弃。"},
+      "data": {"type": "string", "doc": "原始字节（按 UTF-8 文本传）。原样写进 PTY。"}
+    },
+    "required": ["v", "t", "terminal_id", "data"]
+  },
+  "terminal_resize": {
+    "summary": "改 PTY 的窗口大小（PTY resize → SIGWINCH / 平台等价物）。",
+    "doc": [
+      "**这是必须能力，不是优化**：`vim`、`top`、`htop`、`less` 这些全屏程序读的是终端",
+      "尺寸，尺寸不对时它们画出来的东西就是错的（或者在 80 列处折行）。",
+      "",
+      "非法尺寸（<= 0）被忽略而不是取一个「差不多的值」：把一个用户没要求过的尺寸",
+      "推给 PTY，会让全屏程序按错的宽度重画一次，而这件事在屏幕上看起来像是渲染 bug。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "terminal_resize"},
+      "terminal_id": {"type": "string"},
+      "cols": {"type": "integer", "doc": "列数，必须 > 0。"},
+      "rows": {"type": "integer", "doc": "行数，必须 > 0。"}
+    },
+    "required": ["v", "t", "terminal_id", "cols", "rows"]
+  },
+  "terminal_kill": {
+    "summary": "结束一个 Terminal：PTY → shell → **整个进程组**。",
+    "doc": [
+      "不能只杀最外层 shell。一个 `npm test` 会变成 `shell → npm → node`，杀掉 shell 留下的",
+      "`node` 仍然占着端口、锁着文件 —— 而屏幕上写着「已结束」。所以 Unix 上是向进程组发信号，",
+      "Windows 上是 job object / `taskkill /T`。",
+      "",
+      "回包是 `ui` / `kind=terminal_exit`（带 `exit_code` 与 `reason=killed`），**由 runtime 发**，",
+      "和 shell 自己退出时走的是同一条路。前端不允许通过「我发了 kill」推断它已经结束。",
+      "",
+      "对已经不存在的 id 是幂等的：回一条 notice，不报错。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "terminal_kill"},
+      "terminal_id": {"type": "string"}
+    },
+    "required": ["v", "t", "terminal_id"]
+  },
   "refresh_state": {
     "summary": "请 runtime 回一份面板快照（出站的 `ui` / `kind=state`）。**空消息，没有参数。**",
     "doc": [

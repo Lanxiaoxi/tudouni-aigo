@@ -32,6 +32,10 @@ const SUITES = [
   'contract.test.ts',
   'paste.test.ts',
   'workspace.test.ts',
+  // The workspace's capabilities: the keystroke encoder, the terminal output
+  // buffer, and the file browser's path arithmetic. All three are pure, which is
+  // why they can be asserted without a window or a shell.
+  'terminal.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

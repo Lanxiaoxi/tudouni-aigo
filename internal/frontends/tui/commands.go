@@ -46,6 +46,8 @@ func commands() []commandInfo {
 		{"/effort", true},
 		{"/mcp", true},
 		{"/goal", true},
+		{"/files", true},
+		{"/terminal", true},
 	}
 	out := make([]commandInfo, 0, len(table))
 	for _, row := range table {

@@ -160,8 +160,16 @@ test('an inserted path stays a separate word', () => {
 
 test('the envelope version is the one hard failure point', () => {
   assert.equal(ENVELOPE_VERSION, 1);
-  assert.equal(PROTOCOL_VERSION, 3);
+  // 4 adds the workspace's two capabilities (Files and Terminal) to 3. It is a
+  // **semantic** version and not the hard one: a front end that does not know
+  // the new kinds ignores them and still gets the whole answer from
+  // `ui(run_finished).answer`, which is exactly why `protocol` is separate from
+  // `v` in the first place.
+  assert.equal(PROTOCOL_VERSION, 4);
 
+  // Decoding an `init` from a **3** runtime still works: the field is documented
+  // as survivable, and the capture in `tests/fixtures/opening.jsonl` is one, so
+  // this is the real case rather than a hypothetical one.
   const ok = decodeLine(`{"v":1,"t":"init","protocol":3}`);
   assert.equal(ok.msg?.t, 'init');
   assert.equal(ok.fatal, undefined);

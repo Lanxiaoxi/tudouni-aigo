@@ -1,13 +1,16 @@
 /**
  * The command table.
  *
- * **17 commands**, in learning order — that order is fixed here and the UI must
+ * **19 commands**, in learning order — that order is fixed here and the UI must
  * not re-sort it.
  *
- * It is 17 and not 18 because `/theme` is gone (decision 4): the native spec
- * requires exactly one theme source with no in-app switch, and `init` carries no
- * theme list either. The runtime's `--theme` flag is the *TUI's* colour scheme
- * and has nothing to do with this window; it is deliberately not wired in.
+ * It is not 20 because `/theme` is gone (decision 4): the native spec requires
+ * exactly one theme source with no in-app switch, and `init` carries no theme
+ * list either. The runtime's `--theme` flag is the *TUI's* colour scheme and has
+ * nothing to do with this window; it is deliberately not wired in.
+ *
+ * The two workspace commands come last because they are the newest things a
+ * person can ask for, and the order above them is the order people learned.
  *
  * The "capability list" (keys) is not a command table: those live in
  * `hooks/useGlobalKeys.ts` and in each panel.
@@ -56,6 +59,8 @@ export const COMMANDS: CommandDef[] = [
     argHint: 'load <name>|unload <name>',
   },
   { id: 'goal', name: '/goal', descKey: 'cmd.goal.desc', takesArg: true, argHint: 'pause|resume|clear' },
+  { id: 'files', name: '/files', descKey: 'cmd.files.desc' },
+  { id: 'terminal', name: '/terminal', descKey: 'cmd.terminal.desc' },
 ];
 
 const BY_NAME = new Map(COMMANDS.map((c) => [c.name, c]));
@@ -183,6 +188,19 @@ export function runCommand(id: string, arg?: string): void {
       if (s.blockCollapsed.goal) s.toggleBlock('goal');
       break;
     }
+
+    case 'files':
+      // No argument form. The panel is a browser whose path is a **state** it
+      // walks, not a parameter: `/files src/main.go` would have to decide
+      // whether it names a directory to list or a file to open, and the runtime
+      // answers that question better than a guess here (a path that is a file
+      // produces a visible refusal from `file_list`).
+      s.openPanel('files');
+      break;
+
+    case 'terminal':
+      s.openPanel('terminal');
+      break;
 
     default:
       break;

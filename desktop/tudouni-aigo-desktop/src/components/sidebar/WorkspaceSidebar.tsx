@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, Settings, Trash2, X } from 'lucide-react';
+import { ChevronRight, FileText, FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
 import {
   activeRuntime,
   NO_SESSION_LIST,
@@ -48,6 +48,12 @@ export function WorkspaceSidebar() {
   // is no single workspace for the window, and this rail's first row names the
   // one the transcript below belongs to.
   const rt = useApp(activeRuntime);
+  // Whether there is a child to talk to at all. Both workspace capabilities
+  // need one: a terminal belongs to a workspace the runtime is *in*, and a file
+  // listing is answered by that child against that child's boundary. With no
+  // session there is nothing to ask, so the two affordances are disabled rather
+  // than offered and then refused.
+  const hasSession = rt !== null && rt.ready;
   const currentWorkspace = rt?.session?.workspace ?? rt?.workspace ?? '';
   const sessionList = rt?.sessionList ?? NO_SESSION_LIST;
   const listed = rt?.listedSessions ?? false;
@@ -447,11 +453,39 @@ export function WorkspaceSidebar() {
       {/* The settings affordance, at the foot of the rail rather than in the
           command palette. Two reasons, and the second is the load-bearing one:
           it sits next to the workspace list because what it holds is the same
-          kind of decision (what the runtime process is), and the palette's
-          seventeen commands are a fixed, load-ordered set — `commands.ts`
-          spells the number out and a test asserts it. Adding an eighteenth entry
-          there would rewrite a sentence whose whole point is that it is exact. */}
+          kind of decision (what the runtime process is), and the workspace's own
+          two capabilities sit beside it for the same reason — where the runtime
+          works is one decision, and what it can do there is the next. */}
       <div className="lb-foot">
+        {/* Files and Terminal. The design's left rail lists exactly these three
+            (§20: Chat / Files / Terminal), and this build's "Chat" is the
+            transcript that is already the main view — so these two rows are the
+            two ways **out** of it. Both are disabled with no session: a terminal
+            belongs to a workspace the runtime is in, so with no child there is
+            no workspace to open one in, and a button that could only produce a
+            refusal would be worse than one that is plainly unavailable. */}
+        <Tip label={t('cmd.files.desc')}>
+          <button
+            type="button"
+            className="lb-foot-btn"
+            disabled={blocked || !hasSession}
+            onClick={() => openPanel('files')}
+          >
+            <FileText size={14} />
+            <span>{t('panel.files.title')}</span>
+          </button>
+        </Tip>
+        <Tip label={t('cmd.terminal.desc')}>
+          <button
+            type="button"
+            className="lb-foot-btn"
+            disabled={blocked || !hasSession}
+            onClick={() => openPanel('terminal')}
+          >
+            <SquareTerminal size={14} />
+            <span>{t('panel.term.title')}</span>
+          </button>
+        </Tip>
         <Tip label={t('lb.settings')}>
           <button
             type="button"

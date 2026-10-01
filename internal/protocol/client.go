@@ -298,6 +298,59 @@ func (c *Client) Goal(action string) {
 // and a poll with no reason dilutes that reason away.
 func (c *Client) RefreshState() { c.Send(map[string]any{"t": InRefreshState}) }
 
+// ListFiles asks for one directory level of the workspace.
+//
+// An empty path means the workspace root, which is the same value the protocol
+// uses for "the workspace itself" — there is no second spelling to keep in step.
+func (c *Client) ListFiles(path string) {
+	c.Send(map[string]any{"t": InFileList, "path": path})
+}
+
+// ReadFile asks for one file. The answer carries a preview and an artifact
+// reference; the whole body stays on disk.
+func (c *Client) ReadFile(path string) {
+	c.Send(map[string]any{"t": InFileRead, "path": path})
+}
+
+// ListTerminals asks for the workspace's terminals.
+func (c *Client) ListTerminals() { c.Send(map[string]any{"t": InTerminalList}) }
+
+// CreateTerminal asks for a new shell. An empty cwd means the workspace root; a
+// size of zero means "the conventional 80x24", which the runtime applies.
+func (c *Client) CreateTerminal(cwd string, cols, rows int) {
+	message := map[string]any{"t": InTerminalCreate}
+	if cwd != "" {
+		message["cwd"] = cwd
+	}
+	if cols > 0 && rows > 0 {
+		message["cols"] = cols
+		message["rows"] = rows
+	}
+	c.Send(message)
+}
+
+// TerminalInput writes raw bytes to a terminal.
+//
+// **There is no reply.** The output arrives as `ui` / `kind=terminal_output`
+// messages on its own schedule, which is why this returns nothing: a caller that
+// waited for a response would wait forever on a command that prints nothing, and
+// would have no way to show a prompt waiting for input.
+func (c *Client) TerminalInput(id, data string) {
+	c.Send(map[string]any{"t": InTerminalInput, "terminal_id": id, "data": data})
+}
+
+// TerminalResize tells the runtime the terminal's new size.
+func (c *Client) TerminalResize(id string, cols, rows int) {
+	c.Send(map[string]any{
+		"t": InTerminalResize, "terminal_id": id, "cols": cols, "rows": rows,
+	})
+}
+
+// TerminalKill ends a terminal and everything it started.
+func (c *Client) TerminalKill(id string) {
+	c.Send(map[string]any{"t": InTerminalKill, "terminal_id": id})
+}
+
 // Shutdown asks the runtime to finish and exit.
 //
 // The current turn finishes first; this does not interrupt it. Interrupting would

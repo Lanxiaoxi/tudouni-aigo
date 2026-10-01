@@ -36,7 +36,15 @@ const VERSION = 1
 // learned that the second step had begun. The field keeps its name, type and
 // meaning; only its value is now right, which is why a front end written against
 // 2 still parses every message it receives.
-const PROTOCOL = 3
+//
+// 4 adds the workspace's two non-session capabilities: Files (`file_list`,
+// `file_read`) and Terminal (`terminal_list`, `terminal_create`, `terminal_input`,
+// `terminal_resize`, `terminal_kill`, plus the `terminal_*` kinds on the `ui`
+// channel). Additive in the same way 2 was: a front end that knows neither simply
+// never asks, and one that does not know `terminal_output` ignores a kind it cannot
+// draw — which is why the state snapshot also carries the terminal list, and why a
+// terminal's whole life is still observable from `ui(state)` alone.
+const PROTOCOL = 4
 
 // Message keys used by every envelope.
 const (
@@ -67,6 +75,20 @@ const (
 	InGoal               = "goal"
 	InRefreshState       = "refresh_state"
 	InShutdown           = "shutdown"
+
+	// Files. Workspace-scoped and read-only in this phase; `file_write` and the
+	// rest are deliberately absent rather than declared and unimplemented.
+	InFileList = "file_list"
+	InFileRead = "file_read"
+
+	// Terminal. Five verbs, and the split is the runtime's own model of a shell
+	// rather than a convenience: a terminal is created once, written to many times,
+	// resized when somebody's window changes, and killed once.
+	InTerminalList   = "terminal_list"
+	InTerminalCreate = "terminal_create"
+	InTerminalInput  = "terminal_input"
+	InTerminalResize = "terminal_resize"
+	InTerminalKill   = "terminal_kill"
 )
 
 // Message kinds travelling runtime -> front end.
@@ -107,6 +129,65 @@ const (
 	UISkills      = "skills"
 	UICompacted   = "compacted"
 	UIRunFinished = "run_finished"
+
+	// Files. The answer to `file_list`; `file_read` reuses the artifact
+	// machinery and answers with its own kind.
+	UIFiles     = "files"
+	UIFileRead  = "file_read"
+	UITerminals = "terminals"
+
+	// Terminal. `terminal_created` is the answer to `terminal_create` (the new
+	// terminal's own row); `terminal_output` is the asynchronous stream and is the
+	// **only** kind that is high-frequency; `terminal_exit` carries the one status
+	// transition a terminal actually has.
+	//
+	// **There is deliberately no `terminal_state`.** The design listed one, and it
+	// was cut for the reason `mcp_servers`' `failed` state was cut before it: a
+	// kind nothing can ever emit is a promise to every front end writing an
+	// adapter, and it is one nobody has tested. The two transitions such a message
+	// would carry are both already covered — creation answers with
+	// `terminal_created`, and the only later transition is the exit, which has its
+	// own kind because it carries the exit code and the reason.
+	UITerminalCreated = "terminal_created"
+	UITerminalOutput  = "terminal_output"
+	UITerminalExit    = "terminal_exit"
+)
+
+// Terminal statuses. The runtime is the only source of truth for these; a front
+// end displays what it is told and never derives a status of its own.
+//
+// **`starting` and `failed` are deliberately absent**, although the design lists
+// both. Neither can appear on the wire: `Create` is synchronous, so by the time any
+// answer travels the shell is either running or the attempt failed — and a failure
+// produces no terminal at all, which means an error rather than a row to mark.
+// Declaring them would put two values in every front end's switch that no message
+// can ever carry.
+const (
+	TerminalRunning = "running"
+	TerminalExited  = "exited"
+	TerminalKilled  = "killed"
+)
+
+// Reasons a terminal can end, as `ui(terminal_exit).reason` carries them.
+//
+// They are spelled separately from the statuses above even though the two strings
+// coincide today, because they answer different questions and a front end reads
+// them from different fields: `status` is "what is this terminal now" and `reason`
+// is "why did it end". Folding them into one constant would make a change to
+// either vocabulary silently change both.
+//
+// **The distinction is not cosmetic.** A shell where somebody typed `exit` and one
+// that this program killed want different things on screen, and both can report
+// exit code 0 — so the reason is the only thing that tells them apart.
+const (
+	TerminalExitReasonExited = "exited"
+	TerminalExitReasonKilled = "killed"
+)
+
+// Types a `file_list` row can carry.
+const (
+	FileTypeFile      = "file"
+	FileTypeDirectory = "directory"
 )
 
 // Decisions a front end may return for a permission request.
@@ -173,4 +254,29 @@ var RequiredKeys = map[string][]string{
 	InGoal:               {"v", "t", "action"},
 	InRefreshState:       {"v", "t"},
 	InShutdown:           {"v", "t"},
+
+	// `path` is deliberately absent from both Files entries: an empty or missing
+	// path means the workspace root, and a schema that listed it as required would
+	// make "list the root" a message no front end could legally send.
+	InFileList: {"v", "t"},
+	InFileRead: {"v", "t", "path"},
+
+	InTerminalList: {"v", "t"},
+	// Nothing is required beyond the envelope: the cwd is optional (the workspace
+	// root is the default) and the shell is the runtime's choice, not the client's.
+	InTerminalCreate: {"v", "t"},
+	// `data` may legitimately be the empty string, so the key has to be present
+	// rather than non-empty — the same rule `text` follows on `user_message`.
+	InTerminalInput:  {"v", "t", "terminal_id", "data"},
+	InTerminalResize: {"v", "t", "terminal_id", "cols", "rows"},
+	InTerminalKill:   {"v", "t", "terminal_id"},
 }
+
+// TerminalDefaults are the size a terminal is created with when the client does
+// not say. 80x24 is the conventional terminal, and it is what a program reading
+// the size before the first `terminal_resize` will believe — so it should be the
+// least surprising number rather than an arbitrary one.
+const (
+	TerminalDefaultCols = 80
+	TerminalDefaultRows = 24
+)

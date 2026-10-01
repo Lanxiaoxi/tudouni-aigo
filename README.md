@@ -246,6 +246,55 @@ binary and `tools/` but not `prompts/` resolves its root to the working director
 instead, does not find ripgrep, and drops `grep` — with one line on stderr to say
 so. `tools/release` checks for the directory rather than assuming it.
 
+## The workspace: files and terminals
+
+The workspace is more than where the agent's hands are tied to. A front end can
+also **browse it** and **run shells in it**, and both are the runtime's, not the
+front end's:
+
+```
+file_list   one directory level, workspace-relative
+file_read   one UTF-8 file: a preview plus an artifact reference
+
+terminal_list / terminal_create / terminal_input / terminal_resize / terminal_kill
+```
+
+Three rules hold this together, and each of them is a place where the obvious
+implementation is wrong:
+
+**Runtime is the only state source.** A terminal's process, working directory and
+status live in the runtime; a front end may keep exactly one thing of its own —
+which terminal it is typing into. Anything else it derived would be a second
+answer that drifts, and the drift would show up as a file tree that is out of date
+or a shell drawn as running after it exited.
+
+**A real PTY, never pipes.** `exec.Command` with stdin/stdout pipes cannot carry a
+terminal: no line discipline, no `isatty`, no job control, no window size — so
+`vim`, `top`, `htop` and a `python` prompt all either refuse to start or draw
+garbage. Unix gets a pty via `creack/pty`; Windows gets a **pseudo console**
+(ConPTY), which is the only thing on that platform a shell will treat as one.
+`terminal_resize` is required rather than a nicety for the same reason: those
+programs lay themselves out from the size, so a pane that never reports one draws
+them at 80 columns for ever.
+
+**Terminals outlive sessions.** They belong to the *workspace*, so switching,
+closing or deleting a conversation never ends one. Killing a terminal ends its
+whole process group (`shell → npm → node`), because killing only the shell leaves
+`node` holding the port while the screen says the terminal ended.
+
+Output is a **coalesced asynchronous stream** — `ui(terminal_output)`, batched on a
+short timer and a size threshold rather than one message per byte, and cut on rune
+boundaries so a multi-byte character is never split across two batches. There is no
+synchronous reply to `terminal_input`: a terminal is `command → PTY → stream`, and
+a front end that waited for a response would never show a prompt. The output
+deliberately enters **nothing** else — not the audit log, not the context, not the
+artifact store. It is unbounded, and writing it into any of those would turn that
+thing into a second terminal.
+
+Both capabilities are also inside the agent's reach already: the file tools and
+`shell` have always worked in the workspace, and this is the same boundary — one
+`internal/tools.Workspace` object — reached from a front end.
+
 ## The tools, and the four rules they are built on
 
 `read_file`, `write_file`, `edit_file`, `list_files`, `shell`, `grep`,
@@ -339,6 +388,8 @@ internal/tools/       the tool framework, the workspace boundary, the builtins
 internal/security/    policy, gate, command rules, the approval memory
 internal/state/       session store, model catalogue, counters, goals
 internal/context/     budget, degradation, compaction, the artifact store
+internal/files/       the workspace's file capability: one listing, one read
+internal/terminal/    the workspace's shells: a real PTY, coalesced output, lifecycles
 internal/skills/      finding and parsing the workspace's procedures
 internal/mcp/         mounting external tool servers
 internal/subagent/    delegation: the child registry, the board, the depth rule

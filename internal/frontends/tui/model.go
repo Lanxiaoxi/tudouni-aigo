@@ -82,6 +82,15 @@ type panelstate struct {
 	// empty shape rather than omitting the key, so "no goal" and "nothing said
 	// yet" are told apart by whether the map is nil, not by its contents.
 	goal map[string]any
+	// terminals is the workspace's terminal list, exactly as the runtime reports
+	// it — on every snapshot as well as on `terminal_list`.
+	//
+	// It is kept on the panel rather than derived here for the same reason the
+	// task list is: "which of these is still running" is the runtime's judgement
+	// (it is the only end that can see the process), and recomputing it from
+	// events would be a second answer that drifts by exactly the events that
+	// arrive out of order.
+	terminals []any
 }
 
 type model struct {
@@ -210,6 +219,16 @@ type model struct {
 	// runtimeGone records that this interface has already said the runtime ended.
 	// One line is a report; two would read as two deaths.
 	runtimeGone bool
+
+	// files is the workspace browser's position. See filePanel.
+	files filePanel
+	// attached is which terminal the input line writes to, or the zero value when
+	// nothing is attached — in which case the input line behaves normally.
+	//
+	// This is the **one** terminal fact this interface is allowed to own: "which
+	// one am I typing into". The process, the cwd and the status all live in the
+	// runtime, and this never guesses at any of them.
+	attached terminalAttach
 }
 
 // railSeen is the three edges the rail auto-opens on, one field each.
@@ -312,6 +331,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch typed := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = typed.Width, typed.Height
+		// An attached shell has to be told, and this is the one moment it can be:
+		// `vim`, `top`, `htop` and `less` read the size and lay themselves out from
+		// it, so a window that never reports a resize draws them at the old width
+		// for the rest of the session. It is a no-op when nothing is attached —
+		// there is then no PTY whose size this interface knows anything about.
+		m.autoResize()
 		return m, nil
 
 	case tickMsg:
@@ -1151,7 +1176,72 @@ func (m *model) handleUI(payload map[string]any) {
 		m.appendLine(renderLine{segments: []seg{
 			{text: frontends.RenderContext(payload), role: "rule"},
 		}}, "answer", "")
+
+	case protocol.UIFiles:
+		// The browser's listing. The **path comes from the answer**, not from the
+		// request: the runtime normalises it, and the two differ after a
+		// `/files ./src/../src`. Keeping the reply's spelling is what makes "where
+		// am I" answerable, and Backspace's parent arithmetic correct.
+		path, _ := protocol.String(payload, "path")
+		entries, _ := payload["entries"].([]any)
+		m.files = filePanel{path: path, entries: entries}
+		if m.overlay.kind != overlayFiles {
+			m.overlay = overlay{kind: overlayFiles}
+		}
+		m.overlay.cursor = 0
+
+	case protocol.UIFileRead:
+		// The opened file replaces the listing **in the panel**, not in the log:
+		// it is a viewer, and a source file pasted into the transcript would push
+		// the conversation off the screen and stay there.
+		m.files.opened = payload
+		m.files.loading = false
+		if m.overlay.kind != overlayFiles {
+			m.overlay = overlay{kind: overlayFiles}
+		}
+		m.overlay.cursor = 0
+
+	case protocol.UITerminals:
+		if rows, ok := payload["terminals"].([]any); ok {
+			m.panel.terminals = rows
+		}
+
+	case protocol.UITerminalCreated:
+		// The new terminal's row goes in and the panel **closes**, because the
+		// answer to `/terminal new` is a shell to type into rather than a list to
+		// read. It is attached straight away for the same reason: opening a
+		// terminal and then having to choose it from a list is two steps for one
+		// intention.
+		if row, ok := payload["terminal"].(map[string]any); ok {
+			m.overlay = overlay{}
+			m.attachTerminal(terminalRow{
+				id:     stringFieldOf(row, "id"),
+				cwd:    stringFieldOf(row, "cwd"),
+				shell:  stringFieldOf(row, "shell"),
+				status: stringFieldOf(row, "status"),
+			})
+		}
+
+	case protocol.UITerminalOutput:
+		id, _ := protocol.String(payload, "terminal_id")
+		data, _ := protocol.String(payload, "data")
+		if id != "" {
+			m.appendTerminalOutput(id, data)
+		}
+
+	case protocol.UITerminalExit:
+		m.terminalExitLine(payload)
 	}
+}
+
+// stringFieldOf reads one string out of a row the runtime built.
+//
+// A small helper rather than an inline assertion because it appears at four call
+// sites that all have the same failure mode: a missing key yields "" and an empty
+// id is the one value that would make this interface talk to no terminal at all.
+func stringFieldOf(row map[string]any, key string) string {
+	value, _ := row[key].(string)
+	return value
 }
 
 // reportAutopilot echoes `/autopilot` once the runtime has confirmed the value.
@@ -1227,6 +1317,22 @@ func (m *model) applyState(payload map[string]any) {
 	}
 	if value, ok := payload["mcp"].([]any); ok {
 		m.panel.mcp = value
+	}
+	// The workspace's terminals. They arrive on every snapshot as well as on
+	// `terminal_list` — see the runtime's `terminalsPanel` for why both exist:
+	// this is the one that lets a front end started *after* a shell was created,
+	// or one that lost a message, learn about it rather than never.
+	if value, ok := payload["terminals"].([]any); ok {
+		m.panel.terminals = value
+		// The attached banner follows the runtime's status. The interface does not
+		// decide for itself whether a shell is running — that is the runtime's
+		// alone — so when a snapshot says the attached terminal has ended, the
+		// banner has to say so too rather than keep claiming it is live.
+		if m.attached.id != "" {
+			if row, ok := m.rowOfTerminal(m.attached.id); ok {
+				m.attached.status = row.status
+			}
+		}
 	}
 	if value, ok := payload["risk_scope"].([]any); ok {
 		m.panel.riskScope = value

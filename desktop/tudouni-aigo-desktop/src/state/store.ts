@@ -26,6 +26,7 @@
 
 import { create } from 'zustand';
 import type {
+  FileEntry,
   FrontendMsg,
   ModelAlias,
   PermissionDecision,
@@ -35,6 +36,7 @@ import type {
   QuestionStatus,
   RuntimeMsg,
   SkillCatalogRow,
+  TerminalRow,
 } from '@/protocol/types';
 import {
   applyDelta,
@@ -122,7 +124,12 @@ export type PanelKind =
   | 'help'
   | 'subagents'
   | 'audit'
-  | 'settings';
+  | 'settings'
+  /* The workspace's two capabilities. They are panels rather than windows
+   * because they share the app's one interaction model (§5), and because
+   * neither is a destination: a person opens one, looks, and goes back. */
+  | 'files'
+  | 'terminal';
 
 export type SidebarBlockKey = 'goal' | 'tasks' | 'skills' | 'jobs' | 'mcp';
 
@@ -372,6 +379,61 @@ export interface SessionRuntime {
   models: VmModel[];
   modelAliases: ModelAlias[];
 
+  /**
+   * The workspace's terminals, from `ui(terminals)` **and** every `ui(state)`.
+   *
+   * Two sources for one fact on purpose (see the runtime's `terminalsPanel`):
+   * the snapshot is sent on every tool result and at the end of every turn, so a
+   * front end that started after a shell was created — or that lost a message —
+   * learns about it from the next snapshot rather than never.
+   *
+   * Per **session** bucket although terminals belong to the workspace, and the
+   * distinction matters: this is "what this child told me", which is the only
+   * thing a bucket can hold. Two sessions in one workspace each hear the same
+   * list from their own child, and neither is wrong.
+   */
+  terminals: TerminalRow[];
+  /**
+   * Which terminal this session's terminal view is attached to.
+   *
+   * A **front-end** preference, like `draft`: the design says a client may keep
+   * `active_terminal_id` and nothing else about a terminal. The process, the cwd
+   * and the status all remain the runtime's, and this never guesses at any of
+   * them.
+   */
+  activeTerminalId: string | null;
+  /**
+   * What this session's front end has seen of each attached terminal's output.
+   *
+   * A **bounded** tail, newest last. The runtime keeps no scrollback — the design
+   * is explicit that a terminal's output must not become a second terminal — so
+   * showing more than the last screenful is necessarily this end's job.
+   *
+   * Keyed by terminal id rather than held for one: switching between two shells
+   * and back should not lose the first one's screen.
+   */
+  terminalOutput: Record<string, string[]>;
+  /**
+   * Terminals with a create or kill request in flight.
+   *
+   * Not an optimistic update: it claims nothing about a terminal's state — the
+   * badge still comes only from the runtime. It states one fact this front end
+   * really has, which is that it just sent the request.
+   */
+  terminalPending: string[];
+
+  /**
+   * The browser's listing, and whether its answer has arrived.
+   *
+   * `filesLoading` is separate from an empty `filesEntries` on purpose: "this
+   * directory is empty" and "the answer has not come back yet" are different
+   * statements, and a panel that drew the first while the second was true would
+   * send somebody looking for files that are there.
+   */
+  filesPath: string;
+  filesEntries: FileEntry[];
+  filesLoading: boolean;
+
   /* ---------------- this session's own input state ---------------- */
   draft: string;
   history: string[];
@@ -458,6 +520,15 @@ export function createSessionBucket(
     skillShadowed: [],
     models: [],
     modelAliases: [],
+    // Terminals belong to the workspace, but "what this child told me" is the
+    // only thing a bucket can hold — see the field's own comment.
+    terminals: [],
+    activeTerminalId: null,
+    terminalOutput: {},
+    terminalPending: [],
+    filesPath: '',
+    filesEntries: [],
+    filesLoading: false,
     draft: '',
     history: [],
     historyCursor: null,
@@ -795,6 +866,52 @@ export interface AppStore {
   requestSkills(): void;
   goalAction(action?: 'pause' | 'resume' | 'clear'): void;
   refreshState(): void;
+
+  /* ---------------- the workspace: files ---------------- */
+
+  /**
+   * List one directory level of the active session's workspace.
+   *
+   * An empty path is the workspace root. The answer replaces the browser's
+   * entries and — importantly — its **path**: the runtime normalises what it was
+   * given, and the reply's spelling is what makes "where am I" answerable after
+   * a `/./src/../src`.
+   */
+  listFiles(path: string): void;
+  /** Read one file. The reply's head goes in the viewer and its `artifact_id`
+   *  names the body on disk; the whole file is never sent. */
+  readFile(path: string): void;
+
+  /* ---------------- the workspace: terminals ---------------- */
+
+  /** Ask for the workspace's terminal list. */
+  listTerminals(): void;
+  /**
+   * Open a shell.
+   *
+   * `cwd` is workspace-relative and optional; so is the size, which the runtime
+   * turns into the conventional 80x24. A refusal produces a notice and an
+   * **unchanged list**, never a `terminal_created` — a front end given a row
+   * would remember an id for a shell that does not exist.
+   */
+  createTerminal(options?: { cwd?: string; cols?: number; rows?: number }): void;
+  /**
+   * Write raw bytes to a shell.
+   *
+   * **No reply.** The output arrives asynchronously, which is the whole shape of
+   * a terminal: `command → PTY → stream`. Nothing is buffered or interpreted
+   * here — `Ctrl+C`, arrows and Tab are just bytes.
+   */
+  terminalInput(id: string, data: string): void;
+  /** Tell the runtime the shell's new window size. Required for `vim`, `top`,
+   *  `htop` and `less`, which lay themselves out from it. */
+  resizeTerminal(id: string, cols: number, rows: number): void;
+  /** End a terminal and everything it started. The transcript's line comes from
+   *  the runtime's exit event, never from this request. */
+  killTerminal(id: string): void;
+  /** Point this front end's terminal view at one terminal. A **local** act:
+   *  nothing is sent, and the shell is unaffected either way. */
+  attachTerminal(id: string | null): void;
   /** Ask the OS for a directory, then open a session in it. A different
    *  workspace is a different process, so this cannot be done to an existing
    *  one. */
@@ -1149,6 +1266,13 @@ export const NO_ENTRIES: Entry[] = [];
 export const NO_NOTES: NoteEntry[] = [];
 export const NO_STRINGS: string[] = [];
 export const NO_SESSION_LIST: VmSessionListItem[] = [];
+/** The empty terminal list, for the same reason: a selector's fallback must be
+ *  a stable reference or every render of an empty workspace is a new frame. */
+export const NO_TERMINALS: TerminalRow[] = [];
+/** No file listing yet. Same rule as above. */
+export const NO_FILE_ENTRIES: FileEntry[] = [];
+/** No terminal output yet. Same rule as above. */
+export const NO_OUTPUT: string[] = [];
 export const NO_SKILLS: VmSkill[] = [];
 export const NO_MCP_ROWS: VmMcp[] = [];
 export const NO_PASTED: PastedImage[] = [];
@@ -1176,6 +1300,86 @@ export function useSessionField<T>(pick: (rt: SessionRuntime) => T, fallback: T)
 
 function runtimeOf(s: AppStore, key: string | null): SessionRuntime | null {
   return key === null ? null : (s.sessions[key] ?? null);
+}
+
+/**
+ * How many lines of one terminal's output this front end keeps.
+ *
+ * The runtime keeps **none** by design — a terminal's output must not become a
+ * second terminal — so showing more than the last screenful is necessarily this
+ * end's job. 4000 lines is about fifty screens; a build log is megabytes, and an
+ * unbounded buffer would make this window's memory grow with the length of a
+ * command somebody ran.
+ */
+export const TERMINAL_SCROLLBACK = 4000;
+
+/**
+ * Append one output batch to a terminal's bounded tail.
+ *
+ * Two details, both of them the difference between readable and not:
+ *
+ *   - the batch boundary is **not** a line boundary. A fragment that continues
+ *     the last line already held is joined to it rather than becoming a row of
+ *     its own, or a sentence would be broken in the middle of a word every time
+ *     the PTY happened to flush there.
+ *   - `\r\n` is normalised to `\n`. The PTY sends CRLF, and a browser rendering
+ *     a raw `\r` inside a `<div>` shows it as nothing at all — so without this a
+ *     terminal's output collapses onto one line.
+ */
+export function appendTerminalOutput(
+  store: Record<string, string[]>,
+  id: string,
+  data: string,
+): Record<string, string[]> {
+  const existing = store[id] ?? [];
+  const lines = data.replace(/\r\n/g, '\n').split('\n');
+  let next: string[];
+  if (existing.length > 0) {
+    // The first fragment continues the line already held.
+    next = [...existing.slice(0, -1), existing[existing.length - 1] + lines[0], ...lines.slice(1)];
+  } else {
+    next = lines;
+  }
+  if (next.length > TERMINAL_SCROLLBACK) {
+    // The **newest** lines survive: dropping the recent output would leave the
+    // pane showing the start of a build with no sign of the end.
+    next = next.slice(next.length - TERMINAL_SCROLLBACK);
+  }
+  return { ...store, [id]: next };
+}
+
+/**
+ * Replace one terminal's row, or append it when it was never seen.
+ *
+ * The exit event carries the whole row, so it is **replaced** rather than patched
+ * field by field. Merging two fields by hand is how a row and the runtime end up
+ * describing different terminals — and the append case is real: a shell can end
+ * before this window ever received a snapshot that mentioned it.
+ */
+export function replaceTerminal(rows: TerminalRow[], row: TerminalRow): TerminalRow[] {
+  const at = rows.findIndex((candidate) => candidate.id === row.id);
+  if (at < 0) return [...rows, row];
+  const next = [...rows];
+  next[at] = row;
+  return next;
+}
+
+/**
+ * What one terminal's ending says in the transcript.
+ *
+ * Three endings read three ways, and the third is why this cannot be a lookup:
+ * `killed`, `exited` with a code, and `exited` without one (killed by a signal on
+ * POSIX, or a console this program had to close) are different facts. Printing a
+ * number for the last case would invent one.
+ */
+export function terminalExitText(
+  id: string,
+  reason: 'exited' | 'killed',
+  code: number | null,
+): string {
+  if (reason === 'killed') return `Terminal ${id} was killed.`;
+  if (code === null) return `Terminal ${id} exited.`;
+  return `Terminal ${id} exited with code ${code}.`;
 }
 
 export const useApp = create<AppStore>((set, get) => {
@@ -1777,6 +1981,86 @@ export const useApp = create<AppStore>((set, get) => {
               });
               break;
             }
+            case 'files': {
+              // The **runtime's** path, not the one that was asked for: the two
+              // differ after a `/./src/../src`, and the reply's spelling is what
+              // makes "where am I" answerable and the parent-directory step
+              // correct.
+              patch(key, {
+                filesPath: typeof msg.path === 'string' ? msg.path : '',
+                filesEntries: Array.isArray(msg.entries) ? msg.entries : [],
+                filesLoading: false,
+              });
+              break;
+            }
+            case 'file_read': {
+              // The body goes in the browser's viewer as a block, in arrival
+              // order like every other panel payload — the alternative is a
+              // second, parallel transcript that has to be kept in step with
+              // this one.
+              patchWith(key, (current) => ({
+                filesLoading: false,
+                entries: pushBlock(current.entries, 'file', msg),
+              }));
+              break;
+            }
+            case 'terminals': {
+              patch(key, {
+                terminals: Array.isArray(msg.terminals) ? msg.terminals : [],
+              });
+              break;
+            }
+            case 'terminal_created': {
+              // The new row goes into the list straight away so the panel can
+              // show it without waiting for a snapshot, and the answer also
+              // **attaches** to it: the reply to "open a terminal" is a shell to
+              // type into, not a list to read.
+              const row = msg.terminal;
+              patchWith(key, (current) => ({
+                terminals: row ? [...current.terminals, row] : current.terminals,
+                activeTerminalId: row && row.id ? row.id : current.activeTerminalId,
+                terminalPending: current.terminalPending.filter((id) => id !== 'new'),
+              }));
+              break;
+            }
+            case 'terminal_output': {
+              // The one high-frequency message. It carries no row, no snapshot
+              // and no status — only which terminal and which bytes — so this
+              // handler does one thing: append to that terminal's bounded tail.
+              const id = msg.terminal_id;
+              const data = typeof msg.data === 'string' ? msg.data : '';
+              if (id === '' || data === '') break;
+              patchWith(key, (current) => ({
+                terminalOutput: appendTerminalOutput(current.terminalOutput, id, data),
+              }));
+              break;
+            }
+            case 'terminal_exit': {
+              const exited = msg.terminal;
+              patchWith(key, (current) => ({
+                // The row is **replaced whole** rather than patched: it carries
+                // the status and the exit code the runtime decided, and merging
+                // two fields by hand is how the row and the runtime end up
+                // describing different terminals.
+                terminals: exited
+                  ? replaceTerminal(current.terminals, exited)
+                  : current.terminals,
+                terminalPending: current.terminalPending.filter(
+                  (id) => id !== msg.terminal_id,
+                ),
+                entries: [
+                  ...current.entries,
+                  {
+                    kind: 'note' as const,
+                    id: nextId('note'),
+                    tone: msg.reason === 'killed' ? ('warn' as const) : ('info' as const),
+                    code: 'terminal',
+                    text: terminalExitText(msg.terminal_id, msg.reason, msg.exit_code),
+                  },
+                ],
+              }));
+              break;
+            }
             case 'run_finished': {
               const runId = msg.run_id;
               // The two `run_finished` messages are not ordered, so pairing is by
@@ -2079,6 +2363,19 @@ export const useApp = create<AppStore>((set, get) => {
         // widens itself" possible.
         sendTo(key, { v: 1, t: 'mcp', action: 'list', servers: [] });
       }
+      if (p === 'files') {
+        // Opens at the workspace root and asks for it in the same breath. The
+        // panel draws its loading state immediately, so this never looks like a
+        // dead keypress while the runtime reads the directory.
+        patch(key, { filesLoading: true });
+        sendTo(key, { v: 1, t: 'file_list', path: '' });
+      }
+      if (p === 'terminal') {
+        // The list is already carried on every `ui(state)`, so this is a
+        // refresh rather than the only source of it — a front end that never
+        // sent this would still show terminals, one snapshot later.
+        sendTo(key, { v: 1, t: 'terminal_list' });
+      }
     },
 
     setQuiet(q) {
@@ -2285,6 +2582,98 @@ export const useApp = create<AppStore>((set, get) => {
       const key = get().activeKey;
       if (key === null) return;
       throttled(key, () => sendTo(key, { v: 1, t: 'refresh_state' }));
+    },
+
+    /* ==========================================================
+       The workspace: files
+       ========================================================== */
+
+    listFiles(path) {
+      const key = get().activeKey;
+      if (key === null) return;
+      patch(key, { filesLoading: true });
+      // The path is sent verbatim. Whether it exists, is a directory, or stays
+      // inside the workspace is the **runtime's** judgement — it holds the
+      // boundary — and a second check here would be a second answer that
+      // eventually disagrees with it.
+      sendTo(key, { v: 1, t: 'file_list', path });
+    },
+
+    readFile(path) {
+      const key = get().activeKey;
+      if (key === null) return;
+      sendTo(key, { v: 1, t: 'file_read', path });
+    },
+
+    /* ==========================================================
+       The workspace: terminals
+       ========================================================== */
+
+    listTerminals() {
+      const key = get().activeKey;
+      if (key === null) return;
+      sendTo(key, { v: 1, t: 'terminal_list' });
+    },
+
+    createTerminal(options) {
+      const key = get().activeKey;
+      if (key === null) return;
+      // The size is sent only when the caller has one: the runtime's own default
+      // is the right answer here, and this layer has no idea how big the pane
+      // will be when the shell's first output arrives.
+      const message: {
+        v: 1;
+        t: 'terminal_create';
+        cwd?: string;
+        cols?: number;
+        rows?: number;
+      } = { v: 1, t: 'terminal_create' };
+      if (options?.cwd !== undefined && options.cwd !== '') message.cwd = options.cwd;
+      if (options?.cols !== undefined) message.cols = options.cols;
+      if (options?.rows !== undefined) message.rows = options.rows;
+      sendTo(key, message);
+    },
+
+    terminalInput(id, data) {
+      const key = get().activeKey;
+      if (key === null) return;
+      // Fire and forget, and that is the shape of a terminal rather than a
+      // shortcut: the reply is `ui(terminal_output)` on its own schedule, and
+      // most input (a keystroke in a shell that is waiting) produces none at all.
+      sendTo(key, { v: 1, t: 'terminal_input', terminal_id: id, data });
+    },
+
+    resizeTerminal(id, cols, rows) {
+      const key = get().activeKey;
+      if (key === null) return;
+      // A size nobody asked for is worse than none: `vim` and `top` redraw at the
+      // wrong width, which on screen is indistinguishable from a rendering bug
+      // in this window. So a nonsensical size is dropped here as well as in the
+      // runtime.
+      if (cols <= 0 || rows <= 0) return;
+      sendTo(key, { v: 1, t: 'terminal_resize', terminal_id: id, cols, rows });
+    },
+
+    killTerminal(id) {
+      const key = get().activeKey;
+      if (key === null) return;
+      patchWith(key, (current) => ({
+        terminalPending: current.terminalPending.includes(id)
+          ? current.terminalPending
+          : [...current.terminalPending, id],
+      }));
+      // **No optimistic status change.** The row still reads whatever the
+      // runtime last said, and it changes when `ui(terminal_exit)` arrives —
+      // which is the design's rule that the runtime is the only source of truth
+      // for whether a terminal is running. A kill that was refused must not look
+      // like a kill that worked.
+      sendTo(key, { v: 1, t: 'terminal_kill', terminal_id: id });
+    },
+
+    attachTerminal(id) {
+      const key = get().activeKey;
+      if (key === null) return;
+      patch(key, { activeTerminalId: id });
     },
 
     async pickWorkspace() {
