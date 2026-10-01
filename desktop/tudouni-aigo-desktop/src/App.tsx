@@ -20,6 +20,7 @@ import { WorkspaceSidebar } from '@/components/sidebar/WorkspaceSidebar';
 import { Welcome } from '@/components/Welcome';
 import { Booting } from '@/components/Booting';
 import { StartupProblem } from '@/components/StartupProblem';
+import { SessionProblem } from '@/components/SessionProblem';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { StreamView } from '@/components/stream/StreamView';
 import { PanelHost } from '@/components/panels/PanelHost';
@@ -41,6 +42,12 @@ export function App() {
   const rt = useApp(activeRuntime);
   const activeKey = useApp((s) => s.activeKey);
   const ready = rt?.ready ?? false;
+  // **Why this session's child would not start**, when that is why it is not on
+  // screen. It is read here and nowhere else, and it has to be read *before*
+  // `!ready` is tested: a session whose child failed never becomes ready, so the
+  // order below is the difference between "here is what went wrong" and
+  // "Starting the runtime…" over a process that already gave up.
+  const problem = rt?.problem ?? null;
   const entries = rt?.entries ?? NO_ENTRIES;
   const handshakeNotices = rt?.handshakeNotices ?? NO_NOTES;
   const sidebarVisible = useApp((s) => s.sidebarVisible);
@@ -140,6 +147,18 @@ export function App() {
                   is no session to show, and the reason plus the two ways out are
                   the only useful thing on screen.
 
+                  **Then one session's own failure**, which is a different thing
+                  and must not be confused with it. A child that refused to start
+                  belongs to the conversation somebody just asked for, not to the
+                  window: the window may have another conversation running
+                  happily beside it. `SessionProblem` says so and offers the two
+                  ways out, and it sits above the `!ready` branch for the same
+                  reason the missing-session case does — a session whose child
+                  failed never becomes ready, so testing `!ready` first would
+                  print "Starting the runtime…" over a process that already gave
+                  up, which is precisely the invisible failure this is here to
+                  remove.
+
                   **A missing session outranks "not ready", and the order here
                   is load-bearing.** With nothing open there is no child to boot,
                   so `ready` can never become true and `<Booting />` would be a
@@ -149,6 +168,8 @@ export function App() {
                   is now a normal state rather than an impossible one. */}
               {startupProblem !== null ? (
                 <StartupProblem />
+              ) : problem !== null ? (
+                <SessionProblem />
               ) : showWelcome ? (
                 <Welcome notices={handshakeNotices} />
               ) : !ready ? (

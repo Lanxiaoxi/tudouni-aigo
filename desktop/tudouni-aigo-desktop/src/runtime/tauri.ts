@@ -338,6 +338,29 @@ export interface BridgeOptions {
    ============================================================ */
 
 /**
+ * A session key as the bridge's `u64`, or `null` when it names no child.
+ *
+ * **This is not a cast, it is a guard, and it exists because of what `null`
+ * means on the wire.** The Rust commands take `Option<ChildKey>`, where `None`
+ * is documented as "every session" — and `JSON.stringify({ key: NaN })` is
+ * `{"key":null}`, because JSON has no NaN. So `Number(key)` on a key the bridge
+ * never minted silently escalates a per-session act into a window-wide one.
+ *
+ * It is reachable rather than theoretical: `attachSession` names the bucket for a
+ * child that refused to start `failed-<stamp>`, so `Number('failed-muoy2dpe')` is
+ * `NaN` — and the "Try again" button on that session would otherwise have shut
+ * down every *other* conversation the person had open.
+ *
+ * The keys the bridge mints are positive integers as decimal strings
+ * (`ChildKey = u64`, `guard.next_key += 1`), so anything else is not one.
+ */
+function bridgeKey(key: string): number | null {
+  if (!/^\d+$/.test(key)) return null;
+  const value = Number(key);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/**
  * Read the runtime's version. The binary path is optional: the Rust side knows
  * where it put the packaged runtime.
  *
@@ -506,10 +529,24 @@ export async function attachRuntimeListener(): Promise<number> {
  *
  * A single key is a different act — closing one conversation is not a reason to
  * end another.
+ *
+ * **A key that names no child is refused here, never escalated to "all of
+ * them".** `null` is the wire form of `None`, which this command reads as every
+ * session — and `Number('failed-muoy2dpe')` is `NaN`, which `JSON.stringify`
+ * writes as `null`. So a bucket whose child never started (`attachSession`'s
+ * `catch` names it `failed-…`) used to shut down every *other* conversation when
+ * its "Try again" button was pressed. The two cases are now distinct: an absent
+ * key means all, and a key that is not a child is a no-op.
  */
 export async function shutdownRuntime(key?: string): Promise<void> {
   if (!isHosted()) return;
-  await tauriInvoke('runtime_shutdown', { key: key === undefined ? null : Number(key) });
+  if (key === undefined) {
+    await tauriInvoke('runtime_shutdown', { key: null });
+    return;
+  }
+  const target = bridgeKey(key);
+  if (target === null) return;
+  await tauriInvoke('runtime_shutdown', { key: target });
 }
 
 /**
@@ -540,10 +577,20 @@ export async function quitApp(): Promise<void> {
 }
 
 /** The kill switch, for when the graceful wait is not enough. `key` omitted
- *  means every session. */
+ *  means every session.
+ *
+ *  Same guard as `shutdownRuntime`, and for the same reason: `null` is `None`,
+ *  which this command reads as every session — so a key the bridge never minted
+ *  must be a no-op rather than an escalation. */
 export async function killRuntime(key?: string): Promise<void> {
   if (!isHosted()) return;
-  await tauriInvoke('runtime_kill', { key: key === undefined ? null : Number(key) });
+  if (key === undefined) {
+    await tauriInvoke('runtime_kill', { key: null });
+    return;
+  }
+  const target = bridgeKey(key);
+  if (target === null) return;
+  await tauriInvoke('runtime_kill', { key: target });
 }
 
 /** The last stderr lines of one session's child, for the local "it would not

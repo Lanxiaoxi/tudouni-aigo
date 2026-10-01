@@ -209,3 +209,143 @@ test('a session\'s own workspace outranks having nothing, so the refusal is not 
   assert.equal(useApp.getState().startupNotice, null);
   assert.equal(useApp.getState().lastWorkspace, before);
 });
+
+/* ============================================================
+   A child that would not start
+   ============================================================ */
+
+/**
+ * Run `body` against a fake Tauri host whose `runtime_attach` **fails**.
+ *
+ * The refusal this simulates is the Rust side's own: a workspace the runtime
+ * will not take, a binary that is present but will not execute. It is a rejected
+ * promise rather than an exit code, because that is what the bridge does — every
+ * failure it can describe is returned as a sentence.
+ *
+ * `isHosted()` is what makes `attachRuntime` a real call rather than an
+ * immediate null, so the host exists only for the length of the test.
+ */
+async function withFailingAttach<T>(reason: string, body: () => Promise<T>): Promise<T> {
+  const previous = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    __TAURI_INTERNALS__: {
+      invoke(cmd: string) {
+        if (cmd === 'runtime_attach') return Promise.reject(reason);
+        if (cmd === 'runtime_stderr') return Promise.resolve([]);
+        return Promise.resolve(null);
+      },
+    },
+  };
+  try {
+    return await body();
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+  }
+}
+
+test('a child that would not start is recorded on its own session, with the reason', async () => {
+  // **This is the regression the "nothing happened" report was about.** The
+  // store always wrote `SessionRuntime.problem` here; nothing read it. So the
+  // failure produced no sentence anywhere, and because a session whose child
+  // failed never becomes `ready`, the screen sat on "Starting the runtime…"
+  // over a process that had already given up. Both halves are asserted: the
+  // reason is recorded where a component can find it, and it is recorded on the
+  // *session* rather than on the window.
+  install({}, [], null, { lastWorkspace: 'C:/work' });
+
+  const reason = 'the workspace C:/work cannot be used (it is the home directory)';
+  await withFailingAttach(reason, async () => {
+    const key = await useApp.getState().attachSession({});
+    assert.equal(key, null, 'a failed attach hands back no key');
+  });
+
+  const s = useApp.getState();
+  const bucket = s.sessions[s.activeKey ?? ''];
+  assert.ok(bucket, 'the session that failed is recorded, or the reason has nowhere to live');
+  assert.equal(bucket.problem, reason, 'the bridge\'s own sentence, verbatim');
+  assert.equal(bucket.workspace, 'C:/work', 'and it names the directory that was refused');
+  // `ready` stays false — which is *why* the render order in `App` matters:
+  // testing `!ready` before `problem` would print the booting sentence over a
+  // child that is not booting.
+  assert.equal(bucket.ready, false);
+  // **Not a window-level problem.** Another conversation may be running happily
+  // beside this one, and a panel that covers the window would hide it.
+  assert.equal(s.startupProblem, null);
+});
+
+/* ============================================================
+   A key that names no child must never mean "all of them"
+   ============================================================ */
+
+/**
+ * Every `runtime_shutdown` / `runtime_kill` the front end makes, against a fake
+ * host, with the payload as the Rust side receives it.
+ *
+ * The payload matters because of what `null` means there: both commands take
+ * `Option<ChildKey>`, and `None` is documented as **every session**. JSON has no
+ * NaN, so `JSON.stringify({ key: Number('failed-abc') })` is `{"key":null}` —
+ * which is why `Number(key)` on a key the bridge never minted silently escalates
+ * a per-session act into a window-wide one.
+ */
+async function withRecordingHost<T>(
+  body: () => Promise<T>,
+): Promise<{ result: T; calls: { cmd: string; key: unknown }[] }> {
+  const calls: { cmd: string; key: unknown }[] = [];
+  const previous = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    __TAURI_INTERNALS__: {
+      invoke(cmd: string, args: Record<string, unknown>) {
+        if (cmd === 'runtime_shutdown' || cmd === 'runtime_kill') {
+          // The wire form, not the JS value: `undefined` disappears from the
+          // object entirely, which is a third thing again.
+          calls.push({ cmd, key: args?.key === undefined ? '<absent>' : args.key });
+        }
+        return Promise.resolve(null);
+      },
+    },
+  };
+  try {
+    const result = await body();
+    return { result, calls };
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+  }
+}
+
+test('a session that never started does not shut down every other one', async () => {
+  // **The regression this pins.** `attachSession` names the bucket for a child
+  // that refused to start `failed-<stamp>`. That bucket's "Try again" button
+  // calls `retrySession`, which detaches it first — and `Number('failed-…')` is
+  // `NaN`, which reaches the bridge as `null`, which means **every session**. So
+  // one click on a failed session would have ended every conversation the person
+  // had open. Reachable the moment `SessionProblem` started rendering that
+  // button, which is this same change.
+  const { shutdownRuntime, killRuntime } = await import('@/runtime/tauri');
+
+  const { calls } = await withRecordingHost(async () => {
+    await shutdownRuntime('failed-muoy2dpe');
+    await killRuntime('failed-muoy2dpe');
+  });
+
+  assert.deepEqual(
+    calls,
+    [],
+    'a key the bridge never minted names no child, so nothing may be sent',
+  );
+});
+
+test('an absent key still means every session, and a real key stays per-session', async () => {
+  // The other half: the guard must not break the two acts that are legitimate.
+  // Closing the window asks for all of them, and that path is `undefined`.
+  const { shutdownRuntime } = await import('@/runtime/tauri');
+
+  const { calls } = await withRecordingHost(async () => {
+    await shutdownRuntime();
+    await shutdownRuntime('7');
+  });
+
+  assert.deepEqual(calls, [
+    { cmd: 'runtime_shutdown', key: null },
+    { cmd: 'runtime_shutdown', key: 7 },
+  ]);
+});

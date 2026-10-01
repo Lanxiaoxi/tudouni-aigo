@@ -17,16 +17,28 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const outDir = resolve(root, '.test-build');
 
+/**
+ * Every suite, named **once**.
+ *
+ * There used to be two lists — the esbuild entry points, and the files handed to
+ * `node --test` — and only the first was kept up to date. `workspace.test.ts` was
+ * therefore bundled and never executed, which is the worst possible failure for a
+ * test: the suite reported a green total that silently excluded it, and the
+ * assertions were never run at all. Deriving both from one list is what makes
+ * that impossible rather than merely unlikely.
+ */
+const SUITES = [
+  'projection.test.ts',
+  'contract.test.ts',
+  'paste.test.ts',
+  'workspace.test.ts',
+];
+
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
 await build({
-  entryPoints: [
-    resolve(here, 'projection.test.ts'),
-    resolve(here, 'contract.test.ts'),
-    resolve(here, 'paste.test.ts'),
-    resolve(here, 'workspace.test.ts'),
-  ],
+  entryPoints: SUITES.map((name) => resolve(here, name)),
   outdir: outDir,
   // `.mjs`, because package.json declares `"type": "module"` and the sources are
   // ESM — esbuild would otherwise emit `.js` and the runner's paths would miss.
@@ -52,9 +64,7 @@ const result = spawnSync(
   process.execPath,
   [
     '--test',
-    resolve(outDir, 'projection.test.mjs'),
-    resolve(outDir, 'contract.test.mjs'),
-    resolve(outDir, 'paste.test.mjs'),
+    ...SUITES.map((name) => resolve(outDir, name.replace(/\.ts$/, '.mjs'))),
   ],
   {
     stdio: 'inherit',

@@ -218,11 +218,29 @@ export function WorkspaceSidebar() {
           ) : null}
 
           {rows.length === 0 ? (
-            <EmptyState
-              compact
-              title={t('lb.emptyWorkspaces.title')}
-              hint={t('lb.emptyWorkspaces.hint')}
-            />
+            <>
+              <EmptyState
+                compact
+                title={t('lb.emptyWorkspaces.title')}
+                hint={t('lb.emptyWorkspaces.hint')}
+              />
+              {/* **A named button, not only the icon in the section head.**
+                  With no workspace listed this rail has exactly one useful
+                  control, and it used to be a bare `FolderPlus` glyph with no
+                  label — while the first screen's notice said "choose one below,
+                  or add a directory" over a list that was empty. That is a screen
+                  whose only way forward is a small icon nobody was told to look
+                  for. */}
+              <button
+                type="button"
+                className="btn btn-outline btn-block lb-empty-add"
+                disabled={blocked}
+                onClick={() => void onAdd()}
+              >
+                <FolderPlus size={13} />
+                {t('lb.addWorkspace')}
+              </button>
+            </>
           ) : (
             <div className="lb-rows">
               {rows.map((path) => {

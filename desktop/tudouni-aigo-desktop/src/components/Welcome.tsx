@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { Clock, Sparkles, Terminal } from 'lucide-react';
-import { NO_SESSION_LIST, useApp, useSessionField, type StartupNotice } from '@/state/store';
+import { NO_SESSION_LIST, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import { StartupNoticeLine, ChooseWorkspaceButton } from '@/components/StartupNotice';
 import { Kbd } from '@/components/ui/kit';
 import { NoteRow } from '@/components/stream/EntryView';
 import type { Entry } from '@/state/entries';
@@ -94,10 +95,20 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
            * what you want, or reopen the last session") and this state is exactly
            * the one where they do not: there is no workspace, so there is no
            * session to reopen and nothing for a turn to run in. Two lines, one of
-           * which assumes a workspace, would contradict each other. */}
+           * which assumes a workspace, would contradict each other.
+           *
+           * The button is not decoration, and it is not the sentence's
+           * direction either. The line used to end with "choose one below",
+           * which is true only while the workspace list is actually visible
+           * below — the rail can be folded away or hidden outright by a narrow
+           * window. So the direction moved out of the wording and into this
+           * control, which works from every state. */}
           {startupNotice ? (
             <div className="wi-start wi-notice" role="status">
-              <NoticeText notice={startupNotice} />
+              <span className="wi-notice-text">
+                <StartupNoticeLine notice={startupNotice} />
+              </span>
+              <ChooseWorkspaceButton />
             </div>
           ) : (
             <div className="wi-start">{t('welcome.start')}</div>
@@ -195,31 +206,6 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
       </div>
     </div>
   );
-}
-
-/**
- * One `StartupNotice` as a sentence.
- *
- * A code-to-words step rather than a stored string, for the same reason
- * `ComposerNotice` is a code: the store has no business holding English, and the
- * translation is what owns the punctuation.
- *
- * The one code is rendered exhaustively with no `default`, so a second notice
- * kind is a type error here rather than a blank line on the first screen.
- */
-function NoticeText({ notice }: { notice: StartupNotice }) {
-  const t = useT();
-  switch (notice.code) {
-    case 'last-workspace-gone':
-      return (
-        <>
-          {t('notice.lastWorkspaceGone', { path: notice.path, reason: notice.reason })}{' '}
-          {t('notice.pickWorkspace')}
-        </>
-      );
-    case 'no-workspace':
-      return <>{t('notice.noWorkspace')}</>;
-  }
 }
 
 function KeyCap({ keys, label }: { keys: string[]; label: string }) {

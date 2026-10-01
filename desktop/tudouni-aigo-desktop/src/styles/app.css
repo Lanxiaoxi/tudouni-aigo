@@ -809,9 +809,22 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
 /* Why nothing is open. It takes the `wi-start` slot rather than adding a line,
    and it is drawn in the warning colour because it states that something the
    person expects to be true is not: this is not the workspace they left. Colour
-   never carries that alone — the sentence says it outright. */
+   never carries that alone — the sentence says it outright.
+
+   It wraps now that a button sits beside the sentence: the text keeps its own
+   block so the control drops to a second line on a narrow window instead of
+   squeezing the sentence into a column three words wide. */
 .welcome-id .wi-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
   color: var(--warning);
+}
+
+.welcome-id .wi-notice .wi-notice-text {
+  flex: 1 1 auto;
+  min-width: 20ch;
 }
 
 .welcome-block > .wb-head {

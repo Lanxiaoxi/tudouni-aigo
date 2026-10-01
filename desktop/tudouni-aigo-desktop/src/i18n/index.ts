@@ -30,6 +30,15 @@ export const en = {
   'startup.retry': 'Try again',
   'startup.stderr': "What the runtime printed (stderr, last lines)",
 
+  /* ---------------- one session's own failure ----------------
+   *
+   * The same two buttons as the window-level panel above, because the two are
+   * answered the same way; only the heading differs, and it has to: this one is
+   * about a session that was being opened while another was already running, so
+   * saying "the runtime could not be started" would be a sentence about the
+   * wrong process. See `SessionProblem`. */
+  'problem.title': 'This session could not be started',
+
   /* ---------------- start-up notice ----------------
    *
    * Not a failure: the application runs, nothing is open yet, and this says why.
@@ -41,9 +50,17 @@ export const en = {
   'notice.pickWorkspace': 'Pick a workspace in the list to start, or add one.',
   /** No session to inherit a workspace from and nothing remembered, so a child
    *  was not started. A refusal rather than a failure: the app is fine, it just
-   *  has nowhere to work. */
+   *  has nowhere to work.
+   *
+   *  **It names no direction on purpose.** This sentence is read in two places —
+   *  the first screen, where the workspace list really is below it, and the
+   *  conversation column, where that list may be folded away or hidden by the
+   *  window being narrow. "Choose one below" would be false in the second, so
+   *  the line states the fact and the button beside it is the way forward. */
   'notice.noWorkspace':
-    'No workspace is open, so nothing was started. Choose one below, or add a directory.',
+    'No workspace is open, so nothing was started. The runtime needs a directory to work in.',
+  /** The button that goes with the two notices above. */
+  'notice.chooseWorkspace': 'Choose a workspace…',
 
   /* ---------------- title bar ---------------- */
   'titlebar.minimize': 'Minimize',
