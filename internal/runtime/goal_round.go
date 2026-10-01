@@ -143,38 +143,43 @@ func (r *Runtime) GoalCommand(action string) (map[string]any, error) {
 // no prompt entered history, and the caller should hand the turn back to whatever
 // else was queued.
 //
-// The order is what makes that promise true:
+// Admitting is the driver's job, and this delegates to it rather than repeating the
+// rules. It used to repeat them, beside a `Driver.Admit` that checked the same
+// things and was never called: the two drifted at the one step that matters —
+// releasing the claim — so the reservation the driver was holding stayed held, and
+// every round after the first was refused with `already-pending` for a claim nobody
+// was going to spend. There is now one release (`Driver.Discard`) and one decision,
+// and the order below is what keeps it safe:
 //
-//  1. check the reservation against the goal as it is now;
-//  2. admit the round (which spends the number and moves the revision);
-//  3. checkpoint, so a crash cannot leave the number spent with no prompt to show
-//     for it;
-//  4. append the prompt;
-//  5. run.
-//
-// Steps 2–4 are in that order because each is the undo of the one before it: a
-// round with no prompt is a number spent on nothing, and a prompt with no round is
-// a free round.
-func (r *Runtime) StartGoalRound(reservation protocol.GoalRound) (string, bool, error) {
-	if reservation == nil || r.Agent == nil {
+//  1. refuse before touching anything, when no round could run at all;
+//  2. hand the reservation to the driver, which releases the claim and either
+//     spends the number or reports the claim stale;
+//  3. write the record that says the round really ran;
+//  4. run it. The prompt lives inside the reservation, so it enters history in the
+//     same call that runs the turn — a number is never spent with no prompt to show
+//     for it.
+func (r *Runtime) StartGoalRound(round protocol.GoalRound) (string, bool, error) {
+	reservation, owned := round.(*Reservation)
+	if !owned || r.Driver == nil || r.Agent == nil {
+		// Nothing can run, and a caller that got here has a bug rather than a race.
+		// The claim is released anyway — `Discard` answers false when there is no
+		// claim to release, which covers every shape of this branch — because a
+		// one-shot authorization left held refuses every round that comes after it.
+		r.Driver.Discard(reservation)
 		return "", false, ErrGoalNotArmed
 	}
 	if !r.GoalArmed() {
+		// A pause arriving between the queue and the start makes the claim moot, and
+		// holding it would refuse the round a later resume authorizes. This is the
+		// "raced with a pause" half of the error's contract below, and it drops the
+		// reservation exactly as that comment says it should.
+		r.Driver.Discard(reservation)
 		return "", false, ErrGoalNotArmed
 	}
-	goal, ok := state.LoadGoal(r.SessionValue.Metadata)
-	if !ok || goal.ID != reservation.GoalID() || goal.Revision != reservation.Revision() {
+	admitted, ok := r.Driver.Admit(reservation)
+	if !ok {
 		return "", false, nil
 	}
-	if goal.Phase != state.PhaseActive || goal.RoundLimitReached() {
-		return "", false, nil
-	}
-
-	admitted, err := state.AdmitGoalRound(r.SessionValue.Metadata, reservation.GoalID(), reservation.Revision(), reservation.Round())
-	if err != nil {
-		return "", false, nil
-	}
-	r.Checkpoint()
 	r.recordGoalRound(admitted, reservation.Round())
 	answer, err := r.Agent.RunMessages(reservation.Messages())
 	return answer, true, err

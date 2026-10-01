@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
 // driverRuntime builds the smallest runtime the driver touches: a session with
@@ -277,7 +279,7 @@ func TestAdmissionSpendsTheRoundAndMovesTheRevision(t *testing.T) {
 	reservation := queue.rounds[0]
 	before, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata)
 
-	if !runtimeValue.Driver.Admit(reservation) {
+	if _, ok := runtimeValue.Driver.Admit(reservation); !ok {
 		t.Fatal("the reservation was refused")
 	}
 	after, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata)
@@ -291,7 +293,7 @@ func TestAdmissionSpendsTheRoundAndMovesTheRevision(t *testing.T) {
 	if runtimeValue.Driver.Pending() != nil {
 		t.Error("the reservation is still pending after admission")
 	}
-	if runtimeValue.Driver.Admit(reservation) {
+	if _, ok := runtimeValue.Driver.Admit(reservation); ok {
 		t.Error("the same reservation was admitted twice")
 	}
 }
@@ -312,7 +314,7 @@ func TestAdmissionRefusesAStaleReservation(t *testing.T) {
 		t.Fatalf("edit: %v", err)
 	}
 
-	if runtimeValue.Driver.Admit(reservation) {
+	if _, ok := runtimeValue.Driver.Admit(reservation); ok {
 		t.Fatal("a reservation for a goal that moved was admitted")
 	}
 	if goal, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata); goal.Rounds != 0 {
@@ -330,7 +332,7 @@ func TestAdmissionRefusesAPausedGoal(t *testing.T) {
 	reservation := queue.rounds[0]
 
 	runtimeValue.SetGoalArmed(false)
-	if runtimeValue.Driver.Admit(reservation) {
+	if _, ok := runtimeValue.Driver.Admit(reservation); ok {
 		t.Fatal("a reservation was admitted while the goal was disarmed")
 	}
 	if goal, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata); goal.Rounds != 0 {
@@ -351,7 +353,7 @@ func TestAdmissionRefusesAnExhaustedBudget(t *testing.T) {
 	if _, err := state.AdmitGoalRound(runtimeValue.SessionValue.Metadata, current.ID, current.Revision, 1); err != nil {
 		t.Fatalf("spending the budget: %v", err)
 	}
-	if runtimeValue.Driver.Admit(reservation) {
+	if _, ok := runtimeValue.Driver.Admit(reservation); ok {
 		t.Fatal("a reservation was admitted with no budget left")
 	}
 	if goal, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata); goal.Rounds != 1 {
@@ -666,5 +668,218 @@ func TestGoalPanelIsAlwaysACompleteShape(t *testing.T) {
 	}
 	if panel["armed"] != true || panel["rounds_text"] != "0/5" {
 		t.Errorf("the panel disagrees with the goal: %v", panel)
+	}
+}
+
+// --- the round's real path, which is where the claim was leaked ----------------
+
+// answeringChat is a model that answers in one line, so a round can run to
+// completion with no gateway. It embeds the status fixture for the rest of the
+// interface, because what this file varies is the answer and nothing else.
+type answeringChat struct {
+	statusChat
+	answer string
+}
+
+func (c *answeringChat) Complete([]map[string]any, []map[string]any,
+	model.CompleteOptions) (model.ModelResponse, error) {
+	text := c.answer
+	return model.ModelResponse{Content: &text}, nil
+}
+
+// goalRuntimeWithAgent is driverRuntime plus the one thing `StartGoalRound` needs to
+// run a round for real: an agent. Every test below asks what the driver decides
+// **after** a round has run, so a fixture that only called `Admit` would be testing
+// a sequence the server never performs — which is exactly how the leak survived.
+func goalRuntimeWithAgent(t *testing.T, phase state.Phase, rounds, maxRounds int, armed bool) *Runtime {
+	t.Helper()
+	runtimeValue := driverRuntime(t, phase, rounds, maxRounds, armed)
+	runtimeValue.Agent = agent.New(agent.Config{
+		Chat:    &answeringChat{answer: "这一轮做了 X"},
+		Tools:   tools.NewRegistry(),
+		Session: runtimeValue.SessionValue,
+	})
+	return runtimeValue
+}
+
+// humanThenRound drives one authorization and the round it produced through the
+// production entry point, and returns the runtime with the round finished.
+//
+// The shape is the server's, in order: a finished turn is observed, the reservation
+// it produced is handed to `StartGoalRound`, and the round's own outcome is observed
+// in turn. Anything less than this sequence is what let the defect through.
+func humanThenRound(t *testing.T, runtimeValue *Runtime) {
+	t.Helper()
+	runtimeValue.SessionValue.Messages = append(runtimeValue.SessionValue.Messages,
+		map[string]any{"role": "user", "content": "把重连修好"},
+		map[string]any{"role": "assistant", "content": "好"})
+
+	queue := &recordingQueue{}
+	if decision := runtimeValue.ObserveTurn(nil, false, queue.queue); decision != string(DecisionContinue) {
+		t.Fatalf("the person's turn was not authorized to continue: decision = %q", decision)
+	}
+	if len(queue.rounds) != 1 {
+		t.Fatalf("queued %d rounds after a human turn, want 1", len(queue.rounds))
+	}
+	if _, started, err := runtimeValue.StartGoalRound(queue.rounds[0]); !started || err != nil {
+		t.Fatalf("the reserved round did not run (started=%v, err=%v)", started, err)
+	}
+}
+
+// The regression: the round the driver reserved must give its claim back when it
+// runs, or the **next** finished turn finds the claim still held and refuses with
+// `already-pending`. That refusal is not a pause and does not disarm, so the goal
+// ran exactly one round for the life of the process and no further message from the
+// person could start another — the failure a person sees as "it continued once and
+// then never again".
+func TestAnAutomaticRoundReleasesItsClaimForTheNextTurn(t *testing.T) {
+	runtimeValue := goalRuntimeWithAgent(t, state.PhaseActive, 0, 9, true)
+	humanThenRound(t, runtimeValue)
+
+	if runtimeValue.Driver.Pending() != nil {
+		t.Fatal("the round that just ran left its reservation held")
+	}
+	// The goal is spent, so the round's own turn does not get another one. That is
+	// the rule below; what matters here is that it refuses for its own reason.
+	afterRound := &recordingQueue{}
+	if decision := runtimeValue.ObserveTurn(nil, false, afterRound.queue); decision != string(DecisionRefused) {
+		t.Fatalf("decision straight after a round = %q, want refused", decision)
+	}
+	if len(afterRound.rounds) != 0 {
+		t.Errorf("queued %d rounds straight after a round, want none", len(afterRound.rounds))
+	}
+
+	// And a person saying something more is a new authorization, which has to reach
+	// round 2. This is the assertion the leak failed: the claim was never released,
+	// so the reservation could not be taken and the goal was stuck at 1/9 forever.
+	runtimeValue.SetGoalArmed(true)
+	runtimeValue.SessionValue.Messages = append(runtimeValue.SessionValue.Messages,
+		map[string]any{"role": "user", "content": "继续"},
+		map[string]any{"role": "assistant", "content": "好"})
+
+	next := &recordingQueue{}
+	if decision := runtimeValue.ObserveTurn(nil, false, next.queue); decision != string(DecisionContinue) {
+		t.Fatalf("decision after the person spoke again = %q, want continue — the claim from the first round was never released", decision)
+	}
+	if len(next.rounds) != 1 {
+		t.Fatalf("queued %d rounds for the second authorization, want 1", len(next.rounds))
+	}
+	if round := next.rounds[0].Round(); round != 2 {
+		t.Errorf("reserved round %d, want 2", round)
+	}
+	if goal, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata); goal.Rounds != 1 {
+		t.Errorf("rounds = %d, want the first round to be the only one spent", goal.Rounds)
+	}
+}
+
+// The other half, on the same real path: one authorization produces one round. The
+// check has to answer "was this turn an automatic round", and it has to answer it
+// from the turn's opener — a finished round ends on its answer, so the newest
+// message is never the round prompt.
+func TestARoundThatAnsweredDoesNotChainOnTheRealPath(t *testing.T) {
+	runtimeValue := goalRuntimeWithAgent(t, state.PhaseActive, 0, 9, true)
+	humanThenRound(t, runtimeValue)
+
+	// The round finished by answering, so its authorization is spent.
+	queue := &recordingQueue{}
+	decision := runtimeValue.ObserveTurn(nil, false, queue.queue)
+	if decision != string(DecisionRefused) {
+		t.Fatalf("decision = %q, want refused — a round that answered must not start another", decision)
+	}
+	if len(queue.rounds) != 0 {
+		t.Errorf("queued %d rounds straight after a round, want none", len(queue.rounds))
+	}
+	if runtimeValue.GoalArmed() {
+		t.Error("the goal stayed armed after an automatic round")
+	}
+	if origin := runtimeValue.SessionValue.TurnOrigin(); origin != state.TurnOriginAutomatic {
+		t.Errorf("the finished round reads as %s, so the rule was asked the wrong question", origin)
+	}
+}
+
+// Running out of steps is not the same outcome as answering: the round spent this
+// turn's step budget, the session is intact, and the work it was authorized for is
+// not done. Refusing here would give a long task exactly one round per message from
+// a person, which is the case the round budget exists for.
+func TestAStepCappedRoundStillContinuesOnTheRealPath(t *testing.T) {
+	runtimeValue := goalRuntimeWithAgent(t, state.PhaseActive, 0, 9, true)
+	humanThenRound(t, runtimeValue)
+
+	queue := &recordingQueue{}
+	decision := runtimeValue.ObserveTurn(&agent.StepLimitExceeded{Step: 120, Tools: []string{"shell"}}, false, queue.queue)
+	if decision != string(DecisionContinue) {
+		t.Fatalf("decision = %q, want continue — a step cap is what a long task hits first", decision)
+	}
+	if len(queue.rounds) != 1 {
+		t.Fatalf("queued %d rounds after a step-capped round, want 1", len(queue.rounds))
+	}
+	if round := queue.rounds[0].Round(); round != 2 {
+		t.Errorf("reserved round %d, want 2", round)
+	}
+	if !runtimeValue.GoalArmed() {
+		t.Error("a step limit disarmed the goal")
+	}
+}
+
+// A round that runs while the goal is paused or completed must not be continued on
+// the strength of a step budget. The check is a refusal that names the goal's own
+// state rather than the claim, which is what a reader needs to tell "the person
+// stopped it" from "the loop ran out of rounds".
+func TestAStepCappedRoundDoesNotOverrideAPause(t *testing.T) {
+	runtimeValue := goalRuntimeWithAgent(t, state.PhaseActive, 0, 9, true)
+	humanThenRound(t, runtimeValue)
+
+	// The person pauses while the round is running.
+	if _, err := runtimeValue.GoalCommand(state.GoalActionPause); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	queue := &recordingQueue{}
+	decision := runtimeValue.ObserveTurn(&agent.StepLimitExceeded{Step: 120}, false, queue.queue)
+	if decision != string(DecisionRefused) {
+		t.Fatalf("decision = %q, want refused — a paused goal is not continued", decision)
+	}
+	if len(queue.rounds) != 0 {
+		t.Errorf("queued %d rounds for a paused goal, want none", len(queue.rounds))
+	}
+}
+
+// Every refusal path has to give the claim back, not just the successful one. A
+// claim held by a path that refused is a goal that can never reserve again, and the
+// reason reported would name a claim that does not exist.
+func TestARefusedRoundStillReleasesTheClaim(t *testing.T) {
+	runtimeValue := goalRuntimeWithAgent(t, state.PhaseActive, 0, 9, true)
+	runtimeValue.SessionValue.Messages = append(runtimeValue.SessionValue.Messages,
+		map[string]any{"role": "user", "content": "把重连修好"},
+		map[string]any{"role": "assistant", "content": "好"})
+
+	queue := &recordingQueue{}
+	runtimeValue.ObserveTurn(nil, false, queue.queue)
+	reservation := queue.rounds[0]
+
+	// Disarmed between the reservation and the start: the round is refused, and the
+	// claim must not be left held for a round that will never spend it.
+	runtimeValue.SetGoalArmed(false)
+	if _, started, err := runtimeValue.StartGoalRound(reservation); started || !errors.Is(err, ErrGoalNotArmed) {
+		t.Fatalf("a disarmed round ran (started=%v, err=%v)", started, err)
+	}
+	if runtimeValue.Driver.Pending() != nil {
+		t.Fatal("a refused round left its reservation held")
+	}
+	if goal, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata); goal.Rounds != 0 {
+		t.Errorf("a refused round spent a number: %d", goal.Rounds)
+	}
+
+	// And the authorization that follows can reserve again.
+	runtimeValue.SetGoalArmed(true)
+	runtimeValue.SessionValue.Messages = append(runtimeValue.SessionValue.Messages,
+		map[string]any{"role": "user", "content": "继续"},
+		map[string]any{"role": "assistant", "content": "好"})
+	next := &recordingQueue{}
+	if decision := runtimeValue.ObserveTurn(nil, false, next.queue); decision != string(DecisionContinue) {
+		t.Fatalf("decision after a refused round = %q, want continue", decision)
+	}
+	if len(next.rounds) != 1 {
+		t.Fatalf("queued %d rounds, want 1", len(next.rounds))
 	}
 }

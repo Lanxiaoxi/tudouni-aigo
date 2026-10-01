@@ -155,7 +155,7 @@ func (d *Driver) Observe(outcome error, stopped bool, queue func(*Reservation) b
 	if queue == nil || !queue(reservation) {
 		// Nothing took the round. The reservation is dropped rather than kept, so
 		// the number stays unspent and the next finished turn can claim it again.
-		d.pending = nil
+		d.Discard(reservation)
 		d.record(DecisionRefused, ReasonQueueFailed, reservation)
 		return DecisionRefused
 	}
@@ -163,38 +163,78 @@ func (d *Driver) Observe(outcome error, stopped bool, queue func(*Reservation) b
 	return DecisionContinue
 }
 
-// Admit validates a reservation and reports whether the round may start.
+// Discard releases a reservation without spending it, and reports whether there was
+// one to release.
+//
+// It is the **one** place a claim stops being held, and that is the whole point of
+// it. Every path that consumes a claim, abandons one, or discovers it is unusable
+// goes through here, so "a reservation that has been dealt with is not still held"
+// is a property of the type instead of something each caller has to remember. The
+// version before it wrote the release into `Admit` alone, and the automatic round's
+// own entry point — which did its own admitting — left the claim held. The next
+// finished turn then found `pending` occupied, refused it as `already-pending`, and
+// that goal ran exactly one round for the life of the process: not even a later
+// message from the person could start another, because nothing ever released the
+// claim the first round had already spent.
+//
+// Nil receivers and nil reservations answer false rather than panicking. The callers
+// are refusal paths, and a refusal path that can crash is worse than the refusal it
+// was there to report.
+func (d *Driver) Discard(reservation *Reservation) bool {
+	if d == nil || reservation == nil || d.pending != reservation {
+		return false
+	}
+	d.pending = nil
+	return true
+}
+
+// Admit validates a reservation, spends the round, and reports the admitted goal.
 //
 // This is the second half of reserve-then-admit, and it is the reason the ordering
 // is worth the trouble: between the two calls a person may have sent a message,
 // edited the goal, or paused it. The check is against the goal as it is **now**, so
 // the answer can honestly be no.
-func (d *Driver) Admit(reservation *Reservation) bool {
-	if d == nil || reservation == nil || d.pending != reservation {
-		return false
+//
+// The goal comes back rather than just a yes, because the caller that runs the round
+// has to record which revision of which goal it actually ran — and this is the only
+// place that knows. Reporting the admission off the session instead would let a
+// person's edit in the gap be attributed to the round that was refused.
+//
+// Releasing the claim comes **first**, before any check that can fail. A stale
+// reservation is not a reservation that should be kept: the whole reason to hold one
+// is that a later round may spend it, and a round that has just been refused will
+// never be that. Doing the release last means every early return leaks, which is the
+// defect this ordering exists to make unrepresentable.
+func (d *Driver) Admit(reservation *Reservation) (state.Goal, bool) {
+	if !d.Discard(reservation) {
+		return state.Goal{}, false
 	}
-	d.pending = nil
 
 	current, ok := state.LoadGoal(d.rt.SessionValue.Metadata)
 	if !ok || current.ID != reservation.goalID || current.Revision != reservation.revision {
 		d.record(DecisionRefused, ReasonAdmissionFailed, reservation)
-		return false
+		return state.Goal{}, false
 	}
 	if current.Phase != state.PhaseActive || !d.rt.GoalArmed() || current.RoundLimitReached() {
 		d.record(DecisionRefused, ReasonAdmissionFailed, reservation)
-		return false
+		return state.Goal{}, false
 	}
 
 	// Only now is the round spent. `AdmitGoalRound` also moves the revision, so an
 	// admission is itself a change that invalidates any later reservation taken
 	// against the old revision.
-	if _, err := state.AdmitGoalRound(d.rt.SessionValue.Metadata, reservation.goalID, reservation.revision, reservation.round); err != nil {
+	admitted, err := state.AdmitGoalRound(d.rt.SessionValue.Metadata, reservation.goalID, reservation.revision, reservation.round)
+	if err != nil {
 		d.record(DecisionRefused, ReasonAdmissionFailed, reservation)
-		return false
+		return state.Goal{}, false
 	}
 	d.rt.Checkpoint()
-	d.record(DecisionContinue, "", reservation)
-	return true
+	// No record here. The decision was already written when the round was
+	// reserved, and the fact that it *ran* is the caller's to write —
+	// `StartGoalRound` writes it as `started`. Writing "continue" again from this
+	// point would put two identical lines in the log for one round and no way to
+	// tell the claim from the admission.
+	return admitted, true
 }
 
 // advance decides whether another round is allowed, and normalises the armed flag.
@@ -217,15 +257,20 @@ func (d *Driver) advance(outcome error, stopped bool) (Decision, string) {
 		d.rt.SetGoalArmed(false)
 		return DecisionRefused, ReasonStopRequested
 	}
-	if outcome != nil {
-		// A step limit is checked **before** the disarm, because it is the one
-		// outcome that means "carry on": the turn spent this turn's step budget and
-		// the session is intact. Disarming first and asking afterwards would make
-		// the round budget unreachable — a long task dies on the first turn that
-		// hits the step cap, which is precisely the case the goal exists for.
-		if isStepLimit(outcome) {
-			return DecisionContinue, ""
-		}
+	// A step limit is the one outcome that means "carry on": the turn spent this
+	// turn's step budget, every tool result is paired and the session is intact.
+	// That is what a long task hits first, so it is checked **before** the disarm —
+	// disarming first would make the round budget unreachable, and the goal would
+	// die on the first turn that hit the step cap.
+	//
+	// It also carries past the automatic-round rule at the bottom. That rule exists
+	// so one authorization does not spend the whole budget back to back, and a round
+	// that ran out of steps has not finished the work it was authorized for: a
+	// goal whose rounds each end at the cap would otherwise get exactly one round
+	// per message from a person, which is the case the round budget is there for.
+	// A round that *answered* is a different thing and still stops.
+	stepLimited := outcome != nil && isStepLimit(outcome)
+	if outcome != nil && !stepLimited {
 		d.rt.SetGoalArmed(false)
 		if isTurnCancelled(outcome) {
 			return DecisionRefused, ReasonCancelled
@@ -266,19 +311,26 @@ func (d *Driver) advance(outcome error, stopped bool) (Decision, string) {
 	// the goal keeps its arming, because that turn is where the authorization came
 	// from. Refusing there would make a goal created in a person's turn stop
 	// immediately — the exact failure this batch exists to fix.
-	if state.IsGoalRound(lastMessage(d.rt.SessionValue.Messages)) {
+	//
+	// "Was this turn an automatic round" is asked of the turn's **opener**, not of
+	// the newest message. This check used to read `IsGoalRound(lastMessage(...))`,
+	// and that question has no answer in production: a turn that has finished ends
+	// on the assistant's answer, or on the tool result of its last step, so the
+	// round's own prompt is never the newest message by the time the driver is
+	// asked. The rule was therefore never the thing stopping the chain — the leaked
+	// reservation was, and it stopped it by refusing *every* subsequent round
+	// instead of the one it was written for.
+	//
+	// A step-capped round is exempt, and that exemption is the whole reason the
+	// check above is not an early return: a round that ran out of steps did not
+	// finish the work it was authorized for, so stopping there would give a long
+	// task exactly one round per message from a person. A round that *answered* has
+	// spent its authorization and stops.
+	if !stepLimited && d.rt.SessionValue.TurnOrigin() == state.TurnOriginAutomatic {
 		d.rt.SetGoalArmed(false)
 		return DecisionRefused, ReasonAutomaticRound
 	}
 	return DecisionContinue, ""
-}
-
-// lastMessage is the newest message, or nil for an empty history.
-func lastMessage(messages []map[string]any) map[string]any {
-	if len(messages) == 0 {
-		return nil
-	}
-	return messages[len(messages)-1]
 }
 
 // reserve claims the next round number.

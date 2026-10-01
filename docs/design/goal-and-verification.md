@@ -285,6 +285,43 @@ internal/frontends/*            改动  /goal 命令与面板（可选，后置�
 
 ---
 
+## 十一、第四批的落地记录（5.8.4）：自动续行只跑一轮
+
+这一批的起点是一个使用中的现象：**goal 建好之后，第一个回合结束会续一轮，那一轮结束之后就再也不续了**。日志把它说得很清楚：
+
+```
+21:24:33  continue        round=1  rounds=0/200  rev=1
+21:24:33  started         round=1  rounds=1/200  rev=2
+21:55:03  refused  already-pending   armed=true  rounds=1/200  rev=2
+22:34:52  refused  already-pending   armed=true  rounds=1/200  rev=2
+```
+
+`rounds` 停在第 1 轮、`revision` 停在 2 再没动过，说明第 2 轮从来没被预留成功。**预留泄漏**：`Driver.Observe` 预留一轮并挂在自己的 `pending` 上，而这一轮真正开始时走的是 `Runtime.StartGoalRound` —— 它自己直接调 `state.AdmitGoalRound`，从没碰过 `pending`。唯一会清 `pending` 的 `Driver.Admit` 在生产代码里没有任何调用者（只有测试调它）。于是第一个预留永远挂着，之后每次回合结束都撞在 `already-pending` 上。它不是暂停、也不 disarm，所以连用户中途再说一句话也救不回来。
+
+### 改了什么
+
+| 文件 | 内容 |
+| --- | --- |
+| `internal/runtime/goal_driver.go` | `Discard`：**唯一**的释放入口；`Admit` 改用它并返回 `(state.Goal, bool)`；`advance` 的自动轮判定改问轮次开启者 |
+| `internal/runtime/goal_round.go` | `StartGoalRound` 不再自己验证+消费，改为委托 `Driver.Admit` |
+| `internal/state/session.go` | `TurnOrigin`（human/automatic/runtime/unknown）；`IsHumanTurn` 变成它的一层包装 |
+| `internal/runtime/goal_driver_test.go` | 沿真实路径（`Observe` → `StartGoalRound` → 再 `Observe`）的五个回归测试 |
+
+### 定下来的四条
+
+1. **释放预留只能有一个地方。** 消费、放弃、以及发现预留不可用，全部走 `Discard`。原来那版把释放写在 `Admit` 里，而自动轮自己的入口另做了一份准入 —— 两份实现漂移的那一步正好是释放。`Admit` 现在**先释放再检查**：检查失败就返回，把释放放最后意味着每个提前返回都漏。
+2. **准入只有一份。** `StartGoalRound` 委托 `Driver.Admit`，保留 `ErrGoalNotArmed` 的三态（「和 pause 撞车」要丢掉预留，「从没武装过」是调用方的 bug），`started` 那条审计仍由它写 —— 它记的是「真的跑了」，与预留时的 `continue` 是两件事，日志里成对出现。
+3. **「这一轮是不是自动续行」要问轮次的开启者，不是最新一条消息。** 原来判的是 `IsGoalRound(lastMessage(...))`，而一个跑完的回合末尾一定是 assistant 回答或最后一步的 tool 结果，round 提示词永远不会是最后一条消息 —— 这条规则在生产里从来没有生效过。真正拦住链式的是那个泄漏的预留，而它拦的是**所有**后续回合，不只是它该拦的那一个。
+4. **步数用尽仍然要续。** 这是唯一表示「继续」的结局（长任务最先撞上的就是它），所以它在 disarm **之前**判定；而它同时要能穿过自动轮规则：一个撞上步数上限的轮次并没有做完它被授权做的事，否则每个回合只能换来一轮，轮次预算就失去意义。**回答完毕**的轮次是另一回事，照旧停。
+
+### 仍然没有的东西
+
+- **blocker 连续轮计数**：`blocked` 仍完全由模型决定。
+- **CLI 路径不续行**：`cli.go` 自己循环，不经过协议服务器。
+- **没有验证层**：证据门（第三、四节）仍未做。
+
+---
+
 ## 七、一句话结论
 
 设计里最核心的那句判断是对的，而且比 DSH 现在的实现更完整：

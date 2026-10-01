@@ -97,11 +97,47 @@ func (s *Session) UserInputs() []string {
 // RuntimeNoteKey marks a user-role message the runtime inserted itself.
 const RuntimeNoteKey = "__runtime_note"
 
-// IsHumanTurn reports whether the turn in progress was started by a person.
+// TurnOrigin is who opened the turn in progress.
 //
-// It is what tells "the model is steering" apart from "the model is driving", and
-// the goal tools depend on it: starting, redefining, pausing and resuming a goal
-// are things only a person may ask for.
+// It is a value rather than a boolean because two callers ask the same scan two
+// different questions, and answering the second with the first is how the
+// automatic-round rule came to be written against the wrong fact. `IsHumanTurn`
+// asks "may the model change the goal" — a person or not. The goal driver asks "was
+// *this* turn an autonomous round" — an automatic round or not. A turn opened by a
+// model change notice is neither, and only the three-valued answer says so.
+type TurnOrigin int
+
+const (
+	// TurnOriginUnknown means nothing in the history decided the question: an empty
+	// session, or one whose last word was the system prompt. Both callers read it as
+	// "no authority and no round", which is the safe direction for a fact that could
+	// not be established.
+	TurnOriginUnknown TurnOrigin = iota
+	// TurnOriginHuman means a person's own message opened the turn.
+	TurnOriginHuman
+	// TurnOriginAutomatic means the runtime's `<goal_round>` prompt opened it.
+	TurnOriginAutomatic
+	// TurnOriginRuntime means another runtime note opened it — today, the notice
+	// that the model changed. It is not a person, and it is not a round.
+	TurnOriginRuntime
+)
+
+// String names the origin, because a bare number in a failed assertion or an audit
+// line is a number the reader has to go and look up.
+func (o TurnOrigin) String() string {
+	switch o {
+	case TurnOriginHuman:
+		return "human"
+	case TurnOriginAutomatic:
+		return "automatic"
+	case TurnOriginRuntime:
+		return "runtime"
+	default:
+		return "unknown"
+	}
+}
+
+// TurnOrigin reports who opened the turn in progress.
 //
 // The rule is a backwards scan, and **the details are the whole function**:
 //
@@ -110,19 +146,24 @@ const RuntimeNoteKey = "__runtime_note"
 //     why the turn started; stopping at the first one would answer "not human" for
 //     every turn that used a tool before reaching for a goal tool.
 //   - Assistant messages are skipped **for the same reason, one step further
-//     out**. The model's own narration is not evidence about who asked.
-//   - A runtime note ends the scan as "not human". This is what makes an autonomous
-//     goal round answer false, and it is the reason round prompts carry
-//     RuntimeNoteKey at all: without it a round could authorize its own successor,
-//     and the round budget would stop meaning anything.
+//     out**. The model's own narration is not evidence about who asked — and it is
+//     what a round that has finished ends on, which is why asking about the newest
+//     message rather than about the turn is the question that keeps being wrong.
+//   - A goal round prompt decides the scan as automatic. It carries RuntimeNoteKey
+//     as well, so the marked check has to come first: the driver needs to know that
+//     this turn was the round it queued, and "some runtime note" does not say that.
+//   - Any other runtime note decides it as runtime. This is what makes an
+//     autonomous goal round unable to authorize its own successor: without it a
+//     round would land here and answer "a person asked", and the round budget would
+//     stop meaning anything.
 //   - Anything else decides it (and only a user message can be anything else in
-//     practice — but the default is "not human", because the one thing this
-//     function must never do is grant authority it cannot prove).
+//     practice — but the default is "unknown", because the one thing this scan must
+//     never do is grant authority it cannot prove).
 //
 // A turn where the user's message is followed by assistant output and then by a
-// goal tool call therefore answers true. That is correct: the person asked, and the
-// model is one step into answering.
-func (s *Session) IsHumanTurn() bool {
+// goal tool call therefore answers `TurnOriginHuman`. That is correct: the person
+// asked, and the model is one step into answering.
+func (s *Session) TurnOrigin() TurnOrigin {
 	for index := len(s.Messages) - 1; index >= 0; index-- {
 		message := s.Messages[index]
 		role, _ := message["role"].(string)
@@ -130,13 +171,26 @@ func (s *Session) IsHumanTurn() bool {
 		case "tool", "assistant":
 			continue
 		}
-		if isRuntimeNote(message) {
-			return false
+		if IsGoalRound(message) {
+			return TurnOriginAutomatic
 		}
-		return role == "user"
+		if isRuntimeNote(message) {
+			return TurnOriginRuntime
+		}
+		if role == "user" {
+			return TurnOriginHuman
+		}
+		return TurnOriginUnknown
 	}
-	return false
+	return TurnOriginUnknown
 }
+
+// IsHumanTurn reports whether the turn in progress was started by a person.
+//
+// It is what tells "the model is steering" apart from "the model is driving", and
+// the goal tools depend on it: starting, redefining, pausing and resuming a goal
+// are things only a person may ask for. The scan itself is `TurnOrigin`'s.
+func (s *Session) IsHumanTurn() bool { return s.TurnOrigin() == TurnOriginHuman }
 
 func isRuntimeNote(message map[string]any) bool {
 	value, _ := message[RuntimeNoteKey].(bool)
