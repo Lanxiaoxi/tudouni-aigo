@@ -286,6 +286,64 @@
   gap: var(--space-3);
 }
 
+/* The reason a long conversation does not slow the stream down.
+ *
+ * `StreamView` follows the bottom by writing `scrollTop = scrollHeight` on every
+ * chunk, and that write makes the browser lay the **whole transcript** out
+ * synchronously — every delta, all of it, whether or not it is anywhere near the
+ * screen. Measured on a 160-turn session (322 rows, ~47,000px tall), one delta:
+ *
+ *   as it was                                          14.0ms
+ *   with the scroll write dropped (nothing else changed) 1.2ms
+ *
+ * So ~93% of a chunk's cost was the layout of 322 rows to append one line to the
+ * last of them. It grew with the conversation exactly as the complaint said, and
+ * it was invisible to the reducer's own timing because the reducer is not what
+ * pays it. `scripts/stream-perf.mjs` is the harness that measured it.
+ *
+ * `content-visibility: auto` is the browser's own answer: a row that is not on
+ * screen is not laid out or painted, so the work per chunk stops depending on
+ * how much history is above the fold. Rows that *are* visible are laid out
+ * normally, and a skipped row stays in the accessibility tree and in
+ * `Ctrl+F` — it is deferred, not hidden.
+ *
+ * **`contain-intrinsic-size: auto <length>` is load-bearing, not decoration.**
+ * A skipped row has no height of its own to contribute, so it must contribute an
+ * estimate; `auto` makes the browser remember each row's real height the first
+ * time it is rendered and use it from then on, and the length is the fallback for
+ * one that has never been on screen. Without the `auto` keyword every skipped row
+ * would sit at the fallback forever and the scrollbar would describe a document
+ * that does not exist. The 120px is near this transcript's measured mean row
+ * height, but it only ever applies to rows nobody has looked at yet.
+ *
+ * Two things this deliberately does **not** cover, and both are why the rule is
+ * on the rows rather than on `.stream-inner`:
+ *
+ *   - the scroll container itself must keep its real height, or `.stream-scroll`'s
+ *     `flex: 1 1 auto` and the viewport-sized scrollbar stop meaning anything;
+ *   - `contain: layout paint` on the same rows was measured too and bought
+ *     nothing on its own (14.5ms, unchanged) — the cost is the *off-screen* rows'
+ *     layout, and only skipping them removes it.
+ *
+ * **The estimate does not put the follow out of step**, which was the thing to
+ * check rather than to assume: the bottom-follow is `scrollTop = scrollHeight`,
+ * and a skipped row's height is only an estimate. Measured over 150 chunks at
+ * 640 turns (1282 rows, 181,449px tall), the gap to the bottom was 0px on every
+ * one of them and the newest row's bottom sat 24px inside the viewport — the same
+ * 24px it sits at without the rule, which is the transcript's own bottom padding.
+ * So `StreamView` needs no change here, and a version of this that "re-asserted
+ * the scroll on the next frame" would have been complexity bought with a
+ * measurement nobody had taken.
+ *
+ * The one behaviour to keep an eye on, because it is what the estimate could
+ * disturb, is a *reader's* position: the pane must not creep while chunks land
+ * above the eye. Checked with the reader parked mid-transcript and 120 chunks
+ * arriving — 0px drift, and `scrollTop` not moved by a pixel. */
+.stream-inner > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
 /* 新回合提示：不自动滚到底时出现 */
 .jump-latest {
   position: absolute;

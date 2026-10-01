@@ -1,0 +1,120 @@
+/**
+ * The stylesheet rule that keeps a long conversation's stream flat.
+ *
+ * This is a regression guard for a performance fix, which is an awkward thing to
+ * write tests for: the fix is one CSS declaration, its absence does not break
+ * anything, and nothing about the interface *looks* different. The only symptom
+ * is that a session which has grown long starts to stutter — and by then the
+ * connection to this rule is long gone from anyone's memory. So the rule is
+ * pinned here, together with the reason, because a test is the only place the
+ * reason survives a refactor.
+ *
+ * What was wrong, measured on a 160-turn session (322 rows, ~47,000px tall):
+ * `StreamView` follows the bottom with `scrollTop = scrollHeight` on every
+ * chunk, and that write made the browser lay out the **whole transcript**
+ * synchronously. One delta cost **14.0ms**; with the scroll write dropped it cost
+ * **1.2ms**. So ~93% of a chunk's cost was laying out 322 rows to append a line to
+ * the last of them — growing with the conversation, which is exactly what the
+ * session got slower at.
+ *
+ * `content-visibility: auto` on the rows is the fix: a row that is not on screen
+ * is not laid out. `scripts/stream-perf.mjs` is the harness that takes the
+ * measurement. See `src/styles/app.css` for the numbers and the reasoning, and
+ * `internal/frontends/tui/transcript.go`'s `markdownResults` for the same defect
+ * on the other front end.
+ *
+ * **These read the stylesheet as text**, which is a poor way to test CSS in
+ * general and the right way here: there is no build step between this file and
+ * the rule, the declaration has no runtime behaviour to observe in Node, and what
+ * is being protected is the *presence* of a rule rather than its effect. An
+ * assertion about computed style would need a browser and would not fail any
+ * less clearly.
+ */
+
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { test } from 'node:test';
+
+// Resolved from the project root, not from `import.meta.url`: the tests are
+// bundled into `.test-build/` before they run, so a path relative to this module
+// would point inside the build directory. The runner sets `cwd` to the root.
+const cssPath = resolve(process.cwd(), 'src', 'styles', 'app.css');
+const css = readFileSync(cssPath, 'utf8');
+
+/**
+ * The declarations of one rule, as written.
+ *
+ * Deliberately naive: it finds `selector {` and reads to the matching `}`, which
+ * is all the structure this stylesheet has. A real CSS parser would be a
+ * dependency taken on to read twenty lines that a human wrote by hand.
+ */
+function ruleBody(selector: string): string | null {
+  const at = css.indexOf(`${selector} {`);
+  if (at < 0) return null;
+  const open = css.indexOf('{', at);
+  const close = css.indexOf('}', open);
+  if (open < 0 || close < 0) return null;
+  return css.slice(open + 1, close);
+}
+
+test('the transcript does not lay out the rows nobody is looking at', () => {
+  const body = ruleBody('.stream-inner > *');
+  assert.ok(body !== null, 'the `.stream-inner > *` rule is gone from app.css');
+
+  // The declaration itself. Without it a delta's cost grows with the length of
+  // the conversation, because the bottom-follow write re-lays out all of it.
+  assert.match(
+    body,
+    /content-visibility:\s*auto/,
+    'the transcript rows no longer skip layout, so a long session streams slower ' +
+      'as it grows — see scripts/stream-perf.mjs to re-measure',
+  );
+});
+
+test('a skipped row still contributes a remembered height', () => {
+  const body = ruleBody('.stream-inner > *');
+  assert.ok(body !== null, 'the `.stream-inner > *` rule is gone from app.css');
+
+  // `auto <length>`, and **both** halves matter:
+  //
+  //   - without `contain-intrinsic-size` at all, a skipped row contributes no
+  //     height, the document collapses to something much shorter than the text in
+  //     it, and the bottom-follow lands on a scrollHeight that is a lie;
+  //   - without the `auto` keyword, the fallback length is used *forever* instead
+  //     of each row's real height once it has been rendered once, so the
+  //     scrollbar keeps describing a document that does not exist and the
+  //     estimate never converges.
+  const match = body.match(/contain-intrinsic-size:\s*auto\s+(\d+(?:\.\d+)?)(px|rem|em)/);
+  assert.ok(
+    match !== null,
+    '`contain-intrinsic-size` must be `auto <length>` on the transcript rows: the ' +
+      '`auto` keyword is what makes a refreshed row keep its real height',
+  );
+
+  // A sane fallback. It only ever applies to a row nobody has scrolled past yet,
+  // but a value far off the real row height would still show as a jump the first
+  // time somebody scrolls a long session.
+  const px = Number(match[1]);
+  assert.ok(
+    px > 16 && px < 400,
+    `the rows' estimated height is ${match[1]}${match[2]}, which is not a plausible ` +
+      'row height for this transcript (measured: median ~58px, mean ~133px)',
+  );
+});
+
+test('the skip is on the rows and not on the scroll container', () => {
+  // The rule has to be on the children. `content-visibility` on `.stream-inner`
+  // itself would skip the *whole* transcript whenever any part of it was off
+  // screen, and `.stream-scroll`'s `flex: 1 1 auto` plus the viewport-sized
+  // scrollbar would stop describing anything.
+  for (const selector of ['.stream-inner', '.stream-scroll']) {
+    const body = ruleBody(selector);
+    assert.ok(body !== null, `${selector} is gone from app.css`);
+    assert.doesNotMatch(
+      body,
+      /content-visibility/,
+      `${selector} must keep its real height — the skip belongs on its children`,
+    );
+  }
+});

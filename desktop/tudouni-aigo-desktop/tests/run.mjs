@@ -36,6 +36,11 @@ const SUITES = [
   // buffer, and the file browser's path arithmetic. All three are pure, which is
   // why they can be asserted without a window or a shell.
   'terminal.test.ts',
+  // The stylesheet rule that keeps a long conversation's stream flat. It reads
+  // `app.css` as text, because the declaration has no behaviour to observe in
+  // Node and what is being protected is its presence — see the file for why a
+  // performance fix is worth a test at all.
+  'stream-layout.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });
