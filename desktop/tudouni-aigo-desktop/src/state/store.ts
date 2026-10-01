@@ -1539,24 +1539,32 @@ export const useApp = create<AppStore>((set, get) => {
 
       const bucket = createSessionBucket(key, workspace, launch);
 
-      // The handle is registered before the first line can be routed to it, and
-      // the store bucket before that; the host holds anything that arrives in
-      // between.
+      // The handle is built before the first line can be routed to it, and it
+      // holds anything that arrives before a subscriber exists.
       const runtime = createTauriRuntime(key, (line) => {
         get().pushStderr(key, line);
       });
       registerRuntime(runtime);
-      runtime.subscribe((msg) => {
-        get().applyRuntimeMessage(key, msg);
-      });
 
-      // Anything the child printed before it gave up is already in the bridge's
-      // ring; read it once so a start-up failure has something to show even if
-      // it died faster than the event subscription.
-      void readRuntimeStderr(key).then((early) => {
-        for (const line of early) get().pushStderr(key, line);
-      });
-
+      // **The bucket is installed before anything is subscribed, and that order
+      // is load-bearing.** A line the child sent before the handle existed is
+      // held — by the host's `pendingLines`, and then by the handle's own queue
+      // — and `subscribe` is what flushes it, straight into
+      // `applyRuntimeMessage`. That function drops a message for a key with no
+      // bucket, and it has to: from a key alone, "this session is gone" and
+      // "this session has not been installed yet" are the same statement.
+      //
+      // So subscribing first and installing the bucket afterwards threw away
+      // exactly the lines the queue exists to protect: the opening
+      // `init` -> `session_load` -> `ui(state)` triple. The child is perfectly
+      // healthy and every *later* reply lands normally (`session_list` is sent
+      // below, after the bucket exists, so `sessions` populates the rail) —
+      // which is what makes this so quiet. With `init` gone there is no
+      // `session_id`, so the rail cannot mark the row current; with `ui(state)`
+      // gone the right rail has no snapshot; and because `ready` never becomes
+      // true the screen shows "Starting the runtime…" forever over a process
+      // that is running and answering. Nothing reports a failure, because
+      // nothing failed.
       set((state) => ({
         sessions: { ...state.sessions, [key as string]: bucket },
         order: [...state.order, key as string],
@@ -1567,6 +1575,18 @@ export const useApp = create<AppStore>((set, get) => {
         // And so is the note about nothing having been opened, if there was one.
         startupNotice: null,
       }));
+
+      // Only now, with somewhere for them to land.
+      runtime.subscribe((msg) => {
+        get().applyRuntimeMessage(key, msg);
+      });
+
+      // Anything the child printed before it gave up is already in the bridge's
+      // ring; read it once so a start-up failure has something to show even if
+      // it died faster than the event subscription.
+      void readRuntimeStderr(key).then((early) => {
+        for (const line of early) get().pushStderr(key, line);
+      });
 
       // A child is running in this directory — the bridge does not hand back a
       // key otherwise — and it is now the one on screen. That is the plainest

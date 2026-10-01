@@ -32,6 +32,11 @@ const SUITES = [
   'contract.test.ts',
   'paste.test.ts',
   'workspace.test.ts',
+  // The attach race: a child's opening handshake can be on the wire before the
+  // store has built the handle for it, and the layers that hold it only mean
+  // something if the bucket is installed before anything is subscribed. It is
+  // the "I opened a new session and it never came up" report.
+  'attach-race.test.ts',
   // The workspace's capabilities: the keystroke encoder, the terminal output
   // buffer, and the file browser's path arithmetic. All three are pure, which is
   // why they can be asserted without a window or a shell.
