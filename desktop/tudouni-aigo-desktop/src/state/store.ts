@@ -715,6 +715,13 @@ export interface AppStore {
   blockTouched: Partial<Record<SidebarBlockKey, boolean>>;
   blockAutoExpanded: Partial<Record<SidebarBlockKey, boolean>>;
   /**
+   * The right rail's width in px, as dragged by its own handle; `null` means
+   * "no width of the person's choosing", which lets the stylesheet keep owning
+   * the default — including its narrow-window fallback. A front-end preference:
+   * a rail's width is layout, and the protocol has no opinion on it.
+   */
+  sidebarWidth: number | null;
+  /**
    * Which reasoning blocks and tool rows are open, by entry id.
    *
    * Window-level, and it does not need to be otherwise: `nextId` in `entries.ts`
@@ -775,6 +782,12 @@ export interface AppStore {
   /* ---------------- composer ---------------- */
   /** An OS drag is currently over the window. Purely local, purely visual. */
   dragging: boolean;
+  /**
+   * A rail-width drag is live. Purely local, purely visual: the rail drops its
+   * width transition while the pointer moves, so the rail tracks the pointer
+   * instead of easing behind it.
+   */
+  resizing: boolean;
 
   /* ---------------- actions ---------------- */
 
@@ -926,6 +939,11 @@ export interface AppStore {
   toggleQuiet(): void;
   toggleSidebar(): void;
   setSidebarVisible(v: boolean): void;
+  /**
+   * Set the right rail's dragged width (clamped), or `null` to hand the width
+   * back to the stylesheet. Persisted like the other window-level preferences.
+   */
+  setSidebarWidth(px: number | null): void;
   toggleLeftbar(): void;
   setLeftbarVisible(v: boolean): void;
   toggleBlock(k: SidebarBlockKey): void;
@@ -1048,13 +1066,38 @@ export interface AppStore {
   applyLaunch(next: LaunchArgs): Promise<void>;
 }
 
+/**
+ * The rail opens **folded**: five headings are a table of contents, and a list
+ * that springs open on every start spends its pixels on blocks that usually
+ * have nothing to say about this conversation yet. The first snapshot that
+ * gives a block content unfolds it — once (`blockAutoExpanded`), and never
+ * again after a person has folded it themselves (`blockTouched`).
+ */
 const EMPTY_BLOCKS: Record<SidebarBlockKey, boolean> = {
-  goal: false,
-  tasks: false,
-  skills: false,
-  jobs: false,
-  mcp: false,
+  goal: true,
+  tasks: true,
+  skills: true,
+  jobs: true,
+  mcp: true,
 };
+
+/**
+ * The range a dragged rail width is allowed to land in.
+ *
+ * The floor keeps every row's own minimum readable (the MCP row was measured to
+ * overflow below 201px — see `McpRow`), and the ceiling keeps a maximally wide
+ * rail from eating the transcript: the composer's comfortable floor is around
+ * 700px, minus the left rail and a dragged one at the ceiling still leaves that.
+ * Both ends are read back through this function on load, so a range change
+ * re-clamps what an older build persisted rather than trusting it.
+ */
+export const RAIL_MIN = 208;
+export const RAIL_MAX = 420;
+
+export function clampRailWidth(px: number): number {
+  if (!Number.isFinite(px)) return RAIL_MIN;
+  return Math.min(RAIL_MAX, Math.max(RAIL_MIN, Math.round(px)));
+}
 
 /* ============================================================
    Preferences: read once, persisted on change
@@ -1064,6 +1107,8 @@ type Prefs = {
   quiet: boolean;
   sidebarVisible: boolean;
   leftbarVisible: boolean;
+  /** The right rail's dragged width; `null` = the stylesheet's own default. */
+  sidebarWidth: number | null;
   blockCollapsed: Record<SidebarBlockKey, boolean>;
   blockTouched: Partial<Record<SidebarBlockKey, boolean>>;
   /** The left rail's session list, folded on its own. The workspace list above
@@ -1108,6 +1153,7 @@ function loadPrefs(): Prefs {
     quiet: false,
     sidebarVisible: true,
     leftbarVisible: true,
+    sidebarWidth: null,
     blockCollapsed: { ...EMPTY_BLOCKS },
     blockTouched: {},
     sessionsCollapsed: false,
@@ -1133,6 +1179,14 @@ function loadPrefs(): Prefs {
       quiet: parsed.quiet === true,
       sidebarVisible: parsed.sidebarVisible ?? fallback.sidebarVisible,
       leftbarVisible: parsed.leftbarVisible ?? fallback.leftbarVisible,
+      // A number, or nothing. A non-number is not `NaN`-coerced and hoped for:
+      // `clampRailWidth` would turn it into a real width and a corrupted record
+      // would silently win over a stylesheet default, so the boundary is kept
+      // at the parse.
+      sidebarWidth:
+        typeof parsed.sidebarWidth === 'number' && Number.isFinite(parsed.sidebarWidth)
+          ? clampRailWidth(parsed.sidebarWidth)
+          : fallback.sidebarWidth,
       blockCollapsed: { ...EMPTY_BLOCKS, ...(parsed.blockCollapsed ?? {}) },
       blockTouched: parsed.blockTouched ?? {},
       sessionsCollapsed: parsed.sessionsCollapsed ?? fallback.sessionsCollapsed,
@@ -1210,6 +1264,7 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
         quiet: quiet ? quiet.value : s.sessions[s.activeKey ?? '']?.quiet === true,
         sidebarVisible: s.sidebarVisible,
         leftbarVisible: s.leftbarVisible,
+        sidebarWidth: s.sidebarWidth,
         blockCollapsed: s.blockCollapsed,
         blockTouched: s.blockTouched,
         sessionsCollapsed: s.sessionsCollapsed,
@@ -1717,6 +1772,7 @@ export const useApp = create<AppStore>((set, get) => {
 
     sidebarVisible: prefs.sidebarVisible,
     leftbarVisible: prefs.leftbarVisible,
+    sidebarWidth: prefs.sidebarWidth,
     blockCollapsed: prefs.blockCollapsed,
     blockTouched: prefs.blockTouched,
     blockAutoExpanded: {},
@@ -1730,6 +1786,7 @@ export const useApp = create<AppStore>((set, get) => {
     maxStepsDefault: prefs.maxStepsDefault,
 
     dragging: false,
+    resizing: false,
 
     /* ==========================================================
        Sessions: the lifecycle
@@ -2814,6 +2871,16 @@ export const useApp = create<AppStore>((set, get) => {
       persistPrefs(get());
     },
 
+    /**
+     * The dragged width. Clamped at the single place that remembers it, so a
+     * future change to the range re-clamps what is read back, and `null` (no
+     * dragging has happened) hands the width back to the stylesheet.
+     */
+    setSidebarWidth(px) {
+      set({ sidebarWidth: px === null ? null : clampRailWidth(px) });
+      persistPrefs(get());
+    },
+
     toggleLeftbar() {
       set({ leftbarVisible: !get().leftbarVisible });
       persistPrefs(get());
@@ -3331,8 +3398,23 @@ function applyStateSnapshot(
   let changedPrefs = false;
 
   for (const blockKey of SIDEBAR_BLOCKS) {
-    const touched = s.blockTouched[blockKey] === true;
-    if (!touched && hasContent[blockKey] && !autoExpanded[blockKey]) {
+    // A human fold always wins, and never fires the one-time expansion later:
+    // once a person has touched the block, `toggleBlock`'s state is final. The
+    // mark is written here rather than relying on the rule skipping a touched
+    // block forever — that variant comes unstuck when the first snapshot
+    // *follows* the touch in the same tick, in which case nothing else would
+    // ever write the mark, `blockAutoExpanded` would stay empty and the stale
+    // record could resurface after a Preferences repair. `changedPrefs` fires
+    // whenever the mark is new, which for a first session is every block.
+    if (s.blockTouched[blockKey] === true) {
+      if (autoExpanded[blockKey] !== true) {
+        autoExpanded[blockKey] = true;
+        changedPrefs = true;
+      }
+      continue;
+    }
+    // The one-time auto-expand: the day a block has something to say, it says it.
+    if (hasContent[blockKey] && autoExpanded[blockKey] !== true) {
       collapsed[blockKey] = false;
       autoExpanded[blockKey] = true;
       changedPrefs = true;

@@ -121,6 +121,7 @@ async function main() {
       hasStatusBar: !!document.querySelector('.statusbar'),
       hasComposer: !!document.querySelector('.composer'),
       booting: !!document.querySelector('.booting'),
+      welcome: !!document.querySelector('.welcome'),
       commandCount: document.querySelectorAll('.titlebar, .topbar').length,
     });
   })()`);
@@ -129,7 +130,13 @@ async function main() {
   const m = JSON.parse(mounted ?? '{}');
   if (m.childCount <= 0) throw new Error('the React tree did not mount');
   if (!m.hasApp) throw new Error('the app shell is missing');
-  if (!m.booting) throw new Error('with no runtime attached the UI should show its booting phase');
+  // No session attached: `conversationView` puts the **first screen** here, not
+  // "starting the runtime…" — `booting` belongs to a session that exists but is
+  // not ready yet. This check used to assert `booting` and had not followed the
+  // view's documented priority order, so it failed on an untouched tree.
+  if (!m.welcome) {
+    throw new Error('with no session attached the UI should show the first screen');
+  }
 
   // ---- 1b. the conversation column owns the composer, the status bar spans the window ----
   //
@@ -730,12 +737,16 @@ async function main() {
   });
 
   const sessions = await evaluate(`(() => {
-    const rows = [...document.querySelectorAll('.lb-session')];
+    // The saved list only. The live group (.lb-live-rows) holds the session
+    // currently open with no file yet - added after this check was written -
+    // and its row carries is-current by design, so counting every .lb-session
+    // read 3 rows and 1 "current" on an untouched tree.
+    const rows = [...document.querySelectorAll('.lb-rows:not(.lb-live-rows) .lb-session')];
     return JSON.stringify({
       count: rows.length,
       first: (rows[0]?.innerText ?? '').replace(/\\s+/g,' ').trim(),
       current: rows.filter((r) => r.classList.contains('is-current')).length,
-      times: [...document.querySelectorAll('.lb-session-time')].map((n) => n.textContent),
+      times: [...document.querySelectorAll('.lb-rows:not(.lb-live-rows) .lb-session-time')].map((n) => n.textContent),
     });
   })()`);
   console.log('session rows:', sessions);
@@ -1589,7 +1600,7 @@ async function main() {
   await evaluate(`(() => { window.__aigoStore.getState().answerQuestion('answered', 'SQLite'); return true; })()`);
   await sleep(200);
 
-  // ---- 5. the command palette, and the 17-command table ----
+  // ---- 5. the command palette, and the command table ----
   await evaluate(`(() => { window.__aigoStore.getState().openPanel('commands'); return true; })()`);
   await sleep(400);
   const palette = await evaluate(`(() => {
@@ -1598,7 +1609,9 @@ async function main() {
   })()`);
   console.log('command palette:', palette);
   const pal = JSON.parse(palette ?? '{}');
-  if (pal.count !== 17) throw new Error(`expected 17 commands, got ${pal.count}`);
+  // 19 = `COMMANDS` in `src/commands.ts` (files and terminal joined after this
+  // check was written; keep the number tied to that table, not to a memory).
+  if (pal.count !== 19) throw new Error(`expected 19 commands, got ${pal.count}`);
   if (pal.rows.includes('/theme')) throw new Error('/theme is still in the command table');
 
   await evaluate(`(() => { window.__aigoStore.setState({ panel: null }); return true; })()`);

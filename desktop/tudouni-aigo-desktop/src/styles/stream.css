@@ -830,12 +830,13 @@
   color: var(--fg-secondary);
 }
 
+/* The objective is shown in full: the rail scrolls and the tail of a long
+   sentence is exactly where "what is this goal, precisely" usually lives. The
+   -webkit line clamp that used to sit here belonged to a different surface — a
+   fixed-height column that had to clip (see the TUI's `railMaxRows`) — and
+   carried over by momentum. No ellipsis, no cap: the block grows downward. */
 .sb-goal .sg-text {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  color: var(--fg-secondary);
   word-break: break-word;
 }
 

@@ -211,6 +211,7 @@ export const en = {
   'lb.collapse': 'Hide this sidebar',
   'lb.settings': 'Settings',
   'lb.show': 'Show the workspace sidebar',
+  'rail.drag': 'Drag to resize the sidebar. Double-click to reset it.',
   'lb.foldSessions': 'Fold the session list',
   'lb.unfoldSessions': 'Unfold the session list',
   'lb.deleteSession': 'Delete this session',

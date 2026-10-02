@@ -221,6 +221,8 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
   width: var(--rail-w);
   min-height: 0;
   overflow: hidden;
+  /* The drag handle is absolutely positioned against the rail's own edge. */
+  position: relative;
   transition: width var(--motion-base) var(--ease-standard);
 }
 
@@ -228,12 +230,57 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
   --rail-w: 244px;
 }
 
+/**
+ * The right rail's width is draggable, so the default lives one declaration
+ * deep: `App.tsx` writes `--rail-w-dragged` on the same element when the person
+ * has dragged a width of their own (persisted as `sidebarWidth`), and the
+ * `var(..., fallback)` form lets dragged widths survive a rebuild while the
+ * stylesheet keeps owning the default — including the narrow-window override
+ * below, which keeps its own un-dragged value.
+ */
 .app-rail-right {
-  --rail-w: 268px;
+  --rail-w: var(--rail-w-dragged, 268px);
 }
 
 .app-rail.is-collapsed {
   width: 0;
+}
+
+/* ---------- 右侧栏的拖宽手柄 ---------- */
+/**
+ * A 6px strip on the rail's inner edge (the divider a person would aim at),
+ * produced by `App.tsx`'s `RailDragHandle`. `touch-action: none` lets pointer
+ * events own the gesture on touch screens; a double-click hands the width back
+ * to the stylesheet (`setSidebarWidth(null)`).
+ *
+ * The hover affordance paints the strip rather than moving it: a width change
+ * on hover would move the strip under the pointer, which is how jitter is made.
+ */
+.rail-drag {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 5;
+}
+
+.rail-drag:hover,
+.app-rail.is-resizing .rail-drag {
+  background: var(--accent-subtle);
+}
+
+/* The live drag must not rubber-band behind the width transition, and the page
+   must not select text while the pointer sweeps across it. */
+.app-rail.is-resizing {
+  transition: none;
+}
+
+body.is-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 /* ---------- 通用小工具 ---------- */
@@ -435,7 +482,10 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
    narrow windows change. */
 @media (max-width: 1180px) {
   .app-rail-right {
-    --rail-w: 236px;
+    /* Same shape as the base rule above: a dragged width wins here too — a
+       width the person chose is not suspended by the window getting narrower —
+       and the fallback stays the narrow-window default. */
+    --rail-w: var(--rail-w-dragged, 236px);
   }
   .app-rail-left {
     --rail-w: 216px;
