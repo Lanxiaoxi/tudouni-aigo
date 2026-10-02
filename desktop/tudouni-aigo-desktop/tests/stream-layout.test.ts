@@ -43,6 +43,8 @@ const cssPath = resolve(process.cwd(), 'src', 'styles', 'app.css');
 const css = readFileSync(cssPath, 'utf8');
 const streamCssPath = resolve(process.cwd(), 'src', 'styles', 'stream.css');
 const streamCss = readFileSync(streamCssPath, 'utf8');
+const globalCssPath = resolve(process.cwd(), 'src', 'styles', 'global.css');
+const globalCss = readFileSync(globalCssPath, 'utf8');
 
 /**
  * The declarations of one rule, as written.
@@ -68,6 +70,16 @@ function streamRuleBody(selector: string): string | null {
   const close = streamCss.indexOf('}', open);
   if (open < 0 || close < 0) return null;
   return streamCss.slice(open + 1, close);
+}
+
+/** The same, against `global.css` — where the fold vocabulary lives. */
+function globalRuleBody(selector: string): string | null {
+  const at = globalCss.indexOf(`${selector} {`);
+  if (at < 0) return null;
+  const open = globalCss.indexOf('{', at);
+  const close = globalCss.indexOf('}', open);
+  if (open < 0 || close < 0) return null;
+  return globalCss.slice(open + 1, close);
 }
 
 test('the transcript does not lay out the rows nobody is looking at', () => {
@@ -165,6 +177,81 @@ test('a blank line in a terminal occupies a line', () => {
     /^(calc\(|1em$)/,
     `\`min-height: ${value}\` is not a length this pane can rely on — use ` +
       '`calc(var(--text-code) * var(--leading-code))` or `1em`',
+  );
+});
+
+/* ============================================================
+   The streaming reasoning block
+   ============================================================ */
+
+test('the streaming reasoning block is contained from the transcript around it', () => {
+  // The second half of "a long session streams slower as it grows", and the one
+  // the character counter made visible: the client ticked fast for the first
+  // steps of a session and then fell behind the TUI, and the cause was the folded
+  // reasoning body still being laid out.
+  //
+  // A reasoning block grows a chunk at a time, quiet mode folds it, and
+  // `.collapse` keeps the body **mounted** so the fold has something to
+  // transition — so the text stayed in the layout tree and `pre-wrap` +
+  // `break-word` re-broke all of it on every commit. Measured on a 40-step
+  // session in quiet mode, one delta cost 17ms with 3k characters of reasoning on
+  // screen and **242ms** with 128k, and the block length tracks the context —
+  // which is why it only showed up once the session was long.
+  //
+  // `content-visibility: auto` is the fix. It is deliberately *not* `hidden`: the
+  // body is one Ctrl+T away from being read, and a 130,776-character body must
+  // still lay out in full when it is open.
+  const body = streamRuleBody('.e-reason-body');
+  assert.ok(body !== null, 'the `.e-reason-body` rule is gone from stream.css');
+
+  assert.match(
+    body,
+    /content-visibility:\s*auto/,
+    'the reasoning body is laid out by the whole document again, so one delta ' +
+      'costs more the longer the model has been thinking — see the reasoning in ' +
+      'stream.css for the measurement',
+  );
+  // `auto <length>` for the same reason as the transcript and the terminal: the
+  // fallback only applies to an element that has never been laid out, and `auto`
+  // is what makes the estimate converge to the real height afterwards.
+  assert.match(
+    body,
+    /contain-intrinsic-size:\s*auto\s+\d+(?:\.\d+)?(px|rem|em)/,
+    '`contain-intrinsic-size` must be `auto <length>` on the reasoning body too',
+  );
+});
+
+test('the reasoning body is never hidden from layout', () => {
+  // The cheap-looking alternative, and the one that was measured and rejected:
+  // `content-visibility: hidden` on `.collapse.is-collapsed > *`. It flattens the
+  // closed case as well as `auto` does, but `hidden` applies only while
+  // `is-collapsed` is present — and that is the class the click *removes*, so the
+  // block popped to full height instead of unfolding. The one animation the fold
+  // exists for was gone, which is why the declaration belongs on the body as
+  // `auto` (self-managing: expand it and the browser lays it out) rather than on
+  // the fold wrapper as `hidden`.
+  //
+  // Pinned because the two are one keystroke apart in a stylesheet and read as
+  // equivalent, while only one of them keeps the block readable.
+  const body = streamRuleBody('.e-reason-body');
+  assert.ok(body !== null, 'the `.e-reason-body` rule is gone from stream.css');
+  assert.doesNotMatch(
+    body,
+    /content-visibility:\s*hidden/,
+    '`hidden` unconditionally skips the reasoning body, so an *open* block is ' +
+      'never laid out — use `auto`',
+  );
+
+  // And the fold wrapper itself must stay out of this: a skip keyed on
+  // `is-collapsed` races the class removal that starts the unfold animation.
+  const collapse = globalRuleBody('.collapse.is-collapsed');
+  assert.ok(collapse !== null, 'the `.collapse.is-collapsed` rule is gone from global.css');
+  assert.doesNotMatch(
+    collapse,
+    /content-visibility/,
+    'the collapsed state must not skip its content: `is-collapsed` is removed to ' +
+      'start the unfold, so the content pops in at full height with nothing to ' +
+      'transition',
   );
 });
 

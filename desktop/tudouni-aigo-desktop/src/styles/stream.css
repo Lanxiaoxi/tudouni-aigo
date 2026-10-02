@@ -393,6 +393,48 @@
   color: var(--fg-faint);
 }
 
+/* The reasoning quote block, and the reason a long session's reasoning stream
+   does not get slower as the session grows.
+ *
+ * A reasoning block grows one chunk at a time and is text nobody can see while it
+ * grows: quiet mode folds it (`.er-head` only), and `.collapse` keeps the body
+ * **mounted** so the fold has something to transition. Mounted but folded is not
+ * the same as absent, though — the text is still in the layout tree, and
+ * `white-space: pre-wrap` + `word-break: break-word` means every commit re-breaks
+ * all of it. So the cost of one streamed chunk grew with the length of the
+ * reasoning block, which is exactly what the counter beside it made visible:
+ * measured on a 40-step session, one `delta` cost one number at 3k characters of
+ * reasoning and **fourteen times** that at 128k — and since the block length
+ * tracks the context, that is what "the client falls behind the TUI" was.
+ *
+ * Measured (production bundle, `flushSync`, 1440x900, quiet mode):
+ *
+ *   one 128k-character block    242ms -> 17ms per delta
+ *   history 0 -> 120 steps      14 -> 38ms  =>  5 -> 25ms
+ *
+ * `content-visibility: auto` is what fixes it. Note it does **not** hide the
+ * block: the TUI has its flat reasoning line because it never puts the text
+ * through layout at all (`internal/frontends/tui/view.go`, `thinkingFolded`),
+ * whereas here the block is one Ctrl+T away from being read. What `auto` brings
+ * is containment — the element's own layout is isolated from the document's — so
+ * re-breaking this text no longer invalidates the transcript around it. An open
+ * block is still laid out in full and still scrolls: measured with a
+ * 130,776-character body, the box is 320px tall against a 38,345px scroll
+ * height, so all of it is reachable.
+ *
+ * `contain-intrinsic-size: auto 320px` is load-bearing, the same as on the
+ * transcript rows (`.stream-inner > *`, app.css): a skipped element contributes
+ * an estimate, `auto` makes the browser keep each element's real height once it
+ * has been laid out, and the fallback is this block's own `max-height`, so the
+ * estimate can never claim more room than the box is allowed to take.
+ *
+ * **`content-visibility: hidden` on the fold wrapper was measured and rejected.**
+ * It flattens the closed case too, but it applies only while `is-collapsed` is
+ * present — and that is the class the click removes — so the block popped to full
+ * height instead of unfolding, and the one animation the fold exists for was
+ * gone. `auto` on the body is self-managing: expand and the block becomes
+ * visible, so the browser lays it out as it grows and the fold still animates.
+ */
 .e-reason-body {
   padding: var(--space-2) var(--space-3) var(--space-3);
   border-top: 1px dashed var(--border);
@@ -404,6 +446,8 @@
   word-break: break-word;
   max-height: 320px;
   overflow: auto;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 320px;
 }
 
 /* ---------------- 10/11. 回答与流式正文 ---------------- */
