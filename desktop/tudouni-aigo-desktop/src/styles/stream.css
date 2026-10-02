@@ -1388,6 +1388,18 @@
   color: var(--fg);
 }
 
+/* Armed: the second press will really end a process tree and remove the tab, so
+   the button says so — the destructive colour, and the tooltip and aria-label
+   both change too. Colour never carries it alone. */
+.term-tab-close.is-armed {
+  color: var(--destructive);
+  background: var(--destructive-subtle);
+}
+
+/* The close button is no longer disabled for an ended terminal — a dead button
+   there left no way at all to remove the tab. The rule stays because a disabled
+   control may come back for the in-flight case, and a greyed button that does
+   not read as greyed is worse than no state at all. */
 .term-tab-close:disabled {
   opacity: 0.3;
   cursor: not-allowed;

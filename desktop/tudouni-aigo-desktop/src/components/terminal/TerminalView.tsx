@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, X } from 'lucide-react';
-import { useApp, useSessionField, NO_TERMINALS } from '@/state/store';
+import { useApp, useSessionField, EMPTY_TAIL, NO_TERMINALS } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { encodeKey } from '@/runtime/terminalKeys';
@@ -41,7 +41,7 @@ export function TerminalView() {
   const terminals = useSessionField((rt) => rt.terminals, NO_TERMINALS);
   const attachedId = useSessionField((rt) => rt.activeTerminalId, null);
   const createTerminal = useApp((s) => s.createTerminal);
-  const killTerminal = useApp((s) => s.killTerminal);
+  const closeTerminal = useApp((s) => s.closeTerminal);
   const attachTerminal = useApp((s) => s.attachTerminal);
 
   const attached = useMemo(
@@ -54,9 +54,9 @@ export function TerminalView() {
       <TerminalTabs
         terminals={terminals}
         attachedId={attachedId}
-        onPick={attachTerminal}
+        onPick={(id) => attachTerminal(id === attachedId ? null : id)}
         onNew={() => createTerminal()}
-        onKill={killTerminal}
+        onClose={closeTerminal}
       />
       {attached ? (
         <AttachedPane key={attached.id} row={attached} />
@@ -73,62 +73,122 @@ export function TerminalView() {
   );
 }
 
-/** The tab strip: one tab per terminal, plus the new-terminal button. */
+/**
+ * The tab strip: one tab per terminal, plus the new-terminal button.
+ *
+ * `onPick` **toggles**: clicking the tab already being read goes back to the
+ * conversation rather than re-selecting it. That is the only way out of an
+ * attached terminal — the tab strip has no separate "leave" control, and the
+ * alternative was having the person close the shell to get their transcript
+ * back, which is a destructive answer to a navigation question.
+ */
 function TerminalTabs({
   terminals,
   attachedId,
   onPick,
   onNew,
-  onKill,
+  onClose,
 }: {
   terminals: TerminalRow[];
   attachedId: string | null;
   onPick: (id: string) => void;
   onNew: () => void;
-  onKill: (id: string) => void;
+  onClose: (id: string) => void;
 }) {
   const t = useT();
+  /**
+   * Which running terminal has asked to be closed once already.
+   *
+   * The same two-press rule the session list uses for a delete, and for the same
+   * reason: ending a terminal takes down a **whole process tree** — `shell → npm
+   * → node` is the ordinary shape of a command — and it cannot be undone. An
+   * ended terminal needs no confirmation, because forgetting a record destroys
+   * nothing but the record.
+   */
+  const [armed, setArmed] = useState<string | null>(null);
   return (
     <div className="term-tabs" role="tablist">
-      {terminals.map((row) => (
-        <div
-          key={row.id}
-          className={`term-tab${row.id === attachedId ? ' is-current' : ''}`}
-          data-status={row.status}
-        >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={row.id === attachedId}
-            className="term-tab-main"
-            onClick={() => onPick(row.id)}
-            title={row.cwd === '' ? t('panel.term.cwdRoot') : row.cwd}
+      {terminals.map((row) => {
+        const running = row.status === 'running';
+        const isArmed = armed === row.id;
+        return (
+          <div
+            key={row.id}
+            className={`term-tab${row.id === attachedId ? ' is-current' : ''}`}
+            data-status={row.status}
           >
-            <span className="mono">{row.id}</span>
-            {/* The status is the runtime's word, never derived here. Three
-                endings read three ways: `killed`, `exited` with a code, and
-                `exited` with none are different facts. */}
-            <span className="term-tab-state">
-              {row.status === 'running'
-                ? t('panel.term.running')
-                : row.status === 'killed'
-                  ? t('panel.term.killed')
-                  : row.exit_code === null || row.exit_code === undefined
-                    ? t('panel.term.exitedNoCode')
-                    : t('panel.term.exited', { code: row.exit_code })}
-            </span>
-          </button>
-          <button
-            type="button"
-            className="term-tab-close"
-            aria-label={t('panel.term.kill')}
-            disabled={row.status !== 'running'}
-            onClick={() => onKill(row.id)}
-          >
-            <X size={11} />
-          </button>
-        </div>
-      ))}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={row.id === attachedId}
+              className="term-tab-main"
+              onClick={() => onPick(row.id)}
+              title={
+                row.id === attachedId
+                  ? t('panel.term.detach')
+                  : row.cwd === ''
+                    ? t('panel.term.cwdRoot')
+                    : row.cwd
+              }
+            >
+              <span className="mono">{row.id}</span>
+              {/* The status is the runtime's word, never derived here. Three
+                  endings read three ways: `killed`, `exited` with a code, and
+                  `exited` with none are different facts. */}
+              <span className="term-tab-state">
+                {running
+                  ? t('panel.term.running')
+                  : row.status === 'killed'
+                    ? t('panel.term.killed')
+                    : row.exit_code === null || row.exit_code === undefined
+                      ? t('panel.term.exitedNoCode')
+                      : t('panel.term.exited', { code: row.exit_code })}
+              </span>
+            </button>
+            {/* Close the tab — and for a shell that is still running that means
+                ending it first, because the runtime will not forget a terminal
+                whose process is alive. The button says which of the two it will
+                do, because one of them is destructive and one is not.
+
+                **It is never disabled.** An ended terminal's tab used to have a
+                dead button here, which left no way at all to remove it — the row
+                stays in the list on purpose (it is what answers "what was I
+                running"), so the only thing that could ever take it off was the
+                control that was greyed out. */}
+            <button
+              type="button"
+              className={`term-tab-close${isArmed ? ' is-armed' : ''}`}
+              aria-label={
+                running
+                  ? isArmed
+                    ? t('panel.term.closeRunningConfirm')
+                    : t('panel.term.closeRunning')
+                  : t('panel.term.close')
+              }
+              title={
+                running
+                  ? isArmed
+                    ? t('panel.term.closeRunningConfirm')
+                    : t('panel.term.closeRunning')
+                  : t('panel.term.close')
+              }
+              onClick={() => {
+                if (running && !isArmed) {
+                  setArmed(row.id);
+                  return;
+                }
+                setArmed(null);
+                onClose(row.id);
+              }}
+              onBlur={() => {
+                if (isArmed) setArmed(null);
+              }}
+            >
+              <X size={11} />
+            </button>
+          </div>
+        );
+      })}
       <Tip label={t('panel.term.new')}>
         <button type="button" className="term-tab-add" aria-label={t('panel.term.new')} onClick={onNew}>
           <Plus size={12} />
@@ -148,7 +208,8 @@ function TerminalTabs({
  */
 function AttachedPane({ row }: { row: TerminalRow }) {
   const t = useT();
-  const lines = useSessionField((rt) => rt.terminalOutput[row.id] ?? EMPTY_LINES, EMPTY_LINES);
+  const tail = useSessionField((rt) => rt.terminalTails[row.id] ?? EMPTY_TAIL, EMPTY_TAIL);
+  const lines = tail.lines;
   const terminalInput = useApp((s) => s.terminalInput);
   const resizeTerminal = useApp((s) => s.resizeTerminal);
   const ref = useRef<HTMLDivElement>(null);
@@ -256,10 +317,6 @@ function AttachedPane({ row }: { row: TerminalRow }) {
     </div>
   );
 }
-
-/** A stable empty array: a fresh `[]` on every render is a new reference and
- *  would re-render this pane on every store write. */
-const EMPTY_LINES: string[] = [];
 
 /**
  * Measure one character cell by rendering a known string off-screen.

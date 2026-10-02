@@ -735,6 +735,10 @@ runtime 自己给出（就是 `model_call` 将要记的那个号），跟审计�
 你 → {"v":1,"t":"terminal_kill","terminal_id":"term-01"}
 你 ← {"v":1,"t":"ui","kind":"terminal_exit","terminal_id":"term-01","reason":"killed",
       "exit_code":null,"terminal":{…status 已经是 killed…}}
+
+你 → {"v":1,"t":"terminal_close","terminal_id":"term-01"}
+你 ← {"v":1,"t":"ui","kind":"terminals","terminals":[…去掉 term-01 之后的全量清单…]}
+   // 对**还活着**的或认不出的 id：一句 notice + 一份没变过的全量清单
 ```
 
 **终端是 runtime 管的长期资源，不是前端自己起的子进程。** 它属于 **workspace**，不属于

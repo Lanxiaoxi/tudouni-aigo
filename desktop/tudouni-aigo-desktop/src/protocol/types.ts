@@ -21,7 +21,7 @@ export const ENVELOPE_VERSION = 1;
  *
  * **4** adds the workspace's two non-session capabilities: Files (`file_list`,
  * `file_read`) and Terminal (`terminal_list`, `terminal_create`,
- * `terminal_input`, `terminal_resize`, `terminal_kill`, plus the `terminal_*`
+ * `terminal_input`, `terminal_resize`, `terminal_kill`, `terminal_close`, plus the `terminal_*`
  * and `files` / `file_read` kinds on the `ui` channel). It is additive in the
  * same way 2 was: a front end that knows neither simply never asks, and one that
  * does not recognise `terminal_output` ignores a kind it cannot draw — which is
@@ -992,6 +992,13 @@ export type FrontendMsg =
   | { v: number; t: 'terminal_input'; terminal_id: string; data: string }
   | { v: number; t: 'terminal_resize'; terminal_id: string; cols: number; rows: number }
   | { v: number; t: 'terminal_kill'; terminal_id: string }
+  /** Forget a terminal that has **already ended**, so it stops appearing in the
+   *  list. Not a synonym for `terminal_kill`: that one ends a process, this one
+   *  deletes a record, and the runtime refuses this for a terminal that still
+   *  needs the other. The answer is a fresh `ui(terminals)` — a refused close
+   *  answers with a notice *and* that list, so a tab dropped too early is
+   *  restored from the same reply. */
+  | { v: number; t: 'terminal_close'; terminal_id: string }
   | { v: number; t: 'shutdown' };
 
 /* ============================================================

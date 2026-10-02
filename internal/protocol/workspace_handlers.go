@@ -214,6 +214,39 @@ func (s *Server) handleTerminalKill(message map[string]any) {
 	}
 }
 
+// handleTerminalClose answers `terminal_close`.
+//
+// It drops a terminal that has **already ended** from the workspace's list. A
+// running one is refused by the runtime, and that refusal is the safety property
+// rather than a technicality: forgetting a record whose process is still alive
+// would leave a shell nobody can see and nobody can end.
+//
+// Unlike `terminal_kill`, this handler **does** answer, and the answer is the
+// resulting full list. The two differ because they change different things. A kill
+// ends a process, and the ending has an event of its own (`terminal_exit`) emitted
+// from the wait path — a reply there would be a second truth about whether the
+// shell is running. A close changes the list, and the list is the only thing that
+// can report it.
+func (s *Server) handleTerminalClose(message map[string]any) {
+	service, ok := s.terminalService()
+	if !ok {
+		return
+	}
+	id, ok := String(message, "terminal_id")
+	if !ok || id == "" {
+		s.notice("warn", "terminal", i18n.T("channels.terminal.needs_id", "action", InTerminalClose))
+		return
+	}
+	if err := service.RemoveTerminal(id); err != nil {
+		s.notice("warn", "terminal", i18n.T("channels.terminal.close_failed", "id", id, "problem", err.Error()))
+		// The list goes out as well, so a front end that had already dropped the
+		// tab learns the truth from the same reply as the sentence explaining why.
+		s.Send(s.terminalListMessage(service))
+		return
+	}
+	s.Send(s.terminalListMessage(service))
+}
+
 // terminalService finds the runtime's terminal surface, reporting the two ways it
 // can be absent.
 //

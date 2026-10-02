@@ -357,8 +357,15 @@ export const en = {
   'panel.term.new': 'New terminal',
   'panel.term.kill': 'End this terminal',
   'panel.term.killConfirm': 'Press again to end it',
+  /* Closing a tab: two different acts behind one button, and the label says
+     which will happen. An ended shell is only forgotten — nothing is lost but
+     the record — while a running one has to be **ended first**, because the
+     runtime will not forget a terminal whose process is alive. */
+  'panel.term.close': 'Close this tab',
+  'panel.term.closeRunning': 'End this terminal and close its tab',
+  'panel.term.closeRunningConfirm': 'Press again to end it and close the tab',
   'panel.term.attach': 'Type into it',
-  'panel.term.detach': 'Leave the terminal (it keeps running)',
+  'panel.term.detach': 'Back to the conversation (the shell keeps running)',
   'panel.term.detached': 'You left the terminal. It is still running.',
   'panel.term.running': 'running',
   'panel.term.exited': 'exited ({code})',

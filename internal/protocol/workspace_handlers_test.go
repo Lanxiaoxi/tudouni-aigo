@@ -26,6 +26,8 @@ type terminalStub struct {
 	inputs      []string
 	resizes     [][2]int
 	killed      []string
+	removed     []string
+	removeErr   error
 	readFailure error
 }
 
@@ -78,6 +80,11 @@ func (s *terminalStub) TerminalResize(id string, cols, rows int) error {
 func (s *terminalStub) TerminalKill(id string) error {
 	s.killed = append(s.killed, id)
 	return nil
+}
+
+func (s *terminalStub) RemoveTerminal(id string) error {
+	s.removed = append(s.removed, id)
+	return s.removeErr
 }
 
 type stubError struct{ text string }
@@ -211,7 +218,7 @@ func TestFileFailureIsAnoticeNotAnEmptyAnswer(t *testing.T) {
 // would swallow, and the symptom would be a file tree that is empty rather than a
 // sentence saying there is no session.
 func TestAWorkspaceMessageWithNoRuntimeSaysSo(t *testing.T) {
-	for _, kind := range []string{InFileList, InTerminalList, InTerminalCreate} {
+	for _, kind := range []string{InFileList, InTerminalList, InTerminalCreate, InTerminalClose} {
 		message := onlyMessage(t, driveServer(t, nil, map[string]any{"v": VERSION, "t": kind}))
 		if TypeOf(message) != OutNotice {
 			t.Errorf("%s with no runtime answered %q, want a notice", kind, TypeOf(message))
@@ -422,6 +429,78 @@ func TestTerminalResizeWithoutAnIdIsRefused(t *testing.T) {
 	}
 	if len(runtime.resizes) != 0 {
 		t.Errorf("a resize with no id reached the runtime: %v", runtime.resizes)
+	}
+}
+
+// TestTerminalCloseAnswersWithTheList.
+//
+// The asymmetry with `terminal_kill` is deliberate and this is where it is
+// pinned: a kill changes a **process**, and its outcome travels as the
+// `terminal_exit` the wait path emits, so a reply here would be a second truth. A
+// close changes the **list**, and the list is the only thing that can report it —
+// so this one does answer, and with the whole list rather than a delta, which is
+// what lets a front end replace rather than reconcile.
+func TestTerminalCloseAnswersWithTheList(t *testing.T) {
+	runtime := &terminalStub{terminals: []map[string]any{{"id": "term-02", "status": "running"}}}
+	messages := decodeAll(t, driveServer(t, runtime, map[string]any{
+		"v": VERSION, "t": InTerminalClose, "terminal_id": "term-01",
+	}))
+	if len(messages) != 1 {
+		t.Fatalf("terminal_close wrote %d messages, want exactly one", len(messages))
+	}
+	message := messages[0]
+	if TypeOf(message) != OutUI {
+		t.Fatalf("type = %q, want %q", TypeOf(message), OutUI)
+	}
+	if kind, _ := String(message, "kind"); kind != UITerminals {
+		t.Errorf("kind = %q, want %q", kind, UITerminals)
+	}
+	if len(runtime.removed) != 1 || runtime.removed[0] != "term-01" {
+		t.Errorf("removed = %v, want one term-01", runtime.removed)
+	}
+	// The list is the runtime's answer, not an empty placeholder: a front end draws
+	// the tab strip from this.
+	rows, _ := message["terminals"].([]any)
+	if len(rows) != 1 {
+		t.Errorf("terminals = %v, want the runtime's own one-row list", message["terminals"])
+	}
+}
+
+// TestTerminalCloseRefusalStillSendsTheTruth.
+//
+// A refused close is the running-terminal case, and the answer is a notice **plus**
+// the unchanged list. The list matters as much as the sentence: a front end that
+// had already dropped the tab learns from the same reply that it was wrong, rather
+// than from a later snapshot that may never come.
+func TestTerminalCloseRefusalStillSendsTheTruth(t *testing.T) {
+	runtime := &terminalStub{
+		terminals: []map[string]any{{"id": "term-01", "status": "running"}},
+		removeErr: &stubError{"terminal term-01 is still running; end it first"},
+	}
+	messages := decodeAll(t, driveServer(t, runtime, map[string]any{
+		"v": VERSION, "t": InTerminalClose, "terminal_id": "term-01",
+	}))
+	if len(messages) != 2 {
+		t.Fatalf("a refused close wrote %d messages, want a notice and a list", len(messages))
+	}
+	if TypeOf(messages[0]) != OutNotice {
+		t.Errorf("first message = %q, want a notice naming the reason", TypeOf(messages[0]))
+	}
+	if kind, _ := String(messages[1], "kind"); kind != UITerminals {
+		t.Errorf("second message kind = %q, want %q so the front end learns it still exists",
+			kind, UITerminals)
+	}
+}
+
+// TestTerminalCloseNeedsAnId — the same guard the other terminal verbs share, and
+// it is checked here because a close with no id would otherwise be the one message
+// that could be read as "and all of them".
+func TestTerminalCloseNeedsAnId(t *testing.T) {
+	message := onlyMessage(t, driveServer(t, &terminalStub{}, map[string]any{
+		"v": VERSION, "t": InTerminalClose,
+	}))
+	if TypeOf(message) != OutNotice {
+		t.Errorf("terminal_close with no id answered %q, want a notice", TypeOf(message))
 	}
 }
 

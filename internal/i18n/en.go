@@ -62,7 +62,7 @@ var catalog = map[string]string{
 	"cmd.files.hint":      "Browse the workspace's files",
 	"cmd.files.detail":    "Without an argument it lists the workspace root; /files <path> lists a directory or shows a file",
 	"cmd.terminal.hint":   "Terminals in this workspace",
-	"cmd.terminal.detail": "Without an argument it opens the terminal list; /terminal <n> switches, /terminal new opens one, /terminal kill <n> ends one",
+	"cmd.terminal.detail": "Without an argument it opens the terminal list; /terminal <n> switches, /terminal new opens one, /terminal kill <n> ends one, /terminal close <n> takes an ended one off the list",
 	"cmd.compact.hint":    "Compact the history (nothing deleted)",
 	"cmd.context.hint":    "See the context and compaction ledger",
 	"cmd.compact.waiting": "[compact] started (one model call writes the summary; the result arrives shortly)…",
@@ -558,7 +558,7 @@ var catalog = map[string]string{
 	// --- the terminal panel -------------------------------------------------
 	"terminal.title":       "Terminal",
 	"terminal.empty":       "No terminal is open in this workspace. `/terminal new` opens one.",
-	"terminal.footer":      "↑↓ pick  ·  Enter attach  ·  k kill  ·  Esc close",
+	"terminal.footer":      "↑↓ pick  ·  Enter attach  ·  k kill  ·  c close  ·  Esc close panel",
 	"terminal.running":     "running",
 	"terminal.exited":      "exited ({code})",
 	"terminal.exited_unknown": "exited",
@@ -935,6 +935,7 @@ var catalog = map[string]string{
 	"channels.terminal.input_failed":   "[terminal] could not write to {id}: {problem}",
 	"channels.terminal.resize_failed":  "[terminal] could not resize {id}: {problem}",
 	"channels.terminal.kill_failed":    "[terminal] could not end {id}: {problem}",
+	"channels.terminal.close_failed":   "[terminal] could not close {id}: {problem}",
 
 	// --- the /context screen ------------------------------------------------
 	"context.title":        "Context and compaction",

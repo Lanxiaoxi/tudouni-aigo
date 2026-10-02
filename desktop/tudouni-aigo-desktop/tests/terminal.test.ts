@@ -21,11 +21,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { encodeKey, isTerminalKey } from '@/runtime/terminalKeys';
+import { applyTerminalChunk, sanitizeTerminalChunk } from '@/runtime/terminalOutput';
 import {
   appendTerminalOutput,
+  pruneTails,
   replaceTerminal,
   terminalExitText,
   TERMINAL_SCROLLBACK,
+  type TerminalTail,
 } from '@/state/store';
 import { parentPath } from '@/components/panels/panels';
 import type { TerminalRow } from '@/protocol/types';
@@ -131,37 +134,42 @@ test('isTerminalKey answers what the window handlers ask it', () => {
    The output buffer
    ============================================================ */
 
+/** The lines one terminal is holding, for the assertions below. */
+function linesOf(store: Record<string, TerminalTail>, id: string): string[] {
+  return store[id]?.lines ?? [];
+}
+
 test('a batch boundary is not a line boundary', () => {
   // The PTY flushes wherever it happens to flush. A fragment that continues the
   // line already held must be joined to it, or a sentence breaks in the middle
   // of a word every time that happens.
   let store = appendTerminalOutput({}, 'term-01', 'npm ');
   store = appendTerminalOutput(store, 'term-01', 'test\r\n');
-  assert.deepEqual(store['term-01'], ['npm test', '']);
+  assert.deepEqual(linesOf(store, 'term-01'), ['npm test', '']);
 });
 
 test('CRLF is normalised so the output does not collapse onto one line', () => {
   // A browser renders a raw `\r` inside a `<div>` as nothing at all.
   const store = appendTerminalOutput({}, 'term-01', 'one\r\ntwo\r\n');
-  assert.deepEqual(store['term-01'], ['one', 'two', '']);
+  assert.deepEqual(linesOf(store, 'term-01'), ['one', 'two', '']);
 });
 
 test('each terminal keeps its own buffer', () => {
   let store = appendTerminalOutput({}, 'term-01', 'first\n');
   store = appendTerminalOutput(store, 'term-02', 'second\n');
-  assert.deepEqual(store['term-01'], ['first', '']);
-  assert.deepEqual(store['term-02'], ['second', '']);
+  assert.deepEqual(linesOf(store, 'term-01'), ['first', '']);
+  assert.deepEqual(linesOf(store, 'term-02'), ['second', '']);
 });
 
 test('the buffer is bounded, and it is the newest lines that survive', () => {
   // Without the bound this window's memory grows with the length of a command
   // somebody ran; dropping the recent output instead would leave the pane showing
   // the start of a build with no sign of the end.
-  let store: Record<string, string[]> = {};
+  let store: Record<string, TerminalTail> = {};
   for (let i = 0; i < TERMINAL_SCROLLBACK + 500; i += 1) {
     store = appendTerminalOutput(store, 'term-01', `line ${i}\n`);
   }
-  const lines = store['term-01'] ?? [];
+  const lines = linesOf(store, 'term-01');
   assert.ok(lines.length <= TERMINAL_SCROLLBACK + 1, `kept ${lines.length} lines`);
   assert.ok(lines.some((line) => line.includes(`line ${TERMINAL_SCROLLBACK + 499}`)));
   assert.ok(!lines.some((line) => line.includes('line 0\n')));
@@ -170,11 +178,108 @@ test('the buffer is bounded, and it is the newest lines that survive', () => {
 test('the buffer is copied, never mutated in place', () => {
   // The store's patch helpers compare references; mutating the array a previous
   // state holds is how a React render silently shows nothing new.
-  const before = { 'term-01': ['a'] };
+  const before = { 'term-01': { lines: ['a'], carry: '' } };
   const after = appendTerminalOutput(before, 'term-01', 'b');
   assert.notEqual(after, before);
   assert.notEqual(after['term-01'], before['term-01']);
-  assert.deepEqual(before['term-01'], ['a']);
+  assert.notEqual(after['term-01'].lines, before['term-01'].lines);
+  assert.deepEqual(before['term-01'].lines, ['a']);
+});
+
+/* ============================================================
+   PTY bytes → text
+   ============================================================ */
+
+test('a prompt with escape sequences around it reads as the prompt', () => {
+  // The measured shape of a real ConPTY prompt. Before this was stripped, every
+  // one of these bytes was drawn literally — `▯[?25l` in the middle of a shell
+  // prompt, which is exactly what the screenshot showed.
+  const raw =
+    '\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H' +
+    'PS C:\\ws>\x1b[1C\x1b]0;C:\\WINDOWS\\powershell.exe\x07\x1b[?25h';
+  assert.equal(sanitizeTerminalChunk('', raw).text, 'PS C:\\ws>');
+});
+
+test('a lone carriage return rewrites its line rather than appending', () => {
+  // A progress bar redraws itself. The last rewrite is what a terminal would be
+  // showing; drawing all of them prints `10%50%100% done` on one line.
+  const lines = applyTerminalChunk([], '10%\r50%\r100% done', 100);
+  assert.deepEqual(lines, ['100% done']);
+});
+
+test('sgr colour codes go, and the text between them stays', () => {
+  // `\x1b[93mecho \x1b[37mMARK` is a real PowerShell line: the colours are
+  // instructions, the words are the output.
+  assert.equal(sanitizeTerminalChunk('', '\x1b[93mecho \x1b[37mMARK\x1b[?25h').text, 'echo MARK');
+});
+
+test('a sequence split across two batches is held, not shown', () => {
+  // A PTY flushes wherever it flushes, so `\x1b[` can arrive in one batch and
+  // `0m` in the next. A stateless stripper would print a stray `0m` in the middle
+  // of somebody's output — often enough to look like a memory bug.
+  const first = sanitizeTerminalChunk('', 'before \x1b[');
+  assert.equal(first.text, 'before ');
+  assert.equal(first.carry, '\x1b[');
+
+  const second = sanitizeTerminalChunk(first.carry, '0mafter');
+  assert.equal(second.text, 'after');
+  assert.equal(second.carry, '');
+});
+
+test('the carry survives into the store, so the split is invisible', () => {
+  // The same case end to end: one line, arriving as two batches.
+  let store = appendTerminalOutput({}, 'term-01', 'PS> \x1b[?25');
+  store = appendTerminalOutput(store, 'term-01', 'lDone');
+  assert.deepEqual(linesOf(store, 'term-01'), ['PS> Done']);
+  assert.equal(store['term-01'].carry, '');
+});
+
+test('control characters have no meaning once the bytes are text', () => {
+  // A Windows console scatters NULs through its output, and a browser draws them
+  // as nothing — or as a box. Newline and tab are the two that stay meaningful.
+  assert.equal(sanitizeTerminalChunk('', 'a\x00b\x07c').text, 'abc');
+  assert.equal(sanitizeTerminalChunk('', 'keep\ttabs\nand newlines').text, 'keep\ttabs\nand newlines');
+  // DEL and the C1 range go too. C1 matters rather than being pedantry: the
+  // runtime's own stripper drops it, so keeping it here would make the two front
+  // ends disagree about what a shell's output says.
+  assert.equal(sanitizeTerminalChunk('', 'a\x7fb\x9bc').text, 'abc');
+});
+
+test('an unterminated sequence is eventually shown rather than held for ever', () => {
+  // A front end that buffered an unbounded "incomplete" escape would grow its
+  // state on malformed output. Showing the raw bytes is a far better failure than
+  // showing nothing at all.
+  const held = sanitizeTerminalChunk('', '\x1b]0;' + 'x'.repeat(600));
+  assert.equal(held.carry, '');
+  assert.ok(held.text.length > 600, 'the over-long sequence was not released');
+
+  // The same for one that spans a newline, which is not a sequence we will ever
+  // complete.
+  const across = sanitizeTerminalChunk('', '\x1b]0;title\nnext line');
+  assert.equal(across.carry, '');
+});
+
+test('an OSC title is stripped whole, terminator and all', () => {
+  // PowerShell writes the window title; drawing it would put the executable's
+  // path in the middle of the prompt.
+  const { text } = sanitizeTerminalChunk('', '\x1b]0;C:\\WINDOWS\\system32\x1b\\PS> ');
+  assert.equal(text, 'PS> ');
+});
+
+test('pruneTails drops what the runtime no longer lists, and keeps the rest', () => {
+  // A tail belongs to a terminal that exists. One kept for an id the runtime has
+  // forgotten is memory this window can never free — nothing will append to it and
+  // nothing will draw it.
+  const tails: Record<string, TerminalTail> = {
+    'term-01': { lines: ['a'], carry: '' },
+    'term-02': { lines: ['b'], carry: '' },
+  };
+  const pruned = pruneTails(tails, [row('term-02', 'running')]);
+  assert.deepEqual(Object.keys(pruned), ['term-02']);
+
+  // And nothing is copied when nothing was dropped, so a snapshot mentioning only
+  // known terminals does not re-render the pane.
+  assert.equal(pruneTails(tails, [row('term-01', 'running'), row('term-02', 'running')]), tails);
 });
 
 /* ============================================================

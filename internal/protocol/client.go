@@ -351,6 +351,17 @@ func (c *Client) TerminalKill(id string) {
 	c.Send(map[string]any{"t": InTerminalKill, "terminal_id": id})
 }
 
+// TerminalClose forgets a terminal that has already ended, so it stops appearing
+// in the list.
+//
+// A separate message from TerminalKill rather than a flag on it: ending a shell
+// and dropping the record of it are two different acts, and the runtime refuses
+// the second for a terminal that still needs the first. The answer is a fresh
+// full list.
+func (c *Client) TerminalClose(id string) {
+	c.Send(map[string]any{"t": InTerminalClose, "terminal_id": id})
+}
+
 // Shutdown asks the runtime to finish and exit.
 //
 // The current turn finishes first; this does not interrupt it. Interrupting would

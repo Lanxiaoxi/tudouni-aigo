@@ -81,14 +81,18 @@ const (
 	InFileList = "file_list"
 	InFileRead = "file_read"
 
-	// Terminal. Five verbs, and the split is the runtime's own model of a shell
+	// Terminal. Six verbs, and the split is the runtime's own model of a shell
 	// rather than a convenience: a terminal is created once, written to many times,
-	// resized when somebody's window changes, and killed once.
+	// resized when somebody's window changes, killed once, and — separately —
+	// forgotten once it has ended. `terminal_close` is not a synonym for
+	// `terminal_kill`: one ends a process, the other deletes a record, and the
+	// runtime refuses to do the second to a terminal that still needs the first.
 	InTerminalList   = "terminal_list"
 	InTerminalCreate = "terminal_create"
 	InTerminalInput  = "terminal_input"
 	InTerminalResize = "terminal_resize"
 	InTerminalKill   = "terminal_kill"
+	InTerminalClose  = "terminal_close"
 )
 
 // Message kinds travelling runtime -> front end.
@@ -270,6 +274,7 @@ var RequiredKeys = map[string][]string{
 	InTerminalInput:  {"v", "t", "terminal_id", "data"},
 	InTerminalResize: {"v", "t", "terminal_id", "cols", "rows"},
 	InTerminalKill:   {"v", "t", "terminal_id"},
+	InTerminalClose:  {"v", "t", "terminal_id"},
 }
 
 // TerminalDefaults are the size a terminal is created with when the client does

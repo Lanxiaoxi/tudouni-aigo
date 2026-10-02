@@ -377,6 +377,30 @@
     },
     "required": ["v", "t", "terminal_id"]
   },
+  "terminal_close": {
+    "summary": "把**已经结束**的 Terminal 从清单里去掉（不是杀掉它）。",
+    "doc": [
+      "**它和 `terminal_kill` 是两件事，不是一件事的两种说法。** kill 结束一个进程，",
+      "close 删掉一条记录。所以 runtime **拒绝**对还活着的 Terminal 做 close：一条记录消失、",
+      "而它的进程还在跑，就等于一个既看不见、也杀不掉的 shell —— 那正是 kill 那条路要防住的事。",
+      "想关掉一个跑着的终端，先 kill，等 `terminal_exit` 到了再 close。",
+      "",
+      "回答是 `ui` / `kind=terminals`，一份**去掉该行之后的全量清单**。这里**可以**回答，",
+      "而 kill 不可以：kill 改变的是进程，它的结局由等待路径发出的 `terminal_exit` 承载，",
+      "在这里回一句「已结束」会变成第二个真相；close 改变的就是清单，而清单是唯一能报告它的东西。",
+      "",
+      "代价是真实的、也是有意留下的：已结束的 Terminal 是「我刚才在跑什么」的答案，关掉它就",
+      "把退出码和最后一屏输出一起删了。所以这是**人自己的动作**，前端不该自作主张替人做。",
+      "",
+      "认不出的 id、或者还活着的 id，都回一条 notice 附一份没变过的全量清单。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "terminal_close"},
+      "terminal_id": {"type": "string"}
+    },
+    "required": ["v", "t", "terminal_id"]
+  },
   "refresh_state": {
     "summary": "请 runtime 回一份面板快照（出站的 `ui` / `kind=state`）。**空消息，没有参数。**",
     "doc": [

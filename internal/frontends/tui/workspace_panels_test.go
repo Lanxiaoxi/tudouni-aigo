@@ -315,25 +315,47 @@ func TestEveryMappedKeyHasAByte(t *testing.T) {
 
 // TestTerminalOutputStripsEscapesAndKeepsTheLastRewrite.
 //
-// A program's output routinely contains cursor movements, and drawing those
-// literally would clear or scramble the screen this interface is drawing on. The
-// carriage-return case is the progress bar: it rewrites one line, and the last
+// A shell writes instructions as well as text: `\x1b[2J\x1b[H` is a redraw and
+// `\x1b[?25l` is "hide the cursor", and this interface has no screen buffer to
+// carry either out. Drawing them literally — which is what it used to do — puts
+// `▯[?25l` in the middle of somebody's prompt.
+//
+// The carriage-return case is the progress bar: it rewrites one line, and the last
 // rewrite is what a terminal would be showing.
 func TestTerminalOutputStripsEscapesAndKeepsTheLastRewrite(t *testing.T) {
-	lines := terminalOutputLine("\x1b[2J\x1b[Hhello")
-	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "hello") {
-		t.Errorf("escape sequences were not stripped: %q", lines)
+	// The measured shape of a real ConPTY prompt, so the assertion is about the
+	// bytes a shell actually sends rather than a guess at them.
+	raw := "\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H" +
+		"PS C:\\ws>\x1b[1C\x1b]0;C:\\WINDOWS\\powershell.exe\a\x1b[?25h"
+	cleaned, carry := stripTerminalEscapes("", raw)
+	if cleaned != "PS C:\\ws>" {
+		t.Errorf("cleaned = %q, want the prompt alone", cleaned)
 	}
-	for _, line := range lines {
-		if strings.Contains(line, "\x1b") {
-			t.Errorf("an escape sequence survived into the output: %q", line)
-		}
+	if carry != "" {
+		t.Errorf("carry = %q, want nothing held back", carry)
 	}
 
-	// A progress line: several rewrites separated by CR, only the last shown.
-	progress := terminalOutputLine("10%\r50%\r100% done")
-	if got := strings.Join(progress, "\n"); got != "100% done" {
-		t.Errorf("progress rewrites collapsed to %q, want the last one", got)
+	// A sequence cut in half by the batch boundary is held, not printed. This is
+	// the case a per-batch strip cannot handle: `\x1b[` is not a sequence in the
+	// first batch and `0m` is not one in the second.
+	first, held := stripTerminalEscapes("", "before \x1b[")
+	if first != "before " || held != "\x1b[" {
+		t.Errorf("first batch = (%q, %q), want the text and the held fragment", first, held)
+	}
+	second, rest := stripTerminalEscapes(held, "0mafter")
+	if second != "after" || rest != "" {
+		t.Errorf("second batch = (%q, %q), want the split sequence dropped", second, rest)
+	}
+}
+
+// TestScrollbackKeepsTheLastRewrite — a progress line rewrites itself with CR, and
+// the last rewrite is the part that matters. Every intermediate one on its own row
+// would print `10%50%100% done`.
+func TestScrollbackKeepsTheLastRewrite(t *testing.T) {
+	cleaned, _ := stripTerminalEscapes("", "10%\r50%\r100% done\nnext")
+	lines := appendScrollback(nil, cleaned)
+	if got := strings.Join(lines, "|"); got != "100% done|next" {
+		t.Errorf("rewrites collapsed to %q, want the last one kept", got)
 	}
 }
 
@@ -345,6 +367,22 @@ func TestScrollbackContinuesTheLastLine(t *testing.T) {
 	joined := strings.Join(lines, "|")
 	if !strings.Contains(joined, "npm test") {
 		t.Errorf("a split line was broken into two rows: %q", joined)
+	}
+}
+
+// TestASplitEscapeNeverReachesTheScrollback is the stream-past-the-unit version of
+// the strip test: the whole round trip, batch by batch, through the model.
+func TestASplitEscapeNeverReachesTheScrollback(t *testing.T) {
+	m := filledModel(120, 40)
+	m.attached = terminalAttach{id: "term-01", status: "running"}
+	m.appendTerminalOutput("term-01", "PS> \x1b[?25")
+	m.appendTerminalOutput("term-01", "lDone")
+	// The pending fragment is carried between batches rather than written.
+	if m.attached.escapeCarry != "" {
+		t.Errorf("escapeCarry = %q, want it cleared once the sequence completed", m.attached.escapeCarry)
+	}
+	if got := strings.Join(m.attached.scrollback, "|"); got != "PS> Done" {
+		t.Errorf("scrollback = %q, want the sequence stripped across the boundary", got)
 	}
 }
 
@@ -445,6 +483,102 @@ func TestTerminalByIndexAcceptsBothSpellingsAndGuessesAtNeither(t *testing.T) {
 		if row := m.terminalByIndex(bad); row != nil {
 			t.Errorf("terminalByIndex(%q) = %v, want nil", bad, row)
 		}
+	}
+}
+
+// TestClosingARunningTerminalEndsItFirst.
+//
+// The runtime refuses to forget a terminal whose process is alive — a record that
+// vanished while the shell kept going would be something nobody can see and nobody
+// can end — so one gesture has to become two acts, and the second one waits for the
+// exit event. This pins the first half: the intention is recorded and the row is
+// **not** treated as gone.
+func TestClosingARunningTerminalEndsItFirst(t *testing.T) {
+	m := terminalPanelModel()
+	m.client = protocol.NewClient(nil)
+	m.overlay = overlay{kind: overlayTerminal}
+
+	running := terminalRow{id: "term-01", status: protocol.TerminalRunning}
+	m.closeTerminal(running)
+
+	if len(m.closing) != 1 || m.closing[0] != "term-01" {
+		t.Fatalf("closing = %v, want the intention recorded for term-01", m.closing)
+	}
+	// And nothing claims it is gone: the panel still lists all three, because the
+	// runtime has not said otherwise yet.
+	if len(m.terminalPanelRows()) != 3 {
+		t.Errorf("the panel lists %d terminals, want the unchanged three",
+			len(m.terminalPanelRows()))
+	}
+}
+
+// TestClosingAnEndedTerminalGoesStraightThrough.
+//
+// An ended terminal needs no ending, so there is nothing to wait for — and this is
+// the case the old interface could not reach at all, because its only control for
+// it was a disabled button.
+func TestClosingAnEndedTerminalGoesStraightThrough(t *testing.T) {
+	m := terminalPanelModel()
+	m.client = protocol.NewClient(nil)
+
+	m.closeTerminal(terminalRow{id: "term-02", status: protocol.TerminalExited})
+	if len(m.closing) != 0 {
+		t.Errorf("closing = %v, want nothing pending for an already-ended terminal", m.closing)
+	}
+}
+
+// TestTheExitEventFinishesAPendingClose.
+//
+// The second half, driven from the **event** rather than from the kill request:
+// a process that refused to die must not read as closed, and the runtime would
+// have refused the close along with it.
+func TestTheExitEventFinishesAPendingClose(t *testing.T) {
+	m := terminalPanelModel()
+	m.client = protocol.NewClient(nil)
+	m.closing = []string{"term-01"}
+
+	m.terminalExitLine(map[string]any{
+		"terminal_id": "term-01",
+		"reason":      protocol.TerminalExitReasonKilled,
+		"terminal": map[string]any{
+			"id": "term-01", "shell": "pwsh", "status": protocol.TerminalKilled,
+		},
+	})
+
+	if len(m.closing) != 0 {
+		t.Errorf("closing = %v, want the pending close consumed by the exit event", m.closing)
+	}
+}
+
+// TestAnExitNobodyAskedToCloseLeavesNoPendingClose: the ordinary case — a shell
+// that runs `exit` by itself stays on the list, because an ended terminal is what
+// answers "what was I running".
+func TestAnExitNobodyAskedToCloseLeavesNoPendingClose(t *testing.T) {
+	m := terminalPanelModel()
+	m.client = protocol.NewClient(nil)
+
+	m.terminalExitLine(map[string]any{
+		"terminal_id": "term-02",
+		"reason":      protocol.TerminalExitReasonExited,
+		"terminal": map[string]any{
+			"id": "term-02", "shell": "pwsh", "status": protocol.TerminalExited,
+		},
+	})
+
+	if len(m.closing) != 0 {
+		t.Errorf("closing = %v, want nothing pending for a terminal nobody asked to close",
+			m.closing)
+	}
+	// The row stays: a terminal that vanished on exit would take its exit code and
+	// its last screenful with it.
+	found := false
+	for _, row := range m.terminalPanelRows() {
+		if row.id == "term-02" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("an exited terminal was dropped from the list without being closed")
 	}
 }
 

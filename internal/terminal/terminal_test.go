@@ -300,6 +300,70 @@ func TestInputAndResizeRefuseAnUnknownId(t *testing.T) {
 	if err := manager.Kill("term-99"); err == nil {
 		t.Error("killing an unknown terminal was accepted")
 	}
+	if err := manager.Remove("term-99"); err == nil {
+		t.Error("removing an unknown terminal was accepted")
+	}
+}
+
+// TestRemoveRefusesARunningTerminal is the safety property, stated as a test.
+//
+// A record that disappeared while its process kept going would be a shell nobody
+// can see and nobody can end — the leftover `node` holding the port, with the
+// screen saying nothing is running. That is exactly the failure the kill path
+// exists to prevent, so this branch is the one that must not be relaxed.
+func TestRemoveRefusesARunningTerminal(t *testing.T) {
+	manager, _ := startManager(t)
+	info, err := manager.Create("", 80, 24)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := manager.Remove(info.ID); err == nil {
+		t.Fatal("removing a running terminal was accepted; its process is now unreachable")
+	}
+	// And the row is still there, so the refusal is a refusal rather than a
+	// half-done removal.
+	if rows := manager.List(); len(rows) != 1 {
+		t.Errorf("a refused remove left %d terminal(s), want the terminal still listed", len(rows))
+	}
+}
+
+// TestRemoveTakesAnEndedTerminalOffTheList.
+//
+// The other half of the pair: once the shell has ended there is no process to
+// lose track of, so forgetting the record is safe — and it is the only way a tab
+// can actually go away, because an ended terminal deliberately stays on the list
+// until somebody says otherwise.
+func TestRemoveTakesAnEndedTerminalOffTheList(t *testing.T) {
+	manager, sink := startManager(t)
+	info, err := manager.Create("", 80, 24)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	command := "exit\n"
+	if isWindows() {
+		command = "exit\r"
+	}
+	if err := manager.Input(info.ID, command); err != nil {
+		t.Fatalf("Input: %v", err)
+	}
+	waitFor(t, "the terminal to report its exit", 20*time.Second, func() bool {
+		_, ok := sink.exit()
+		return ok
+	})
+
+	if err := manager.Remove(info.ID); err != nil {
+		t.Fatalf("Remove after the exit was refused: %v", err)
+	}
+	if rows := manager.List(); len(rows) != 0 {
+		t.Errorf("%d terminal(s) still listed after removal, want none", len(rows))
+	}
+	// Gone rather than merely hidden: the id no longer names anything, which is
+	// what makes "the tab is closed" true rather than cosmetic.
+	if err := manager.Input(info.ID, "echo hi\n"); err == nil {
+		t.Error("input to a removed terminal was accepted")
+	}
 }
 
 func TestResizeIsIgnoredForANonsenseSize(t *testing.T) {

@@ -199,10 +199,9 @@ type FileService interface {
 
 // TerminalService is what a runtime must provide for the workspace's terminals.
 //
-// It is five methods rather than one verb-and-arguments pair because a terminal
-// really does have five operations with different shapes, and collapsing them
-// would put a `switch` on the runtime side of a boundary whose whole job is to
-// keep that switch out of the protocol layer.
+// It is the verbs a terminal really has rather than one verb-and-arguments pair,
+// and collapsing them would put a `switch` on the runtime side of a boundary
+// whose whole job is to keep that switch out of the protocol layer.
 //
 // `CreateTerminal` is the one that can fail with something to report — an
 // escaped cwd, a PTY that will not start — and it returns an error rather than an
@@ -216,6 +215,11 @@ type TerminalService interface {
 	TerminalInput(id, data string) error
 	TerminalResize(id string, cols, rows int) error
 	TerminalKill(id string) error
+	// RemoveTerminal drops a terminal that has already **ended** from the list.
+	// It is separate from TerminalKill because it does a different thing to a
+	// different thing: that one ends a process, this one deletes a record. See
+	// `terminal.Manager.Remove` for why a running one is refused.
+	RemoveTerminal(id string) error
 }
 
 // GoalRoundScheduler is what a runtime must provide to be asked whether another
@@ -452,6 +456,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 
 	case InTerminalKill:
 		s.handleTerminalKill(message)
+
+	case InTerminalClose:
+		s.handleTerminalClose(message)
 
 	case InUserMessage:
 		text, _ := String(message, "text")

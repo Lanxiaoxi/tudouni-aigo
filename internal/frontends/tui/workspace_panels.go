@@ -293,12 +293,17 @@ func (m model) terminalAttachHead() string {
 // splits batches on rune boundaries (see `terminal.splitRunes`), so no decoding
 // happens on this side and a multi-byte character cannot be cut in half here.
 //
-// What is stored is the *text*, with the escape sequences kept: the runtime strips
-// nothing, and this interface draws the terminal's raw bytes. Trying to render
-// them faithfully would mean writing a terminal emulator — a screen grid, cursor
-// movement, scroll regions — which is a project rather than a panel, and the
-// design puts that work on the client's side of the boundary (the desktop uses a
-// real emulator; this one keeps the tail).
+// What is stored is the **text a terminal would have shown**: the escape
+// sequences are stripped on the way in, and an incomplete one is held for the next
+// batch. Keeping the raw bytes and stripping at draw time was the alternative, and
+// it fails on the one case that matters — a sequence split across two batches is
+// not visible as a sequence in either of them, so a per-batch strip at render time
+// cannot put it back together.
+//
+// Trying to render them faithfully instead would mean writing a terminal emulator
+// — a screen grid, cursor movement, scroll regions — which is a project rather
+// than a panel, and the design puts that work on the client's side of the
+// boundary (the desktop uses a real emulator; this one keeps the tail).
 func (m *model) appendTerminalOutput(id, data string) {
 	if id != m.attached.id {
 		// Output from a terminal this interface is not attached to. It is counted
@@ -308,7 +313,9 @@ func (m *model) appendTerminalOutput(id, data string) {
 		return
 	}
 	m.attached.pendingBytes += len(data)
-	m.attached.scrollback = appendScrollback(m.attached.scrollback, data)
+	cleaned, carry := stripTerminalEscapes(m.attached.escapeCarry, data)
+	m.attached.escapeCarry = carry
+	m.attached.scrollback = appendScrollback(m.attached.scrollback, cleaned)
 }
 
 // scrollbackLimit bounds how much output this interface keeps per terminal.
@@ -318,22 +325,36 @@ func (m *model) appendTerminalOutput(id, data string) {
 // which is not a thing a UI should do. 4000 lines is about fifty screens.
 const scrollbackLimit = 4000
 
-// appendScrollback adds a batch to the tail and trims from the front.
+// appendScrollback adds cleaned output to the tail and trims from the front.
+//
+// Two rules, and between them they cover everything a shell's byte stream means as
+// text:
+//
+//   - **A newline opens a row and a carriage return rewrites one.** `\r` is how a
+//     progress bar redraws itself, and the last rewrite is what a terminal would
+//     be showing; keeping every intermediate one would print `10%50%100% done` on
+//     one line.
+//   - **The batch boundary is not a line boundary.** The first fragment continues
+//     the last line already held, so a sentence is not broken in the middle of a
+//     word every time the PTY happened to flush there.
 //
 // Splitting on newlines is what makes the trim a *line* bound rather than a byte
 // bound — so what gets dropped is old output rather than half of a line somebody
 // is reading.
-func appendScrollback(existing []string, data string) []string {
-	text := strings.ReplaceAll(data, "\r\n", "\n")
-	lines := strings.Split(text, "\n")
-	if len(existing) > 0 {
-		// The batch boundary is not a line boundary: the first fragment continues
-		// the last line already held, and appending it as a new row would break
-		// one line into two.
-		existing[len(existing)-1] += lines[0]
-		lines = lines[1:]
+func appendScrollback(existing []string, text string) []string {
+	if len(existing) == 0 {
+		existing = []string{""}
 	}
-	existing = append(existing, lines...)
+	for _, r := range strings.ReplaceAll(text, "\r\n", "\n") {
+		switch r {
+		case '\n':
+			existing = append(existing, "")
+		case '\r':
+			existing[len(existing)-1] = ""
+		default:
+			existing[len(existing)-1] += string(r)
+		}
+	}
 	if len(existing) > scrollbackLimit {
 		existing = existing[len(existing)-scrollbackLimit:]
 	}

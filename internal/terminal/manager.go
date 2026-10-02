@@ -412,6 +412,54 @@ func (m *Manager) Kill(id string) error {
 	return run.terminate()
 }
 
+// Remove forgets a terminal that has already ended.
+//
+// **Only an ended one, and that restriction is the whole safety property.** A
+// running shell has a process behind it, and dropping the record would leave that
+// process unseen, unlisted and unreachable by a later kill — the leftover `node`
+// holding the port while the screen says nothing is running, which is precisely
+// the failure the kill path exists to prevent. A caller that wants a running
+// terminal gone ends it first; the ending arrives as the usual `terminal_exit`,
+// and only then is there nothing left to leak.
+//
+// It is a **separate operation from Kill rather than a flag on it**, because the
+// two do different things to different things: one ends a process, the other
+// deletes a record. Folding them would make "stop this shell" and "stop showing
+// me this shell" the same message, and the first front end to want one without
+// the other would have to guess.
+//
+// The cost is deliberate and worth stating: an ended terminal is what answers
+// "what was I running", so removing one takes its exit code and its last
+// screenful with it. That is why this is the person's own act, not something a
+// front end does on its own initiative.
+func (m *Manager) Remove(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	run, ok := m.sessions[id]
+	if !ok {
+		return fmt.Errorf("no terminal %s in this workspace", id)
+	}
+	if run.snapshot().Status == StatusRunning {
+		return fmt.Errorf("terminal %s is still running; end it first", id)
+	}
+	// The PTY is released as well, not merely forgotten. The wait path closes it
+	// itself only when the reader was still blocked at exit (see `session.waitLoop`),
+	// so a shell whose reader finished on its own — the ordinary POSIX case, where
+	// closing the child gives the master EOF — would otherwise leave a file
+	// descriptor behind for every terminal the person tidied away. Both platform
+	// implementations are idempotent, so the case where the wait path already
+	// closed it costs nothing.
+	_ = run.proc.Close()
+	delete(m.sessions, id)
+	for index, candidate := range m.order {
+		if candidate == id {
+			m.order = append(m.order[:index], m.order[index+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
 // Close ends every terminal this manager owns.
 //
 // It is the process-exit path. Without it a POSIX shell, which `Setsid` put in

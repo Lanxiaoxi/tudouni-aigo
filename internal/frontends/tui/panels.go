@@ -74,7 +74,19 @@ type terminalAttach struct {
 	// terminal), so a front end that wants to show more than the last screenful
 	// has to hold it. The bound is what keeps a build log from growing without
 	// limit in a process the person is drawing with.
+	//
+	// What is stored is **text a terminal would have shown**, not the raw bytes:
+	// the escape sequences are stripped as the batches arrive (`stripTerminalEscapes`),
+	// because they are instructions this interface has no screen buffer to carry
+	// out — and drawing them literally is how `▯[?25l` ends up in the middle of
+	// somebody's prompt.
 	scrollback []string
+	// escapeCarry is an escape sequence the batch boundary cut in half.
+	//
+	// A PTY flushes wherever it flushes, so `\x1b[` can land in one batch and `0m`
+	// in the next. Holding the fragment until the rest arrives is what keeps that
+	// from printing as a stray `0m` in the middle of somebody's output.
+	escapeCarry string
 	// pendingBytes counts what has arrived for this terminal, so `/terminal`
 	// can say "5000 bytes since you last looked" rather than only showing the
 	// tail.

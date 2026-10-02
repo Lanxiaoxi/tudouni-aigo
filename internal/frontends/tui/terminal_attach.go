@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -25,7 +26,7 @@ import (
 //     exactly the programs a terminal exists to run.
 //   - **the layout does not change.** Under a full-screen program the bytes
 //     include cursor movements this interface does not emulate, so the output is
-//     drawn as text with its escape sequences removed (see `terminalOutputLine`).
+//     drawn as text with its escape sequences removed (see `stripTerminalEscapes`).
 //     Emulating them properly would mean a screen buffer and a cursor — a project
 //     rather than a panel — and the design puts that work on the client's side of
 //     the boundary. Saying so in the banner is the honest version.
@@ -234,30 +235,150 @@ func encodeKey(key tea.KeyMsg) string {
 	return ""
 }
 
-// terminalOutputLine turns one output batch into transcript lines.
+// maxEscapeCarry bounds how much of an incomplete escape sequence is held back.
 //
-// **Escape sequences are removed**, with two exceptions that are cheap and worth
-// keeping. The reason for removing them is not tidiness: a program's output
-// routinely contains cursor movements (`\x1b[2J`, `\x1b[H`, `\x1b[K`), and drawing
-// those literally would clear or scramble the screen this interface is drawing on.
-// A real terminal emulator interprets them into a screen buffer; this interface has
-// no buffer, so the honest thing is to show the text and say the rest was dropped.
+// Every real sequence is short — a dozen bytes, with an OSC window title the long
+// one. Past this the bytes are emitted as text rather than carried for ever: a
+// front end that buffered an unbounded "incomplete" sequence would grow its state
+// on malformed output, and showing the raw bytes is a far better failure than
+// showing nothing at all.
+const maxEscapeCarry = 512
+
+// stripTerminalEscapes removes what a terminal would have **acted on**, leaving
+// what it would have shown.
 //
-// `\r` is handled rather than stripped: a progress line rewrites itself with
-// carriage returns, and the last rewrite is the part that matters. Splitting on it
-// keeps the final state instead of every intermediate one.
-func terminalOutputLine(data string) []string {
-	// `ansi.Strip` is the program's own ANSI-aware stripper (already used for
-	// measuring panel rows), so this cannot drift from how the rest of the
-	// interface decides what a string's visible text is.
-	cleaned := ansi.Strip(data)
-	// Carriage returns separate the rewrites of one line; the last one is what a
-	// terminal would be showing.
-	if index := strings.LastIndex(cleaned, "\r"); index >= 0 {
-		cleaned = cleaned[index+1:]
+// **Escape sequences and control characters are dropped, not drawn.** That is the
+// whole job, and it is not tidiness: a shell writes `\x1b[?25l` (hide the cursor)
+// around every prompt, `\x1b[2J\x1b[H` to redraw, and `\x1b[93m` to colour. Those
+// are instructions. A real terminal emulator interprets them into a screen buffer;
+// this interface has no buffer, so the honest thing is to show the text and drop
+// the rest — because the alternative, which is what this interface used to do, is
+// painting `▯[?25l` in the middle of somebody's prompt.
+//
+// `\n`, `\t` and `\r` are kept, and each earns it: a newline separates rows, a tab
+// aligns columns, and a carriage return is the rewrite `rewriteLine` handles.
+//
+// **`carry` is why this is a stream transform rather than a plain strip.** A PTY
+// flushes wherever it happens to flush, so a sequence can be split across two
+// batches — `\x1b[` in one and `0m` in the next. Stripping each batch on its own
+// would print a stray `0m` in the middle of somebody's output, often enough to look
+// like a memory bug. So an incomplete trailing sequence is handed back to be
+// prepended to the next batch, which makes a split sequence indistinguishable from
+// one that arrived whole. `ansi.Strip` cannot express this: it is stateless by
+// construction, and the state is the point.
+func stripTerminalEscapes(carry, data string) (cleaned, rest string) {
+	raw := carry + data
+	var out strings.Builder
+	for i := 0; i < len(raw); {
+		if raw[i] == 0x1b {
+			end, complete := escapeEnd(raw, i)
+			if !complete {
+				held := raw[i:]
+				// A sequence spanning a newline is not one that is coming, and one
+				// past the cap is not worth waiting for. Either way the bytes go out
+				// as text: showing them is recoverable, holding them is not.
+				if len(held) > maxEscapeCarry || strings.Contains(held, "\n") {
+					out.WriteString(held)
+					return out.String(), ""
+				}
+				return out.String(), held
+			}
+			i = end
+			continue
+		}
+		// Stepped by rune, not by byte, and that matters: the C1 controls this
+		// drops live at 0x80–0x9F, which is exactly where UTF-8's continuation
+		// bytes live. A byte-wise loop would eat the second byte of every `汉字`.
+		// The runtime already guarantees a batch ends on a rune boundary (see
+		// `terminal.splitRunes`), so this never has a partial rune to worry about.
+		r, size := utf8.DecodeRuneInString(raw[i:])
+		if !droppedControl(r) {
+			out.WriteString(raw[i : i+size])
+		}
+		i += size
 	}
-	cleaned = strings.ReplaceAll(cleaned, "\r", "")
-	return strings.Split(cleaned, "\n")
+	return out.String(), ""
+}
+
+// droppedControl reports whether a rune has no meaning once the bytes are text.
+func droppedControl(r rune) bool {
+	switch r {
+	case '\n', '\t', '\r':
+		return false
+	}
+	// C0, DEL and C1. The C1 half is not pedantry: `ansi.Strip` drops it on the
+	// desktop's side of the same decision, and two front ends that disagreed about
+	// what a shell's output says would be two bugs.
+	if r < 0x20 || r == 0x7f {
+		return true
+	}
+	return r >= 0x80 && r <= 0x9f
+}
+
+// escapeEnd reports where the escape sequence starting at `start` ends.
+//
+// `complete` is false when the input ran out first, which is the batch-boundary
+// case the caller responds to by holding the remainder back. Every branch returns
+// an index greater than `start`, so malformed input cannot make the scanner spin.
+func escapeEnd(raw string, start int) (end int, complete bool) {
+	i := start + 1
+	if i >= len(raw) {
+		return 0, false
+	}
+	switch raw[i] {
+	case '[':
+		// CSI: parameter bytes, then intermediates, then one final byte.
+		i++
+		for i < len(raw) {
+			c := raw[i]
+			if c >= 0x40 && c <= 0x7e {
+				return i + 1, true
+			}
+			if c >= 0x20 && c <= 0x3f {
+				i++
+				continue
+			}
+			// Not a byte that can appear inside a CSI. Consuming to here still
+			// moves past the `ESC [`, which is what keeps the loop progressing.
+			return i, true
+		}
+		return 0, false
+
+	case ']', 'P', 'X', '^', '_':
+		// A string sequence — an OSC window title is the common one. It runs until
+		// BEL or ST (`ESC \`), and may contain anything in between.
+		i++
+		for i < len(raw) {
+			c := raw[i]
+			if c == 0x07 {
+				return i + 1, true
+			}
+			if c == 0x1b {
+				if i+1 >= len(raw) {
+					return 0, false
+				}
+				if raw[i+1] == '\\' {
+					return i + 2, true
+				}
+				return i, true
+			}
+			i++
+		}
+		return 0, false
+	}
+	// Everything else: optional intermediates, then one final byte. `ESC ( B` and
+	// `ESC =` are the shapes this covers.
+	i++
+	for i < len(raw) && raw[i] >= 0x20 && raw[i] <= 0x2f {
+		i++
+	}
+	if i >= len(raw) {
+		return 0, false
+	}
+	if c := raw[i]; c >= 0x30 && c <= 0x7e {
+		return i + 1, true
+	}
+	return i, true
 }
 
 // rowOfTerminal finds a terminal in the runtime's list.
@@ -424,5 +545,23 @@ func (m *model) terminalExitLine(payload map[string]any) {
 		m.attached.status = row.status
 		m.attached.exitCode = row.exitCode
 		m.detach()
+	}
+
+	// **The second half of a close.** Somebody pressed `c` (or typed
+	// `/terminal close`) on a shell that was still running, and the runtime's rule
+	// is that such a terminal can be ended but not forgotten — so the ending had
+	// to come first, and this is where it has arrived. The row is an ended one now,
+	// which is the state the close accepts.
+	//
+	// It is driven from the **event** rather than from the kill request, for the
+	// same reason every other line in this file is: a process that refused to die
+	// must not read as done, and the close would have been refused along with it.
+	for index, candidate := range m.closing {
+		if candidate != id {
+			continue
+		}
+		m.closing = append(m.closing[:index], m.closing[index+1:]...)
+		m.client.TerminalClose(id)
+		break
 	}
 }

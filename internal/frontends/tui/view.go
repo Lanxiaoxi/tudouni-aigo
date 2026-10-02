@@ -295,7 +295,7 @@ func (m model) renderBody(available int) string {
 		// It replaces the transcript instead of sharing the screen with it, and
 		// that is the honest choice given what this interface can render: the
 		// output is drawn as text with its escape sequences removed (see
-		// `terminalOutputLine`), so it is not a faithful terminal — it is a view of
+		// `stripTerminalEscapes`), so it is not a faithful terminal — it is a view of
 		// what the shell printed. Half a screen of it beside half a screen of chat
 		// would be worse at both jobs.
 		//

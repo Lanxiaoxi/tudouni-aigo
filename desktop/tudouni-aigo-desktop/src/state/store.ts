@@ -89,6 +89,7 @@ import {
   unregisterRuntime,
 } from '@/runtime/bus';
 import { insertPathAtCaret, type PastedImage } from '@/runtime/paste';
+import { applyTerminalChunk, sanitizeTerminalChunk } from '@/runtime/terminalOutput';
 import { baseName, samePath } from '@/utils/format';
 import {
   attachRuntime,
@@ -412,7 +413,22 @@ export interface SessionRuntime {
    * Keyed by terminal id rather than held for one: switching between two shells
    * and back should not lose the first one's screen.
    */
-  terminalOutput: Record<string, string[]>;
+  /**
+   * What this session's front end has seen of each attached terminal's output.
+   *
+   * A **bounded** tail, newest last. The runtime keeps no scrollback — the design
+   * is explicit that a terminal's output must not become a second terminal — so
+   * showing more than the last screenful is necessarily this end's job.
+   *
+   * Keyed by terminal id rather than held for one: switching between two shells
+   * and back should not lose the first one's screen.
+   *
+   * Each value is both halves of one tail — the lines **and** an escape sequence
+   * the batch boundary cut in half — because they are two parts of one parsing
+   * state. Held as two records keyed by the same id they could drift, and the
+   * symptom would be one shell's pending sequence appearing in another's output.
+   */
+  terminalTails: Record<string, TerminalTail>;
   /**
    * Terminals with a create or kill request in flight.
    *
@@ -421,6 +437,19 @@ export interface SessionRuntime {
    * really has, which is that it just sent the request.
    */
   terminalPending: string[];
+  /**
+   * Terminals the person asked to dismiss, whose shell was still running.
+   *
+   * Closing is a **two-part act** for a running shell — end it, then forget it —
+   * and the two parts happen at different times because the runtime refuses to
+   * forget something that is alive. So the intention has to survive the gap
+   * between the click and the exit, which is what this list is.
+   *
+   * It is a front-end fact and nothing more, the same category as
+   * `activeTerminalId`: it records what somebody asked for, never what a terminal
+   * is doing. The `terminal_exit` it is waiting for comes from the runtime.
+   */
+  terminalClosing: string[];
 
   /**
    * The browser's listing, and whether its answer has arrived.
@@ -524,8 +553,9 @@ export function createSessionBucket(
     // only thing a bucket can hold — see the field's own comment.
     terminals: [],
     activeTerminalId: null,
-    terminalOutput: {},
+    terminalTails: {},
     terminalPending: [],
+    terminalClosing: [],
     filesPath: '',
     filesEntries: [],
     filesLoading: false,
@@ -909,8 +939,21 @@ export interface AppStore {
   /** End a terminal and everything it started. The transcript's line comes from
    *  the runtime's exit event, never from this request. */
   killTerminal(id: string): void;
+  /**
+   * Forget a terminal that has **already ended**, so its tab goes away.
+   *
+   * Not a synonym for `killTerminal`, and the runtime enforces the difference: a
+   * record whose process is still alive would be a shell nobody can see and
+   * nobody can end. So this refuses a running terminal, and the caller's job is
+   * to end it first and close it once the `terminal_exit` has arrived.
+   *
+   * The reply is a fresh full list, so a tab dropped too eagerly is restored from
+   * the same message that carries the reason.
+   */
+  closeTerminal(id: string): void;
   /** Point this front end's terminal view at one terminal. A **local** act:
-   *  nothing is sent, and the shell is unaffected either way. */
+   *  nothing is sent, and the shell is unaffected either way. `null` goes back to
+   *  the conversation. */
   attachTerminal(id: string | null): void;
   /** Ask the OS for a directory, then open a session in it. A different
    *  workspace is a different process, so this cannot be done to an existing
@@ -1314,38 +1357,41 @@ function runtimeOf(s: AppStore, key: string | null): SessionRuntime | null {
 export const TERMINAL_SCROLLBACK = 4000;
 
 /**
- * Append one output batch to a terminal's bounded tail.
+ * One terminal's tail: the lines drawn, and the parsing state behind them.
  *
- * Two details, both of them the difference between readable and not:
+ * The two are one value rather than two records keyed by the same id, because a
+ * pending escape sequence is meaningless apart from the terminal it came from —
+ * and two maps that have to be kept in step are two maps that eventually are not.
+ */
+export interface TerminalTail {
+  lines: string[];
+  /** An escape sequence the batch boundary cut in half. `''` when there is none. */
+  carry: string;
+}
+
+/** The shared empty tail, so a selector's fallback is a stable reference. */
+export const EMPTY_TAIL: TerminalTail = { lines: [], carry: '' };
+
+/**
+ * Apply one output batch to a terminal's bounded tail.
  *
- *   - the batch boundary is **not** a line boundary. A fragment that continues
- *     the last line already held is joined to it rather than becoming a row of
- *     its own, or a sentence would be broken in the middle of a word every time
- *     the PTY happened to flush there.
- *   - `\r\n` is normalised to `\n`. The PTY sends CRLF, and a browser rendering
- *     a raw `\r` inside a `<div>` shows it as nothing at all — so without this a
- *     terminal's output collapses onto one line.
+ * The work is in `sanitizeTerminalChunk` / `applyTerminalChunk`, which are pure
+ * and tested on their own; this function's job is the store-shaped half — the
+ * per-terminal keying and the copy-on-write.
+ *
+ * Copying rather than mutating is required, not tidiness: the store's selectors
+ * compare by identity, so mutating the object a previous state holds is how a
+ * React render silently shows nothing new.
  */
 export function appendTerminalOutput(
-  store: Record<string, string[]>,
+  store: Record<string, TerminalTail>,
   id: string,
   data: string,
-): Record<string, string[]> {
-  const existing = store[id] ?? [];
-  const lines = data.replace(/\r\n/g, '\n').split('\n');
-  let next: string[];
-  if (existing.length > 0) {
-    // The first fragment continues the line already held.
-    next = [...existing.slice(0, -1), existing[existing.length - 1] + lines[0], ...lines.slice(1)];
-  } else {
-    next = lines;
-  }
-  if (next.length > TERMINAL_SCROLLBACK) {
-    // The **newest** lines survive: dropping the recent output would leave the
-    // pane showing the start of a build with no sign of the end.
-    next = next.slice(next.length - TERMINAL_SCROLLBACK);
-  }
-  return { ...store, [id]: next };
+): Record<string, TerminalTail> {
+  const existing = store[id] ?? EMPTY_TAIL;
+  const chunk = sanitizeTerminalChunk(existing.carry, data);
+  const lines = applyTerminalChunk(existing.lines, chunk.text, TERMINAL_SCROLLBACK);
+  return { ...store, [id]: { lines, carry: chunk.carry } };
 }
 
 /**
@@ -1356,6 +1402,28 @@ export function appendTerminalOutput(
  * describing different terminals — and the append case is real: a shell can end
  * before this window ever received a snapshot that mentioned it.
  */
+/**
+ * Drop the tails of terminals the runtime no longer lists.
+ *
+ * The same identity rule as `appendTerminalOutput`, and it is not an
+ * optimisation: a tail belongs to a terminal that exists, and one kept for an id
+ * the runtime has forgotten is memory this window can never free — nothing will
+ * ever append to it again, and nothing will ever draw it.
+ *
+ * The map is returned unchanged when nothing was dropped, so a snapshot that
+ * mentions only terminals this window already knows does not re-render the pane.
+ */
+export function pruneTails(
+  tails: Record<string, TerminalTail>,
+  rows: TerminalRow[],
+): Record<string, TerminalTail> {
+  const kept = Object.keys(tails).filter((id) => rows.some((row) => row.id === id));
+  if (kept.length === Object.keys(tails).length) return tails;
+  const next: Record<string, TerminalTail> = {};
+  for (const id of kept) next[id] = tails[id];
+  return next;
+}
+
 export function replaceTerminal(rows: TerminalRow[], row: TerminalRow): TerminalRow[] {
   const at = rows.findIndex((candidate) => candidate.id === row.id);
   if (at < 0) return [...rows, row];
@@ -2025,8 +2093,27 @@ export const useApp = create<AppStore>((set, get) => {
               break;
             }
             case 'terminals': {
-              patch(key, {
-                terminals: Array.isArray(msg.terminals) ? msg.terminals : [],
+              // The list is **replaced**, never merged: it is the runtime's whole
+              // answer, and a front end that unioned it with what it already had
+              // would keep a closed terminal's tab alive for ever.
+              //
+              // So this is also where a closed terminal's leftovers go, and there
+              // are exactly two of them. Its output tail can never receive
+              // another byte once the runtime has forgotten the id, and the
+              // attach can no longer resolve to a row — leaving either in place
+              // would draw a terminal view for a shell that does not exist, with
+              // no tab to switch away from it.
+              const rows = Array.isArray(msg.terminals) ? msg.terminals : [];
+              patchWith(key, (current) => {
+                const tails = pruneTails(current.terminalTails, rows);
+                const stillThere =
+                  current.activeTerminalId !== null &&
+                  rows.some((row) => row.id === current.activeTerminalId);
+                return {
+                  terminals: rows,
+                  terminalTails: tails,
+                  activeTerminalId: stillThere ? current.activeTerminalId : null,
+                };
               });
               break;
             }
@@ -2051,12 +2138,20 @@ export const useApp = create<AppStore>((set, get) => {
               const data = typeof msg.data === 'string' ? msg.data : '';
               if (id === '' || data === '') break;
               patchWith(key, (current) => ({
-                terminalOutput: appendTerminalOutput(current.terminalOutput, id, data),
+                terminalTails: appendTerminalOutput(current.terminalTails, id, data),
               }));
               break;
             }
             case 'terminal_exit': {
               const exited = msg.terminal;
+              // **The second half of a close.** Somebody clicking the tab of a
+              // running shell asked to be rid of it, and the runtime's rule is
+              // that a running terminal can be ended but not forgotten — so the
+              // ending had to come first, and this is where it has arrived. The
+              // row is now an ended one, which the close will accept.
+              //
+              // Read before the patch, because the patch is what clears it.
+              const pendingClose = bucket.terminalClosing.includes(msg.terminal_id);
               patchWith(key, (current) => ({
                 // The row is **replaced whole** rather than patched: it carries
                 // the status and the exit code the runtime decided, and merging
@@ -2066,6 +2161,9 @@ export const useApp = create<AppStore>((set, get) => {
                   ? replaceTerminal(current.terminals, exited)
                   : current.terminals,
                 terminalPending: current.terminalPending.filter(
+                  (id) => id !== msg.terminal_id,
+                ),
+                terminalClosing: current.terminalClosing.filter(
                   (id) => id !== msg.terminal_id,
                 ),
                 entries: [
@@ -2079,6 +2177,9 @@ export const useApp = create<AppStore>((set, get) => {
                   },
                 ],
               }));
+              if (pendingClose) {
+                sendTo(key, { v: 1, t: 'terminal_close', terminal_id: msg.terminal_id });
+              }
               break;
             }
             case 'run_finished': {
@@ -2688,6 +2789,47 @@ export const useApp = create<AppStore>((set, get) => {
       // for whether a terminal is running. A kill that was refused must not look
       // like a kill that worked.
       sendTo(key, { v: 1, t: 'terminal_kill', terminal_id: id });
+    },
+
+    closeTerminal(id) {
+      const key = get().activeKey;
+      if (key === null) return;
+      const bucket = get().sessions[key];
+      const row = bucket?.terminals.find((candidate) => candidate.id === id);
+      if (!row) return;
+
+      // Counter-intuitive but required: **a running shell cannot be closed, only
+      // ended first.** The runtime refuses to forget a terminal whose process is
+      // alive — a record that vanished while the shell kept going would be
+      // something nobody can see and nobody can end — so the person's single
+      // gesture is carried out in the two parts the rule actually allows. The
+      // second half runs in the `terminal_exit` handler below, when the runtime
+      // has confirmed the process is gone.
+      //
+      // Clicking the tab you are reading is also how you get back to the
+      // conversation, so the view switches at once rather than after the round
+      // trip: that is this window's own preference (`activeTerminalId`) and the
+      // person's intent is not in doubt.
+      if (row.status === 'running') {
+        patchWith(key, (current) => ({
+          terminalClosing: current.terminalClosing.includes(id)
+            ? current.terminalClosing
+            : [...current.terminalClosing, id],
+          terminalPending: current.terminalPending.includes(id)
+            ? current.terminalPending
+            : [...current.terminalPending, id],
+          activeTerminalId: current.activeTerminalId === id ? null : current.activeTerminalId,
+        }));
+        sendTo(key, { v: 1, t: 'terminal_kill', terminal_id: id });
+        return;
+      }
+
+      // Already ended, so there is no process to lose track of and the runtime
+      // will accept this. **No optimistic removal**: the row and the tail go when
+      // the runtime's list comes back without them, which keeps one place
+      // (`ui(terminals)`) responsible for what this window still holds.
+      patch(key, { activeTerminalId: bucket.activeTerminalId === id ? null : bucket.activeTerminalId });
+      sendTo(key, { v: 1, t: 'terminal_close', terminal_id: id });
     },
 
     attachTerminal(id) {

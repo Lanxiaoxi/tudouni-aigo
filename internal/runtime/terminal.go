@@ -105,6 +105,25 @@ func (r *Runtime) TerminalKill(id string) error {
 	return r.Terminals.Kill(id)
 }
 
+// RemoveTerminal answers `terminal_close`.
+//
+// It drops a terminal that has already ended from the workspace's list. The
+// manager refuses one that is still running, and that refusal is the point
+// rather than an inconvenience: a record that disappeared while its process kept
+// going would be a terminal nobody can see and nobody can end.
+//
+// Unlike `terminal_kill` this **does** answer with the resulting list. The two
+// differ because they change different things: a kill ends a process, and the
+// ending has its own event (`terminal_exit`) emitted from the wait path, so a
+// reply here would be a second truth about whether the shell is running; a close
+// changes the list, and the list is the only thing that can report it.
+func (r *Runtime) RemoveTerminal(id string) error {
+	if r.Terminals == nil {
+		return fmt.Errorf("%s", terminalUnavailable)
+	}
+	return r.Terminals.Remove(id)
+}
+
 // terminalsPanel is the `terminals` array on every `ui(state)` snapshot.
 //
 // Always `[]` and never nil, for the reason every other panel list follows that

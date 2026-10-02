@@ -453,7 +453,7 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "/terminal":
-		// Four shapes, and the first is the panel: `/terminal` on its own lists
+		// Six shapes, and the first is the panel: `/terminal` on its own lists
 		// what is running in this workspace.
 		switch strings.ToLower(firstWord(arguments)) {
 		case "":
@@ -471,6 +471,26 @@ func (m model) runCommand(text string) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.client.TerminalKill(arguments[1])
+			return m, nil
+		case "close":
+			// Forgetting an **ended** terminal, which is a different act from
+			// ending one — see `closeTerminal` for why the runtime refuses this
+			// for a shell that is still running, and what this does about it.
+			if len(arguments) < 2 {
+				m.appendLine(renderLine{segments: []seg{
+					{text: i18n.T("cmd.terminal.need_id"), role: "warn"},
+				}}, "notice", "")
+				return m, nil
+			}
+			// Resolved through the same lookup `/terminal <n>` attaches with, so
+			// the number a person reads in the panel is the number this takes. An
+			// id the panel does not know is sent anyway and refused by the runtime,
+			// which is the only end that can say whether such a terminal exists.
+			if row := m.terminalByIndex(arguments[1]); row != nil {
+				m.closeTerminal(*row)
+				return m, nil
+			}
+			m.client.TerminalClose(arguments[1])
 			return m, nil
 		case "detach":
 			m.detach()
@@ -914,6 +934,14 @@ func (m model) handleOverlayKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.overlay.kind == overlayTerminal && typed == "k" {
 			return m.killTerminalUnderCursor()
 		}
+		// `c` closes the tab, which for a **running** shell means ending it first:
+		// the runtime will not forget a terminal whose process is alive, so a
+		// record that vanished while the shell kept going would be something
+		// nobody can see and nobody can end. `closeTerminalUnderCursor` does both
+		// halves, and an ended terminal needs the `k` path not at all.
+		if m.overlay.kind == overlayTerminal && typed == "c" {
+			return m.closeTerminalUnderCursor()
+		}
 		if typed == "q" {
 			m.overlay = overlay{}
 			return m, nil
@@ -1140,6 +1168,43 @@ func (m model) killTerminalUnderCursor() (tea.Model, tea.Cmd) {
 	row := rows[m.overlay.cursor]
 	m.client.TerminalKill(row.id)
 	return m, nil
+}
+
+// closeTerminalUnderCursor takes the terminal under the cursor off the list.
+//
+// It is the panel's `c`, and it is **two acts wearing one key** because the
+// runtime's rule leaves no alternative for a shell that is still running: a
+// terminal can be ended but not forgotten, so the ending has to come first. The
+// second half happens in `terminalExitLine`, which closes what the person asked
+// to close once the exit event confirms the process is gone.
+//
+// An ended terminal needs no ending, so it goes straight to the close.
+func (m model) closeTerminalUnderCursor() (tea.Model, tea.Cmd) {
+	rows := m.terminalPanelRows()
+	if m.overlay.cursor >= len(rows) {
+		return m, nil
+	}
+	row := rows[m.overlay.cursor]
+	m.closeTerminal(row)
+	return m, nil
+}
+
+// closeTerminal is the shared half of every close: the `/terminal close` command,
+// the panel's `c`, and the exit path's second step.
+//
+// It never guesses about the runtime's answer. A close that was refused comes back
+// as a notice plus a fresh list, and the row staying in that list is what keeps the
+// panel honest — no optimistic removal happens here.
+func (m *model) closeTerminal(row terminalRow) {
+	if row.status == protocol.TerminalRunning {
+		// Ended first, and the close that follows is remembered so the exit event
+		// can finish the job. Without this the shell would die and its row would
+		// stay for ever, which is exactly the state the person was trying to leave.
+		m.closing = append(m.closing, row.id)
+		m.client.TerminalKill(row.id)
+		return
+	}
+	m.client.TerminalClose(row.id)
 }
 
 // openFiles switches the browser to a directory and asks for its listing.

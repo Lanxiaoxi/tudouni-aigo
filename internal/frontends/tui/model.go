@@ -229,6 +229,15 @@ type model struct {
 	// one am I typing into". The process, the cwd and the status all live in the
 	// runtime, and this never guesses at any of them.
 	attached terminalAttach
+	// closing is the terminals somebody asked to close whose shell was still
+	// running.
+	//
+	// Closing is two acts for a live shell — end it, then forget it — and the two
+	// land at different times because the runtime refuses to forget a terminal
+	// whose process is alive. This is the intention waiting out that gap, and like
+	// `attached` it is a front-end fact: it records what was asked for, never what
+	// a terminal is doing.
+	closing []string
 }
 
 // railSeen is the three edges the rail auto-opens on, one field each.
