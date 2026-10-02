@@ -46,6 +46,11 @@ const SUITES = [
   // Node and what is being protected is its presence — see the file for why a
   // performance fix is worth a test at all.
   'stream-layout.test.ts',
+  // What the conversation column shows, and in what order. A priority order
+  // written as a chain of ternaries is exactly the kind of thing that reads as
+  // ordinary code while being wrong — this one hid an attached terminal behind
+  // the first screen, which took the composer away with it.
+  'conversation-view.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

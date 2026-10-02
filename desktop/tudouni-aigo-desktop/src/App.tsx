@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
 import { activeRuntime, NO_ENTRIES, NO_NOTES, useApp } from '@/state/store';
+import { conversationView, showsComposer } from '@/conversationView';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
 import { useFileDrop } from '@/hooks/useFileDrop';
@@ -79,11 +80,25 @@ export function App() {
   // stream, because `session_load` rebuilds the stream the moment after `init`
   // and would take them with it.
   const hasConversation = entries.some((entry) => entry.kind !== 'note');
-  // Two ways to reach the first screen, and the second one is what keeps closing
-  // the last session from parking the window on "Starting the runtime…" with
-  // nothing starting. With no session open there is nothing to boot, and the
-  // first screen is where a person starts one.
-  const showWelcome = activeKey === null || (ready && !hasConversation);
+
+  // **Which of the six things the column is showing, decided in one place.**
+  // The priority order is a real ordering rather than a set of independent
+  // conditions, and that distinction is the whole reason this is a function:
+  // the terminal and the composer used to be answered by two separate
+  // expressions, which let them disagree — a shell with no composer and no
+  // terminal, and no control on screen that could detach. See
+  // `conversationView.ts` for the order and for the defect.
+  const view = conversationView({
+    startupProblem: startupProblem !== null,
+    sessionProblem: problem !== null,
+    attachedTerminalId,
+    // No session open means nothing to boot: `ready` can never become true, so
+    // "starting the runtime…" would be a sentence about a process nobody
+    // started. Closing the last session is how that state is reached.
+    hasSession: activeKey !== null,
+    ready,
+    hasConversation,
+  });
 
   // The sidebar has two independent off-switches: the person's preference, and
   // the stylesheet's 1024px rule — which is why the summary row cannot be driven
@@ -149,57 +164,39 @@ export function App() {
               this column, so it stays a sibling and spans the window. */}
           <div className="app-conversation">
             <main className="app-stream">
-              {/* A start-up failure outranks everything: without a runtime there
-                  is no session to show, and the reason plus the two ways out are
-                  the only useful thing on screen.
-
-                  **Then one session's own failure**, which is a different thing
-                  and must not be confused with it. A child that refused to start
-                  belongs to the conversation somebody just asked for, not to the
-                  window: the window may have another conversation running
-                  happily beside it. `SessionProblem` says so and offers the two
-                  ways out, and it sits above the `!ready` branch for the same
-                  reason the missing-session case does — a session whose child
-                  failed never becomes ready, so testing `!ready` first would
-                  print "Starting the runtime…" over a process that already gave
-                  up, which is precisely the invisible failure this is here to
-                  remove.
-
-                  **A missing session outranks "not ready", and the order here
-                  is load-bearing.** With nothing open there is no child to boot,
-                  so `ready` can never become true and `<Booting />` would be a
-                  sentence about a process that does not exist — "Starting the
-                  runtime…" over a runtime that nobody started. That is exactly
-                  what a launch with no workspace to go back to would show, which
-                  is now a normal state rather than an impossible one.
-
-                  **An attached terminal replaces the transcript**, and it is
-                  checked after the failure cases rather than before them: a
-                  window with no runtime has no shells either, so a start-up
-                  failure is still the right thing to show. See `TerminalView`
-                  for why the terminal takes the whole column rather than half of
-                  it. */}
-              {startupProblem !== null ? (
+              {/* Six occupants, one order, and **the order is the decision** —
+                  see `conversationView.ts`, where it is written down and
+                  asserted. It used to be a chain of ternaries here, and the two
+                  that mattered most were the two that were swapped: an attached
+                  terminal was tested *after* the first screen, so opening a
+                  shell in a workspace with no conversation drew the greeting
+                  over it and hid the only control that could leave. */}
+              {view === 'startup-problem' ? (
                 <StartupProblem />
-              ) : problem !== null ? (
+              ) : view === 'session-problem' ? (
                 <SessionProblem />
-              ) : showWelcome ? (
-                <Welcome notices={handshakeNotices} />
-              ) : !ready ? (
-                <Booting />
-              ) : attachedTerminalId !== null ? (
+              ) : view === 'terminal' ? (
                 <TerminalView />
+              ) : view === 'welcome' ? (
+                <Welcome notices={handshakeNotices} />
+              ) : view === 'booting' ? (
+                <Booting />
               ) : (
                 <StreamView />
               )}
             </main>
 
             {/* The composer is the conversation's, and it is **not drawn while a
-                terminal is attached**: every keystroke in that state belongs to
-                the shell (see `TerminalView`), so a text box sitting under the
-                output would be a control that cannot accept input. Its `+` and
-                its send button would each be a gesture that does nothing. */}
-            {attachedTerminalId === null ? <Composer /> : null}
+                terminal has the screen**: every keystroke in that state belongs
+                to the shell (see `TerminalView`), so a text box sitting under
+                the output would be a control that cannot accept input. Its `+`
+                and its send button would each be a gesture that does nothing.
+
+                **Asked of the same decision as the view above, not of the
+                attach.** Two expressions answered one question, so they could
+                disagree — and when they did, the bug was invisible in the worst
+                way: the composer was gone *and* nothing had replaced it. */}
+            {showsComposer(view) ? <Composer /> : null}
           </div>
 
           <div
