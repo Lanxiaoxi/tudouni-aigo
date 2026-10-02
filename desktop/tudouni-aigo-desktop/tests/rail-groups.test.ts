@@ -1,5 +1,6 @@
 /**
- * The left rail's two groups, and what makes its actions inert.
+ * The left rail's groups, what makes its actions inert, and what a launch leaves
+ * behind.
  *
  * This is the regression suite for one report: **"I press 'New session' and
  * nothing happens."** Two independent faults produced it, and both are pure
@@ -23,9 +24,17 @@
  *      `.overlay-mask` and **zero** IPC calls go out. `railBlocked` is what makes
  *      the rail *say* it is inert.
  *
- * Both are asserted as pairs, because each one alone would pass on the broken
- * code: the first test in each pair is the state that used to be wrong, and the
- * second is the state that must not regress while fixing it.
+ * Group 3 belongs to the same group of facts and was reported next: the session a
+ * **launch** opens, left behind when the person opens a past conversation
+ * instead. Listing it was right for the second it was the screen; keeping it for
+ * the life of the window was not, and neither was the alternative of simply not
+ * drawing it — a session with no file has no delete button, so a live child drawn
+ * nowhere is a process nobody can reach or end. `isUntouchedSession` is the rule
+ * that separates it from a conversation, and `abandonIfUntouched` closes it.
+ *
+ * All three are asserted as pairs, because each one alone would pass on the
+ * broken code: the first test in each pair is the state that used to be wrong,
+ * and the second is the state that must not regress while fixing it.
  */
 
 import assert from 'node:assert/strict';
@@ -71,7 +80,17 @@ function handshaken(key: string, workspace: string, sessionId: string): SessionR
   const bucket = fresh(key, workspace);
   bucket.ready = true;
   bucket.sessionId = sessionId;
-  bucket.session = { id: sessionId, workspace } as SessionRuntime['session'];
+  // `resumed: false` is what the runtime says about a session it minted itself,
+  // and `isUntouchedSession` reads it: an id with a file behind it is a
+  // conversation the person picked, whatever its transcript happens to hold.
+  bucket.session = { id: sessionId, workspace, resumed: false } as SessionRuntime['session'];
+  return bucket;
+}
+
+/** The same, for a conversation loaded from its file. */
+function resumed(key: string, workspace: string, sessionId: string): SessionRuntime {
+  const bucket = handshaken(key, workspace, sessionId);
+  bucket.session = { id: sessionId, workspace, resumed: true } as SessionRuntime['session'];
   return bucket;
 }
 
@@ -178,6 +197,203 @@ test('the status travels with the row, so the dot still has something to say', (
 test('nothing open is an empty string, not a row for nobody', () => {
   install({}, [], null);
   assert.equal(selectLiveOnlyKey(useApp.getState(), 'C:/work'), '');
+});
+
+/* ============================================================
+   Group 3: the session a launch leaves behind
+   ============================================================ */
+
+test('the idle session a launch opened is closed when the person moves on', () => {
+  // **The reported shape.** A launch opens a session in the workspace last
+  // worked in, so the window always comes up with one. Opening a past
+  // conversation instead leaves that first one behind: a live child, no file,
+  // and a rail row reading "open now / Nothing has run in it yet" for the rest
+  // of the window's life — with no delete button, because there is no file.
+  const idle = handshaken('k1', 'C:/work', '20261002-183456');
+  const past = handshaken('k2', 'C:/work', '20261002-183131');
+  // A conversation with a file, which is what makes it a **past** session: the
+  // runtime's list holds it, so it is drawn from there and not from this group.
+  past.sessionList = [
+    { id: '20261002-183131', messages: 21, steps: 8, todos: '', preview: 'hi', modifiedAt: 1 },
+  ];
+  past.listedSessions = true;
+  install({ k1: idle, k2: past }, ['k1', 'k2'], 'k1');
+
+  useApp.getState().focusSession('k2');
+
+  const s = useApp.getState();
+  assert.equal(s.activeKey, 'k2');
+  assert.equal(s.sessions.k1, undefined, 'the session that was left is closed, not merely unlisted');
+  assert.deepEqual(s.order, ['k2']);
+  // And the consequence the person actually sees: no row, from either group.
+  assert.equal(selectLiveOnlyKey(s, 'C:/work'), '');
+});
+
+test('a session with something in it is left exactly where it is', () => {
+  // The other half, and the half that would make this rule dangerous: the check
+  // must be about a session that never became a conversation, not about one that
+  // is merely not on screen. Each case below is a reason somebody would come
+  // back to it — so each is a reason to keep the child alive.
+  const cases: { what: string; mutate: (rt: SessionRuntime) => void }[] = [
+    {
+      what: 'a message has been sent',
+      mutate: (rt) => {
+        rt.hasSpoken = true;
+      },
+    },
+    {
+      what: 'a turn is running',
+      mutate: (rt) => {
+        rt.activeRunId = 'run-1';
+      },
+    },
+    {
+      what: 'a draft is half-typed',
+      mutate: (rt) => {
+        rt.draft = 'let me think about';
+      },
+    },
+    {
+      what: 'a shell was opened from it',
+      mutate: (rt) => {
+        rt.activeTerminalId = 'term-1';
+      },
+    },
+    {
+      what: 'its child died',
+      mutate: (rt) => {
+        rt.runtimeExit = { code: 1, requested: false };
+      },
+    },
+    {
+      what: 'the runtime said something worth reading',
+      mutate: (rt) => {
+        rt.problem = 'the workspace C:/work cannot be used';
+      },
+    },
+  ];
+
+  for (const { what, mutate } of cases) {
+    const busy = handshaken('k1', 'C:/work', '20261002-183456');
+    mutate(busy);
+    install({ k1: busy, k2: handshaken('k2', 'C:/work', '20261002-183131') }, ['k1', 'k2'], 'k1');
+
+    useApp.getState().focusSession('k2');
+
+    assert.ok(useApp.getState().sessions.k1, `kept open when ${what}`);
+  }
+});
+
+test('a conversation loaded from its file is not an idle session', () => {
+  // `resumed` is the runtime's own answer, and it is the one fact that separates
+  // "a child I just started for you" from "a conversation you picked". The gap
+  // between `init` and `session_load` is why this cannot be read off the
+  // transcript: the history has not been rebuilt yet, so a resumed session looks
+  // empty for that one frame — and closing it in that frame would throw away a
+  // conversation the person had just asked for.
+  const past = resumed('k1', 'C:/work', '20261002-183131');
+  install({ k1: past, k2: handshaken('k2', 'C:/work', '20261002-183456') }, ['k1', 'k2'], 'k1');
+
+  useApp.getState().focusSession('k2');
+
+  assert.ok(useApp.getState().sessions.k1, 'a resumed session is never closed by switching away');
+});
+
+test('a session still holding a request is never closed', () => {
+  // The runtime blocks on the request id with no timeout, so a session that is
+  // waiting on a person may not be ended by anything but that person — the same
+  // rule the rail's own inertness follows.
+  const asking = handshaken('k1', 'C:/work', '20261002-183456');
+  install({ k1: asking, k2: handshaken('k2', 'C:/work', '20261002-183131') }, ['k1', 'k2'], 'k1', {
+    pendingModals: [
+      {
+        kind: 'permission',
+        key: 'k1',
+        req: {
+          id: 'p1',
+          tool: 'shell',
+          risk: 'high',
+          arguments: {},
+          remember: null,
+          remember_hint: null,
+          allow_trust_all: false,
+          trust_all_hint: null,
+        },
+      },
+    ] as AppStore['pendingModals'],
+  });
+
+  useApp.getState().focusSession('k2');
+
+  assert.ok(useApp.getState().sessions.k1, 'the prompt is still on screen to be answered');
+});
+
+/**
+ * Run `body` against a fake Tauri host that will start a child.
+ *
+ * `attachSession` returns null before it touches the store when there is no
+ * bridge, so the path a launch-plus-click actually takes — the conversation was
+ * not open, so a child is started for it — can only be exercised with one. The
+ * host is the smallest that answers `runtime_attach`; `runtime_stderr` is the
+ * one other command the attach path calls, and `ensureHost` tolerates never
+ * having been wired (`initBridge`) because nothing here subscribes to events.
+ */
+async function withFakeAttach<T>(body: () => Promise<T>): Promise<T> {
+  const previous = (globalThis as { window?: unknown }).window;
+  let minted = 0;
+  (globalThis as { window?: unknown }).window = {
+    __TAURI_INTERNALS__: {
+      invoke(cmd: string) {
+        if (cmd === 'runtime_attach') {
+          minted += 1;
+          return Promise.resolve(minted);
+        }
+        if (cmd === 'runtime_stderr') return Promise.resolve([]);
+        return Promise.resolve(null);
+      },
+    },
+  };
+  try {
+    return await body();
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+  }
+}
+
+test('opening a closed past conversation closes the idle session it displaces', async () => {
+  // **The path the report actually took.** The launch opens a session in the
+  // workspace last worked in; clicking a past conversation that no child has
+  // open goes through `attachSession`, not `focusSession` — so the abandonment
+  // has to live on both, or the row this whole change is about survives exactly
+  // the click that produced it.
+  const idle = handshaken('k1', 'C:/work', '20261002-183456');
+  install({ k1: idle }, ['k1'], 'k1');
+
+  await withFakeAttach(() =>
+    useApp.getState().attachSession({ workspace: 'C:/work', sessionId: '20261002-183131' }),
+  );
+
+  const s = useApp.getState();
+  assert.equal(s.activeKey, '1', 'the conversation that was asked for is the one on screen');
+  assert.equal(s.sessions.k1, undefined, 'and the idle session it displaced is closed');
+  assert.deepEqual(s.order, ['1']);
+});
+
+test('the handshake\'s own notices are not a conversation', () => {
+  // The boundary that decides whether the rule ever fires at all. Every session
+  // is handed runtime notices ("no ripgrep", "this MCP server did not attach"),
+  // and they are session content the design says must not be pushed out — but a
+  // row of them is still not something anybody comes back to. If they counted,
+  // the idle session would be kept for ever on any machine with a warning.
+  const noticed = handshaken('k1', 'C:/work', '20261002-183456');
+  noticed.entries = [
+    { kind: 'note', id: 'n1', tone: 'warn', code: 'grep.missing_binary', text: 'no ripgrep' },
+  ];
+  install({ k1: noticed, k2: handshaken('k2', 'C:/work', '20261002-183131') }, ['k1', 'k2'], 'k1');
+
+  useApp.getState().focusSession('k2');
+
+  assert.equal(useApp.getState().sessions.k1, undefined);
 });
 
 /* ============================================================

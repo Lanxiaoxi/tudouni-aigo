@@ -1344,6 +1344,60 @@ export function resolveAttachWorkspace(
   return '';
 }
 
+/**
+ * Whether an open session has never become a conversation.
+ *
+ * There is one state where this matters, and it is the one a launch leaves
+ * behind. `openFirstSession` starts a child in the workspace last worked in, so
+ * the window always comes up with a session open — and if the person then opens
+ * a past conversation instead of typing here, that first session stays: a live
+ * child, no file, no message, and a rail row reading "open now / Nothing has run
+ * in it yet". It is not a conversation anybody can come back to, so it is
+ * **closed** when the screen moves off it (`abandonIfUntouched`) rather than
+ * merely left out of the list. Hiding the row would be worse than showing it —
+ * with no file there is no delete button either, so a live child nobody draws is
+ * a process nobody can reach or end.
+ *
+ * Every exclusion below is a thing a person would notice losing, and each one
+ * also *dis*qualifies the session: it is then a conversation in progress, and it
+ * is left exactly where it is.
+ *
+ * Exported and pure so the rule can be asserted without a child process, which
+ * is how the rail's groups are tested — see `tests/rail-groups.test.ts`.
+ */
+export function isUntouchedSession(s: AppStore, key: string): boolean {
+  const rt = s.sessions[key];
+  if (!rt) return false;
+
+  // The handshake has to have landed, and it has to say this is a **new**
+  // session. Before `init` there is nothing to judge — the child has not said
+  // which conversation it is — and a resumed one is a conversation the person
+  // picked by name, whatever its transcript happens to hold. Without the second
+  // half, the gap between `init` and `session_load` would read as "empty": the
+  // history has not been rebuilt yet, so `hasSpoken` is still false.
+  if (!rt.ready || rt.session?.resumed !== false) return false;
+
+  // Said something, or is saying it now. `hasSpoken` is set as the message goes
+  // out, so it covers the turn that follows it.
+  if (rt.hasSpoken || rt.activeRunId !== null || hasRunningTurn(rt.entries)) return false;
+  // Typed something, or staged a picture, without sending it.
+  if (rt.draft.trim() !== '' || rt.pastedImages.length > 0) return false;
+  // A shell is running, made by this session's child — closing the session ends
+  // it, and the scrollback this end holds goes with it.
+  if (rt.terminals.length > 0 || rt.activeTerminalId !== null) return false;
+  // Something to read rather than nothing to lose: a child that would not start,
+  // one that died, an input the composer refused and explained.
+  if (rt.problem !== null || rt.runtimeExit !== null || rt.composerNotice !== null) return false;
+  // A transcript, however short. The handshake's own notices do not count —
+  // every session has those, and "no ripgrep" is not a conversation.
+  if (rt.entries.some((entry) => entry.kind !== 'note')) return false;
+  // Waiting on the person. Nothing closes a session that is holding a request:
+  // the runtime waits on that id for ever.
+  if (s.pendingModals.some((entry) => entry.key === key)) return false;
+
+  return true;
+}
+
 /* ------------------------------------------------------------
    Reading the active session from a component
    ------------------------------------------------------------
@@ -1622,6 +1676,30 @@ export const useApp = create<AppStore>((set, get) => {
     return get().activeKey;
   }
 
+  /**
+   * Close the session the screen just left, when it never became a conversation.
+   *
+   * Called **after** the new focus is in place, never before: the test is "is
+   * this one still on screen", and reading `activeKey` a moment early would make
+   * every ordinary switch look like leaving. There is one caller per way the
+   * screen moves — `focusSession` and `attachSession` — because those are the
+   * store's only two ways for `activeKey` to change to a session that already
+   * existed.
+   *
+   * Closing is a real act and it is deliberately the one taken: this session has
+   * no file, so the row it would leave behind has no delete button, and a live
+   * child that is drawn nowhere is a process nobody can reach or end. Closing
+   * loses nothing — by `isUntouchedSession` there is nothing in it to lose — and
+   * the runtime's own shutdown is graceful, so a turn that somehow started
+   * between the two still finishes.
+   */
+  function abandonIfUntouched(key: string | null): void {
+    if (key === null) return;
+    if (key === get().activeKey) return;
+    if (!isUntouchedSession(get(), key)) return;
+    void get().detachSession(key);
+  }
+
   return {
     sessions: {},
     order: [],
@@ -1726,6 +1804,11 @@ export const useApp = create<AppStore>((set, get) => {
           order: [...state.order, failed],
           activeKey: failed,
         }));
+        // **No abandonment here, deliberately.** The screen moved, but to a
+        // session that is not a conversation — so the one it displaced is
+        // whatever the person was working in, and closing that because an
+        // unrelated start-up was refused would cost them the only thing that
+        // still works. It stays on screen behind the refusal.
         return null;
       }
 
@@ -1763,6 +1846,13 @@ export const useApp = create<AppStore>((set, get) => {
       // true the screen shows "Starting the runtime…" forever over a process
       // that is running and answering. Nothing reports a failure, because
       // nothing failed.
+
+      // The session this one is replacing **on screen**, read here rather than
+      // from the `s` taken at the top: `attachRuntime` awaited, and the person
+      // may have moved to another conversation while the child was starting.
+      // `get().activeKey` at this point is still the one being looked at, which
+      // is what "left behind" means.
+      const leaving = get().activeKey;
       set((state) => ({
         sessions: { ...state.sessions, [key as string]: bucket },
         order: [...state.order, key as string],
@@ -1797,6 +1887,11 @@ export const useApp = create<AppStore>((set, get) => {
       // and a fresh child is the only thing that can answer for this workspace.
       sendTo(key, { v: 1, t: 'session_list' });
 
+      // The other half of a switch: the session this one displaced is now off
+      // screen, and if it never became a conversation it is closed rather than
+      // left as a row nothing can delete. See `abandonIfUntouched`.
+      abandonIfUntouched(leaving);
+
       return key;
     },
 
@@ -1804,6 +1899,7 @@ export const useApp = create<AppStore>((set, get) => {
       const s = get();
       if (!s.sessions[key]) return;
       if (s.activeKey === key) return;
+      const leaving = s.activeKey;
       patchWith(key, () => ({ unseen: false }));
       // **Nothing is sent.** Switching which conversation is drawn is a local
       // act; the child keeps running and keeps its transcript. This is the
@@ -1816,6 +1912,9 @@ export const useApp = create<AppStore>((set, get) => {
       // precisely how somebody changes which one that is.
       const workspace = s.sessions[key]?.workspace ?? '';
       if (workspace !== '') get().rememberWorkspace(workspace);
+      // Last, with the new focus already in place: what is being looked at now
+      // is the one that stays, whatever it is.
+      abandonIfUntouched(leaving);
     },
 
     async detachSession(key) {

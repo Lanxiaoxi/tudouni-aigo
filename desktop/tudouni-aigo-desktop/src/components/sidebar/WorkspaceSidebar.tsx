@@ -415,6 +415,13 @@ export function WorkspaceSidebar() {
                   "saved" are two different facts: the runtime owns the second,
                   this end owns the first.
 
+                  What is in here is therefore a conversation with something in
+                  it and no file yet — a turn that has not been written down, a
+                  draft, a shell. A session that never became one at all is
+                  **closed** when the screen moves off it rather than listed
+                  (`isUntouchedSession`), which is what keeps the session a launch
+                  opens from sitting here for the life of the window.
+
                   No delete button: there is no file to delete, and closing a
                   conversation is `detachSession`, which is a different act from
                   erasing one. The row is still a way to switch to it, which is
