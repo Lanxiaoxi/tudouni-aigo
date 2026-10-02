@@ -26,6 +26,10 @@ debug.log
 launch.log
 probe-launch.log
 
+# Tauri build logs, from scripts/build-installer.ps1 and any manual run.
+.tauri-build*.log
+.tudouni-tauri-build.log
+
 # Rust
 src-tauri/target/
 src-tauri/gen/

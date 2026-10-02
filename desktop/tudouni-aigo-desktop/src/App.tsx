@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
 import { activeRuntime, NO_ENTRIES, NO_NOTES, useApp } from '@/state/store';
@@ -11,6 +11,7 @@ import { useSidebarHiddenByCss } from '@/hooks/useLayout';
 import { applySystemTheme, watchSystemTheme } from '@/theme';
 
 import { TitleBar } from '@/components/chrome/TitleBar';
+import { useT } from '@/i18n/useT';
 import { TopBar } from '@/components/chrome/TopBar';
 import { SessionBar } from '@/components/chrome/SessionBar';
 import { CollapsedSummary } from '@/components/chrome/CollapsedSummary';
@@ -54,6 +55,10 @@ export function App() {
   const handshakeNotices = rt?.handshakeNotices ?? NO_NOTES;
   const sidebarVisible = useApp((s) => s.sidebarVisible);
   const leftbarVisible = useApp((s) => s.leftbarVisible);
+  const sidebarWidth = useApp((s) => s.sidebarWidth);
+  // Live while a rail-width drag is in flight: the rail drops its width
+  // transition so it tracks the pointer instead of easing behind it.
+  const resizing = useApp((s) => s.resizing);
   const startupProblem = useApp((s) => s.startupProblem);
   const dragging = useApp((s) => s.dragging);
   // Which terminal this session's view is attached to, if any. It is read from
@@ -200,9 +205,18 @@ export function App() {
           </div>
 
           <div
-            className={`app-rail app-rail-right${showSidebar ? '' : ' is-collapsed'}`}
+            className={`app-rail app-rail-right${showSidebar ? '' : ' is-collapsed'}${resizing ? ' is-resizing' : ''}`}
             inert={!showSidebar}
+            // React's CSSProperties does not declare custom properties; the
+            // cast is the usual bridge, and the variable name is asserted by
+            // the stylesheet it feeds (`--rail-w-dragged` in global.css).
+            style={
+              sidebarWidth !== null
+                ? ({ '--rail-w-dragged': `${sidebarWidth}px` } as CSSProperties)
+                : undefined
+            }
           >
+            {showSidebar ? <RailDragHandle /> : null}
             <Sidebar />
           </div>
         </div>
@@ -215,5 +229,67 @@ export function App() {
       <QuestionModal />
       </ErrorBoundary>
     </TooltipPrimitive.Provider>
+  );
+}
+
+/**
+ * The right rail's drag handle: a narrow strip on its inner edge that resizes
+ * the rail with pointer events.
+ *
+ * A live drag goes to `document`, not to the strip: crossing the strip's own
+ * edge mid-sweep would otherwise drop the pointermove stream. The listeners
+ * are removed on `pointerup`, which for a captured pointer is the gesture's
+ * own end — a drag that ends outside the window still releases there.
+ *
+ * The width is clamped through `setSidebarWidth`, so the same range governs the
+ * drag, the persisted value read back on load, and any future caller. A
+ * double-click hands the width back to the stylesheet (`null`), the same way
+ * other rails' toggles restore rather than merely hide.
+ */
+function RailDragHandle() {
+  const t = useT();
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    // Capture keeps the pointermove stream aimed here even when the pointer
+    // leaves the strip mid-sweep; the document listeners below are what keep
+    // the width tracking, because the capture only fixes the *target*, and the
+    // move handler has to live somewhere that survives crossing the strip's
+    // own edge.
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    // The rail is the strip's offset parent, so its current width is the
+    // starting point the deltas are measured against — read here, once, rather
+    // than from the store on every move.
+    const startW = e.currentTarget.offsetParent
+      ? (e.currentTarget.offsetParent as HTMLElement).getBoundingClientRect().width
+      : 0;
+    const move = (ev: PointerEvent) => {
+      // The strip sits on the rail's **left** edge, and dragging that edge
+      // outward (to the left) must widen the rail — so the delta enters the
+      // width negated. `startW + dx` is the geometry for a right-edge handle
+      // and read as "drag left = narrower", which is how this was shipped.
+      useApp.getState().setSidebarWidth(startW - (ev.clientX - startX));
+    };
+    const stop = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', stop);
+      document.body.classList.remove('is-resizing');
+      useApp.setState({ resizing: false });
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', stop);
+    document.body.classList.add('is-resizing');
+    useApp.setState({ resizing: true });
+  };
+
+  return (
+    <div
+      className="rail-drag"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={t('rail.drag')}
+      onPointerDown={onPointerDown}
+      onDoubleClick={() => useApp.getState().setSidebarWidth(null)}
+    />
   );
 }

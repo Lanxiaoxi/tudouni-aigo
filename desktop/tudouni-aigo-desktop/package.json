@@ -1,7 +1,7 @@
 {
   "name": "tudouni-aigo-desktop",
   "private": true,
-  "version": "0.9.8",
+  "version": "0.9.9",
   "type": "module",
   "description": "tudouni-aigo desktop client — Tauri 2 shell + React front end driving the Go runtime over the JSONL stdio protocol",
   "scripts": {
@@ -15,6 +15,7 @@
     "audit:css": "node scripts/class-audit.mjs",
     "icons": "node scripts/make-icons.mjs",
     "runtime:stage": "node scripts/stage-runtime.mjs",
+    "installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
     "tauri": "tauri"
   },
   "dependencies": {

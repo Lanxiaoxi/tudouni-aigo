@@ -24,6 +24,7 @@
 | `internal/i18n/` | 界面文案 |
 | `internal/version/` | 版本号的读取与展示；**命令名也在这里**（`version.Name`，`--help`、flag set 名、打包产物名都从它取，改名字只改这一处 + `packaging/`） |
 | `internal/release/`、`tools/release/` | 打包、暂存目录、校验、压缩 |
+| `desktop/tudouni-aigo-desktop/` | 独立的桌面客户端（Tauri 2 + React）；出安装包见下文「桌面端安装包」一节 |
 | `prompts/` | 系统提示词（运行时按目录是否存在来判定「这是不是安装包根目录」） |
 | `tools/vendor/rg/` | 随包分发的 ripgrep，按平台各一份 |
 | `packaging/` | `install.ps1`、`install.sh`、`README.txt` |
@@ -37,6 +38,32 @@ make vet
 make release    # 两个平台全量构建 + 校验 + 打包成 zip
 make clean
 ```
+
+### 桌面端安装包（Windows NSIS）
+
+桌面端出安装包只需一条命令（在 `desktop/tudouni-aigo-desktop/` 下）：
+
+```
+npm run installer       # = scripts/build-installer.ps1
+```
+
+脚本依次做三件事，顺序不能乱：
+
+1. **检查工具链**（Node、cargo 在 PATH 里；`-SkipToolcheck` 跳过）；
+2. **确保 runtime 已暂存**：`src-tauri/runtime/` 缺二进制、`--version` 与仓库根
+   `VERSION` 不一致、或 `dist/` 里有更新的构建时，自动跑 `npm run runtime:stage`；
+   都满足就跳过（`-Force` 强制重跑）；
+3. **跑 `npm run tauri build`**（日志落在 `.tauri-build.log`），结束时报告产物路径。
+
+它**不会**替你跑 `make release`：那是 Go 运行时自己的发布门（会真启动二进制做校验）。
+如果 Go 源码有改动，先在仓库根 `make release`，再跑 `npm run installer`。
+
+产物：`desktop/tudouni-aigo-desktop/src-tauri/target/release/bundle/nsis/tudouni-aigo_<桌面端版本>_x64-setup.exe`。
+发布目标只有 NSIS（Windows）；`tauri.conf.json` 里的 `deb`/`appimage` 只在 Linux 上构建时生效。
+
+已知坑（脚本里已经处理，改脚本时别丢）：Windows PowerShell 5.1 下 `$ErrorActionPreference='Stop'`
+会把 native 命令写到 stderr 的普通进度行当成终止错误，所以 npm 调用都包在 `cmd /c` 里；
+同样 5.1 没有 `$IsWindows` 变量和 `Join-Path` 多子路径形式，判定要用 `$env:OS`。
 
 Makefile 的每条 recipe 都走 `go run ./tools/release`，因为本仓库在 Windows 上开发，
 `mkdir -p`／`$(shell cat ...)` 这类 POSIX 写法在 cmd 里会挂。别把 recipe 改回 shell 工具。
