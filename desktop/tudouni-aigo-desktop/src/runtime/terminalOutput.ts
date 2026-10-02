@@ -210,6 +210,25 @@ export function applyTerminalChunk(
   text: string,
   limit: number,
 ): string[] {
+  return applyTerminalChunkReporting(lines, text, limit).lines;
+}
+
+/**
+ * The same, plus **whether anything was dropped**.
+ *
+ * The count is the whole reason this exists rather than the caller comparing
+ * lengths: a bounded buffer silently discards the oldest output, and a log that
+ * has been cut with no sign of it is a log somebody will read as complete. The
+ * pane says so once it happens (see `TerminalTail.dropped`), which needs the fact
+ * to leave this function — a length comparison at the call site would be the same
+ * arithmetic written a second time, and it would be wrong the moment a batch both
+ * adds and drops.
+ */
+export function applyTerminalChunkReporting(
+  lines: string[],
+  text: string,
+  limit: number,
+): { lines: string[]; dropped: number } {
   const next = lines.length > 0 ? [...lines] : [''];
   // `\r\n` is a line ending and a lone `\r` is a rewrite; normalising first is what
   // tells the two apart without a second pass.
@@ -228,7 +247,8 @@ export function applyTerminalChunk(
   if (next.length > limit) {
     // The **newest** lines survive: dropping the recent output would leave the pane
     // showing the start of a build with no sign of the end.
-    return next.slice(next.length - limit);
+    const dropped = next.length - limit;
+    return { lines: next.slice(dropped), dropped };
   }
-  return next;
+  return { lines: next, dropped: 0 };
 }

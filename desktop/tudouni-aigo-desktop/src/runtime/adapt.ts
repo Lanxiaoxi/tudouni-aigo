@@ -33,6 +33,7 @@ import type {
   SkillPointer,
   StatusGroup,
   SubagentRow,
+  TerminalRow,
   TodoRow,
   TodoStatus,
   ToolRow,
@@ -307,6 +308,17 @@ export interface VmState {
   effortLevels: string[];
   autopilot: boolean;
   permission: VmPermissionScope;
+  /**
+   * The workspace's terminals, carried on every snapshot.
+   *
+   * Read here rather than ignored, and that is the whole point of the field: the
+   * runtime sends the **full list** on every `ui(state)` so that a front end
+   * which started after a shell was created — or which simply lost a message —
+   * learns about it from the next snapshot instead of never. Declaring it on the
+   * wire type and projecting it nowhere left that promise empty: the bucket's
+   * list only ever changed when somebody happened to open the panel.
+   */
+  terminals: TerminalRow[];
 }
 
 /* ============================================================
@@ -621,6 +633,10 @@ export function projectState(msg: UiStateMsg): VmState {
     effortLevels: strings(msg.effort_levels),
     autopilot: bool(msg.autopilot),
     permission,
+    // Passed through, not reshaped: a row is the runtime's, and building a copy
+    // field by field here would be a second description of it that drifts the
+    // first time the runtime adds one.
+    terminals: Array.isArray(msg.terminals) ? msg.terminals : [],
   };
 }
 

@@ -68,11 +68,31 @@
   /* 仅可动画属性：background-color, border-color, color, opacity, transform
      禁止：width/height/top/left（布局属性），页面滚动视差，stagger 入场编排 */
 
-  /* ---------- 层级 ---------- */
-  --z-titlebar: 100;
+  /* ---------- 层级 ----------
+   *
+   * `--z-shell` is the window's own chrome (the title bar), and it is **above
+   * every overlay** on purpose: minimize / maximize / close are OS-level actions
+   * on the window, so a person has to be able to reach them even while a dialog
+   * is up — which is exactly the moment they are most likely to need them, since
+   * the runtime may be blocked on an approval.
+   *
+   * It gets its own rung rather than reusing `--z-dialog`: the two mean different
+   * things ("a modal layer" versus "the window frame"), and a shared number is
+   * how the next person decides the frame belongs under a dialog. Anything
+   * between `--z-dialog` and `--z-tooltip` is available; tooltips stay on top.
+   *
+   * **`--z-titlebar: 100` is gone, and it is not a rename.** It was declared
+   * *and never took effect*: `.titlebar` was `position: static`, where `z-index`
+   * does nothing — so the token described a position the title bar never had,
+   * and its name invited exactly the repair that was wrong ("the title bar is
+   * 100, the mask is 500, so the mask covers it"). A token whose stated meaning
+   * contradicts what the element does is worse than no token: it is a wrong
+   * answer written down. The shell's position is now a fact about the shell
+   * (`--z-shell`), stated where it is used. */
   --z-sticky:   200;   /* 表头 / 侧栏 */
   --z-popover:  400;   /* dropdown / menu */
   --z-dialog:   500;
+  --z-shell:    550;   /* 标题栏 / 窗口按钮：任何遮罩之上，tooltip 之下 */
   --z-tooltip:  600;   /* 永远最顶 */
 }
 

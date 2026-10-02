@@ -19,7 +19,7 @@ import { useT } from '@/i18n/useT';
 import { Badge, RiskTag } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
 import { InBlock } from './InBlock';
-import { charCount, type Entry } from '@/state/entries';
+import { charCount, type Entry, type FrontMessage } from '@/state/entries';
 import { formatDuration, formatTokens, oneLine } from '@/utils/format';
 import type { TKey } from '@/i18n';
 
@@ -489,6 +489,7 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
  * them out. One implementation, so the two places cannot drift.
  */
 export function NoteRow({ entry }: { entry: Extract<Entry, { kind: 'note' }> }) {
+  const t = useT();
   const icon =
     entry.tone === 'degraded' ? (
       <Layers size={11} />
@@ -516,9 +517,44 @@ export function NoteRow({ entry }: { entry: Extract<Entry, { kind: 'note' }> }) 
   return (
     <div className={`e-note${cls}`} data-code={entry.code}>
       {icon}
-      {/* The runtime's own sentence, displayed verbatim. Translating it would
-          invent a second source for the same fact. */}
-      <span className="en-text">{entry.text}</span>
+      {/* **Two sources, and they are not interchangeable.** A runtime notice
+          carries the runtime's own sentence and is displayed verbatim —
+          translating it would invent a second source for the same fact. A
+          sentence *this window* is saying arrives as a code (`entry.message`)
+          and is worded here, from i18n, because the store has no business
+          holding English.
+
+          Exactly one of the two is set; the fallback order is what makes a note
+          with neither render as nothing rather than as a blank row that looks
+          like a layout bug. */}
+      <span className="en-text">
+        {entry.message ? frontMessageText(t, entry.message) : entry.text}
+      </span>
     </div>
   );
+}
+
+/**
+ * One sentence this front end is saying, as words.
+ *
+ * A function with an exhaustive `switch` and no `default`, like
+ * `Composer.tsx`'s `noticeText`: a new code has to be given a sentence, and the
+ * exhaustiveness check is what enforces that rather than a fallback that would
+ * print an empty row.
+ */
+export function frontMessageText(
+  t: ReturnType<typeof useT>,
+  message: FrontMessage,
+): string {
+  switch (message.code) {
+    case 'terminalEnded':
+      // The three endings stay three sentences. `killed` is not "exited with
+      // code null": a killed shell did not choose an exit status, so printing a
+      // number for it would invent one.
+      if (message.reason === 'killed') return t('note.term.endedKilled', { id: message.id });
+      if (message.exitCode === null) return t('note.term.ended', { id: message.id });
+      return t('note.term.endedCode', { id: message.id, code: message.exitCode });
+    case 'terminalDetached':
+      return t('note.term.detached', { id: message.id });
+  }
 }

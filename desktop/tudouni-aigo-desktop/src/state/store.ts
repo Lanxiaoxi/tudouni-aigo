@@ -37,8 +37,10 @@ import type {
   RuntimeMsg,
   SkillCatalogRow,
   TerminalRow,
+  UiFileReadMsg,
 } from '@/protocol/types';
 import {
+  appendBlock,
   applyDelta,
   applyFinalAnswer,
   clearStream,
@@ -50,6 +52,7 @@ import {
   settleAbandonedTurn,
   type BlockKind,
   type Entry,
+  type FrontMessage,
   type LooseEvent,
   type NoteEntry,
   type ToolFacts,
@@ -89,7 +92,7 @@ import {
   unregisterRuntime,
 } from '@/runtime/bus';
 import { insertPathAtCaret, type PastedImage } from '@/runtime/paste';
-import { applyTerminalChunk, sanitizeTerminalChunk } from '@/runtime/terminalOutput';
+import { applyTerminalChunkReporting, sanitizeTerminalChunk } from '@/runtime/terminalOutput';
 import { baseName, samePath } from '@/utils/format';
 import {
   attachRuntime,
@@ -201,6 +204,30 @@ export type StartupNotice =
    *  `attachSession`), so it has to be visible: a button that does nothing at
    *  all is the failure mode this whole change exists to remove. */
   | { code: 'no-workspace' };
+
+/**
+ * One file, as the browser's own viewer draws it.
+ *
+ * It is the `ui(file_read)` payload plus which file was asked for, held **per
+ * session** because that is what answered — the child holds the workspace
+ * boundary the path is relative to.
+ *
+ * The payload itself is kept rather than copied field by field on purpose: it is
+ * the runtime's answer, and a struct built here would be a second description of
+ * it that drifts the first time a field is added. `UiFileReadMsg` is the shape
+ * `FileBlock` already knows how to draw, so the panel and the transcript draw the
+ * same answer through the same component instead of two that agree today.
+ */
+export interface FileView {
+  /** The path that was asked for. Not read back off the payload: the runtime's
+   *  reply is the authority on what it read, and this is what the panel names
+   *  while the answer is still in flight. */
+  path: string;
+  /** `null` while the read is in flight. */
+  answer: UiFileReadMsg | null;
+  /** Why it failed, verbatim from the runtime. `null` when it did not. */
+  problem: string | null;
+}
 
 /**
  * What a child was actually started with.
@@ -462,6 +489,33 @@ export interface SessionRuntime {
   filesPath: string;
   filesEntries: FileEntry[];
   filesLoading: boolean;
+  /**
+   * Why the last `file_list` did **not** answer, verbatim from the runtime.
+   *
+   * A third state, and it had no representation at all. A refusal arrives as a
+   * `notice`, not as a `ui(files)`, so the only thing that could clear
+   * `filesLoading` was a success — and a refused listing therefore left the panel
+   * reading "Reading the directory…" for ever. Worse, the sentence that explained
+   * it went into the transcript, which is exactly what the panel was covering.
+   *
+   * The runtime's own words, unaltered: it is the authority on why it refused a
+   * path, and rewording it here would be a second copy of that rule.
+   */
+  filesProblem: string | null;
+  /**
+   * The file most recently read from the browser, and whether it is still in
+   * flight.
+   *
+   * The panel draws this in its own lower half. That is not decoration: a
+   * `file_read` answer lands in the **transcript**, and the files panel is a
+   * modal layer on top of it, so "press Enter on a file" used to change nothing
+   * on screen. A person could not tell a slow read from a broken button.
+   *
+   * `null` means nothing has been opened yet — which is why it is not just an
+   * empty payload: "no file opened" and "a file opened and it was empty" are
+   * different statements, exactly like the three listing states above.
+   */
+  fileView: FileView | null;
 
   /* ---------------- this session's own input state ---------------- */
   draft: string;
@@ -559,6 +613,8 @@ export function createSessionBucket(
     filesPath: '',
     filesEntries: [],
     filesLoading: false,
+    filesProblem: null,
+    fileView: null,
     draft: '',
     history: [],
     historyCursor: null,
@@ -1367,10 +1423,23 @@ export interface TerminalTail {
   lines: string[];
   /** An escape sequence the batch boundary cut in half. `''` when there is none. */
   carry: string;
+  /**
+   * How many lines have fallen off the front of the bound.
+   *
+   * It exists so the pane can **say** that what is on screen is not the whole of
+   * what the shell printed. `TERMINAL_SCROLLBACK` discards the oldest output
+   * silently otherwise, and a log that has been cut with no sign of it is a log
+   * somebody reads as complete — the exact failure `panel.term.dropped` was
+   * written for, and which had no reference anywhere in the code.
+   *
+   * A number rather than a boolean because it is a fact about the buffer, not a
+   * one-shot event: it only ever grows, and "how much is missing" is answerable.
+   */
+  dropped: number;
 }
 
 /** The shared empty tail, so a selector's fallback is a stable reference. */
-export const EMPTY_TAIL: TerminalTail = { lines: [], carry: '' };
+export const EMPTY_TAIL: TerminalTail = { lines: [], carry: '', dropped: 0 };
 
 /**
  * Apply one output batch to a terminal's bounded tail.
@@ -1390,8 +1459,15 @@ export function appendTerminalOutput(
 ): Record<string, TerminalTail> {
   const existing = store[id] ?? EMPTY_TAIL;
   const chunk = sanitizeTerminalChunk(existing.carry, data);
-  const lines = applyTerminalChunk(existing.lines, chunk.text, TERMINAL_SCROLLBACK);
-  return { ...store, [id]: { lines, carry: chunk.carry } };
+  const applied = applyTerminalChunkReporting(existing.lines, chunk.text, TERMINAL_SCROLLBACK);
+  return {
+    ...store,
+    [id]: {
+      lines: applied.lines,
+      carry: chunk.carry,
+      dropped: existing.dropped + applied.dropped,
+    },
+  };
 }
 
 /**
@@ -1416,8 +1492,17 @@ export function appendTerminalOutput(
 export function pruneTails(
   tails: Record<string, TerminalTail>,
   rows: TerminalRow[],
+  keepId: string | null,
 ): Record<string, TerminalTail> {
-  const kept = Object.keys(tails).filter((id) => rows.some((row) => row.id === id));
+  // **A tail is kept while its terminal is running, or while somebody is reading
+  // it.** The row stays in the list either way — it is what answers "what was I
+  // running" — but the *output* is up to 4000 lines, and a long session with a
+  // dozen finished shells was holding a dozen of those for ever: nothing appends
+  // to them any more, and only the attached one can be drawn.
+  const kept = Object.keys(tails).filter((id) => {
+    if (id === keepId) return true;
+    return rows.some((row) => row.id === id && row.status === 'running');
+  });
   if (kept.length === Object.keys(tails).length) return tails;
   const next: Record<string, TerminalTail> = {};
   for (const id of kept) next[id] = tails[id];
@@ -1433,21 +1518,66 @@ export function replaceTerminal(rows: TerminalRow[], row: TerminalRow): Terminal
 }
 
 /**
- * What one terminal's ending says in the transcript.
+ * Install a full terminal list, and clean up what no longer has a terminal.
  *
- * Three endings read three ways, and the third is why this cannot be a lookup:
- * `killed`, `exited` with a code, and `exited` without one (killed by a signal on
- * POSIX, or a console this program had to close) are different facts. Printing a
- * number for the last case would invent one.
+ * One function because the rule is one rule, and it now has **two callers**: the
+ * `ui(terminals)` reply, and `ui(state)`. The snapshot carries the workspace's
+ * whole list too (`runtime.terminalsPanel`) precisely so a front end that started
+ * after a shell existed — or that lost a message — learns about it rather than
+ * never. Reading it in only one of the two places left that promise unfulfilled:
+ * the field was declared on the wire type, projected nowhere, and the bucket's
+ * list therefore only ever changed when a panel happened to be opened.
+ *
+ * The list is **replaced**, never merged. A union would keep a closed terminal's
+ * tab alive for ever, which is the one thing `terminal_close` exists to prevent.
+ *
+ * Two leftovers go with it, and both would otherwise be permanent:
+ *   - a **tail** for an id the runtime has forgotten can never receive another
+ *     byte, and nothing will ever draw it;
+ *   - an **attach** to a row that is gone would draw a terminal view with no tab
+ *     to switch away from it.
+ *
+ * `'new'` is released here as well, because a **refused create** answers with this
+ * same list rather than with a row (see the runtime's `handleTerminalCreate`).
+ * Without that, one refusal would leave the button disabled for the rest of the
+ * session.
  */
-export function terminalExitText(
+export function applyTerminalList(
+  current: Pick<
+    SessionRuntime,
+    'terminals' | 'terminalTails' | 'activeTerminalId' | 'terminalPending'
+  >,
+  rows: TerminalRow[],
+): Partial<SessionRuntime> {
+  const stillThere =
+    current.activeTerminalId !== null && rows.some((row) => row.id === current.activeTerminalId);
+  return {
+    terminals: rows,
+    terminalTails: pruneTails(current.terminalTails, rows, current.activeTerminalId),
+    activeTerminalId: stillThere ? current.activeTerminalId : null,
+    terminalPending: current.terminalPending.filter((id) => id !== 'new'),
+  };
+}
+
+/**
+ * A front end note about a terminal ending, as the code the store holds.
+ *
+ * The **sentence** lives in `i18n` (`note.text.terminalEnded*`), not here: the
+ * store records facts, and this used to return English from the reducer — which
+ * put the one line a person reads about a dead shell out of the translation
+ * table's reach. See `FrontMessage`.
+ *
+ * It is still a function rather than an object literal at the call site because
+ * the three endings have to stay distinguishable: `killed`, `exited` with a code,
+ * and `exited` without one are different facts, and printing a number for the
+ * last would invent one.
+ */
+export function terminalEndedNote(
   id: string,
   reason: 'exited' | 'killed',
   code: number | null,
-): string {
-  if (reason === 'killed') return `Terminal ${id} was killed.`;
-  if (code === null) return `Terminal ${id} exited.`;
-  return `Terminal ${id} exited with code ${code}.`;
+): FrontMessage {
+  return { code: 'terminalEnded', id, reason, exitCode: code };
 }
 
 export const useApp = create<AppStore>((set, get) => {
@@ -2074,21 +2204,42 @@ export const useApp = create<AppStore>((set, get) => {
               // differ after a `/./src/../src`, and the reply's spelling is what
               // makes "where am I" answerable and the parent-directory step
               // correct.
+              //
+              // `filesProblem` is cleared here because this *is* the answer: the
+              // refusal that set it belongs to a request that has now been
+              // superseded.
               patch(key, {
                 filesPath: typeof msg.path === 'string' ? msg.path : '',
                 filesEntries: Array.isArray(msg.entries) ? msg.entries : [],
                 filesLoading: false,
+                filesProblem: null,
               });
               break;
             }
             case 'file_read': {
-              // The body goes in the browser's viewer as a block, in arrival
-              // order like every other panel payload — the alternative is a
-              // second, parallel transcript that has to be kept in step with
-              // this one.
+              // **Two destinations, one answer.** The body goes into the
+              // transcript as a block — that is where a file read belongs in
+              // arrival order — *and* into the browser's own viewer, because the
+              // browser is a modal layer drawn over the transcript. Without the
+              // second one, pressing Enter on a file in the panel changed nothing
+              // anybody could see.
+              //
+              // `filesLoading` is not cleared here: a read is not a listing, and
+              // releasing the listing's spinner on a read's answer would say "the
+              // directory came back" when it did not.
               patchWith(key, (current) => ({
-                filesLoading: false,
-                entries: pushBlock(current.entries, 'file', msg),
+                fileView: {
+                  // The path the answer is about, taken **from the payload**: the
+                  // runtime may have normalised it, and a viewer labelled with
+                  // the request's spelling would name a path it did not read.
+                  path: typeof msg.path === 'string' ? msg.path : '',
+                  answer: msg,
+                  problem: null,
+                },
+                // `appendBlock`, not `pushBlock`: a file read is one of a
+                // sequence, not the newest state of one thing. Replacing meant
+                // opening a second file deleted the first from the transcript.
+                entries: appendBlock(current.entries, 'file', msg),
               }));
               break;
             }
@@ -2103,18 +2254,14 @@ export const useApp = create<AppStore>((set, get) => {
               // attach can no longer resolve to a row — leaving either in place
               // would draw a terminal view for a shell that does not exist, with
               // no tab to switch away from it.
+              //
+              // **A refused create also answers with this list** (see the
+              // runtime's `handleTerminalCreate`), which is why `'new'` is
+              // released here as well as on success: otherwise one refusal would
+              // leave the "New terminal" button disabled for the rest of the
+              // session, with nothing on screen to explain why.
               const rows = Array.isArray(msg.terminals) ? msg.terminals : [];
-              patchWith(key, (current) => {
-                const tails = pruneTails(current.terminalTails, rows);
-                const stillThere =
-                  current.activeTerminalId !== null &&
-                  rows.some((row) => row.id === current.activeTerminalId);
-                return {
-                  terminals: rows,
-                  terminalTails: tails,
-                  activeTerminalId: stillThere ? current.activeTerminalId : null,
-                };
-              });
+              patchWith(key, (current) => applyTerminalList(current, rows));
               break;
             }
             case 'terminal_created': {
@@ -2173,7 +2320,13 @@ export const useApp = create<AppStore>((set, get) => {
                     id: nextId('note'),
                     tone: msg.reason === 'killed' ? ('warn' as const) : ('info' as const),
                     code: 'terminal',
-                    text: terminalExitText(msg.terminal_id, msg.reason, msg.exit_code),
+                    // **No sentence here.** The store holds the fact; `i18n`
+                    // holds the words (see `FrontMessage`). This used to build
+                    // `Terminal term-01 exited with code 0.` inside the reducer,
+                    // which put English in the store and made the one sentence a
+                    // person reads about a dead shell unreachable by translation.
+                    text: '',
+                    message: terminalEndedNote(msg.terminal_id, msg.reason, msg.exit_code ?? null),
                   },
                 ],
               }));
@@ -2265,9 +2418,27 @@ export const useApp = create<AppStore>((set, get) => {
         }
 
         case 'notice': {
-          patch(key, {
+          // **A refusal is an answer too.** A `notice` with `code: 'files'` is
+          // what the runtime sends instead of `ui(files)` when it will not list
+          // or read a path, so it is also the only thing that can release the
+          // listing's spinner — and the sentence that explains it belongs to the
+          // panel the person is looking at, not only to the transcript that panel
+          // is covering.
+          //
+          // Other notices are untouched by this and still go to the stream,
+          // verbatim.
+          patchWith(key, (current) => ({
+            ...(msg.code === 'files'
+              ? {
+                  filesLoading: false,
+                  filesProblem: msg.text,
+                  ...(current.fileView && current.fileView.answer === null
+                    ? { fileView: { ...current.fileView, problem: msg.text } }
+                    : {}),
+                }
+              : {}),
             entries: [
-              ...bucket.entries,
+              ...current.entries,
               {
                 kind: 'note',
                 id: nextId('note'),
@@ -2277,7 +2448,7 @@ export const useApp = create<AppStore>((set, get) => {
                 text: msg.text,
               },
             ],
-          });
+          }));
           break;
         }
 
@@ -2712,7 +2883,10 @@ export const useApp = create<AppStore>((set, get) => {
     listFiles(path) {
       const key = get().activeKey;
       if (key === null) return;
-      patch(key, { filesLoading: true });
+      // The previous refusal is cleared here rather than on the answer: a new
+      // listing supersedes it the moment it is asked for, and leaving it up would
+      // show a stale reason over a directory that may now list fine.
+      patch(key, { filesLoading: true, filesProblem: null });
       // The path is sent verbatim. Whether it exists, is a directory, or stays
       // inside the workspace is the **runtime's** judgement — it holds the
       // boundary — and a second check here would be a second answer that
@@ -2723,6 +2897,10 @@ export const useApp = create<AppStore>((set, get) => {
     readFile(path) {
       const key = get().activeKey;
       if (key === null) return;
+      // The viewer's own state, so the panel can say "reading…" in place. The
+      // transcript block is still the runtime's answer and still arrives on its
+      // own; this is the panel's copy of the same fact, not a second one.
+      patch(key, { fileView: { path, answer: null, problem: null } });
       sendTo(key, { v: 1, t: 'file_read', path });
     },
 
@@ -2739,6 +2917,22 @@ export const useApp = create<AppStore>((set, get) => {
     createTerminal(options) {
       const key = get().activeKey;
       if (key === null) return;
+      // **Marked in flight before the request goes out**, and that is not an
+      // optimistic update: it claims nothing about a terminal — it records that
+      // this window has just asked for one. Without it the two "+" buttons stayed
+      // live, and two quick presses created **two real shells**; the second
+      // `terminal_created` then attached the view to it, so the first one was
+      // left as a tab nobody remembers asking for.
+      //
+      // The sentinel is the string `'new'` rather than an id, because there is no
+      // id yet — creation is what produces one. `terminal_created` releases it on
+      // success and `ui(terminals)` releases it on a refusal, which is why a
+      // refused create cannot leave the button disabled for ever.
+      patchWith(key, (current) => ({
+        terminalPending: current.terminalPending.includes('new')
+          ? current.terminalPending
+          : [...current.terminalPending, 'new'],
+      }));
       // The size is sent only when the caller has one: the runtime's own default
       // is the right answer here, and this layer has no idea how big the pane
       // will be when the shell's first output arrives.
@@ -2835,7 +3029,36 @@ export const useApp = create<AppStore>((set, get) => {
     attachTerminal(id) {
       const key = get().activeKey;
       if (key === null) return;
-      patch(key, { activeTerminalId: id });
+      const bucket = get().sessions[key];
+      // **Going back is recorded, because it is the one moment the fact matters.**
+      // The shell keeps running after the person returns to the conversation, and
+      // nothing else on screen says so: the terminal view is gone, the tab strip
+      // is gone, and the composer looks exactly like it does with no shells at
+      // all. `panel.term.detached` was written for this and had no reference
+      // anywhere.
+      //
+      // Only for a **running** shell: leaving an ended one needs no sentence,
+      // because the row in the panel still reports how it ended.
+      const leaving = bucket?.activeTerminalId ?? null;
+      const row = leaving === null ? undefined : bucket?.terminals.find((r) => r.id === leaving);
+      patchWith(key, (current) => ({
+        activeTerminalId: id,
+        ...(id === null && row?.status === 'running'
+          ? {
+              entries: [
+                ...current.entries,
+                {
+                  kind: 'note' as const,
+                  id: nextId('note'),
+                  tone: 'info' as const,
+                  code: 'terminal',
+                  text: '',
+                  message: { code: 'terminalDetached' as const, id: row.id },
+                },
+              ],
+            }
+          : {}),
+      }));
     },
 
     async pickWorkspace() {
@@ -3022,6 +3245,13 @@ function applyStateSnapshot(
           skillCatalog: catalog,
           skills: merged.loaded,
           skillAvailable: merged.available,
+          // **The snapshot's terminal list is the workspace's whole truth**, so
+          // it is applied rather than ignored. It is the one path that lets a
+          // front end which started after a shell existed — or which lost a
+          // message — learn about it instead of never; `terminal_created` and
+          // `terminal_exit` remain the immediate patch for the moments between
+          // two snapshots.
+          ...applyTerminalList(live, snap.terminals),
           ...(session
             ? {
                 session: {

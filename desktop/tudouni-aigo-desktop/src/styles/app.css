@@ -5,6 +5,30 @@
    ============================================================ */
 
 /* ---------------- 自绘标题栏（tauri-native-spec §3，高 36px）---------------- */
+/* The window shell is the **one** thing that must stay clickable through every
+   overlay, and it takes all three declarations to get there:
+
+   - `position: relative`, because `z-index` does nothing on a static element.
+     It was declared with a `z-index` and a static position for a long time, and
+     the number was read back by anyone who checked but never applied.
+   - `z-index: var(--z-shell)`, which is above every dialog. See the token's own
+     comment for why the window shell gets its own rung rather than borrowing
+     `--z-dialog`.
+   - `pointer-events: auto`, because Radix sets `pointer-events: none` on `body`
+     while a modal is open and this element **inherits** it — so the browser did
+     not even deliver the click.
+
+   All three are needed and any one alone leaves the buttons dead; the failure
+   is invisible on screen (the buttons still draw, and even still show hover
+   styling), which is why `scripts/window-controls-check.mjs` tests it with real
+   mouse events.
+
+   Letting the shell through is a deliberate opening in "a modal blocks
+   everything", and it does not weaken fail-closed: minimize / maximize / close
+   are OS-level actions on the window itself, and a person must **always** be
+   able to move or close it — especially when the runtime is stuck on an
+   approval. The modal is not dismissed by it: `PermissionModal` prevents
+   outside-pointer events. */
 .titlebar {
   flex: none;
   height: 36px;
@@ -14,7 +38,9 @@
   padding: 0 var(--space-3);
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-subtle);
-  z-index: var(--z-titlebar);
+  position: relative;
+  z-index: var(--z-shell);
+  pointer-events: auto;
   user-select: none;
 }
 

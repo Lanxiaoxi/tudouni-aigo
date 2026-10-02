@@ -41,6 +41,8 @@ import { test } from 'node:test';
 // would point inside the build directory. The runner sets `cwd` to the root.
 const cssPath = resolve(process.cwd(), 'src', 'styles', 'app.css');
 const css = readFileSync(cssPath, 'utf8');
+const streamCssPath = resolve(process.cwd(), 'src', 'styles', 'stream.css');
+const streamCss = readFileSync(streamCssPath, 'utf8');
 
 /**
  * The declarations of one rule, as written.
@@ -56,6 +58,16 @@ function ruleBody(selector: string): string | null {
   const close = css.indexOf('}', open);
   if (open < 0 || close < 0) return null;
   return css.slice(open + 1, close);
+}
+
+/** The same, against `stream.css`. */
+function streamRuleBody(selector: string): string | null {
+  const at = streamCss.indexOf(`${selector} {`);
+  if (at < 0) return null;
+  const open = streamCss.indexOf('{', at);
+  const close = streamCss.indexOf('}', open);
+  if (open < 0 || close < 0) return null;
+  return streamCss.slice(open + 1, close);
 }
 
 test('the transcript does not lay out the rows nobody is looking at', () => {
@@ -117,4 +129,65 @@ test('the skip is on the rows and not on the scroll container', () => {
       `${selector} must keep its real height — the skip belongs on its children`,
     );
   }
+});
+
+/* ============================================================
+   The terminal pane's rows
+   ============================================================ */
+
+test('a blank line in a terminal occupies a line', () => {
+  // `min-height: var(--leading-code)` reads as "one line" and is not: the token
+  // is `1.5`, a **unitless** number, which `line-height` accepts and `min-height`
+  // drops as invalid. Measured in a browser, an empty `.term-line` came out 0.0px
+  // tall against 18.8px for a non-empty one — so a blank line was invisible and
+  // every row after it moved up by a full line. A `git status` or a columnar `ls`
+  // then showed something the shell never printed.
+  //
+  // Asserted as text because that is the only place the mistake is visible: the
+  // declaration has no behaviour to observe in Node, and nothing about the pane
+  // *looks* broken — it just quietly disagrees with the terminal.
+  const body = streamRuleBody('.term-line');
+  assert.ok(body !== null, 'the `.term-line` rule is gone from stream.css');
+
+  const declared = body.match(/min-height:\s*([^;]+);/);
+  assert.ok(declared !== null, '`.term-line` must declare a `min-height` at all');
+  const value = declared[1].trim();
+
+  assert.notEqual(
+    value,
+    'var(--leading-code)',
+    '`min-height: var(--leading-code)` is a unitless multiplier and is dropped as ' +
+      'invalid, so a blank line collapses to zero height',
+  );
+  // Either form is fine; what matters is that the value is a length.
+  assert.match(
+    value,
+    /^(calc\(|1em$)/,
+    `\`min-height: ${value}\` is not a length this pane can rely on — use ` +
+      '`calc(var(--text-code) * var(--leading-code))` or `1em`',
+  );
+});
+
+test('the terminal pane skips the rows nobody is looking at', () => {
+  // The same defect, in the same shape, at a larger size: this pane holds up to
+  // `TERMINAL_SCROLLBACK` rows and re-renders all of them on every output batch.
+  // `app.css` measured 14.0ms → 1.2ms on a 322-row transcript with 93% of the
+  // cost in laying out rows that were off screen; a build log is longer than a
+  // transcript, and the fix is one declaration.
+  const body = streamRuleBody('.term-line');
+  assert.ok(body !== null, 'the `.term-line` rule is gone from stream.css');
+
+  assert.match(
+    body,
+    /content-visibility:\s*auto/,
+    'terminal rows no longer skip layout, so a long build log re-renders every ' +
+      'line it ever printed on each batch',
+  );
+  // `auto <length>` for the same reason as the transcript: without `auto` the
+  // estimate is used for ever instead of each row's real height.
+  assert.match(
+    body,
+    /contain-intrinsic-size:\s*auto\s+\d+(?:\.\d+)?(px|rem|em)/,
+    '`contain-intrinsic-size` must be `auto <length>` on the terminal rows too',
+  );
 });

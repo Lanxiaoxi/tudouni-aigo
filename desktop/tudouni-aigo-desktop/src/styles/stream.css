@@ -939,6 +939,25 @@
   gap: 1px;
 }
 
+/* The one control this rail has when no workspace is listed, drawn as a named
+   button rather than the section head's bare icon. It is `.btn .btn-outline
+   .btn-block` and needs a rule of its own for the two things the shared button
+   classes cannot know: it sits in the empty state's flow rather than in a form,
+   and it must not look clickable while a session is blocked.
+
+   `npm run audit:css` exists because of a case exactly like this one — a
+   `className` with no rule renders, it just lands wrong, and only a screenshot
+   shows it. This class was that case, so the audit was red until this rule. */
+.lb-empty-add {
+  margin: var(--space-2) var(--space-2) 0;
+  width: auto;
+}
+
+.lb-empty-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ---------------- workspace rows ---------------- */
 
 .lb-row {
@@ -1382,6 +1401,43 @@
   cursor: pointer;
 }
 
+/* The way back to the conversation, on the tab strip. Pushed to the far right so
+   it never sits where a tab might be — it is a navigation control, not a tab,
+   and putting it in the tab flow is how it gets clicked by accident or missed
+   entirely. */
+.term-leave {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.term-leave:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* The same act, in the pane's footer, next to the key hint that names it. */
+.term-leave-inline {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-caption);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .term-tab-close:hover:not(:disabled),
 .term-tab-add:hover {
   background: var(--bg-muted);
@@ -1436,8 +1492,28 @@
   outline-offset: -2px;
 }
 
+/* A terminal's rows, and the two rules here are both about what a `<div>` does
+   with a line that has no text in it.
+
+   `min-height` **must not be a bare `line-height` multiplier**. `--leading-code`
+   is `1.5` — a unitless number, which is what `line-height` wants and what
+   `min-height` cannot use: the declaration is dropped as invalid, so an empty
+   line measured 0.0px while a non-empty one measured 18.8px. A blank line in
+   `git status` or a columnar `ls` therefore vanished, and every row after it
+   moved up by a full line — the pane showed something that was not what the
+   shell printed. `calc(...)` gives it a real length.
+
+   `content-visibility: auto` is the same fix the transcript needed, for the same
+   reason and at the same size: this pane holds up to `TERMINAL_SCROLLBACK` rows
+   and every output batch re-renders all of them. `app.css` measured 14.0ms →
+   1.2ms on a 322-row transcript with 93% of the cost in laying out rows nobody
+   was looking at; a build log is longer than a transcript. The intrinsic size is
+   a remembered estimate, and `auto` is what makes it converge to each row's real
+   height once it has been drawn. */
 .term-line {
-  min-height: var(--leading-code);
+  min-height: calc(var(--text-code) * var(--leading-code));
+  content-visibility: auto;
+  contain-intrinsic-size: auto 19px;
 }
 
 .term-empty {
@@ -1459,6 +1535,61 @@
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-secondary);
   flex: 0 0 auto;
+}
+
+.term-foot-hint {
+  min-width: 0;
+}
+
+/* How the shell ended, in the pane that is showing it. The transcript's own note
+   about the ending is drawn in the stream, and while a terminal is attached the
+   stream is replaced by this view — so this is the only place the sentence can be
+   read at that moment. */
+.term-ended {
+  color: var(--fg-muted);
+}
+
+.term-foot-right {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+/* The buffer's bound has bitten: what is on screen is not the whole of what the
+   shell printed. Warning-toned rather than faint, because the failure it
+   prevents is somebody reading a truncated log as a complete one. */
+.term-dropped {
+  color: var(--warning);
+}
+
+/* ---- the file the browser is reading, in the panel's lower half ---- */
+
+.files-view {
+  flex: 0 0 auto;
+  max-height: 42vh;
+  overflow: auto;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.files-view-head {
+  padding: var(--space-1) 0;
+}
+
+/* A refusal of a file read, in the runtime's own words. Same treatment as the
+   listing's refusal above it, so one panel does not have two ways of saying
+   "this did not work". */
+.files-view-problem {
+  padding: var(--space-2);
+  border: 1px solid var(--destructive-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  word-break: break-word;
 }
 
 /* ---- a file opened in the stream ---- */

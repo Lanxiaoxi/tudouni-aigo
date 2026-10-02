@@ -91,6 +91,15 @@ export function PanelRow({
         if (!onPick) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
+          // **`stopPropagation`, and it is load-bearing.** Every panel's keys go
+          // through `useListKeys`, whose listener is on `window` — so a focused
+          // row meant one `Enter` reached both handlers and the row's action ran
+          // **twice**. Idempotent requests hid it (`file_list` sent twice,
+          // `attachTerminal` called twice), but `ResumePanel`'s `openSession` is
+          // not idempotent: two `session_switch` messages for one keypress. This
+          // is the narrower of the two paths (it needs the row to have focus),
+          // so it is the one that yields.
+          e.stopPropagation();
           onPick();
         }
       }}

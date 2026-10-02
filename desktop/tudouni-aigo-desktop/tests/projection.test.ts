@@ -436,6 +436,22 @@ const STATE_PAYLOAD = {
     blocked_code: '',
     blocked_message: '',
   },
+  // The workspace's terminals ride on **every** snapshot, and this one carries a
+  // row so the projection has something to pass through.
+  terminals: [
+    {
+      id: 'term-01',
+      workspace: '/ws',
+      cwd: '',
+      shell: 'powershell',
+      pid: 1234,
+      status: 'running',
+      exit_code: null,
+      created_at: 0,
+      cols: 80,
+      rows: 24,
+    },
+  ],
 };
 
 test('ui(state) projects every block the sidebar and the bar read', () => {
@@ -470,6 +486,16 @@ test('ui(state) projects every block the sidebar and the bar read', () => {
     state.riskScope.map((row) => `${row.risk}:${row.disposition}`),
     ['low:auto', 'medium:ask', 'high:ask'],
   );
+
+  // **The workspace's terminals ride on the snapshot too**, and this assertion is
+  // the whole point of the field. `ui(state)` carries the full list precisely so
+  // that a front end which started *after* a shell existed — or which simply lost
+  // a message — learns about it from the next snapshot instead of never. The
+  // field was declared on the wire type and projected nowhere, so the promise was
+  // empty: the bucket's list only ever changed when somebody opened the panel.
+  assert.equal(state.terminals.length, 1);
+  assert.equal(state.terminals[0].id, 'term-01');
+  assert.equal(state.terminals[0].status, 'running');
 });
 
 test('job states are carried through, and `uncollected` is the loud one', () => {
@@ -1508,6 +1534,217 @@ test('the store never writes a runtime fact on its own', () => {
 
   useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'ui', kind: 'state', ...STATE_PAYLOAD } as never);
   assert.equal(rt().uiState?.autopilot, true);
+});
+
+/* ============================================================
+   The workspace's terminals and files: the two facts that only
+   ever reached the screen when a panel happened to be open
+   ============================================================ */
+
+test('a snapshot alone is enough to learn about a terminal', () => {
+  captureOutbound();
+  resetStore();
+
+  // **No `terminal_list` is sent here, and that is the assertion.** The panel's
+  // own request is the usual path and it works — which is exactly why the hole
+  // went unnoticed: the contract the runtime documents ("a front end that started
+  // *after* a shell was created, or one that lost a message, learns from the next
+  // snapshot rather than never") was simply not implemented on this side. The
+  // field was declared on the wire type, projected nowhere, and the bucket's list
+  // only ever changed when somebody opened the panel.
+  assert.deepEqual(rt().terminals, []);
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'ui',
+    kind: 'state',
+    ...STATE_PAYLOAD,
+  } as never);
+
+  assert.deepEqual(rt().terminals.map((row) => row.id), ['term-01']);
+});
+
+test('a snapshot that no longer lists a terminal takes its attach away', () => {
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'ui',
+    kind: 'state',
+    ...STATE_PAYLOAD,
+  } as never);
+  useApp.getState().attachTerminal('term-01');
+  assert.equal(rt().activeTerminalId, 'term-01');
+
+  // The runtime's list is the whole truth, so a snapshot without the id means it
+  // is gone. An attach left pointing at a row that does not exist draws a
+  // terminal view with no tab to switch away from it.
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'ui',
+    kind: 'state',
+    ...STATE_PAYLOAD,
+    terminals: [],
+  } as never);
+
+  assert.equal(rt().activeTerminalId, null);
+  assert.deepEqual(rt().terminals, []);
+});
+
+test('a refused listing stops the spinner and says why', () => {
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().listFiles('gone');
+  assert.equal(rt().filesLoading, true, 'the request is in flight');
+
+  // **The refusal is a `notice`, not a `ui(files)`.** Only the success path used
+  // to clear `filesLoading`, so a refused listing left the panel reading
+  // "Reading the directory…" for ever — while the sentence explaining it went
+  // into the transcript, which is exactly what the panel was covering. A
+  // directory deleted between the listing and the click is the everyday
+  // reproduction.
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'notice',
+    level: 'warn',
+    code: 'files',
+    text: '[files] could not list that directory: Path escapes workspace',
+  } as never);
+
+  assert.equal(rt().filesLoading, false);
+  assert.equal(
+    rt().filesProblem,
+    '[files] could not list that directory: Path escapes workspace',
+  );
+  // The runtime's own sentence, unaltered, and **also** in the stream: the panel
+  // shows it where the person is looking, and the transcript keeps the record.
+  const note = rt().entries.at(-1);
+  assert.equal(note?.kind, 'note');
+});
+
+test('a successful listing clears the refusal it superseded', () => {
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'notice',
+    level: 'warn',
+    code: 'files',
+    text: 'nope',
+  } as never);
+  assert.equal(rt().filesProblem, 'nope');
+
+  useApp.getState().listFiles('');
+  // Cleared on the **request**, not on the answer: the old refusal is about a
+  // request that has been superseded, and leaving it up would show a stale reason
+  // over a directory that may now list fine.
+  assert.equal(rt().filesProblem, null);
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'ui',
+    kind: 'files',
+    path: '',
+    entries: [],
+  } as never);
+  assert.equal(rt().filesLoading, false);
+  assert.equal(rt().filesProblem, null);
+});
+
+test('reading a file fills the panel\'s own viewer, and keeps both files', () => {
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().readFile('a.txt');
+  // In flight: the viewer names what was asked for, and has no answer yet.
+  assert.deepEqual(rt().fileView, { path: 'a.txt', answer: null, problem: null });
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'ui',
+    kind: 'file_read',
+    path: 'a.txt',
+    artifact_id: '',
+    content: 'first',
+    chars: 5,
+    bytes: 5,
+    truncated: false,
+    total_lines: 1,
+  } as never);
+
+  // **Two destinations, one answer.** The transcript block is where a file read
+  // belongs in arrival order, and the viewer is what the panel draws — without
+  // which pressing Enter on a file changed nothing anybody could see.
+  assert.equal(rt().fileView?.answer?.content, 'first');
+  const blocks = rt().entries.filter((e) => e.kind === 'block' && e.block === 'file');
+  assert.equal(blocks.length, 1);
+
+  // A second file **adds** a block rather than replacing the first. `pushBlock`
+  // replaces same-kind blocks, which is right for `/status` — "what is the state
+  // now" — and wrong here: "I read A, now B" is two readings, and replacing meant
+  // opening the second file silently deleted the first.
+  useApp.getState().readFile('b.txt');
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'ui',
+    kind: 'file_read',
+    path: 'b.txt',
+    artifact_id: '',
+    content: 'second',
+    chars: 6,
+    bytes: 6,
+    truncated: false,
+    total_lines: 1,
+  } as never);
+
+  const both = rt().entries.filter((e) => e.kind === 'block' && e.block === 'file');
+  assert.equal(both.length, 2, 'reading a second file must not delete the first');
+});
+
+test('a refused read is answered in the viewer, not only in the stream', () => {
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().readFile('.tudouni');
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'notice',
+    level: 'warn',
+    code: 'files',
+    text: '[files] could not read that file: not a file: .tudouni',
+  } as never);
+
+  assert.equal(rt().fileView?.problem, '[files] could not read that file: not a file: .tudouni');
+  assert.equal(rt().fileView?.answer, null);
+});
+
+test('asking for a terminal marks the request in flight, and a refusal releases it', () => {
+  const sent = captureOutbound();
+  resetStore();
+
+  useApp.getState().createTerminal();
+  assert.equal(sent.at(-1)?.t, 'terminal_create');
+  // The sentinel is `'new'` rather than an id, because there is no id yet —
+  // creation is what produces one. Both `+` buttons read this to disable
+  // themselves, and without it two quick presses created **two real shells**,
+  // with the reply attaching the view to the newest and leaving the first as a
+  // tab nobody remembered asking for.
+  assert.deepEqual(rt().terminalPending, ['new']);
+
+  // A **refused** create answers with the unchanged full list plus a notice, so
+  // the list is what has to release the mark. Releasing it only on
+  // `terminal_created` would leave the button disabled for the rest of the
+  // session, with nothing on screen to explain why.
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'ui',
+    kind: 'terminals',
+    terminals: [],
+  } as never);
+  assert.deepEqual(rt().terminalPending, []);
 });
 
 test('runtime_exited records the code and whether it was requested', () => {

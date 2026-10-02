@@ -21,16 +21,21 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { encodeKey, isTerminalKey } from '@/runtime/terminalKeys';
-import { applyTerminalChunk, sanitizeTerminalChunk } from '@/runtime/terminalOutput';
+import {
+  applyTerminalChunk,
+  applyTerminalChunkReporting,
+  sanitizeTerminalChunk,
+} from '@/runtime/terminalOutput';
 import {
   appendTerminalOutput,
   pruneTails,
   replaceTerminal,
-  terminalExitText,
+  terminalEndedNote,
   TERMINAL_SCROLLBACK,
   type TerminalTail,
 } from '@/state/store';
 import { parentPath } from '@/components/panels/panels';
+import { contentBoxOf } from '@/components/terminal/TerminalView';
 import type { TerminalRow } from '@/protocol/types';
 
 function key(name: string, mods: Partial<Record<'ctrl' | 'alt' | 'shift' | 'meta', boolean>> = {}) {
@@ -271,15 +276,40 @@ test('pruneTails drops what the runtime no longer lists, and keeps the rest', ()
   // forgotten is memory this window can never free — nothing will append to it and
   // nothing will draw it.
   const tails: Record<string, TerminalTail> = {
-    'term-01': { lines: ['a'], carry: '' },
-    'term-02': { lines: ['b'], carry: '' },
+    'term-01': { lines: ['a'], carry: '', dropped: 0 },
+    'term-02': { lines: ['b'], carry: '', dropped: 0 },
   };
-  const pruned = pruneTails(tails, [row('term-02', 'running')]);
+  const pruned = pruneTails(tails, [row('term-02', 'running')], null);
   assert.deepEqual(Object.keys(pruned), ['term-02']);
 
   // And nothing is copied when nothing was dropped, so a snapshot mentioning only
   // known terminals does not re-render the pane.
-  assert.equal(pruneTails(tails, [row('term-01', 'running'), row('term-02', 'running')]), tails);
+  assert.equal(
+    pruneTails(tails, [row('term-01', 'running'), row('term-02', 'running')], null),
+    tails,
+  );
+});
+
+test('a finished terminal\'s output is released; a running one\'s is not', () => {
+  // The **row** stays for an ended shell on purpose — it is what answers "what was
+  // I running". The output does not: up to `TERMINAL_SCROLLBACK` lines per shell,
+  // and a long session with a dozen finished ones was holding a dozen of them for
+  // ever, since nothing appends to a forgotten id and only the attached tail can
+  // be drawn.
+  const tails: Record<string, TerminalTail> = {
+    'term-live': { lines: ['still going'], carry: '', dropped: 0 },
+    'term-done': { lines: ['long gone'], carry: '', dropped: 0 },
+  };
+  const rows = [row('term-live', 'running'), row('term-done', 'exited')];
+  assert.deepEqual(Object.keys(pruneTails(tails, rows, null)), ['term-live']);
+
+  // **Except the one somebody is reading.** An ended shell's last screenful is a
+  // record a person may still be looking at, and dropping it while the pane is
+  // pointed at that id would blank the view.
+  assert.deepEqual(
+    Object.keys(pruneTails(tails, rows, 'term-done')).sort(),
+    ['term-done', 'term-live'],
+  );
 });
 
 /* ============================================================
@@ -318,26 +348,35 @@ test('a terminal that ends before any snapshot mentioned it is still added', () 
   assert.equal(next[0].id, 'term-01');
 });
 
-test('the three endings read three ways', () => {
+test('the three endings stay three facts, and none of them is a sentence', () => {
   // `killed`, `exited` with a code, and `exited` without one are different facts.
-  // A killed shell did not choose an exit status, so printing a number for it
-  // would invent one — and a process killed by a signal on POSIX is exactly that
+  // A killed shell did not choose an exit status, so a number must not be
+  // invented for it — and a process killed by a signal on POSIX is exactly that
   // case.
   //
-  // The id below is deliberately one with no digits in it: an earlier version of
-  // this test used `term-01` and asserted the sentence did not contain `0`,
-  // which it always did. The assertion was about the whole string while the
-  // claim was about the **code**, so the id has to stop being able to satisfy it.
+  // **What is asserted here is the code, not a string**, and that is the point
+  // of the change this test came with: the sentence used to be assembled inside
+  // the store (`terminalExitText`), which put English in the reducer and made the
+  // one line a person reads about a dead shell unreachable by `i18n`. The fact
+  // now travels as `{code, id, reason, exitCode}` and the words live in the
+  // translation table, so the store-side assertion is about which of the three
+  // facts was recorded.
   const id = 'term';
-  const killed = terminalExitText(id, 'killed', null);
-  const exitedWithCode = terminalExitText(id, 'exited', 0);
-  const exitedNoCode = terminalExitText(id, 'exited', null);
+  const killed = terminalEndedNote(id, 'killed', null);
+  const exitedWithCode = terminalEndedNote(id, 'exited', 0);
+  const exitedNoCode = terminalEndedNote(id, 'exited', null);
 
-  assert.notEqual(killed, exitedWithCode);
-  assert.notEqual(exitedNoCode, exitedWithCode);
-  assert.ok(exitedWithCode.includes('0'), 'the code is printed when there is one');
-  assert.ok(!exitedNoCode.includes('0'), 'no code is invented when there is none');
-  assert.ok(killed.includes('killed'));
+  assert.equal(killed.reason, 'killed');
+  // A killed shell's code is null and stays null: there was no exit status to
+  // report, and `0` would say "it finished cleanly".
+  assert.equal(killed.exitCode, null);
+  assert.equal(exitedWithCode.exitCode, 0);
+  assert.equal(exitedNoCode.exitCode, null);
+
+  // The three are distinguishable by what the renderer reads, which is what makes
+  // three sentences possible rather than two.
+  assert.notDeepEqual(killed, exitedNoCode);
+  assert.notDeepEqual(exitedNoCode, exitedWithCode);
 });
 
 /* ============================================================
@@ -367,4 +406,76 @@ test('a parent path never escapes, however deep the call', () => {
   let path = 'one';
   for (let i = 0; i < 6; i += 1) path = parentPath(path);
   assert.equal(path, '');
+});
+
+/* ============================================================
+   The pane's usable size — what gets reported to the shell
+   ============================================================ */
+
+/** The measurements the report took off a real pane, in headless Chrome. */
+const PANE = {
+  clientWidth: 424,
+  clientHeight: 400,
+  offsetWidth: 424,
+  paddingLeft: 12,
+  paddingRight: 12,
+  paddingTop: 8,
+  paddingBottom: 8,
+};
+
+/** Consolas at 12.5px, measured in the same run. */
+const CELL = { width: 6.873, height: 18.8 };
+
+test('the reported size is the content box, not the padded box', () => {
+  // **This is the whole of the bug, in three lines of arithmetic.** `clientWidth`
+  // includes padding, and this pane has `--space-2 --space-3` (8px vertical,
+  // 12px horizontal). The report's measurement: 424px of `clientWidth` with a
+  // 6.873px cell reported **61** columns, where the 400px that characters can
+  // actually occupy is **58**. A shell told 61 wraps its output past the pane's
+  // right edge — the same failure as never resizing at all, reached from the
+  // other side.
+  //
+  // The irony worth recording: the code that measures the cell says in its own
+  // comment that a 20%-wrong cell width "is the same failure as not resizing at
+  // all". It measured the cell precisely and then divided by the wrong box.
+  const box = contentBoxOf(PANE);
+  assert.equal(box.width, 400, 'the content width is clientWidth minus padding');
+  assert.equal(box.height, 384, 'the content height is clientHeight minus padding');
+
+  assert.equal(Math.floor(box.width / CELL.width), 58, 'the real column count');
+  // The old arithmetic, stated so the regression is visible if somebody reverts
+  // to `clientWidth` — this assertion is what fails then.
+  assert.equal(Math.floor(PANE.clientWidth / CELL.width), 61);
+  assert.notEqual(
+    Math.floor(PANE.clientWidth / CELL.width),
+    Math.floor(box.width / CELL.width),
+    'the padded box and the content box must not agree — if they do, the padding ' +
+      'has been dropped from the calculation again',
+  );
+});
+
+test('a scrollbar comes out of the reported size too', () => {
+  // `overflow: auto` takes a vertical scrollbar out of `clientWidth` already, but
+  // a **horizontal** one — which `white-space: pre` makes likely — only shows up
+  // through `offsetWidth - clientWidth`. A `rows` that ignores it is a line too
+  // tall, which is a `vim` that draws one row past the bottom.
+  const box = contentBoxOf({ ...PANE, offsetWidth: 424 + 15 });
+  assert.equal(box.width, 400 - 15);
+});
+
+test('a pane measured mid-layout still reports a size a shell can use', () => {
+  // The runtime refuses a nonsensical size (see `resizeTerminal`), and a zero
+  // here would be dropped as "the client did not say" — leaving the shell at its
+  // default width rather than the one the pane will have a frame later.
+  const box = contentBoxOf({
+    clientWidth: 10,
+    clientHeight: 0,
+    offsetWidth: 10,
+    paddingLeft: 12,
+    paddingRight: 12,
+    paddingTop: 8,
+    paddingBottom: 8,
+  });
+  assert.equal(box.width, 1);
+  assert.equal(box.height, 1);
 });

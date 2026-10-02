@@ -7,8 +7,19 @@ import { useT } from '@/i18n/useT';
  *
  * `data-tauri-drag-region` goes on the container **only** — every control inside
  * is separately clickable, and adding the attribute to them would eat the click.
- * Double-clicking the drag region does not maximize by itself in Tauri, so it is
- * handled here.
+ *
+ * **Double-clicking the drag region is not handled here**, and that is a
+ * correction rather than an omission. There used to be an `onDoubleClick` with a
+ * comment saying Tauri does not maximize on its own; that was true of an older
+ * Tauri and is false of the pinned 2.12.0, which injects its own `drag.js`:
+ *
+ *     const cmd = e.detail === 2 ? 'internal_toggle_maximize' : 'start_dragging'
+ *
+ * Both responded, so one real double-click sent `internal_toggle_maximize` *and*
+ * `toggle_maximize` — one on, one off, net zero. Measured on the real window:
+ * `["start_dragging", "internal_toggle_maximize", "toggle_maximize"]` and
+ * `maximized: false`. Handing the gesture to Tauri's script is what makes it
+ * work.
  *
  * Outside a Tauri host (a plain browser during development) the window API is
  * simply absent; the buttons then do nothing rather than throwing.
@@ -67,18 +78,8 @@ export function TitleBar() {
     };
   }, []);
 
-  async function onDoubleClick() {
-    // Tauri does not maximize the window on a double-click of the drag region
-    // the way a native title bar does, so it is done here. One call, because
-    // `toggleMaximize` is what the name says — the previous version asked
-    // `isMaximized()` and then ran the same branch either way, which read as
-    // though it were deciding something.
-    const api = await windowApi();
-    await api?.toggleMaximize();
-  }
-
   return (
-    <div className="titlebar" data-tauri-drag-region onDoubleClick={onDoubleClick}>
+    <div className="titlebar" data-tauri-drag-region>
       <span className="tb-mark" data-tauri-drag-region aria-hidden />
       <span className="tb-title" data-tauri-drag-region>
         tudouni-aigo

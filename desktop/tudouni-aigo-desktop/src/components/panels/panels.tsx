@@ -22,9 +22,11 @@ import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { useListKeys } from '@/hooks/useListKeys';
 import { Badge, EmptyState, RiskTag } from '@/components/ui/kit';
+import { InBlock } from '@/components/stream/InBlock';
 import { PanelBody, PanelRow, PanelShell } from './PanelShell';
 import { COMMANDS } from '@/commands';
 import { formatDuration, formatPath, formatRelative, formatTokens, oneLine } from '@/utils/format';
+import { formatBytes } from '@/runtime/paste';
 import type { FileEntry } from '@/protocol/types';
 
 const closePanel = () => useApp.setState({ panel: null });
@@ -626,7 +628,10 @@ export function FilesPanel() {
   const path = useSessionField((rt) => rt.filesPath, '');
   const entries = useSessionField((rt) => rt.filesEntries, NO_FILE_ENTRIES);
   const loading = useSessionField((rt) => rt.filesLoading, false);
+  const problem = useSessionField((rt) => rt.filesProblem, null);
+  const view = useSessionField((rt) => rt.fileView, null);
   const listFiles = useApp((s) => s.listFiles);
+  const readFile = useApp((s) => s.readFile);
 
   function open(entry: FileEntry) {
     // A directory is **listed**; a file is **read**. Which one this is comes
@@ -634,7 +639,7 @@ export function FilesPanel() {
     // symlink to a directory is reported as a directory, and a name with a dot
     // in it is not evidence of anything.
     if (entry.type === 'directory') listFiles(entry.path);
-    else useApp.getState().readFile(entry.path);
+    else readFile(entry.path);
   }
 
   const { active, setActive } = useListKeys({
@@ -669,11 +674,19 @@ export function FilesPanel() {
           </button>
         ) : null}
 
-        {/* "Loading" and "empty" are different statements. A panel that drew the
-            second while the first was true would send somebody looking for files
-            that are there. */}
+        {/* **Three states, not two.** "Loading", "empty" and "the runtime
+            refused" are three different statements, and the third had no
+            representation at all: a refusal arrives as a `notice` rather than a
+            `ui(files)`, so nothing cleared `loading` and the panel sat on
+            "Reading the directory…" for ever — while the sentence explaining it
+            was written into the transcript this panel is covering.
+
+            The refusal is the runtime's own wording, unaltered: it is the
+            authority on why it will not read a path. */}
         {loading ? (
           <EmptyState title={t('panel.files.loading')} />
+        ) : problem !== null ? (
+          <EmptyState title={t('panel.files.failed')} hint={problem} />
         ) : entries.length === 0 ? (
           <EmptyState title={t('panel.files.empty')} />
         ) : (
@@ -700,6 +713,43 @@ export function FilesPanel() {
           ))
         )}
       </PanelBody>
+
+      {/* **The viewer, in the panel's own lower half.**
+
+          It has to be here rather than only in the transcript: the panel is a
+          modal layer drawn *over* the transcript, so a `file_read` answer landing
+          in the stream was invisible — pressing Enter on a file changed nothing
+          on screen, and a person could not tell a slow read from a dead button.
+          The comparison is right next door: `TerminalPanel` closes itself before
+          attaching for exactly this reason.
+
+          It draws the **same component** the transcript draws (`InBlock` →
+          `FileBlock`), so the two cannot drift into describing one answer two
+          ways. The block is also still appended to the stream, because that is
+          where a file read belongs in arrival order and where a person reads it
+          once the panel is closed. */}
+      {view !== null ? (
+        <div className="files-view">
+          {view.problem !== null ? (
+            <div className="files-view-problem" role="alert">
+              {view.problem}
+            </div>
+          ) : view.answer === null ? (
+            <div className="files-view-head caption faint">
+              <span className="mono">{view.path}</span> · {t('panel.files.reading')}
+            </div>
+          ) : (
+            <InBlock
+              entry={{
+                kind: 'block',
+                id: 'files-preview',
+                block: 'file',
+                payload: view.answer,
+              }}
+            />
+          )}
+        </div>
+      ) : null}
     </PanelShell>
   );
 }
@@ -720,13 +770,14 @@ export function parentPath(path: string): string {
   return at < 0 ? '' : trimmed.slice(0, at);
 }
 
-/** A byte count as a person reads it. */
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
+/* There used to be a second `formatBytes` right here, and it disagreed with the
+   one in `runtime/paste.ts` about the same byte counts: `1.5 KB` here versus
+   `1.5MB` there, spaces and rounding both different. The two are drawn on **one
+   screen** — the files panel lists sizes while the composer reports an oversized
+   paste — so the same file could be described two ways in two lines a person is
+   reading at once. The paste module's own comment says it exists so a file is
+   not "1.5MB in one sentence and 1536KB in the next"; the panel is now held to
+   the same rule by importing it. */
 
 /* ============================================================
    Terminals. The list, and the one thing a client owns about a terminal.
@@ -762,10 +813,18 @@ export function TerminalPanel() {
       note={t('panel.term.outline')}
     >
       <PanelBody>
+        {/* **Disabled while a create is in flight.** Two quick presses used to
+            send two `terminal_create` messages, which the runtime answered with
+            two real shells — and because the reply attaches the view to the
+            newest one, the first was left as a tab nobody remembered asking
+            for. The sentinel `'new'` is released by `terminal_created` on
+            success and by `ui(terminals)` on a refusal, so a refused create
+            cannot leave this button dead. */}
         <button
           type="button"
           className="btn btn-outline btn-block"
           style={{ margin: '0 var(--space-3) var(--space-2)' }}
+          disabled={pending.includes('new')}
           onClick={() => createTerminal()}
         >
           <Plus size={13} />

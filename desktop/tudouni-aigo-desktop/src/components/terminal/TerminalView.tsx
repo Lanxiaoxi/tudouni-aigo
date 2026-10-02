@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, X } from 'lucide-react';
-import { useApp, useSessionField, EMPTY_TAIL, NO_TERMINALS } from '@/state/store';
+import { ArrowLeft, Plus, X } from 'lucide-react';
+import { useApp, useSessionField, EMPTY_TAIL, NO_STRINGS, NO_TERMINALS } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { encodeKey } from '@/runtime/terminalKeys';
@@ -49,17 +49,27 @@ export function TerminalView() {
     [terminals, attachedId],
   );
 
+  const pending = useSessionField((rt) => rt.terminalPending, NO_STRINGS);
+
+  // Leaving is a **first-class control**, not a side effect of picking a tab.
+  // The view replaced the transcript and the composer, so without this the only
+  // way back was to close a shell — a destructive answer to "I want to read what
+  // the model said".
+  const leave = () => attachTerminal(null);
+
   return (
     <div className="term-view">
       <TerminalTabs
         terminals={terminals}
         attachedId={attachedId}
+        pending={pending}
         onPick={(id) => attachTerminal(id === attachedId ? null : id)}
         onNew={() => createTerminal()}
         onClose={closeTerminal}
+        onLeave={leave}
       />
       {attached ? (
-        <AttachedPane key={attached.id} row={attached} />
+        <AttachedPane key={attached.id} row={attached} onLeave={leave} />
       ) : (
         <div className="term-empty">
           <p>{t('panel.term.empty')}</p>
@@ -74,26 +84,30 @@ export function TerminalView() {
 }
 
 /**
- * The tab strip: one tab per terminal, plus the new-terminal button.
+ * The tab strip: one tab per terminal, the new-terminal button, and the way out.
  *
  * `onPick` **toggles**: clicking the tab already being read goes back to the
- * conversation rather than re-selecting it. That is the only way out of an
- * attached terminal — the tab strip has no separate "leave" control, and the
- * alternative was having the person close the shell to get their transcript
- * back, which is a destructive answer to a navigation question.
+ * conversation rather than re-selecting it. That is *a* way out, but it was the
+ * only one, and it is not one a person can find — a tab that looks like a tab
+ * does not advertise "press me again to leave". So there is also an explicit
+ * `onLeave`, drawn as a named button, and the pane's footer names the key.
  */
 function TerminalTabs({
   terminals,
   attachedId,
+  pending,
   onPick,
   onNew,
   onClose,
+  onLeave,
 }: {
   terminals: TerminalRow[];
   attachedId: string | null;
+  pending: string[];
   onPick: (id: string) => void;
   onNew: () => void;
   onClose: (id: string) => void;
+  onLeave: () => void;
 }) {
   const t = useT();
   /**
@@ -145,12 +159,17 @@ function TerminalTabs({
                       : t('panel.term.exited', { code: row.exit_code })}
               </span>
             </button>
-            {/* Close the tab — and for a shell that is still running that means
-                ending it first, because the runtime will not forget a terminal
-                whose process is alive. The button says which of the two it will
-                do, because one of them is destructive and one is not.
+            {/* End it, then forget it — and **both presses are needed**, so this
+                says which one it will do. An ended terminal is only forgotten
+                (nothing is lost but the record); a running one has to be ended
+                first, because the runtime refuses to forget a terminal whose
+                process is alive.
 
-                **It is never disabled.** An ended terminal's tab used to have a
+                It used to be one press here and two in the panel — the same
+                destructive act with two different confirmation rules — and the
+                20px button sits right against the tab it belongs to, so "switch
+                tab" and "kill the process tree" were one slip apart. */}
+            {/* **It is never disabled.** An ended terminal's tab used to have a
                 dead button here, which left no way at all to remove it — the row
                 stays in the list on purpose (it is what answers "what was I
                 running"), so the only thing that could ever take it off was the
@@ -189,11 +208,35 @@ function TerminalTabs({
           </div>
         );
       })}
+      {/* **Disabled while a create is in flight.** Two quick presses used to send
+          two `terminal_create` messages, which the runtime answered with two real
+          shells — and because the reply attaches the view to the newest one, the
+          first was left as a tab nobody remembered asking for. */}
       <Tip label={t('panel.term.new')}>
-        <button type="button" className="term-tab-add" aria-label={t('panel.term.new')} onClick={onNew}>
+        <button
+          type="button"
+          className="term-tab-add"
+          aria-label={t('panel.term.new')}
+          disabled={pending.includes('new')}
+          onClick={onNew}
+        >
           <Plus size={12} />
         </button>
       </Tip>
+      {/* The way back, as a named control rather than a hint. It is on the strip
+          because that is where the person already is, and it is only drawn while
+          a terminal has the screen — there is nothing to leave otherwise. */}
+      {attachedId !== null ? (
+        <button
+          type="button"
+          className="term-leave"
+          title={t('panel.term.leaveHint')}
+          onClick={onLeave}
+        >
+          <ArrowLeft size={12} />
+          {t('panel.term.leave')}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -206,7 +249,7 @@ function TerminalTabs({
  * scroll position. Carrying them across would leave the view scrolled to the
  * bottom of a *different* terminal's output.
  */
-function AttachedPane({ row }: { row: TerminalRow }) {
+function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void }) {
   const t = useT();
   const tail = useSessionField((rt) => rt.terminalTails[row.id] ?? EMPTY_TAIL, EMPTY_TAIL);
   const lines = tail.lines;
@@ -214,6 +257,24 @@ function AttachedPane({ row }: { row: TerminalRow }) {
   const resizeTerminal = useApp((s) => s.resizeTerminal);
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null);
+
+  /**
+   * **Focus the pane on mount, and this is not a nicety.**
+   *
+   * `onKeyDown` fires only while the pane has focus, and nothing focused it: the
+   * pane has `tabIndex` but no `autoFocus`, so after pressing Enter on a terminal
+   * in the panel the keyboard went nowhere at all. The person had to work out
+   * that clicking the black area was the missing step — a rule nobody was told
+   * about and nothing on screen hinted at.
+   *
+   * Done here rather than with `autoFocus` because the pane must take focus
+   * **after** it is in the document, which is what `useEffect` guarantees; and
+   * `preventScroll` because focusing an element inside a scroller can otherwise
+   * scroll it into view and move the output under the reader.
+   */
+  useEffect(() => {
+    ref.current?.focus({ preventScroll: true });
+  }, [row.id]);
 
   // Scroll with the output, which is what a terminal does. Only when the shell
   // is still running: a finished shell's last screenful is a record somebody is
@@ -247,8 +308,18 @@ function AttachedPane({ row }: { row: TerminalRow }) {
       if (!target) return;
       const cell = measureCell(target);
       if (cell.width <= 0 || cell.height <= 0) return;
-      const cols = Math.max(1, Math.floor(target.clientWidth / cell.width));
-      const rows = Math.max(1, Math.floor(target.clientHeight / cell.height));
+      // The **content box**, not `clientWidth`/`clientHeight`. Both of those
+      // include padding, and this pane has some (`--space-2 --space-3` = 8px
+      // vertical, 12px horizontal): measured, a 424px `clientWidth` with a
+      // 6.873px cell reported **61** columns where the real usable width of
+      // 400px is **58**. A shell told 61 wraps its output past the pane's right
+      // edge — the same failure as never resizing, reached from the other side.
+      // `offsetWidth - clientWidth` is the scrollbar, which `overflow: auto`
+      // adds when it appears and which `clientWidth` already excludes but
+      // `clientHeight` does not for a horizontal one.
+      const box = contentBox(target);
+      const cols = Math.max(1, Math.floor(box.width / cell.width));
+      const rows = Math.max(1, Math.floor(box.height / cell.height));
       setSize((previous) =>
         previous && previous.cols === cols && previous.rows === rows ? previous : { cols, rows },
       );
@@ -256,6 +327,13 @@ function AttachedPane({ row }: { row: TerminalRow }) {
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
+    // **Re-measure once the webfont arrives.** `ResizeObserver` fires on *size*
+    // changes, and swapping the font does not change the pane's size — it changes
+    // how wide a character is. Mounted before JetBrains Mono was ready, the
+    // measurement above is of the fallback (Consolas, 6.873px) and nothing would
+    // ever measure again, so `cols` stayed too large for the life of the pane.
+    // `document.fonts` is absent in some hosts, hence the guard.
+    void document.fonts?.ready.then(measure).catch(() => {});
     return () => observer.disconnect();
   }, []);
 
@@ -276,6 +354,22 @@ function AttachedPane({ row }: { row: TerminalRow }) {
    * while the shell was also receiving it.
    */
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    // **`Ctrl+Shift+\` leaves, and it is tested before the encoder.** That order
+    // is required rather than tidy: `encodeKey` deliberately ignores Shift on a
+    // single character, so `Ctrl+\` and `Ctrl+Shift+\` both encode to `0x1C` —
+    // checking after it would mean taking plain `Ctrl+\` away from the shell,
+    // which is a real byte a program may want. `Ctrl+Shift+\` is the combination
+    // the TUI picked for the same reason, and the pane's footer names it.
+    //
+    // It comes **before the `running` guard** as well: leaving has to work for an
+    // ended terminal, which is exactly the case where the view had no way out at
+    // all (its close button was disabled and the shell was gone).
+    if (e.ctrlKey && e.shiftKey && e.key === '\\') {
+      e.preventDefault();
+      e.stopPropagation();
+      onLeave();
+      return;
+    }
     if (row.status !== 'running') return;
     const data = encodeKey(e);
     if (data === '') return;
@@ -295,27 +389,147 @@ function AttachedPane({ row }: { row: TerminalRow }) {
         onKeyDown={onKeyDown}
       >
         {lines.map((line, i) => (
-          // Index keys are correct here and deliberately chosen: this is an
-          // append-only bounded tail, so a line's position *is* its identity —
-          // and a content hash would collide on the many repeated lines a build
-          // log produces.
-          <div className="term-line" key={i}>
+          // **The absolute line number, not the index.** The array is bounded and
+          // drops from the front, so index `0` is a *different* line before and
+          // after a drop: with `key={i}` every row's key shifts at once and React
+          // rewrites the text of the whole pane, on the batch where a long command
+          // is already producing the most output.
+          //
+          // `tail.dropped + i` is stable, because a line is only ever appended or
+          // removed from the head — which is exactly the identity a key needs. A
+          // content hash would be the other candidate and is wrong here: a build
+          // log repeats the same line many times, so equal keys would collide.
+          <div className="term-line" key={tail.dropped + i}>
             {line}
           </div>
         ))}
         {lines.length === 0 ? <div className="term-line faint">{t('common.loading')}</div> : null}
       </div>
+      {/* The footer states **both** halves of the contract: what the keys do
+          (the runtime's own sentence), and how to get out. The way out used to
+          be undocumented — the only one was clicking the current tab again, and
+          nothing on screen said so. */}
       <div className="term-foot caption faint">
-        {row.status === 'running' ? t('panel.term.hint') : t('panel.term.outline')}
-        {size ? (
-          <span className="mono">
-            {' '}
-            {size.cols}×{size.rows}
-          </span>
-        ) : null}
+        {/* **How the shell ended, in the pane that is showing it.**
+            The ending is also written into the transcript as a note, and while a
+            terminal is attached the transcript is *replaced by this view* — so
+            the one message about the shell somebody was watching was the one
+            message they could not see. The tab's status word is not a substitute:
+            it says `killed`, and the footer is where the sentence is read.
+
+            Three endings, three sentences, and the same three the note uses:
+            `killed`, `exited` with a code, and `exited` with none are different
+            facts — a killed shell did not choose an exit status. */}
+        <span className="term-foot-hint">
+          {row.status === 'running' ? (
+            t('panel.term.hint')
+          ) : (
+            <span className="term-ended">
+              {row.status === 'killed'
+                ? t('panel.term.killed')
+                : row.exit_code === null || row.exit_code === undefined
+                  ? t('panel.term.exitedNoCode')
+                  : t('panel.term.exited', { code: row.exit_code })}
+              {' · '}
+              {t('panel.term.outline')}
+            </span>
+          )}
+        </span>
+        <span className="term-foot-right">
+          {/* **The buffer is bounded, and it says so once it has bitten.**
+              `TERMINAL_SCROLLBACK` discards the oldest output, and a log that has
+              been cut with no sign of it is a log somebody reads as complete —
+              they will search it, not find what they expected, and conclude the
+              command did not print it. The sentence existed in i18n and had no
+              reference anywhere. */}
+          {tail.dropped > 0 ? (
+            <span className="term-dropped" role="status">
+              {t('panel.term.dropped')}
+            </span>
+          ) : null}
+          <button type="button" className="term-leave-inline" onClick={onLeave}>
+            {t('panel.term.leave')}
+          </button>
+          {size ? (
+            <span className="mono">
+              {size.cols}×{size.rows}
+            </span>
+          ) : null}
+        </span>
       </div>
     </div>
   );
+}
+
+/**
+ * The pane's **content box**, in pixels.
+ *
+ * `clientWidth`/`clientHeight` include padding; the padding here is
+ * `--space-2 --space-3` (8px vertical, 12px horizontal), which is 24px of width
+ * and 16px of height that no character can occupy. Reporting it as usable made
+ * the shell wrap three columns past the pane's right edge — and the code below
+ * already measures the cell precisely, so being wrong at the other end defeats
+ * the same care.
+ *
+ * The vertical scrollbar is the other half: `overflow: auto` takes it out of
+ * `clientWidth` already, but a horizontal scrollbar (which `white-space: pre`
+ * makes likely) comes out of `clientHeight` only through the difference against
+ * `offsetHeight`.
+ */
+export function contentBox(el: HTMLElement): { width: number; height: number } {
+  const cs = window.getComputedStyle(el);
+  return contentBoxOf({
+    clientWidth: el.clientWidth,
+    clientHeight: el.clientHeight,
+    offsetWidth: el.offsetWidth,
+    paddingLeft: parseFloat(cs.paddingLeft),
+    paddingRight: parseFloat(cs.paddingRight),
+    paddingTop: parseFloat(cs.paddingTop),
+    paddingBottom: parseFloat(cs.paddingBottom),
+  });
+}
+
+/** The measurements `contentBoxOf` needs. A subset of what an element reports. */
+export interface PaneMeasurements {
+  clientWidth: number;
+  clientHeight: number;
+  offsetWidth: number;
+  paddingLeft: number;
+  paddingRight: number;
+  paddingTop: number;
+  paddingBottom: number;
+}
+
+/**
+ * The same arithmetic, as a **pure function**.
+ *
+ * Split out from the DOM read on purpose, and it is the same reason
+ * `terminalKeys.ts` takes a plain descriptor rather than a `KeyboardEvent`: the
+ * mistake this exists to prevent is in the arithmetic, it has no error to throw
+ * and nothing about the pane looks wrong — it just quietly wraps the shell's
+ * output three columns past the right edge. The report's own measurement is what
+ * the assertion in `terminal.test.ts` replays:
+ *
+ *     clientWidth = 424, padding 12 + 12, cell 6.873px
+ *     424 / 6.873 = 61.7 -> 61 columns   (wrong: 24px of padding is not usable)
+ *     400 / 6.873 = 58.2 -> 58 columns   (right)
+ *
+ * The scrollbar term is the other half. `overflow: auto` takes a vertical
+ * scrollbar out of `clientWidth` already, but a **horizontal** one — which
+ * `white-space: pre` makes likely — comes out of the visible height only through
+ * `offsetWidth - clientWidth`, and a `rows` that ignores it is a line too tall.
+ */
+export function contentBoxOf(m: PaneMeasurements): { width: number; height: number } {
+  const padX = m.paddingLeft + m.paddingRight;
+  const padY = m.paddingTop + m.paddingBottom;
+  const scrollbar = m.offsetWidth - m.clientWidth;
+  // Floored at 1 so a pane mid-layout reports a size a shell can use rather than
+  // zero: the runtime refuses a nonsensical size, and "no resize" is a worse
+  // answer than a small one.
+  return {
+    width: Math.max(1, m.clientWidth - padX - scrollbar),
+    height: Math.max(1, m.clientHeight - padY),
+  };
 }
 
 /**

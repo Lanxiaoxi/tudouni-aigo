@@ -346,11 +346,14 @@ export const en = {
   'panel.files.loading': 'Reading the directory…',
   'panel.files.root': 'workspace root',
   'panel.files.parent': 'Up one level',
-  'panel.files.dir': 'directory',
+  /* `panel.files.dir` ('directory') was never read: the panel marks a directory
+     with a trailing `/` and an icon, which is the runtime's own `type` shown as
+     itself rather than a word repeating it. */
   'panel.files.lines': '{n} lines',
   'panel.files.truncated':
     'Showing the first {chars} characters. The whole body is stored as {id}.',
   'panel.files.failed': 'Could not read it',
+  'panel.files.reading': 'reading…',
   /* ---- workspace: terminals ---- */
   'panel.term.title': 'Terminals',
   'panel.term.empty': 'No terminal open in this workspace',
@@ -364,9 +367,14 @@ export const en = {
   'panel.term.close': 'Close this tab',
   'panel.term.closeRunning': 'End this terminal and close its tab',
   'panel.term.closeRunningConfirm': 'Press again to end it and close the tab',
-  'panel.term.attach': 'Type into it',
   'panel.term.detach': 'Back to the conversation (the shell keeps running)',
-  'panel.term.detached': 'You left the terminal. It is still running.',
+  'panel.term.leave': 'Back to the conversation',
+  /* `panel.term.attach` ('Type into it') and `panel.term.detached` were here with
+     no reference anywhere: the first described a state the pane does not draw,
+     and the second duplicated the sentence that now lives at `note.term.detached`
+     — where the store's own note actually reads it. A key nobody reads is a
+     sentence somebody believes is on screen. */
+  'panel.term.leaveHint': 'Ctrl+Shift+\\ also goes back; the shell keeps running.',
   'panel.term.running': 'running',
   'panel.term.exited': 'exited ({code})',
   'panel.term.exitedNoCode': 'exited',
@@ -376,6 +384,18 @@ export const en = {
     'Keys go to the shell byte for byte: Ctrl+C interrupts its command, arrows move in it. Nothing is interpreted by this window.',
   'panel.term.dropped': 'Earlier output scrolled out of this buffer.',
   'panel.term.outline': 'The runtime keeps no output — this buffer is this window’s own.',
+
+  /* ---- what this window itself says about a terminal ----
+   *
+   * Distinct from a runtime `notice`, whose text is displayed verbatim. These
+   * are this front end's own sentences, so they are built from a code plus
+   * parameters (`FrontMessage`) rather than assembled in the store. The three
+   * endings stay three sentences: a killed shell did not choose an exit status,
+   * so printing a number for it would invent one. */
+  'note.term.endedKilled': 'Terminal {id} was killed.',
+  'note.term.ended': 'Terminal {id} exited.',
+  'note.term.endedCode': 'Terminal {id} exited with code {code}.',
+  'note.term.detached': 'Terminal {id} is still running.',
   'panel.help.title': 'Help',
   'panel.help.commands': 'Commands',
   'panel.help.keys': 'Keybindings',

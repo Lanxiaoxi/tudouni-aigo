@@ -48,7 +48,9 @@ await build({
   define: { __DESKTOP_VERSION__: JSON.stringify('0.1.0') },
   logLevel: 'warning',
 });
-const { decodeLine } = await import(`file://${resolve(outDir, 'decode.mjs').replace(/\\/g, '/')}`);
+const { decodeLine, PROTOCOL_VERSION } = await import(
+  `file://${resolve(outDir, 'decode.mjs').replace(/\\/g, '/')}`
+);
 
 console.log(`binary:    ${binary}`);
 console.log(`workspace: ${workspace}`);
@@ -113,7 +115,16 @@ try {
   // ---- init ----
   const init = decoded[0];
   assert.equal(init.v, 1, 'the envelope version is 1');
-  assert.equal(init.protocol, 3, 'the conversation protocol is 3');
+  // **Compared against the front end's own constant, never a literal here.**
+  // This line used to read `assert.equal(init.protocol, 3)` while
+  // `src/protocol/types.ts` declared 4 — two declarations of one fact, each with
+  // a test backing it, and the one that was wrong was the one nobody ran. Any
+  // second literal reintroduces exactly that.
+  assert.equal(
+    init.protocol,
+    PROTOCOL_VERSION,
+    `the runtime's conversation protocol is the one this front end declares (${PROTOCOL_VERSION})`,
+  );
   for (const key of [
     'session_id',
     'resumed',
@@ -259,6 +270,113 @@ try {
   assert.ok(Array.isArray(mcp.mcp_servers), 'mcp_servers is an array');
   assert.ok(Array.isArray(mcp.mcp_notes), 'mcp_notes is an array');
   console.log(`mcp: ${mcp.mcp_servers.length} server(s), notes=${mcp.mcp_notes.length}`);
+
+  // ---- the workspace: files ----
+  //
+  // The three facts a front end builds a browser out of, checked against the
+  // real runtime rather than against a payload written here: the root listing,
+  // one file's read, and a **refusal** — which is the one that matters most,
+  // because a refusal arrives as a `notice` rather than as a `ui(files)` and a
+  // front end that only handled the success left its spinner turning for ever.
+  child.stdin.write('{"v":1,"t":"file_list","path":""}\n');
+  await waitFor(() => decoded.some((m) => m.t === 'ui' && m.kind === 'files'), 'ui(files)');
+  const files = decoded.find((m) => m.t === 'ui' && m.kind === 'files');
+  assert.ok(Array.isArray(files.entries), 'ui(files).entries is an array, not null');
+  for (const entry of files.entries) {
+    for (const key of ['name', 'path', 'type', 'size']) {
+      assert.ok(key in entry, `a file entry must carry ${key}`);
+    }
+    assert.ok(
+      entry.type === 'file' || entry.type === 'directory',
+      `type is file or directory, got ${entry.type}`,
+    );
+  }
+  console.log(`files: ${files.entries.length} entry(ies) at the root`);
+
+  const firstFile = files.entries.find((entry) => entry.type === 'file');
+  if (firstFile) {
+    child.stdin.write(`{"v":1,"t":"file_read","path":${JSON.stringify(firstFile.path)}}\n`);
+    await waitFor(() => decoded.some((m) => m.t === 'ui' && m.kind === 'file_read'), 'ui(file_read)');
+    const read = decoded.find((m) => m.t === 'ui' && m.kind === 'file_read');
+    for (const key of ['path', 'content', 'chars', 'bytes', 'total_lines', 'truncated', 'artifact_id']) {
+      assert.ok(key in read, `ui(file_read).${key} must be present`);
+    }
+    assert.equal(typeof read.truncated, 'boolean', 'truncated is a boolean, not a string');
+    console.log(`file_read: ${read.path} (${read.bytes}B, ${read.total_lines} lines)`);
+  }
+
+  // A refusal, and it must be a notice rather than a silent nothing.
+  const beforeRefusal = decoded.filter((m) => m.t === 'notice').length;
+  child.stdin.write('{"v":1,"t":"file_list","path":"../../.."}\n');
+  await waitFor(
+    () => decoded.filter((m) => m.t === 'notice').length > beforeRefusal,
+    'a notice refusing a path outside the workspace',
+  );
+  const refusal = decoded.filter((m) => m.t === 'notice')[beforeRefusal];
+  assert.equal(refusal.code, 'files', 'a file refusal carries code `files`');
+  assert.ok(refusal.text.length > 0, 'the refusal says why');
+  console.log(`refusal: ${refusal.text.slice(0, 80)}`);
+
+  // ---- the workspace: terminals ----
+  child.stdin.write('{"v":1,"t":"terminal_create"}\n');
+  await waitFor(
+    () => decoded.some((m) => m.t === 'ui' && m.kind === 'terminal_created'),
+    'ui(terminal_created)',
+  );
+  const created = decoded.find((m) => m.t === 'ui' && m.kind === 'terminal_created');
+  const term = created.terminal;
+  for (const key of ['id', 'workspace', 'cwd', 'shell', 'status', 'exit_code', 'cols', 'rows']) {
+    assert.ok(key in term, `a terminal row must carry ${key}`);
+  }
+  assert.equal(term.status, 'running', 'a terminal is running by the time its row arrives');
+  console.log(`terminal_create: ${term.id} (${term.shell}, ${term.cols}x${term.rows})`);
+
+  // A resize, and the **list** is where the new size has to show up: the runtime
+  // owns the row, so a front end that kept its own copy would drift.
+  child.stdin.write(
+    `{"v":1,"t":"terminal_resize","terminal_id":${JSON.stringify(term.id)},"cols":100,"rows":30}\n`,
+  );
+  child.stdin.write('{"v":1,"t":"terminal_list"}\n');
+  await waitFor(
+    () =>
+      decoded.some(
+        (m) =>
+          m.t === 'ui' &&
+          m.kind === 'terminals' &&
+          m.terminals.some((row) => row.id === term.id && row.cols === 100),
+      ),
+    'the resize to appear in the list',
+  );
+  console.log('terminal_resize: 100x30 reflected in the list');
+
+  // The end, which arrives as an **event** rather than as a reply: `terminal_kill`
+  // deliberately answers nothing, because a second truth about whether a process
+  // is alive is exactly what the design forbids.
+  child.stdin.write(
+    `{"v":1,"t":"terminal_kill","terminal_id":${JSON.stringify(term.id)}}\n`,
+  );
+  await waitFor(
+    () => decoded.some((m) => m.t === 'ui' && m.kind === 'terminal_exit'),
+    'ui(terminal_exit)',
+  );
+  const exit = decoded.find((m) => m.t === 'ui' && m.kind === 'terminal_exit');
+  assert.equal(exit.terminal_id, term.id);
+  assert.equal(exit.terminal.status, 'killed', 'a killed terminal is `killed`, not `exited`');
+  assert.equal(exit.terminal.exit_code, null, 'a killed shell has no exit code to report');
+  console.log(`terminal_kill: ${exit.terminal_id} -> ${exit.terminal.status}`);
+
+  // And the record can be forgotten, which a running one could not be.
+  child.stdin.write(
+    `{"v":1,"t":"terminal_close","terminal_id":${JSON.stringify(term.id)}}\n`,
+  );
+  await waitFor(
+    () =>
+      decoded.some(
+        (m) => m.t === 'ui' && m.kind === 'terminals' && !m.terminals.some((row) => row.id === term.id),
+      ),
+    'the closed terminal to leave the list',
+  );
+  console.log('terminal_close: the row left the list');
 
   // ---- a malformed line must not break the stream ----
   child.stdin.write('this is not json\n');

@@ -1,6 +1,34 @@
 import { useEffect } from 'react';
 import { activeRuntime, selectPhase, useApp } from '@/state/store';
-import { encodeKey } from '@/runtime/terminalKeys';
+
+/** The class the terminal pane carries. Named here so the guard below and the
+ *  pane itself cannot disagree about what "the terminal" is. */
+export const TERMINAL_PANE_CLASS = 'term-pane';
+
+/**
+ * Is the keyboard inside the terminal pane?
+ *
+ * A pure two-argument function rather than a `document` read, because this
+ * decision is the one that used to be made wrongly and there is no way to see it
+ * in a rendered string — "typing at a shell does something" is a fact about
+ * focus, not about markup.
+ *
+ * `contains` covers the pane's own children, which matters the moment anything
+ * inside it becomes focusable.
+ */
+export function focusIsInTerminal(active: Element | null, pane: Element | null): boolean {
+  if (active === null || pane === null) return false;
+  return active === pane || pane.contains(active);
+}
+
+/** The live answer, for the window handler. */
+function keyboardIsAtAShell(): boolean {
+  if (typeof document === 'undefined') return false;
+  return focusIsInTerminal(
+    document.activeElement,
+    document.querySelector(`.${TERMINAL_PANE_CLASS}`),
+  );
+}
 
 /**
  * Global keys (the capability list).
@@ -24,26 +52,7 @@ export function useGlobalKeys(): void {
         !!target &&
         (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable);
 
-      /* ---- An attached terminal owns the keyboard ----
-       *
-       * While a shell has the keyboard, every key that has a terminal meaning
-       * belongs to it — including `Ctrl+K`, `Ctrl+B`, `Ctrl+C` and Escape. The
-       * pane itself handles this (it `preventDefault`s and stops propagation),
-       * but that only covers the case where the pane has focus. Clicking the tab
-       * strip or the status bar moves focus away, and the window handler would
-       * then fold a rail, quit the app, or interrupt a turn **while somebody was
-       * typing at a shell** — the one state where the interface must look like a
-       * terminal and behave like one.
-       *
-       * `encodeKey` is the single definition of "has a terminal meaning", so this
-       * guard cannot drift from what the pane actually sends. */
-      if (activeRuntime(s)?.activeTerminalId != null && encodeKey(e) !== '') {
-        // Not `preventDefault`: the pane may still be about to handle it, and
-        // cancelling here would swallow the key before it gets there.
-        return;
-      }
-
-      /* ---- Reload keys: suppressed, and they must be suppressed here ----
+      /* ---- Reload keys: suppressed, and they must be suppressed *first* ----
        *
        * A reload of the WebView re-runs `attachRuntime({})`, and the bridge's
        * restart path kills the current child and starts a **new session** — the
@@ -54,9 +63,41 @@ export function useGlobalKeys(): void {
        * no `initialization_script` and no key interception in `src-tauri`, so
        * nothing was intercepting anything. The mechanism below is the same one
        * `Ctrl+S` already relies on. A developer who wants a reload can use the
-       * devtools' own button, which is not a key the app can swallow. */
+       * devtools' own button, which is not a key the app can swallow.
+       *
+       * **It comes before the terminal guard below, and that order is the whole
+       * point.** `encodeKey({key:'F5'})` is `\x1b[15~` and `Ctrl+R` is `\x12`, so
+       * both looked like keys "the pane would handle" and the guard returned
+       * before this ever ran — reopening the exact hole this block exists to
+       * close. A reload key has no meaning to a shell, so there is nothing to
+       * concede. */
       if (e.key === 'F5' || (mod && !e.shiftKey && ['r', 'p', 'f'].includes(e.key.toLowerCase()))) {
         e.preventDefault();
+        return;
+      }
+
+      /* ---- An attached terminal owns the keyboard, while it has focus ----
+       *
+       * While a shell has the keyboard, every key that has a terminal meaning
+       * belongs to it — including `Ctrl+K`, `Ctrl+B`, `Ctrl+C` and Escape. The
+       * pane itself handles this (it `preventDefault`s and stops propagation),
+       * but that only covers the case where the pane has focus. Clicking the tab
+       * strip or the status bar moves focus away, and the window handler would
+       * then fold a rail, quit the app, or interrupt a turn **while somebody was
+       * typing at a shell** — the one state where the interface must look like a
+       * terminal and behave like one.
+       *
+       * **The test is focus, not "does this key encode to something".** That was
+       * the old rule, and it was wrong in the direction that hurts: `encodeKey`
+       * answers `''` for very few keys, so a plain letter, `Ctrl+C`, F5 and
+       * everything else hit the guard and `return`ed — leaving the key to a pane
+       * that had not been focused, and never calling `preventDefault`. The result
+       * was a keyboard that did nothing at all until the black area was clicked
+       * with a mouse. Asking where the focus actually is says what the guard
+       * means: "the terminal is the thing receiving keys right now." */
+      if (activeRuntime(s)?.activeTerminalId != null && keyboardIsAtAShell()) {
+        // Not `preventDefault`: the pane is about to handle it, and cancelling
+        // here would swallow the key before it gets there.
         return;
       }
 

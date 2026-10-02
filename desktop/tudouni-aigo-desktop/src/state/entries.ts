@@ -79,6 +79,35 @@ export type TurnStatus = string;
 
 export type NoteTone = 'info' | 'warn' | 'degraded' | 'compacted' | 'image' | 'error';
 
+/**
+ * A sentence **this front end** composes, kept as a code plus its parameters.
+ *
+ * The store holds facts; the words live in `i18n`. That is the rule the other
+ * notice types already follow (`ComposerNotice`, `StartupNotice`), and a note
+ * built here broke it — `terminalExitText` assembled `Terminal term-01 exited
+ * with code 0.` inside the reducer, which is English in the store and a string
+ * no translation can reach.
+ *
+ * A note has two possible sources and they are different in kind:
+ *
+ *   - the **runtime's own sentence**, displayed verbatim (see `NoteEntry.text`)
+ *     — the UI must never reword what the runtime said;
+ *   - a sentence **this window** is saying (this type), which is ours to word.
+ *
+ * Keeping them apart is what stops the second from being smuggled in as the
+ * first: `text` is either the runtime's or `''`, and `message` is only ever set
+ * by a handler in this file.
+ */
+export type FrontMessage =
+  /** A terminal has ended — killed, exited with a code, or exited without one. */
+  | { code: 'terminalEnded'; id: string; reason: 'exited' | 'killed'; exitCode: number | null }
+  /** The person went back to the conversation while the shell kept running.
+   *
+   *  Said **only for a running shell**, because that is the case where "it is
+   *  still running" is news. Leaving an ended one needs no sentence: the row in
+   *  the panel still reports how it ended. */
+  | { code: 'terminalDetached'; id: string };
+
 /** A system line. Used as a named type by callers that hold notes outside the
  *  stream (the handshake's own notices, which outlive a `session_load`). */
 export type NoteEntry = Extract<Entry, { kind: 'note' }>;
@@ -184,8 +213,13 @@ export type Entry =
       tone: NoteTone;
       /** Machine-readable category, carried through for filtering. */
       code: string;
-      /** The runtime's own sentence, displayed verbatim. */
+      /** The runtime's own sentence, displayed verbatim. `''` when this window
+       *  is the one speaking — see `message`. */
       text: string;
+      /** The sentence **this window** composed, as a code plus parameters. Set
+       *  only by a handler in the store; never for a runtime notice, whose exact
+       *  words are the runtime's. Exactly one of the two is non-empty. */
+      message?: FrontMessage;
     }
   /** §5 large-text blocks: /status /tools /context /compact, plus one file
    *  opened in the workspace browser.
@@ -909,6 +943,24 @@ export function settleAbandonedTurn(entries: Entry[]): Entry[] {
 export function pushBlock(entries: Entry[], block: BlockKind, payload: unknown): Entry[] {
   const filtered = entries.filter((e) => !(e.kind === 'block' && e.block === block));
   return [...filtered, { kind: 'block', id: nextId('block'), block, payload }];
+}
+
+/**
+ * Append a block **without** removing the earlier ones of its kind.
+ *
+ * `pushBlock` replaces, which is right for `/status`, `/tools`, `/context` and
+ * `/compact`: each answers "what is the state now", so two of them on screen
+ * would be one stale copy contradicting a fresh one.
+ *
+ * A file is not that shape. "I read A, now I want to read B" is two readings,
+ * not a newer state of the same thing — and replacing meant opening the second
+ * file **silently deleted the first one** and moved the survivor to the end of
+ * the stream. So the one block kind whose answers are a sequence rather than a
+ * state gets its own function, and the difference is stated here rather than
+ * left to whoever notices a file disappearing.
+ */
+export function appendBlock(entries: Entry[], block: BlockKind, payload: unknown): Entry[] {
+  return [...entries, { kind: 'block', id: nextId('block'), block, payload }];
 }
 
 /**

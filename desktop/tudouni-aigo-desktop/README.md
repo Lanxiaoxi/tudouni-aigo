@@ -415,11 +415,13 @@ unfilled `{name}` is still a non-empty string.
 
 ## Verification
 
+**Three gates, all of them required**, and the last two need something a plain
+unit test cannot provide:
+
 ```bash
 npm run typecheck     # tsc -b, zero errors
-npm run build         # tsc -b + vite build
-npm test              # 40 assertions over the protocol, the projection, the reducer
-node scripts/class-audit.mjs
+npm test              # the protocol, the projection, the reducer, the stylesheet rules
+npm run audit:css     # every className has a CSS rule
 ```
 
 The unit tests exist because **protocol mismatches are the easiest thing to get
@@ -430,20 +432,43 @@ blank or as 0, and the screen looks plausible.
 rule. Nothing else can see it — the element renders, it is just unstyled, so a
 control lands in the wrong place and only a screenshot shows it.
 
-Two checks need a running runtime or a browser.
-
-**Against the real binary.** Starts `tudouni-aigo --runtime-stdio` the way the
-Rust bridge does and decodes the output with the same decoder the UI uses:
+**Before a release, these two as well.** Both need a running runtime or a
+browser, so neither is in `npm test`:
 
 ```bash
-node tests/e2e-runtime.mjs <abs-path-to-tudouni-aigo> <abs-path-to-workspace>
+# 1. Against the real binary.  <exe> <workspace> are both required.
+npm run test:e2e -- <abs-path-to-tudouni-aigo> <abs-path-to-workspace>
+
+# 2. Against the rendered interface, with `npm run dev` and a CDP browser up.
+node scripts/render-check.mjs http://127.0.0.1:5178/ 9333
+
+# 3. Can a person actually click the window controls?  Same prerequisites.
+npm run check:window -- http://127.0.0.1:5178/ 9333
 ```
 
-It asserts the opening triple (`init` -> `session_load` -> `ui(state)`), that
-every `init` and `ui(state)` field the UI reads is present, that empty lists
-arrive as `[]` and never `null`, that a malformed line and an unknown type are
-both skipped without breaking the stream, and that a requested shutdown exits
-with code 0.
+**Against the real binary.** Starts `tudouni-aigo --runtime-stdio` the way the
+Rust bridge does and decodes the output with the same decoder the UI uses. It
+asserts the opening triple (`init` -> `session_load` -> `ui(state)`), that every
+`init` and `ui(state)` field the UI reads is present, that empty lists arrive as
+`[]` and never `null`, that a malformed line and an unknown type are both skipped
+without breaking the stream, and that a requested shutdown exits with code 0.
+
+It also walks the workspace's two capabilities end to end — `file_list` →
+`file_read` → a **refusal** (which arrives as a `notice`, not as a `ui(files)`,
+and is the path a front end forgets), then `terminal_create` → `terminal_resize`
+→ `terminal_kill` → `terminal_close`.
+
+Two rules about this script, both learned the hard way:
+
+- **It compares `init.protocol` against `PROTOCOL_VERSION`, never a literal.** It
+  used to assert `3` while `src/protocol/types.ts` said `4`: two declarations of
+  one fact, each with a test backing it, and the wrong one was the one nobody
+  ran. Any second literal reintroduces exactly that.
+- **It needs a binary built from the current tree.** A stale one under
+  `src-tauri/runtime/` tests the old runtime and reports the difference as a
+  front-end bug — which is what happened the first time this ran after
+  `terminal_close` was added. `npm run runtime:stage` warns when it cannot find a
+  build matching `VERSION`, and that warning is worth reading.
 
 **Against the rendered interface.** With `npm run dev` and a CDP-enabled browser
 running, mounts the real tree, records every console error and uncaught
@@ -466,6 +491,36 @@ It writes `render-check.png`; look at it. Two of the defects this project had
 (the window controls sitting next to the title, and a turn head reading "in
 progress" over a finished answer) were invisible to every assertion and obvious
 in the image.
+
+**Can a person actually click the window controls?** `check:window` answers that
+one question, and it is the check most likely to regress silently: every other
+gate passes while the buttons are dead, because the markup is right and a modal
+layer is simply over them.
+
+```bash
+npm run check:window -- http://127.0.0.1:5178/ 9333
+```
+
+It installs a fake `__TAURI_INTERNALS__` that records every `invoke`, mounts
+Tauri's **own** `drag.js` from the pinned crate, then clicks each control with
+**CDP's real mouse events** — not synthetic `.click()` — in three states: nothing
+open, a `/files` panel open, and a blocking approval modal up. It also
+double-clicks the title text and asserts the window really ends up maximized.
+
+Two things about it are the point rather than the plumbing:
+
+- **Real mouse events, not `.click()`.** A synthetic click is delivered straight
+  to the element and bypasses hit testing, so it reports success on a button a
+  person cannot reach. The first probe that found this bug used synthetic clicks
+  and reported everything fine; the failure only appeared with real ones. Never
+  verify "can somebody click this" with a method that skips hit testing.
+- **The two overlays have opposite expectations, and both are correct.** Over a
+  **panel**, clicking the frame sends the command *and* dismisses the panel —
+  that is what an outside-pointer event means to a dialog, and a panel that
+  stayed up would be the one state where the frame does nothing. Over the
+  **approval modal** the prompt must stay up: a stray click is not a decision.
+  Anything touching an overlay's `z-index` can flip both, and nothing on the page
+  looks different when it does.
 
 ---
 
