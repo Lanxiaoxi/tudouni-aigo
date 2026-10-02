@@ -227,6 +227,15 @@ export const en = {
   'lb.workspaceBad': 'Cannot be used',
   'lb.openWorkspace': 'Open this workspace',
 
+  /* The sessions that are open but have no file yet.
+     They need their own words because they are a different fact from a saved
+     row: there is nothing on disk, so there is no message count, no preview and
+     no time to show — and before this group existed a new session appeared in no
+     list at all, which is why "New session" read as a button that did nothing. */
+  'lb.unsaved': 'open now',
+  'lb.sessionOpen': 'Nothing has run in it yet',
+  'lb.sessionPending': 'starting…',
+
   /* The session status dots. Each one has to read as a sentence, because the
      colour alone is not a signal anybody should be asked to interpret — see
      `SessionDot`. */

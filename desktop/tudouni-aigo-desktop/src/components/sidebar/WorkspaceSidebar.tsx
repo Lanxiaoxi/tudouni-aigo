@@ -3,6 +3,8 @@ import { ChevronRight, FileText, FolderPlus, Folder, PanelLeftClose, Plus, Refre
 import {
   activeRuntime,
   NO_SESSION_LIST,
+  railBlocked,
+  selectLiveOnlyKey,
   selectRowStatusKey,
   selectWorkspaceAttentionKey,
   useApp,
@@ -58,12 +60,16 @@ export function WorkspaceSidebar() {
   const sessionList = rt?.sessionList ?? NO_SESSION_LIST;
   const listed = rt?.listedSessions ?? false;
   const currentSessionId = rt?.session?.id ?? null;
-  const modal = useApp((s) => s.modal);
 
   const enterWorkspace = useApp((s) => s.enterWorkspace);
   const addWorkspace = useApp((s) => s.addWorkspace);
   const removeWorkspace = useApp((s) => s.removeWorkspace);
   const openSession = useApp((s) => s.openSession);
+  // Focusing a session that is already open sends **nothing** — it only decides
+  // which transcript is drawn. That is why a row in the "open now" group below is
+  // a plain `focusSession` rather than an `openSession`: its child already exists.
+  const focusSession = useApp((s) => s.focusSession);
+  const activeKey = useApp((s) => s.activeKey);
   const requestSessionList = useApp((s) => s.requestSessionList);
   const deleteSession = useApp((s) => s.deleteSession);
   // The session list folds on its own; the workspace list above it does not
@@ -119,6 +125,35 @@ export function WorkspaceSidebar() {
     return out;
   }, [attentionKey]);
 
+  /**
+   * The sessions that are **open and not on disk yet**, in rail order.
+   *
+   * The rail's list comes from `sessions.items`, which the runtime builds by
+   * reading session files — and a conversation that has not run a turn has no
+   * file. So without this, a new session appears in **no list at all**: measured
+   * on the release build, pressing "New session" from the first screen left the
+   * transcript, the four recent-session slots and every rail row byte-identical,
+   * with only the session bar's id moving. A press with no visible result gets
+   * pressed again, which is how one workspace accumulated four children in
+   * sixteen seconds.
+   *
+   * Drawn as its own group rather than merged into the saved list, because the
+   * two are different facts: the runtime is the authority on what is *saved*,
+   * and this end is the authority on what is *open*. A conversation in both is
+   * drawn once, from the saved list, which carries its message count and preview.
+   */
+  const liveKey = useApp((s) => selectLiveOnlyKey(s, currentWorkspace));
+  const liveOnly = useMemo(() => {
+    const out: { key: string; id: string; status: RowStatus }[] = [];
+    if (liveKey === '') return out;
+    for (const part of liveKey.split('\u0001')) {
+      const [key, id, status] = part.split('\u0000');
+      if (!key) continue;
+      out.push({ key, id, status: (status ?? 'idle') as RowStatus });
+    }
+    return out;
+  }, [liveKey]);
+
   /** Why the last workspace that was offered could not be taken. Local: nothing
    *  about it reached the runtime, and it is a statement about this list. */
   const [refusal, setRefusal] = useState<string | null>(null);
@@ -133,7 +168,15 @@ export function WorkspaceSidebar() {
   // lost — and the runtime waits on that id forever. The same goes for
   // restarting the child under a prompt. So every action here is inert while one
   // is up, exactly as the global keys are.
-  const blocked = modal !== null;
+  //
+  // **`railBlocked` rather than `modal !== null`, and that is a fix rather than a
+  // tidy-up.** Every panel is a Radix dialog, and Radix puts
+  // `pointer-events: none` on `body` while one is open — inherited, so the whole
+  // rail inherits it and the browser stops delivering clicks to it. Testing
+  // `modal` alone left every control here looking available and behaving dead
+  // whenever a panel was up, which is one of the two ways "New session" was
+  // reported as a button that does nothing. See `railBlocked`.
+  const blocked = useApp(railBlocked);
 
   async function onAdd() {
     if (blocked) return;
@@ -362,14 +405,66 @@ export function WorkspaceSidebar() {
             inert={sessionsCollapsed}
           >
             <div>
+              {/* **The group that made "New session" look dead.**
+                  A conversation that has been opened but has not run a turn has
+                  no file on disk, and the runtime's `sessions.items` is built by
+                  reading those files — so it used to appear in no list at all,
+                  and pressing the button changed nothing a person could see. It
+                  is drawn **above** the saved list because it is what is
+                  happening now, and it is a separate group because "open" and
+                  "saved" are two different facts: the runtime owns the second,
+                  this end owns the first.
+
+                  No delete button: there is no file to delete, and closing a
+                  conversation is `detachSession`, which is a different act from
+                  erasing one. The row is still a way to switch to it, which is
+                  what makes a second and third session reachable at all. */}
+              {liveOnly.length > 0 ? (
+                <div className="lb-rows lb-live-rows">
+                  {liveOnly.map((row) => {
+                    const isCurrent = row.key === activeKey;
+                    return (
+                      <div key={row.key} className="lb-session-wrap">
+                        <button
+                          type="button"
+                          className={`lb-session${isCurrent ? ' is-current' : ''}`}
+                          disabled={blocked || isCurrent}
+                          aria-current={isCurrent ? 'true' : undefined}
+                          onClick={() => focusSession(row.key)}
+                        >
+                          <span className="lb-session-top">
+                            <SessionDot status={row.status} />
+                            {/* The id is the runtime's own, so it is the same name
+                                the row will carry once the session is saved. Until
+                                `init` lands there is no id yet, and the honest
+                                label for that moment is the runtime's, not an
+                                invented one. */}
+                            <span className="lb-session-id">
+                              {row.id !== '' ? row.id : t('lb.sessionPending')}
+                            </span>
+                            <span className="lb-session-time">{t('lb.unsaved')}</span>
+                          </span>
+                          <span className="lb-session-meta">{t('lb.sessionOpen')}</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+
               {!listed ? (
                 <div className="lb-note">{t('common.loading')}</div>
               ) : sessionList.length === 0 ? (
-                <EmptyState
-                  compact
-                  title={t('lb.emptySessions.title')}
-                  hint={t('lb.emptySessions.hint')}
-                />
+                // Only when there is nothing open either: with a live row above,
+                // "no past session" is a statement about files and the screen
+                // already has a conversation on it.
+                liveOnly.length > 0 ? null : (
+                  <EmptyState
+                    compact
+                    title={t('lb.emptySessions.title')}
+                    hint={t('lb.emptySessions.hint')}
+                  />
+                )
               ) : (
                 <div className="lb-rows">
                   {sessionList.map((item) => {

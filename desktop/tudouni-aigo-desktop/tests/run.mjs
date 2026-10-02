@@ -51,6 +51,11 @@ const SUITES = [
   // ordinary code while being wrong — this one hid an attached terminal behind
   // the first screen, which took the composer away with it.
   'conversation-view.test.ts',
+  // The left rail's two groups, and what makes its actions inert. This is the
+  // "I press New session and nothing happens" report: a session with no file yet
+  // was in no list at all, and a panel made the rail unclickable while it still
+  // looked available. Both are pure functions, so both are assertable here.
+  'rail-groups.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

@@ -2106,6 +2106,24 @@ export const useApp = create<AppStore>((set, get) => {
           if (result.runEnded) {
             wakePolling(key);
             throttled(key, () => sendTo(key, { v: 1, t: 'status' }));
+
+            // **The rail's two groups change membership here, and only here.**
+            // A conversation gets its file on the first checkpoint, so this is
+            // the moment a row moves out of the "open now" group and into the
+            // saved list — and without a re-read the row would keep claiming it
+            // is unsaved for the rest of its life, because `sessions.items` is
+            // the only source for the saved list and nothing else asks again.
+            //
+            // Asked **only while this conversation is still missing from that
+            // list**, so it is one extra round trip per session rather than one
+            // per turn: the list is built by reading up to fifty session files,
+            // which is not something to re-read at the end of every turn.
+            if (
+              bucket.sessionId !== null &&
+              !bucket.sessionList.some((row) => row.id === bucket.sessionId)
+            ) {
+              sendTo(key, { v: 1, t: 'session_list' });
+            }
           }
           break;
         }
@@ -3511,6 +3529,73 @@ export function selectWorkspaceAttentionKey(s: AppStore): string {
     counts.set(workspace, (counts.get(workspace) ?? 0) + 1);
   }
   return [...counts.entries()].map(([ws, n]) => `${ws}\u0000${n}`).join('\u0001');
+}
+
+/**
+ * The sessions that have a live child and **no file on disk yet**, as one
+ * compact string.
+ *
+ * **This is why "New session" looked like a dead button.** The rail draws
+ * `sessions.items`, which the runtime builds by reading this workspace's session
+ * files — and a session that has not run a turn has no file. So a brand-new
+ * session appeared in **no list at all**. Measured on the release build, pressing
+ * the button from the first screen left the transcript, the four "recent
+ * sessions" slots and every rail row byte-identical; the only thing that moved
+ * was the id in the session bar. That is a screen with no feedback on it, and the
+ * people who hit it press again — four children in sixteen seconds on the machine
+ * this was diagnosed on.
+ *
+ * It is a **front-end** fact, deliberately: "which conversations do I have open"
+ * is something this end owns, while the runtime's list stays the authority on
+ * what is *saved*. The two are drawn as two groups so neither is read as the
+ * other, and a conversation that is in both is drawn once, from the saved list,
+ * because that row carries its messages and preview.
+ *
+ * Format: `key\u0000sessionId\u0000status` per row, joined by `\u0001`. Control
+ * characters for the same reason `selectWorkspaceAttentionKey` uses them: none of
+ * a child key, a session id or a status name can contain one.
+ */
+export function selectLiveOnlyKey(s: AppStore, workspace: string): string {
+  // What the saved list already holds, so one conversation is never two rows.
+  const saved = new Set((activeRuntime(s)?.sessionList ?? []).map((row) => row.id));
+  const parts: string[] = [];
+  for (const key of s.order) {
+    const bucket = s.sessions[key];
+    if (!bucket) continue;
+    if (bucket.sessionId !== null && saved.has(bucket.sessionId)) continue;
+    // Scoped like the saved list is: this rail's list belongs to the workspace on
+    // screen, and a conversation somewhere else is not this list's business.
+    // `bucket.workspace` is set when the child is started, so this works before
+    // `init` has landed — which is exactly the moment a new session exists.
+    const own = bucket.session?.workspace ?? bucket.workspace;
+    if (workspace !== '' && own !== '' && !samePath(own, workspace)) continue;
+    parts.push(`${key}\u0000${bucket.sessionId ?? ''}\u0000${selectRowStatus(s, key)}`);
+  }
+  return parts.join('\u0001');
+}
+
+/**
+ * Whether the left rail's actions are inert right now.
+ *
+ * **It has to be `modal || panel`, and the difference is the whole of one
+ * reported bug.** Every panel is a Radix dialog, and Radix puts
+ * `pointer-events: none` on `body` while one is open — an **inherited** property,
+ * so the rail inherits it and the browser never delivers the click at all. The
+ * rail's own check tested `modal` alone, so with `/files` open the "New session"
+ * button drew normally, showed hover styling, and swallowed every press: the
+ * report exactly, "I press it and nothing happens". Measured with real mouse
+ * events, `elementFromPoint` lands on `.overlay-mask` and **zero** IPC calls go
+ * out.
+ *
+ * The panel is not being made reachable through — clicking outside still
+ * dismisses it, which is what a modal means, and the person's next press lands on
+ * a live button. What changes is that the rail now **says** it is inert instead
+ * of looking available. A control the browser has disabled and the styling has
+ * not is a lie about the state of the application, and this one was expensive:
+ * it reads as a broken button, so it gets pressed repeatedly.
+ */
+export function railBlocked(s: AppStore): boolean {
+  return s.modal !== null || s.panel !== null;
 }
 
 /**

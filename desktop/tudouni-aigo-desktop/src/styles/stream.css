@@ -983,6 +983,16 @@
   gap: 1px;
 }
 
+/* The group of conversations that are open but have no file yet, above the saved
+   list. It needs its own rule for one thing the shared row styles cannot know:
+   it has to read as a **separate group** from the saved list below it, or the two
+   look like one list in which some rows are missing their message count. The
+   separation is a margin rather than a heading — a heading for one or two rows
+   costs more height than the rows do, and this rail is the narrow one. */
+.lb-live-rows {
+  margin-bottom: var(--space-2);
+}
+
 /* The one control this rail has when no workspace is listed, drawn as a named
    button rather than the section head's bare icon. It is `.btn .btn-outline
    .btn-block` and needs a rule of its own for the two things the shared button
