@@ -257,24 +257,47 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
   const resizeTerminal = useApp((s) => s.resizeTerminal);
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null);
+  // Whether an overlay is holding the keyboard. Read here because it decides who
+  // owns the keyboard, and the pane is the other claimant.
+  const overlayOpen = useApp((s) => s.panel !== null || s.modal !== null);
 
   /**
-   * **Focus the pane on mount, and this is not a nicety.**
+   * **The pane takes the keyboard whenever no overlay is holding it.**
    *
-   * `onKeyDown` fires only while the pane has focus, and nothing focused it: the
-   * pane has `tabIndex` but no `autoFocus`, so after pressing Enter on a terminal
-   * in the panel the keyboard went nowhere at all. The person had to work out
-   * that clicking the black area was the missing step — a rule nobody was told
-   * about and nothing on screen hinted at.
+   * `onKeyDown` fires only while the pane has focus, so focus *is* the feature: a
+   * pane without it is a terminal that silently ignores everything typed into it.
+   * Two measured paths made that the case, and this effect is the one rule that
+   * covers both:
    *
-   * Done here rather than with `autoFocus` because the pane must take focus
-   * **after** it is in the document, which is what `useEffect` guarantees; and
-   * `preventScroll` because focusing an element inside a scroller can otherwise
-   * scroll it into view and move the output under the reader.
+   *   - **On mount**, because nothing focused it: the pane has `tabIndex` but no
+   *     `autoFocus`, so after pressing Enter on a terminal in the panel the
+   *     keyboard went nowhere at all. The person had to work out that clicking the
+   *     black area was the missing step — a rule nobody was told about and nothing
+   *     on screen hinted at.
+   *   - **When an overlay closes**, which is the half that a mount-only effect
+   *     could not do and did not: the pane mounts while the panel that created it
+   *     is still open, so its focus call runs *inside* the dialog's focus trap and
+   *     is then undone when Radix restores focus on close. Measured: `Esc` after
+   *     "New terminal" left `document.activeElement` as `BODY`, so typing did
+   *     nothing until the pane was clicked with the mouse.
+   *
+   * A frame's delay on the second path is deliberate rather than incidental: the
+   * restore Radix performs happens after its own close handling, so claiming focus
+   * in the same commit would be claimed *before* it is taken back. One frame later
+   * is after it, and still before a person can type.
+   *
+   * Done in an effect rather than with `autoFocus` because the pane must take focus
+   * **after** it is in the document; and `preventScroll` because focusing an element
+   * inside a scroller can otherwise scroll it into view and move the output under
+   * the reader.
    */
   useEffect(() => {
-    ref.current?.focus({ preventScroll: true });
-  }, [row.id]);
+    // The dialog owns the keyboard while it is up; taking it then would fight the
+    // focus trap and lose (see above). It gets claimed when the overlay closes.
+    if (overlayOpen) return;
+    const frame = requestAnimationFrame(() => ref.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(frame);
+  }, [row.id, overlayOpen]);
 
   // Scroll with the output, which is what a terminal does. Only when the shell
   // is still running: a finished shell's last screenful is a record somebody is

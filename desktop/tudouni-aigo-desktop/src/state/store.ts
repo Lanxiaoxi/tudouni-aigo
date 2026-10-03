@@ -92,7 +92,14 @@ import {
   unregisterRuntime,
 } from '@/runtime/bus';
 import { insertPathAtCaret, type PastedImage } from '@/runtime/paste';
-import { applyTerminalChunkReporting, sanitizeTerminalChunk } from '@/runtime/terminalOutput';
+import {
+  applyTerminalOutput,
+  DEFAULT_VIEWPORT_ROWS,
+  EMPTY_TERMINAL_STATE,
+  fitViewport,
+  initialTerminalState,
+  type TerminalState,
+} from '@/runtime/terminalOutput';
 import { baseName, samePath } from '@/utils/format';
 import {
   attachRuntime,
@@ -1522,61 +1529,71 @@ function runtimeOf(s: AppStore, key: string | null): SessionRuntime | null {
 export const TERMINAL_SCROLLBACK = 4000;
 
 /**
- * One terminal's tail: the lines drawn, and the parsing state behind them.
+ * One terminal's tail.
  *
- * The two are one value rather than two records keyed by the same id, because a
- * pending escape sequence is meaningless apart from the terminal it came from —
- * and two maps that have to be kept in step are two maps that eventually are not.
+ * It is the parsing state itself (`TerminalState`) rather than a record beside it,
+ * because the screen, the cursor and the pending escape are one value: a row's text
+ * only means what it means relative to where the cursor is. Two maps keyed by the
+ * same id would be two maps to keep in step, and the screen would be the one that
+ * drifts.
+ *
+ * The name is kept for the store's own vocabulary — "the tail of a terminal's
+ * output" — while the model lives in `runtime/terminalOutput`.
  */
-export interface TerminalTail {
-  lines: string[];
-  /** An escape sequence the batch boundary cut in half. `''` when there is none. */
-  carry: string;
-  /**
-   * How many lines have fallen off the front of the bound.
-   *
-   * It exists so the pane can **say** that what is on screen is not the whole of
-   * what the shell printed. `TERMINAL_SCROLLBACK` discards the oldest output
-   * silently otherwise, and a log that has been cut with no sign of it is a log
-   * somebody reads as complete — the exact failure `panel.term.dropped` was
-   * written for, and which had no reference anywhere in the code.
-   *
-   * A number rather than a boolean because it is a fact about the buffer, not a
-   * one-shot event: it only ever grows, and "how much is missing" is answerable.
-   */
-  dropped: number;
-}
+export type TerminalTail = TerminalState;
 
 /** The shared empty tail, so a selector's fallback is a stable reference. */
-export const EMPTY_TAIL: TerminalTail = { lines: [], carry: '', dropped: 0 };
+export const EMPTY_TAIL: TerminalTail = EMPTY_TERMINAL_STATE;
 
 /**
  * Apply one output batch to a terminal's bounded tail.
  *
- * The work is in `sanitizeTerminalChunk` / `applyTerminalChunk`, which are pure
- * and tested on their own; this function's job is the store-shaped half — the
- * per-terminal keying and the copy-on-write.
+ * The work is in `applyTerminalOutput`, which is pure and tested on its own; this
+ * function's job is the store-shaped half — the per-terminal keying and the
+ * copy-on-write.
+ *
+ * A terminal this window has never heard of starts with a **full-height screen**,
+ * not the shared one-row placeholder: the cursor's row is addressed against the
+ * screen's height, so a state that is one row tall would clamp every cursor row to
+ * the top line until a resize happened to arrive.
  *
  * Copying rather than mutating is required, not tidiness: the store's selectors
- * compare by identity, so mutating the object a previous state holds is how a
- * React render silently shows nothing new.
+ * compare by identity, so mutating the object a previous state holds is how a React
+ * render silently shows nothing new.
  */
 export function appendTerminalOutput(
   store: Record<string, TerminalTail>,
   id: string,
   data: string,
 ): Record<string, TerminalTail> {
-  const existing = store[id] ?? EMPTY_TAIL;
-  const chunk = sanitizeTerminalChunk(existing.carry, data);
-  const applied = applyTerminalChunkReporting(existing.lines, chunk.text, TERMINAL_SCROLLBACK);
+  const existing = store[id] ?? initialTerminalState(DEFAULT_VIEWPORT_ROWS);
   return {
     ...store,
-    [id]: {
-      lines: applied.lines,
-      carry: chunk.carry,
-      dropped: existing.dropped + applied.dropped,
-    },
+    [id]: applyTerminalOutput(existing, data, TERMINAL_SCROLLBACK),
   };
+}
+
+/**
+ * Tell one terminal how tall its screen is.
+ *
+ * The pane measures itself and says so; this is the store's half of that, and it
+ * exists separately from `appendTerminalOutput` because the two events are
+ * genuinely different: bytes arrive constantly and the size changes when a rail is
+ * folded. Keeping them apart is also what stops a resize from being charged to the
+ * output — the pane would otherwise redraw its scrollback every time a panel opened.
+ */
+export function resizeTerminalTail(
+  store: Record<string, TerminalTail>,
+  id: string,
+  rows: number,
+): Record<string, TerminalTail> {
+  const existing = store[id];
+  // A terminal with nothing on screen has no tail yet, and creating one here would
+  // throw away the real size the next output batch would have fitted itself to.
+  if (!existing) return store;
+  const fitted = fitViewport(existing, rows);
+  if (fitted === existing) return store;
+  return { ...store, [id]: fitted };
 }
 
 /**
@@ -3150,6 +3167,16 @@ export const useApp = create<AppStore>((set, get) => {
       // in this window. So a nonsensical size is dropped here as well as in the
       // runtime.
       if (cols <= 0 || rows <= 0) return;
+      // **The local screen is fitted as well as the shell being told.** The two are
+      // not the same fact and both are needed: the runtime needs it so the shell
+      // lays itself out, and this front end needs it because the cursor is addressed
+      // in screen rows — a 10-row shell redraws at `CSI 9;60H`, and a model that
+      // still believed it had 24 rows would resolve that row to the wrong line.
+      // Fitting it here rather than when the bytes arrive also means the next batch
+      // is already interpreted against the right height.
+      patchWith(key, (current) => ({
+        terminalTails: resizeTerminalTail(current.terminalTails, id, rows),
+      }));
       sendTo(key, { v: 1, t: 'terminal_resize', terminal_id: id, cols, rows });
     },
 

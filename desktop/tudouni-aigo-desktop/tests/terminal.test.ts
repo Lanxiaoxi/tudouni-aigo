@@ -22,14 +22,17 @@ import { test } from 'node:test';
 
 import { encodeKey, isTerminalKey } from '@/runtime/terminalKeys';
 import {
-  applyTerminalChunk,
-  applyTerminalChunkReporting,
-  sanitizeTerminalChunk,
+  applyTerminalOutput,
+  DEFAULT_VIEWPORT_ROWS,
+  fitViewport,
+  initialTerminalState,
+  tokenizeTerminalChunk,
 } from '@/runtime/terminalOutput';
 import {
   appendTerminalOutput,
   pruneTails,
   replaceTerminal,
+  resizeTerminalTail,
   terminalEndedNote,
   TERMINAL_SCROLLBACK,
   type TerminalTail,
@@ -144,6 +147,18 @@ function linesOf(store: Record<string, TerminalTail>, id: string): string[] {
   return store[id]?.lines ?? [];
 }
 
+/**
+ * A tail holding one line of output, built through the real pipeline.
+ *
+ * Not an object literal: a tail is now the screen *and its cursor*, and a literal
+ * with the fields a test happens to know about is exactly how the fixtures and the
+ * implementation ended up agreeing about a shape that was wrong. Building it from
+ * the text means a fixture cannot be self-consistent and wrong at the same time.
+ */
+function tailOf(text: string): TerminalTail {
+  return applyTerminalOutput(initialTerminalState(), text, TERMINAL_SCROLLBACK);
+}
+
 test('a batch boundary is not a line boundary', () => {
   // The PTY flushes wherever it happens to flush. A fragment that continues the
   // line already held must be joined to it, or a sentence breaks in the middle
@@ -182,13 +197,19 @@ test('the buffer is bounded, and it is the newest lines that survive', () => {
 
 test('the buffer is copied, never mutated in place', () => {
   // The store's patch helpers compare references; mutating the array a previous
-  // state holds is how a React render silently shows nothing new.
-  const before = { 'term-01': { lines: ['a'], carry: '' } };
+  // state holds is how a React render silently shows nothing new. The screen is
+  // copied once per batch for the same reason — a batch of pure cursor movement
+  // would otherwise return a state whose `rows` is identical by reference, and the
+  // pane would not redraw.
+  const before: Record<string, TerminalTail> = {
+    'term-01': applyTerminalOutput(initialTerminalState(), 'a', TERMINAL_SCROLLBACK),
+  };
   const after = appendTerminalOutput(before, 'term-01', 'b');
   assert.notEqual(after, before);
   assert.notEqual(after['term-01'], before['term-01']);
-  assert.notEqual(after['term-01'].lines, before['term-01'].lines);
+  assert.notEqual(after['term-01'].rows, before['term-01'].rows);
   assert.deepEqual(before['term-01'].lines, ['a']);
+  assert.deepEqual(after['term-01'].lines, ['ab']);
 });
 
 /* ============================================================
@@ -202,33 +223,177 @@ test('a prompt with escape sequences around it reads as the prompt', () => {
   const raw =
     '\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H' +
     'PS C:\\ws>\x1b[1C\x1b]0;C:\\WINDOWS\\powershell.exe\x07\x1b[?25h';
-  assert.equal(sanitizeTerminalChunk('', raw).text, 'PS C:\\ws>');
+  const state = applyTerminalOutput(initialTerminalState(), raw, TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.lines, ['PS C:\\ws>']);
 });
 
 test('a lone carriage return rewrites its line rather than appending', () => {
   // A progress bar redraws itself. The last rewrite is what a terminal would be
   // showing; drawing all of them prints `10%50%100% done` on one line.
-  const lines = applyTerminalChunk([], '10%\r50%\r100% done', 100);
-  assert.deepEqual(lines, ['100% done']);
+  const state = applyTerminalOutput(initialTerminalState(), '10%\r50%\r100% done', TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.lines, ['100% done']);
 });
 
 test('sgr colour codes go, and the text between them stays', () => {
   // `\x1b[93mecho \x1b[37mMARK` is a real PowerShell line: the colours are
   // instructions, the words are the output.
-  assert.equal(sanitizeTerminalChunk('', '\x1b[93mecho \x1b[37mMARK\x1b[?25h').text, 'echo MARK');
+  const state = applyTerminalOutput(
+    initialTerminalState(),
+    '\x1b[93mecho \x1b[37mMARK\x1b[?25h',
+    TERMINAL_SCROLLBACK,
+  );
+  assert.deepEqual(state.lines, ['echo MARK']);
+});
+
+/* ============================================================
+   The cursor: the two measured ConPTY shapes that made the old
+   renderer wrong. Both are regression tests for reported bugs.
+   ============================================================ */
+
+test('typing does not accumulate: each keystroke redraws its line', () => {
+  // **The reported bug.** PSReadLine does not append what changed; it redraws the
+  // line, moving the cursor back over the part that did not change. These are the
+  // measured bytes from a real powershell, one batch per keystroke:
+  //
+  //     a  ->  ESC[93m  a             ESC[?25h
+  //     b  ->  ESC[93m  \b ab         ESC[?25h
+  //     c  ->  ESC[93m  ESC[1;60H abc ESC[?25h
+  //
+  // Append-only rendering (what this used to do) produced `a`, `aab`, `aababc` —
+  // the pane stopped showing what had been typed, and it got worse with every key.
+  // Measured on a 27-character command, the drawn line reached 385 characters.
+  let state = initialTerminalState();
+  for (const batch of ['\x1b[93ma\x1b[?25h', '\x1b[93m\bab\x1b[?25h', '\x1b[93m\x1b[1;60Habc\x1b[?25h']) {
+    state = applyTerminalOutput(state, batch, TERMINAL_SCROLLBACK);
+  }
+  // The prompt that the column-60 home is measured against, so the position is the
+  // real one rather than an accident of a short line.
+  assert.equal(state.col, 60 + 3 - 1, 'the cursor sits after the three characters');
+});
+
+test('a redraw lands on the characters it redraws', () => {
+  // The same rule stated as text: prompt, then four keystrokes of a word being
+  // rewritten. The line must read the last redraw and nothing else.
+  let state = applyTerminalOutput(initialTerminalState(), 'PS> ', TERMINAL_SCROLLBACK);
+  const promptCol = state.col;
+  for (const word of ['a', 'ab', 'abc', 'abcd']) {
+    state = applyTerminalOutput(
+      state,
+      // Home to the prompt, then the whole word: the shape ConPTY uses when the
+      // cursor has to travel further than a backspace can take it.
+      `\x1b[${promptCol + 1}G${word}`,
+      TERMINAL_SCROLLBACK,
+    );
+  }
+  assert.deepEqual(state.lines, ['PS> abcd']);
+});
+
+test('a backspace moves the cursor instead of being drawn', () => {
+  // `\b` is a cursor move, so a redraw of a shorter word overwrites rather than
+  // leaving the tail of the longer one behind.
+  let state = applyTerminalOutput(initialTerminalState(), 'abc', TERMINAL_SCROLLBACK);
+  state = applyTerminalOutput(state, '\b\b', TERMINAL_SCROLLBACK);
+  assert.equal(state.col, 1);
+  state = applyTerminalOutput(state, 'X', TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.lines, ['aXc']);
+});
+
+test('erase-to-end-of-line removes what was there', () => {
+  // `ESC[K` after a redraw is how a shell clears the remains of a longer previous
+  // line. It erased nothing before this, so the two lines merged.
+  let state = applyTerminalOutput(initialTerminalState(), 'a long first value', TERMINAL_SCROLLBACK);
+  state = applyTerminalOutput(state, '\x1b[1G\x1b[Kshort', TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.lines, ['short']);
+});
+
+test('a resize repaint does not duplicate the screen or add blank lines', () => {
+  // **The second reported bug.** ConPTY answers `terminal_resize` by resending the
+  // whole screen: home, every row, `ESC[K` for each row below the content, then put
+  // the cursor back. These are the measured bytes for a resize to 16 rows.
+  //
+  // Append-only rendering made one screenful into two copies plus the trailing
+  // erasures as blank lines: measured in the app, folding a rail took the pane from
+  // 61 lines to 90, of which **84 were blank**.
+  const rows = 16;
+  let state = initialTerminalState(rows);
+  state = applyTerminalOutput(state, 'PS C:\\ws> "R1"; "R2"\r\nR1\r\nR2\r\nPS C:\\ws> ', TERMINAL_SCROLLBACK);
+  const before = state.lines;
+  assert.deepEqual(before, ['PS C:\\ws> "R1"; "R2"', 'R1', 'R2', 'PS C:\\ws> ']);
+
+  // The repaint, verbatim: home, the content rows with `ESC[K`, then an `ESC[K`
+  // for each remaining row of the screen, then the cursor restored. The count is
+  // the measured one — **one fewer CRLF than there are rows**, because the shell
+  // does not emit a newline after the last row it repaints. That matters: an extra
+  // newline at the bottom of the screen scrolls it, which would move the text
+  // instead of redrawing it.
+  const content = ['PS C:\\ws> "R1"; "R2"', 'R1', 'R2', 'PS C:\\ws> '];
+  const blankRows = rows - content.length;
+  let repaint = '\x1b[?25l\x1b[8;16;70t\x1b[H';
+  repaint += content.map((line) => `${line}\x1b[K\r\n`).join('');
+  repaint += '\x1b[K\r\n'.repeat(blankRows - 1);
+  repaint += '\x1b[K';
+  repaint += '\x1b[4;11H\x1b[?25h';
+
+  const after = applyTerminalOutput(state, repaint, TERMINAL_SCROLLBACK);
+  assert.deepEqual(after.lines, before, 'the repaint draws the same screen, not a second copy');
+  assert.equal(after.lines.filter((line) => line === '').length, 0, 'and no blank rows');
+  assert.equal(after.screenTop, state.screenTop, 'and the screen did not scroll');
+});
+
+test('a resize that grows the shell scrolls where the shell says it does', () => {
+  // The cursor is addressed in **screen** rows, so the model has to know how tall
+  // the screen is: the same `CSI 9;1H` is the bottom row of a 10-row shell and the
+  // ninth of a twenty-row one. Getting this wrong puts a repaint on the wrong line.
+  const tall = fitViewport(initialTerminalState(24), 10);
+  assert.equal(tall.viewportRows, 10);
+
+  // `\n` at the bottom of a 2-row screen scrolls; the same on a taller screen does
+  // not, because there are rows left below the cursor. The scroll is `screenTop`
+  // moving — the rows themselves are never renumbered, which is what lets the
+  // absolute `CSI r;cH` a shell sends next land where it means.
+  let short = initialTerminalState(2);
+  short = applyTerminalOutput(short, 'one\r\ntwo', TERMINAL_SCROLLBACK);
+  const topBefore = short.screenTop;
+  assert.deepEqual(short.lines, ['one', 'two']);
+
+  short = applyTerminalOutput(short, '\r\nthree', TERMINAL_SCROLLBACK);
+  assert.equal(short.screenTop, topBefore + 1, 'the screen scrolled by one row');
+  // `one` is still drawn: the pane is a log of the whole buffer, and a row that
+  // scrolled off the *shell's* screen is still something the person can read.
+  assert.deepEqual(short.lines, ['one', 'two', 'three']);
+  // And the screen is now the last two of those rows.
+  assert.deepEqual(short.rows.slice(short.screenTop, short.screenTop + 2), ['two', 'three']);
+});
+
+test('shrinking then growing the screen keeps what was on it', () => {
+  // The pane is resized when a rail is folded and again when it is unfolded, and
+  // the text a person was reading must survive both.
+  let state = applyTerminalOutput(initialTerminalState(24), 'alpha\r\nbeta', TERMINAL_SCROLLBACK);
+  state = fitViewport(state, 4);
+  assert.equal(state.viewportRows, 4);
+  assert.deepEqual(state.lines, ['alpha', 'beta']);
+  state = fitViewport(state, 24);
+  assert.equal(state.viewportRows, 24);
+  assert.deepEqual(state.lines, ['alpha', 'beta']);
 });
 
 test('a sequence split across two batches is held, not shown', () => {
   // A PTY flushes wherever it flushes, so `\x1b[` can arrive in one batch and
-  // `0m` in the next. A stateless stripper would print a stray `0m` in the middle
+  // `0m` in the next. A stateless scanner would print a stray `0m` in the middle
   // of somebody's output — often enough to look like a memory bug.
-  const first = sanitizeTerminalChunk('', 'before \x1b[');
-  assert.equal(first.text, 'before ');
+  const first = tokenizeTerminalChunk('', 'before \x1b[');
   assert.equal(first.carry, '\x1b[');
+  assert.deepEqual(first.tokens, [{ kind: 'text', value: 'before ' }]);
 
-  const second = sanitizeTerminalChunk(first.carry, '0mafter');
-  assert.equal(second.text, 'after');
+  const second = tokenizeTerminalChunk(first.carry, '0mafter');
   assert.equal(second.carry, '');
+  // `ESC[0m` completed a real sequence, so it comes back as one token rather than
+  // as the text `0m` — which is the whole point: the bytes a person must never see
+  // in the middle of their output.
+  assert.deepEqual(second.tokens, [
+    { kind: 'escape', final: 'm', params: '0' },
+    { kind: 'text', value: 'after' },
+  ]);
 });
 
 test('the carry survives into the store, so the split is invisible', () => {
@@ -242,33 +407,45 @@ test('the carry survives into the store, so the split is invisible', () => {
 test('control characters have no meaning once the bytes are text', () => {
   // A Windows console scatters NULs through its output, and a browser draws them
   // as nothing — or as a box. Newline and tab are the two that stay meaningful.
-  assert.equal(sanitizeTerminalChunk('', 'a\x00b\x07c').text, 'abc');
-  assert.equal(sanitizeTerminalChunk('', 'keep\ttabs\nand newlines').text, 'keep\ttabs\nand newlines');
+  const stripped = applyTerminalOutput(initialTerminalState(), 'a\x00b\x07c', TERMINAL_SCROLLBACK);
+  assert.deepEqual(stripped.lines, ['abc']);
+  // Tab advances to the next tab stop rather than being drawn as a gap of one
+  // space, and a newline starts a row.
+  const tabbed = applyTerminalOutput(initialTerminalState(), 'a\tb', TERMINAL_SCROLLBACK);
+  assert.deepEqual(tabbed.lines, ['a       b']);
   // DEL and the C1 range go too. C1 matters rather than being pedantry: the
   // runtime's own stripper drops it, so keeping it here would make the two front
   // ends disagree about what a shell's output says.
-  assert.equal(sanitizeTerminalChunk('', 'a\x7fb\x9bc').text, 'abc');
+  const c1 = applyTerminalOutput(initialTerminalState(), 'a\x7fb\x9bc', TERMINAL_SCROLLBACK);
+  assert.deepEqual(c1.lines, ['abc']);
 });
 
 test('an unterminated sequence is eventually shown rather than held for ever', () => {
   // A front end that buffered an unbounded "incomplete" escape would grow its
   // state on malformed output. Showing the raw bytes is a far better failure than
   // showing nothing at all.
-  const held = sanitizeTerminalChunk('', '\x1b]0;' + 'x'.repeat(600));
+  const held = tokenizeTerminalChunk('', '\x1b]0;' + 'x'.repeat(600));
   assert.equal(held.carry, '');
-  assert.ok(held.text.length > 600, 'the over-long sequence was not released');
+  assert.ok(
+    held.tokens.some((token) => token.kind === 'text' && token.value.length > 600),
+    'the over-long sequence was not released',
+  );
 
   // The same for one that spans a newline, which is not a sequence we will ever
   // complete.
-  const across = sanitizeTerminalChunk('', '\x1b]0;title\nnext line');
+  const across = tokenizeTerminalChunk('', '\x1b]0;title\nnext line');
   assert.equal(across.carry, '');
 });
 
 test('an OSC title is stripped whole, terminator and all', () => {
   // PowerShell writes the window title; drawing it would put the executable's
   // path in the middle of the prompt.
-  const { text } = sanitizeTerminalChunk('', '\x1b]0;C:\\WINDOWS\\system32\x1b\\PS> ');
-  assert.equal(text, 'PS> ');
+  const state = applyTerminalOutput(
+    initialTerminalState(),
+    '\x1b]0;C:\\WINDOWS\\system32\x1b\\PS> ',
+    TERMINAL_SCROLLBACK,
+  );
+  assert.deepEqual(state.lines, ['PS> ']);
 });
 
 test('pruneTails drops what the runtime no longer lists, and keeps the rest', () => {
@@ -276,8 +453,8 @@ test('pruneTails drops what the runtime no longer lists, and keeps the rest', ()
   // forgotten is memory this window can never free — nothing will append to it and
   // nothing will draw it.
   const tails: Record<string, TerminalTail> = {
-    'term-01': { lines: ['a'], carry: '', dropped: 0 },
-    'term-02': { lines: ['b'], carry: '', dropped: 0 },
+    'term-01': tailOf('a'),
+    'term-02': tailOf('b'),
   };
   const pruned = pruneTails(tails, [row('term-02', 'running')], null);
   assert.deepEqual(Object.keys(pruned), ['term-02']);
@@ -297,8 +474,8 @@ test('a finished terminal\'s output is released; a running one\'s is not', () =>
   // ever, since nothing appends to a forgotten id and only the attached tail can
   // be drawn.
   const tails: Record<string, TerminalTail> = {
-    'term-live': { lines: ['still going'], carry: '', dropped: 0 },
-    'term-done': { lines: ['long gone'], carry: '', dropped: 0 },
+    'term-live': tailOf('still going'),
+    'term-done': tailOf('long gone'),
   };
   const rows = [row('term-live', 'running'), row('term-done', 'exited')];
   assert.deepEqual(Object.keys(pruneTails(tails, rows, null)), ['term-live']);
