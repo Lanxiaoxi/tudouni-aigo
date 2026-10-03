@@ -1053,6 +1053,21 @@ export interface AppStore {
    *  nothing is sent, and the shell is unaffected either way. `null` goes back to
    *  the conversation. */
   attachTerminal(id: string | null): void;
+  /**
+   * The status bar's terminals badge: into the terminal view, or back out of it.
+   *
+   * A **toggle**, and the second half is what makes it worth having: before it,
+   * leaving the terminal view was three controls that all live *inside* it (the
+   * tab strip's button, the pane's footer, and `Ctrl+Shift+\` when the pane has
+   * the focus), so once somebody's attention had moved to the bottom of the
+   * window there was no way back to the conversation without going in first.
+   * That is the same shape as the tab strip's own `onPick`, which also treats
+   * "press the thing you are already on" as "go back".
+   *
+   * It picks its target with `nextTerminalId` rather than remembering one,
+   * because the id it would remember is exactly the one that gets closed.
+   */
+  toggleTerminalView(): void;
   /** Ask the OS for a directory, then open a session in it. A different
    *  workspace is a different process, so this cannot be done to an existing
    *  one. */
@@ -1658,6 +1673,44 @@ export function replaceTerminal(rows: TerminalRow[], row: TerminalRow): Terminal
   const next = [...rows];
   next[at] = row;
   return next;
+}
+
+/**
+ * Which terminal this window should be showing, out of the ones that are left.
+ *
+ * **Two callers, one rule**, and that is why it is a function rather than an
+ * expression at each of them:
+ *
+ *   - the status bar's terminals badge, which has nothing attached and has to
+ *     pick one when it is pressed;
+ *   - `closeTerminal`, where the terminal being read is going away and staying
+ *     put is not an option.
+ *
+ * The second one is a **bug fix, and the bug is worth writing down** because the
+ * old behaviour looked deliberate: closing a tab set `activeTerminalId` to
+ * `null` unconditionally, which is this window's "leave the terminal view". So a
+ * person with two tabs who pressed the X on either one was thrown back to the
+ * conversation — with the other shell still running behind them, reachable only
+ * by going back in through the panel. The screenshot that reported it shows
+ * exactly that: `term-02 running` and `term-05 running`, one closed, and the
+ * transcript. Closing **the last** tab is the only case where leaving is right,
+ * and that is what a `null` result means here.
+ *
+ * A running shell wins over an ended one: the reason a terminal page is open is
+ * to type into something, and a row whose process is gone is a record. Newest
+ * first among equals — the list is in creation order (`terminal.Manager.List`),
+ * so the last match is the shell somebody opened most recently, which is the one
+ * a person means when they say "the terminal".
+ *
+ * Exported and pure so the rule can be asserted without a window, a child or a
+ * shell — see `tests/terminal.test.ts`.
+ */
+export function nextTerminalId(rows: TerminalRow[], exclude: string | null = null): string | null {
+  const candidates = rows.filter((row) => row.id !== exclude);
+  if (candidates.length === 0) return null;
+  const running = candidates.filter((row) => row.status === 'running');
+  const pool = running.length > 0 ? running : candidates;
+  return pool[pool.length - 1].id;
 }
 
 /**
@@ -3234,10 +3287,13 @@ export const useApp = create<AppStore>((set, get) => {
       // second half runs in the `terminal_exit` handler below, when the runtime
       // has confirmed the process is gone.
       //
-      // Clicking the tab you are reading is also how you get back to the
-      // conversation, so the view switches at once rather than after the round
-      // trip: that is this window's own preference (`activeTerminalId`) and the
-      // person's intent is not in doubt.
+      // The view switches at once rather than after the round trip, because
+      // that is this window's own preference (`activeTerminalId`) and the
+      // person's intent is not in doubt. **It switches to the next tab, not out
+      // of the terminal** — see `nextTerminalId` for the bug that reading this
+      // as "leave" turned out to be. `null` here means, and only means, that
+      // there was nothing else open.
+      const next = nextTerminalId(bucket.terminals, id);
       if (row.status === 'running') {
         patchWith(key, (current) => ({
           terminalClosing: current.terminalClosing.includes(id)
@@ -3246,7 +3302,7 @@ export const useApp = create<AppStore>((set, get) => {
           terminalPending: current.terminalPending.includes(id)
             ? current.terminalPending
             : [...current.terminalPending, id],
-          activeTerminalId: current.activeTerminalId === id ? null : current.activeTerminalId,
+          activeTerminalId: current.activeTerminalId === id ? next : current.activeTerminalId,
         }));
         sendTo(key, { v: 1, t: 'terminal_kill', terminal_id: id });
         return;
@@ -3256,7 +3312,7 @@ export const useApp = create<AppStore>((set, get) => {
       // will accept this. **No optimistic removal**: the row and the tail go when
       // the runtime's list comes back without them, which keeps one place
       // (`ui(terminals)`) responsible for what this window still holds.
-      patch(key, { activeTerminalId: bucket.activeTerminalId === id ? null : bucket.activeTerminalId });
+      patch(key, { activeTerminalId: bucket.activeTerminalId === id ? next : bucket.activeTerminalId });
       sendTo(key, { v: 1, t: 'terminal_close', terminal_id: id });
     },
 
@@ -3293,6 +3349,28 @@ export const useApp = create<AppStore>((set, get) => {
             }
           : {}),
       }));
+    },
+
+    toggleTerminalView() {
+      const key = get().activeKey;
+      if (key === null) return;
+      const bucket = get().sessions[key];
+      if (!bucket) return;
+      // Already reading a shell: this is the way back to the conversation. It
+      // goes through `attachTerminal(null)` rather than patching the field, so
+      // the "still running" note is written by the one place that writes it —
+      // leaving a shell behind is exactly the moment that sentence is for.
+      if (bucket.activeTerminalId !== null) {
+        get().attachTerminal(null);
+        return;
+      }
+      const id = nextTerminalId(bucket.terminals);
+      // Nothing to attach to. The badge is disabled in this state, so reaching
+      // here means the list changed between the render and the press — and
+      // attaching to an id that no longer exists would draw the terminal view
+      // over an empty list, which is a screen with no tab to leave by.
+      if (id === null) return;
+      get().attachTerminal(id);
     },
 
     async pickWorkspace() {

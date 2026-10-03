@@ -131,6 +131,20 @@ export const en = {
   'status.steps': '{n} steps',
   'status.autopilot': 'autopilot',
   'status.quiet': 'quiet',
+  /** The status bar's terminals badge: the count of the workspace's shells, and
+   *  the way into the terminal view.
+   *
+   *  **"terminals", not "shells", and the count is every row.** A row whose
+   *  process has ended stays in the runtime's list on purpose — it is what
+   *  answers "what was I running" — and the tab strip and the panel both count
+   *  it, so counting only the live ones here would make one number disagree with
+   *  the two screens it sits between. */
+  'status.terminals': 'terminals',
+  /** The tooltip with nothing to attach to. The button is disabled in this
+   *  state, and a disabled control with no explanation is the kind of dead end
+   *  the terminal panel's empty state exists to avoid — this says the same thing
+   *  in the place the pointer already is. */
+  'status.terminalsNone': 'no terminal in this workspace',
   'status.jobs': 'jobs',
   'status.jobsUncollected': 'uncollected',
   'status.subagents': 'subagents',

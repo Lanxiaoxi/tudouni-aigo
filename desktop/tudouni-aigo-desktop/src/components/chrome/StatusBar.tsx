@@ -1,8 +1,19 @@
-import { Boxes, Bot, CircleSlash, FolderOpen, Gauge, HardDrive, Layers, Zap } from 'lucide-react';
+import {
+  Boxes,
+  Bot,
+  CircleSlash,
+  FolderOpen,
+  Gauge,
+  HardDrive,
+  Layers,
+  SquareTerminal,
+  Zap,
+} from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   NO_JOBS,
   NO_SUBAGENTS,
+  NO_TERMINALS,
   selectPhase,
   selectTurnMs,
   selectUsage,
@@ -23,9 +34,17 @@ import type { Phase } from '@/runtime/adapt';
  *
  * Left: phase + what is happening (or how the last turn settled) + the
  * conversation's cumulative steps.
- * Right, in order: autopilot → quiet → jobs badge → subagent badge → context
- * usage → cache hit rate → turn elapsed → audit log path. Narrow windows cut
- * from the right, so the rightmost elements carry the tightest breakpoints.
+ * Right, in order: autopilot → quiet → **terminals badge** → jobs badge →
+ * subagent badge → context usage → cache hit rate → turn elapsed → audit log
+ * path. Narrow windows cut from the right, so the rightmost elements carry the
+ * tightest breakpoints — including the terminals badge, which is the fourth from
+ * the right and therefore the fourth to go.
+ *
+ * The terminals badge is next to `quiet` on purpose, which is where it was asked
+ * for: both answer "what is running in this session", and the two are the only
+ * toggles on the row. It is derived from `terminals` — the same list the panel
+ * and the tab strip draw — rather than from anything of its own, because the
+ * runtime is the only source of truth for whether a terminal exists.
  *
  * Where the right-hand numbers come from (decision 5, revised): the **live**
  * figures come from the `model_call` events as they arrive, so they move per
@@ -114,11 +133,18 @@ export function StatusBar() {
   const snap = useSessionField((rt) => rt.uiState, null);
   const autopilot = useSessionField((rt) => rt.uiState?.autopilot ?? false, false);
   const quiet = useSessionField((rt) => rt.quiet, false);
+  // The workspace's shells, and which one this session's view is attached to.
+  // Both come from the session on screen for the reason stated above: with two
+  // conversations open, a count that kept the first one's shells would be a
+  // number about a process this row is not describing.
+  const terminals = useSessionField((rt) => rt.terminals, NO_TERMINALS);
+  const attachedTerminalId = useSessionField((rt) => rt.activeTerminalId, null);
   const hasSpoken = useSessionField((rt) => rt.hasSpoken, false);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
   const openPanel = useApp((s) => s.openPanel);
   const setAutopilot = useApp((s) => s.setAutopilot);
   const toggleQuiet = useApp((s) => s.toggleQuiet);
+  const toggleTerminalView = useApp((s) => s.toggleTerminalView);
 
   // The turn's elapsed time. The runtime sends no duration until a turn ends, so
   // a running turn is timed against a local clock — which is why this reads the
@@ -211,6 +237,45 @@ export function StatusBar() {
           >
             <CircleSlash size={11} />
             <span className="hide-b860">{t('status.quiet')}</span>
+          </button>
+        </Tip>
+
+        {/* **The terminals badge**, and it is where it is because that is where
+            it was asked for: directly to the right of `quiet`. It answers the
+            question the tab strip answers only from *inside* the terminal view —
+            "how many shells have I got" — and pressing it is the way in.
+
+            **The count is the number of terminals, not the number running**, and
+            that is the same rule the panel and the tab strip follow: a row that
+            has ended stays in the list, because it is what answers "what was I
+            running", and its exit code would go with it. Counting only the live
+            ones would make a killed shell's row quietly uncounted here and
+            counted everywhere else.
+
+            **Disabled when there is nothing to attach to.** A press has no
+            nothing-state to fall into: `toggleTerminalView` cannot invent a
+            shell, and an enabled control whose press does nothing is the thing
+            this build keeps refusing to draw. `is-on` marks the attached state
+            rather than the count, because "this page is the terminal" is the
+            fact the button toggles. */}
+        <Tip
+          label={
+            terminals.length === 0
+              ? t('status.terminalsNone')
+              : `${t('status.terminals')} ${terminals.length}${
+                  attachedTerminalId !== null ? ` · ${t('panel.term.leave')}` : ''
+                }`
+          }
+        >
+          <button
+            type="button"
+            className={`st-toggle hide-b880${attachedTerminalId !== null ? ' is-on' : ''}`}
+            onClick={toggleTerminalView}
+            disabled={terminals.length === 0}
+            aria-pressed={attachedTerminalId !== null}
+          >
+            <SquareTerminal size={11} />
+            <span className="st-metric">{terminals.length}</span>
           </button>
         </Tip>
 

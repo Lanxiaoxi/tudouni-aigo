@@ -1765,6 +1765,196 @@ test('a snapshot that no longer lists a terminal takes its attach away', () => {
   assert.deepEqual(rt().terminals, []);
 });
 
+/* ============================================================
+   The terminals badge in the status bar
+   ============================================================ */
+
+/** The reply to `terminal_list`, which is also what a refused create answers
+ *  with: the full list, never a delta. */
+function terminalsMsg(rows: Record<string, unknown>[]): Record<string, unknown> {
+  return { v: 1, t: 'ui', kind: 'terminals', terminals: rows };
+}
+
+function termRow(id: string, status: string): Record<string, unknown> {
+  return {
+    id,
+    workspace: '/ws',
+    cwd: '',
+    shell: 'powershell',
+    pid: 1,
+    status,
+    exit_code: null,
+    created_at: 0,
+    cols: 80,
+    rows: 24,
+  };
+}
+
+test('the badge goes into the terminal view, and the same badge comes back out', () => {
+  const sent = captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    terminalsMsg([termRow('term-01', 'running'), termRow('term-02', 'running')]) as never,
+  );
+  assert.equal(rt().terminals.length, 2, 'the badge counts what the runtime listed');
+
+  // In. The newest shell is the one a person means by "the terminal", and the
+  // press sends **nothing**: which terminal this window is showing is its own
+  // preference (design §21), and the shell is unaffected either way.
+  const before = sent.length;
+  useApp.getState().toggleTerminalView();
+  assert.equal(rt().activeTerminalId, 'term-02');
+  assert.equal(sent.length, before, 'attaching is a local act');
+
+  // Out — and this half is the reason the badge is worth having: every other way
+  // back to the conversation lives *inside* the terminal view, so somebody whose
+  // attention had moved to the bottom of the window had to go in to get out.
+  useApp.getState().toggleTerminalView();
+  assert.equal(rt().activeTerminalId, null);
+  assert.equal(sent.length, before, 'leaving is a local act too');
+
+  // Leaving a **running** shell is recorded, because nothing else on screen says
+  // it is still going: the view is gone, the tab strip is gone, and the composer
+  // looks exactly as it does with no shells at all.
+  const note = rt().entries.at(-1);
+  assert.equal(note?.kind, 'note');
+  assert.equal(
+    note?.kind === 'note' ? note.message?.code : null,
+    'terminalDetached',
+  );
+});
+
+test('the badge does nothing at all when the workspace has no terminal', () => {
+  // It is drawn disabled in this state, so reaching the store this way means the
+  // list changed between the render and the press. Attaching to an id that is not
+  // there would draw the terminal view over an empty list — a screen with no tab
+  // to leave by, which is the deadlock `conversation-view.test.ts` was written
+  // about, reached from the other side.
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().toggleTerminalView();
+  assert.equal(rt().activeTerminalId, null);
+});
+
+test('a snapshot arriving while the badge is pressed cannot strand the view', () => {
+  // The interleaving the guard above exists for, at store level: a shell exits
+  // between the render that drew the badge and the press that acted on it, and
+  // the snapshot that says so wins — a stale attach is cleared by
+  // `applyTerminalList`, which is the one place that owns "the runtime's list is
+  // the truth".
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(KEY, terminalsMsg([termRow('term-01', 'running')]) as never);
+  useApp.getState().toggleTerminalView();
+  assert.equal(rt().activeTerminalId, 'term-01');
+
+  useApp.getState().applyRuntimeMessage(KEY, terminalsMsg([]) as never);
+  assert.equal(rt().activeTerminalId, null);
+  assert.deepEqual(rt().terminals, []);
+});
+
+test('closing one of two tabs keeps the other one open on screen', () => {
+  const sent = captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    terminalsMsg([termRow('term-02', 'running'), termRow('term-05', 'running')]) as never,
+  );
+  useApp.getState().attachTerminal('term-02');
+  assert.equal(rt().activeTerminalId, 'term-02');
+
+  // A running shell cannot be closed, only ended first — so the gesture's two
+  // halves happen at different times and this is the first one.
+  useApp.getState().closeTerminal('term-02');
+  assert.deepEqual(sent.at(-1), { v: 1, t: 'terminal_kill', terminal_id: 'term-02' });
+
+  // **The fix, and the assertion that fails without it.** The view moves to the
+  // other tab; it does not leave the terminal. `null` here is what the old code
+  // set unconditionally, and what it produced was the reported screenshot: two
+  // tabs, one closed, and the conversation on screen with the other shell still
+  // running and reachable only through the sidebar.
+  assert.equal(rt().activeTerminalId, 'term-05');
+
+  // The intention to close survives the round trip, because the runtime has not
+  // confirmed the process is gone yet.
+  assert.deepEqual(rt().terminalClosing, ['term-02']);
+  assert.ok(rt().terminalPending.includes('term-02'));
+});
+
+test('closing an ended tab moves on rather than out', () => {
+  const sent = captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    terminalsMsg([termRow('term-01', 'exited'), termRow('term-02', 'running')]) as never,
+  );
+  useApp.getState().attachTerminal('term-01');
+
+  // Already ended, so there is no process to lose track of and the runtime
+  // accepts this directly: one message, not the kill-then-close pair.
+  useApp.getState().closeTerminal('term-01');
+  assert.deepEqual(sent.at(-1), { v: 1, t: 'terminal_close', terminal_id: 'term-01' });
+  // The live shell wins over the ended one, so the view moves **forward** into
+  // `term-02` rather than sitting on a record.
+  assert.equal(rt().activeTerminalId, 'term-02');
+});
+
+test('closing the only tab is the one case that leaves the terminal view', () => {
+  // The other half of the rule, and the reason `null` is still the right answer
+  // somewhere: with one shell there is nothing to move to, and staying would draw
+  // a terminal view for a row the runtime is about to forget — the screen with no
+  // tab to leave by.
+  //
+  // **The list it reads is the one still on screen**, which is why this is its
+  // own case rather than the tail of the test above: the row being closed stays
+  // listed until the runtime's answer prunes it, so "is there anything left" has
+  // to be asked of a list that has only this terminal in it.
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(KEY, terminalsMsg([termRow('term-01', 'running')]) as never);
+  useApp.getState().attachTerminal('term-01');
+  useApp.getState().closeTerminal('term-01');
+  assert.equal(rt().activeTerminalId, null);
+
+  // And the ended variant of the same thing, where the close is direct rather
+  // than a kill the view has to wait on.
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    terminalsMsg([termRow('term-01', 'exited')]) as never,
+  );
+  useApp.getState().attachTerminal('term-01');
+  useApp.getState().closeTerminal('term-01');
+  assert.equal(rt().activeTerminalId, null);
+});
+
+test('the row survives a close, because the runtime is the one that removes it', () => {
+  // **No optimistic removal.** The row and its tail go when the runtime's list
+  // comes back without them, which keeps one place (`ui(terminals)`) responsible
+  // for what this window still holds — and leaves the tab in place if the close
+  // is refused, which is the only honest thing to draw.
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    terminalsMsg([termRow('term-01', 'exited'), termRow('term-02', 'running')]) as never,
+  );
+  useApp.getState().attachTerminal('term-02');
+  useApp.getState().closeTerminal('term-02');
+  assert.deepEqual(rt().terminals.map((row) => row.id), ['term-01', 'term-02']);
+
+  useApp.getState().applyRuntimeMessage(KEY, terminalsMsg([termRow('term-01', 'exited')]) as never);
+  assert.deepEqual(rt().terminals.map((row) => row.id), ['term-01']);
+  assert.equal(rt().activeTerminalId, 'term-01', 'the view follows the list it is showing');
+});
+
 test('a refused listing stops the spinner and says why', () => {
   captureOutbound();
   resetStore();

@@ -518,6 +518,20 @@
   }
 }
 
+/* The terminals badge, and its breakpoint is **between** the jobs badge's (900)
+   and quiet's (860). The order on the row is quiet → terminals → jobs, and the
+   rule that the rightmost elements carry the tightest breakpoints is about
+   *distance from the right edge*, not about the order they were written in: the
+   terminals badge sits two places left of the audit path and one right of
+   `quiet`, so it has to outlive `quiet`'s 860 and give way before it. Reading the
+   row left-to-right gives the sequence 860 (quiet) → 880 (terminals) → 900
+   (jobs), which is not monotonic and is not meant to be. */
+@media (max-width: 880px) {
+  .hide-b880 {
+    display: none !important;
+  }
+}
+
 @media (max-width: 860px) {
   .hide-b860 {
     display: none !important;

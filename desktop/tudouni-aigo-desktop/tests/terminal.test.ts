@@ -30,6 +30,7 @@ import {
 } from '@/runtime/terminalOutput';
 import {
   appendTerminalOutput,
+  nextTerminalId,
   pruneTails,
   replaceTerminal,
   resizeTerminalTail,
@@ -523,6 +524,65 @@ test('a terminal that ends before any snapshot mentioned it is still added', () 
   const next = replaceTerminal([], row('term-01', 'exited'));
   assert.equal(next.length, 1);
   assert.equal(next[0].id, 'term-01');
+});
+
+/* ============================================================
+   Which terminal the view goes to when the one being read goes away
+   ============================================================ */
+
+test('closing one of two tabs leaves the other on screen, not the transcript', () => {
+  // **The reported bug, in one assertion.** The screenshot shows `term-02` and
+  // `term-05` both running; closing either one threw the whole terminal view away
+  // and returned to the conversation, while the other shell kept running behind
+  // it — visible afterwards only in the sidebar's Terminals list, which is where
+  // the report noticed it.
+  //
+  // The cause was a line that read deliberately: `activeTerminalId` was set to
+  // `null` on every close, and `null` is this window's "leave the terminal view".
+  // That is right for the **last** tab and wrong for every other one.
+  const rows = [row('term-02', 'running'), row('term-05', 'running')];
+  assert.equal(nextTerminalId(rows, 'term-02'), 'term-05');
+  assert.equal(nextTerminalId(rows, 'term-05'), 'term-02');
+});
+
+test('the last tab really does go back to the conversation', () => {
+  // The one case where `null` — leave — is the right answer, so the fix above
+  // does not turn "close my last shell" into a view with nothing in it.
+  assert.equal(nextTerminalId([row('term-02', 'running')], 'term-02'), null);
+  assert.equal(nextTerminalId([], null), null);
+});
+
+test('a running shell wins over an ended one, whatever the order', () => {
+  // A terminal page is open to type into something; a row whose process is gone
+  // is a record of what was typed before. So when both are left, the live one is
+  // what a person means — and it must win even when the ended row is newer,
+  // because "newest" is a tiebreak here and not the rule.
+  const endedNewest = [row('term-01', 'running'), row('term-02', 'exited')];
+  assert.equal(nextTerminalId(endedNewest, 'term-03'), 'term-01');
+
+  const endedOnly = [row('term-01', 'killed'), row('term-02', 'exited')];
+  // With nothing running, the newest ended one is still a terminal somebody can
+  // read the last screenful of — which is the point of keeping the row at all.
+  assert.equal(nextTerminalId(endedOnly, null), 'term-02');
+});
+
+test('newest wins among equals, and the list is in creation order', () => {
+  // `terminal.Manager.List` returns creation order, so the last match is the
+  // shell opened most recently — the one a person means by "the terminal".
+  const rows = [row('term-01', 'running'), row('term-02', 'running'), row('term-03', 'running')];
+  assert.equal(nextTerminalId(rows, null), 'term-03');
+  assert.equal(nextTerminalId(rows, 'term-03'), 'term-02');
+});
+
+test('the choice is the next one, never the one being closed', () => {
+  // The `exclude` argument is not decoration: `closeTerminal` chooses a
+  // replacement *before* the runtime has answered, when the row being closed is
+  // still in the list. Without the exclusion the view would be pointed straight
+  // back at the terminal whose process is going away — a pane that goes blank a
+  // round trip later.
+  const rows = [row('term-01', 'running'), row('term-02', 'running')];
+  assert.notEqual(nextTerminalId(rows, 'term-01'), 'term-01');
+  assert.notEqual(nextTerminalId(rows, 'term-02'), 'term-02');
 });
 
 test('the three endings stay three facts, and none of them is a sentence', () => {
