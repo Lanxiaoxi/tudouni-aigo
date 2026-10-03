@@ -124,6 +124,20 @@ export type Entry =
       step: number;
       maxSteps: number;
       status: TurnStatus;
+      /**
+       * When this turn started, on **this window's** clock.
+       *
+       * It exists so the status bar can report how long a turn has been running
+       * *while it runs*, which the runtime cannot supply: the only duration it
+       * sends is `run_finished.duration_ms`, and that arrives after the fact.
+       * The reference front end keeps the same local stamp for the same reason
+       * (`internal/frontends/tui/transcript.go`, `turnData.startedAt`).
+       *
+       * Deliberately local rather than read off the event's `ts`: that field is
+       * the audit's own local-time string with no zone offset, so parsing it
+       * would be a second clock the interface has to trust.
+       */
+      startedAt: number;
     }
   /** 2. User input (local echo) */
   | { kind: 'user'; id: string; text: string; atMs: number }
@@ -269,6 +283,31 @@ export interface ReduceOptions {
   maxSteps: number;
 }
 
+/**
+ * The four figures of one **successful** model call.
+ *
+ * They travel as one record because they describe one call, and a mixture of two
+ * is a number nothing measured: a prompt size from this step beside a duration
+ * from the last would be a rate that never happened. That is why every field is
+ * written on every successful call — to a value or to `null` — so a call that
+ * reports no usage block *clears* the record rather than leaving the previous
+ * call's figures standing. The reference front end states the same rule for the
+ * same four fields (`internal/frontends/tui/model.go`, and
+ * `TestASuccessfulCallMissingAFieldClearsThatHalf`).
+ *
+ * The names are the audit's own (`prompt_tokens`, `cached_tokens`,
+ * `completion_tokens`, `duration_ms`), because that is where they come from:
+ * `model_call` is the audit record forwarded verbatim.
+ */
+export interface CallUsage {
+  /** What the provider received. `null` when this call reported no usage. */
+  promptTokens: number | null;
+  /** The subset a cache served — never the miss, so the two cannot be swapped. */
+  cachedTokens: number | null;
+  completionTokens: number | null;
+  durationMs: number | null;
+}
+
 export interface ReduceResult {
   entries: Entry[];
   /** Drop the message and count it. */
@@ -279,6 +318,16 @@ export interface ReduceResult {
   stopReason?: string;
   /** The run this turn belongs to, for `run_started`. */
   startedRunId?: string;
+  /**
+   * Set when this event was a successful `model_call`: the call's own figures,
+   * for the status bar.
+   *
+   * It is here rather than read back out of `entries` because a call that
+   * produced **no** row — a retry's failed attempt, or a call whose step the
+   * transcript has since replaced — must not be mistaken for "no measurement".
+   * The absent field and the present-but-empty one are different statements.
+   */
+  lastCall?: CallUsage;
 }
 
 function lastTurnOrdinal(entries: Entry[]): number {
@@ -340,6 +389,7 @@ export function reduceEvent(
           step: 0,
           maxSteps,
           status: 'running',
+          startedAt: Date.now(),
         },
       ],
       startedRunId: ev.run_id,
@@ -363,6 +413,15 @@ export function reduceEvent(
   switch (ev.kind) {
     case 'model_call': {
       const failed = ev.status !== 'ok';
+      // Every field is read on every successful call, and the record is returned
+      // **only** for one: a failed attempt carries no usage block, and treating
+      // its absence as a measurement would blank a real reading at every backoff.
+      const lastCall: CallUsage = {
+        promptTokens: typeof ev.prompt_tokens === 'number' ? ev.prompt_tokens : null,
+        cachedTokens: typeof ev.cached_tokens === 'number' ? ev.cached_tokens : null,
+        completionTokens: typeof ev.completion_tokens === 'number' ? ev.completion_tokens : null,
+        durationMs: typeof ev.duration_ms === 'number' ? ev.duration_ms : null,
+      };
       const withModel: Entry[] = [
         ...entries,
         {
@@ -379,13 +438,15 @@ export function reduceEvent(
               : null,
         },
       ];
+      const called = (result: { entries: Entry[] }): ReduceResult =>
+        failed ? result : { ...result, lastCall };
 
       // The complete thinking text arrives here, untruncated. If a streamed
       // block already exists for this step, the full copy replaces it — that is
       // what makes folding-by-default honest.
       const reasoning = typeof ev.reasoning === 'string' ? ev.reasoning : '';
       if (reasoning === '') {
-        return bumpStep(withModel, ev.run_id, ev.step);
+        return called(bumpStep(withModel, ev.run_id, ev.step));
       }
 
       const index = withModel.findIndex(
@@ -397,7 +458,7 @@ export function reduceEvent(
         if (target.kind === 'reason') {
           next[index] = { ...target, text: reasoning, streaming: false };
         }
-        return bumpStep(next, ev.run_id, ev.step);
+        return called(bumpStep(next, ev.run_id, ev.step));
       }
 
       const withReason: Entry[] = [
@@ -411,7 +472,7 @@ export function reduceEvent(
           streaming: false,
         },
       ];
-      return bumpStep(withReason, ev.run_id, ev.step);
+      return called(bumpStep(withReason, ev.run_id, ev.step));
     }
 
     case 'tool_call': {

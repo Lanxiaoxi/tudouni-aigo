@@ -529,6 +529,15 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 - **右**（窗口变窄时从右往左砍）：autopilot → 安静模式 → 后台任务角标（有未收结果时加重）→ 子代理角标 → 上下文用量（**窗口未知时只报用量**）→ 缓存命中率 → 耗时 → 审计日志路径。
 
 > ⚠️ 用量、缓存命中、耗时**不在 `ui(state)` 里**，要走 `ui(status).usage` / `ui(status).counters`。**决策 5：回合结束时拉一次 `status`，加上「有东西悬着」时拉一次**（沿用 `refresh_state` 的节流思路，下限约 2 秒）。`status` 会读一遍审计日志，**不能当心跳**。
+>
+> **修订（决策 5 仍成立，取数路径改了）**：`status` 是**会话总量**的来源，不再承担状态栏右段那几个"当前"数字。原来只走它，结果是整个回合都停在上一回合的读数上，一个回合从 0 涨到 300k 就一次性跳过去。现在每个 **成功的 `model_call`** 落地时把 `prompt_tokens` / `cached_tokens` / `completion_tokens` / `duration_ms` 记进会话桶（`liveCall`），状态栏读它——与 TUI 逐次调用更新面板是同一套。四条规则随之固定：
+>
+> - 四个字段**每次成功调用都整体写入**（写值或写 `null`）。成功但没带 usage 的调用**清空**记录，而不是留着上一次的数，这样屏上那对数字永远描述同一次调用；
+> - **失败的重试什么都不改**：重试不带 usage，退避期间保留上一次真实测量而不是抹掉；
+> - 缓存命中率是**单次调用**的比值（与 TUI `cacheHitText` 同一个除法），不是会话平均——`/status` 大屏仍报会话总量，两者**故意分开标注**；
+> - 耗时：运行中的回合用本地时钟（`run_started` 时的 `turnData.startedAt`，与 TUI 同款，且只在回合进行中走表），结束的回合用 `run_finished.duration_ms` 冻结，不会一直涨。
+>
+> `ui(status)` 仍是**本窗口没见过其调用**的会话的回落来源：`/resume` 打开的历史会话是从会话文件重建的转录，没有 `model_call` 事件可读。
 
 ### 7.5 弹层面板
 
@@ -620,7 +629,7 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 | 2 | **界面语言：全英文**。桌面端界面也只用英文，与运行时保持一致 | `internal/i18n/i18n.go` 包注释：**"This build speaks English only"**，语言切换机制已被刻意移除；`en.go` 是唯一 catalog；`config` 的 `ui` 段被 `UiLanguageIgnored` 显式标记为 ignored。**上游 spec §0 第 6 条「文案支持运行时切换语言」已不成立。** 运行时送来的文本（`notice.text`、审批的 `remember_hint`/`trust_all_hint`）**必须原样显示，不许翻译**——翻译它们既造第二份事实，又直接违反「hint 一字不许改」 |
 | 3 | **首屏问候带用户名**，从 OS 用户名取（Rust 侧读取） | 协议里没有 `user_name`。Windows 走 `%USERNAME%`，POSIX 走 `$USER`/`getpwuid`；取不到时**省略名字**而不是显示 `unknown` |
 | 4 | **删掉 `/theme` 面板**，主题只跟随系统 | 严格按 `docs/tauri-native-spec.md` §4「唯一主题来源，没有应用内手动切换」。`init` 也没有 `themes` 清单。**`--theme` 与 WebView 主题无关，不要接进来**（那是 TUI 配色）。命令表因此从 18 条变为 **17 条** |
-| 5 | **状态栏取数**：回合结束时拉一次 `status`，加上「有东西悬着」时拉一次（沿用 `refresh_state` 的节流思路） | 用量/缓存/耗时在 `ui(status)` 的 `usage`/`counters`，不在 `ui(state)`。`status` 会读一遍审计日志，**不能当心跳**；节流下限建议 2 秒（与 TUI 同一量级，见 `docs/spec/protocol.md`） |
+| 5 | **状态栏取数**：回合结束时拉一次 `status`，加上「有东西悬着」时拉一次（沿用 `refresh_state` 的节流思路） | 用量/缓存/耗时在 `ui(status)` 的 `usage`/`counters`，不在 `ui(state)`。`status` 会读一遍审计日志，**不能当心跳**；节流下限建议 2 秒（与 TUI 同一量级，见 `docs/spec/protocol.md`）。**后续修订（结论仍成立，取数路径变了）**：`status` 只负责**会话总量**，右段那几个「当前」数字改为读每个成功 `model_call` 事件（`liveCall`）——否则整个回合停在上一回合的读数上，一个回合从 0 涨到 300k 就一次性跳过去。详见 §7.4 的引用块 |
 | 6 | ~~**面板内容上限写死在前端常量**（各区块 5 行）~~ **已作废**：右栏**不设内容上限**，有多少列多少，超出由滚动承接 | 协议没有 `caps` 这一点不变；变了的是结论——**前端不造这个上限**，而不是造一个再标注"还有 N 条"。TUI 的同类上限（`railMaxRows`）是"固定高度、非滚动容器"的终端约束，桌面端的右栏是滚动容器，不继承它。原"超限时从底部丢弃并标 `(+N more)`"的做法一并取消；但"不许静默截断"仍然有效，指不许用 CSS 藏行 |
 | 7 | **子代理行字段已核实**：`{id, label, model, provider, depth, seconds, steps, tool_calls, activity}` | `internal/subagent/board.go` 的 `Board.Panel()`。原型的 `started_ms` 应为 **`seconds`**（已运行时长），`calls` 应为 **`tool_calls`**，另有 `steps` 与 `provider` |
 | 8 | **`subagent` 确认是一个工具**（风险 **HIGH**，`parallel_safe=false`、`interactive=true`），会出现在 `/tools` 清单里 | `internal/subagent/subagent.go`：`const DefaultToolName = "subagent"`、`Risk: security.RiskHigh`。它不在 `internal/tools/builtin/` 下注册（在 `internal/subagent` 包内构建后注册进注册表），所以当初按目录搜索没找到。它也**可能被 compose 改名**——界面要按 `init.tools[].name` 显示，不要硬编码 `"subagent"`。HIGH 意味着它会**弹审批**，审批模态里显示的是子任务的 prompt |

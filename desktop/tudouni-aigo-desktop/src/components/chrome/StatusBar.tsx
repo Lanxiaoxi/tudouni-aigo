@@ -4,12 +4,14 @@ import {
   NO_JOBS,
   NO_SUBAGENTS,
   selectPhase,
+  selectTurnMs,
   selectUsage,
   useApp,
   useSessionField,
   type AppStore,
   type UsageView,
 } from '@/state/store';
+import { useTurnClock } from '@/hooks/useTurnClock';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { Tip } from '@/components/ui/kit';
@@ -19,15 +21,22 @@ import type { Phase } from '@/runtime/adapt';
 /**
  * §1·6 The status bar.
  *
- * Left: phase + what is happening (or how the last turn settled) + `step n / N`.
+ * Left: phase + what is happening (or how the last turn settled) + the
+ * conversation's cumulative steps.
  * Right, in order: autopilot → quiet → jobs badge → subagent badge → context
  * usage → cache hit rate → turn elapsed → audit log path. Narrow windows cut
  * from the right, so the rightmost elements carry the tightest breakpoints.
  *
- * Where the right-hand numbers come from matters (decision 5): usage and the
- * cache rate are **not** in `ui(state)`. They live in `ui(status)`, which is
- * fetched once when a turn ends and, throttled, while something is outstanding.
- * `status` reads the audit log, so it must never become a heartbeat.
+ * Where the right-hand numbers come from (decision 5, revised): the **live**
+ * figures come from the `model_call` events as they arrive, so they move per
+ * step. They used to come only from `ui(status)`, which is requested when a turn
+ * ends — so a long turn showed the previous turn's numbers and then jumped, and
+ * a turn that grew to 300k tokens showed the whole jump at once. `ui(status)`
+ * still supplies the session totals and is the fallback for a session whose calls
+ * this window never saw (a `/resume`d conversation, whose transcript is rebuilt
+ * from the session file rather than replayed as events). **`status` is not
+ * requested any more often**: it reads the audit log and must never become a
+ * heartbeat.
  */
 
 const PHASE_TONE: Record<Phase, string> = {
@@ -95,10 +104,9 @@ export function StatusBar() {
   const t = useT();
   // **The whole row is a statement about one conversation**, so every cell comes
   // from the session being shown. That includes the usage numbers on the right:
-  // they are fetched per session (`ui(status)` reads that session's audit log),
-  // and a row that kept the first session's figures while the transcript changed
-  // under it would be the most misleading thing on screen — it would look
-  // perfectly normal.
+  // they are read per session, and a row that kept the first session's figures
+  // while the transcript changed under it would be the most misleading thing on
+  // screen — it would look perfectly normal.
   const key = useApp((s) => s.activeKey);
   const phase = useApp((s) => selectPhase(s, key));
   const action = useApp((s) => selectAction(s, key));
@@ -108,10 +116,16 @@ export function StatusBar() {
   const quiet = useSessionField((rt) => rt.quiet, false);
   const hasSpoken = useSessionField((rt) => rt.hasSpoken, false);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
-  const lastTurnMs = useSessionField((rt) => rt.lastTurnMs, null);
   const openPanel = useApp((s) => s.openPanel);
   const setAutopilot = useApp((s) => s.setAutopilot);
   const toggleQuiet = useApp((s) => s.toggleQuiet);
+
+  // The turn's elapsed time. The runtime sends no duration until a turn ends, so
+  // a running turn is timed against a local clock — which is why this reads the
+  // clock at all, and why the clock ticks **only** while one is in flight (see
+  // `useTurnClock`). A finished turn's duration is frozen on `run_finished`.
+  const now = useTurnClock(phase === 'running');
+  const turnMs = useApp((s) => selectTurnMs(s, key, now));
 
   // `useShallow`, because `selectUsage` **builds a new object** on every call.
   // zustand compares snapshots by identity, so a bare `useApp((s) =>
@@ -268,7 +282,17 @@ export function StatusBar() {
           </Tip>
         ) : null}
 
-        <Tip label={t('status.cache')}>
+        <Tip
+          label={t(
+            usage.cacheScope === 'session'
+              ? 'status.cacheSession'
+              : usage.cacheScope === 'call'
+                ? 'status.cacheCall'
+                : // No rate to describe: the plain noun, never a claim about which
+                  // scope a figure that does not exist came from.
+                  'status.cache',
+          )}
+        >
           <span className="st-chip hide-b1050">
             <HardDrive size={11} />
             {/* An em dash, never 0%: no lookup has happened yet and "the cache
@@ -280,7 +304,7 @@ export function StatusBar() {
         <Tip label={t('status.elapsed')}>
           <span className="st-chip hide-b1120">
             <Layers size={11} />
-            <span className="st-metric">{formatDuration(lastTurnMs)}</span>
+            <span className="st-metric">{formatDuration(turnMs)}</span>
           </span>
         </Tip>
 

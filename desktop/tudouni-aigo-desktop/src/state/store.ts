@@ -51,6 +51,7 @@ import {
   reduceEvent,
   settleAbandonedTurn,
   type BlockKind,
+  type CallUsage,
   type Entry,
   type FrontMessage,
   type LooseEvent,
@@ -331,6 +332,21 @@ export interface SessionRuntime {
   /** Wall time of the last finished turn. Local: `run_finished` carries
    *  `duration_ms` and that is what this is set from. */
   lastTurnMs: number | null;
+  /**
+   * The last **successful** model call's own four figures, as they arrive.
+   *
+   * This is what lets the status bar move during a turn. Usage is otherwise only
+   * in `ui(status)` (`last_prompt_tokens` and `status.usage`), and that message is
+   * requested when a turn ends — so on a long turn the bar sat on the previous
+   * turn's numbers and then jumped. The `model_call` event carries the same four
+   * fields, and it is already arriving: the reducer reads it to draw the model
+   * row. `status` still supplies the session totals, and remains the fallback
+   * before any call in this session has succeeded.
+   *
+   * `null` is "no successful call has been reported to this window" — a fact
+   * about what has been *seen*, never a zero.
+   */
+  liveCall: CallUsage | null;
 
   entries: Entry[];
   /**
@@ -585,6 +601,7 @@ export function createSessionBucket(
     listedSessions: false,
     hasSpoken: false,
     lastTurnMs: null,
+    liveCall: null,
     entries: [],
     handshakeNotices: [],
     activeRunId: null,
@@ -2271,6 +2288,12 @@ export const useApp = create<AppStore>((set, get) => {
             ...(result.runEnded && typeof msg.duration_ms === 'number'
               ? { lastTurnMs: msg.duration_ms }
               : {}),
+            // A successful call's own figures, straight off the event. This is
+            // what makes the usage numbers on the bar move per **step** rather
+            // than per turn: they were only ever refreshed from `ui(status)`,
+            // which is fetched when a turn ends (decision 5 — `status` reads the
+            // audit log and must not become a heartbeat).
+            ...(result.lastCall ? { liveCall: result.lastCall } : {}),
           });
 
           // A finished turn is the one moment the usage/cache/elapsed numbers are
@@ -3597,16 +3620,27 @@ export function selectCacheHitRate(s: AppStore, key: string | null): number | nu
 /**
  * The status bar's right-hand usage numbers, for one session.
  *
- * They come from `ui(status)`, not `ui(state)`: the snapshot has no usage, no
- * cache rate and no elapsed time (§5.3). With no window known, `percent` is
- * null and the bar reports the amount alone.
+ * **Where they come from changed, and why.** They used to come only from
+ * `ui(status)`, which is requested when a turn ends (decision 5) — so on a long
+ * turn the bar sat on the previous turn's figures and then jumped, and a turn
+ * that grew from nothing to 300k tokens showed the whole jump at once. The
+ * `model_call` event carries the same four fields and is already arriving (the
+ * reducer draws the model row from it), so the **last successful call of this
+ * session** is taken from the event stream as it lands and the bar moves per
+ * step. `ui(status)` is still the source for the session totals and remains the
+ * fallback for a session whose calls this window never saw — a `/resume`d
+ * conversation, whose transcript is rebuilt from the session file rather than
+ * replayed as events.
  *
- * **Two different facts, two different fields.** `last_prompt_tokens` is the
- * input of the last *successful* request — what the provider actually received.
- * `context.used` is the context layer's own **local estimate** of what it would
- * send. The reference front end keeps them apart on purpose ("a wrong one is
- * worse than none"): one is a measurement, the other is arithmetic, and
- * swapping one in for the other labels an estimate as a measurement.
+ * The `status` message is **not** requested any more often: it reads the audit
+ * log and must not become a heartbeat. Nothing here polls.
+ *
+ * **Two different facts, two different fields.** `used` is the input of the last
+ * *successful* request — what the provider actually received. `context.used` is
+ * the context layer's own **local estimate** of what it would send. The reference
+ * front end keeps them apart on purpose ("a wrong one is worse than none"): one is
+ * a measurement, the other is arithmetic, and swapping one in for the other labels
+ * an estimate as a measurement.
  */
 export interface UsageView {
   /** The provider's own count for the last successful call, or null. */
@@ -3614,10 +3648,39 @@ export interface UsageView {
   window: number | null;
   percent: number | null;
   cacheHitRate: number | null;
+  /**
+   * What `cacheHitRate` is a ratio **of**.
+   *
+   * The two are different questions and the numbers can differ: `call` is the
+   * last successful request's own cached share (the live path), `session` is the
+   * totals summed over every call so far (`ui(status).usage`, the fallback for a
+   * session whose calls this window never saw). The label says which, because a
+   * figure that silently changes meaning between two sessions is worse than one
+   * that says less.
+   *
+   * `null` when there is no rate at all.
+   */
+  cacheScope: 'call' | 'session' | null;
   /** The context layer's local estimate. Never a substitute for `used`. */
   estimated: number | null;
   /** The estimate's own percentage, against the same window. */
   estimatedPercent: number | null;
+}
+
+/**
+ * How much of a prompt came from the provider's cache — **one call's** ratio.
+ *
+ * The reference front end's bar reads this way on purpose: the two fields are
+ * that call's prompt and the cached subset of it, so they cannot mix two calls.
+ * `internal/frontends/tui/view.go` (`cacheHitText`) is the same division over the
+ * same pair, and with no prompt it is an em dash rather than 0% — "no lookup has
+ * happened yet" and "the cache is broken" are different statements.
+ */
+function callHitRate(call: CallUsage | null): number | null {
+  const prompt = call?.promptTokens ?? null;
+  const cached = call?.cachedTokens ?? null;
+  if (prompt === null || cached === null || prompt <= 0) return null;
+  return cached / prompt;
 }
 
 export function selectUsage(s: AppStore, key: string | null): UsageView {
@@ -3625,10 +3688,13 @@ export function selectUsage(s: AppStore, key: string | null): UsageView {
   const status = bucket?.status;
   const snap = bucket?.uiState;
   const context = bucket?.context;
+  const live = bucket?.liveCall ?? null;
 
-  // No `??` between these two: a missing provider count is "unknown", not an
-  // invitation to show the estimate under the provider's name.
-  const used = status?.lastPromptTokens ?? null;
+  // The live record first, then the session totals. A **present but empty** live
+  // record is not a reason to fall back: it is this session's last successful
+  // call saying it reported no usage, and showing the previous turn's totals
+  // under this step's name would be the mixture the record exists to prevent.
+  const used = live ? live.promptTokens : (status?.lastPromptTokens ?? null);
   const estimated = context?.used ?? null;
   // The window travels with the status screen; the snapshot's `model_window` is
   // the same fact from the other message, and either will do.
@@ -3636,16 +3702,66 @@ export function selectUsage(s: AppStore, key: string | null): UsageView {
   const percent = used !== null && window !== null && window > 0 ? used / window : null;
   const estimatedPercent =
     estimated !== null && window !== null && window > 0 ? estimated / window : null;
-  const hit = status ? cacheHitRate(status.usage) : null;
+  const hit = live ? callHitRate(live) : status ? cacheHitRate(status.usage) : null;
+  // Which question the rate answers. Reported rather than assumed, so the chip's
+  // label cannot claim "last call" over a session average.
+  const cacheScope: UsageView['cacheScope'] = live
+    ? live.promptTokens !== null && live.promptTokens > 0
+      ? 'call'
+      : null
+    : status
+      ? 'session'
+      : null;
 
   return {
     used,
     window,
     percent,
     cacheHitRate: hit,
+    cacheScope,
     estimated,
     estimatedPercent,
   };
+}
+
+/**
+ * How long the turn on screen has been running, in milliseconds.
+ *
+ * Three answers, in order:
+ *
+ *   1. **A finished turn's own measurement** — `run_finished.duration_ms`. This
+ *      is the runtime's number and the only one that may be shown as a final
+ *      figure; `lastTurnMs` carries it.
+ *   2. **A turn still in flight** — `Date.now() - startedAt`, the local stamp the
+ *      reducer took when `run_started` landed. The runtime sends no duration
+ *      until the turn ends, so this is the only way the figure can move while it
+ *      runs. The reference front end does exactly this (`internal/frontends/tui/
+ *      view.go`, `spanText`: `time.Since(m.current.startedAt)`).
+ *   3. **Nothing** — `null`, drawn as an em dash. A session between turns has no
+ *      duration to report, and `0ms` would claim one was measured.
+ *
+ * `now` is a parameter so the caller can drive it from one clock read per frame
+ * and so this stays a pure function of its arguments.
+ */
+export function selectTurnMs(s: AppStore, key: string | null, now: number): number | null {
+  const bucket = runtimeOf(s, key);
+  if (!bucket) return null;
+  // `lastStopReason` reads the turn heads, so "is one running" is answered by the
+  // transcript rather than by a second flag that could disagree with it.
+  const running = hasRunningTurn(bucket.entries);
+  if (running) {
+    for (let i = bucket.entries.length - 1; i >= 0; i -= 1) {
+      const entry = bucket.entries[i];
+      if (entry.kind === 'turn' && entry.status === 'running') {
+        return Math.max(0, now - entry.startedAt);
+      }
+    }
+    // A running turn with no head to time: the transcript and the flag disagree,
+    // and inventing a duration from a turn that is not there would be worse than
+    // showing none.
+    return null;
+  }
+  return bucket.lastTurnMs;
 }
 
 /**

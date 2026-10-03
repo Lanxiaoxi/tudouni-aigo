@@ -326,7 +326,7 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 2 | English only | `i18n/index.ts` |
 | 3 | Greeting carries the OS user name, omitted when unavailable | `os_user_name` in `lib.rs` |
 | 4 | No theme panel; 17 commands | `commands.ts`, `theme.ts`, `panels/PanelHost.tsx` |
-| 5 | `status` polled when a turn ends and while something is outstanding, throttled — **per session**, so a busy conversation cannot starve a quiet one | `POLL_FLOOR_MS`, `pollState` / `throttled()` in `store.ts` |
+| 5 | The bar's live usage/cache figures are read off the **`model_call` events as they arrive** (per step); `ui(status)` supplies the session totals and is the fallback for a session whose calls this window never saw. `status` is requested when a turn ends and while something is outstanding, throttled — **per session**, so a busy conversation cannot starve a quiet one. It is never polled as a heartbeat | `liveCall` in `store.ts` (set from `reduceEvent`'s `lastCall`), `selectUsage` / `selectTurnMs`, `POLL_FLOOR_MS` / `pollState` / `throttled()` in `store.ts`. Why it changed — see below |
 | 6 | The right rail's blocks are **not capped**: every row is listed and the rail scrolls. The `(+N more)` footnote is gone | `Sidebar.tsx` (the block bodies), `.sidebar-inner`'s `overflow-y: auto` in `styles/stream.css`. This reverses an earlier decision — see below |
 | 7 | Subagent rows: `seconds` / `steps` / `tool_calls` / `provider` | `projectSubagents` in `adapt.ts` |
 | 8 | `subagent` is a HIGH-risk tool; risk is read from the runtime, never hard-coded | `toolFacts()` in `store.ts` |
@@ -342,6 +342,44 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 18 | **A launch opens the workspace last worked in.** Remembered from `init.workspace` (the runtime's own answer), never from a path the front end assembled, and it follows the session on screen rather than the last one opened. With nothing remembered — or nothing that still works — **no child is started** and the first screen says why, instead of falling back to the app's own directory | `lastWorkspace` / `rememberWorkspace` / `resolveAttachWorkspace` in `state/store.ts`, `openFirstSession` in `runtime/useRuntime.ts` (`workspace_check`), `StartupNotice` in `components/Welcome.tsx` |
 | 19 | **A child that would not start says so, on its own session.** `SessionRuntime.problem` was written on every failed attach and read by nothing, so the refusal produced no sentence anywhere — and because such a session never becomes `ready`, the screen showed "Starting the runtime…" over a process that had already given up. It is now rendered by `SessionProblem`, above the `!ready` branch, with the two ways out | `SessionProblem.tsx`, the render order in `App.tsx`, `problem` in `state/store.ts` |
 | 20 | **The empty workspace list offers a named button.** The only way forward used to be an unlabelled `FolderPlus` glyph in the section head, while the notice above it said "choose one below" over a list that was empty. The notice's direction also moved out of its wording into a button, because that list can be folded away or hidden by a narrow window | `.lb-empty-add` in `WorkspaceSidebar.tsx`, `ChooseWorkspaceButton` in `components/StartupNotice.tsx` |
+
+### 5 · Why the status bar's numbers no longer wait for a turn to end
+
+Decision 5 said the usage, cache and elapsed figures come from `ui(status)`,
+requested when a turn ends. That is still where the *session totals* come from —
+but it made the bar report the **previous turn's** figures for the whole of the
+next one, so a long turn sat still and then jumped. A turn that grew to 300k
+tokens showed the entire jump at once.
+
+The fix does not poll more. `model_call` already carries the same four fields —
+`prompt_tokens`, `cached_tokens`, `completion_tokens`, `duration_ms` — and the
+reducer was already reading them to draw the model row. So the last **successful**
+call is now recorded as it lands (`liveCall`, from `reduceEvent`'s `lastCall`) and
+the bar reads it, which is exactly what the terminal front end does
+(`internal/frontends/tui/model.go` writes the same four into `m.panel` per call).
+Three rules travel with it:
+
+- **All four fields are written on every successful call**, to a value or to
+  `null`. A call that reports no usage block *clears* the record instead of
+  leaving the previous call's count standing, so the pair on screen always
+  describes one call. The TUI states the same rule, and
+  `TestASuccessfulCallMissingAFieldClearsThatHalf` is why.
+- **A failed attempt changes nothing.** A retry carries no usage, so a backoff
+  between two attempts leaves a real measurement up rather than blanking it.
+- **The cache chip is one call's ratio**, not the session average — the same
+  division the TUI's `cacheHitText` does. The `/status` screen still reports the
+  session totals, and the two are labelled apart on purpose.
+
+The elapsed figure needed one more thing, because the runtime sends no duration
+until `run_finished`: a running turn is timed against a local stamp taken when
+`run_started` landed (`turnData.startedAt`, mirroring the TUI's), and the clock
+ticks **only while a turn is in flight** (`useTurnClock`). A finished turn reads
+`lastTurnMs` — the runtime's own `duration_ms` — so it stops climbing instead of
+growing for as long as the window is left open.
+
+`ui(status)` remains the source for a session whose calls this window never saw: a
+`/resume`d conversation rebuilds its transcript from the session file rather than
+replaying events, so there is no `model_call` to read.
 
 ### 6 · Why the rail is not capped, and why `step n / N` is not a fraction
 

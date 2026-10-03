@@ -1327,6 +1327,35 @@ async function main() {
   if (!st.stream) throw new Error('the streamed body is missing');
   if (!st.toolText.includes('git status')) throw new Error('the tool arguments are missing');
 
+  // ---- the bar's usage numbers move per step, not per turn ----
+  //
+  // They used to come only from `ui(status)`, which is requested when a turn
+  // ends (decision 5 — `status` reads the audit log and must not become a
+  // heartbeat), so a long turn sat on the previous turn's figures and then
+  // jumped; a turn that grew to 300k tokens showed the whole jump at once. The
+  // `model_call` event carries the same four fields and was already arriving, so
+  // the last successful call is read off the stream as it lands.
+  //
+  // **No `ui(status)` has been fed anywhere in this script**, and that is the
+  // assertion: the figures below can only have come from the `model_call` above.
+  const liveBar = await evaluate(`(() => {
+    const chips = [...document.querySelectorAll('.statusbar .st-right .st-chip')];
+    return JSON.stringify({
+      metrics: chips.map((c) => (c.querySelector('.st-metric')?.textContent ?? '').trim()),
+      right: (document.querySelector('.statusbar .st-right')?.innerText ?? '').replace(/\\s+/g, ' '),
+    });
+  })()`);
+  console.log('status bar, live usage:', liveBar);
+  const bar = JSON.parse(liveBar ?? '{}');
+  // 1000 prompt tokens, 700 of them cached → the context chip reports the amount
+  // and the cache chip reports that call's own 70%.
+  if (!(bar.metrics ?? []).includes('70%')) {
+    throw new Error(`the cache chip does not report the call's own ratio: ${JSON.stringify(bar.metrics)}`);
+  }
+  if (!(bar.right ?? '').includes('1,000')) {
+    throw new Error(`the context chip does not report the call's prompt size: ${bar.right}`);
+  }
+
   // the final answer replaces the streamed body
   await apply({
     v: 1,

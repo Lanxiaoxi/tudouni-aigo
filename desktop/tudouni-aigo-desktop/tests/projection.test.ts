@@ -48,6 +48,8 @@ import {
   createSessionBucket,
   selectModalOrigin,
   selectQueuedModals,
+  selectTurnMs,
+  selectUsage,
   useApp,
   type SessionRuntime,
 } from '@/state/store';
@@ -1033,6 +1035,177 @@ test('an answer closes a turn the event did not close', () => {
   // And the real reason still wins when the event does land, in either order.
   entries = reduceEvent(entries, ev('run_finished', { stop_reason: 'max_steps' }), freshOptions()).entries;
   assert.equal(lastStopReason(entries), 'max_steps');
+});
+
+/* ============================================================
+   the status bar's live figures
+   ============================================================ */
+
+/**
+ * The bar's usage numbers move per **step**, not per turn.
+ *
+ * They used to come only from `ui(status)`, which is requested when a turn ends
+ * (decision 5 — `status` reads the audit log and must not become a heartbeat), so
+ * a long turn sat on the previous turn's figures and then jumped; a turn that
+ * grew to 300k tokens showed the whole jump at once. The `model_call` event
+ * carries the same four fields, so the last successful call is read off the
+ * stream as it lands. `status` stays the fallback for a session whose calls this
+ * window never saw.
+ */
+test('a successful model call feeds the bar directly, before any status arrives', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+  assert.equal(rt().status, null, 'nothing has been asked for yet');
+
+  useApp.getState().applyRuntimeMessage(KEY, ev('run_started'));
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    ev('model_call', {
+      status: 'ok',
+      prompt_tokens: 12400,
+      cached_tokens: 10900,
+      completion_tokens: 190,
+      duration_ms: 5000,
+    }),
+  );
+
+  const usage = selectUsage(useApp.getState(), KEY);
+  // The provider's own count for that call — no `status` round trip involved.
+  assert.equal(usage.used, 12400);
+  assert.equal(usage.cacheHitRate, 10900 / 12400);
+  // And it says which question the ratio answers: one call's, not the session's.
+  assert.equal(usage.cacheScope, 'call');
+
+  // And the next step's figures replace them whole.
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    ev('model_call', { status: 'ok', step: 2, prompt_tokens: 20000, cached_tokens: 20000 }),
+  );
+  const next = selectUsage(useApp.getState(), KEY);
+  assert.equal(next.used, 20000);
+  assert.equal(next.cacheHitRate, 1);
+});
+
+/**
+ * A retry attempt carries no usage block, and it must not blank the bar.
+ *
+ * The same rule the reference front end states for its own four fields
+ * (`TestAFailedAttemptLeavesTheLastGoodMeasurementStanding`): all four are "the
+ * last **successful** call", so a backoff between two attempts leaves the
+ * previous figures standing rather than replacing a real measurement with
+ * nothing.
+ */
+test('a failed attempt leaves the last good measurement standing', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    ev('model_call', { status: 'ok', prompt_tokens: 12400, cached_tokens: 10900 }),
+  );
+  const good = selectUsage(useApp.getState(), KEY);
+
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    ev('model_call', { status: 'error', attempt: 1, backoff_ms: 500 }),
+  );
+  assert.deepEqual(selectUsage(useApp.getState(), KEY), good);
+});
+
+/**
+ * A **successful** call that reports no usage clears the figure.
+ *
+ * This is what makes the record describe one call by construction. A gateway that
+ * refuses `stream_options` reports no usage on a streamed call, and recycling the
+ * previous step's count into this step's row would be a number nothing measured.
+ */
+test('a successful call with no usage block clears the figure rather than reusing one', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    ev('model_call', { status: 'ok', prompt_tokens: 12400, cached_tokens: 10900 }),
+  );
+  assert.equal(selectUsage(useApp.getState(), KEY).used, 12400);
+
+  useApp.getState().applyRuntimeMessage(
+    KEY,
+    ev('model_call', { status: 'ok', step: 2, duration_ms: 4000 }),
+  );
+  const usage = selectUsage(useApp.getState(), KEY);
+  assert.equal(usage.used, null, 'the previous call\'s count must not be recycled');
+  assert.equal(usage.cacheHitRate, null);
+});
+
+/**
+ * A session whose calls this window never saw still reports from `status`.
+ *
+ * A `/resume`d conversation rebuilds its transcript from the session file rather
+ * than replaying the events, so there is no `model_call` to read — and the
+ * `status` screen is the only thing that knows what the last request sent.
+ */
+test('with no call seen this session, the numbers fall back to status', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'ui',
+    kind: 'status',
+    status: {
+      session: { id: 's-1', resumed: true, workspace: 'C:/w', messages: 42, steps: 11 },
+      model: { provider: 'p', current: 'm', selected: 'm', last_used: 'm', since: 0, window: 65536, base_url: '', reasoning: { thinking: true, effort: 'high' } },
+      counters: {},
+      usage: { prompt: 1000, cached: 750 },
+      context: null,
+      meta: { max_steps: 120, stream: true, autopilot: false, tool_count: 9, audit_path: 'a.jsonl', permissions: {}, started: '', catalog: '' },
+    },
+    last_prompt_tokens: 1000,
+    context_tokens: 65536,
+  } as never);
+
+  const usage = selectUsage(useApp.getState(), KEY);
+  assert.equal(usage.used, 1000);
+  // The session totals' ratio, which is the shape `status.usage` has — and it is
+  // reported as such, so the chip cannot label a session average "last call".
+  assert.equal(usage.cacheHitRate, 0.75);
+  assert.equal(usage.cacheScope, 'session');
+});
+
+/**
+ * The elapsed figure moves **while** a turn runs, and freezes when it ends.
+ *
+ * The runtime sends no duration until `run_finished`, so a running turn is timed
+ * against the local stamp the reducer took. Drawing `Date.now() - startedAt`
+ * after the turn ended would keep a finished turn's duration climbing for as long
+ * as the screen is left open — which is why the finished case reads
+ * `lastTurnMs` instead.
+ */
+test('a running turn is timed against the local clock, and a finished one is frozen', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+
+  assert.equal(selectTurnMs(useApp.getState(), KEY, Date.now()), null, 'no turn, no duration');
+
+  useApp.getState().applyRuntimeMessage(KEY, ev('run_started'));
+  const head = rt().entries.find((entry) => entry.kind === 'turn') as Extract<Entry, { kind: 'turn' }>;
+  assert.ok(head, 'run_started opens a turn head');
+  const startedAt = head.startedAt;
+  assert.equal(typeof startedAt, 'number');
+
+  // A clock reading four seconds later reports four seconds.
+  assert.equal(selectTurnMs(useApp.getState(), KEY, startedAt + 4000), 4000);
+
+  // The turn ends with the runtime's own measurement, and the local clock stops
+  // being consulted: two readings a minute apart give the same answer.
+  useApp.getState().applyRuntimeMessage(KEY, ev('run_finished', { stop_reason: 'answered', duration_ms: 2500 }));
+  assert.equal(selectTurnMs(useApp.getState(), KEY, startedAt + 5000), 2500);
+  assert.equal(selectTurnMs(useApp.getState(), KEY, startedAt + 65000), 2500);
 });
 
 /* ============================================================

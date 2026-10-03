@@ -565,10 +565,10 @@ answerPermission(decision) {
 | autopilot 按钮 | `uiState.autopilot` | 每会话（**以运行时回的 `ui(state)` 为准，不是点击**——这条不变） |
 | jobs 角标（`outstanding / total`、未收时加重） | `uiState.jobs` | 每会话 |
 | subagents 角标 | `uiState.subagents` | 每会话 |
-| 用量 `percent · used` | `useUsage()` ← `status` + `uiState.modelWindow` | 每会话（`useUsage(key)`） |
-| 上下文估算 `~N` | `useUsage()` ← `context.used` | 每会话 |
-| 缓存命中率 | `useUsage()` ← `status.usage` | 每会话 |
-| 耗时 | `lastTurnMs` | 每会话（已在桶里） |
+| 用量 `percent · used` | `selectUsage()` ← `liveCall`（本次会话最后一次成功调用，来自 `model_call` 事件）；未见过调用时回落到 `status` + `uiState.modelWindow` | 每会话（`selectUsage(s, key)`） |
+| 上下文估算 `~N` | `selectUsage()` ← `context.used` | 每会话 |
+| 缓存命中率 | `selectUsage()` ← `liveCall`（**单次调用**的 `cached/prompt`）；回落时是 `status.usage` 的会话总量 | 每会话 |
+| 耗时 | `selectTurnMs()` ← 运行中的回合用本地时钟（`turn.startedAt`），结束的用 `lastTurnMs` | 每会话 |
 | 审计日志文件名 | `session.auditPath` | 每会话 |
 | **quiet 按钮** | `s.quiet` | **每会话**——见下 |
 

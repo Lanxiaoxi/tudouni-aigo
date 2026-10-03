@@ -140,7 +140,15 @@ export const en = {
    *  yet. The context layer's local estimate is never substituted here. */
   'status.contextNoPrompt': 'context · no request measured yet',
   'status.contextEstimate': 'context estimate · {used} tok · {percent} of the window',
+  /** The cache figure is a ratio, and **of what** differs by source: the last
+   *  successful call's own prompt (the live path), or the totals summed over the
+   *  session (`ui(status).usage`, the fallback for a `/resume`d conversation
+   *  whose calls this window never saw). The two are labelled apart so a figure
+   *  that changes meaning between two sessions is never mistaken for one that
+   *  changed value. The `/status` screen always reports the session totals. */
   'status.cache': 'cache',
+  'status.cacheCall': 'cache · last call',
+  'status.cacheSession': 'cache · session total',
   'status.elapsed': 'turn',
   'status.span': 'span',
   'status.audit': 'audit log',
