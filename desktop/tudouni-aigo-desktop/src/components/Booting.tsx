@@ -1,5 +1,6 @@
 import { useT } from '@/i18n/useT';
 import { BusyDots } from '@/components/ui/kit';
+import { Logo } from '@/components/ui/Logo';
 
 /**
  * The "starting" phase (§4).
@@ -11,7 +12,7 @@ export function Booting() {
   const t = useT();
   return (
     <div className="booting">
-      <span className="bt-mark" aria-hidden />
+      <Logo size={26} />
       <div className="row">
         <span>{t('app.booting')}</span>
         <BusyDots />

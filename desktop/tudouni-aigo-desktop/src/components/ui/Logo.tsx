@@ -1,47 +1,64 @@
 /**
  * The application's own mark.
  *
- * This is **not** the runtime's or anybody else's branding: it is the same
- * drawing `scripts/make-icons.mjs` renders into `src-tauri/icons`, described
- * once here as SVG so the window and the icon cannot drift apart. The shapes are
- * the generator's, in a 0..1 square scaled to a 24-unit viewBox:
+ * This is **not** the runtime's or anybody else's branding: it is the rabbit
+ * icon, drawn from the very file the packaged application wears — the one
+ * `tauri.conf.json` bundles out of `src-tauri/icons/`. There is one drawing, so
+ * the window and the task-bar icon cannot drift apart.
  *
- *   - a rounded square (corner radius 0.22) in the accent colour;
- *   - a prompt glyph in the on-accent colour: a chevron at 0.28/0.50/0.70 and an
- *     underscore from 0.58 to 0.78, stroked at 0.085.
+ * That is a correction, not a preference. This component used to draw its own
+ * mark: a rounded square in `--accent` with a terminal prompt glyph, the same
+ * shapes `scripts/make-icons.mjs` rendered into `src-tauri/icons`. That
+ * generator was then replaced by the hand-drawn rabbit (commit `7f1ee30`), and
+ * the in-window marks were left behind — so every icon the person actually saw
+ * (task bar, installer, Explorer) was the rabbit while the three marks *inside*
+ * the window were still green squares. The old comment claimed the two "cannot
+ * drift apart" because both were described here; two descriptions of one mark is
+ * exactly how they drifted. Importing the file is the only version of that
+ * promise that can be kept.
  *
- * Colours come from the tokens, so the mark follows the theme. `--fg-on-accent`
- * is a real colour in both themes (never the `clearRoles` sentinel), which is
- * what makes it safe to place on top of `--accent` — the pairing is the same one
- * `.btn-primary` and `.welcome-id .wi-mark` use.
+ * Two consequences of using the icon file rather than an SVG, both deliberate:
+ *
+ *   - `128x128.png` is the size that fits the window. The mark is 30px at its
+ *     largest (the first screen), which 128px covers even on a 2x display, and it
+ *     is 9KB where the 512px master is 78KB;
+ *   - the corners are clipped by `.app-mark` (components.css). The file is a
+ *     rounded square drawn on an opaque black page, so its corner pixels are
+ *     solid black — unclipped, the mark reads as a black box on the light theme.
+ *     The clip radius there is measured against this file, not guessed.
  */
-export function Logo({ size = 20, title }: { size?: number; title?: string }) {
+import markUrl from '../../../src-tauri/icons/128x128.png';
+
+export function Logo({
+  size = 20,
+  title,
+  dragRegion = false,
+}: {
+  size?: number;
+  /** Omitted means decorative: the name is already in the text beside it. */
+  title?: string;
+  /**
+   * Whether the title bar hands this element the drag gesture.
+   *
+   * Tauri's `drag.js` reads `data-tauri-drag-region` off the **event target**, so
+   * an element inside the bar needs its own attribute or dragging from it does
+   * nothing — which is why the bar's title and this mark each carry one while the
+   * window controls beside them deliberately do not.
+   */
+  dragRegion?: boolean;
+}) {
   return (
-    <svg
+    <img
+      className="app-mark"
+      src={markUrl}
       width={size}
       height={size}
-      viewBox="0 0 24 24"
-      role={title ? 'img' : undefined}
-      aria-label={title}
+      alt={title ?? ''}
       aria-hidden={title ? undefined : true}
-      focusable="false"
-    >
-      <rect x="0" y="0" width="24" height="24" rx="5.28" fill="var(--accent)" />
-      <path
-        d="M6.72 7.2 L12 12 L6.72 16.8"
-        fill="none"
-        stroke="var(--fg-on-accent)"
-        strokeWidth="2.04"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M13.92 17.28 L18.72 17.28"
-        fill="none"
-        stroke="var(--fg-on-accent)"
-        strokeWidth="2.04"
-        strokeLinecap="round"
-      />
-    </svg>
+      // The browser's own image drag would swallow a title-bar drag: it starts a
+      // native drag-and-drop of the picture and the window never moves.
+      draggable={false}
+      data-tauri-drag-region={dragRegion ? '' : undefined}
+    />
   );
 }

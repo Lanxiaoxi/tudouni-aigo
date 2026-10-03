@@ -5,6 +5,39 @@
    无 spinner；无滚动驱动动画；hover 不用阴影（阴影只给浮层）。
    ============================================================ */
 
+/* ---------------- §0 应用标识 ---------------- */
+/**
+ * The application mark, in every place the window draws one: the title bar, the
+ * left rail's header, the first screen and the start-up phase.
+ *
+ * It is the rabbit icon itself — `Logo.tsx` imports the same PNG
+ * `tauri.conf.json` bundles — so there is no colour here to keep in step with a
+ * theme. That is the point: the three marks used to be separate green squares
+ * drawn from `--accent`, and when the icon became the rabbit they were left
+ * behind, which is a drift no token can prevent. See `Logo.tsx`.
+ *
+ * `border-radius: 16%` is **measured against that file, not chosen**. The PNG is
+ * a rounded square drawn on an opaque black page, so its corner pixels are solid
+ * black: at 0% the mark wears four black corners, which on the light theme reads
+ * as a black box around the rabbit. The icon's own corner radius is 14.06% of
+ * the edge (fitted to the black/field boundary: 18.00px at 128px), so a clip of
+ * 16% removes the whole black corner with margin and cuts no gold pixel at any
+ * size the mark is drawn at. Larger values buy nothing: the black is already
+ * gone, and the clip starts eating the field, which shows as a light notch on
+ * the corners.
+ *
+ * Percentages rather than pixels because the mark is drawn at 14, 20, 26 and
+ * 30px, and the radius has to scale with it — a fixed 5px is correct at 30px and
+ * half the icon at 14px.
+ */
+.app-mark {
+  border-radius: 16%;
+  flex: none;
+  /* The mark is never a control, and a text cursor over it is a lie. */
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 /* ---------------- §0 基础按钮 ---------------- */
 .btn {
   display: inline-flex;

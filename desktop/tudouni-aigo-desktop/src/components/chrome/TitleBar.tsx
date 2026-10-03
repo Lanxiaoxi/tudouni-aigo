@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Minus, Square, X } from 'lucide-react';
 import { useT } from '@/i18n/useT';
+import { Logo } from '@/components/ui/Logo';
 
 /**
  * The self-drawn title bar (36px), per `docs/tauri-native-spec.md` §3.
@@ -80,7 +81,7 @@ export function TitleBar() {
 
   return (
     <div className="titlebar" data-tauri-drag-region>
-      <span className="tb-mark" data-tauri-drag-region aria-hidden />
+      <Logo size={14} dragRegion />
       <span className="tb-title" data-tauri-drag-region>
         tudouni-aigo
       </span>

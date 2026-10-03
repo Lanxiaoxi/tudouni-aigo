@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
-import { Clock, Sparkles, Terminal } from 'lucide-react';
+import { Clock, Terminal } from 'lucide-react';
 import { NO_SESSION_LIST, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { StartupNoticeLine, ChooseWorkspaceButton } from '@/components/StartupNotice';
 import { Kbd } from '@/components/ui/kit';
+import { Logo } from '@/components/ui/Logo';
 import { NoteRow } from '@/components/stream/EntryView';
 import type { Entry } from '@/state/entries';
 import { formatPath, formatRelative } from '@/utils/format';
@@ -58,9 +59,7 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
         {/* 1 · identity */}
         <section className="welcome-id">
           <div className="wi-logo">
-            <span className="wi-mark" aria-hidden>
-              <Sparkles size={17} />
-            </span>
+            <Logo size={30} />
             <h1>
               {userName
                 ? t('welcome.greeting', { name: userName })

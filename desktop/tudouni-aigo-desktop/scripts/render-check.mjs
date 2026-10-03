@@ -562,8 +562,9 @@ async function main() {
   // ---- the left rail: workspaces and sessions ----
   //
   // Two assertions here, and both are about things that cannot fail loudly:
-  //   - the **brand mark is drawn**, which is a `<rect>` in `--accent` inside an
-  //     SVG. A missing mark renders as nothing at all — no error, no gap in the
+  //   - the **brand mark is drawn**, which is now the application's own icon
+  //     file (`<img class="app-mark">`, the same PNG `tauri.conf.json` bundles).
+  //     A missing mark renders as nothing at all — no error, no gap in the
   //     layout, just a rail that starts with a word;
   //   - the **current workspace is a row even though nothing is bookmarked**.
   //     `init.workspace` is the runtime's own answer to "where am I", and a list
@@ -571,11 +572,17 @@ async function main() {
   const leftbar = await evaluate(`(() => {
     const q = (s) => document.querySelector(s);
     const bar = q('.app-leftbar');
-    const logo = q('.lb-head svg rect');
+    const mark = q('.lb-head .app-mark');
+    const cs = mark ? getComputedStyle(mark) : null;
     return JSON.stringify({
       present: !!bar,
       text: (bar?.innerText ?? '').replace(/\\s+/g,' ').slice(0, 400),
-      logoFill: logo ? logo.getAttribute('fill') : null,
+      markTag: mark ? mark.tagName : null,
+      markSrc: mark ? mark.getAttribute('src') : null,
+      // A broken image is the failure this has to catch: it renders as an empty
+      // box or as alt text, silently, with the layout intact.
+      markLoaded: mark ? mark.complete && mark.naturalWidth > 0 : false,
+      markRadius: cs ? cs.borderRadius : null,
       currentRows: document.querySelectorAll('.lb-row.is-current').length,
       newSession: !!q('.lb-new button'),
     });
@@ -587,10 +594,23 @@ async function main() {
   // tests the CSS, not the rail.
   const lbText = String(lb.text).toLowerCase();
   if (!lb.present) throw new Error('the left sidebar is missing');
-  if (!lb.logoFill) throw new Error('the left sidebar has no brand mark');
-  // The mark is the application's own: the accent token, not a hard-coded hex.
-  if (!String(lb.logoFill).includes('--accent')) {
-    throw new Error(`the brand mark is not drawn from the token set: ${lb.logoFill}`);
+  if (!lb.markTag) throw new Error('the left sidebar has no brand mark');
+  if (lb.markTag !== 'IMG') {
+    throw new Error(`the brand mark is a <${lb.markTag}>, not the application icon file`);
+  }
+  // The mark is the application's own drawing — the rabbit the packaged app
+  // wears — and not a second, hand-drawn one. Two descriptions of one mark is
+  // how they drifted the last time.
+  if (!String(lb.markSrc).includes('128x128')) {
+    throw new Error(`the brand mark is not the bundled application icon: ${lb.markSrc}`);
+  }
+  if (!lb.markLoaded) {
+    throw new Error(`the brand mark did not load, so the rail shows an empty box: ${lb.markSrc}`);
+  }
+  // The icon file is a rounded square on an opaque black page, so without a clip
+  // it wears black corners — visible as a black box on the light theme.
+  if (!String(lb.markRadius) || String(lb.markRadius) === '0px') {
+    throw new Error(`the brand mark is not clipped, so its black corners show: ${lb.markRadius}`);
   }
   if (!lb.newSession) throw new Error('the "new session" button is missing');
   if (!lbText.includes('workspaces')) throw new Error('the workspace section is missing');
