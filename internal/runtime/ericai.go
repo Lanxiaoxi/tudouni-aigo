@@ -356,11 +356,18 @@ func ericWriteBack(configPath, newKey string) error {
 	}
 	encoded = append(encoded, '\n')
 
-	tmp := configPath + ".tmp"
+	// The temp name is unique to this process: two `--ericai` sessions can
+	// refresh at once, and a shared temp name is a write into another
+	// process's rename — one of them fails, or lands half a file.
+	tmp := fmt.Sprintf("%s.%d.tmp", configPath, os.Getpid())
 	if err := os.WriteFile(tmp, encoded, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, configPath)
+	if err := os.Rename(tmp, configPath); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // ── the start-up action ───────────────────────────────────────────────────────
