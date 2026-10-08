@@ -1910,10 +1910,21 @@ export const useApp = create<AppStore>((set, get) => {
         return null;
       }
 
+
+      // **A caller that does not name a value inherits the remembered one.**
+      // Every open path — the rail's new session, a new workspace, a saved
+      // session from the list, the first launch — lands here without saying
+      // anything, so they all follow the person's last choice in the settings
+      // panel instead of silently starting without the flag. An explicit
+      // `ericai` still outranks the default: `applyLaunch` restarts the session
+      // on screen with exactly what was applied, and `retrySession` replays the
+      // failed launch verbatim.
+      const ericai = options.ericai ?? get().ericaiDefault;
       const launch: LaunchArgs = {
-        ericai: options.ericai === true,
+        ericai,
         maxSteps: options.maxSteps ?? null,
       };
+
 
       // **The default is passed on, not only recorded.** Computing it above and
       // then handing the caller's `options` straight through made the two
