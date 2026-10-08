@@ -207,12 +207,16 @@ function resultLabel(status: string, t: ReturnType<typeof useT>): string {
   if (status === 'ok') return t('entry.toolResultOk');
   if (status === 'invalid_args') return t('entry.toolResultInvalid');
   if (status === 'denied') return t('entry.toolResultDenied');
+  if (status === 'interrupted') return t('entry.toolResultInterrupted');
   return t('entry.toolResultError');
 }
 
 function resultTone(status: string): 'success' | 'destructive' | 'warning' {
   if (status === 'ok') return 'success';
   if (status === 'denied') return 'warning';
+  // Warning, not destructive: nothing went wrong. A stop is an outcome the person
+  // asked for, and painting it like a failure would send them looking for a bug.
+  if (status === 'interrupted') return 'warning';
   return 'destructive';
 }
 

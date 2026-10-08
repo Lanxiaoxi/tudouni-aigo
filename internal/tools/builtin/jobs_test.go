@@ -1,10 +1,14 @@
 package builtin
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
 // These tests mirror the ones the original carried for its job board
@@ -45,7 +49,7 @@ func TestAPartialReadIsNotACollectedResult(t *testing.T) {
 	job := &Job{ID: "1", Command: "pytest", Started: 1, Clock: board.clock}
 	board.jobs = append(board.jobs, job)
 
-	result := board.Output("1", false, 0)
+	result := board.Output(context.Background(), "1", false, 0)
 	if status := result.Audit["job_status"]; status != "running" {
 		t.Errorf("audit job_status = %v, want running", status)
 	}
@@ -58,12 +62,57 @@ func TestAPartialReadIsNotACollectedResult(t *testing.T) {
 
 	// The same read after the job really ended does collect it.
 	finish(job, 0)
-	board.Output("1", false, 0)
+	board.Output(context.Background(), "1", false, 0)
 	if !job.Collected() {
 		t.Error("a final read did not mark the job collected")
 	}
 	if job.Outstanding() {
 		t.Error("a collected, finished job is still outstanding")
+	}
+}
+
+// TestAStoppedTurnStopsWaitingOnAJob covers the wait that used to be the longest
+// uninterruptible stretch in the program.
+//
+// `job_output(wait=true)` polls for up to five minutes, so a person who pressed stop
+// while the model was waiting on a slow job had to sit through the rest of the wait
+// before anything happened. The job itself must keep running — it was deliberately
+// backgrounded, and stopping a turn is not a reason to kill it — but the **wait** has
+// to end.
+func TestAStoppedTurnStopsWaitingOnAJob(t *testing.T) {
+	board := newBoard(t)
+	// A job that never ends: `ended` stays nil, so `Running()` is true for as long as
+	// the test needs it to be.
+	job := &Job{ID: "1", Command: "pytest", Started: 1, Clock: board.clock}
+	board.jobs = append(board.jobs, job)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan tools.Result, 1)
+	go func() { done <- board.Output(ctx, "1", true, MaxWaitSeconds) }()
+
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+
+	select {
+	case result := <-done:
+		if interrupted, _ := result.Audit[tools.InterruptedAuditKey].(bool); !interrupted {
+			t.Errorf("the audit record does not mark the wait as interrupted: %v", result.Audit)
+		}
+		if !strings.Contains(result.Text, "等待被中断了") {
+			t.Errorf("the result does not say the wait was cut short:\n%s", result.Text)
+		}
+		// Still running, and therefore still not collected: the job was not stopped,
+		// and the payload-tail reminder has to keep naming it.
+		if status := result.Audit["job_status"]; status != "running" {
+			t.Errorf("audit job_status = %v, want running — a stop must not collect the job", status)
+		}
+		if job.Collected() {
+			t.Error("a stopped wait collected the job, so nobody will ever see its exit code")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a cancelled turn did not end the job wait: the stop is not reaching it")
 	}
 }
 

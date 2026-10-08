@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -263,7 +264,7 @@ func NewLoadSkill(board *SkillBoard) tools.Tool {
 				"true 表示卸载所有已加载的技能（技能正文此后不再出现在对话里）",
 				tools.Default(false)),
 		}),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			name, _ := arguments["name"].(string)
 			unload, _ := arguments["unload"].(bool)
 			return board.Call(name, unload), nil

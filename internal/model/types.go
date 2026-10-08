@@ -7,6 +7,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -171,15 +172,21 @@ type CompleteOptions struct {
 	// interface drop the half-written text of the previous attempt before the
 	// next one restates the whole thing.
 	OnAttemptStarted func()
+	// Ctx cancels the request. It is attached to the HTTP request itself, which is
+	// the only way to abandon one that has not answered yet: without it a stop was
+	// noticed only once the first byte arrived, so an endpoint that was thinking —
+	// or hung — kept the interface waiting for as long as its own ten-minute
+	// timeout allowed.
+	Ctx context.Context
 	// ShouldStop is consulted while a stream is being read. A true answer abandons
 	// the turn immediately and returns CancelledError.
 	//
-	// It exists because "stop" has to mean stop. Without it the flag set by the
-	// front end would only be noticed at the next step boundary, so pressing Esc
-	// during a streamed answer still made the user wait out the whole thing —
-	// seconds to tens of seconds, which is exactly the cost streaming was bought
-	// to remove. A stream is where the user's attention is, so it is where the
-	// check has to be.
+	// It exists because "stop" has to mean stop, and it stays alongside Ctx rather
+	// than being replaced by it because the two answer different questions. Ctx
+	// **delivers** the stop to a request that is blocked on the network; this flag
+	// reports whether one was ever asked for, and it is read per line of the stream,
+	// where a context check would be the same cost but a coarser one — a body that
+	// has stopped producing bytes cannot be interrupted by checking it.
 	ShouldStop func() bool
 }
 

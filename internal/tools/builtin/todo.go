@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -95,7 +96,7 @@ func NewTodo(metadata map[string]any) tools.Tool {
 				}, "content"),
 			),
 		}, "todos"),
-		Handler: func(args map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			return board.Write(args), nil
 		},
 		ParallelSafe: false,

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
@@ -40,7 +41,7 @@ func TestASerialBatchStaysAdjacent(t *testing.T) {
 		}
 	}
 
-	if _, err := harness.agent.Run("write both"); err != nil {
+	if _, err := harness.agent.Run(context.Background(), "write both"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,7 +84,7 @@ func TestAParallelBatchIsDecidedBeforeAnythingRuns(t *testing.T) {
 		order = append(order, kind+":"+tool)
 	}
 
-	if _, err := harness.agent.Run("read both"); err != nil {
+	if _, err := harness.agent.Run(context.Background(), "read both"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +121,7 @@ func TestStepLimitNamesOnlyTheLastStepTools(t *testing.T) {
 	// enough that the limit is what ends the turn.
 	harness.agent.MaxSteps = 3
 
-	_, err := harness.agent.Run("go")
+	_, err := harness.agent.Run(context.Background(), "go")
 	limit, ok := err.(*StepLimitExceeded)
 	if !ok {
 		t.Fatalf("err = %v, want StepLimitExceeded", err)

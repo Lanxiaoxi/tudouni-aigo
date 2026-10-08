@@ -10,6 +10,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -215,6 +216,10 @@ func Run(options Options) int {
 			// The REPL is in-process, so a turn is never interrupted from another
 			// goroutine, and there is nobody to stream to: writing the answer in
 			// pieces is what a redirected transcript must not contain.
+			//
+			// The flag and the per-turn context are two halves of one fact and both
+			// are false here for the same reason: nothing in this front end can ask
+			// for a stop. Ctrl+C ends the process instead — see the turn call below.
 			ShouldStop: func() bool { return false },
 		})
 		if err != nil {
@@ -301,7 +306,14 @@ func Run(options Options) int {
 			// to say costs more than one wasted round trip on a typo.
 		}
 
-		answer, err := current.RunTurn(text)
+		// The line terminal has no cancellation to give a turn, and that is a
+		// property of the interface rather than an omission. Ctrl+C at this prompt is
+		// the documented way out: the handler below closes the runtime and exits the
+		// process, so a turn that is running when it arrives is already ended as
+		// completely as it can be. There is no key that means "stop this turn and
+		// give me the prompt back", so there is nothing to thread in — a background
+		// context states that, rather than inventing a cancellation nobody can fire.
+		answer, err := current.RunTurn(context.Background(), text)
 		if err != nil {
 			fmt.Fprintln(diag, err)
 			continue

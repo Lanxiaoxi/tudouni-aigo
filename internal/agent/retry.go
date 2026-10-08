@@ -11,6 +11,7 @@
 package agent
 
 import (
+	"context"
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
@@ -60,6 +61,11 @@ type RetryHooks struct {
 	// call: a user who presses stop during a backoff would otherwise wait out the
 	// delay and then see the request go again.
 	ShouldStop func() bool
+	// Ctx is the turn's cancellation, and it is what makes the backoff below
+	// interruptible. Without it the flag above is only read *after* the sleep, so a
+	// stop during a backoff was noticed one delay late — up to the cap, which is
+	// exactly the wait the flag was added to avoid.
+	Ctx context.Context
 	// OnFatal is offered a fatal error before it ends the call. A true answer means
 	// the cause has been removed and the request is worth sending again; false (or a
 	// nil hook) reports the error, which is what happens for every other fatal
@@ -87,11 +93,6 @@ func CallWithRetry(
 	options model.CompleteOptions,
 	hooks RetryHooks,
 ) (model.ModelResponse, error) {
-	sleep := hooks.Sleep
-	if sleep == nil {
-		sleep = time.Sleep
-	}
-
 	var lastErr error
 	for number := 1; number <= MaxAttempts; number++ {
 		if hooks.ShouldStop != nil && hooks.ShouldStop() {
@@ -148,10 +149,38 @@ func CallWithRetry(
 		lastErr = err
 
 		if wait > 0 {
-			sleep(time.Duration(wait) * time.Millisecond)
+			if !sleepFor(hooks.Ctx, hooks.Sleep, time.Duration(wait)*time.Millisecond) {
+				return model.ModelResponse{}, RunCancelled{}
+			}
 		}
 	}
 	return model.ModelResponse{}, lastErr
+}
+
+// sleepFor waits out one backoff, or gives up when the turn is cancelled, and
+// reports which happened.
+//
+// `sleep` is the injected implementation RetryHooks carries so tests do not spend
+// real time waiting. When one is installed it is called as before and the context
+// is only checked afterwards — a test that replaces the sleeper is stating that it
+// wants the delay to be a no-op, and it is not the code path a person is waiting on.
+func sleepFor(ctx context.Context, sleep func(time.Duration), d time.Duration) bool {
+	if sleep != nil {
+		sleep(d)
+		return ctx == nil || ctx.Err() == nil
+	}
+	if ctx == nil {
+		time.Sleep(d)
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // backoffMillis is the wait before the attempt that follows `completed` tries:

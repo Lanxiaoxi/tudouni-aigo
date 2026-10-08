@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -208,7 +209,12 @@ func buildTool(spec ServerSpec, connection *Connection, toolSpec ToolSpec) tools
 		// the server's to do and this side passes the arguments through.
 		External: true,
 		Schema:   schema,
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
+			// The context is not passed on: an MCP call is a request over the
+			// connection's own channel, which already carries `c.Timeout`, so this
+			// path cannot hang indefinitely. What it does not do is stop early when
+			// the turn is cancelled — a stop waits out the remainder of that
+			// timeout, which is bounded and short rather than open-ended.
 			text, err := connection.CallTool(toolSpec.Name, arguments)
 			if err != nil {
 				// Returned as a result, not raised: the same reasoning as every

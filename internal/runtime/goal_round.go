@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
@@ -158,7 +159,7 @@ func (r *Runtime) GoalCommand(action string) (map[string]any, error) {
 //  4. run it. The prompt lives inside the reservation, so it enters history in the
 //     same call that runs the turn — a number is never spent with no prompt to show
 //     for it.
-func (r *Runtime) StartGoalRound(round protocol.GoalRound) (string, bool, error) {
+func (r *Runtime) StartGoalRound(ctx context.Context, round protocol.GoalRound) (string, bool, error) {
 	reservation, owned := round.(*Reservation)
 	if !owned || r.Driver == nil || r.Agent == nil {
 		// Nothing can run, and a caller that got here has a bug rather than a race.
@@ -181,7 +182,7 @@ func (r *Runtime) StartGoalRound(round protocol.GoalRound) (string, bool, error)
 		return "", false, nil
 	}
 	r.recordGoalRound(admitted, reservation.Round())
-	answer, err := r.Agent.RunMessages(reservation.Messages())
+	answer, err := r.Agent.RunMessages(ctx, reservation.Messages())
 	return answer, true, err
 }
 

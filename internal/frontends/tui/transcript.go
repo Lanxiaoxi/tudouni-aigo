@@ -207,6 +207,12 @@ func toolResultLine(index any, message map[string]any) renderLine {
 		mark, role = "✓ ", "result"
 	case "denied", "invalid_args":
 		mark, role = "✗ ", "denied"
+	case "interrupted":
+		// Its own mark, and deliberately not the failure one. A person who pressed
+		// stop is looking at the transcript to see what their stop did; showing them
+		// a cross would say the tool broke, which is a different story and one they
+		// would go looking for a cause for.
+		mark, role = "⏹ ", "warn"
 	}
 	at := ""
 	if n, ok := asInt(message["tool_index"]); ok {
@@ -265,6 +271,8 @@ func toolBriefDoneLine(message map[string]any) renderLine {
 		parts = []seg{{text: "✗ ", role: "denied"}, {text: i18n.T("tool.denied"), role: "rule"}}
 	case "invalid_args":
 		parts = []seg{{text: "✗ ", role: "denied"}, {text: i18n.T("tool.invalid_args"), role: "rule"}}
+	case "interrupted":
+		parts = []seg{{text: "⏹ ", role: "warn"}, {text: i18n.T("tool.interrupted"), role: "rule"}}
 	default:
 		parts = []seg{
 			{text: "! ", role: "warn"},

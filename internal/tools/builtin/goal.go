@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -101,7 +102,7 @@ func newGetGoal(board *GoalBoard) tools.Tool {
 		Schema:       tools.EmptySchema(),
 		ParallelSafe: true,
 		Interactive:  false,
-		Handler: func(map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, _ map[string]any) (tools.Result, error) {
 			return tools.Result{Text: board.GetText(), Audit: board.auditFields()}, nil
 		},
 	}
@@ -130,7 +131,7 @@ objective 用一句话说清"什么状态算完成"（从用户的话里推断�
 		}, "objective"),
 		ParallelSafe: false,
 		Interactive:  false,
-		Handler: func(args map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			return board.Create(args), nil
 		},
 	}
@@ -164,7 +165,7 @@ edit / pause / resume 只能在用户直接发起的轮次里调用；complete �
 		}, "goal_id", "revision", "action"),
 		ParallelSafe: false,
 		Interactive:  false,
-		Handler: func(args map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			return board.Update(args), nil
 		},
 	}

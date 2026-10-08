@@ -2,11 +2,14 @@ package builtin
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
@@ -66,13 +69,13 @@ func NewShell(workspace *tools.Workspace, hasJobs, hasFetch, hasSearch bool) too
 				tools.Maximum(MAX_TIMEOUT_SECONDS),
 			),
 		}, "command"),
-		Handler: func(args map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			command, _ := args["command"].(string)
 			timeout := TIMEOUT_SECONDS
 			if v, ok := args["timeout_seconds"].(int); ok {
 				timeout = v
 			}
-			return runShell(workspace, command, timeout), nil
+			return runShell(ctx, workspace, command, timeout), nil
 		},
 		ParallelSafe: false,
 		Interactive:  false,
@@ -82,9 +85,20 @@ func NewShell(workspace *tools.Workspace, hasJobs, hasFetch, hasSearch bool) too
 
 // runShell executes one command and never throws. A non-zero exit code is an
 // ordinary result the model must read and reason about, not a tool fault.
-func runShell(workspace *tools.Workspace, command string, timeoutSeconds int) tools.Result {
+//
+// `ctx` is the turn's cancellation, and it is the whole reason this tool is
+// usable for anything slow. Before it, "stop" was only noticed at the next step
+// boundary, so a command with a 300-second ceiling had to be waited out — the
+// interface looked hung while it was in fact listening. The stop now reaches the
+// command itself.
+func runShell(ctx context.Context, workspace *tools.Workspace, command string, timeoutSeconds int) tools.Result {
 	argv := shellArgv(command)
-	cmd := exec.Command(argv[0], argv[1:]...)
+	// CommandContext rather than Command, so a stop reaches the command at all.
+	// Its default cancel is `Process.Kill` — the **direct child only** — which is
+	// why Cancel is replaced below: `powershell -Command "npm test"` is a tree, and
+	// killing the shell leaves node holding the port and the file locks while this
+	// tool reports a termination that did not happen.
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = workspace.Root()
 
 	// stdin from /dev/null so a command that reads input meets EOF at once
@@ -98,9 +112,32 @@ func runShell(workspace *tools.Workspace, command string, timeoutSeconds int) to
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// Put the child in its own process group (unix) so a timeout can kill the
-	// whole tree, not just the direct child.
+	// Put the child in its own process group (unix) so the kill can take the whole
+	// tree rather than just the direct child. On Windows this is a no-op and
+	// taskkill /T does the work. Either way killProcessTree is the only killer.
 	setProcessGroup(cmd)
+
+	// The kill, with its error kept under a lock rather than returned. `Cancel` runs
+	// on the goroutine os/exec starts to watch the context, and the error it
+	// produces is the fact the report needs — "did it actually stop" — so it is
+	// stored where the reporting goroutine can read it without racing that watcher.
+	var killMu sync.Mutex
+	var killErr error
+	kill := func() error {
+		err := killProcessTree(cmd)
+		killMu.Lock()
+		killErr = err
+		killMu.Unlock()
+		return err
+	}
+	cmd.Cancel = kill
+
+	// WaitDelay bounds the other half of the same problem, and it is not optional.
+	// The child's descendants inherit the stdout pipe, so a command that has already
+	// exited can still leave `Wait` blocked for ever on the copier goroutines that
+	// never see EOF. The timer starts when Wait observes the exit, so this covers a
+	// command that finished on its own as much as one that was killed.
+	cmd.WaitDelay = reapAfterKillSeconds * time.Second
 
 	if err := cmd.Start(); err != nil {
 		return tools.TextResult(fmt.Sprintf("无法执行命令（环境问题，不是命令本身）：%s", err))
@@ -109,57 +146,81 @@ func runShell(workspace *tools.Workspace, command string, timeoutSeconds int) to
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
-	select {
-	case waitErr := <-done:
-		code := 0
-		if waitErr != nil {
-			var exitErr *exec.ExitError
-			if asExit(waitErr, &exitErr) {
-				code = exitErr.ExitCode()
-			} else {
-				return tools.TextResult(fmt.Sprintf("无法执行命令（环境问题，不是命令本身）：%s", waitErr))
-			}
+	// reportStopped is the ending where the person stopped the turn.
+	//
+	// It is reached only from the branch where `Wait` has **already returned**, and
+	// that is what lets it say the command stopped: a returned `Wait` means the
+	// process was reaped, which is an observation rather than an intention. It also
+	// means the output buffers have no writer left, so reading them here is safe.
+	reportStopped := func(waitErr error) tools.Result {
+		// The group, not just the child. On unix this reaches descendants that
+		// outlived the direct child; on Windows it is a no-op against a pid that is
+		// already gone, which is why the message below does not depend on it.
+		kill()
+
+		text := "命令被中断了（这一轮被停止），它没有跑完。\n命令：" + command + "\n"
+		text += "已经确认它停下来了：这次没有留下东西在跑。\n"
+		// `WaitDelay` expiring means os/exec gave up on the output pipes rather than
+		// the command exiting on its own. The process is gone either way, but the
+		// capture below may be short, and a reader who took a truncated capture for
+		// the whole thing would draw a conclusion the command never produced.
+		if errors.Is(waitErr, exec.ErrWaitDelay) {
+			text += fmt.Sprintf("（它留下的某个子进程一直占着输出管道，等了 %d 秒后强制收尾"+
+				" —— 下面的输出可能不完整。）\n", reapAfterKillSeconds)
 		}
-		body := combineShellOutput(stdout.String(), stderr.String())
+		text += "这次调用的结果不能当结论用：它没有跑完。\n"
+		if body := combineShellOutput(stdout.String(), stderr.String()); body != "" {
+			text += "它已经产出的输出：\n" + body
+		}
 		return tools.Result{
-			Text:  formatShellOutput(code, body),
-			Audit: map[string]any{"exit_code": code},
+			Text: text,
+			Audit: map[string]any{
+				"exit_code":               -1,
+				"reaped":                  true,
+				tools.InterruptedAuditKey: true,
+			},
 		}
-	case <-time.After(time.Duration(timeoutSeconds) * time.Second):
-		// Kill the process tree, then reap so the child does not become a zombie.
-		//
-		// **What is reported is what was observed, not what was attempted.** These
-		// statements used to be unconditional: the message said "terminated (the whole
-		// process tree with it)" whether or not anything died, and the reap waited
-		// forever. On a machine where the kill is denied — a restricted token, an ACL,
-		// a sandbox — that combination told the model the command had stopped, left the
-		// process holding its port and its files, and hung the turn on `<-done` with no
-		// way out.
-		//
-		// So there are two checks and they answer different questions, in this order:
-		//
-		//  1. **was it already finished?** A command that ended in the moment between
-		//     the timeout firing and the kill arriving is the outcome this wanted, and
-		//     that is a fact this goroutine can see for itself.
-		//  2. **did it actually die?** The reap tells us, and it is bounded. "The kill
-		//     command failed" would be the wrong question: `taskkill` exits non-zero for
-		//     a process that is already gone, and a process that died of the signal may
-		//     not have been reaped yet. Whether it stopped is the fact that decides
-		//     whether the message may claim it.
-		killErr := killProcessTree(cmd)
+	}
+
+	// reportTimeout is the ending where the command ran past its ceiling. The kill
+	// has to be waited out here, and whether it worked is the fact that decides what
+	// the message may claim.
+	//
+	// **What is reported is what was observed, not what was attempted.** These
+	// statements used to be unconditional: the message said "terminated (the whole
+	// process tree with it)" whether or not anything died, and the reap waited
+	// forever. On a machine where the kill is denied — a restricted token, an ACL,
+	// a sandbox — that combination told the model the command had stopped, left the
+	// process holding its port and its files, and hung the turn on `<-done` with no
+	// way out.
+	//
+	// So there are two checks and they answer different questions, in this order:
+	//
+	//  1. **was it already finished?** A command that ended in the moment between
+	//     the timeout firing and the kill arriving is the outcome this wanted, and
+	//     that is a fact this goroutine can see for itself.
+	//  2. **did it actually die?** The reap tells us, and it is bounded. "The kill
+	//     command failed" would be the wrong question: `taskkill` exits non-zero for
+	//     a process that is already gone, and a process that died of the signal may
+	//     not have been reaped yet. Whether it stopped is the fact that decides
+	//     whether the message may claim it.
+	reportTimeout := func() tools.Result {
+		kill()
 		finished, reaped := false, true
 		select {
 		case waitErr := <-done:
-			// The result is not read here — the run that mattered already ended in the
-			// branch above — but a process that was already finished when the timeout
-			// fired satisfies the caller's request exactly as a successful kill does.
+			// The result is not read: what matters is that `Wait` returned, because
+			// that is the observation that nothing is left running.
 			finished = true
 			_ = waitErr
 		case <-time.After(reapAfterKillSeconds * time.Second):
 			reaped = false
 		}
 
-		body := ""
+		killMu.Lock()
+		killed := killErr
+		killMu.Unlock()
+
 		text := fmt.Sprintf("命令超过了 %d 秒。\n命令：%s\n", timeoutSeconds, command)
 		switch {
 		case finished:
@@ -168,31 +229,62 @@ func runShell(workspace *tools.Workspace, command string, timeoutSeconds int) to
 			text += fmt.Sprintf("**没有能确认它停下来了**：停止信号发了 %d 秒后它还没退出"+
 				"（%v）—— 它可能还在跑，也可能还占着端口或文件。\n"+
 				"不要重复这条命令；先确认那个进程还在不在，必要时手动结束它"+
-				"（清掉这个会话也可以，进程是它的子进程）。\n", reapAfterKillSeconds, killErr)
+				"（清掉这个会话也可以，进程是它的子进程）。\n", reapAfterKillSeconds, killed)
 		default:
 			text += "已终止（整棵进程树一起收）。确实慢的命令可以把 timeout_seconds 调大" +
 				fmt.Sprintf("（上限 %d 秒）再试一次；", MAX_TIMEOUT_SECONDS) +
 				"但它本来就不结束的话，调大只是让人多等一会儿，先确认一下。\n"
 		}
-		audit := map[string]any{"exit_code": -1, "reaped": reaped, "kill_failed": killErr != nil}
+		audit := map[string]any{"exit_code": -1, "reaped": reaped, "kill_failed": killed != nil}
 		if !reaped {
 			audit["kill_failed"] = true
 		}
 		// The output is read **only once the process was reaped**. Until then the
-		// goroutines copying the child's stdout and stderr are still writing into these
-		// buffers, and reading them here would be a data race — with the reader racing
-		// the writer for whatever partial bytes happened to be there, which is worth
-		// nothing and is not what a timeout is for.
+		// goroutines copying the child's stdout and stderr are still writing into
+		// these buffers, and reading them here would be a data race — with the reader
+		// racing the writer for whatever partial bytes happened to be there, which is
+		// worth nothing and is not what a timeout is for.
 		if reaped {
-			body = combineShellOutput(stdout.String(), stderr.String())
+			if body := combineShellOutput(stdout.String(), stderr.String()); body != "" {
+				text += "它已经产出的输出：\n" + body
+			}
 		}
-		if body != "" {
-			text += "它已经产出的输出：\n" + body
+		return tools.Result{Text: text, Audit: audit}
+	}
+
+	select {
+	case waitErr := <-done:
+		if ctx.Err() != nil {
+			return reportStopped(waitErr)
+		}
+		// The command exited but something it spawned kept the stdout pipe open, so
+		// WaitDelay force-closed the pipes to let Wait return. The exit status is the
+		// command's own and is reported as usual; the only thing that has to be said
+		// is that the output may be short, because a reader that assumed the pipe
+		// closed naturally would take a truncated capture for the whole thing.
+		truncated := errors.Is(waitErr, exec.ErrWaitDelay)
+
+		code := 0
+		if waitErr != nil {
+			var exitErr *exec.ExitError
+			if asExit(waitErr, &exitErr) {
+				code = exitErr.ExitCode()
+			} else if !truncated {
+				return tools.TextResult(fmt.Sprintf("无法执行命令（环境问题，不是命令本身）：%s", waitErr))
+			}
+		}
+		body := combineShellOutput(stdout.String(), stderr.String())
+		text := formatShellOutput(code, body)
+		if truncated {
+			text += fmt.Sprintf("\n（命令本身已经结束，但它留下的某个子进程还占着输出管道，"+
+				"等了 %d 秒后强制收尾 —— 上面的输出可能不完整。）", reapAfterKillSeconds)
 		}
 		return tools.Result{
 			Text:  text,
-			Audit: audit,
+			Audit: map[string]any{"exit_code": code},
 		}
+	case <-time.After(time.Duration(timeoutSeconds) * time.Second):
+		return reportTimeout()
 	}
 }
 

@@ -272,6 +272,7 @@ var catalog = map[string]string{
 	"tool.result_chars.other":    "{chars} chars",
 	"tool.denied":                "denied, not executed",
 	"tool.invalid_args":          "invalid arguments, not executed",
+	"tool.interrupted":           "stopped, no result",
 	"tool.error.one":             "failed ({chars} char)",
 	"tool.error.other":           "failed ({chars} chars)",
 	"brief.items.one":            "{n} item",

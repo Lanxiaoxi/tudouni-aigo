@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -249,8 +250,8 @@ func Build(config Config) (tools.Tool, bool) {
 					"只写你真正需要的那一件事，不要写成一个大纲。",
 				tools.MinLength(1)),
 		}, "prompt"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
-			return tool.execute(arguments)
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
+			return tool.execute(ctx, arguments)
 		},
 		// Never parallel-safe, and never alongside anything else. One delegation
 		// already runs a whole nested agent loop; two of them in one batch would
@@ -265,7 +266,7 @@ func Build(config Config) (tools.Tool, bool) {
 }
 
 // execute is the handler.
-func (t *Tool) execute(arguments map[string]any) (tools.Result, error) {
+func (t *Tool) execute(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 	// The label is reset per call, not left from the last one. A model that
 	// describes one delegation and then omits the description on the next would
 	// otherwise see the second one wearing the first one's name — on the status
@@ -288,7 +289,7 @@ func (t *Tool) execute(arguments map[string]any) (tools.Result, error) {
 	if refusal := t.depthRefusal(); refusal != "" {
 		return tools.TextResult(refusal), nil
 	}
-	return t.spawn(prompt)
+	return t.spawn(ctx, prompt)
 }
 
 // depthRefusal reports why this delegation is not allowed, or "" when it is.

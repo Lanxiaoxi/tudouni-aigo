@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
@@ -31,7 +32,7 @@ func TestABatchThatRanTogetherIsMarkedOnItsResults(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	if _, err := h.agent.Run("read both"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "read both"); err != nil {
 		t.Fatal(err)
 	}
 

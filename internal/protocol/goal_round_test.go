@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func newGoalRuntime() *goalRuntime {
 	}
 }
 
-func (r *goalRuntime) RunTurn(string) (string, error) { return "turn done", nil }
+func (r *goalRuntime) RunTurn(context.Context, string) (string, error) { return "turn done", nil }
 
 // ObserveTurn records the decision and hands the reservation to the server's own
 // queue function, exactly as the real runtime does.
@@ -92,7 +93,7 @@ func (r *goalRuntime) ObserveTurn(_ error, _ bool, queue func(GoalRound) bool) s
 	return "continue"
 }
 
-func (r *goalRuntime) StartGoalRound(round GoalRound) (string, bool, error) {
+func (r *goalRuntime) StartGoalRound(_ context.Context, round GoalRound) (string, bool, error) {
 	select {
 	case r.started <- round:
 	default:

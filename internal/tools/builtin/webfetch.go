@@ -178,7 +178,7 @@ func NewFetchWeb(client *http.Client) tools.Tool {
 				tools.Minimum(MinFetchTimeoutSeconds),
 				tools.Maximum(MaxFetchTimeoutSeconds)),
 		}, "url"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			rawURL, _ := arguments["url"].(string)
 			timeout := intArg(arguments, "timeout_seconds", DefaultFetchTimeoutSeconds)
 			return fetchResult(client, rawURL, timeout), nil

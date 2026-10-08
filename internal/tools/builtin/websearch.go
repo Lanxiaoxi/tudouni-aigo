@@ -134,7 +134,7 @@ func NewWebSearch(apiKey, baseURL string, client *http.Client) (tools.Tool, bool
 				tools.Minimum(1),
 				tools.Maximum(MaxMaxResults)),
 		}, "query"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			query, _ := arguments["query"].(string)
 			maxResults := intArg(arguments, "max_results", DefaultMaxResults)
 			return runSearch(backend.Search, query, maxResults), nil

@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
@@ -16,7 +17,7 @@ func NewGetCurrentTime() tools.Tool {
 		Description: "获取当前时间（ISO 8601，含时区偏移）",
 		Risk:        security.RiskLow,
 		Schema:      tools.EmptySchema(),
-		Handler: func(args map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			// Local time with its offset, e.g. 2026-09-17T14:03:05+08:00 — the
 			// offset makes it a real instant, not a bare "14:03:05" that is
 			// uninterpretable on another machine.

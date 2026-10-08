@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,7 @@ func call(t *testing.T, tool tools.Tool, arguments map[string]any) string {
 	if err != nil {
 		t.Fatalf("the arguments do not validate: %v", err)
 	}
-	result, err := tool.Execute(validated)
+	result, err := tool.Execute(context.Background(), validated)
 	if err != nil {
 		t.Fatalf("read_file returned an error: %v", err)
 	}
@@ -229,7 +230,7 @@ func TestTheBoundsAreOptionalAndBoundedByTheSchema(t *testing.T) {
 	}
 	// The same call through the tool reports it as invalid arguments, which is the
 	// path the model actually experiences.
-	if _, err := tool.Execute(map[string]any{"path": "a.txt", "end_line": 0}); err == nil {
+	if _, err := tool.Execute(context.Background(), map[string]any{"path": "a.txt", "end_line": 0}); err == nil {
 		t.Error("end_line=0 reached the handler")
 	}
 }
@@ -250,7 +251,7 @@ func TestTheIntervalReachesTheAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := tool.Execute(validated)
+	result, err := tool.Execute(context.Background(), validated)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +261,7 @@ func TestTheIntervalReachesTheAudit(t *testing.T) {
 	}
 
 	// A whole-file read records no interval, so "was this a slice" stays answerable.
-	whole, err := tool.Execute(map[string]any{"path": "a.txt"})
+	whole, err := tool.Execute(context.Background(), map[string]any{"path": "a.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}

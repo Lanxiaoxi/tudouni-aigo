@@ -1,13 +1,14 @@
 package subagent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -24,7 +25,7 @@ import (
 // The one thing that *is* inherited on purpose is the stop flag. Pressing Esc is
 // a statement about this whole piece of work, and a subagent that kept going
 // after the user interrupted would be the feature overriding the user.
-func (t *Tool) spawn(task string) (tools.Result, error) {
+func (t *Tool) spawn(ctx context.Context, task string) (tools.Result, error) {
 	started := time.Now()
 	childID, err := t.mintChildID()
 	if err != nil {
@@ -147,7 +148,11 @@ func (t *Tool) spawn(task string) (tools.Result, error) {
 		"prompt_chars": len([]rune(task)),
 	}))
 
-	answer, runErr := sub.Run(task)
+	// The child runs on the **parent's context**, which is what makes a stop reach a
+	// delegation: its own model call and its own shell commands are all cancellable
+	// through it, and without it a stop would have to wait out the whole child loop —
+	// minutes, for a delegation, which is the longest single step there is.
+	answer, runErr := sub.Run(ctx, task)
 
 	// The child is written down before the outcome is decided, so a session that
 	// ended in a step limit or a model error is still there to be read.
@@ -232,8 +237,8 @@ func (t *Tool) newChildSession(childID string, depth int) *state.Session {
 // each other's artifacts. That separation is where the saving comes from: a
 // `read_file` of a large file lands in the child's store and is degraded and
 // evicted there, while the parent's context only ever holds the child's answer.
-func (t *Tool) childContext(session *state.Session, chat model.ChatModel) (*context.Manager, *context.ToolResultProcessor) {
-	store := context.OpenArtifactStore(paths.SessionArtifactsDir(session.SessionID), nil)
+func (t *Tool) childContext(session *state.Session, chat model.ChatModel) (*ctxwin.Manager, *ctxwin.ToolResultProcessor) {
+	store := ctxwin.OpenArtifactStore(paths.SessionArtifactsDir(session.SessionID), nil)
 	store.Load()
 
 	var window *int
@@ -242,14 +247,14 @@ func (t *Tool) childContext(session *state.Session, chat model.ChatModel) (*cont
 		window = &value
 	}
 
-	manager := context.NewManager(store, nil, context.NewBudget(window), func(current *context.ContextState) {
+	manager := ctxwin.NewManager(store, nil, ctxwin.NewBudget(window), func(current *ctxwin.ContextState) {
 		// The checkpoint reads the Session, so the Session has to point at the
 		// live state. Same arrangement as the parent's, and for the same reason:
 		// a process killed mid-delegation still recovers to what really happened.
 		session.Context = current
 	})
 
-	return manager, context.DefaultProcessor()
+	return manager, ctxwin.DefaultProcessor()
 }
 
 // childUsage sums the child's own token accounting out of its audit log.

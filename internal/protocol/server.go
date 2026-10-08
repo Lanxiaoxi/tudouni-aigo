@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -65,7 +66,13 @@ type Runtime interface {
 	SetEffort(level string) (bool, string)
 
 	// RunTurn runs one turn and returns the answer.
-	RunTurn(text string) (string, error)
+	//
+	// The context is this turn's cancellation. It is a parameter rather than
+	// something the runtime holds because a turn is what gets cancelled and the
+	// runtime outlives it: the same runtime serves every turn of a session, and a
+	// cancelled context left on it would stop the *next* turn at its first safe
+	// point — the failure `ClearStop` already documents for the flag.
+	RunTurn(ctx context.Context, text string) (string, error)
 	// ClearStop resets this turn's cancellation flag.
 	//
 	// It is per-turn and must be cleared at the start of every turn: a flag that
@@ -114,6 +121,20 @@ type Server struct {
 	stop   bool
 	answer string
 
+	// turnCtx is this turn's cancellation, and turnCancel is how it is cancelled.
+	// They are created together at the start of every turn and cancelled by
+	// requestStop.
+	//
+	// The flag above and this context carry the same fact to two different places,
+	// and both are needed. The flag is what a **synchronous** check can read — the
+	// goal driver asks it after the turn is over whether the person had asked to
+	// stop — while the context is the only thing that can reach work which is
+	// blocked: a request waiting for its first byte, a shell command, a handler
+	// sleeping on a background job. A stop that only set the flag was noticed at the
+	// next safe point, which for a slow command is minutes later.
+	turnCtx    context.Context
+	turnCancel context.CancelFunc
+
 	// pending holds the two kinds of request that block until a front end answers.
 	pending *pendingTable
 
@@ -157,7 +178,7 @@ type GoalRound interface {
 // reports whether a turn actually ran, so a reservation that went stale while it
 // waited costs nothing.
 type GoalRoundRunner interface {
-	StartGoalRound(round GoalRound) (answer string, started bool, err error)
+	StartGoalRound(ctx context.Context, round GoalRound) (answer string, started bool, err error)
 }
 
 // GoalArmer is what a runtime must provide for a goal created during a turn to
@@ -506,6 +527,14 @@ func (s *Server) startTurnWith(text string, round GoalRound) bool {
 	s.mu.Lock()
 	s.stop = false
 	s.answer = ""
+	// A fresh context per turn, created in the same critical section that clears the
+	// flag, so the two can never disagree about which turn they describe. The
+	// previous one is released here rather than left to the garbage collector: it
+	// may still have goroutines parked on it, and cancelling is what wakes them.
+	if s.turnCancel != nil {
+		s.turnCancel()
+	}
+	s.turnCtx, s.turnCancel = context.WithCancel(context.Background())
 	s.mu.Unlock()
 
 	done := make(chan struct{})
@@ -548,13 +577,14 @@ func (s *Server) pendingGoalRound() GoalRound {
 
 func (s *Server) runTurn(runtime Runtime, text string) {
 	runtime.ClearStop()
+	ctx := s.turnContext()
 
 	// A reserved round takes the path that composes its own opening message. A
 	// stale reservation means no turn ran, and then there is nothing to report —
 	// falling through to `RunTurn("")` would ask the model to answer an empty
 	// question, which is a real turn spent on nothing.
 	if round := s.pendingGoalRound(); round != nil {
-		answer, err, ran := s.runGoalRound(runtime, round)
+		answer, err, ran := s.runGoalRound(ctx, runtime, round)
 		if !ran {
 			return
 		}
@@ -562,18 +592,18 @@ func (s *Server) runTurn(runtime Runtime, text string) {
 		return
 	}
 
-	answer, err := runtime.RunTurn(text)
+	answer, err := runtime.RunTurn(ctx, text)
 	s.finishTurn(runtime, answer, err)
 }
 
 // runGoalRound runs one reserved round, or reports that it was refused.
-func (s *Server) runGoalRound(runtime Runtime, round GoalRound) (string, error, bool) {
+func (s *Server) runGoalRound(ctx context.Context, runtime Runtime, round GoalRound) (string, error, bool) {
 	s.clearGoalRound()
 	runner, ok := runtime.(GoalRoundRunner)
 	if !ok {
 		return "", nil, false
 	}
-	answer, started, err := runner.StartGoalRound(round)
+	answer, started, err := runner.StartGoalRound(ctx, round)
 	if !started {
 		return "", nil, false
 	}
@@ -699,7 +729,16 @@ func (s *Server) RequestStop() { s.requestStop() }
 func (s *Server) requestStop() {
 	s.mu.Lock()
 	s.stop = true
+	cancel := s.turnCancel
 	s.mu.Unlock()
+
+	// The context goes first, and before the runtime is told anything, because it is
+	// the half that reaches work already in flight. Cancelling it is what makes a
+	// stop feel immediate instead of arriving at the next safe point.
+	if cancel != nil {
+		cancel()
+	}
+
 	runtime := s.current()
 	if runtime == nil {
 		return
@@ -709,6 +748,21 @@ func (s *Server) requestStop() {
 	if stopper, ok := runtime.(interface{ MarkStop() }); ok {
 		stopper.MarkStop()
 	}
+}
+
+// turnContext is this turn's cancellation, for the goroutine running it.
+//
+// It cannot be nil in practice — every path that starts a turn creates it first —
+// but a background context is substituted rather than returning nil, because a nil
+// context reaching `http.NewRequestWithContext` is a panic and "the turn has no
+// cancellation" is a legal state for an in-process caller.
+func (s *Server) turnContext() context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnCtx == nil {
+		return context.Background()
+	}
+	return s.turnCtx
 }
 
 // ShouldStop reports whether this turn has been asked to stop.
@@ -1136,6 +1190,14 @@ func (s *Server) switchSession(message map[string]any) {
 	s.answer = ""
 	s.lastRunID = ""
 	s.lastStep = 0
+	// A session switch ends whatever turn was running, so its context is released
+	// here for the same reason the flag is cleared: the next turn must not inherit
+	// it. Switching sessions while a turn is in flight is the one path where the
+	// old turn's cancellation has no other owner.
+	if s.turnCancel != nil {
+		s.turnCancel()
+		s.turnCtx, s.turnCancel = nil, nil
+	}
 	s.mu.Unlock()
 
 	s.emitOpening()
@@ -1209,6 +1271,12 @@ func (s *Server) deleteSession(message map[string]any) {
 		s.answer = ""
 		s.lastRunID = ""
 		s.lastStep = 0
+		// See the session switch above: the running turn's context has no other
+		// owner once the runtime it belonged to has been replaced.
+		if s.turnCancel != nil {
+			s.turnCancel()
+			s.turnCtx, s.turnCancel = nil, nil
+		}
 		s.mu.Unlock()
 
 		s.emitOpening()

@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -49,7 +50,7 @@ func TestAShellTimeoutDoesNotHangTheTurn(t *testing.T) {
 	}
 
 	done := make(chan tools.Result, 1)
-	go func() { done <- runShell(workspace, stubbornCommand(), 1) }()
+	go func() { done <- runShell(context.Background(), workspace, stubbornCommand(), 1) }()
 
 	select {
 	case result := <-done:
@@ -108,13 +109,62 @@ func TestACommandThatEndedAtTheTimeoutIsNotReportedAsRefused(t *testing.T) {
 		command = "Start-Sleep -Seconds 2"
 	}
 
-	result := runShell(workspace, command, 1)
+	result := runShell(context.Background(), workspace, command, 1)
 
 	if strings.Contains(result.Text, "没有能确认它停下来了") {
 		t.Errorf("a command that ended by itself was reported as unstoppable:\n%s", result.Text)
 	}
 	if !strings.Contains(result.Text, "命令超过了") {
 		t.Errorf("the result does not mention the timeout:\n%s", result.Text)
+	}
+}
+
+// TestAStoppedTurnEndsTheCommandItWasRunning is the point of the whole change: the
+// stop reaches the command itself rather than waiting for the next step boundary.
+//
+// The timeout is ten minutes **on purpose**. A test that used a one-second timeout
+// would pass whether or not the context was wired up at all, because the timeout
+// would end the command anyway; here nothing but the cancellation can, and the
+// deadline below is what catches a regression.
+func TestAStoppedTurnEndsTheCommandItWasRunning(t *testing.T) {
+	workspace, err := tools.NewWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan tools.Result, 1)
+	go func() { done <- runShell(ctx, workspace, stubbornCommand(), 600) }()
+
+	// Long enough that the command is certainly started, short enough that a
+	// regression to "wait out the timeout" fails the deadline rather than the test
+	// run.
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+
+	select {
+	case result := <-done:
+		if !strings.Contains(result.Text, "命令被中断了") {
+			t.Errorf("the result does not say the turn was stopped:\n%s", result.Text)
+		}
+		// The distinction is not cosmetic: a timeout tells the model to ask for more
+		// time and try again, which is exactly the wrong thing to do with a command
+		// the person just stopped.
+		if strings.Contains(result.Text, "命令超过了") {
+			t.Errorf("a stopped command was reported as a timeout:\n%s", result.Text)
+		}
+		if interrupted, _ := result.Audit[tools.InterruptedAuditKey].(bool); !interrupted {
+			t.Errorf("the audit record does not mark the result as interrupted: %v", result.Audit)
+		}
+		// What the command printed before the stop is still the only diagnosis there
+		// is, and a stop is not a reason to throw it away.
+		if !strings.Contains(result.Text, "partial output before the timeout") {
+			t.Errorf("the output printed before the stop was dropped:\n%s", result.Text)
+		}
+	case <-time.After(reapAfterKillSeconds*time.Second + 10*time.Second):
+		t.Fatal("a cancelled turn did not end the command: the stop is not reaching it")
 	}
 }
 
@@ -137,7 +187,7 @@ func TestTheTimeoutResultKeepsWhatTheCommandPrinted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := runShell(workspace, stubbornCommand(), 1)
+	result := runShell(context.Background(), workspace, stubbornCommand(), 1)
 	if !strings.Contains(result.Text, "partial output before the timeout") {
 		t.Errorf("the output printed before the timeout was dropped:\n%s", result.Text)
 	}

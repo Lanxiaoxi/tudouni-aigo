@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -302,7 +303,7 @@ func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[strin
 			knobs = ReasoningKnobs{Thinking: false, Effort: promise.Effort, omit: true, ReplayReasoning: promise.ReplayReasoning}
 		}
 
-		response, err := m.completeOnce(messages, tools, options.OnDelta, options.ShouldStop, knobs)
+		response, err := m.completeOnce(options.Ctx, messages, tools, options.OnDelta, options.ShouldStop, knobs)
 		if err == nil {
 			return response, nil
 		}
@@ -310,6 +311,16 @@ func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[strin
 		// request again after the user asked for it to stop.
 		if IsCancelled(err) {
 			return ModelResponse{}, err
+		}
+		// Cancelling the context is what makes a request that has not answered yet
+		// give up, and the error that comes back is whatever the transport chose to
+		// report — a `*url.Error` wrapping context.Canceled, or a read failure on a
+		// body that was closed underneath the scanner. None of those are facts about
+		// the endpoint, so they are reclassified here rather than being reported as a
+		// model failure: a transient one would be retried, which is the opposite of
+		// what was asked for.
+		if options.Ctx != nil && options.Ctx.Err() != nil {
+			return ModelResponse{}, CancelledError{}
 		}
 
 		// The endpoint wants the thinking it produced sent back with the history,
@@ -387,7 +398,7 @@ func (m *OpenAICompatible) protocol() (dialect, error) {
 	return dialectFor(m.route.Style)
 }
 
-func (m *OpenAICompatible) completeOnce(messages []map[string]any, tools []map[string]any, sink DeltaSink, shouldStop func() bool, knobs ReasoningKnobs) (ModelResponse, error) {
+func (m *OpenAICompatible) completeOnce(ctx context.Context, messages []map[string]any, tools []map[string]any, sink DeltaSink, shouldStop func() bool, knobs ReasoningKnobs) (ModelResponse, error) {
 	codec, err := m.protocol()
 	if err != nil {
 		return ModelResponse{}, err
@@ -422,7 +433,18 @@ func (m *OpenAICompatible) completeOnce(messages []map[string]any, tools []map[s
 	}
 
 	endpoint := endpointURL(m.route.BaseURL, codec.path())
-	request, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	// The request carries the turn's context, and that is the whole point: a stop
+	// has to reach a request that is still waiting for its first byte. `Do` and the
+	// body read below then fail as soon as the context is done, instead of at the
+	// client's own ten-minute timeout.
+	//
+	// A nil context is refused by NewRequestWithContext, so the background one is
+	// substituted rather than passed through: an in-process caller with nothing to
+	// cancel is a legal caller, and it must not be a panic.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return ModelResponse{}, AsFatal("cannot build the request: %v", err)
 	}

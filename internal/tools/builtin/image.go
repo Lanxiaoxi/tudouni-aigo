@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,7 +59,7 @@ func NewReadImage(workspace *tools.Workspace) tools.Tool {
 		Schema: tools.ObjectSchema(map[string]any{
 			"path": tools.StringSchema("图片路径（工作区内，相对或绝对都行）", tools.MinLength(1)),
 		}, "path"),
-		Handler: func(args map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			return readImage(workspace, args)
 		},
 	}

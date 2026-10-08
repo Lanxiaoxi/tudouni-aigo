@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -356,7 +357,7 @@ type stubRuntime struct {
 	delegationChanges int
 }
 
-func (*stubRuntime) RunTurn(string) (string, error)     { return "", nil }
+func (*stubRuntime) RunTurn(context.Context, string) (string, error) { return "", nil }
 func (*stubRuntime) SessionID() string                  { return "parent" }
 func (*stubRuntime) Messages() []map[string]any         { return nil }
 func (*stubRuntime) ClearStop()                         {}

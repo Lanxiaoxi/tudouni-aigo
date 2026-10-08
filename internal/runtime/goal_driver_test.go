@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -437,7 +438,7 @@ func TestDriverWithoutAGoalDoesNothing(t *testing.T) {
 func TestStartGoalRoundRefusesAnUnarmedOrUnusableReservation(t *testing.T) {
 	runtimeValue := driverRuntime(t, state.PhaseActive, 0, 5, true)
 
-	if _, started, err := runtimeValue.StartGoalRound(nil); started || err == nil {
+	if _, started, err := runtimeValue.StartGoalRound(context.Background(), nil); started || err == nil {
 		t.Errorf("a nil reservation started a round (started=%v, err=%v)", started, err)
 	}
 
@@ -446,7 +447,7 @@ func TestStartGoalRoundRefusesAnUnarmedOrUnusableReservation(t *testing.T) {
 	reservation := queue.rounds[0]
 
 	// No agent to run it: refused, and — the part that matters — nothing spent.
-	if _, started, err := runtimeValue.StartGoalRound(reservation); started || !errors.Is(err, ErrGoalNotArmed) {
+	if _, started, err := runtimeValue.StartGoalRound(context.Background(), reservation); started || !errors.Is(err, ErrGoalNotArmed) {
 		t.Errorf("a round ran with no agent (started=%v, err=%v)", started, err)
 	}
 	if goal, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata); goal.Rounds != 0 {
@@ -455,7 +456,7 @@ func TestStartGoalRoundRefusesAnUnarmedOrUnusableReservation(t *testing.T) {
 
 	// Disarmed: same answer, and still nothing spent.
 	runtimeValue.SetGoalArmed(false)
-	if _, started, _ := runtimeValue.StartGoalRound(reservation); started {
+	if _, started, _ := runtimeValue.StartGoalRound(context.Background(), reservation); started {
 		t.Error("a disarmed runtime started a round")
 	}
 	if goal, _ := state.LoadGoal(runtimeValue.SessionValue.Metadata); goal.Rounds != 0 {
@@ -721,7 +722,7 @@ func humanThenRound(t *testing.T, runtimeValue *Runtime) {
 	if len(queue.rounds) != 1 {
 		t.Fatalf("queued %d rounds after a human turn, want 1", len(queue.rounds))
 	}
-	if _, started, err := runtimeValue.StartGoalRound(queue.rounds[0]); !started || err != nil {
+	if _, started, err := runtimeValue.StartGoalRound(context.Background(), queue.rounds[0]); !started || err != nil {
 		t.Fatalf("the reserved round did not run (started=%v, err=%v)", started, err)
 	}
 }
@@ -860,7 +861,7 @@ func TestARefusedRoundStillReleasesTheClaim(t *testing.T) {
 	// Disarmed between the reservation and the start: the round is refused, and the
 	// claim must not be left held for a round that will never spend it.
 	runtimeValue.SetGoalArmed(false)
-	if _, started, err := runtimeValue.StartGoalRound(reservation); started || !errors.Is(err, ErrGoalNotArmed) {
+	if _, started, err := runtimeValue.StartGoalRound(context.Background(), reservation); started || !errors.Is(err, ErrGoalNotArmed) {
 		t.Fatalf("a disarmed round ran (started=%v, err=%v)", started, err)
 	}
 	if runtimeValue.Driver.Pending() != nil {

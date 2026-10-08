@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -49,7 +50,7 @@ func (f *fakeRuntime) GoalPanel() map[string]any          { return map[string]an
 func (f *fakeRuntime) MCPMessage(string, []string) (map[string]any, []string) {
 	return nil, nil
 }
-func (f *fakeRuntime) RunTurn(text string) (string, error) {
+func (f *fakeRuntime) RunTurn(_ context.Context, text string) (string, error) {
 	f.turns = append(f.turns, text)
 	return "answer to " + text, nil
 }

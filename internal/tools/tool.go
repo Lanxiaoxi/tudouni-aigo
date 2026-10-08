@@ -16,6 +16,7 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -52,6 +53,19 @@ type Result struct {
 // TextResult is the common case: a string and nothing extra.
 func TextResult(text string) Result { return Result{Text: text} }
 
+// InterruptedAuditKey marks a result that describes an interruption rather than an
+// outcome: the turn was stopped while this call was running, so the text says what
+// was observed before it stopped and the audit says plainly that there is no
+// verdict.
+//
+// It is an audit field rather than a distinct error type because an interrupted
+// call **did** produce a result the model must read — "the command was stopped
+// part-way" is exactly the kind of ordinary, explainable outcome this package
+// already returns for a non-zero exit code. What it is not is a success, and that
+// is the one thing the caller has to be told, because a result that reads like a
+// completed command is how the model concludes a half-finished build worked.
+const InterruptedAuditKey = "interrupted"
+
 // ImageContent is one picture a tool produced, before it is an artifact.
 //
 // It carries no media type and no dimensions on purpose. Both are facts about the
@@ -78,7 +92,16 @@ type ImageContent struct {
 // ordinary failures (a missing file, a non-zero exit code, no matches) are results
 // with text explaining them, because the model has to see them and try something
 // else.
-type Handler func(arguments map[string]any) (Result, error)
+//
+// The context is the **turn's** cancellation, and it is a parameter rather than
+// something a handler reaches for because a handler that blocks on I/O has to be
+// able to abandon it. Pressing stop used to be noticed only at the next step
+// boundary, so a `shell` call with a 300-second timeout made the user wait out the
+// command; nothing in this package could do better, because nothing here had a way
+// to hear about the stop. A handler that ignores the context is still correct — it
+// simply stays uncancellable, which is the right answer for a tool that returns
+// immediately.
+type Handler func(ctx context.Context, arguments map[string]any) (Result, error)
 
 // Tool is one capability.
 type Tool struct {
@@ -124,7 +147,11 @@ func (t Tool) OpenAISchema() map[string]any {
 }
 
 // Execute validates the arguments and runs the handler.
-func (t Tool) Execute(arguments map[string]any) (result Result, err error) {
+//
+// The context is the turn's. It is passed on rather than checked here: whether a
+// call can be abandoned half-way is a property of what the handler does, and a
+// handler that returns immediately has nothing to abandon.
+func (t Tool) Execute(ctx context.Context, arguments map[string]any) (result Result, err error) {
 	// A panic inside a handler is a bug, and it must not take the session with it.
 	//
 	// Go panics are not errors: without this, one bad regex or one out-of-range
@@ -147,7 +174,7 @@ func (t Tool) Execute(arguments map[string]any) (result Result, err error) {
 	if t.Handler == nil {
 		return Result{}, fmt.Errorf("tool %s has no handler", t.Name)
 	}
-	result, err = t.Handler(validated)
+	result, err = t.Handler(ctx, validated)
 	if err != nil {
 		return Result{}, err
 	}

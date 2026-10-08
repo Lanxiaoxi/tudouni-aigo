@@ -5,6 +5,7 @@
 package builtin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -45,7 +46,7 @@ func NewFileTools(workspace *tools.Workspace) []tools.Tool {
 					"读到第几行（1 起，含这一行）。不传表示读到文件末尾",
 					tools.Minimum(1)),
 			}, "path"),
-			Handler: func(args map[string]any) (tools.Result, error) {
+			Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 				return readFile(workspace, args)
 			},
 			ParallelSafe: true,
@@ -58,7 +59,7 @@ func NewFileTools(workspace *tools.Workspace) []tools.Tool {
 				"path":    tools.StringSchema("文件路径", tools.MinLength(1)),
 				"content": tools.StringSchema("文件内容"),
 			}, "path", "content"),
-			Handler: func(args map[string]any) (tools.Result, error) {
+			Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 				return writeFile(workspace, args)
 			},
 		},
@@ -82,7 +83,7 @@ old_string 在文件里出现多次时，默认拒绝执行并要你把它改得
 					tools.Default(false),
 				),
 			}, "path", "old_string"),
-			Handler: func(args map[string]any) (tools.Result, error) {
+			Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 				return editFile(workspace, args)
 			},
 		},
@@ -93,7 +94,7 @@ old_string 在文件里出现多次时，默认拒绝执行并要你把它改得
 			Schema: tools.ObjectSchema(map[string]any{
 				"path": tools.StringSchema("目录路径（相对于工作区），默认为工作区根目录", tools.MinLength(1), tools.Default(".")),
 			}),
-			Handler: func(args map[string]any) (tools.Result, error) {
+			Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 				return listFiles(workspace, args)
 			},
 			ParallelSafe: true,

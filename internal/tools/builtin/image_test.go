@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -59,7 +60,7 @@ func imageHarness(t *testing.T) (*tools.Workspace, string, tools.Tool) {
 // which is the difference this feature is about.
 func callImage(t *testing.T, tool tools.Tool, arguments map[string]any) tools.Result {
 	t.Helper()
-	result, err := tool.Execute(arguments)
+	result, err := tool.Execute(context.Background(), arguments)
 	if err != nil {
 		t.Fatalf("the tool returned an error rather than a result: %v", err)
 	}

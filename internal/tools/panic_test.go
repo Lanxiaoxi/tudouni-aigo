@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestAPanickingHandlerBecomesAnErrorNotAnExit(t *testing.T) {
 		Description: "for the test",
 		Risk:        "low",
 		Schema:      EmptySchema(),
-		Handler: func(map[string]any) (Result, error) {
+		Handler: func(_ context.Context, _ map[string]any) (Result, error) {
 			var empty []string
 			return Result{Text: empty[3]}, nil // index out of range
 		},
@@ -26,7 +27,7 @@ func TestAPanickingHandlerBecomesAnErrorNotAnExit(t *testing.T) {
 		t.Fatalf("registration: %v", err)
 	}
 
-	result, err := tool.Execute(map[string]any{})
+	result, err := tool.Execute(context.Background(), map[string]any{})
 	if err == nil {
 		t.Fatal("a panicking handler returned no error, so the caller would treat it as success")
 	}
@@ -43,17 +44,17 @@ func TestAPanickingHandlerBecomesAnErrorNotAnExit(t *testing.T) {
 func TestARegistryOfPanickingToolsIsStillUsable(t *testing.T) {
 	exploding := Tool{
 		Name: "boom", Description: "x", Risk: "low", Schema: EmptySchema(),
-		Handler: func(map[string]any) (Result, error) { panic("deliberate") },
+		Handler: func(_ context.Context, _ map[string]any) (Result, error) { panic("deliberate") },
 	}
 	working := Tool{
 		Name: "fine", Description: "x", Risk: "low", Schema: EmptySchema(),
-		Handler: func(map[string]any) (Result, error) { return TextResult("answered"), nil },
+		Handler: func(_ context.Context, _ map[string]any) (Result, error) { return TextResult("answered"), nil },
 	}
 
-	if _, err := exploding.Execute(map[string]any{}); err == nil {
+	if _, err := exploding.Execute(context.Background(), map[string]any{}); err == nil {
 		t.Fatal("the panicking tool did not fail")
 	}
-	result, err := working.Execute(map[string]any{})
+	result, err := working.Execute(context.Background(), map[string]any{})
 	if err != nil || result.Text != "answered" {
 		t.Fatalf("the next tool did not run: %q / %v", result.Text, err)
 	}

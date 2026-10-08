@@ -46,7 +46,7 @@ export interface LooseEvent {
    ============================================================ */
 
 export interface ToolResultState {
-  /** `ok` / `invalid_args` / `error` / `denied`. */
+  /** `ok` / `invalid_args` / `error` / `denied` / `interrupted`. */
   status: string;
   chars: number;
   durationMs: number;

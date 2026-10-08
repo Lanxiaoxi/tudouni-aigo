@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ type authRuntime struct {
 	queued []map[string]any
 }
 
-func (r *authRuntime) RunTurn(string) (string, error) { return "answered", nil }
+func (r *authRuntime) RunTurn(context.Context, string) (string, error) { return "answered", nil }
 
 func (r *authRuntime) DrainAuthNotices() []map[string]any {
 	out := r.queued

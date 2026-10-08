@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,7 +14,7 @@ import (
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/files"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
@@ -300,7 +301,7 @@ type Runtime struct {
 
 	// ContextValue is the session's context ledger: which artifacts are in play,
 	// at what level, and what has been folded away.
-	ContextValue *context.Manager
+	ContextValue *ctxwin.Manager
 	// Workspace is the boundary around the directory the agent works in. It is
 	// kept on the runtime rather than passed to each caller because attach-time
 	// work (resolving a picture the user named) has to go through the **same**
@@ -1286,13 +1287,13 @@ func (r *Runtime) subagentPanel() []any {
 // gets the budget switched off rather than a guess: an invented ceiling degrades
 // a context that would have fit, and then "why can the model not see the whole
 // file" has no answer anywhere.
-func openContext(session *state.Session, chat model.ChatModel, catalog state.Registry) (*context.Manager, *context.ToolResultProcessor, []string, error) {
-	store := context.OpenArtifactStore(paths.SessionArtifactsDir(session.SessionID), nil)
+func openContext(session *state.Session, chat model.ChatModel, catalog state.Registry) (*ctxwin.Manager, *ctxwin.ToolResultProcessor, []string, error) {
+	store := ctxwin.OpenArtifactStore(paths.SessionArtifactsDir(session.SessionID), nil)
 	missing := store.Load()
 
-	var restored *context.ContextState
+	var restored *ctxwin.ContextState
 	if session.Context != nil {
-		saved, err := context.ContextStateFromJSON(session.Context)
+		saved, err := ctxwin.ContextStateFromJSON(session.Context)
 		if err != nil {
 			// A context record this version cannot read is reported and dropped.
 			// The artifacts are still on disk and the messages are still in
@@ -1310,8 +1311,8 @@ func openContext(session *state.Session, chat model.ChatModel, catalog state.Reg
 		window = &value
 	}
 
-	manager := context.NewManager(store, restored, context.NewBudget(window),
-		func(current *context.ContextState) {
+	manager := ctxwin.NewManager(store, restored, ctxwin.NewBudget(window),
+		func(current *ctxwin.ContextState) {
 			// The checkpoint reads the Session, so the Session has to point at the
 			// live state. Doing this on every change rather than at the end of the
 			// turn is what makes a killed process recover to where it really was.
@@ -1321,11 +1322,11 @@ func openContext(session *state.Session, chat model.ChatModel, catalog state.Reg
 	// Legacy sessions: tool bodies are sitting in history as text. Hydrate
 	// collects them into the store and gives each a full-level item — which is
 	// what happened before, made explicit so it can be degraded later.
-	if _, err := manager.Hydrate(session.Messages, context.ZoneDynamic, 0); err != nil {
+	if _, err := manager.Hydrate(session.Messages, ctxwin.ZoneDynamic, 0); err != nil {
 		return nil, nil, missing, err
 	}
 
-	return manager, context.DefaultProcessor(), missing, nil
+	return manager, ctxwin.DefaultProcessor(), missing, nil
 }
 
 // Checkpoint writes the session down. It is the public name for what the agent
@@ -1361,7 +1362,7 @@ func (r *Runtime) contextHandle() any {
 }
 
 // Context is the session's context ledger, or nil when the layer is off.
-func (r *Runtime) Context() *context.Manager { return r.ContextValue }
+func (r *Runtime) Context() *ctxwin.Manager { return r.ContextValue }
 
 // auditRecord is the record as it is written to the log.
 //
@@ -1512,8 +1513,8 @@ func (r *Runtime) MarkStop() {}
 // `attachPictures` resolves whatever the message names, stores the bytes, and
 // returns the body — which is a plain string whenever nothing was attached, so a
 // session that never used the feature sends exactly what it always sent.
-func (r *Runtime) RunTurn(text string) (string, error) {
-	return r.Agent.RunMessages(r.turnMessages(text))
+func (r *Runtime) RunTurn(ctx context.Context, text string) (string, error) {
+	return r.Agent.RunMessages(ctx, r.turnMessages(text))
 }
 
 // SetAutopilot implements protocol.Runtime.
@@ -1834,7 +1835,7 @@ func (r *Runtime) contextPayload() map[string]any {
 	}
 	if r.SessionValue != nil {
 		payload["messages"] = len(r.SessionValue.Messages)
-		if state, ok := context.LoadCompaction(r.SessionValue.Metadata); ok {
+		if state, ok := ctxwin.LoadCompaction(r.SessionValue.Metadata); ok {
 			payload["active"] = state.Active()
 			payload["folded"] = state.FoldedMessages
 			payload["generation"] = state.Generation

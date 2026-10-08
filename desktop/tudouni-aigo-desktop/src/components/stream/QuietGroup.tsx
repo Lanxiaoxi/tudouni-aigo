@@ -135,7 +135,9 @@ function QuietLine({
                     ? t('entry.toolResultError')
                     : result.status === 'invalid_args'
                       ? t('entry.toolResultInvalid')
-                      : t('entry.toolResultDenied')}
+                      : result.status === 'interrupted'
+                        ? t('entry.toolResultInterrupted')
+                        : t('entry.toolResultDenied')}
               </Badge>{' '}
               {formatDuration(result.durationMs)}
               {result.exitCode !== null ? ` · ${t('entry.toolExit', { n: result.exitCode })}` : ''}

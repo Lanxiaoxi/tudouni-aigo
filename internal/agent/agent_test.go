@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -97,7 +98,7 @@ func newHarness(t *testing.T, chat model.ChatModel, ask security.AskFunc) *harne
 			"path":    tools.StringSchema("path", tools.MinLength(1)),
 			"content": tools.StringSchema("content"),
 		}, "path", "content"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(_ context.Context, arguments map[string]any) (tools.Result, error) {
 			return tools.TextResult("Written: " + arguments["path"].(string)), nil
 		},
 	}
@@ -113,7 +114,7 @@ func newHarness(t *testing.T, chat model.ChatModel, ask security.AskFunc) *harne
 			"old_string": tools.StringSchema("old"),
 			"new_string": tools.StringSchema("new"),
 		}, "path", "old_string", "new_string"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(_ context.Context, arguments map[string]any) (tools.Result, error) {
 			return tools.TextResult("edited"), nil
 		},
 	}
@@ -128,7 +129,7 @@ func newHarness(t *testing.T, chat model.ChatModel, ask security.AskFunc) *harne
 		Schema: tools.ObjectSchema(map[string]any{
 			"path": tools.StringSchema("path", tools.MinLength(1)),
 		}, "path"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(_ context.Context, arguments map[string]any) (tools.Result, error) {
 			return tools.TextResult("contents"), nil
 		},
 	}
@@ -212,7 +213,7 @@ func TestReasoningOnlyStepIsNudgedBack(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	answer, err := h.agent.Run("hi")
+	answer, err := h.agent.Run(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("a nudged turn must not fail: %v", err)
 	}
@@ -239,7 +240,7 @@ func TestReasoningOnlyStepIsNotPersisted(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	if _, err := h.agent.Run("hi"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "hi"); err != nil {
 		t.Fatal(err)
 	}
 	for _, message := range h.session.Messages {
@@ -262,7 +263,7 @@ func TestEmptyTurnIsNotAnswered(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	answer, err := h.agent.Run("hi")
+	answer, err := h.agent.Run(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("an empty turn must report an error, not an empty answer")
 	}
@@ -290,7 +291,7 @@ func TestNudgeRidesThePayloadOnly(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	if _, err := h.agent.Run("hi"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "hi"); err != nil {
 		t.Fatal(err)
 	}
 	for _, message := range h.session.Messages {
@@ -323,7 +324,7 @@ func TestAnsweredTurn(t *testing.T) {
 	chat := &fakeModel{script: []model.ModelResponse{textResponse("hello")}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	answer, err := h.agent.Run("hi")
+	answer, err := h.agent.Run(context.Background(), "hi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,7 +346,7 @@ func TestToolCallThenAnswer(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	answer, err := h.agent.Run("read a.txt")
+	answer, err := h.agent.Run(context.Background(), "read a.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +395,7 @@ func TestTheThinkingOfAToolCallIsKeptInTheHistory(t *testing.T) {
 	chat := &fakeModel{script: []model.ModelResponse{step, textResponse("read it")}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	if _, err := h.agent.Run("read a.txt"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "read a.txt"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -428,7 +429,7 @@ func TestDeniedCallNeverRuns(t *testing.T) {
 	refuse := func(string, security.RiskLevel, map[string]any) bool { return false }
 	h := newHarness(t, chat, refuse)
 
-	if _, err := h.agent.Run("write it"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "write it"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -454,7 +455,7 @@ func TestStepLimitIsNotAnError(t *testing.T) {
 	}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	_, err := h.agent.Run("loop")
+	_, err := h.agent.Run(context.Background(), "loop")
 	var limit *StepLimitExceeded
 	if !errors.As(err, &limit) {
 		t.Fatalf("err = %v, want StepLimitExceeded", err)
@@ -474,7 +475,7 @@ func TestFatalErrorIsNotRetried(t *testing.T) {
 	}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	_, err := h.agent.Run("hi")
+	_, err := h.agent.Run(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("a fatal error must be reported")
 	}
@@ -500,7 +501,7 @@ func TestTransientErrorIsRetriedThenReported(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	if _, err := h.agent.Run("hi"); err == nil {
+	if _, err := h.agent.Run(context.Background(), "hi"); err == nil {
 		t.Fatal("giving up must be reported")
 	}
 	if chat.calls != MaxAttempts {
@@ -528,7 +529,7 @@ func TestArgumentsArePreviewedNotStoredWhole(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	if _, err := h.agent.Run("write"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "write"); err != nil {
 		t.Fatal(err)
 	}
 	for _, event := range h.events {
@@ -549,7 +550,7 @@ func TestUnknownToolIsReportedNotCrashed(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	if _, err := h.agent.Run("go"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "go"); err != nil {
 		t.Fatal(err)
 	}
 	var text string
@@ -571,7 +572,7 @@ func TestExistingRequestIsDeniedWhenNobodyCanBeAsked(t *testing.T) {
 	}}
 	h := newHarness(t, chat, nil)
 
-	if _, err := h.agent.Run("write"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "write"); err != nil {
 		t.Fatal(err)
 	}
 	if !hasEventWith(h.events, "permission", "outcome", OutcomeNoAsker) {
@@ -595,7 +596,7 @@ func TestInconsistentArgumentsAreReportedAsInvalid(t *testing.T) {
 	}}
 	h := newHarness(t, chat, security.AlwaysAllow)
 
-	if _, err := h.agent.Run("go"); err != nil {
+	if _, err := h.agent.Run(context.Background(), "go"); err != nil {
 		t.Fatal(err)
 	}
 	if !hasEventWith(h.events, "tool_result", "status", statusInvalidArgs) {

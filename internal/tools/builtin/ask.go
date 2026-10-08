@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
@@ -63,7 +64,7 @@ func NewAskUser(questioner Questioner) tools.Tool {
 			"options":      tools.ArraySchema("给了选项就按编号显示给用户；留空表示让他自由作答", tools.StringSchema("一个选项")),
 			"multi_select": tools.BoolSchema("是否允许选多个（只在给了 options 时有意义）", tools.Default(false)),
 		}, "question"),
-		Handler: func(args map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			return askUser(questioner, args), nil
 		},
 		ParallelSafe: false,

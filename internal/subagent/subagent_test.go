@@ -1,12 +1,13 @@
 package subagent
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -138,7 +139,7 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 		Risk:         security.RiskLow,
 		ParallelSafe: true,
 		Schema:       tools.ObjectSchema(map[string]any{"path": tools.StringSchema("path")}, "path"),
-		Handler: func(map[string]any) (tools.Result, error) {
+		Handler: func(_ context.Context, _ map[string]any) (tools.Result, error) {
 			return tools.TextResult("contents"), nil
 		},
 	}); err != nil {
@@ -200,7 +201,7 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 // validation and argument decoding are exercised as well.
 func (h *harness) call(t *testing.T, arguments map[string]any) tools.Result {
 	t.Helper()
-	result, err := h.tool.Execute(arguments)
+	result, err := h.tool.Execute(context.Background(), arguments)
 	if err != nil {
 		t.Fatalf("the tool returned an error rather than a result: %v", err)
 	}
@@ -588,7 +589,7 @@ func TestADeniedToolInsideTheChildDoesNotAskTheUser(t *testing.T) {
 		Description: "a medium-risk tool",
 		Risk:        security.RiskMedium,
 		Schema:      tools.ObjectSchema(map[string]any{"value": tools.StringSchema("value")}, "value"),
-		Handler: func(map[string]any) (tools.Result, error) {
+		Handler: func(_ context.Context, _ map[string]any) (tools.Result, error) {
 			ran = true
 			return tools.TextResult("ran"), nil
 		},
@@ -643,7 +644,7 @@ func TestTheChildsContextLedgerIsPersisted(t *testing.T) {
 		Risk:         security.RiskLow,
 		ParallelSafe: true,
 		Schema:       tools.ObjectSchema(map[string]any{"path": tools.StringSchema("path")}, "path"),
-		Handler: func(map[string]any) (tools.Result, error) {
+		Handler: func(_ context.Context, _ map[string]any) (tools.Result, error) {
 			return tools.TextResult(body), nil
 		},
 	})
@@ -661,7 +662,7 @@ func TestTheChildsContextLedgerIsPersisted(t *testing.T) {
 	if saved.Context == nil {
 		t.Fatal("the child session carries no context ledger; its artifact references point at nothing")
 	}
-	ledger, err := context.ContextStateFromJSON(saved.Context)
+	ledger, err := ctxwin.ContextStateFromJSON(saved.Context)
 	if err != nil {
 		t.Fatalf("the saved ledger does not decode: %v", err)
 	}

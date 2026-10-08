@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -10,7 +11,7 @@ import (
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/content"
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -195,10 +196,10 @@ type Config struct {
 	//
 	// It is injected rather than built here because the agent does not know where
 	// the workspace is or what the session id is.
-	Context *context.Manager
+	Context *ctxwin.Manager
 	// Processor turns one tool execution into artifacts. It travels with Context:
 	// without a store to collect into, it has nowhere to put anything.
-	Processor *context.ToolResultProcessor
+	Processor *ctxwin.ToolResultProcessor
 	// Vision reports whether the model in use can be sent pictures.
 	//
 	// It is a function rather than a bool because the answer changes with the
@@ -299,8 +300,8 @@ func (a *Agent) OfferedEffortLevels() []string {
 }
 
 // Run executes one turn and returns the answer.
-func (a *Agent) Run(userInput string) (string, error) {
-	return a.RunMessages([]map[string]any{{"role": "user", "content": userInput}})
+func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
+	return a.RunMessages(ctx, []map[string]any{{"role": "user", "content": userInput}})
 }
 
 // RunMessages executes one turn whose opening messages the runtime composed.
@@ -317,7 +318,12 @@ func (a *Agent) Run(userInput string) (string, error) {
 // An empty list is refused rather than tolerated. A turn with no opening message
 // asks the model to continue a conversation nobody started, and the answer would be
 // indistinguishable from a real one.
-func (a *Agent) RunMessages(messages []map[string]any) (string, error) {
+// `ctx` is the turn's cancellation. It is a parameter rather than a field on the
+// Agent because a turn is a value here and the Agent is not: the same Agent runs
+// every turn of a session, and a cancellation left on it would outlive the turn it
+// belonged to — which is exactly the bug `ClearStop` exists to prevent for the
+// flag, and there is no reason to reintroduce it for the context.
+func (a *Agent) RunMessages(ctx context.Context, messages []map[string]any) (string, error) {
 	if len(messages) == 0 {
 		return "", RunCancelled{}
 	}
@@ -378,7 +384,7 @@ func (a *Agent) RunMessages(messages []map[string]any) (string, error) {
 
 	a.emit(audit.Event(audit.KindRunStarted, a.Session.SessionID, a.runID, 0, a.runStartedData()))
 
-	return a.loop()
+	return a.loop(ctx)
 }
 
 func (a *Agent) runStartedData() map[string]any {
@@ -396,12 +402,12 @@ func (a *Agent) runStartedData() map[string]any {
 	return data
 }
 
-func (a *Agent) loop() (string, error) {
+func (a *Agent) loop(ctx context.Context) (string, error) {
 	for a.step = 0; a.step < a.MaxSteps; a.step++ {
 		// The cancellation point sits between steps, which is the only place the
 		// message list is consistent. Stopping anywhere else would leave an
 		// assistant message with tool_calls and no results.
-		if a.ShouldStop != nil && a.ShouldStop() {
+		if a.stopped(ctx) {
 			a.finish(StopCancelled)
 			if a.OnCheckpoint != nil {
 				a.OnCheckpoint()
@@ -440,7 +446,7 @@ func (a *Agent) loop() (string, error) {
 			}
 		}
 
-		response, err := a.completeWithRetry()
+		response, err := a.completeWithRetry(ctx)
 		if err != nil {
 			if isCancelled(err) {
 				a.finish(StopCancelled)
@@ -515,7 +521,7 @@ func (a *Agent) loop() (string, error) {
 		// message has one job: to say which tools the turn was stuck on. Accumulated
 		// over 120 steps it is a hundred names and no clue.
 		a.toolsUsed = a.toolsUsed[:0]
-		if err := a.runBatch(response.ToolCalls); err != nil {
+		if err := a.runBatch(ctx, response.ToolCalls); err != nil {
 			if isCancelled(err) {
 				a.finish(StopCancelled)
 				if a.OnCheckpoint != nil {
@@ -537,13 +543,18 @@ func (a *Agent) loop() (string, error) {
 	return "", &StepLimitExceeded{Step: a.step, Tools: a.toolsUsed}
 }
 
-func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
+func (a *Agent) completeWithRetry(ctx context.Context) (model.ModelResponse, error) {
 	payload := a.Payload()
 
 	options := model.CompleteOptions{}
+	// Handed to the adapter as well: a stream in flight has to be dropped at the
+	// next chunk, not at the next step boundary. See CompleteOptions.
+	//
+	// The context goes in beside it, and it is the half that reaches a request which
+	// has not answered yet — a stop during "the model is thinking" used to wait for
+	// the first byte, which is the one moment a person is most likely to give up.
+	options.Ctx = ctx
 	if a.ShouldStop != nil {
-		// Handed to the adapter as well: a stream in flight has to be dropped at
-		// the next chunk, not at the next step boundary. See CompleteOptions.
 		options.ShouldStop = a.ShouldStop
 	}
 
@@ -585,6 +596,7 @@ func (a *Agent) completeWithRetry() (model.ModelResponse, error) {
 	}
 	hooks := RetryHooks{
 		ShouldStop: a.ShouldStop,
+		Ctx:        ctx,
 		BeforeEach: beforeAttempt,
 		OnAttempt: func(attempt Attempt) {
 			a.reportAttempt(attempt)
@@ -745,10 +757,16 @@ type prepared struct {
 	parallel bool
 	// failure is set when the call cannot run; the text is what the model sees.
 	failure     string
-	failureKind string // "invalid_args" | "denied"
+	failureKind string // "invalid_args" | "denied" | "interrupted"
 	status      string
 	result      string
-	audit       map[string]any
+	// ran records that the handler was entered. It is what tells the settlement
+	// pass apart from the two other ways a call leaves without a result: a refusal
+	// (failure is set before anything runs) and a stop (nothing was ever started).
+	// Without it, "the handler produced an empty string" and "the handler was never
+	// called" would be the same observation, and one of them owes a result message.
+	ran   bool
+	audit map[string]any
 	// images are the pictures this call produced, carried as bytes until
 	// `toolMessage` turns them into artifacts.
 	//
@@ -775,7 +793,7 @@ type prepared struct {
 // of call *n* first — that result is part of what they are judging with, and the
 // previous generation states it as a rule. It also keeps the audit interleaved the
 // way a reader expects: call, permission, result, call, permission, result.
-func (a *Agent) runBatch(calls []model.ToolCall) error {
+func (a *Agent) runBatch(ctx context.Context, calls []model.ToolCall) error {
 	batch := make([]prepared, 0, len(calls))
 	parallel := len(calls) > 1
 
@@ -804,7 +822,7 @@ func (a *Agent) runBatch(calls []model.ToolCall) error {
 		for i := range batch {
 			a.approve(&batch[i])
 		}
-		a.runParallel(batch)
+		a.runParallel(ctx, batch)
 		// A call that never ran still produced a result as far as the audit is
 		// concerned: the model asked for it, and "it was refused" or "its arguments
 		// were invalid" is the outcome. Recording only the executions would leave
@@ -817,14 +835,42 @@ func (a *Agent) runBatch(calls []model.ToolCall) error {
 		}
 	} else {
 		for i := range batch {
+			// A stop during the previous call ends the batch here. The calls that
+			// were never reached are settled below rather than skipped: see the
+			// settlement pass, which is the invariant rather than tidiness.
+			if a.stopped(ctx) {
+				break
+			}
 			// Adjacent, always: the question about this call comes after the
 			// previous call's result has been shown.
 			a.approve(&batch[i])
-			a.runOne(&batch[i])
+			a.runOne(ctx, &batch[i])
 			if batch[i].failure != "" {
 				a.reportToolResult(&batch[i], 0, false)
 			}
 		}
+	}
+
+	// **Settlement: every call the model asked for leaves with a result.**
+	//
+	// This is the reason a stop cannot simply return early. An assistant message
+	// that carries `tool_calls` must be followed by a tool result for every one of
+	// those ids; a missing one is a 400 from the provider that reads like "the
+	// context is too long", and it is permanent, because the message is already in
+	// the session file. So a call that never ran — because the turn was stopped
+	// while an earlier call was in flight — is not skipped, it is **answered** with
+	// the one true thing there is to say about it.
+	//
+	// It is a separate pass rather than a branch inside the loop above because the
+	// parallel path can also leave calls unanswered, and because doing it here keeps
+	// the serial path's interleaving intact: the audit still reads call, permission,
+	// result, one call at a time.
+	for i := range batch {
+		if batch[i].ran || batch[i].failure != "" {
+			continue
+		}
+		batch[i] = failPrepared(batch[i], statusInterrupted, interruptedCallText(batch[i].call.Name))
+		a.reportToolResult(&batch[i], 0, false)
 	}
 
 	// Results are appended in the model's order regardless of the order they
@@ -839,7 +885,30 @@ func (a *Agent) runBatch(calls []model.ToolCall) error {
 	if message := a.imageMessage(batch); message != nil {
 		a.Session.Append(message)
 	}
+
+	// The stop is reported only now, after the history is consistent. Returning it
+	// from inside the loop above would have left the batch half-settled, and the
+	// caller treats this error as "the turn ended" — it checkpoints the session and
+	// returns.
+	if a.stopped(ctx) {
+		return RunCancelled{}
+	}
 	return nil
+}
+
+// interruptedCallText is what the model is told about a call that was never run
+// because the turn was stopped first.
+//
+// It names the tool, because the model is reading a list of results and "this one
+// did not run" without saying which one is a puzzle; and it says the call may be
+// repeated, because unlike a refusal there is no policy decision behind it — the
+// person stopped the turn, and the next turn is free to do the same thing.
+func interruptedCallText(tool string) string {
+	if tool == "" {
+		return "这次调用没有执行：这一轮在此之前就被停止了。它没有产生任何结果。"
+	}
+	return "这次调用（" + tool + "）没有执行：这一轮在它开始之前就被停止了。" +
+		"它没有产生任何结果，也没有发生任何副作用 —— 需要的话可以在下一轮重新调用。"
 }
 
 // imageMessage carries the pictures one batch of tool calls produced.
@@ -910,7 +979,7 @@ func (a *Agent) imageMessage(batch []prepared) map[string]any {
 	body := content.Content{}
 	seen := map[string]bool{}
 	for _, picture := range pictures {
-		artifact, err := context.AttachImage(a.Context.Store, picture.Body, context.ArtifactSource{
+		artifact, err := ctxwin.AttachImage(a.Context.Store, picture.Body, ctxwin.ArtifactSource{
 			Tool: "read_image",
 			Path: picture.Path,
 		})
@@ -939,8 +1008,8 @@ func (a *Agent) imageMessage(batch []prepared) map[string]any {
 		// The same ledger entry a user's own attachment gets — dynamic and
 		// unpinned, because that is what every other tool result is, and the ladder
 		// has a thumbnail to offer before it drops a picture.
-		a.Context.Add(artifact.ID, context.AddOptions{Quiet: true})
-		body = body.WithImage(context.ImageRefFor(artifact, content.VariantOriginal))
+		a.Context.Add(artifact.ID, ctxwin.AddOptions{Quiet: true})
+		body = body.WithImage(ctxwin.ImageRefFor(artifact, content.VariantOriginal))
 	}
 	if body.IsEmpty() {
 		return nil
@@ -1013,12 +1082,13 @@ func failPrepared(item prepared, kind, text string) prepared {
 }
 
 // runOne executes one prepared call.
-func (a *Agent) runOne(item *prepared) {
+func (a *Agent) runOne(ctx context.Context, item *prepared) {
 	if item.failure != "" {
 		return
 	}
+	item.ran = true
 	started := time.Now()
-	result, err := item.tool.Execute(item.arguments)
+	result, err := item.tool.Execute(ctx, item.arguments)
 	durationMs := int(time.Since(started).Milliseconds())
 
 	text := result.Text
@@ -1030,12 +1100,36 @@ func (a *Agent) runOne(item *prepared) {
 		status = statusError
 		text = fmt.Sprintf("工具执行失败：%T: %v", err, err)
 		a.reportToStderr(fmt.Sprintf("tool %s failed: %v", item.call.Name, err))
+		// Unless the turn was stopped, in which case "the tool failed" is the wrong
+		// story: whatever the transport reported on its way out, the cause is that
+		// somebody asked for this to stop. A handler that returns an error rather
+		// than an interrupted result lands here.
+		if ctx.Err() != nil {
+			status = statusInterrupted
+			// A different sentence from the settlement pass's, and the difference is
+			// the fact the model needs: this call **did** start, so it may have had
+			// side effects before it was cut off. "It never ran, repeat it freely" is
+			// the wrong thing to say about a handler that was halfway through.
+			text = "这次调用（" + item.call.Name + "）被中断了：这一轮在执行途中被停止，" +
+				"所以它没有跑完、没有结果。它可能已经做了一部分 —— " +
+				"重复之前先确认它到底做到哪了。"
+		}
 	}
 
 	item.status = status
 	if result.Audit != nil {
 		for key, value := range result.Audit {
+			if key == tools.InterruptedAuditKey {
+				continue
+			}
 			item.audit[key] = value
+		}
+		// A handler that says it was interrupted decides the **text** — it is the one
+		// that knows what it was doing — while the status is decided here, because the
+		// vocabulary belongs to the loop that writes the history and the audit.
+		if interrupted, _ := result.Audit[tools.InterruptedAuditKey].(bool); interrupted {
+			item.status = statusInterrupted
+			item.audit[tools.InterruptedAuditKey] = true
 		}
 	}
 	item.audit["chars"] = len([]rune(text))
@@ -1043,11 +1137,11 @@ func (a *Agent) runOne(item *prepared) {
 	// The pictures this call produced, kept as bytes until `toolMessage` can turn
 	// them into artifacts. A failed call keeps none: the handler may have filled
 	// them in before failing, and half a result is worse than none.
-	if status == statusOK {
+	if item.status == statusOK {
 		item.images = result.Images
 	}
 
-	a.reportToolResult(item, durationMs, status == statusOK)
+	a.reportToolResult(item, durationMs, item.status == statusOK)
 }
 
 func (a *Agent) reportToolResult(item *prepared, durationMs int, ok bool) {
@@ -1091,7 +1185,7 @@ func (a *Agent) reportToolResult(item *prepared, durationMs int, ok bool) {
 	a.emit(audit.Event(audit.KindToolResult, a.Session.SessionID, a.runID, a.step, data))
 }
 
-func (a *Agent) runParallel(batch []prepared) {
+func (a *Agent) runParallel(ctx context.Context, batch []prepared) {
 	started := time.Now()
 	semaphore := make(chan struct{}, MaxParallel)
 	var wait sync.WaitGroup
@@ -1105,7 +1199,7 @@ func (a *Agent) runParallel(batch []prepared) {
 		go func(item *prepared) {
 			defer wait.Done()
 			defer func() { <-semaphore }()
-			a.runOne(item)
+			a.runOne(ctx, item)
 		}(&batch[i])
 	}
 	wait.Wait()
@@ -1201,11 +1295,40 @@ func isCancelled(err error) bool {
 	return ok
 }
 
+// stopped reports whether this turn has been asked to stop, and it is the single
+// place that question is answered inside the loop.
+//
+// Two signals feed it and they are not redundant. The context is what **delivers**
+// the stop into blocking work — a request waiting for its first byte, a shell
+// command, a handler sleeping on a job — and it is the only one of the two that
+// can reach those places. The flag is the same fact as a value, and it is what the
+// goal driver reads after the turn is over to decide whether the goal may continue:
+// by then the context has been cancelled and released, and "was this turn
+// interrupted" would otherwise have no answer.
+//
+// They are set together by the one caller that stops anything
+// (`protocol.Server.requestStop`), so consulting either is consulting both; asking
+// both here means a future caller that sets only one still stops the turn.
+func (a *Agent) stopped(ctx context.Context) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return true
+	}
+	return a.ShouldStop != nil && a.ShouldStop()
+}
+
 const (
 	statusOK          = "ok"
 	statusInvalidArgs = "invalid_args"
 	statusError       = "error"
 	statusDenied      = "denied"
+	// statusInterrupted is a call that did not produce a verdict because the turn
+	// was stopped: either it was running when the stop arrived, or it never started.
+	//
+	// It is its own value rather than an `error` because the two are read
+	// differently by everybody downstream — the model must not treat it as a tool
+	// that broke, the front ends draw it with its own mark, and the audit's
+	// success rate would be wrong if a person pressing stop counted as a failure.
+	statusInterrupted = "interrupted"
 )
 
 // toolMessage builds the message fed back to the model for one call.
@@ -1235,10 +1358,10 @@ func (a *Agent) toolMessage(item *prepared) map[string]any {
 
 	processor := a.Processor
 	if processor == nil {
-		processor = context.DefaultProcessor()
+		processor = ctxwin.DefaultProcessor()
 	}
 
-	execution := context.ToolExecution{
+	execution := ctxwin.ToolExecution{
 		Tool:      item.call.Name,
 		Arguments: item.arguments,
 		Text:      item.result,
@@ -1258,11 +1381,11 @@ func (a *Agent) toolMessage(item *prepared) map[string]any {
 	}
 
 	artifact := artifacts[0]
-	a.Context.Add(artifact.ID, context.AddOptions{Quiet: true})
+	a.Context.Add(artifact.ID, ctxwin.AddOptions{Quiet: true})
 	return map[string]any{
 		"role":         "tool",
 		"tool_call_id": item.call.ID,
-		"content":      context.BuildReference(artifact.ID, artifact.Chars, item.call.Name),
+		"content":      ctxwin.BuildReference(artifact.ID, artifact.Chars, item.call.Name),
 		// The explicit id field: a program should not be finding an artifact by
 		// parsing a sentence meant for a person.
 		"artifact_id": artifact.ID,

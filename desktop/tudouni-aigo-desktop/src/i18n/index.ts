@@ -199,6 +199,10 @@ export const en = {
   'entry.toolResultError': 'error',
   'entry.toolResultInvalid': 'bad arguments',
   'entry.toolResultDenied': 'not run',
+  // Its own label rather than reusing `not run`. "Not run" is a decision the
+  // runtime made about the call; this is the person's own stop, and the two read
+  // very differently when you are scanning a transcript for what your stop did.
+  'entry.toolResultInterrupted': 'stopped',
   'entry.toolChars': '{n} chars',
   'entry.toolExit': 'exit {n}',
   'entry.toolDuration': '{ms}',

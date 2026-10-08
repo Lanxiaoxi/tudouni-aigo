@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,7 +117,7 @@ func NewGrep(workspace *tools.Workspace) (tools.Tool, bool) {
 					"命中文件更多时只列最前面的，但总数会告诉你有几个",
 				tools.Default(GREP_MAX_FILES), tools.Minimum(1), tools.Maximum(GREP_MAX_MAX_FILES)),
 		}, "pattern"),
-		Handler: func(args map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			pattern, _ := args["pattern"].(string)
 			searchPath, _ := args["path"].(string)
 			if searchPath == "" {
@@ -128,7 +129,7 @@ func NewGrep(workspace *tools.Workspace) (tools.Tool, bool) {
 			if v, ok := args["max_files"].(int); ok && v >= 1 {
 				maxFiles = v
 			}
-			return tools.TextResult(grep(workspace, binary, pattern, searchPath, include, ignoreCase, maxFiles)), nil
+			return tools.TextResult(grep(ctx, workspace, binary, pattern, searchPath, include, ignoreCase, maxFiles)), nil
 		},
 		ParallelSafe: true,
 	}, true
@@ -151,7 +152,12 @@ type fileMatch struct {
 // grep runs ripgrep and renders the result. It never throws: "no matches" is a
 // normal outcome, not a fault, and the model must see it to avoid assuming
 // absence equals non-existence.
-func grep(workspace *tools.Workspace, binary, pattern, searchPath, include string, ignoreCase bool, maxFiles int) string {
+//
+// `turn` is the turn's cancellation. The timeout below is derived from it rather
+// than from `context.Background()`, which is the difference between "this search
+// took too long" and "the person stopped the turn": both end the search, and only
+// the second may be reported as an interruption.
+func grep(turn context.Context, workspace *tools.Workspace, binary, pattern, searchPath, include string, ignoreCase bool, maxFiles int) string {
 	root, err := workspace.SafePath(searchPath)
 	if err != nil {
 		// Escaping the workspace is a hard refusal, not a search result.
@@ -165,7 +171,7 @@ func grep(workspace *tools.Workspace, binary, pattern, searchPath, include strin
 	}
 
 	argv := buildGrepArgv(binary, root, pattern, include, ignoreCase)
-	ctx, cancel := context.WithTimeout(context.Background(), GREP_TIMEOUT_SECONDS*time.Second)
+	ctx, cancel := context.WithTimeout(turn, GREP_TIMEOUT_SECONDS*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = workspace.Root()
@@ -186,6 +192,16 @@ func grep(workspace *tools.Workspace, binary, pattern, searchPath, include strin
 			// search for "this is everything".
 			killErr := process.TerminateTree(cmd)
 			<-done
+			// The turn was stopped, so this is not a verdict about the search: the
+			// timeout text below would tell the model to narrow its range, which is
+			// advice about a question nobody is asking any more.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				if killErr != nil {
+					return "这次搜索被中断了，而且**没能把 ripgrep 停掉**（" + killErr.Error() +
+						"）—— 它可能还在跑。这次没有任何结果。"
+				}
+				return "这次搜索被中断了，没有结果。"
+			}
 			text := "搜索超过了 " + itoa(GREP_TIMEOUT_SECONDS) + " 秒，已终止，这次没有任何结果。\n" +
 				"缩小范围再试：把 path 指到子目录，或者用 include 限定文件名（例如 *.py）。"
 			if killErr != nil {

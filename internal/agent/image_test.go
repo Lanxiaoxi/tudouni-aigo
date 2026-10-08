@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
@@ -11,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/content"
-	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -49,7 +50,7 @@ func pictureTool(t *testing.T) tools.Tool {
 		Schema: tools.ObjectSchema(map[string]any{
 			"path": tools.StringSchema("path", tools.MinLength(1)),
 		}, "path"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(_ context.Context, arguments map[string]any) (tools.Result, error) {
 			path, _ := arguments["path"].(string)
 			return tools.Result{
 				Text: "已读取图片 " + path,
@@ -100,8 +101,8 @@ func pngBody(t *testing.T, width, height int) []byte {
 type imageHarness struct {
 	agent   *Agent
 	session *state.Session
-	store   *context.ArtifactStore
-	manager *context.Manager
+	store   *ctxwin.ArtifactStore
+	manager *ctxwin.Manager
 	model   *fakeModel
 	body    []byte
 }
@@ -109,9 +110,9 @@ type imageHarness struct {
 func newImageHarness(t *testing.T, script ...model.ModelResponse) *imageHarness {
 	t.Helper()
 	workspace := t.TempDir()
-	store := context.OpenArtifactStore(filepath.Join(workspace, "artifacts"), nil)
+	store := ctxwin.OpenArtifactStore(filepath.Join(workspace, "artifacts"), nil)
 	tokens := 200_000
-	manager := context.NewManager(store, nil, context.NewBudget(&tokens), nil)
+	manager := ctxwin.NewManager(store, nil, ctxwin.NewBudget(&tokens), nil)
 
 	registry := tools.NewRegistry()
 	if err := registry.Register(pictureTool(t)); err != nil {
@@ -142,7 +143,7 @@ func TestAPictureFromAToolReachesTheModelAsAPicture(t *testing.T) {
 		textResponse("it is a diagram"),
 	)
 
-	answer, err := h.agent.RunMessages([]map[string]any{{"role": "user", "content": "看下图"}})
+	answer, err := h.agent.RunMessages(context.Background(), []map[string]any{{"role": "user", "content": "看下图"}})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestThePictureComesAfterEveryToolResult(t *testing.T) {
 		textResponse("both are diagrams"),
 	)
 
-	if _, err := h.agent.RunMessages([]map[string]any{{"role": "user", "content": "看这两张"}}); err != nil {
+	if _, err := h.agent.RunMessages(context.Background(), []map[string]any{{"role": "user", "content": "看这两张"}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -292,7 +293,7 @@ func TestThePictureMessageIsNotReadAsAPersonSpeaking(t *testing.T) {
 		textResponse("done"),
 	)
 
-	if _, err := h.agent.RunMessages([]map[string]any{{"role": "user", "content": "看下图"}}); err != nil {
+	if _, err := h.agent.RunMessages(context.Background(), []map[string]any{{"role": "user", "content": "看下图"}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -333,7 +334,7 @@ func TestAToolWithNoPicturesAddsNoMessage(t *testing.T) {
 	if err := registry.Register(tools.Tool{
 		Name: "read_image", Description: "text only", Risk: security.RiskLow, ParallelSafe: true,
 		Schema: tools.ObjectSchema(map[string]any{"path": tools.StringSchema("path", tools.MinLength(1))}, "path"),
-		Handler: func(map[string]any) (tools.Result, error) {
+		Handler: func(_ context.Context, _ map[string]any) (tools.Result, error) {
 			return tools.TextResult("no picture here"), nil
 		},
 	}); err != nil {
@@ -342,7 +343,7 @@ func TestAToolWithNoPicturesAddsNoMessage(t *testing.T) {
 	h.agent.Tools = registry
 
 	before := len(h.session.Messages)
-	if _, err := h.agent.RunMessages([]map[string]any{{"role": "user", "content": "看下图"}}); err != nil {
+	if _, err := h.agent.RunMessages(context.Background(), []map[string]any{{"role": "user", "content": "看下图"}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -373,9 +374,9 @@ func TestAnUnstorablePictureIsSaidNotSilentlyDropped(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	h.manager.Store = context.OpenArtifactStore(filepath.Join(blocker, "artifacts"), nil)
+	h.manager.Store = ctxwin.OpenArtifactStore(filepath.Join(blocker, "artifacts"), nil)
 
-	if _, err := h.agent.RunMessages([]map[string]any{{"role": "user", "content": "看下图"}}); err != nil {
+	if _, err := h.agent.RunMessages(context.Background(), []map[string]any{{"role": "user", "content": "看下图"}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -417,7 +418,7 @@ func TestAPictureFromAToolDegradesLikeAnyOther(t *testing.T) {
 		toolCallResponse("c1", "read_image", `{"path":"architecture.png"}`),
 		textResponse("done"),
 	)
-	if _, err := h.agent.RunMessages([]map[string]any{{"role": "user", "content": "看下图"}}); err != nil {
+	if _, err := h.agent.RunMessages(context.Background(), []map[string]any{{"role": "user", "content": "看下图"}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 
@@ -435,7 +436,7 @@ func TestAPictureFromAToolDegradesLikeAnyOther(t *testing.T) {
 	// A ceiling nothing that size fits under, so the ladder has to move.
 	tokens := 4200
 	h.manager.Budget.MaxTokens = &tokens
-	renderer := context.NewRenderer(h.store, h.manager)
+	renderer := ctxwin.NewRenderer(h.store, h.manager)
 
 	// **Several passes, not one.** `Fit` is single-step by design: it drops one
 	// level and returns, so that the next step can re-decide with a fresh
@@ -467,7 +468,7 @@ func TestAPictureFromAToolDegradesLikeAnyOther(t *testing.T) {
 	// picture cannot be truncated, so `range` or `preview` on it would be a level
 	// that moves while the bytes stay the same.
 	switch after {
-	case context.RepresentationThumbnail, context.RepresentationMetadata:
+	case ctxwin.RepresentationThumbnail, ctxwin.RepresentationMetadata:
 	default:
 		t.Errorf("the picture stepped to %q, which is not an image rung", after)
 	}
@@ -513,7 +514,7 @@ func TestTheSamePictureReadTwiceIsSentOnce(t *testing.T) {
 		textResponse("done"),
 	)
 
-	if _, err := h.agent.RunMessages([]map[string]any{{"role": "user", "content": "看这张"}}); err != nil {
+	if _, err := h.agent.RunMessages(context.Background(), []map[string]any{{"role": "user", "content": "看这张"}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 

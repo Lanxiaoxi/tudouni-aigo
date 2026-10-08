@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -344,11 +345,19 @@ func (b *JobBoard) Start(command string) (tools.Result, error) {
 }
 
 // Output fetches a job's output, optionally waiting for it to finish.
-func (b *JobBoard) Output(jobID string, wait bool, waitSeconds int) tools.Result {
+//
+// `ctx` is the turn's cancellation, and the wait below is the one place in this
+// package where a stop used to be invisible: the loop slept in 50ms steps for up
+// to MaxWaitSeconds, so a person who pressed stop while the model was waiting on a
+// slow job had to sit through the rest of the wait. The job itself is **not**
+// touched — it runs independently by design, and stopping a turn is not a reason to
+// kill something the model deliberately backgrounded.
+func (b *JobBoard) Output(ctx context.Context, jobID string, wait bool, waitSeconds int) tools.Result {
 	job, ok := b.find(jobID)
 	if !ok {
 		return tools.TextResult(b.unknownJob(jobID))
 	}
+	waitInterrupted := false
 	if wait && job.Running() {
 		seconds := waitSeconds
 		if seconds <= 0 {
@@ -359,7 +368,10 @@ func (b *JobBoard) Output(jobID string, wait bool, waitSeconds int) tools.Result
 		}
 		deadline := time.Now().Add(time.Duration(seconds) * time.Second)
 		for time.Now().Before(deadline) && job.Running() {
-			time.Sleep(50 * time.Millisecond)
+			if !sleepOrDone(ctx, jobPollInterval) {
+				waitInterrupted = true
+				break
+			}
 		}
 	}
 
@@ -401,14 +413,42 @@ func (b *JobBoard) Output(jobID string, wait bool, waitSeconds int) tools.Result
 	default:
 		status = fmt.Sprintf("已结束（退出码 %s，跑了 %s）", exitCodeText(exitCode), durationText(job.Duration()))
 	}
+	// The wait was cut short by a stop rather than by its own deadline, and that is
+	// a different fact from "the job is still running": the model has to know its
+	// wait did not run to completion, or it will read a timeout-shaped answer as
+	// evidence about how long the job has been going.
+	if waitInterrupted {
+		status = "**这一轮的等待被中断了**（不是任务结束，也不是等到了时间上限）—— " + status
+	}
 
 	auditStatus := "running"
 	if !stillRunning {
 		auditStatus = "collected"
 	}
+	audit := map[string]any{"job_id": jobID, "job_status": auditStatus}
+	if waitInterrupted {
+		audit[tools.InterruptedAuditKey] = true
+	}
 	return tools.Result{
 		Text:  status + "\n" + head + "\n" + body,
-		Audit: map[string]any{"job_id": jobID, "job_status": auditStatus},
+		Audit: audit,
+	}
+}
+
+// jobPollInterval is how often the wait above looks at the job. It is a variable
+// rather than a constant only so a test can shorten it.
+var jobPollInterval = 50 * time.Millisecond
+
+// sleepOrDone waits for d and reports whether it got there. A false answer means
+// the context was cancelled first, which is the caller's signal to stop waiting.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
@@ -718,7 +758,7 @@ func NewJobs(workspace *tools.Workspace, sessionID string) (*JobBoard, []tools.T
 		Schema: tools.ObjectSchema(map[string]any{
 			"command": tools.StringSchema(fmt.Sprintf("要执行的命令，按 %s 的语法写。它会在后台一直跑，直到它自己结束或被 job_kill 收掉", shellName()), tools.MinLength(1)),
 		}, "command"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			command, _ := arguments["command"].(string)
 			return board.Start(command)
 		},
@@ -740,11 +780,11 @@ func NewJobs(workspace *tools.Workspace, sessionID string) (*JobBoard, []tools.T
 			"wait":         tools.BoolSchema("true（默认）表示它还没结束就等一会儿；false 表示立刻返回**到目前为止**的输出 —— 看一个不会结束的服务（dev server）跑到哪儿了就用 false", tools.Default(true)),
 			"wait_seconds": tools.IntSchema(fmt.Sprintf("wait=true 时最多等多少秒（上限 %d）。到点它还没结束，返回的就是「还在跑」加上一段部分输出 —— 那不是结果", MaxWaitSeconds), tools.Default(DocumentedWaitSeconds), tools.Minimum(1), tools.Maximum(MaxWaitSeconds)),
 		}, "job_id"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			id, _ := arguments["job_id"].(string)
 			wait, _ := arguments["wait"].(bool)
 			seconds, _ := arguments["wait_seconds"].(int)
-			return board.Output(id, wait, seconds), nil
+			return board.Output(ctx, id, wait, seconds), nil
 		},
 	}
 
@@ -759,7 +799,7 @@ func NewJobs(workspace *tools.Workspace, sessionID string) (*JobBoard, []tools.T
 			MaxJobs, MaxLiveJobs),
 		Risk:   security.RiskLow,
 		Schema: tools.EmptySchema(),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			return board.List(), nil
 		},
 	}
@@ -776,7 +816,7 @@ func NewJobs(workspace *tools.Workspace, sessionID string) (*JobBoard, []tools.T
 		Schema: tools.ObjectSchema(map[string]any{
 			"job_id": tools.StringSchema("要终止的后台任务 id。整棵进程树都会被收掉（包括它拉起来的子进程）", tools.MinLength(1)),
 		}, "job_id"),
-		Handler: func(arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			id, _ := arguments["job_id"].(string)
 			return board.Kill(id), nil
 		},
