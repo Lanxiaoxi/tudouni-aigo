@@ -495,7 +495,15 @@ export function WorkspaceSidebar() {
                                 session row carries no icon, unlike a workspace
                                 row. */}
                             <SessionDot status={statusBySessionId.get(item.id) ?? 'idle'} />
-                            <span className="lb-session-id">{item.id}</span>
+                            {/* The first line is the **topic** — the runtime's preview
+                                of the first user message — because that is what a
+                                person recognizes a conversation by. The id is a
+                                timestamp (`YYYYMMDD-HHMMSS`), so a list led by ids is
+                                a column of twelve-digit numbers that all look alike;
+                                it moved to the row's last line instead. An empty
+                                preview means the session never spoke, and then this
+                                line is only the dot and the time. */}
+                            <span className="lb-session-preview">{item.preview}</span>
                             {/* `modified_at` is epoch **seconds**; null means the file
                                 could not be read, and then there is no time to show. */}
                             <span className="lb-session-time">
@@ -513,7 +521,11 @@ export function WorkspaceSidebar() {
                             {t('panel.resume.steps', { n: item.steps })}
                             {item.todos ? ` · ${item.todos}` : ''}
                           </span>
-                          <span className="lb-session-preview">{item.preview}</span>
+                          {/* The id, last and faintest. It is still the runtime's own
+                              name for this conversation and the thing a person types
+                              at `/resume`, so it stays on the row — just not in front
+                              of the topic. */}
+                          <span className="lb-session-id lb-session-foot">{item.id}</span>
                         </button>
                         {/* Delete the file, not the row: the runtime waits for the
                             running turn, then re-sends the list. No optimistic

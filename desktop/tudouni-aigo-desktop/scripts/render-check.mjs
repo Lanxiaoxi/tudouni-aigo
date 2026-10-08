@@ -733,28 +733,29 @@ async function main() {
   // The session list, as the runtime answers it. `messages`, `steps`, `todos`
   // and `preview` are all computed by the runtime — this rail counts nothing
   // itself, so what is asserted here is that the runtime's own numbers arrive.
-  await apply({
-    v: 1,
-    t: 'sessions',
-    items: [
-      {
-        session_id: 's-20260101-000000',
-        messages: 12,
-        steps: 5,
-        todos: '3/7',
-        preview: 'fix the reconnect race',
-        modified_at: 1767225600,
-      },
-      {
-        session_id: 's-20251231-235959',
-        messages: 3,
-        steps: 1,
-        todos: '',
-        preview: '',
-        modified_at: null,
-      },
-    ],
-  });
+  //
+  // Named once, because it is applied twice: the `/resume` panel below re-asks
+  // the runtime for the list, and a second hand-written copy of this fixture is
+  // a second thing to keep in step with the first.
+  const SESSION_ITEMS = [
+    {
+      session_id: 's-20260101-000000',
+      messages: 12,
+      steps: 5,
+      todos: '3/7',
+      preview: 'fix the reconnect race',
+      modified_at: 1767225600,
+    },
+    {
+      session_id: 's-20251231-235959',
+      messages: 3,
+      steps: 1,
+      todos: '',
+      preview: '',
+      modified_at: null,
+    },
+  ];
+  await apply({ v: 1, t: 'sessions', items: SESSION_ITEMS });
 
   const sessions = await evaluate(`(() => {
     // The saved list only. The live group (.lb-live-rows) holds the session
@@ -762,11 +763,38 @@ async function main() {
     // and its row carries is-current by design, so counting every .lb-session
     // read 3 rows and 1 "current" on an untouched tree.
     const rows = [...document.querySelectorAll('.lb-rows:not(.lb-live-rows) .lb-session')];
+    // The three lines of a row, by the y they are **painted** at. The order of
+    // the lines is the point of this row and it is invisible to every text
+    // assertion: \`innerText\` carries all three in either order.
+    const top = (row, sel) => {
+      const el = row?.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().top) : null;
+    };
+    const colour = (row, sel) => {
+      const el = row?.querySelector(sel);
+      return el ? getComputedStyle(el).color : null;
+    };
+    const idEl = rows[0]?.querySelector('.lb-session-id');
     return JSON.stringify({
       count: rows.length,
       first: (rows[0]?.innerText ?? '').replace(/\\s+/g,' ').trim(),
       current: rows.filter((r) => r.classList.contains('is-current')).length,
       times: [...document.querySelectorAll('.lb-rows:not(.lb-live-rows) .lb-session-time')].map((n) => n.textContent),
+      lines: {
+        topic: top(rows[0], '.lb-session-preview'),
+        meta: top(rows[0], '.lb-session-meta'),
+        id: top(rows[0], '.lb-session-id'),
+        time: top(rows[0], '.lb-session-time'),
+      },
+      // The id must not be painted above the topic, and it must not stretch:
+      // the row is a column, so a leftover flex-grow from its days as the first
+      // line would grow it to fill whatever height the row has.
+      colours: {
+        topic: colour(rows[0], '.lb-session-preview'),
+        meta: colour(rows[0], '.lb-session-meta'),
+        id: colour(rows[0], '.lb-session-id'),
+      },
+      idFlexGrow: idEl ? getComputedStyle(idEl).flexGrow : null,
     });
   })()`);
   console.log('session rows:', sessions);
@@ -783,6 +811,115 @@ async function main() {
   if (!sr.times.some((value) => value === 'unknown')) {
     throw new Error(`an unreadable modified_at was rendered as a time: ${JSON.stringify(sr.times)}`);
   }
+  // ---- the row reads topic, then progress, then id ----
+  //
+  // The id used to be the first line. Both orders render, both carry the same
+  // text and both pass every assertion above, so this is asserted as geometry:
+  // the topic is what identifies a conversation, and the id is a timestamp
+  // (`YYYYMMDD-HHMMSS`) that belongs under it, not in front of it.
+  const { topic, meta, id: idTop, time } = sr.lines ?? {};
+  if (topic === null || meta === null || idTop === null || topic === undefined) {
+    throw new Error(`a session row is missing one of its three lines: ${JSON.stringify(sr.lines)}`);
+  }
+  if (!(topic <= meta && meta <= idTop)) {
+    throw new Error(
+      `the session row is not topic -> progress -> id, top to bottom: ${JSON.stringify(sr.lines)}`,
+    );
+  }
+  // The time belongs on the topic's line — it is the first line of the row.
+  if (!(time <= topic + 1)) {
+    throw new Error(
+      `the time is not on the topic's line: time at ${time}, topic at ${topic}`,
+    );
+  }
+  // And the id is a footnote, not a second title. Compared as computed values
+  // rather than against a hard-coded rgb, because the tokens are theme-dependent:
+  // what must hold in every theme is that the id sits on the **progress line's**
+  // layer and the topic does not.
+  if (sr.colours.id !== sr.colours.meta) {
+    throw new Error(
+      `the session id is not on the metadata layer: id ${sr.colours.id}, progress ${sr.colours.meta}`,
+    );
+  }
+  if (sr.colours.topic === sr.colours.id) {
+    throw new Error(
+      `the topic and the id are painted in the same colour (${sr.colours.topic}): the topic is the row's title and the id is a footnote`,
+    );
+  }
+  if (sr.idFlexGrow !== '0') {
+    throw new Error(
+      `the id still grows (flex-grow ${sr.idFlexGrow}) — in a column row that stretches it to the row's height`,
+    );
+  }
+
+  // ---- the first screen's cards use the same order ----
+  //
+  // The same fact on two screens: a card here and a row in the rail open the
+  // same conversation, so an order that holds on one and not the other is a
+  // person having to look twice. Measured for the same reason as above.
+  const card = await evaluate(`(() => {
+    const slot = document.querySelector('.recent-slot:not(.is-empty)');
+    if (!slot) return JSON.stringify({ missing: true });
+    const top = (sel) => {
+      const el = slot.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().top) : null;
+    };
+    return JSON.stringify({ topic: top('.rs-preview'), id: top('.rs-id'), time: top('.rs-time') });
+  })()`);
+  console.log('recent card lines:', card);
+  const rc = JSON.parse(card ?? '{}');
+  if (rc.missing) throw new Error('the first screen has no recent-session card to measure');
+  if (!(rc.topic < rc.id)) {
+    throw new Error(`the recent-session card is not topic -> id: ${JSON.stringify(rc)}`);
+  }
+  if (!(rc.time <= rc.topic + 1)) {
+    throw new Error(
+      `the recent-session card does not put the time on the topic's line: ${JSON.stringify(rc)}`,
+    );
+  }
+
+  // ---- and the /resume panel lists the same two facts in the same order ----
+  //
+  // The third place the pair appears. Opening the panel **re-asks** the runtime
+  // for the list (`listedSessions` goes false until the reply arrives), so the
+  // payload has to be applied again behind it; without that the panel is
+  // photographed saying "loading…" and this block would assert nothing at all —
+  // which is exactly what the first version of it did.
+  await evaluate(`(() => { window.__aigoStore.getState().openPanel('resume'); return true; })()`);
+  await sleep(150);
+  await apply({ v: 1, t: 'sessions', items: SESSION_ITEMS });
+  const panel = await evaluate(`(() => {
+    const row = document.querySelector('.dialog-body .cmdk-item');
+    if (!row) return JSON.stringify({ missing: true });
+    const top = (sel) => {
+      const el = row.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().top) : null;
+    };
+    return JSON.stringify({
+      text: (row.innerText ?? '').replace(/\\s+/g, ' ').trim(),
+      topic: top('.truncate'),
+      meta: top('.row'),
+      // The topic inherits the panel row's own colour (--fg-secondary); the id
+      // is the faint layer under it. What has to hold is that they are not the
+      // same layer — the exact rgb is the theme's business, not this check's.
+      topicColour: getComputedStyle(row.querySelector('.truncate')).color,
+      idColour: getComputedStyle(row.querySelector('.mono')).color,
+    });
+  })()`);
+  console.log('resume panel row:', panel);
+  const rp = JSON.parse(panel ?? '{}');
+  if (rp.missing) throw new Error('the /resume panel rendered no session row');
+  if (!(rp.topic < rp.meta)) {
+    throw new Error(`the /resume row is not topic -> facts: ${JSON.stringify(rp)}`);
+  }
+  if (rp.idColour === rp.topicColour) {
+    throw new Error(
+      `the /resume row's id is painted as strongly as the topic (${rp.idColour}): the topic is the title and the id is a footnote`,
+    );
+  }
+  // Closed again before the next step, so nothing below runs under a modal.
+  await evaluate(`(() => { window.__aigoStore.getState().openPanel(null); return true; })()`);
+  await sleep(150);
 
   // `session_load` — the message the runtime sends **unconditionally** right
   // behind `init`.

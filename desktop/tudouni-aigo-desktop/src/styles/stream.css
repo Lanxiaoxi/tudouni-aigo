@@ -1192,6 +1192,21 @@
   color: var(--fg);
 }
 
+/* The saved row's id, on the row's **last** line. The rule above is the live
+   row's: there the id is still the first line, because a session with no file
+   yet has no topic to lead with. Here it is a footnote, so it neither grows
+   (the row is a column, and `flex: 1 1 auto` there would stretch it) nor
+   competes with the topic. Both of these come *after* the `.is-current` rule on
+   purpose: same specificity, so source order is what decides. */
+.lb-session .lb-session-id.lb-session-foot {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.lb-session.is-current .lb-session-id.lb-session-foot {
+  color: var(--fg-muted);
+}
+
 .lb-session .lb-session-time {
   flex: none;
   font-family: var(--font-mono);
@@ -1207,20 +1222,27 @@
 
 /* Two lines at most: a preview is a reminder of which conversation this is, not
    the conversation. `overflow-wrap` is deliberately not used to rescue a long
-   word — it re-flows the row — so a single unbroken token ellipsises instead. */
+   word — it re-flows the row — so a single unbroken token ellipsises instead.
+   It is the row's **first** line and its flex lane is what makes that possible
+   beside the time: a clamped box with no `min-width: 0` would size to its
+   longest line and push the time off the row. */
 .lb-session .lb-session-preview {
   display: -webkit-box;
+  flex: 1 1 auto;
+  min-width: 0;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   font-size: var(--text-compact);
-  color: var(--fg-muted);
+  /* The topic is the row's primary line, so it carries the colour the id used
+     to carry, and the id dropped to `--fg-faint` above. */
+  color: var(--fg-secondary);
   word-break: break-word;
 }
 
 .lb-session.is-current .lb-session-preview {
-  color: var(--fg-secondary);
+  color: var(--fg);
 }
 
 /* The delete button sits beside the session button, revealed on hover — and

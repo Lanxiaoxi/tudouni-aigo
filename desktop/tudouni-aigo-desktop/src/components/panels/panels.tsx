@@ -234,15 +234,24 @@ export function ResumePanel() {
                   : formatRelative(item.modifiedAt * 1000)
               }
             >
+              {/* The topic first, the facts under it — the order the rail's rows
+                  and the first screen's cards use. The row inherits the panel's
+                  `--fg-secondary` at `--text-compact`, which is the same pair the
+                  rail gives its topic line; `caption` would have demoted it to
+                  the metadata it is no longer. */}
+              <div className="truncate">{item.preview}</div>
               <div className="row" style={{ gap: 'var(--space-2)' }}>
-                <span className="mono strong">{item.id}</span>
+                {/* The id is a footnote now, not the title: it is a timestamp
+                    (`YYYYMMDD-HHMMSS`) and the topic above is what identifies the
+                    conversation. It stays because it is the name `/resume` and the
+                    rail's own row use. */}
+                <span className="mono faint">{item.id}</span>
                 <span className="caption faint">{t('panel.resume.messages', { n: item.messages })}</span>
                 <span className="caption faint">{t('panel.resume.steps', { n: item.steps })}</span>
                 {/* `todos` is ready-made progress text; an empty string means
                     there is no task list, which is not the same as zero. */}
                 {item.todos ? <span className="caption faint">{item.todos}</span> : null}
               </div>
-              <div className="caption muted truncate">{item.preview}</div>
             </PanelRow>
           ))
         )}

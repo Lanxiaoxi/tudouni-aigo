@@ -143,14 +143,18 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
                   onClick={() => void openSession(item.id)}
                 >
                   <span className="rs-top">
-                    <span className="rs-id">{item.id}</span>
+                    {/* The topic leads and the id follows — the same order the
+                        rail's rows use. This card is the same decision made from
+                        a different screen, and two orders for one fact is one
+                        order too many. */}
+                    <span className="rs-preview clamp-2">{item.preview}</span>
                     {/* `modified_at` is epoch seconds; null means the file
                         could not be read, and then there is no time to show. */}
                     <span className="rs-time">
                       {item.modifiedAt === null ? t('common.unknown') : formatRelative(item.modifiedAt * 1000)}
                     </span>
                   </span>
-                  <span className="rs-preview clamp-2">{item.preview}</span>
+                  <span className="rs-id">{item.id}</span>
                 </button>
               ) : (
                 <div key={`empty-${index}`} className="recent-slot is-empty">
