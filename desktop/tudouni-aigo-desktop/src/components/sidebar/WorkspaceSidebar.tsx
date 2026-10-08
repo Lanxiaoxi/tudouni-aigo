@@ -502,15 +502,14 @@ export function WorkspaceSidebar() {
                                 a column of twelve-digit numbers that all look alike;
                                 it moved to the row's last line instead. An empty
                                 preview means the session never spoke, and then this
-                                line is only the dot and the time. */}
+                                line is only the dot.
+
+                                The topic owns this whole line: the time used to ride
+                                its right edge, and that cost the preview a fixed ~40px
+                                on each of the two lines it is clamped to — the topic
+                                is the row's longest text and the only one that scales
+                                with the message it came from. */}
                             <span className="lb-session-preview">{item.preview}</span>
-                            {/* `modified_at` is epoch **seconds**; null means the file
-                                could not be read, and then there is no time to show. */}
-                            <span className="lb-session-time">
-                              {item.modifiedAt === null
-                                ? t('common.unknown')
-                                : formatRelative(item.modifiedAt * 1000)}
-                            </span>
                           </span>
                           {/* Both computed by the runtime. `todos` is ready-made
                               progress text, and an empty string means there is no task
@@ -524,8 +523,22 @@ export function WorkspaceSidebar() {
                           {/* The id, last and faintest. It is still the runtime's own
                               name for this conversation and the thing a person types
                               at `/resume`, so it stays on the row — just not in front
-                              of the topic. */}
-                          <span className="lb-session-id lb-session-foot">{item.id}</span>
+                              of the topic. The time rides this line rather than the
+                              topic's: the two are the same kind of fact — the
+                              runtime's name for the conversation and when it was last
+                              touched — while the topic above is prose and is the only
+                              line here that wants every column it can get.
+
+                              `modified_at` is epoch **seconds**; null means the file
+                              could not be read, and then there is no time to show. */}
+                          <span className="lb-session-foot">
+                            <span className="lb-session-id">{item.id}</span>
+                            <span className="lb-session-time">
+                              {item.modifiedAt === null
+                                ? t('common.unknown')
+                                : formatRelative(item.modifiedAt * 1000)}
+                            </span>
+                          </span>
                         </button>
                         {/* Delete the file, not the row: the runtime waits for the
                             running turn, then re-sends the list. No optimistic

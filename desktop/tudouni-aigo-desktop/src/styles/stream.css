@@ -1192,18 +1192,34 @@
   color: var(--fg);
 }
 
-/* The saved row's id, on the row's **last** line. The rule above is the live
-   row's: there the id is still the first line, because a session with no file
-   yet has no topic to lead with. Here it is a footnote, so it neither grows
-   (the row is a column, and `flex: 1 1 auto` there would stretch it) nor
-   competes with the topic. Both of these come *after* the `.is-current` rule on
-   purpose: same specificity, so source order is what decides. */
-.lb-session .lb-session-id.lb-session-foot {
-  flex: none;
+/* The saved row's **last** line: the runtime's own name for the conversation and
+   when it was last touched, side by side. The rule above is the live row's —
+   there the id is the whole first line, because a session with no file yet has
+   no topic to lead with.
+
+   The time rides this line, not the topic's. It used to sit on the topic's right
+   edge, and that cost the preview a fixed ~40px on **each** of the two lines it
+   is clamped to: the topic is the row's longest text and the only line here that
+   scales with what the message actually said, while a relative stamp is one of
+   four fixed widths. The id keeps `flex: 1 1 auto` from the rule above, so it is
+   still what takes the slack — which is what keeps the times in one column down
+   the list instead of ending wherever each id happens to.
+
+   The colour rules come *after* `.lb-session.is-current .lb-session-id` on
+   purpose: that one ties on specificity with the first of them, so source order
+   is what decides. */
+.lb-session .lb-session-foot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.lb-session .lb-session-foot .lb-session-id {
   color: var(--fg-faint);
 }
 
-.lb-session.is-current .lb-session-id.lb-session-foot {
+.lb-session.is-current .lb-session-foot .lb-session-id {
   color: var(--fg-muted);
 }
 

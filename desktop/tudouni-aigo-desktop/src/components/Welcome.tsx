@@ -142,19 +142,25 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
                   // session, which is why the name changed with the mechanism.
                   onClick={() => void openSession(item.id)}
                 >
-                  <span className="rs-top">
-                    {/* The topic leads and the id follows — the same order the
-                        rail's rows use. This card is the same decision made from
-                        a different screen, and two orders for one fact is one
-                        order too many. */}
-                    <span className="rs-preview clamp-2">{item.preview}</span>
-                    {/* `modified_at` is epoch seconds; null means the file
-                        could not be read, and then there is no time to show. */}
+                  {/* The topic leads and the id follows — the same order the
+                      rail's rows use. This card is the same decision made from
+                      a different screen, and two orders for one fact is one
+                      order too many. */}
+                  <span className="rs-preview clamp-2">{item.preview}</span>
+                  <span className="rs-foot">
+                    {/* The same pair as the rail's last line: the runtime's own
+                        name for the conversation, and when it was last touched.
+                        The time used to sit on the topic's line here too, which
+                        cost the preview a fixed ~40px on each of the two lines
+                        it is clamped to — the card is half the content pane, so
+                        it pays for that more dearly than the rail does.
+                        `modified_at` is epoch seconds; null means the file could
+                        not be read, and then there is no time to show. */}
+                    <span className="rs-id">{item.id}</span>
                     <span className="rs-time">
                       {item.modifiedAt === null ? t('common.unknown') : formatRelative(item.modifiedAt * 1000)}
                     </span>
                   </span>
-                  <span className="rs-id">{item.id}</span>
                 </button>
               ) : (
                 <div key={`empty-${index}`} className="recent-slot is-empty">

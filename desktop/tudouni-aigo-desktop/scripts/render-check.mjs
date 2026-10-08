@@ -775,6 +775,7 @@ async function main() {
       return el ? getComputedStyle(el).color : null;
     };
     const idEl = rows[0]?.querySelector('.lb-session-id');
+    const footEl = rows[0]?.querySelector('.lb-session-foot');
     return JSON.stringify({
       count: rows.length,
       first: (rows[0]?.innerText ?? '').replace(/\\s+/g,' ').trim(),
@@ -786,15 +787,19 @@ async function main() {
         id: top(rows[0], '.lb-session-id'),
         time: top(rows[0], '.lb-session-time'),
       },
-      // The id must not be painted above the topic, and it must not stretch:
-      // the row is a column, so a leftover flex-grow from its days as the first
-      // line would grow it to fill whatever height the row has.
+      // The id must not be painted above the topic, and the row's last line must
+      // not stretch: the row is a column, so a child that grows there absorbs
+      // whatever height the row has. That is now asked of the **foot** - the
+      // line the id and the time share - because the id is a child of it and no
+      // longer a child of the column. Inside a row, the id's own flex-grow is
+      // what pushes the time to the right edge, and it is wanted.
       colours: {
         topic: colour(rows[0], '.lb-session-preview'),
         meta: colour(rows[0], '.lb-session-meta'),
         id: colour(rows[0], '.lb-session-id'),
       },
       idFlexGrow: idEl ? getComputedStyle(idEl).flexGrow : null,
+      footFlexGrow: footEl ? getComputedStyle(footEl).flexGrow : null,
     });
   })()`);
   console.log('session rows:', sessions);
@@ -826,10 +831,14 @@ async function main() {
       `the session row is not topic -> progress -> id, top to bottom: ${JSON.stringify(sr.lines)}`,
     );
   }
-  // The time belongs on the topic's line — it is the first line of the row.
-  if (!(time <= topic + 1)) {
+  // The time rides the **id's** line — the row's last. It used to sit on the
+  // topic's, which cost the preview a fixed ~40px on each of the two lines it
+  // is clamped to; the topic is the row's only line that scales with what the
+  // message actually said. The pair reads as one footnote: the runtime's name
+  // for the conversation, and when it was last touched.
+  if (!(time <= idTop + 1)) {
     throw new Error(
-      `the time is not on the topic's line: time at ${time}, topic at ${topic}`,
+      `the time is not on the id's line: time at ${time}, id at ${idTop}`,
     );
   }
   // And the id is a footnote, not a second title. Compared as computed values
@@ -846,9 +855,19 @@ async function main() {
       `the topic and the id are painted in the same colour (${sr.colours.topic}): the topic is the row's title and the id is a footnote`,
     );
   }
-  if (sr.idFlexGrow !== '0') {
+  // The row is a column, so a child that grows there absorbs whatever height the
+  // row has. That question is now asked of the **foot** — the line the id and
+  // the time share — because the id is a child of that row and no longer a child
+  // of the column. Inside a row, the id's own `flex-grow` is `1` and wanted: it
+  // is what pushes the stamp to the right edge.
+  if (sr.footFlexGrow !== '0') {
     throw new Error(
-      `the id still grows (flex-grow ${sr.idFlexGrow}) — in a column row that stretches it to the row's height`,
+      `the row's foot still grows (flex-grow ${sr.footFlexGrow}) — in a column row that stretches it to the row's height`,
+    );
+  }
+  if (sr.idFlexGrow !== '1') {
+    throw new Error(
+      `the id does not take the foot row's slack (flex-grow ${sr.idFlexGrow}): the stamps would end wherever each id happens to`,
     );
   }
 
@@ -872,9 +891,9 @@ async function main() {
   if (!(rc.topic < rc.id)) {
     throw new Error(`the recent-session card is not topic -> id: ${JSON.stringify(rc)}`);
   }
-  if (!(rc.time <= rc.topic + 1)) {
+  if (!(rc.time <= rc.id + 1)) {
     throw new Error(
-      `the recent-session card does not put the time on the topic's line: ${JSON.stringify(rc)}`,
+      `the recent-session card does not put the time on the id's line: ${JSON.stringify(rc)}`,
     );
   }
 

@@ -968,37 +968,50 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   border-color: var(--border-subtle);
 }
 
-/* Baseline, not centre: the topic may run to two lines (`.clamp-2`), and the
-   time belongs on the first of them — the same relationship the rail's rows
-   draw. Centring it would put the time between the two lines instead. */
-.recent-slot .rs-top {
+/* The card's **last** line: the runtime's own name for the conversation and when
+   it was last touched. The time rides here rather than the topic's line, which
+   is where it used to sit — that cost the preview a fixed ~40px on each of the
+   two lines `.clamp-2` allows it, and the topic is the only line on this card
+   that scales with what the message actually said. The id keeps the growing lane
+   so the stamps stay in a column down the two-up grid rather than ending
+   wherever each id happens to. */
+.recent-slot .rs-foot {
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+  min-width: 0;
 }
 
-/* The topic is the card's first line, so it takes the colour and the flex lane
-   the id used to hold; the id moved to the last line and dropped to the faint
-   layer with the time. Without `min-width: 0` the clamped box sizes to its
-   longest line and the time is pushed off the card. */
+/* The topic is the card's first line, so it takes the colour the id used to
+   hold; the id dropped to the faint layer with the time. It is a **column**
+   child now, not a row item: `flex: none` keeps it from absorbing the card's
+   free height (the card has a `min-height` and is taller than its three lines
+   whenever the topic is one line), and `min-width: 0` is kept because a clamped
+   box with no floor still sizes to its longest line. */
 .recent-slot .rs-preview {
-  flex: 1 1 auto;
+  flex: none;
   min-width: 0;
   font-size: var(--text-compact);
   color: var(--fg-secondary);
 }
 
 .recent-slot .rs-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--fg-faint);
 }
 
 .recent-slot .rs-time {
-  margin-left: auto;
+  flex: none;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
 }
 
 .keycaps {
