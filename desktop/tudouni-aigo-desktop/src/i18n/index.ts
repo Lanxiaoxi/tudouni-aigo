@@ -466,7 +466,7 @@ export const en = {
   'panel.settings.ericaiDesc':
     'Keep this session’s EricAI token fresh: check it at start-up, and refresh it before any request that would otherwise go out with a stale one.',
   'panel.settings.ericaiEffect':
-    'Turning this on lets the runtime rewrite providers.ericai.api_key in your configuration file and keep a refresh token under ~/.tudouni/. Keep it on in one session at a time: every session writes that same file, and two of them refreshing at once overwrite each other.',
+    'Turning this on lets the runtime rewrite providers.ericai.api_key in your configuration file and keep a refresh token under ~/.tudouni/. It takes effect on the session on screen after the restart, and it is remembered: every session started from then on — new ones, other workspaces, the next launch — comes up with the token managed. Sessions already running are unaffected.',
   'panel.settings.maxSteps': 'Step cap',
   'panel.settings.maxStepsDesc':
     'How many model calls one turn may take. Empty means the runtime’s own default.',
