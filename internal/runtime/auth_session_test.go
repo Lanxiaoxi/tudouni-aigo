@@ -30,6 +30,13 @@ type authHarness struct {
 }
 
 func newAuthHarness(t *testing.T, key string, enabled bool) *authHarness {
+	return newAuthHarnessAt(t, key, enabled, "https://eric.example")
+}
+
+// newAuthHarnessAt is the same harness against a named endpoint, for the tests
+// that need the model call to actually go somewhere — a 401 is a fact about the
+// endpoint, so a session that is supposed to earn one has to reach a real one.
+func newAuthHarnessAt(t *testing.T, key string, enabled bool, baseURL string) *authHarness {
 	t.Helper()
 	// A throwaway home: the refresh-token store lives under it, and a test that
 	// inherited the real one would use — and rotate — a real credential.
@@ -42,7 +49,7 @@ func newAuthHarness(t *testing.T, key string, enabled bool) *authHarness {
 	body, err := json.Marshal(map[string]any{
 		"providers": map[string]any{
 			EricAIProvider: map[string]any{
-				"api_key": key, "base_url": "https://eric.example",
+				"api_key": key, "base_url": baseURL,
 				"models": []any{map[string]any{"id": "eric-chat"}},
 			},
 		},

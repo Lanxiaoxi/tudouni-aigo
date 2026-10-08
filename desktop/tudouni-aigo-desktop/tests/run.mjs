@@ -62,6 +62,12 @@ const SUITES = [
   // are both invisible in a rendered string, which is why they are asserted here
   // rather than by looking at the window.
   'turn-rail.test.ts',
+  // Whether the start-up arguments the settings panel owns actually reach the
+  // child. `--ericai` is the one that matters most: the runtime decides at open
+  // whether it manages the session's token, so a flag that never arrives is a
+  // session that 401s forever once its token expires — while the panel says it is
+  // in force. This is the "the desktop never refreshes my EricAI token" report.
+  'ericai-launch.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

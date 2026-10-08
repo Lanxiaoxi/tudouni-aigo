@@ -1920,10 +1920,8 @@ export const useApp = create<AppStore>((set, get) => {
       // on screen with exactly what was applied, and `retrySession` replays the
       // failed launch verbatim.
       const ericai = options.ericai ?? get().ericaiDefault;
-      const launch: LaunchArgs = {
-        ericai,
-        maxSteps: options.maxSteps ?? null,
-      };
+      const maxSteps = options.maxSteps ?? get().maxStepsDefault;
+      const launch: LaunchArgs = { ericai, maxSteps };
 
 
       // **The default is passed on, not only recorded.** Computing it above and
@@ -1938,7 +1936,38 @@ export const useApp = create<AppStore>((set, get) => {
       // different, empty conversation, in a workspace nobody asked for, while
       // the row that was clicked stayed where it was. Written down but never
       // spawned in, the default was decoration.
-      const attach: Partial<BridgeOptions> = { ...options, workspace };
+      //
+      // **The two start-up arguments had the same defect, and it was worse,
+      // because it was invisible.** They were resolved into `launch` — the record
+      // the settings panel draws — and then dropped, because the payload was
+      // spread from the caller's `options` and every open path but `applyLaunch`
+      // names neither. So a session started from the rail, from the sidebar, or by
+      // the launch itself ran **without `--ericai`** while the panel reported it as
+      // in force.
+      //
+      // What that costs is not a subtle difference in behaviour: `--ericai` is what
+      // makes the runtime refresh the token at all (`Options.EricAI` gates every
+      // path in `internal/runtime/auth_session.go`). Without it the session runs
+      // until the token it was opened with expires and then answers 401 to every
+      // single message, with no recovery, for the life of the process — while the
+      // panel still says the token is managed. `--max-steps` is the same shape with
+      // a smaller blast radius: the runtime reads it while it is being assembled,
+      // so a value that never reaches the command line is not a limit anybody is
+      // under.
+      //
+      // The payload is therefore built from the **resolved** values rather than
+      // from `options`: what is recorded and what is started have to be the same
+      // two facts, or the record is a claim about a command line that was never
+      // run.
+      const attach: Partial<BridgeOptions> = {
+        ...options,
+        workspace,
+        ericai,
+        // Only when there is one: `BridgeOptions.maxSteps` is a number and `null`
+        // is how "nothing remembered" is spelled here, so the absent key is what
+        // the bridge's own `?? null` turns into "no flag".
+        ...(maxSteps === null ? {} : { maxSteps }),
+      };
 
       let key: string | null;
       try {
