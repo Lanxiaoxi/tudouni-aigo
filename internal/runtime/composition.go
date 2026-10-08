@@ -1581,7 +1581,7 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 	mcpRows, _ := r.mcpInventory(r.McpCfg)
 	payload := map[string]any{
 		"todos":            r.todos(),
-		"skills":           []any{},
+		"skills":           r.skillPointers(),
 		"jobs":             panelOf(r.Jobs),
 		"subagents":        r.subagentPanel(),
 		"messages":         len(r.Messages()),
@@ -1625,9 +1625,48 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		payload["granted_prefixes"] = []string{}
 	}
 	if withCatalog {
-		payload["skill_catalog"] = []any{}
+		payload["skill_catalog"] = r.skillCatalogRows()
 	}
 	return payload
+}
+
+// skillPointers is the loaded-skill pointers the state snapshot carries:
+// `name` + `digest` for each skill this session has loaded. The digest is the
+// only place it travels — a front end needs it to tell "the skill on disk
+// changed since it was loaded" (stale) from "still what I loaded" — and it
+// must be re-read from the live session metadata on **every** snapshot so the
+// one `load_skill` wrote this process shows up on the very next one, and the
+// same list read back from a session file survives a `/resume`.
+//
+// An absent or malformed entry list means "nothing loaded" and goes out as
+// `[]`, never `null`: a front end that has to tell the two apart has a second
+// definition of the panel's shape, and the first bug it produces is a crash on
+// the empty case.
+func (r *Runtime) skillPointers() []any {
+	entries := skills.LoadEntries(r.SessionValue.Metadata)
+	rows := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		rows = append(rows, map[string]any{"name": entry.Name, "digest": entry.Digest})
+	}
+	return rows
+}
+
+// skillCatalogRows is the one-line-per-skill catalogue the **first** snapshot
+// carries: everything this session *can* load, `name` + `description`. It is
+// what answers "what exists that I could still load" and is only sent once,
+// because a directory scan at boot is the only time the cost is worth it and
+// the answer almost never changes. With no board (a runtime built without the
+// skill tool) it is an empty `[]` — "there are none" — rather than `null`.
+func (r *Runtime) skillCatalogRows() []any {
+	if r.Skills == nil {
+		return []any{}
+	}
+	catalog := r.Skills.Catalog()
+	rows := make([]any, 0, len(catalog.Skills))
+	for _, skill := range catalog.Skills {
+		rows = append(rows, map[string]any{"name": skill.Name, "description": skill.Description})
+	}
+	return rows
 }
 
 // StatusMessage implements protocol.Runtime.
