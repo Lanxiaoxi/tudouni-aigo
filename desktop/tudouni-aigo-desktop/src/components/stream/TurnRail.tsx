@@ -124,8 +124,20 @@ export function TurnRail({
   const [focus, setFocus] = useState<number | null>(null);
   const [railScroll, setRailScroll] = useState(0);
   const [railViewport, setRailViewport] = useState(0);
+  /**
+   * The scroller's own offset from the rail's top.
+   *
+   * The marks live inside the scroller, but the hover card is positioned against
+   * the **rail** — so a mark's position has to be translated between the two, and
+   * this is the translation. It is not a constant: the rail centres its scroller
+   * (`justify-content: center`), so the offset is whatever slack is left over
+   * after the marks box has taken its height, and it changes with the window.
+   */
+  const [railOffset, setRailOffset] = useState(0);
 
   const scroller = useRef<HTMLDivElement | null>(null);
+  /** The rail itself — the box the preview is positioned against. */
+  const frame = useRef<HTMLElement | null>(null);
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   const pointerInside = useRef(false);
   /**
@@ -230,10 +242,30 @@ export function TurnRail({
 
   useEffect(() => {
     const el = scroller.current;
-    if (el === null || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => setRailViewport(el.clientHeight));
+    if (el === null) return;
+    // `clientHeight` and `offsetTop` are read together, and the second one is the
+    // easy one to leave out: it is what turns a mark's position *inside the
+    // scroller* into a position inside the rail. `offsetTop` is measured from the
+    // offset parent's padding edge, which is exactly the containing block an
+    // absolutely positioned child resolves `top` against — same origin, so the two
+    // can simply be added.
+    const read = () => {
+      setRailViewport(el.clientHeight);
+      setRailOffset(el.offsetTop);
+    };
+    if (typeof ResizeObserver === 'undefined') {
+      read();
+      return;
+    }
+    const observer = new ResizeObserver(read);
+    // The rail as well as the scroller. `justify-content: center` means the
+    // scroller's offset is derived from the rail's own height, so a rail that
+    // changes height while the marks box stays the same size still moves every
+    // mark — and observing only the scroller would miss it.
     observer.observe(el);
-    setRailViewport(el.clientHeight);
+    const nav = frame.current;
+    if (nav !== null) observer.observe(nav);
+    read();
     return () => observer.disconnect();
   }, []);
 
@@ -357,6 +389,7 @@ export function TurnRail({
 
   return (
     <nav
+      ref={frame}
       className="turn-rail"
       aria-label={t('rail.label')}
       onKeyDown={onKeyDown}
@@ -404,7 +437,15 @@ export function TurnRail({
           // the rail's own scroll — so the rail's scroll offset enters here and
           // the clamp lives in the stylesheet.
           style={
-            { '--rail-preview-centre': `${markCentre(preview) - railScroll}px` } as CSSProperties
+            {
+              // In the **rail's** coordinates, not the scroller's: the card's `top`
+              // is resolved against the rail (that is its containing block), so
+              // `railOffset` has to be in here. Without it every card sat
+              // `railOffset` px too high — and because the offset is the rail's
+              // leftover slack, it is largest on a short conversation, where the
+              // stylesheet's `clamp` then pinned the card to the very top.
+              '--rail-preview-centre': `${railOffset + markCentre(preview) - railScroll}px`,
+            } as CSSProperties
           }
         >
           <div className="turn-rail-prompt">

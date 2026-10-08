@@ -1880,7 +1880,13 @@
   overflow: hidden;
   z-index: var(--z-popover);
   /* 跟着横线走，但整张卡必须留在栏内：`clamp` 的三段就是「不许越过上端、跟着
-     中心、不许越过下端」。`100%` 解析的是 `.turn-rail` 的高度。 */
+     中心、不许越过下端」。`100%` 解析的是 `.turn-rail` 的高度。
+   *
+   * `--rail-preview-centre` 必须是**栏**的坐标，不是横线组所在滚动容器的坐标：
+   * `top` 相对 `.turn-rail`（本卡的包含块）解析，而横线在 `.turn-rail-scroll`
+   * 里，两者差着滚动容器相对栏顶的那段偏移 —— 它由 `TurnRail.tsx` 的
+   * `railOffset` 补进来。漏掉它的后果不是「偏一点」：那段偏移就是栏居中后剩下
+   * 的余量，会话越短越大，于是 `clamp` 会把整张卡按在最顶上。 */
   top: clamp(
     0px,
     calc(var(--rail-preview-centre) - var(--rail-preview-h) / 2),

@@ -489,6 +489,81 @@ async function main() {
   console.log('at the top:', JSON.stringify(atTop));
   if (atTop.active !== 0) throw new Error(`at the top the rail highlights mark ${atTop.active + 1}`);
 
+  // ---- the card sits *beside* the mark it belongs to ----
+  //
+  // `insideFrame` above is a containment check, and containment is not alignment:
+  // a card pinned to the rail's top passes it. That is exactly what shipped once —
+  // the card's `top` is computed in the marks box's coordinates (`markCentre(i) -
+  // railScroll`) but spent in the rail's, whose containing block starts at the
+  // rail's padding edge, so the scroller's own offset from the rail was missing
+  // and the stylesheet's `clamp` pinned every card to the top. Both boxes are
+  // therefore compared against each other, in one coordinate space.
+  //
+  // The mark is picked as the one nearest the rail's vertical middle rather than
+  // by index: the stylesheet's `clamp` is *meant* to pull the card back inside the
+  // frame near either end, so a mark near an end would measure the clamp instead of
+  // the alignment. `clampFree` is asserted too, for the same reason — if it ever
+  // goes false this check has quietly stopped testing what it says it tests.
+  const middle = await probe(`(() => {
+    const nav = document.querySelector('.turn-rail').getBoundingClientRect();
+    const marks = [...document.querySelectorAll('.turn-rail-mark')];
+    let best = 0;
+    let bestD = Infinity;
+    marks.forEach((m, i) => {
+      const b = m.getBoundingClientRect();
+      const d = Math.abs(b.top + b.height / 2 - (nav.top + nav.height / 2));
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    return JSON.stringify({ index: best, fromMiddle: Math.round(bestD) });
+  })()`);
+  await evaluate(`(() => {
+    const mark = document.querySelectorAll('.turn-rail-mark')[${middle.index}];
+    mark.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+    mark.dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+    return true;
+  })()`);
+  await sleep(150);
+  const beside = await probe(`(() => {
+    const el = document.querySelector('.turn-rail-preview');
+    const mark = document.querySelectorAll('.turn-rail-mark')[${middle.index}];
+    const nav = document.querySelector('.turn-rail').getBoundingClientRect();
+    const box = el.getBoundingClientRect();
+    const mb = mark.getBoundingClientRect();
+    return JSON.stringify({
+      cardCentre: Math.round(box.top + box.height / 2 - nav.top),
+      markCentre: Math.round(mb.top + mb.height / 2 - nav.top),
+      cardH: Math.round(box.height),
+      navH: Math.round(nav.height),
+      // What "beside the mark" actually means, and the assertion the containment
+      // check above cannot make.
+      coversMark: box.top <= mb.top + mb.height / 2 && box.bottom >= mb.top + mb.height / 2,
+      clampFree: box.top - nav.top > 1 && box.bottom < nav.bottom - 1,
+    });
+  })()`);
+  const delta = beside.cardCentre - beside.markCentre;
+  console.log(
+    `card beside mark ${middle.index + 1}:`,
+    JSON.stringify({ ...beside, fromMiddle: middle.fromMiddle, delta }),
+  );
+  if (!beside.clampFree) {
+    throw new Error(
+      'the card is against one end of the frame, so the clamp is deciding its position and ' +
+        'this check cannot see the alignment it is here to measure',
+    );
+  }
+  // Coverage rather than a distance: the stylesheet centres the card on its
+  // `--rail-preview-h` **maximum** height, so a card shorter than that sits
+  // `(max - actual) / 2` px high by design. Coverage is unaffected by that
+  // difference and an exact-distance assertion would be measuring it instead.
+  if (!beside.coversMark) {
+    throw new Error(
+      `the card does not cover the mark it belongs to (card centre ${beside.cardCentre}, ` +
+        `mark centre ${beside.markCentre}, ${delta}px apart): its top is measured in the marks ` +
+        'box\u2019s coordinates and spent in the rail\u2019s, so the scroller\u2019s own offset ' +
+        'from the rail is missing',
+    );
+  }
+
   if (shotPath !== '') {
     const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     writeFileSync(shotPath, Buffer.from(shot.result.data, 'base64'));
