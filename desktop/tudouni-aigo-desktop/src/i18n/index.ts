@@ -631,6 +631,11 @@ export const en = {
   /** The scroll region's accessible name. It is also the `aria-live` region, so
    *  new answers and notices are announced rather than silently appearing. */
   'stream.label': 'Session transcript',
+  /** The turn rail down the transcript's right edge (`TurnRail.tsx`). */
+  'rail.label': 'Turn navigation',
+  /** One mark's accessible name. It has to say what the press does **and** which
+   *  turn, or a screen reader user hears "button" some hundreds of times. */
+  'rail.jump': 'Jump to turn {n}',
 } as const;
 
 export type TKey = keyof typeof en;

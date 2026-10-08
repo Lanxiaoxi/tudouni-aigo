@@ -1664,3 +1664,256 @@
   /* Same reasoning as the terminal pane: source code does not reflow. */
   white-space: pre;
 }
+
+/* ============================================================
+   回合导航栏 · Turn rail
+   ------------------------------------------------------------
+   正文右边一条竖栏，一轮对话一根横线，点一下跳过去，悬停看这一轮的
+   提问与回答（`TurnRail.tsx` 是绘制那一半，`turnRail.ts` 是纯规则那一半）。
+
+   **它是一列，不是浮层。** 这一条是整个设计里唯一不能改的决定：正文是
+   `.stream-inner` 居中、`max-width: 980px`，所以宽窗下右侧本来就有一条空白
+   gutter，把横线浮在那条 gutter 里是最省事的做法 —— 也是错的。gutter 的宽度
+   取决于窗口有多宽、两条侧栏是不是展开、右栏被拖到多宽；1440px、两条侧栏都
+   开着的时候正文列只有 928px，gutter 只剩 **5px**，横线就压在文字上面。做成
+   flex 的一列之后，任何宽度下都不可能压到文字：代价是正文少 36px，换来的是
+   不需要断点、不需要 `:has`、也不需要假设侧栏今天有多宽。
+
+   实测（`scripts/turn-rail-check.mjs`，1440×900、两条侧栏展开、60 轮对话）：
+   正文列 928px，`stream-inner` 882px，文字右缘 x=1106，导航栏一列占
+   x∈[1136,1172]，文字到横线的间距 **30px**。把这一列改回
+   `position:absolute; right:12px; width:28px` 的浮层、在同一个会话上再量一次：
+   正文列因为让出了这一列而变宽 36px、文字右缘挪到 x=1142，而横线占
+   x∈[1132,1160] —— **仍然重叠 10px**。两个数是一起量的，因为浮层方案下正文
+   宽度本身会变；重叠量随窗口变窄、侧栏展开而增大，这正是「不能靠 gutter」的
+   意思。 */
+.stream-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* 正文在这一行里的位置。
+ *
+ * `min-width: 0` 是承重的，而且是这次改动**新引入**的需要：此前
+ * `.stream-scroll` 是纵向 flex 容器唯一的孩子，交叉轴上自动拉伸，宽度不可能
+ * 被内容顶开；变成横向 flex item 之后它的自动最小尺寸是内容的 **min-content**
+ * 宽度，于是一个没有断点的长 token（base64、没有空格的路径）会把正文顶宽、
+ * 把导航栏挤出屏幕。写在 stream.css 而不是 app.css，是为了让「为什么需要」
+ * 和声明待在一起。 */
+.stream-body > .stream-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 跳转落点留一点余量：`scrollIntoView({block:'start'})` 会把回合头贴到正文
+   顶边，而正文上方没有任何粘性栏，贴边读起来像是被切了一半。
+ *
+ * 数值来自 `turnRail.ts` 的 `LANDING_PX`（`StreamView` 写在 `--rail-landing`
+ * 上），**不能在这里另写一个常量**：`HEADING_BAND_PX` 是由它推出来的，落点
+ * 一旦跑到自己的判定带外面，点第 k 轮却会高亮第 k-1 轮。 */
+.stream-inner > [data-anchor] {
+  scroll-margin-top: var(--rail-landing, 0px);
+}
+
+/* 跳转期间把 `content-visibility` 关掉。
+ *
+ * `app.css` 给正文每一行都加了 `content-visibility: auto`，为的是让一个 chunk
+ * 的布局成本不随历史长度增长；代价是**没上过屏的行只有一个估算高度**，于是
+ * 文档比实际矮，`scrollIntoView` 跳到远处的回合会在当前底部被夹住 ——
+ * `turn-rail-check.mjs` 在 60 轮会话上量到，点最后一根横线，回合头停在顶边下方
+ * **15,561px**，正文根本没动。
+ *
+ * 所以跳转时先把这些行还原成真实布局，量完再放开。放开不会把刚才那次布局丢掉：
+ * `contain-intrinsic-size` 里的 `auto` 关键字就是「记住这一行第一次渲染时的真实
+ * 高度」，这正是它存在的原因，所以这一次的代价每个会话只付一次，而且付在点击
+ * 上，不在流式路径上。
+ *
+ * 类名由 `TurnRail.tsx` 的 `onJump` 加/去，整个开关发生在同一帧内、绘制之前，
+ * 所以看不到闪动。 */
+.stream-scroll.is-landing .stream-inner > * {
+  content-visibility: visible;
+}
+
+.turn-rail {
+  --rail-lane: 36px;
+  /* 悬停卡的最大高度，同时是它的 clamp 上界 —— 两个数字必须一致，所以只有
+     一个来源。 */
+  --rail-preview-h: 100px;
+  flex: 0 0 auto;
+  width: var(--rail-lane);
+  min-height: 0;
+  padding-block: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  /* 竖栏本身占满整列高，里面的横线组按内容高居中：短会话里它待在中间，长会话
+     里它撑到 max-height 并在自己内部滚动。 */
+  justify-content: center;
+  position: relative;
+}
+
+.turn-rail-scroll {
+  /* `flex: 0 1 auto` + `min-height: 0` 而不是 `max-height: 100%`：父元素高度是
+     自动的，百分比 max-height 对它解析不出结果（浏览器按 `none` 处理）。让
+     flex 收缩去做这件事，窗口矮的时候横线组跟着变矮并滚动，不会溢出。 */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.turn-rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 还有横线在视线之外的那一端，留下 24px 的渐隐。用 mask 而不是盖一层渐变，
+   所以不占额外元素、也没有层级要对。 */
+.turn-rail-scroll.is-top {
+  mask-image: linear-gradient(#0000 0, #000 24px 100%);
+}
+
+.turn-rail-scroll.is-bottom {
+  mask-image: linear-gradient(#000 0 calc(100% - 24px), #0000 100%);
+}
+
+.turn-rail-scroll.is-top.is-bottom {
+  mask-image: linear-gradient(#0000 0, #000 24px calc(100% - 24px), #0000 100%);
+}
+
+.turn-rail-marks {
+  position: relative;
+}
+
+.turn-rail-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  cursor: pointer;
+}
+
+/* 那根横线。
+ *
+ * 右对齐、并且以右端为变换原点：三种状态（常态、悬停、当前）只是同一个右端点
+ * 上 `scaleX` 不同，所以一排横线里改变某一条不会把旁边的推动一格。这也是
+ * DeepSeek Harness 里那条导航栏的做法，抄的是这条几何而不是它的具体数值。 */
+.turn-rail-mark::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 20px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+  transform: translateY(-50%) scaleX(0.55);
+  transform-origin: 100% 50%;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.turn-rail-mark.is-preview::before {
+  background: var(--fg-muted);
+  transform: translateY(-50%) scaleX(0.85);
+}
+
+.turn-rail-mark.is-active::before {
+  background: var(--fg);
+  transform: translateY(-50%) scaleX(1);
+}
+
+/* 键盘焦点：换色**并且**变长。两条一起才是合格的焦点指示 —— 只用颜色就是在
+   要求使用者分辨 `--border` 和 `--accent`，而那正是 `SessionDot` 里写明不许
+   的做法。（全局的 `prefers-reduced-motion` 块已经把 transition 归零，所以
+   这里不需要再来一遍。） */
+.turn-rail-mark:focus-visible {
+  outline: none;
+}
+
+.turn-rail-mark:focus-visible::before {
+  background: var(--accent);
+  transform: translateY(-50%) scaleX(1);
+}
+
+/* 正在跑的那一轮：呼吸。
+ *
+ * `component-states.md` §0 禁止用呼吸动画表达状态翻转，并且给「有回合在飞」
+ * 留了唯一的例外 —— 它是持续状态，不是翻转。同一条理由写在 `SessionDot.tsx`
+ * 里。颜色和 `aria-busy` 也各自携带同一件事，所以动画从来不是唯一信号。 */
+.turn-rail-mark.is-running::before {
+  animation: rail-mark-busy calc(var(--motion-slow) * 2) ease-in-out infinite;
+}
+
+@keyframes rail-mark-busy {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 悬停 / 聚焦时的那张卡。 */
+.turn-rail-preview {
+  position: absolute;
+  right: calc(100% + var(--space-2));
+  width: min(320px, 40vw);
+  max-height: var(--rail-preview-h);
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  color: var(--fg);
+  pointer-events: none;
+  overflow: hidden;
+  z-index: var(--z-popover);
+  /* 跟着横线走，但整张卡必须留在栏内：`clamp` 的三段就是「不许越过上端、跟着
+     中心、不许越过下端」。`100%` 解析的是 `.turn-rail` 的高度。 */
+  top: clamp(
+    0px,
+    calc(var(--rail-preview-centre) - var(--rail-preview-h) / 2),
+    calc(100% - var(--rail-preview-h))
+  );
+  transition: top var(--motion-fast) var(--ease-standard);
+  animation: rail-preview-in var(--motion-fast) var(--ease-standard);
+}
+
+.turn-rail-prompt,
+.turn-rail-response {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.turn-rail-prompt {
+  font-size: var(--text-body);
+  font-weight: 600;
+  -webkit-line-clamp: 1;
+}
+
+.turn-rail-response {
+  margin-top: var(--space-1);
+  font-size: var(--text-compact);
+  line-height: var(--leading-body);
+  color: var(--fg-muted);
+  -webkit-line-clamp: 3;
+}
+
+@keyframes rail-preview-in {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+}

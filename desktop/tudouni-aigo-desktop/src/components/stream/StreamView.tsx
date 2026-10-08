@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { NO_ENTRIES, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { EntryView } from './EntryView';
 import { QuietGroup } from './QuietGroup';
+import { TurnRail } from './TurnRail';
+import { MIN_RAIL_TURNS, turnRail, LANDING_PX } from '@/turnRail';
 import type { Entry } from '@/state/entries';
 
 /**
@@ -17,6 +20,12 @@ import type { Entry } from '@/state/entries';
  * reader scrolls up, the position is not stolen back — a "jump to latest"
  * button appears instead, so reading history is not interrupted by streaming
  * output.
+ *
+ * The transcript and the turn rail share a row (`.stream-body`). Reserving the
+ * rail's lane here rather than floating it over the transcript is what makes it
+ * impossible for a mark to land on the text — see `TurnRail.tsx`. The lane is
+ * only taken once there is a conversation worth navigating (`MIN_RAIL_TURNS`),
+ * so a session with one turn keeps every pixel of width it had.
  */
 
 type Row =
@@ -64,6 +73,12 @@ export function StreamView() {
   const [pinned, setPinned] = useState(true);
 
   const rows = useMemo(() => buildRows(entries, quiet), [entries, quiet]);
+  // One pass over the transcript, in its own order. Called on every change to
+  // `entries` — including every chunk of every answer — so it walks the entries
+  // once rather than scanning each turn's span independently: the spans
+  // partition the transcript, so the total work is linear, not quadratic.
+  const turns = useMemo(() => turnRail(entries), [entries]);
+  const rail = turns.length >= MIN_RAIL_TURNS;
 
   // Follow only while pinned, and land directly — no positional animation.
   useEffect(() => {
@@ -115,35 +130,47 @@ export function StreamView() {
 
   return (
     <div
-      className="stream-scroll scroll"
-      ref={scrollRef}
-      onScroll={onScroll}
-      onKeyDown={onKeyDown}
-      tabIndex={0}
-      role="log"
-      aria-live="polite"
-      aria-label={t('stream.label')}
+      className="stream-body"
+      // Where a jumped-to turn head lands, published for the stylesheet's
+      // `scroll-margin-top`. It is written here rather than in `stream.css`
+      // because `HEADING_BAND_PX` — the rule that decides which mark is active —
+      // is derived from it in `turnRail.ts`, and a jump that lands outside its own
+      // band makes the rail highlight the turn *before* the one that was clicked.
+      style={{ '--rail-landing': `${LANDING_PX}px` } as CSSProperties}
     >
-      <div className="stream-inner">
-        {rows.map((row) =>
-          row.kind === 'quiet' ? (
-            <QuietGroup key={row.key} entries={row.entries} />
-          ) : (
-            <EntryView key={row.key} entry={row.entry} />
-          ),
-        )}
+      <div
+        className="stream-scroll scroll"
+        ref={scrollRef}
+        onScroll={onScroll}
+        onKeyDown={onKeyDown}
+        tabIndex={0}
+        role="log"
+        aria-live="polite"
+        aria-label={t('stream.label')}
+      >
+        <div className="stream-inner">
+          {rows.map((row) =>
+            row.kind === 'quiet' ? (
+              <QuietGroup key={row.key} entries={row.entries} />
+            ) : (
+              <EntryView key={row.key} entry={row.entry} />
+            ),
+          )}
+        </div>
+
+        {!pinned ? (
+          <button
+            type="button"
+            className="btn btn-secondary btn-compact jump-latest"
+            onClick={jumpToLatest}
+          >
+            <ArrowDown size={12} />
+            {t('common.jumpLatest')}
+          </button>
+        ) : null}
       </div>
 
-      {!pinned ? (
-        <button
-          type="button"
-          className="btn btn-secondary btn-compact jump-latest"
-          onClick={jumpToLatest}
-        >
-          <ArrowDown size={12} />
-          {t('common.jumpLatest')}
-        </button>
-      ) : null}
+      {rail ? <TurnRail turns={turns} scrollRef={scrollRef} /> : null}
     </div>
   );
 }

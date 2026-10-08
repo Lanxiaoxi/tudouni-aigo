@@ -136,7 +136,12 @@ function TurnHead({ entry }: { entry: Extract<Entry, { kind: 'turn' }> }) {
     !running && !['answered', 'completed'].includes(entry.status);
 
   return (
-    <div className="turn-head">
+    // `data-anchor` is how the turn rail finds this row to scroll to it. It is
+    // the **entry's id** rather than its ordinal or its index: quiet mode merges
+    // tool rows into one `.quiet-rollup` row, so a child index is not an entry
+    // index, and after a `session_load` the ordinals restart while the ids do
+    // not. See `turnRail.ts` and `TurnRail.tsx`.
+    <div className="turn-head" data-anchor={entry.id}>
       <span className="th-num">{t('entry.turn', { n: entry.ordinal })}</span>
       <Badge tone={tone}>{label}</Badge>
       {rawIsInformative ? <span className="faint caption mono">{entry.status}</span> : null}
@@ -152,7 +157,10 @@ function TurnHead({ entry }: { entry: Extract<Entry, { kind: 'turn' }> }) {
 function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
   const t = useT();
   return (
-    <div className="e-user">
+    // The second kind of rail anchor. A turn restored by `session_load` has no
+    // `turn` head — the stored message list carries no turn boundary — so those
+    // marks scroll to the prompt they are named after instead.
+    <div className="e-user" data-anchor={entry.id}>
       <span className="eu-tag">{t('entry.you')}</span>
       {entry.text}
     </div>

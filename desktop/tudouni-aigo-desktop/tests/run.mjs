@@ -56,6 +56,12 @@ const SUITES = [
   // was in no list at all, and a panel made the rail unclickable while it still
   // looked available. Both are pure functions, so both are assertable here.
   'rail-groups.test.ts',
+  // The turn rail down the transcript's right edge: which marks exist, what they
+  // are called, and where each turn begins and ends. Its two rules — a live turn's
+  // prompt sits *above* its head, and a restored transcript has no heads at all —
+  // are both invisible in a rendered string, which is why they are asserted here
+  // rather than by looking at the window.
+  'turn-rail.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });
