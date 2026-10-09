@@ -362,13 +362,31 @@
   contain-intrinsic-size: auto 120px;
 }
 
-/* 新回合提示：不自动滚到底时出现 */
+/* 新回合提示：不自动滚到底时出现。Wears the accent green rather than the
+   secondary grey: it is the one action the transcript is asking for, and the
+   colour says so without stealing the word "primary". */
 .jump-latest {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
   bottom: var(--space-4);
   z-index: var(--z-popover);
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  font-weight: 600;
+}
+
+.jump-latest:hover {
+  background: var(--accent-hover);
+  /* The secondary button's hover/active `filter: brightness()` would land on
+     the accent background too — same specificity, and app.css comes later, so
+     `none` here is what keeps the green from going dull. */
+  filter: none;
+}
+
+.jump-latest:active {
+  background: var(--accent-active);
+  filter: none;
 }
 
 /* ---------------- §1·6 状态栏 ---------------- */
