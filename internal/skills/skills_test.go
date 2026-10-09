@@ -144,6 +144,28 @@ func TestABOMDoesNotBreakTheFrontmatter(t *testing.T) {
 // The body is spliced into **every** request, and a silent cut removes the last
 // steps of a procedure — which the model then follows as if they were the whole
 // thing.
+// TestCRLFLineEndingsDoNotBreakTheFrontmatter ...
+//
+// Editors on Windows default to CRLF, and `\r` is invisible: without the fix the
+// first line is `---\r`, the frontmatter is "missing", and the skill vanishes.
+func TestCRLFLineEndingsDoNotBreakTheFrontmatter(t *testing.T) {
+	root := t.TempDir()
+	content := strings.ReplaceAll(goodSkill("windows-eol", "Windows 换行。"), "\n", "\r\n")
+	writeSkill(t, root, "windows-eol", content)
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+	if len(catalog.Skills) != 1 {
+		t.Fatalf("CRLF broke the parse: %+v", catalog.Problems)
+	}
+	skill := catalog.Skills[0]
+	if skill.Description != "Windows 换行。" {
+		t.Fatalf("the description is wrong: %q", skill.Description)
+	}
+	if !strings.Contains(skill.Body, "做点什么") {
+		t.Fatalf("the body was not kept: %q", skill.Body)
+	}
+}
+
 func TestAnOversizedSkillIsRefusedNotTruncated(t *testing.T) {
 	root := t.TempDir()
 	body := strings.Repeat("很长的步骤内容。", MaxSkillBytes/4)
