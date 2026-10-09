@@ -1080,7 +1080,10 @@ export function AuditPanel() {
                     <td className="mono">{row.path}</td>
                     <td className="mono num">{row.lines}</td>
                     <td>
-                      <Badge tone={row.status === 'loaded' ? 'success' : 'destructive'} dot={false}>
+                      <Badge
+                        tone={row.status === 'loaded' ? 'success' : row.status === 'ignored' ? 'warning' : 'destructive'}
+                        dot={false}
+                      >
                         {row.status}
                       </Badge>
                     </td>

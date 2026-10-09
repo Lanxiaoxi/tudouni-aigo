@@ -182,7 +182,7 @@
       },
       "agents_md": {
         "type": "array",
-        "doc": "**只有 kind=state 有**。这个会话的 system 消息里那份 `AGENT.md` 的去向：`[{\"path\": \"AGENT.md\", \"lines\": 12, \"status\": \"loaded|failed\", \"problem\": \"...\"}]`。**它读会话、不重读盘** —— 恢复旧会话时它说的必须是那份旧提示词里的事。"
+        "doc": "**只有 kind=state 有**。这个会话的 system 消息里那份工作区说明的去向：`[{\"path\": \"AGENTS.md\", \"lines\": 12, \"status\": \"loaded|failed|ignored\", \"problem\": \"...\"}]`。`AGENT.md` 与 `AGENTS.md` 都读，`AGENTS.md` 优先；没被读的那一份是 `ignored`，`problem` 里写着谁赢了。**它读会话、不重读盘** —— 恢复旧会话时它说的必须是那份旧提示词里的事。"
       },
       "risk_scope": {
         "type": "array",

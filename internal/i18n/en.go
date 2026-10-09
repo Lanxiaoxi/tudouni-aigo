@@ -810,11 +810,18 @@ var catalog = map[string]string{
 	"agents_md.reason.not_utf8":        "not UTF-8 text; nothing was injected (saving it as UTF-8 once is enough)",
 	"agents_md.reason.permission":      "no read permission",
 	"agents_md.notice.loaded_item":     "{path} ({n} lines)",
-	"agents_md.notice.loaded":          "[AGENT.md] loaded {listed}",
+	"agents_md.notice.loaded":          "[{name}] loaded {listed}",
 	"agents_md.notice.truncated_lines": "only the first {lines} lines were injected (out of {total})",
 	"agents_md.notice.truncated_chars": "another {omitted} characters were cut off the end, so the text stops mid-sentence",
-	"agents_md.notice.truncated":       "[AGENT.md] {path} is over the injection budget, {detail}; the model has to read_file it for the full text.",
-	"agents_md.notice.failed":          "[AGENT.md] cannot read {path}: {reason}",
+	"agents_md.notice.truncated":       "[{name}] {path} is over the injection budget, {detail}; the model has to read_file it for the full text.",
+	"agents_md.notice.failed":          "[{name}] cannot read {path}: {reason}",
+	// Both spellings are read; this is the line for the one that lost. It names the
+	// winner as well as the loser, because "AGENTS.md was ignored" leaves the reader
+	// to guess which file the session is actually running on — and the whole point of
+	// the warning is that they might be keeping their notes in the wrong one.
+	"agents_md.notice.ignored": "[{name}] {path} was not read: {winner} is already there and takes priority.",
+	// The same fact for the rail's row, phrased for a column rather than a sentence.
+	"agents_md.ignored.reason": "{winner} takes priority",
 
 	// --- pictures in a message ---------------------------------------------
 	//

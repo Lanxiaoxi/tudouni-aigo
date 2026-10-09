@@ -458,7 +458,7 @@ export const en = {
   'panel.audit.permissions': 'Non-default permissions',
   'panel.audit.granted': 'Granted this session',
   'panel.audit.none': 'none',
-  'panel.audit.agentsMd': 'AGENT.md',
+  'panel.audit.agentsMd': 'AGENT.md / AGENTS.md',
 
   /* ---------------- settings ---------------- */
   'panel.settings.title': 'Settings',

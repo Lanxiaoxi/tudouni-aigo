@@ -2311,6 +2311,20 @@ func agentMDNotices(session *state.Session) []map[string]any {
 			})
 		}
 	}
+	// Sessions written before both spellings were read have no `ignored` list, and a
+	// missing one is not a zero — it means the question was never asked.
+	if ignored, ok := block["ignored"].([]any); ok {
+		for _, item := range ignored {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			report.Ignored = append(report.Ignored, state.AgentMDIgnored{
+				Path:   stringOf(entry["path"]),
+				Winner: stringOf(entry["winner"]),
+			})
+		}
+	}
 	if !report.HasAnything() {
 		return nil
 	}
