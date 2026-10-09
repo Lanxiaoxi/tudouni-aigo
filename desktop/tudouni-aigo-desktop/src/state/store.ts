@@ -92,7 +92,13 @@ import {
   sendTo,
   unregisterRuntime,
 } from '@/runtime/bus';
-import { insertPathAtCaret, type PastedImage } from '@/runtime/paste';
+import {
+  insertAtCaret,
+  nextPlaceholder,
+  removePlaceholderFromDraft,
+  restorePastedPaths,
+  type PastedImage,
+} from '@/runtime/paste';
 import {
   applyTerminalOutput,
   DEFAULT_VIEWPORT_ROWS,
@@ -551,11 +557,13 @@ export interface SessionRuntime {
    *
    * A **front-end preference**, not a runtime fact: the runtime never hears about
    * a chip. The chips are drawn from these, but *which* are drawn is decided by
-   * the draft text (`referencedImages`), because the text is the only thing that
-   * gets sent — so deleting a path from the sentence drops its chip, and there is
-   * no second source of truth to fall out of step.
+   * the draft text (`referencedImages`) — a picture counts while its placeholder
+   * is still in the sentence — because the text is the only surface the person
+   * reads, so deleting the marker drops its chip and there is no second source of
+   * truth to fall out of step. The paths themselves are put back only at submit
+   * time (`restorePastedPaths`); the draft carries placeholders.
    *
-   * Per session because the path in the sentence is **workspace-relative**, and
+   * Per session because the path each entry holds is **workspace-relative**, and
    * two sessions may be in different workspaces: the same string names a
    * different place, or nothing at all.
    */
@@ -2843,8 +2851,18 @@ export const useApp = create<AppStore>((set, get) => {
         return null;
       }
 
+      // The draft is re-read here rather than taken from `current`: awaiting the
+      // bridge gave the person time to keep typing, and inserting into the text
+      // as it was would silently drop what they wrote. The placeholder is minted
+      // against the *same* re-read, so a token the person typed since the paste
+      // started cannot be issued twice.
+      const fresh = get().sessions[key]?.draft ?? '';
+      const placeholder = nextPlaceholder(fresh);
+      const { text, caret } = insertAtCaret(fresh, at, placeholder);
+
       const image: PastedImage = {
         path: stashed.path,
+        placeholder,
         name: stashed.name,
         bytes: stashed.bytes,
         mime: stashed.mime,
@@ -2856,10 +2874,6 @@ export const useApp = create<AppStore>((set, get) => {
         url: URL.createObjectURL(new Blob([bytes as BlobPart], { type: stashed.mime })),
       };
 
-      // The draft is re-read here rather than taken from `current`: awaiting the
-      // bridge gave the person time to keep typing, and inserting into the text
-      // as it was would silently drop what they wrote.
-      const { text, caret } = insertPathAtCaret(get().sessions[key]?.draft ?? '', at, image.path);
       patchWith(key, (bucket) => ({
         draft: text,
         historyCursor: null,
@@ -2872,7 +2886,14 @@ export const useApp = create<AppStore>((set, get) => {
       patchWith(get().activeKey ?? '', (current) => {
         const doomed = current.pastedImages.find((image) => image.path === path);
         if (doomed) URL.revokeObjectURL(doomed.url);
-        return { pastedImages: current.pastedImages.filter((image) => image.path !== path) };
+        // The marker in the sentence comes out with the entry: the tray and the
+        // draft are two readings of one list, and a token left where the chip was
+        // removed would promise a picture no chip stands for.
+        return {
+          pastedImages: current.pastedImages.filter((image) => image.path !== path),
+          draft: doomed ? removePlaceholderFromDraft(current.draft, doomed.placeholder) : current.draft,
+          historyCursor: null,
+        };
       });
     },
 
@@ -2911,8 +2932,14 @@ export const useApp = create<AppStore>((set, get) => {
       const key = s.activeKey;
       const current = activeRuntime(s);
       if (key === null || !current) return;
+      // What the person wrote and what the runtime receives are **two strings**.
+      // The draft carries placeholders; the sentence that goes out carries paths,
+      // because a path in the text is the only image channel the runtime has.
+      // The transcript keeps the draft — the placeholder is what the person said,
+      // and the chip row above the input already told them the picture was there.
+      const sent = restorePastedPaths(current.draft, current.pastedImages).trim();
       const text = current.draft.trim();
-      if (text === '') return;
+      if (sent === '') return;
       // A modal is blocking: nothing may be sent over the top of one.
       if (s.modal !== null) return;
       // The pictures have done their job the moment the sentence goes out: what
@@ -2931,7 +2958,7 @@ export const useApp = create<AppStore>((set, get) => {
         // Whatever was said about this input has been answered by sending it.
         composerNotice: null,
       }));
-      sendTo(key, { v: 1, t: 'user_message', text });
+      sendTo(key, { v: 1, t: 'user_message', text: sent });
     },
 
     interrupt() {

@@ -4,15 +4,20 @@
  * The whole feature rests on the same fact the drop handler rests on: **a path is
  * the only channel a picture travels on.** `internal/runtime/images.go` scans the
  * user's sentence for path-shaped words, stores what resolves, and attaches it.
- * There is no upload command and no markup. So a paste can only ever do one
- * thing — put the picture on disk *inside the workspace* and write its path into
- * the sentence.
+ * There is no upload command and no markup.
  *
  * A drop already has an absolute path, handed over by the OS. A paste does not:
  * the clipboard carries **bytes**, and the WebView has no filesystem. So the
  * bytes go to the Rust side to be written (see `image_stash` in `src-tauri`), and
  * this module owns everything that can be decided **before** that call, plus the
- * two text operations that follow it.
+ * placeholder text operations that follow it.
+ *
+ * **The draft carries a placeholder, not the path.** The path has to be in the
+ * sentence *when it goes out*, and it can be a short marker while it is being
+ * written: `nextPlaceholder` mints the token, `insertAtCaret` puts it in the
+ * draft, `restorePastedPaths` swaps it for the path at submit time, and
+ * `removePlaceholderFromDraft` takes it out again when a chip is dismissed. The
+ * runtime never sees a placeholder, and the person never sees a path.
  *
  * The three gates are all mirrors of the runtime's own rules, and the reason to
  * mirror rather than invent is that a refusal here is a sentence a person reads
@@ -65,10 +70,100 @@ export type PasteRefusal =
   | { code: 'too-large'; size: number; limit: number }
   | { code: 'not-an-image'; declared: string };
 
+/**
+ * A pasted picture in the draft is **a placeholder, not a path**.
+ *
+ * The runtime's only image channel is a path-shaped word in the sentence
+ * (`internal/runtime/images.go`), so the sentence that goes out the door must
+ * still name the file — but the sentence the person *reads* should be the
+ * sentence they typed. A path like `.tudouni/paste/paste-1759...-1.png` is
+ * machine noise in a conversation, so the draft carries a short marker and the
+ * real path is put back at submit time (`restorePastedPaths`). The runtime
+ * never sees a placeholder; it is a front-end concern that ends at the wire.
+ */
+
+/**
+ * Build the next placeholder.
+ *
+ * The shape is deliberately far from anything the runtime's scanner could read
+ * as a path: the `⟦⟧` brackets are not in its path-character set (nor are they
+ * whitespace, so the token survives intact), and the name is a literal — the
+ * front end is English-only, so the marker does not need to follow the user's
+ * language. Numbered, because one sentence can carry several pictures and the
+ * person should be able to point at one in the text ("the second one").
+ *
+ * `taken` is what the **draft** already contains — not what is stashed — so a
+ * number the person deleted is recycled rather than skipped: the sentence is
+ * the surface these tokens live on, and a gap (`1`, `3`) reads as a mistake.
+ */
+export function nextPlaceholder(taken: string): string {
+  let number = 0;
+  let candidate = `⟦pimg-${number}⟧`;
+  while (taken.includes(candidate)) {
+    number += 1;
+    candidate = `⟦pimg-${number}⟧`;
+  }
+  return candidate;
+}
+
+/**
+ * The text that goes to the runtime, from the text the person wrote.
+ *
+ * Every placeholder is swapped for its picture's path — the path the scanner
+ * will resolve, and the one the runtime's notices quote, so what arrives is
+ * exactly the sentence it always arrived as.
+ *
+ * **A placeholder the person deleted is not a lost picture.** The picture is
+ * stashed and the chip is still on screen; what is gone is the *marker*.
+ * Appending the path at the end keeps the promise that a visible chip always
+ * ships a picture, in the failure mode that costs the least surprise: the
+ * sentence is untouched where the person edited it, and the extra word at the
+ * end is one they can see and delete — unlike a picture that silently never
+ * arrived.
+ *
+ * The path is appended as its own trailing word: the scanner splits on
+ * whitespace, so a path glued to the last word is one token it will not
+ * resolve, and a silently unattached picture is the one failure this layer
+ * exists to prevent.
+ */
+export function restorePastedPaths(draft: string, images: PastedImage[]): string {
+  if (images.length === 0) return draft;
+  let text = draft;
+  const orphans: string[] = [];
+  for (const image of images) {
+    if (text.includes(image.placeholder)) {
+      text = text.replaceAll(image.placeholder, image.path);
+    } else {
+      orphans.push(image.path);
+    }
+  }
+  if (orphans.length === 0) return text;
+  const trail = text === '' || /\s$/.test(text) ? '' : ' ';
+  return `${text}${trail}${orphans.join(' ')}`;
+}
+
+/** Remove one placeholder from the draft — what a chip's dismiss button does.
+ *
+ * Same reason it edits text rather than a list: the text is the only surface
+ * that exists, and leaving the marker where a chip was removed would make the
+ * sentence promise a picture the tray no longer shows. The hole is closed and
+ * runs of spaces collapse, so the sentence does not keep a gap where the
+ * token was.
+ */
+export function removePlaceholderFromDraft(draft: string, placeholder: string): string {
+  return draft
+    .split(placeholder)
+    .join('')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 /** One picture this front end stashed, as the composer needs to know it. */
 export interface PastedImage {
-  /** The workspace-relative path exactly as it was written into the sentence. */
+  /** The workspace-relative path — what the sentence names at submit time. */
   path: string;
+  /** The token standing for this picture in the draft while it is being written. */
+  placeholder: string;
   /** The file's own name, for the chip's label. */
   name: string;
   bytes: number;
@@ -148,22 +243,21 @@ function normalizeWorkspace(workspace: string): string {
 }
 
 /**
- * Insert a path at the caret, keeping it a separate word.
+ * Insert a token at the caret, keeping it a separate word.
  *
- * Separate on both sides, and that is load-bearing rather than tidy: the runtime
- * finds pictures by splitting the sentence into tokens (`content.FindImagePaths`)
- * and asking the filesystem about each one. A path glued to the word in front of
- * it is a single token, and the reading that would rescue it (`看这个/a.png`) is a
- * guess the scanner offers rather than a rule it applies — so a paste that
- * silently failed to attach is exactly the failure this spacing prevents.
+ * Separate on both sides, and that is load-bearing rather than tidy: at submit
+ * the placeholder is swapped for a path in the **same** sentence (`restorePastedPaths`),
+ * and a path glued to the word in front of it would be one token the runtime's
+ * scanner will not resolve — so the spacing that is kept here is what keeps the
+ * restored path its own word.
  *
- * The caret lands **after** the path, before any space added for the following
+ * The caret lands **after** the token, before any space added for the following
  * text, so typing continues where the person expects.
  */
-export function insertPathAtCaret(
+export function insertAtCaret(
   draft: string,
   caret: number,
-  path: string,
+  token: string,
 ): { text: string; caret: number } {
   const at = Math.max(0, Math.min(caret, draft.length));
   const before = draft.slice(0, at);
@@ -171,216 +265,37 @@ export function insertPathAtCaret(
   const lead = before === '' || /[\s\p{Cc}]$/u.test(before) ? '' : ' ';
   const trail = after === '' || /^[\s\p{Cc}]/u.test(after) ? '' : ' ';
   return {
-    text: `${before}${lead}${path}${trail}${after}`,
-    caret: before.length + lead.length + path.length,
+    text: `${before}${lead}${token}${trail}${after}`,
+    caret: before.length + lead.length + token.length,
   };
 }
 
 /**
- * The pictures still named in the draft.
+ * The pictures the draft still carries.
  *
- * **The text is the single source of truth**, because the text is the only thing
- * that gets sent: the runtime never hears about a chip. So a chip is drawn while
- * its path is still in the sentence and disappears the moment the person deletes
- * that word — no second piece of state to keep in step, and no way for the tray
- * to claim a picture that is not going anywhere.
+ * A picture is in the draft exactly while its **placeholder** is: a chip is
+ * drawn for it and it ships when the sentence goes out. The person deletes the
+ * marker — not a path, since there is no path in the sentence — and the chip
+ * follows; the file stays on disk but goes nowhere, which is the same as
+ * deleting the path used to mean.
  *
- * The matching is a **port of the runtime's own scanner** (`content.FindImagePaths`
- * and `content.pathCandidates`), not a `includes` check, and that is the whole
- * difficulty of this function. A token in a sentence is wrapped in punctuation and,
- * in Chinese input, glued to the words around it, so the scanner offers several
- * readings and lets the filesystem pick. Comparing the raw token would therefore
- * be wrong in both directions at once:
- *
- *   - it would **miss** a picture the runtime does attach, when the path arrives
- *     inside brackets (`看这个（a.png）。`) or after prose with no separator;
- *   - it would **claim** one it does not, when the token only *contains* the path
- *     (`xa.png` does not name `a.png`).
- *
- * A missed chip is a picture the person cannot see is attached; a false chip is a
- * picture they believe is attached. Both are the "plausible screen" failure this
- * file exists to avoid, so the readings are reproduced here in the same order.
+ * The matching is by literal token, and it can be trusted, because the
+ * placeholder is one this front end minted and nobody else writes it. That is
+ * the point of moving the draft off paths: the tray no longer has to re-port the
+ * runtime's scanner to agree with what the runtime will resolve — the sentence
+ * the tray reads and the one that gets sent differ only by the swap
+ * `restorePastedPaths` performs.
  *
  * Order of the result follows the **sentence**, not the order they were pasted:
  * that is the order the pictures will appear in the message.
  */
 export function referencedImages(draft: string, images: PastedImage[]): PastedImage[] {
   if (images.length === 0) return [];
-  const stashed = new Map<string, PastedImage>();
-  for (const image of images) stashed.set(image.path, image);
-
-  const found: PastedImage[] = [];
-  const seen = new Set<string>();
-  for (const token of splitTokens(draft)) {
-    for (const candidate of pathCandidates(token)) {
-      const image = stashed.get(candidate);
-      if (image === undefined) continue;
-      // The first reading that really is one of this front end's files is the one
-      // the resolver would take, so the walk stops here — a later reading is only
-      // reached when an earlier one does not exist, which is not this case.
-      if (!seen.has(image.path)) {
-        seen.add(image.path);
-        found.push(image);
-      }
-      break;
-    }
-  }
-  return found;
-}
-
-/** Split a sentence into tokens the way `content.FindImagePaths` does: on
- *  whitespace **and control characters**. */
-function splitTokens(text: string): string[] {
-  return text.split(/[\s\p{Cc}]+/u).filter((token) => token !== '');
-}
-
-/**
- * Remove one picture's path from the sentence — what a chip's dismiss button does.
- *
- * It edits the **text**, not a list of attachments, and that is the whole design
- * in one function: the text is what gets sent, so dropping the path is what
- * actually un-attaches the picture. Anything else would leave a chip's absence
- * and the message disagreeing.
- *
- * The match is by token, not by substring, so dismissing `a.png` cannot damage
- * `xa.png` or a sentence that happens to contain those letters. It walks the same
- * candidate readings `referencedImages` does, for the same reason: the token in
- * the sentence may be `看这个（a.png）。` and the path to remove is `a.png`.
- *
- * Surrounding whitespace is collapsed so the sentence does not keep a hole where
- * the path was, and the result is trimmed at both ends.
- */
-export function removePathFromDraft(draft: string, path: string): string {
-  const tokens = draft.split(/([\s\p{Cc}]+)/u);
-  const kept: string[] = [];
-  for (let index = 0; index < tokens.length; index += 2) {
-    const token = tokens[index];
-    const separator = tokens[index + 1] ?? '';
-    // The token is edited only when the path is one of the readings it resolves
-    // to — exactly the condition `referencedImages` used to draw its chip, so a
-    // chip that is on screen can always be dismissed.
-    if (!pathCandidates(token).includes(path)) {
-      kept.push(token + separator);
-      continue;
-    }
-    // **Only the path comes out, never the whole token.** A path glued to prose
-    // (`看这个（a.png）。`) is a single token, and dropping the token would delete
-    // words the person wrote — silently, and as the result of an action they took
-    // to remove a *picture*. The path is always a substring of the token, because
-    // every candidate is derived from it by trimming or slicing.
-    const at = token.indexOf(path);
-    const rest = at < 0 ? token : token.slice(0, at) + token.slice(at + path.length);
-    kept.push(rest + separator);
-  }
-  // Runs of **spaces and tabs** collapse, so removing a word does not leave a
-  // double space behind. Newlines are deliberately left alone: a draft can be
-  // several lines, and flattening it into one would be a much bigger edit than
-  // the one that was asked for.
-  return kept.join('').replace(/[ \t]{2,}/g, ' ').trim();
-}
-
-/**
- * Strip the punctuation a path is routinely wrapped in — `content.trimToken`.
- *
- * Two rounds, because `("/a.png"),` needs both: the comma comes off first and
- * exposes the bracket, which the second round removes. Note what is **not** in
- * these sets: a smart quote (`“”`) is not an ASCII quote, so a path wrapped in
- * one keeps it and the runtime does not resolve it either. That agreement is the
- * point — the tray must not promise an attachment that will not happen.
- */
-function trimToken(token: string): string {
-  let trimmed = token.trim();
-  for (let round = 0; round < 2; round++) {
-    trimmed = trimmed.replace(/^["'`]+|["'`]+$/g, '');
-    trimmed = trimmed.replace(/^[()[\]{}<>（）【】《》「」]+|[()[\]{}<>（）【】《》「」]+$/g, '');
-    trimmed = trimmed.replace(/[.,;:!?，。、；：！？…]+$/, '');
-  }
-  return trimmed.replace(/^@/, '').trim();
-}
-
-/** `filepath.Ext`: the suffix from the final dot **in the final path element**,
- *  so `a.b/c` has none. */
-function extensionOf(value: string): string {
-  for (let index = value.length - 1; index >= 0; index--) {
-    const character = value[index];
-    if (character === '/' || character === '\\') return '';
-    if (character === '.') return value.slice(index);
-  }
-  return '';
-}
-
-/** `content.IsImagePath`: the same three formats the runtime can measure. */
-function isImagePath(value: string): boolean {
-  const extension = extensionOf(value.trim()).toLowerCase();
-  return extension === '.png' || extension === '.jpg' || extension === '.jpeg' || extension === '.gif';
-}
-
-/**
- * `content.looksLikePicture`: the right extension **and** a name in front of it.
- *
- * The name matters: `the .png format is lossless` is a sentence about an
- * extension, and a scanner that accepted `.png` would send the resolver looking
- * for a file literally called `.png` in the workspace.
- */
-function looksLikePicture(value: string): boolean {
-  if (!isImagePath(value)) return false;
-  const name = value.slice(0, value.length - extensionOf(value).length);
-  return name !== '' && name !== '.' && name !== '..';
-}
-
-/** `content.isPathByte`: the characters a path can be built from, ASCII only. */
-function isPathByte(character: string): boolean {
-  if (character.length !== 1) return false;
-  const code = character.charCodeAt(0);
-  if (code < 0x20 || code > 0x7e) return false;
-  if ((code >= 0x61 && code <= 0x7a) || (code >= 0x41 && code <= 0x5a)) return true; // a-z A-Z
-  if (code >= 0x30 && code <= 0x39) return true; // 0-9
-  return '/\\._-~'.includes(character);
-}
-
-/** `content.asciiSuffix`: the longest tail made only of path characters, which is
- *  the reading for a picture glued to a Chinese word with no separator. */
-function asciiSuffix(value: string): string {
-  let start = value.length;
-  for (let index = value.length - 1; index >= 0; index--) {
-    if (!isPathByte(value[index])) break;
-    start = index;
-  }
-  if (start >= value.length) return '';
-  const suffix = value.slice(start);
-  return looksLikePicture(suffix) ? suffix : '';
-}
-
-/**
- * `content.pathCandidates`: the ways one token could be read as a picture's path,
- * most likely first. No candidates means "this token is not a path at all".
- *
- * Nothing is decided here in the runtime and nothing is decided here either — the
- * caller walks the readings and takes the first that is real. The order is
- * reproduced exactly, because it is the order the resolver tries them in and
- * therefore the order that decides which picture a token refers to.
- */
-function pathCandidates(token: string): string[] {
-  const trimmed = trimToken(token);
-  if (!looksLikePicture(trimmed)) return [];
-
-  const candidates = [trimmed];
-
-  // Reading 2: from the first separator on, for `看这个/tmp/a.png`.
-  const firstSeparator = trimmed.search(/[/\\]/);
-  if (firstSeparator > 0) candidates.push(trimmed.slice(firstSeparator));
-
-  // Reading 3: the longest all-ASCII tail, for `看这个shot.png`.
-  const suffix = asciiSuffix(trimmed);
-  if (suffix !== '' && suffix !== trimmed) candidates.push(suffix);
-
-  // Reading 4: the last segment, for `截图/首页.png` written inside prose.
-  const lastSeparator = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  if (lastSeparator >= 0 && lastSeparator + 1 < trimmed.length) {
-    candidates.push(trimmed.slice(lastSeparator + 1));
-  }
-
-  return [...new Set(candidates)];
+  const placed = images
+    .map((image) => ({ image, at: draft.indexOf(image.placeholder) }))
+    .filter((entry) => entry.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  return placed.map((entry) => entry.image);
 }
 
 /**

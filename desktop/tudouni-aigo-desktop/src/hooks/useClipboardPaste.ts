@@ -2,11 +2,15 @@
  * Pasting a picture into the composer.
  *
  * The runtime's only image channel is a **path in the user's sentence**
- * (`internal/runtime/images.go`: there is no upload command and no markup), so
- * this handler does exactly two things: put the clipboard's bytes into a file
- * inside the workspace, and write that file's path into the draft. Everything
- * else — the scanner, the size ceiling, the vision gate, the degradation ladder —
- * is already there and is not duplicated here.
+ * (`internal/runtime/images.go`: there is no upload command and no markup).
+ * This handler therefore still writes the picture into a file inside the
+ * workspace — but the draft receives a **placeholder**, not the path. The
+ * path goes into the sentence at submit time (`restorePastedPaths`), which is
+ * why the runtime sees exactly the text it always has: the person reads
+ * `⟦pimg-0⟧` in the input, and the wire carries
+ * `.tudouni/paste/paste-1759...-1.png`. Everything else — the scanner, the size
+ * ceiling, the vision gate, the degradation ladder — is already there and is
+ * not duplicated here.
  *
  * ## The one rule that matters most
  *

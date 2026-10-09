@@ -21,11 +21,13 @@ import {
   MAX_IMAGES_PER_MESSAGE,
   classify,
   formatBytes,
-  insertPathAtCaret,
+  insertAtCaret,
   nameOfPath,
+  nextPlaceholder,
   referencedImages,
   refuseBeforeRead,
-  removePathFromDraft,
+  removePlaceholderFromDraft,
+  restorePastedPaths,
   type PastedImage,
 } from '@/runtime/paste';
 
@@ -112,103 +114,114 @@ test('this front end stops stashing at its own share of the cap', () => {
 });
 
 /* ============================================================
-   writing the path into the sentence
+   the placeholder in the draft
    ============================================================ */
 
-test('an inserted path stays a separate word on both sides', () => {
-  // The runtime finds pictures by splitting the sentence into tokens, so a path
-  // glued to the word before it is one token it will not recognise — and a
-  // silently unattached picture is the one failure this whole layer exists to
-  // prevent.
-  assert.deepEqual(insertPathAtCaret('', 0, 'a.png'), { text: 'a.png', caret: 5 });
-  assert.deepEqual(insertPathAtCaret('look at this', 12, 'a.png'), {
-    text: 'look at this a.png',
-    caret: 18,
+test('a placeholder is short, numbered, and never reused in the same draft', () => {
+  assert.equal(nextPlaceholder(''), '⟦pimg-0⟧');
+  assert.equal(nextPlaceholder('⟦pimg-0⟧'), '⟦pimg-1⟧');
+  assert.equal(nextPlaceholder('⟦pimg-1⟧ ⟦pimg-0⟧'), '⟦pimg-2⟧');
+  // A number the person deleted is recycled, not skipped: the gaps would read
+  // as a mistake.
+  assert.equal(nextPlaceholder('⟦pimg-0⟧ ⟦pimg-2⟧'), '⟦pimg-1⟧');
+  // A longer word that merely *contains* the token is not a collision.
+  assert.equal(nextPlaceholder('x⟦pimg-0⟧'), '⟦pimg-1⟧');
+});
+
+test('the placeholder is a word the runtime’s scanner cannot read as a path', () => {
+  // The swap happens before anything leaves the window, but the draft itself
+  // must not accidentally carry a token the runtime could try to resolve.
+  // `content.looksLikePicture` needs an image extension **and** a name in front
+  // of it, and `pathCandidates` can only cut from a separator or an ASCII tail —
+  // none of which a token built as `⟦pimg-n⟧` has: no image extension anywhere,
+  // no separator, and the only ASCII part is a name, not a tail.
+  const token = nextPlaceholder('');
+  assert.ok(!/\.(png|jpe?g|gif)/i.test(token));
+  assert.ok(!/[\\/]/.test(token));
+  // The bracket characters are what keep the whole thing out of the runtime’s
+  // path-character set: drop them and the remainder is a plain name with no
+  // extension, which the scanner reads as prose.
+  assert.ok(!/^[\x21-\x7e]+$/.test(token));
+  assert.ok(!/\.(png|jpe?g|gif)/i.test(token.replace(/⟦|⟧/g, '')));
+});
+
+test('an inserted token stays a separate word on both sides', () => {
+  // The spacing is load-bearing: at submit the token is swapped for a path in
+  // the same sentence, and a path glued to the previous word would be one token
+  // the runtime will not resolve. The token is eight characters long.
+  assert.deepEqual(insertAtCaret('', 0, '⟦pimg-0⟧'), { text: '⟦pimg-0⟧', caret: 8 });
+  assert.deepEqual(insertAtCaret('look at this', 12, '⟦pimg-0⟧'), {
+    text: 'look at this ⟦pimg-0⟧',
+    caret: 21,
   });
   // Already at a word boundary: no second space.
-  assert.deepEqual(insertPathAtCaret('look at this ', 13, 'a.png'), {
-    text: 'look at this a.png',
-    caret: 18,
+  assert.deepEqual(insertAtCaret('look at this ', 13, '⟦pimg-0⟧'), {
+    text: 'look at this ⟦pimg-0⟧',
+    caret: 21,
   });
 });
 
-test('a path goes in at the caret, not at the end', () => {
-  // Unlike a drop, a paste has a caret: the person put it somewhere.
-  assert.deepEqual(insertPathAtCaret('see  and this', 4, 'a.png'), {
-    text: 'see a.png and this',
-    caret: 9,
+test('a token goes in at the caret, not at the end', () => {
+  assert.deepEqual(insertAtCaret('see  and this', 4, '⟦pimg-0⟧'), {
+    text: 'see ⟦pimg-0⟧ and this',
+    caret: 12,
   });
-  // The caret lands just after the path, and a space is added so the next word
+  // The caret lands just after the token, and a space is added so the next word
   // stays its own token.
-  assert.deepEqual(insertPathAtCaret('seeand this', 3, 'a.png'), {
-    text: 'see a.png and this',
-    caret: 9,
+  assert.deepEqual(insertAtCaret('seeand this', 3, '⟦pimg-0⟧'), {
+    text: 'see ⟦pimg-0⟧ and this',
+    caret: 12,
   });
 });
 
 test('a caret outside the text is clamped rather than trusted', () => {
   // A stale caret (the draft changed under it) must not slice past the end.
-  assert.deepEqual(insertPathAtCaret('abc', 99, 'a.png'), { text: 'abc a.png', caret: 9 });
-  assert.deepEqual(insertPathAtCaret('abc', -5, 'a.png'), { text: 'a.png abc', caret: 5 });
+  assert.deepEqual(insertAtCaret('abc', 99, '⟦pimg-0⟧'), { text: 'abc ⟦pimg-0⟧', caret: 12 });
+  assert.deepEqual(insertAtCaret('abc', -5, '⟦pimg-0⟧'), { text: '⟦pimg-0⟧ abc', caret: 8 });
 });
 
 /* ============================================================
    the tray and the sentence, kept in step
    ============================================================ */
 
-function image(path: string, bytes = 1024): PastedImage {
-  return { path, name: nameOfPath(path), bytes, mime: 'image/png', url: `blob:${path}` };
+function image(path: string, placeholder: string, bytes = 1024): PastedImage {
+  return {
+    path,
+    placeholder,
+    name: nameOfPath(path),
+    bytes,
+    mime: 'image/png',
+    url: `blob:${path}`,
+  };
 }
 
-test('a chip is drawn only while its path is still in the sentence', () => {
-  const images = [image('.tudouni/paste/s-1/a.png'), image('.tudouni/paste/s-1/b.png')];
+const A = image('.tudouni/paste/s-1/a.png', '⟦pimg-0⟧');
+const B = image('.tudouni/paste/s-1/b.png', '⟦pimg-1⟧');
 
-  // Both named: both drawn.
-  assert.deepEqual(
-    referencedImages('看看这两张 .tudouni/paste/s-1/a.png .tudouni/paste/s-1/b.png', images).map(
-      (i) => i.path,
-    ),
-    ['.tudouni/paste/s-1/a.png', '.tudouni/paste/s-1/b.png'],
-  );
+test('a chip is drawn only while its placeholder is still in the sentence', () => {
+  const images = [A, B];
 
-  // The person deleted one word. The tray must follow the text, because the text
-  // is the only thing that gets sent — a chip left behind would claim a picture
-  // that is not going anywhere.
-  assert.deepEqual(
-    referencedImages('看看这张 .tudouni/paste/s-1/b.png', images).map((i) => i.path),
-    ['.tudouni/paste/s-1/b.png'],
-  );
+  // Both marked: both drawn.
+  assert.deepEqual(referencedImages('看看这两张 ⟦pimg-0⟧ ⟦pimg-1⟧', images).map((i) => i.path), [
+    A.path,
+    B.path,
+  ]);
+
+  // The person deleted one marker. The tray must follow the text — a chip left
+  // behind would claim a picture that is not going anywhere.
+  assert.deepEqual(referencedImages('看看这张 ⟦pimg-1⟧', images).map((i) => i.path), [B.path]);
 
   // Both deleted: no chips at all.
   assert.deepEqual(referencedImages('算了', images), []);
 });
 
-test('a path the person wrapped in punctuation still counts', () => {
-  // `content.trimToken` strips the punctuation a path is routinely wrapped in,
-  // and the question this function answers is "would the runtime still resolve
-  // this?" — so the two have to agree.
-  const images = [image('.tudouni/paste/s-1/a.png')];
-  assert.equal(referencedImages('"`.tudouni/paste/s-1/a.png`"', images).length, 1);
-  assert.equal(referencedImages('看这个（.tudouni/paste/s-1/a.png）。', images).length, 1);
-  assert.equal(referencedImages('@.tudouni/paste/s-1/a.png', images).length, 1);
-});
-
-test('punctuation the runtime does not strip does not count here either', () => {
-  // Smart quotes are **not** in `content.trimToken`'s set, so the runtime's own
-  // scanner would not resolve a path wrapped in them — and the tray must not
-  // claim otherwise. Asserting the agreement is the point: a chip drawn for a
-  // picture the runtime will not attach is exactly the "looks like it worked"
-  // failure this feature has to avoid, and it would be invisible on screen.
-  const images = [image('.tudouni/paste/s-1/a.png')];
-  assert.equal(referencedImages('“`.tudouni/paste/s-1/a.png`”', images).length, 0);
-});
-
-test('a path that is only a prefix of another is not a match', () => {
-  // Token equality, not `includes`: `a.png` must not light up because `xa.png`
-  // happens to contain it.
-  const images = [image('a.png')];
-  assert.equal(referencedImages('xa.png', images).length, 0);
-  assert.equal(referencedImages('a.png', images).length, 1);
+test('the tray follows the sentence, not the order the pictures arrived', () => {
+  // The person rearranged the tokens by hand: the chips follow, because that is
+  // the order the pictures will appear in the message.
+  assert.deepEqual(referencedImages('⟦pimg-1⟧ 然后 ⟦pimg-0⟧', [A, B]).map((i) => i.path), [
+    B.path,
+    A.path,
+  ]);
 });
 
 test('no images means no work', () => {
@@ -216,51 +229,87 @@ test('no images means no work', () => {
 });
 
 /* ============================================================
+   the swap at submit: placeholder out, path in
+   ============================================================ */
+
+test('every placeholder becomes its picture’s path, in place', () => {
+  assert.equal(
+    restorePastedPaths('看看这个 ⟦pimg-0⟧', [A]),
+    '看看这个 .tudouni/paste/s-1/a.png',
+  );
+  assert.equal(
+    restorePastedPaths('a ⟦pimg-0⟧ b ⟦pimg-1⟧ c', [A, B]),
+    'a .tudouni/paste/s-1/a.png b .tudouni/paste/s-1/b.png c',
+  );
+});
+
+test('a draft with no pictures is sent byte-for-byte as it is', () => {
+  // Nothing stashed: nothing to restore, and the text must not be touched at all.
+  assert.equal(restorePastedPaths('just words', []), 'just words');
+  // A token the person typed that is not one of the minted ones is prose: it
+  // stays, because a restore that rewrites foreign text is an edit no one asked
+  // for. (The stashed picture’s marker is missing, so it still ships — as its
+  // own trailing word, which is the orphan rule asserted below.)
+  assert.equal(
+    restorePastedPaths('see ⟦pimg-9⟧', [A]),
+    'see ⟦pimg-9⟧ .tudouni/paste/s-1/a.png',
+  );
+});
+
+test('a picture whose marker the person deleted still ships, as its own trailing word', () => {
+  // The chip was still on screen, so the promise is that the picture arrives.
+  // Appending the path at the end is the failure with the least surprise: the
+  // sentence is untouched where the person edited it, and the extra word is one
+  // they can see and delete.
+  assert.equal(
+    restorePastedPaths('看看这个', [A]),
+    '看看这个 .tudouni/paste/s-1/a.png',
+  );
+  // An empty draft with one orphan: the path alone, still a whole sentence.
+  assert.equal(restorePastedPaths('', [A]), '.tudouni/paste/s-1/a.png');
+});
+
+test('the restored path lands as its own word, so the scanner resolves it', () => {
+  // The swap keeps the token’s spacing: the token sat as a separate word, so the
+  // path that takes its place is one too. Gluing it on would make it part of the
+  // previous token and the runtime would not find it.
+  const out = restorePastedPaths('see ⟦pimg-0⟧ this', [A]);
+  assert.deepEqual(out.split(' '), ['see', '.tudouni/paste/s-1/a.png', 'this']);
+});
+
+test('one picture marked twice is restored at both places', () => {
+  // `replaceAll`, deliberately: a marker the person duplicated by hand is still
+  // two mentions of the same picture, and the runtime dedupes the second naming.
+  assert.equal(
+    restorePastedPaths('⟦pimg-0⟧ and again ⟦pimg-0⟧', [A]),
+    '.tudouni/paste/s-1/a.png and again .tudouni/paste/s-1/a.png',
+  );
+});
+
+/* ============================================================
    dismissing a chip
    ============================================================ */
 
-test('dismissing a chip edits the sentence, because the sentence is what gets sent', () => {
-  // The chip's dismiss button removes the **path**, not an entry in a list of
-  // attachments. Anything else would leave the tray and the message disagreeing
-  // about whether the picture is going anywhere.
-  assert.equal(
-    removePathFromDraft('看看这个 .tudouni/paste/a.png', '.tudouni/paste/a.png'),
-    '看看这个',
-  );
-  // The hole the path left is closed, so the sentence does not keep a double space.
-  assert.equal(
-    removePathFromDraft('see .tudouni/paste/a.png and this', '.tudouni/paste/a.png'),
-    'see and this',
-  );
+test('dismissing a chip takes its marker out of the sentence', () => {
+  assert.equal(removePlaceholderFromDraft('看看这个 ⟦pimg-0⟧', '⟦pimg-0⟧'), '看看这个');
+  // The hole the token left is closed, so the sentence does not keep a double space.
+  assert.equal(removePlaceholderFromDraft('see ⟦pimg-0⟧ and this', '⟦pimg-0⟧'), 'see and this');
   // The only word: nothing left.
-  assert.equal(removePathFromDraft('.tudouni/paste/a.png', '.tudouni/paste/a.png'), '');
+  assert.equal(removePlaceholderFromDraft('⟦pimg-0⟧', '⟦pimg-0⟧'), '');
 });
 
 test('dismissing one picture leaves the others alone', () => {
-  const draft = 'a .tudouni/paste/one.png .tudouni/paste/two.png b';
-  assert.equal(
-    removePathFromDraft(draft, '.tudouni/paste/one.png'),
-    'a .tudouni/paste/two.png b',
-  );
+  const draft = 'a ⟦pimg-0⟧ ⟦pimg-1⟧ b';
+  assert.equal(removePlaceholderFromDraft(draft, '⟦pimg-0⟧'), 'a ⟦pimg-1⟧ b');
 });
 
-test('dismissing by token cannot damage a longer word', () => {
-  // Substring matching would eat `xa.png` here, and the person would lose text
-  // they never asked to remove.
-  assert.equal(removePathFromDraft('xa.png', 'a.png'), 'xa.png');
-  assert.equal(removePathFromDraft('a.png', 'a.png'), '');
-});
-
-test('a path the person wrapped in punctuation is removed with it', () => {
-  // The same readings `referencedImages` uses to draw the chip, so a chip that is
-  // visible can always be dismissed. Only the **path** comes out: the brackets and
-  // the full stop are punctuation the person wrote, and a button that removes a
-  // picture has no business editing their prose. What is left resolves to no file,
-  // so the runtime's scanner sees a word and the sentence is unchanged for it.
-  assert.equal(
-    removePathFromDraft('看这个（.tudouni/paste/a.png）。', '.tudouni/paste/a.png'),
-    '看这个（）。',
-  );
+test('a marker the person edited by hand is not a chip to dismiss', () => {
+  // The placeholder is one this front end minted; the tray only matches it whole.
+  // A string the person typed that *contains* it is still removed, which is the
+  // right answer: it is the token, glued to their prose, and only the token
+  // comes out.
+  assert.equal(removePlaceholderFromDraft('x⟦pimg-0⟧', '⟦pimg-0⟧'), 'x');
+  assert.equal(removePlaceholderFromDraft('⟦pimg-1⟧', '⟦pimg-0⟧'), '⟦pimg-1⟧');
 });
 
 /* ============================================================
