@@ -1,7 +1,7 @@
 {
   "name": "tudouni-aigo-desktop",
   "private": true,
-  "version": "1.2.1",
+  "version": "1.2.2",
   "type": "module",
   "description": "tudouni-aigo desktop client — Tauri 2 shell + React front end driving the Go runtime over the JSONL stdio protocol",
   "scripts": {
@@ -25,6 +25,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-opener": "^2.7.0",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

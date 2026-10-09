@@ -1215,6 +1215,11 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        // Markdown links open in the OS browser rather than in a new webview:
+        // Tauri 2 refuses `window.open`/`target=_blank` by default, and a new
+        // webview window would be the wrong container for arbitrary external
+        // URLs anyway (CSP is `default-src 'self'`).
+        .plugin(tauri_plugin_opener::init())
         .manage(Bridge::default())
         .invoke_handler(tauri::generate_handler![
             runtime_attach,

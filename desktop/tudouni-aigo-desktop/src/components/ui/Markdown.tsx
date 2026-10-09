@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 /**
  * Markdown rendering.
@@ -26,8 +27,19 @@ const components: Components = {
   h6: ({ children }) => <h3>{children}</h3>,
   // A model ending text with two spaces used to force a line break the old
   // renderer silently dropped; keep that behaviour visible here too.
+  // Open in the OS browser via the opener plugin. Tauri 2 refuses `window.open`
+  // and `target=_blank` navigation by default, so a plain external link would
+  // look clickable and do nothing on click — hence the explicit handler.
   a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noreferrer noopener">
+    <a
+      href={href}
+      onClick={(e) => {
+        e.preventDefault();
+        if (href) {
+          void openUrl(href);
+        }
+      }}
+    >
       {children}
     </a>
   ),
