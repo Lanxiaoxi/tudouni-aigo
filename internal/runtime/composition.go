@@ -1150,6 +1150,28 @@ func (r *Runtime) ResolveChild(route subagent.Route, parentModel, parentProvider
 		return subagent.ChildChat{}, fmt.Errorf("route %s has no API key", provider.Name)
 	}
 
+	// **The catalogue's key is a copy, and it goes stale while the session
+	// lives.** The catalogue is read once at open; when the session later
+	// refreshes a managed token (`authCheck`, `RecoverAuth`) the new key is
+	// installed on the session's live client and written to the config, but
+	// `r.Catalog` is never re-read, so its `api_key` stays on whatever token
+	// was current at open. The parent never notices: it sends from the live
+	// client, which is exactly what keeps a long session working — "the parent
+	// works" proves nothing about the age of the catalogue's copy. A child
+	// resolved from the catalogue would therefore ship a token the endpoint
+	// already revoked, earn one 401, and have no recovery hook to retry with —
+	// the delegation dies on its first model call while the parent carries on.
+	//
+	// The live client's key is the one the session actually sends, and it is
+	// the freshest copy this process has. It is authoritative only for the
+	// route it is on — anything else falls back to the catalogue, which is
+	// where that route's key came from anyway.
+	if r.Chat != nil && provider.Name == r.Chat.ProviderName() {
+		if live := r.Chat.Route().APIKey; live != "" {
+			provider.APIKey = live
+		}
+	}
+
 	thinking, effort := modelState.Thinking(), modelState.Effort()
 	if route.Effort == "" {
 		// An explicit reasoning level for the child would need `reasoning_effort`
