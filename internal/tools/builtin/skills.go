@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
@@ -53,6 +54,9 @@ type SkillBoard struct {
 	metadata map[string]any
 	loader   *skills.Loader
 	catalog  skills.Catalog
+	// mu guards catalog: Catalog() writes it on rescan, and the parent's payload
+	// tail reads it at the same time a delegated subagent builds its request.
+	mu sync.Mutex
 }
 
 // NewSkillBoard builds a board over a session's metadata.
@@ -77,7 +81,13 @@ func NewSkillBoard(metadata map[string]any, loader *skills.Loader) *SkillBoard {
 // rare and a directory with a few files is cheap to rescan, so consistency wins. It
 // also brings edited files along: after a rescan the digest differs, and the
 // renderer says so.
+//
+// The rescan writes the field rather than returning a local, and that write has
+// to be locked: the board is read from the parent's payload tail at the same
+// time a delegated subagent is building its request, and both call in here.
 func (b *SkillBoard) Catalog() skills.Catalog {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.loader != nil {
 		b.catalog = b.loader.Reload()
 	}

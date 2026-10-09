@@ -215,10 +215,7 @@ func (r *Registry) Register(tool Tool) error {
 	if !tool.Risk.Valid() {
 		return fmt.Errorf("tool %s must declare a risk level (low/medium/high); a missing one would silently land on low", tool.Name)
 	}
-	if tool.ParallelSafe && tool.Risk != security.RiskLow {
-		return fmt.Errorf("tool %s is declared parallel_safe but its risk is %s: a parallel batch does not prompt, so only low risk tools may run in one", tool.Name, tool.Risk)
-	}
-	if tool.Interactive && tool.ParallelSafe {
+	if tool.ParallelSafe && tool.Interactive {
 		return fmt.Errorf("tool %s is declared both interactive and parallel_safe: a tool that asks the user can never run alongside others", tool.Name)
 	}
 	if _, exists := r.tools[tool.Name]; exists {

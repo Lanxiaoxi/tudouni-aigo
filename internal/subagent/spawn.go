@@ -25,7 +25,9 @@ import (
 // The one thing that *is* inherited on purpose is the stop flag. Pressing Esc is
 // a statement about this whole piece of work, and a subagent that kept going
 // after the user interrupted would be the feature overriding the user.
-func (t *Tool) spawn(ctx context.Context, task string) (tools.Result, error) {
+// label is this call's own, passed in by execute: the tool holds no per-call
+// state, because two invocations may be in flight at once.
+func (t *Tool) spawn(ctx context.Context, task, label string) (tools.Result, error) {
 	started := time.Now()
 	childID, err := t.mintChildID()
 	if err != nil {
@@ -61,7 +63,7 @@ func (t *Tool) spawn(ctx context.Context, task string) (tools.Result, error) {
 		"provider":    route.Name,
 	}))
 
-	session := t.newChildSession(childID, childDepth)
+	session := t.newChildSession(childID, childDepth, label)
 	// The resolved route is written into the child's own session record rather
 	// than left implicit. A child session that does not say which model produced
 	// it is a transcript somebody will later misattribute, and the resolution may
@@ -80,7 +82,7 @@ func (t *Tool) spawn(ctx context.Context, task string) (tools.Result, error) {
 	if t.Board != nil {
 		t.Board.Start(Delegation{
 			ID:       childID,
-			Label:    t.labelText(),
+			Label:    t.callLabel(label),
 			Model:    chosen,
 			Provider: route.Name,
 			Depth:    childDepth,
@@ -212,14 +214,14 @@ func (t *Tool) modelVisionFor(chat model.ChatModel) func() bool {
 // That emptiness is the feature. A child that started from the parent's history
 // would be paying for the same tokens twice — once in the parent, once in the
 // child — which is the opposite of what delegation is for.
-func (t *Tool) newChildSession(childID string, depth int) *state.Session {
+func (t *Tool) newChildSession(childID string, depth int, label string) *state.Session {
 	session := state.NewSession(childID, paths.WorkspaceDir())
-	// `labelText`, not `Config.Label`: the model's own description of this task is
-	// the per-call one, and reading the static config here would write an empty
-	// label for every delegation that supplied a `description` — which is the
-	// common case, and the one where the label is the only human-readable clue in
-	// the child's file about what it was asked.
-	for key, value := range ChildMetadata(t.Parent, depth, t.labelText()) {
+	// The per-call label, not `Config.Label`: the model's own description of
+	// this task is the per-call one, and reading the static config here would
+	// write an empty label for every delegation that supplied a `description`
+	// — which is the common case, and the one where the label is the only
+	// human-readable clue in the child's file about what it was asked.
+	for key, value := range ChildMetadata(t.Parent, depth, t.callLabel(label)) {
 		session.Metadata[key] = value
 	}
 	// The scope declaration goes in before the task, because it is a property of
@@ -290,17 +292,38 @@ func (t *Tool) childUsage(childID string) map[string]any {
 	return out
 }
 
-// toolsForChild is the parent's tool set minus the ability to delegate again.
+// sessionScopedToolNames are the parent's tools that operate on the delegating
+// session itself rather than on the workspace. They are withheld from a child,
+// in addition to the delegating tool, because their state lives in the parent's
+// live session metadata: two children that ran in one batch are two goroutines
+// writing the same map, and a concurrent write to a Go map is a fatal error that
+// takes the whole process down. A child has its own session, so the parent's
+// task list, goal and loaded skills are not its to update either — which is the
+// reason the package already withholds the task list and the skill catalogue
+// from the child's payload (see childNotes).
+var sessionScopedToolNames = []string{
+	"todo_write",
+	"get_goal",
+	"create_goal",
+	"update_goal",
+	"load_skill",
+	"ask_user",
+}
+
+// toolsForChild is the parent's tool set minus what belongs to the parent.
 //
-// The subtraction is by name and only reaches the tool this instance owns, so a
-// second delegation tool mounted with another name stays available — that is a
-// deliberate arrangement by whoever configured it, not recursion this package
-// should silently forbid.
+// The subtraction is by name. The delegating tool is left out so a child cannot
+// recurse (and a second delegation tool mounted under another name stays
+// available, which is a deliberate arrangement by whoever configured it). The
+// session-scoped tools are left out for the reason in sessionScopedToolNames.
 func (t *Tool) toolsForChild() *tools.Registry {
 	if t.Tools == nil {
 		return tools.NewRegistry()
 	}
-	return t.Tools.Clone(t.Name)
+	exclude := make([]string, 0, 1+len(sessionScopedToolNames))
+	exclude = append(exclude, t.Name)
+	exclude = append(exclude, sessionScopedToolNames...)
+	return t.Tools.Clone(exclude...)
 }
 
 // resolveChild picks the route the child runs on.
@@ -330,13 +353,18 @@ func (t *Tool) resolveChild(parentModel, parentProvider string) (ChildChat, erro
 
 // mintChildID finds a session id for the child that nothing has taken yet.
 //
-// The counter is per process, and the existence check is what makes it correct
-// across restarts: ids restart at 1 for a new process, and a resumed parent
-// delegating for the first time would otherwise overwrite a child session from
-// the previous run — the child would open on somebody else's history, and its
-// append-only file would be extended with an unrelated conversation.
+// The counter is per process and atomic, and that is what makes it correct
+// within a process: a batch runs its delegations in different goroutines, and
+// two of them checking the store for the same candidate at once would both see
+// it free and both take it — two children writing one session file. The
+// existence check is a different defence for a different collision: ids restart
+// at 1 for a new process, and a resumed parent delegating for the first time
+// would otherwise overwrite a child session from the previous run — the child
+// would open on somebody else's history, and its append-only file would be
+// extended with an unrelated conversation.
 func (t *Tool) mintChildID() (string, error) {
-	for seq := 1; seq <= 1000; seq++ {
+	for tries := 0; tries < 1000; tries++ {
+		seq := int(t.childSeq.Add(1))
 		candidate := ChildID(t.parentID(), seq)
 		if t.Store == nil || !t.Store.Exists(candidate) {
 			return candidate, nil

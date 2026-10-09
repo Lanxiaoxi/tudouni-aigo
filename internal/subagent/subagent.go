@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
@@ -193,21 +194,22 @@ type ToolArgs struct {
 type Tool struct {
 	Config
 
-	// label is the description the current delegation shows, set from the
-	// arguments. It is unexported and per-invocation: `Config.Label` is the static
-	// fallback from the composition, and the model's own words win when it gives
-	// them.
-	//
-	// Writing it from the handler is safe because this tool declares itself
-	// Interactive and not ParallelSafe, and the registry refuses any other
-	// combination — so two invocations of it can never be in flight at once.
-	label string
+	// childSeq numbers this session's delegations, in process memory. The atomic
+	// is what lets two delegations mint their ids at the same time (one batch
+	// runs them in different goroutines) without both landing on the same
+	// number. The store's existence check is a different defence for a
+	// different collision: see mintChildID.
+	childSeq atomic.Int64
 }
 
-// labelText is the description the interfaces show for this delegation.
-func (t *Tool) labelText() string {
-	if t.label != "" {
-		return t.label
+// callLabel is the description the interfaces show for this call.
+//
+// The label comes from the call's own arguments (see execute); `Config.Label`
+// is only the fallback for a call the model supplied none. The tool itself
+// holds no per-call state, because two calls may be in flight at once.
+func (t *Tool) callLabel(label string) string {
+	if label != "" {
+		return label
 	}
 	return t.Config.Label
 }
@@ -253,43 +255,47 @@ func Build(config Config) (tools.Tool, bool) {
 		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			return tool.execute(ctx, arguments)
 		},
-		// Never parallel-safe, and never alongside anything else. One delegation
-		// already runs a whole nested agent loop; two of them in one batch would
-		// multiply the cost of a single step and make the audit's "what happened
-		// in this step" unreadable.
-		ParallelSafe: false,
-		// Interactive is the honest declaration: this handler blocks for as long
-		// as a whole agent takes, which is minutes rather than milliseconds, and
-		// the interface has to know that before it draws a status line.
-		Interactive: true,
+		// Parallel-safe because the handler holds nothing shared between
+		// invocations: the label is read from the arguments, not from a field on
+		// the tool, and the child id comes from an atomic counter. Two
+		// delegations in one batch are the point of the feature — the parent
+		// waits for the batch either way, so serial spawning buys nothing but
+		// wall time. The cost of that wall time is still real: each child is a
+		// whole agent loop, and the model is told in the description that
+		// several at once is for independent tasks.
+		ParallelSafe: true,
+		// Not interactive, and the old value here was the bug: this handler
+		// blocks for as long as a whole agent takes, but it never blocks on a
+		// person answering — the child is built with no asker. "Long-running" is
+		// not what Interactive means (the field's contract is "blocks on a
+		// person"), and claiming it made the batch demote to serial.
+		Interactive: false,
 	}, true
 }
 
 // execute is the handler.
 func (t *Tool) execute(ctx context.Context, arguments map[string]any) (tools.Result, error) {
-	// The label is reset per call, not left from the last one. A model that
-	// describes one delegation and then omits the description on the next would
-	// otherwise see the second one wearing the first one's name — on the status
-	// bar, in `subagent_id`-adjacent panels, and in the child's own session file,
-	// where it is the only human-readable clue about what the child was asked.
-	t.label = ""
 	prompt := strings.TrimSpace(stringArg(arguments, "prompt"))
 	if prompt == "" {
 		return tools.TextResult(
 			"prompt 是空的：子 agent 看不到这次对话，你得把要做的事完整写进 prompt 里。"), nil
 	}
-	// The label is display-only, so it is never allowed to fail the call. It is
-	// also never allowed to become the task: a model that put the real task in
-	// `description` and nothing in `prompt` gets the refusal above, not a
-	// delegation of a five-word label.
-	if label := strings.TrimSpace(stringArg(arguments, "description")); label != "" {
-		t.label = clip(label, 60)
+	// The label is read from this call's arguments rather than stored on the
+	// tool, because two invocations may be in flight at once: a shared field
+	// would let one delegation hand its label to the other. It is display-only,
+	// so it is never allowed to fail the call. It is also never allowed to
+	// become the task: a model that put the real task in `description` and
+	// nothing in `prompt` gets the refusal above, not a delegation of a
+	// five-word label.
+	var label string
+	if raw := strings.TrimSpace(stringArg(arguments, "description")); raw != "" {
+		label = clip(raw, 60)
 	}
 
 	if refusal := t.depthRefusal(); refusal != "" {
 		return tools.TextResult(refusal), nil
 	}
-	return t.spawn(ctx, prompt)
+	return t.spawn(ctx, prompt, label)
 }
 
 // depthRefusal reports why this delegation is not allowed, or "" when it is.
@@ -396,7 +402,7 @@ func errorLine(err error) string {
 func description(maxDepth int) string {
 	return fmt.Sprintf(`把一个自足的任务交给子 agent 去做。它开在一个全新的会话里，**看不到这次对话**，所以 prompt 必须自带全部背景；它做完之后只把最终答复返回给你，中间过程留在它自己的上下文里 —— 这才是用它省钱的地方：翻找、试错、读大文件的开销不进你的上下文。
 
-什么时候用：一段可以独立描述、结论比过程重要的活 —— 调研、定位、受范围限制的实现、对一份东西的审阅。什么时候不用：你自己一两次工具调用就能做完的事，或者还没想清楚要什么的事（那就先自己查清楚再决定要不要委派）。有依赖关系的步骤要串行委派，不要在 prompt 里塞一串前后依赖的活儿。
+什么时候用：一段可以独立描述、结论比过程重要的活 —— 调研、定位、受范围限制的实现、对一份东西的审阅。什么时候不用：你自己一两次工具调用就能做完的事，或者还没想清楚要什么的事（那就先自己查清楚再决定要不要委派）。多个互相独立的子任务可以在同一轮里一起派：同一轮里的多个 subagent 调用会**并行**执行。有依赖关系的步骤要等上一轮的结果回来再派，不要在 prompt 里塞一串前后依赖的活儿。
 
 三条必须知道的限制：
 1. **它看不到这次对话。** 凡是它自己查不到的信息（你的判断、已经确定的结论、刚读到的内容），都要写进 prompt。
