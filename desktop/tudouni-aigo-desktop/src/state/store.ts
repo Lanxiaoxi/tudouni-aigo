@@ -926,7 +926,7 @@ export interface AppStore {
   /**
    * Quit the application: finish every runtime, then close the window.
    *
-   * One path for `Ctrl+C`, `/exit` and any future quit affordance. It goes
+   * One path for `/exit` and any future quit affordance. It goes
    * through the **bridge's** shutdown rather than a bare `shutdown` protocol
    * message, because only the bridge sets `requested = true` on the exit event —
    * which is the whole difference between "the session ended" and a red "Runtime

@@ -47,10 +47,6 @@ export function useGlobalKeys(): void {
 
       const s = useApp.getState();
       const mod = e.ctrlKey || e.metaKey;
-      const target = e.target as HTMLElement | null;
-      const inField =
-        !!target &&
-        (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.isContentEditable);
 
       /* ---- Reload keys: suppressed, and they must be suppressed *first* ----
        *
@@ -83,7 +79,7 @@ export function useGlobalKeys(): void {
        * pane itself handles this (it `preventDefault`s and stops propagation),
        * but that only covers the case where the pane has focus. Clicking the tab
        * strip or the status bar moves focus away, and the window handler would
-       * then fold a rail, quit the app, or interrupt a turn **while somebody was
+       * then fold a rail or interrupt a turn **while somebody was
        * typing at a shell** — the one state where the interface must look like a
        * terminal and behave like one.
        *
@@ -163,17 +159,6 @@ export function useGlobalKeys(): void {
               .reverse()
               .find((x) => x.kind === 'reason');
             if (last) s.toggleReasoning(last.id);
-            return;
-          }
-          case 'c': {
-            // Quit — but only when nothing is selected, so copy is not stolen.
-            // One quit path for `Ctrl+C` and `/exit` (`store.quit` → the
-            // bridge's shutdown), so a deliberate exit is never reported back
-            // to the person as a crash.
-            if (!inField && !window.getSelection()?.toString()) {
-              e.preventDefault();
-              void s.quit();
-            }
             return;
           }
           case '\\': {

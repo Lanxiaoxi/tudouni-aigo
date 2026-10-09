@@ -605,7 +605,6 @@ export const en = {
   'key.send': 'Send',
   'key.newline': 'Newline in the input',
   'key.esc': 'Close modal / interrupt turn / deny',
-  'key.exit': 'Quit',
   'key.move': 'Move in a list / scroll the stream',
   'key.thinking': 'Collapse or expand reasoning',
   'key.sidebar': 'Collapse or expand the sidebar',

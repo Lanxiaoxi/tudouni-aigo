@@ -483,7 +483,6 @@ const KEY_ROWS: Array<{ keys: string[]; label: TKey }> = [
   { keys: ['Enter'], label: 'key.send' },
   { keys: ['Shift', 'Enter'], label: 'key.newline' },
   { keys: ['Esc'], label: 'key.esc' },
-  { keys: ['Ctrl', 'C'], label: 'key.exit' },
   { keys: ['↑', '↓', 'PgUp', 'PgDn'], label: 'key.move' },
   { keys: ['Ctrl', 'T'], label: 'key.thinking' },
   { keys: ['Ctrl', 'B'], label: 'key.sidebar' },

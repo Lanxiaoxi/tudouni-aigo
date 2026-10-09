@@ -556,8 +556,8 @@ export async function shutdownRuntime(key?: string): Promise<void> {
  * message is the load-bearing part. `runtime_shutdown` is what sets
  * `requested = true` before waiting, and `runtime://exited` carries that flag —
  * so this reads as "the session ended". A protocol `shutdown` left the flag
- * false, and the person who pressed Ctrl+C was told, in red, that the runtime
- * had died unexpectedly with code 0.
+ * false, and a deliberate quit would have been reported, in red, as a
+ * runtime that died unexpectedly with code 0.
  *
  * The window is closed even if the graceful wait fails: a quit that leaves the
  * window open is a quit that did not happen.

@@ -106,10 +106,10 @@ export function runCommand(id: string, arg?: string): void {
       break;
 
     case 'exit':
-      // The same path as `Ctrl+C`: the bridge's shutdown, which marks the exit
-      // as requested and then closes the window. A bare `shutdown` protocol
-      // message left `requested` false, so quitting reported itself to the
-      // person as a red "Runtime exited (code 0)" crash.
+      // The bridge's shutdown marks the exit as requested and then closes the
+      // window. A bare `shutdown` protocol message left `requested` false, so
+      // quitting reported itself to the person as a red "Runtime exited
+      // (code 0)" crash.
       void s.quit();
       break;
 
