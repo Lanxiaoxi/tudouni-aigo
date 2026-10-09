@@ -21,7 +21,7 @@ import {
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { useListKeys } from '@/hooks/useListKeys';
-import { Badge, EmptyState, RiskTag } from '@/components/ui/kit';
+import { Badge, EmptyState, Info, RiskTag } from '@/components/ui/kit';
 import { InBlock } from '@/components/stream/InBlock';
 import { PanelBody, PanelRow, PanelShell } from './PanelShell';
 import { COMMANDS } from '@/commands';
@@ -406,19 +406,26 @@ export function SkillsPanel() {
       note={t('cmd.skills.desc')}
     >
       <PanelBody>
-        <div className="cmdk-group">{t('panel.skills.loaded')}</div>
+        {/* Group head = the group's label plus a `?` carrying the sentence the
+            row itself cannot carry. The row is name-first now (strong, no badge
+            in the middle): the badge moved to `aside`, where it cannot break
+            the name out of the first visual slot. */}
+        <div className="panel-group-head">
+          <span>{t('panel.skills.loaded')}</span>
+          <Info label={t('panel.skills.hint')} />
+        </div>
         {loaded.length === 0 ? (
           <EmptyState title={t('panel.skills.empty')} hint={t('empty.skills.hint')} />
         ) : (
           loaded.map((skill) => (
             <PanelRow key={skill.name} aside={<Badge tone="success" dot={false}>{t('panel.skills.loaded')}</Badge>}>
-              <div className="row" style={{ gap: 'var(--space-2)' }}>
+              <div className="skill-row-main">
                 <span className="mono strong">{skill.name}</span>
                 {/* Empty means the runtime did not send a digest for this one —
                     unknown, not "no digest". */}
                 {skill.digest !== '' ? <span className="caption faint mono">{skill.digest}</span> : null}
               </div>
-              <div className="caption muted">
+              <div className="caption muted clamp-2">
                 {skill.description ?? t('common.unknown')}
               </div>
             </PanelRow>
@@ -426,14 +433,18 @@ export function SkillsPanel() {
         )}
 
         {/* What is left is what a person could still load — the difference
-            between the catalogue and the loaded set. */}
+            between the catalogue and the loaded set. The plain `.cmdk-group`
+            rule (no weight, fainter colour) is the second tier: the loaded
+            group's head is bold and one shade up. */}
         {available.length > 0 ? (
           <>
             <div className="cmdk-group">{t('panel.skills.available')}</div>
             {available.map((row) => (
               <PanelRow key={row.name}>
-                <span className="mono muted">{row.name}</span>
-                <div className="caption faint">{row.description ?? ''}</div>
+                <div className="skill-row-main">
+                  <span className="mono">{row.name}</span>
+                </div>
+                {row.description ? <div className="caption faint clamp-2">{row.description}</div> : null}
               </PanelRow>
             ))}
           </>

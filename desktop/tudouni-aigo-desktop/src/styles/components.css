@@ -992,6 +992,57 @@ table.table td.mono {
   letter-spacing: var(--tracking-label);
 }
 
+/* Primary group head: the section the person is looking at, with an optional
+   `?` icon. One shade stronger than `.cmdk-group` — the sub-groups use the
+   plain `.cmdk-group` rule, which reads as secondary. */
+.panel-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px 8px 2px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+/* `?` icon that carries the sentence the row itself cannot hold.
+   cursor: help, not pointer — there is no click action, only hover/focus. */
+.info-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: help;
+  border-radius: var(--radius-xs);
+  flex: none;
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+.info-ic:hover {
+  color: var(--fg-secondary);
+  background: var(--bg-muted);
+}
+.info-ic:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 1px;
+}
+
+/* First line of a skill row: name + digest, baseline-aligned. */
+.skill-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .cmdk-item {
   display: flex;
   align-items: center;

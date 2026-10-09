@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Pause, Zap } from 'lucide-react';
 import { selectPhase, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
-import { Badge, Tip } from '@/components/ui/kit';
+import { Badge, Info, Tip } from '@/components/ui/kit';
 import { PanelBody, PanelShell } from './PanelShell';
 
 /**
@@ -80,6 +80,10 @@ export function SettingsPanel() {
           <div className="set-main">
             <div className="set-title">
               <span>{t('panel.settings.ericai')}</span>
+              {/* The side effect is stated, not implied — but in the icon, not
+                  the row: the row says what the switch does, the `?` says what
+                  it is allowed to do to the person's machine. */}
+              <Info label={t('panel.settings.ericaiDetail')} side="top" />
               {launch.ericai ? (
                 <Badge tone="success" dot={false}>
                   {t('panel.settings.inForce')}
@@ -87,9 +91,6 @@ export function SettingsPanel() {
               ) : null}
             </div>
             <div className="set-desc">{t('panel.settings.ericaiDesc')}</div>
-            {/* The side effect is stated, not implied: turning this on is what
-                lets the runtime write to the person's own configuration file. */}
-            <div className="set-desc faint">{t('panel.settings.ericaiEffect')}</div>
           </div>
           <Tip label={ericai ? t('common.none') : t('panel.settings.apply')}>
             <button

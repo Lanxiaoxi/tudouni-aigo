@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { RiskLevel } from '@/protocol/types';
+import { HelpCircle } from 'lucide-react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { useT } from '@/i18n/useT';
 
@@ -79,6 +80,33 @@ export function Tip({
   return (
     <TooltipPrimitive.Root>
       <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
+      <TooltipPrimitive.Portal>
+        <TooltipPrimitive.Content className="tooltip" side={side} sideOffset={6}>
+          {label}
+        </TooltipPrimitive.Content>
+      </TooltipPrimitive.Portal>
+    </TooltipPrimitive.Root>
+  );
+}
+
+/**
+ * 信息图标。面板里把长说明从行内挪出来的配套件：标题行放一个 `?`，
+ * 细节留给悬停/聚焦时再看 —— 行内只留一句话，主次才分得开。
+ * 复用 Tooltip 的 Provider 与 400ms 延迟，和 `Tip` 同一套行为。
+ */
+export function Info({ label, side = 'top' }: { label: ReactNode; side?: 'top' | 'right' | 'bottom' | 'left' }) {
+  if (!label) return null;
+  return (
+    <TooltipPrimitive.Root>
+      <TooltipPrimitive.Trigger asChild>
+        <button
+          type="button"
+          className="info-ic"
+          aria-label={typeof label === 'string' ? label : 'More'}
+        >
+          <HelpCircle size={13} />
+        </button>
+      </TooltipPrimitive.Trigger>
       <TooltipPrimitive.Portal>
         <TooltipPrimitive.Content className="tooltip" side={side} sideOffset={6}>
           {label}

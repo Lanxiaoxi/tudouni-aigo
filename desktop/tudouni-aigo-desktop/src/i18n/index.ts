@@ -372,6 +372,10 @@ export const en = {
   'panel.skills.loaded': 'loaded',
   /** The catalogue minus the loaded set: what could still be loaded. */
   'panel.skills.available': 'Available to load',
+  /** The sentence behind the `?` on the "loaded" group: what the two lists
+   *  mean, in one breath. */
+  'panel.skills.hint':
+    'Loaded skills are active in this session. Available ones load on demand when a task matches one of them.',
   'panel.skills.refresh': 'Re-read the skill directories',
   'panel.skills.problems': 'Problems',
   'panel.skills.shadowed': 'Shadowed',
@@ -459,17 +463,20 @@ export const en = {
   /* ---------------- settings ---------------- */
   'panel.settings.title': 'Settings',
   'panel.settings.note':
-    'What this session can change. Start-up arguments need a new runtime process, so applying one restarts it.',
+    "Start-up arguments for this session's runtime — applying one restarts it.",
   'panel.settings.launch': 'Start-up arguments',
   'panel.settings.launchHint':
-    'These are the arguments the running runtime was started with. Changing one restarts it — the runtime decides them at open and cannot be told later.',
+    'These are the arguments the running runtime was started with. Changing one restarts it.',
   'panel.settings.inForce': 'in force',
   'panel.settings.notInForce': 'restart to apply',
   'panel.settings.running': 'Running now',
   'panel.settings.ericai': 'EricAI token',
   'panel.settings.ericaiDesc':
-    'Keep this session’s EricAI token fresh: check it at start-up, and refresh it before any request that would otherwise go out with a stale one.',
-  'panel.settings.ericaiEffect':
+    'Keep this session’s EricAI token fresh: checked at start-up, refreshed before a stale one would be used.',
+  /* The long side-effect sentence, behind the `?` rather than in the row: the
+     row says what the switch does, the icon says what it is allowed to do to
+     the person's machine. */
+  'panel.settings.ericaiDetail':
     'Turning this on lets the runtime rewrite providers.ericai.api_key in your configuration file and keep a refresh token under ~/.tudouni/. It takes effect on the session on screen after the restart, and it is remembered: every session started from then on — new ones, other workspaces, the next launch — comes up with the token managed. Sessions already running are unaffected.',
   'panel.settings.maxSteps': 'Step cap',
   'panel.settings.maxStepsDesc':
