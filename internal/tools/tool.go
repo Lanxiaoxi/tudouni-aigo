@@ -5,14 +5,20 @@
 // runs. Keeping them in one value means the schema cannot drift away from the code
 // that reads the arguments.
 //
-// Three rules are enforced at registration time rather than left to discipline:
+// Two rules are enforced at registration time rather than left to discipline:
 //
 //   - risk must be declared. A tool that forgets would land on the safest-looking
 //     value, which is the worst possible failure shape for a permission system;
-//   - a tool that claims to be safe to run in parallel must be low risk, because a
-//     parallel batch does not prompt and prompting from several goroutines would
-//     fight over the same stdin;
-//   - a tool that asks the user something may never be parallel-safe.
+//   - a tool that asks the user something may never be parallel-safe, because
+//     several goroutines prompting at once would fight over the same stdin.
+//
+// Parallel-safety says nothing about risk. The agent loop approves a parallel
+// batch as a whole **before** any of it runs — that order exists so a person's
+// yes to the last call is given before the first one starts writing files — so a
+// high risk tool may declare itself parallel-safe and every call of the batch
+// still goes in front of the user. It was the other way round once, and a
+// delegated subagent — high risk by construction — was the tool that could not
+// be registered because of it.
 package tools
 
 import (
@@ -206,7 +212,7 @@ func NewRegistry() *Registry {
 
 // Register adds a tool.
 //
-// The three invariants are checked here, at startup, so a broken declaration is a
+// The two invariants are checked here, at startup, so a broken declaration is a
 // crash on the first run rather than a surprise during an approval.
 func (r *Registry) Register(tool Tool) error {
 	if tool.Name == "" {

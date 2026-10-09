@@ -407,7 +407,7 @@ func description(maxDepth int) string {
 三条必须知道的限制：
 1. **它看不到这次对话。** 凡是它自己查不到的信息（你的判断、已经确定的结论、刚读到的内容），都要写进 prompt。
 2. **它没有审批通道，需要审批的操作会被直接拒绝。** 也不要指望它去问用户；它被拒绝后会自己换一种做法，或者把限制写进答复里交还给你 —— 所以别把需要用户点头的步骤委派出去。
-3. **它不能再往下委派。** 当前深度上限是 %d 层，子 agent 到顶之后只能自己做完。
+3. **它不能再往下委派，也碰不到父会话的待办、目标和技能。** 当前深度上限是 %d 层，子 agent 到顶之后只能自己做完；它有自己的会话，父会话的 todo、goal 和已加载技能对它既不显示也不可改。
 
 它返回的是它的最终文本，不是它的中间步骤；失败、被中断或步数用尽时会明确标出来，并附上它已经产出的部分。`, maxDepth)
 }
@@ -425,7 +425,9 @@ func delegationScopeMessage() map[string]any {
 		"content": "在开始之前：你是一个被委派的子 agent，权限在你被启动时就固定了，" +
 			"无法在本次会话里扩大 —— 需要审批的操作会被自动拒绝。" +
 			"遇到被拒绝的操作不要重试，把这条限制写进你的最终答复里，" +
-			"让委派你的那个 agent 去处理。",
+			"让委派你的那个 agent 去处理。" +
+			"你还有自己的会话，所以父会话的待办清单、目标和已加载技能对你不可见，" +
+			"也不要去改它们：把要交接的东西写进你的最终答复。",
 		// Marked as a runtime note so it is never mistaken for the user's words by
 		// anything that asks "what did the human actually ask for".
 		state.RuntimeNoteKey: true,

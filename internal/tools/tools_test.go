@@ -51,7 +51,7 @@ func TestSchemaAppliesDefaults(t *testing.T) {
 	}
 }
 
-func TestRegistrationEnforcesTheThreeInvariants(t *testing.T) {
+func TestRegistrationEnforcesTheTwoInvariants(t *testing.T) {
 	registry := NewRegistry()
 
 	// A tool with no risk would land on the safest-looking value, which is the
@@ -60,9 +60,13 @@ func TestRegistrationEnforcesTheThreeInvariants(t *testing.T) {
 		t.Fatal("a tool without a risk level must be rejected")
 	}
 
-	// Only low risk tools may run in a batch: a parallel batch does not prompt.
-	if err := registry.Register(Tool{Name: "unsafe", Risk: security.RiskHigh, ParallelSafe: true}); err == nil {
-		t.Fatal("a parallel_safe tool above low risk must be rejected")
+	// Risk and parallel-safety are independent: a parallel batch is approved as a
+	// whole before any of it runs (see `Agent.runBatch`), so a high risk tool may
+	// declare itself parallel-safe and every call still goes in front of the user.
+	// Asserted the other way round on purpose — this is what stops the old
+	// "parallel implies low risk" rule from being added back.
+	if err := registry.Register(Tool{Name: "unsafe", Risk: security.RiskHigh, ParallelSafe: true}); err != nil {
+		t.Fatalf("a high risk parallel_safe tool must be accepted: %v", err)
 	}
 
 	// A tool that asks a person can never run alongside others.

@@ -195,7 +195,12 @@
   模型失败发生在 assistant 消息被追加之前（`agent.go:267-282`），所以失败的一轮只留 `["system","user"]`。
 - **并发批次**：全有或全无、≥2 个调用才并行、`MAX_PARALLEL = 8`、未知/非法调用强制串行、
   结果按模型给的顺序追加（`agent.go:501-543` ↔ `agent.py:1783-1801`）；
-  注册期校验一致（`parallel_safe` 必须 LOW、`interactive` 与 `parallel_safe` 互斥）。
+  注册期保留两条校验（风险必须声明、`interactive` 与 `parallel_safe` 互斥）；
+  Python 的第三条「`parallel_safe` 必须 LOW」已删（有意为之，见下）。
+- **委派并行**：工具声明 `ParallelSafe: true, Interactive: false`，所以同一轮里的多个
+  `subagent` 调用走并行路径一起跑；`childSeq` 原子发号避免两个子会话撞同一个 id，
+  label 从调用参数读而非工具字段，子 agent 拿不到会写父会话 metadata 的
+  `todo_write`/三个 goal 工具/`load_skill`/`ask_user`（并发写父会话 map 会直接崩进程）。
 - **流式**：`on_delta == nil` ⇒ 走非流式、请求体里没有 `stream`（`openai.go:138-141` ↔
   `openai_compatible.py:467-469`）；增量按字段路由而不是按位置；只对非空片段回包；
   tool call 按 `index` 合并；`id` 取第一个非空；usage 是替换而不是累加（缺省是 `None` 而不是 0）；

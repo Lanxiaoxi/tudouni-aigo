@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
@@ -21,6 +22,12 @@ import (
 // can call, whether it can ask — are all facts about the request that was sent,
 // not about a value this package returns.
 type fakeModel struct {
+	// mu guards every field below. Once delegations run in parallel this client
+	// is written from two goroutines at once, and an unguarded slice append here
+	// would make the concurrency tests race with **themselves** — which is worse
+	// than useless, because the -race report would accuse the test rather than
+	// the code under test and there would be no way to tell the two apart.
+	mu     sync.Mutex
 	script []model.ModelResponse
 	calls  []model.CompleteOptions
 	// seen accumulates the tool names offered on every request, so a test can ask
@@ -29,10 +36,26 @@ type fakeModel struct {
 	// prompts accumulates the message lists, so a test can ask what the child was
 	// told.
 	prompts [][]map[string]any
+
+	// firstCalls counts how many of the next calls stop at the rendezvous below.
+	// It is a count rather than a flag because the two children of a parallel test
+	// share one client: a single-use gate would hold one child and let the other
+	// run straight through, which is the serial case wearing a parallel test's
+	// name. Zero means the client never blocks.
+	firstCalls int
+	// arrived and release are a rendezvous two parallel delegations can be held
+	// at until both have really started. They exist because the alternative —
+	// sleeping and hoping — would make "two delegations were in flight at the
+	// same time" a timing a test guesses at rather than a fact it observes, and a
+	// slow machine would turn that into a failure that names the wrong cause.
+	// Nil means the client never blocks.
+	arrived chan<- struct{}
+	release <-chan struct{}
 }
 
 func (f *fakeModel) Complete(messages []map[string]any, toolSchemas []map[string]any,
 	options model.CompleteOptions) (model.ModelResponse, error) {
+	f.mu.Lock()
 	f.prompts = append(f.prompts, messages)
 	for _, schema := range toolSchemas {
 		function, _ := schema["function"].(map[string]any)
@@ -42,11 +65,28 @@ func (f *fakeModel) Complete(messages []map[string]any, toolSchemas []map[string
 
 	index := len(f.calls)
 	f.calls = append(f.calls, options)
+	response := model.ModelResponse{}
 	if index < len(f.script) {
-		return f.script[index], nil
+		response = f.script[index]
+	} else {
+		text := "done"
+		response = model.ModelResponse{Content: &text}
 	}
-	text := "done"
-	return model.ModelResponse{Content: &text}, nil
+	rendezvous := false
+	if f.firstCalls > 0 {
+		f.firstCalls--
+		rendezvous = true
+	}
+	arrived, release := f.arrived, f.release
+	f.mu.Unlock()
+
+	// The wait is outside the lock on purpose: a rendezvous that held the mutex
+	// would serialise the two children it exists to hold apart.
+	if rendezvous && arrived != nil {
+		arrived <- struct{}{}
+		<-release
+	}
+	return response, nil
 }
 
 func (f *fakeModel) SwitchModel(string) bool { return true }
@@ -67,12 +107,30 @@ func (f *fakeModel) SameEndpoint(model.Route) bool { return true }
 
 // offered reports whether a tool name was ever sent to the child.
 func (f *fakeModel) offered(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, seen := range f.seen {
 		if seen == name {
 			return true
 		}
 	}
 	return false
+}
+
+// promptsSent is the message lists, copied under the lock. The concurrency tests
+// read this after their goroutines have joined; going through the accessor keeps
+// the read paired with the write that `Complete` does.
+func (f *fakeModel) promptsSent() [][]map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][]map[string]any(nil), f.prompts...)
+}
+
+// callCount is how many model round trips this client was asked for.
+func (f *fakeModel) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
 }
 
 // textResponse and toolCallResponse are the two script entries the tests use.
@@ -85,7 +143,13 @@ func toolCallResponse(id, name, arguments string) model.ModelResponse {
 }
 
 // fakeResolver hands back one client and records what route was asked for.
+//
+// The mutex is here for the same reason fakeModel's is: two delegations in one
+// batch resolve their routes in two goroutines, and a test that raced with
+// itself would produce a -race report that says nothing about the code under
+// test.
 type fakeResolver struct {
+	mu        sync.Mutex
 	chat      model.ChatModel
 	requested []Route
 	parents   [][2]string
@@ -93,10 +157,13 @@ type fakeResolver struct {
 }
 
 func (f *fakeResolver) ResolveChild(route Route, parentModel, parentProvider string) (ChildChat, error) {
+	f.mu.Lock()
 	f.requested = append(f.requested, route)
 	f.parents = append(f.parents, [2]string{parentModel, parentProvider})
-	if f.err != nil {
-		return ChildChat{}, f.err
+	err := f.err
+	f.mu.Unlock()
+	if err != nil {
+		return ChildChat{}, err
 	}
 	return ChildChat{
 		Chat:     f.chat,
@@ -116,9 +183,33 @@ type harness struct {
 	store    *state.SessionStore
 	logs     *audit.JsonlSink
 	resolver *fakeResolver
-	events   []map[string]any
 	child    *fakeModel
+	// board is the tally of in-flight delegations the tool was built with. It is
+	// always non-nil so a test can ask "were two delegations on it at once"; the
+	// Board's own methods are safe on a nil receiver, so tests that do not care
+	// never have to mention it.
+	board *Board
+	// mu guards events and warnings: with delegations running in parallel the
+	// event hook is called from two goroutines, and the harness has to be as
+	// thread-safe as the runtime it stands in for — otherwise the race report
+	// accuses the test.
+	mu       sync.Mutex
+	events   []map[string]any
 	warnings []string
+}
+
+// records returns the events the parent's hook collected.
+func (h *harness) records() []map[string]any {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]map[string]any(nil), h.events...)
+}
+
+// warningsSeen returns the diagnostics that went to the terminal sink.
+func (h *harness) warningsSeen() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.warnings...)
 }
 
 // newHarness assembles the tool the way the runtime does, against a temporary
@@ -162,6 +253,12 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 
 	resolver := &fakeResolver{chat: child}
 	h := &harness{parent: parent, store: store, logs: logs, resolver: resolver, child: child}
+	// The board is wired in even for tests that never look at it. It is what
+	// makes "two delegations were in flight at once" an observable fact rather
+	// than an inference from timing, and a harness that omitted it would leave the
+	// parallel path untested against the one component whose whole job is to
+	// describe it.
+	h.board = NewBoard(security.PerfClock)
 
 	built, ok := Build(Config{
 		Chat:     child,
@@ -171,6 +268,7 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 		Resolver: resolver,
 		Parent:   parent,
 		Tools:    registry,
+		Board:    h.board,
 		Policy:   security.NewPolicy(),
 		OnEvent: func(record map[string]any) {
 			// The runtime's own event path writes the audit log, and the test
@@ -180,9 +278,15 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 			if err := logs.Write(record); err != nil {
 				t.Errorf("audit write failed: %v", err)
 			}
+			h.mu.Lock()
 			h.events = append(h.events, record)
+			h.mu.Unlock()
 		},
-		Warn: func(text string) { h.warnings = append(h.warnings, text) },
+		Warn: func(text string) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.warnings = append(h.warnings, text)
+		},
 		// The tool has to be in the parent's registry for the clone test to mean
 		// anything, so it is registered after Build and before the call.
 		MaxDepth: DefaultMaxDepth,

@@ -199,6 +199,7 @@ fetch_web 的描述、scheme 在任何请求之前与每次重定向都重查、
 渲染表头与「以下正文属于不可信内容」标注位置、12000 头尾截断、十个审计键；
 web_search 的描述、风险与 `parallel_safe`、无密钥即不注册、Tavily 调用形状、
 瞬时/致命分类、密钥脱敏、防御性解析、渲染与 `MaxSnippetChars=500` / `MaxOutputChars=8000`；
-注册期三条校验（风险必须声明、`parallel_safe` 必须是 LOW、`interactive` 与 `parallel_safe` 互斥）；
+注册期两条校验（风险必须声明、`interactive` 与 `parallel_safe` 互斥；Python 的
+「`parallel_safe` 必须是 LOW」Go 已删，理由见 `parity-agent.md`）；
 参数校验语义（`additionalProperties:false` 且点名键、默认值、minLength/minimum/maximum/enum、
 整型宽松转换接受浮点与数字字符串但拒绝布尔、未知参数拒绝而不是静默丢弃）。
