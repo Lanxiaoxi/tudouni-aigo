@@ -295,6 +295,10 @@ func parseSkill(path, directoryName string) (Skill, *Problem, bool) {
 	// A BOM is tolerated: "save as UTF-8" on Windows writes one, and it turns the
 	// first line into `\ufeff---`, so the frontmatter appears to be missing.
 	text := strings.TrimPrefix(string(raw), "\uFEFF")
+	// Windows line endings are tolerated too: split on `\n` alone would leave a
+	// trailing `\r` on every line, and `---\r` is not a delimiter — the whole
+	// frontmatter block silently disappears.
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 
 	fields, body, problem := parseFrontmatter(text)
 	if problem != nil {
