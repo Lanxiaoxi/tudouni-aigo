@@ -14,6 +14,8 @@
     "check:window": "node scripts/window-controls-check.mjs",
     "audit:css": "node scripts/class-audit.mjs",
     "runtime:stage": "node scripts/stage-runtime.mjs",
+    "version:bump": "node scripts/bump-version.mjs",
+    "version:check": "node scripts/bump-version.mjs --check",
     "installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1",
     "tauri": "tauri"
   },

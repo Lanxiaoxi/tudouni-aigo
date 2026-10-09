@@ -101,16 +101,19 @@ Makefile 的每条 recipe 都走 `go run ./tools/release`，因为本仓库在 W
 
 - **`VERSION`（仓库根）** 覆盖 Go 运行时：`cmd/`、`internal/`、`tools/`、`packaging/`、
   `prompts/`。只有改了这些才按上表升它。
-- **桌面端自己的版本** 在 `desktop/tudouni-aigo-desktop/` 里，改的时候这几处必须一起改、
-  且保持一致：
+- **桌面端自己的版本** 在 `desktop/tudouni-aigo-desktop/` 里，改的时候**不要手工编辑**，
+  在 `desktop/tudouni-aigo-desktop/` 下跑：
 
-  | 文件 | 处数 |
-  | --- | --- |
-  | `package.json` | 1 |
-  | `package-lock.json` | 2（根 `version` + `packages.""` 里的那个） |
-  | `src-tauri/tauri.conf.json` | 1 |
-  | `src-tauri/Cargo.toml` | 1 |
-  | `src-tauri/Cargo.lock` | 1（只改 `name = "tudouni-aigo-desktop"` 那个 `[[package]]`；同名号的第三方 crate 不要碰） |
+  ```
+  npm run version:bump 1.2.3    # = node scripts/bump-version.mjs 1.2.3，一次改齐五处并自验
+  npm run version:check         # 只检查五处是否一致，不改文件（CI / 提交前可用）
+  ```
+
+  它覆盖的五处：`package.json`（1）、`package-lock.json`（2：根 `version` +
+  `packages.""`）、`src-tauri/tauri.conf.json`（1）、`src-tauri/Cargo.toml`（1）、
+  `src-tauri/Cargo.lock`（1，只改 `name = "tudouni-aigo-desktop"` 那个 `[[package]]`；
+  同名号的第三方 crate 不要碰）。脚本会校验每个文件的格式假设（JSON 是否还是
+  标准两空格序列化、行尾风格），不满足就拒绝写盘。
 
 - 两边都改了（例如动了 `internal/protocol/` 的协议形状、桌面端跟着适配）才两边都升。
 
