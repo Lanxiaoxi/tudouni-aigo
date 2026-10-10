@@ -23,6 +23,7 @@ import { test } from 'node:test';
 import { encodeKey, isTerminalKey } from '@/runtime/terminalKeys';
 import {
   applyTerminalOutput,
+  caretPosition,
   DEFAULT_VIEWPORT_ROWS,
   fitViewport,
   initialTerminalState,
@@ -376,6 +377,128 @@ test('shrinking then growing the screen keeps what was on it', () => {
   state = fitViewport(state, 24);
   assert.equal(state.viewportRows, 24);
   assert.deepEqual(state.lines, ['alpha', 'beta']);
+});
+
+/* ============================================================
+   The pane's size, and the half of it that used to be thrown away
+   ============================================================ */
+
+test('a size reported before any output is kept, not discarded', () => {
+  // **The reported bug: "why does it start from the middle".** A pane is resized
+  // on mount and on every layout change, and the *first* of those arrives before
+  // the shell has printed anything. `resizeTerminalTail` used to `return store` in
+  // that case, so the size was dropped — and the tail was then created by the
+  // first output batch at the `DEFAULT_VIEWPORT_ROWS` fallback.
+  //
+  // That is invisible in a unit test and obvious in the app, because the shell was
+  // told a different number: the runtime resizes the PTY, and the model here keeps
+  // scrolling its 24-row screen while the shell is drawing a taller one.
+  const store = resizeTerminalTail({}, 'term-01', 30);
+  assert.deepEqual(Object.keys(store), ['term-01'], 'the size was not remembered at all');
+  assert.equal(store['term-01'].viewportRows, 30);
+
+  // And the tail that the first batch then extends is built on that size rather
+  // than on the fallback.
+  const withOutput = appendTerminalOutput(store, 'term-01', 'PS> ');
+  assert.equal(withOutput['term-01'].viewportRows, 30);
+  assert.notEqual(withOutput['term-01'].viewportRows, DEFAULT_VIEWPORT_ROWS);
+});
+
+test('a resize repaint against a correctly-sized screen does not scroll the prompt away', () => {
+  // The whole failure, replayed from the **real** ConPTY bytes. This is what a
+  // resize to 30 rows produced on Windows, with the prompt already on screen:
+  //
+  //     ESC[?25l ESC[8;30;107t ESC[H <prompt> ESC[K CRLF  (29 more ESC[K CRLF) ESC[1;68H ESC[?25h
+  //
+  // Home, the one content row, then an `ESC[K CRLF` for every remaining row of the
+  // screen. A model that knows it has 30 rows lands back on row 0 and scrolls
+  // nothing. A model still believing in the 24-row default scrolls six times on
+  // the way down, which is six blank lines above the prompt — the screenshot.
+  const prompt = 'PS C:\\ws>';
+  const repaint = (rows: number) =>
+    '\x1b[?25l\x1b[8;' + rows + ';107t\x1b[H' + prompt + '\x1b[K\r\n' +
+    '\x1b[K\r\n'.repeat(rows - 2) +
+    '\x1b[K\x1b[1;68H\x1b[?25h';
+
+  // Right: the pane told the store its height before the batch arrived.
+  let fixed = resizeTerminalTail({}, 't', 30);
+  fixed = appendTerminalOutput(fixed, 't', repaint(30));
+  assert.equal(fixed['t'].screenTop, 0, 'a 30-row screen does not scroll for a 30-row repaint');
+  assert.deepEqual(fixed['t'].lines, [prompt], 'the prompt is the first thing drawn');
+
+  // Wrong: the same bytes against the 24-row fallback. Asserted so the regression
+  // is stated in the test rather than being inferred from the fix above.
+  let wrong: Record<string, TerminalTail> = {};
+  wrong = appendTerminalOutput(wrong, 't', repaint(30));
+  assert.equal(wrong['t'].viewportRows, DEFAULT_VIEWPORT_ROWS);
+  assert.ok(wrong['t'].screenTop > 0, 'the 24-row model scrolled on a 30-row repaint');
+  assert.equal(wrong['t'].lines.filter((line) => line === '').length, 6, 'six blank lines above the prompt');
+});
+
+/* ============================================================
+   The cursor
+   ============================================================ */
+
+test('the shell\'s show/hide cursor pair is obeyed', () => {
+  // **The reported bug: "why is there no cursor".** `CSI ?25l` / `CSI ?25h` were
+  // on the ignored list, and a real ConPTY wraps *every* redraw in them — one
+  // keystroke is `ESC[m ESC[?25l` then `ESC[93m… ESC[?25h`, and the boot batch
+  // brackets its repaint the same way. So there was nothing to draw a cursor from
+  // at any moment, which is not "the cursor is in the wrong place".
+  const shown = applyTerminalOutput(initialTerminalState(), 'a\x1b[?25h', TERMINAL_SCROLLBACK);
+  assert.equal(shown.cursorVisible, true);
+  const hidden = applyTerminalOutput(initialTerminalState(), 'a\x1b[?25l', TERMINAL_SCROLLBACK);
+  assert.equal(hidden.cursorVisible, false);
+  // And it toggles back, which is the case that actually appears on the wire.
+  const again = applyTerminalOutput(hidden, '\x1b[?25h', TERMINAL_SCROLLBACK);
+  assert.equal(again.cursorVisible, true);
+});
+
+test('a bare CSI 25h is not read as the cursor pair', () => {
+  // The `?` is not decoration. `CSI 25h` is a **different mode number space**, and
+  // `param` strips the marker before parsing — so the check has to look at the raw
+  // params. Reading it as DECTCEM would be obeying somebody else's instruction.
+  const bare = applyTerminalOutput(initialTerminalState(), 'a\x1b[25l', TERMINAL_SCROLLBACK);
+  assert.equal(bare.cursorVisible, true);
+});
+
+test('the caret is drawn where the shell put the cursor, not at the end', () => {
+  // The arithmetic `visibleLines` makes non-obvious: it slices from index 0 of
+  // `rows`, so the caret's line index is `screenTop + row` and **not** `row`. After
+  // a screen has scrolled, those two differ — and using `row` would put the caret
+  // on the wrong line, which reads as a cursor that tracks nothing.
+  let state = applyTerminalOutput(initialTerminalState(4), 'one\r\ntwo', TERMINAL_SCROLLBACK);
+  // A newline at the bottom of a 4-row screen... is not yet a scroll, so make one
+  // happen: two more rows than the screen holds.
+  state = applyTerminalOutput(state, '\r\nthree\r\nfour', TERMINAL_SCROLLBACK);
+  state = applyTerminalOutput(state, '\r\nfive', TERMINAL_SCROLLBACK);
+  assert.ok(state.screenTop > 0, 'the screen has scrolled for this assertion to mean anything');
+
+  const caret = caretPosition(state, state.lines);
+  assert.notEqual(caret, null);
+  assert.equal(caret!.line, state.screenTop + state.row, 'the caret is indexed in `lines`, not in screen rows');
+  assert.equal(state.lines[caret!.line], 'five', 'and it is on the row the shell last wrote');
+});
+
+test('a hidden cursor draws no caret at all', () => {
+  // `null` rather than a position, so the pane draws nothing instead of drawing a
+  // caret the shell has asked not to be shown — which is what a full-screen
+  // program's alternate screen would otherwise get.
+  const state = applyTerminalOutput(initialTerminalState(), 'x\x1b[?25l', TERMINAL_SCROLLBACK);
+  assert.equal(caretPosition(state, state.lines), null);
+});
+
+test('the caret sits after the prompt on a fresh terminal', () => {
+  // The ordinary case a person sees, and the one the screenshot was missing: type
+  // nothing, and the caret is at the end of the prompt rather than nowhere.
+  const state = applyTerminalOutput(initialTerminalState(), 'PS C:\\ws> ', TERMINAL_SCROLLBACK);
+  const caret = caretPosition(state, state.lines);
+  assert.deepEqual(caret, { line: 0, col: 'PS C:\\ws> '.length });
+  // A `col` past the end of the text is kept, not clamped: that is the ordinary
+  // "about to type here" position, and clamping would move the caret backwards
+  // onto a character the shell has already left.
+  const far = applyTerminalOutput(initialTerminalState(), 'ab\x1b[10G', TERMINAL_SCROLLBACK);
+  assert.equal(caretPosition(far, far.lines)!.col, 9);
 });
 
 test('a sequence split across two batches is held, not shown', () => {

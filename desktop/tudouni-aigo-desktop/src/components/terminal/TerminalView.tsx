@@ -4,6 +4,7 @@ import { useApp, useSessionField, EMPTY_TAIL, NO_STRINGS, NO_TERMINALS } from '@
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { encodeKey } from '@/runtime/terminalKeys';
+import { caretPosition } from '@/runtime/terminalOutput';
 import type { TerminalRow } from '@/protocol/types';
 
 /**
@@ -253,6 +254,10 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
   const t = useT();
   const tail = useSessionField((rt) => rt.terminalTails[row.id] ?? EMPTY_TAIL, EMPTY_TAIL);
   const lines = tail.lines;
+  // **Where the caret goes, or `null` when the shell has hidden it.** Read from
+  // the same tail as `lines` rather than from a second source: the cursor and the
+  // row text only mean anything together, which is why they are one value.
+  const caret = useMemo(() => caretPosition(tail, lines), [tail, lines]);
   const terminalInput = useApp((s) => s.terminalInput);
   const resizeTerminal = useApp((s) => s.resizeTerminal);
   const ref = useRef<HTMLDivElement>(null);
@@ -423,7 +428,21 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
           // content hash would be the other candidate and is wrong here: a build
           // log repeats the same line many times, so equal keys would collide.
           <div className="term-line" key={tail.dropped + i}>
-            {line}
+            {/* **The row the shell's cursor is on is drawn as a grid of two
+                spans**, so the caret can sit *between* two characters rather than
+                next to them — the one thing `textContent` cannot express. Splitting
+                only this row (and only when its column is inside it) keeps the rest
+                of the pane as plain text, which is what `white-space: pre` and the
+                row's `content-visibility` were written for. */}
+            {caret !== null && caret.line === i ? (
+              <>
+                <span>{line.slice(0, caret.col)}</span>
+                <span className="term-caret" />
+                <span>{line.slice(caret.col)}</span>
+              </>
+            ) : (
+              line
+            )}
           </div>
         ))}
         {lines.length === 0 ? <div className="term-line faint">{t('common.loading')}</div> : null}

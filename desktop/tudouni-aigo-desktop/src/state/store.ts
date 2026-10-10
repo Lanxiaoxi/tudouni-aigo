@@ -1627,10 +1627,32 @@ export function resizeTerminalTail(
   id: string,
   rows: number,
 ): Record<string, TerminalTail> {
+  // **A terminal with no output yet still gets its tail, and that is the whole of
+  // this branch.** It used to `return store` here, on the reasoning that creating
+  // a tail would throw away the size the next batch would have fitted itself to —
+  // and the reasoning was backwards. A tail is created by whichever event arrives
+  // first, and a pane's size *is* the first event: the view measures itself on
+  // mount, before the shell has printed anything.
+  //
+  // Measured against a real ConPTY, returning early produced exactly this, and it
+  // is the screenshot this was reported from:
+  //
+  //   1. the pane mounts, measures 30 rows, sends `terminal_resize`;
+  //   2. the tail does not exist yet, so the 30 is **dropped on the floor**;
+  //   3. the shell's first byte arrives and the tail is born at the
+  //      `DEFAULT_VIEWPORT_ROWS` fallback — **24**, while the shell is drawing a
+  //      30-row screen;
+  //   4. ConPTY answers the resize with a full repaint of its 30-row screen: home,
+  //      then 29 `ESC[K\r\n`, then home again;
+  //   5. a model that believes it has 24 rows scrolls six times on the way down.
+  //
+  // So the prompt ended up six blank lines below the top of the pane — "why does
+  // it start from the middle" — and it stayed there, because nothing would ever
+  // correct a `viewportRows` the shell had already been told about.
   const existing = store[id];
-  // A terminal with nothing on screen has no tail yet, and creating one here would
-  // throw away the real size the next output batch would have fitted itself to.
-  if (!existing) return store;
+  if (!existing) {
+    return { ...store, [id]: initialTerminalState(rows) };
+  }
   const fitted = fitViewport(existing, rows);
   if (fitted === existing) return store;
   return { ...store, [id]: fitted };

@@ -131,6 +131,21 @@ export interface TerminalState {
   row: number;
   /** The cursor's column, 0-based, counted in string indices. */
   col: number;
+  /**
+   * Whether the shell wants the cursor drawn: `CSI ?25h` shows it, `CSI ?25l`
+   * hides it.
+   *
+   * It is tracked rather than assumed because the shell **wraps every redraw in
+   * the pair**. Measured from a real ConPTY, one keystroke arrives as
+   * `ESC[m ESC[?25l` and then `ESC[93m… ESC[?25h`, and the boot sequence does the
+   * same. So a pane that never read these two sequences drew no cursor at all —
+   * the cursor was not merely in the wrong place, there was nothing on screen to
+   * be in a place.
+   *
+   * It starts `true`, which is what a fresh terminal shows: the cursor is where
+   * it is, and no shell has said otherwise yet.
+   */
+  cursorVisible: boolean;
   /** An escape sequence the batch boundary cut in half. `''` when there is none. */
   carry: string;
   /**
@@ -161,6 +176,7 @@ export const EMPTY_TERMINAL_STATE: TerminalState = Object.freeze({
   viewportRows: 1,
   row: 0,
   col: 0,
+  cursorVisible: true,
   carry: '',
   dropped: 0,
 }) as TerminalState;
@@ -530,11 +546,33 @@ function applyToken(state: TerminalState, token: Token): void {
     case 'K':
       eraseLine(state, param(token.params, 0, 0));
       return;
+    case 'h':
+    case 'l': {
+      // **DECTCEM, the cursor show/hide pair — `CSI ?25h` and `CSI ?25l`.**
+      //
+      // These were on the ignored list, and that is why this pane drew no cursor
+      // at all: a real ConPTY wraps *every* redraw in the pair (measured: one
+      // keystroke is `ESC[m ESC[?25l` then `ESC[93m… ESC[?25h`, and the boot
+      // batch does the same around its repaint), so the sequence is not an
+      // occasional decoration that could be skipped — it is on the wire
+      // constantly, and a model that dropped it had nothing to draw a cursor
+      // from.
+      //
+      // Only the **private** form is read. `CSI 25h` without the `?` is a
+      // different mode number space entirely, and `param` strips the marker, so
+      // the check has to be made on the raw text rather than on the parsed
+      // number: treating a bare `CSI 25h` as DECTCEM would be reading somebody
+      // else's instruction.
+      if (token.params.startsWith('?') && param(token.params, 0, 0) === 25) {
+        state.cursorVisible = token.final === 'h';
+      }
+      return;
+    }
     default:
-      // Colour (`m`), modes (`h`/`l`), window manipulation (`t`), device status
-      // (`n`), scroll regions (`r`), saved cursors (`s`/`u`) and everything else:
-      // recognised, and deliberately without an effect. See the module comment for
-      // which of these is a real remaining limitation.
+      // Colour (`m`), the other modes (`h`/`l`), window manipulation (`t`), device
+      // status (`n`), scroll regions (`r`), saved cursors (`s`/`u`) and everything
+      // else: recognised, and deliberately without an effect. See the module
+      // comment for which of these is a real remaining limitation.
       return;
   }
 }
@@ -568,6 +606,35 @@ export function visibleLines(state: TerminalState): string[] {
   const last = Math.max(end, bufferIndex(state, state.row));
   if (last < 0) return [''];
   return state.rows.slice(0, last + 1);
+}
+
+/**
+ * Where the caret goes, as an index into what `visibleLines` returned, or `null`
+ * when there is nothing to draw.
+ *
+ * `visibleLines` slices from index `0` of `rows`, so a row's **buffer** index is
+ * also its index in `lines` — the cursor's row on the screen (`state.row`) is
+ * therefore *not* its index here; `screenTop + row` is.
+ *
+ * Split out as a function rather than inlined into the pane for the same reason
+ * `contentBoxOf` is: the arithmetic is one line, it has no error to throw, and
+ * getting it wrong puts the caret on the wrong line — which looks exactly like a
+ * cursor that tracks nothing, and is the failure this whole change exists to fix.
+ *
+ * The `col` is a **string index**, which is what the model counts in (see the
+ * module comment on wide characters). An index past the end of the line is kept
+ * as-is: that is the ordinary "about to type" position, and the pane draws it as a
+ * bar. Clamping it to the line's length instead would silently move the caret onto
+ * the last character of a line the shell believes it has already left.
+ */
+export function caretPosition(
+  state: TerminalState,
+  lines: string[],
+): { line: number; col: number } | null {
+  if (!state.cursorVisible) return null;
+  const line = bufferIndex(state, state.row);
+  if (line < 0 || line >= lines.length) return null;
+  return { line, col: Math.max(0, state.col) };
 }
 
 /**
@@ -649,6 +716,7 @@ export function initialTerminalState(viewportRows = DEFAULT_VIEWPORT_ROWS): Term
     viewportRows: height,
     row: 0,
     col: 0,
+    cursorVisible: true,
     carry: '',
     dropped: 0,
   };

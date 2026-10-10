@@ -1609,6 +1609,65 @@
   contain-intrinsic-size: auto 19px;
 }
 
+/* The caret.
+ *
+ * It is a **bar drawn where the shell's cursor is**, not a native text caret and
+ * not a block: this pane does not emulate a screen grid, so it has no cell to fill
+ * — and a block would have to cover a real character to be one, which would hide
+ * the very thing the person is looking at. A bar sits *between* two characters,
+ * which is what the two `<span>`s around it in `TerminalView` exist to express.
+ *
+ *   - `width: 0` with a `border-left` is what makes it zero-width content: an
+ *     inline-block with no width still paints its border, so the bar has a real
+ *     2px and the row's own `white-space: pre` layout is untouched.
+ *   - `margin-right: -2px` cancels that width, so **the text after the caret does
+ *     not move** when it appears or disappears. Without it, every redraw of a line
+ *     being typed would shove the tail of the line two pixels sideways.
+ *   - `height: 1.25em` with `vertical-align: text-bottom` approximates the block
+ *     between the baseline and the ascender rather than stretching to the row's
+ *     full `line-height`, which is 1.5 and would make the caret visibly taller
+ *     than the glyphs beside it.
+ *
+ * `--terminal-fg` rather than `--fg`: this pane's foreground is paired with
+ * `--terminal-bg` and does **not** follow the theme (see `tokens.css` — the light
+ * theme keeps the terminal dark), so a caret in `--fg` would be near-invisible in
+ * the light theme, on the one surface that does not change with it.
+ *
+ * **The blink is turned off entirely under `prefers-reduced-motion`, and it is
+ * stated here rather than left to the global override.** The global block pins
+ * `animation-duration` to 0.001ms and `animation-iteration-count` to 1, which
+ * leaves the element on whatever the animation's last keyframe painted — a caret
+ * that blinked away would be *invisible* for exactly the people who asked for
+ * less motion. It is the one animation in this application whose degraded state
+ * has to be "on", so it says so itself, where the caret is defined. */
+.term-caret {
+  display: inline-block;
+  width: 0;
+  height: 1.25em;
+  margin-right: -2px;
+  border-left: 2px solid var(--terminal-fg);
+  vertical-align: text-bottom;
+  animation: term-caret-blink 1.2s step-end infinite;
+}
+
+@keyframes term-caret-blink {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .term-caret {
+    animation: none;
+  }
+}
+
 .term-empty {
   display: flex;
   flex-direction: column;
