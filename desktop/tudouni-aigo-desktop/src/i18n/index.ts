@@ -642,10 +642,10 @@ export const en = {
    * `{count}` is how many sessions are open, so the sentence can say what
    * "close" would actually end — with several running, that is the fact that
    * decides the answer. */
-  'close.title': 'Minimize or close?',
-  'close.subtitle': 'Closing ends every session; minimizing keeps them running.',
-  'close.minimize': 'Minimize',
-  'close.minimizeHint': 'Hide the window. Every session keeps running.',
+  'close.title': 'Minimize to tray or close?',
+  'close.subtitle': 'Closing ends every session; minimizing to the tray keeps them running.',
+  'close.minimize': 'Minimize to tray',
+  'close.minimizeHint': 'Hide the window to the system tray. Every session keeps running.',
   'close.close': 'Close',
   'close.closeHint': 'Finish every session, then exit.',
   'close.remember': 'Remember this choice',
@@ -656,14 +656,14 @@ export const en = {
   /* The same three values the prompt offers, named for the settings row, which
      has room to spell out what "ask" means. */
   'close.policy.ask': 'Ask every time',
-  'close.policy.minimize': 'Minimize',
+  'close.policy.minimize': 'Minimize to tray',
   'close.policy.close': 'Close',
   /* What the window will do next time, under the setting. A remembered choice is
      reported as a sentence rather than left to be inferred from which radio is
      filled: with three options the selection is a fact about the future, not
      just about the control. */
   'close.policy.summaryAsk': 'The X button asks, the same as now.',
-  'close.policy.summaryMinimize': 'The X button hides the window; sessions keep running.',
+  'close.policy.summaryMinimize': 'The X button hides the window to the system tray; sessions keep running.',
   'close.policy.summaryClose': 'The X button finishes every session and exits.',
 
   /* ---------------- system notifications ----------------

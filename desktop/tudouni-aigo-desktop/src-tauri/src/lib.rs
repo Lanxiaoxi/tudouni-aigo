@@ -41,6 +41,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{InvokeBody, Request};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(windows)]
 use std::ffi::c_void;
@@ -1415,14 +1417,18 @@ fn close_prompt_ack() -> Result<(), String> {
 #[tauri::command]
 fn close_prompt_answer(window: tauri::Window, choice: CloseChoice) -> Result<(), String> {
     match choice {
-        // The children are untouched, and that is the whole meaning of this
-        // choice: a minimized window still has every session running, and a turn
-        // in flight keeps running.
+        // `hide`, not `minimize`. The choice's promise has always been "the
+        // window leaves the screen and every session keeps running", and the
+        // tray icon is what makes that promise honest: a minimized window is
+        // still a taskbar button asking to be clicked again, while a hidden one
+        // is reachable exactly one way — through the tray, which is created
+        // before this command can ever be answered (see `make_tray`).
+        // `hide` keeps the children untouched, as before.
         CloseChoice::Minimize => {
             end_close_prompt();
             window
-                .minimize()
-                .map_err(|e| format!("could not minimize the window: {e}"))
+                .hide()
+                .map_err(|e| format!("could not hide the window: {e}"))
         }
         CloseChoice::Close => {
             finish_close(window);
@@ -1457,6 +1463,92 @@ fn window_destroy(window: tauri::Window) -> Result<(), String> {
 }
 
 /* ============================================================
+   The tray icon
+   ============================================================ */
+
+/// Create the system tray icon and its menu.
+///
+/// It exists for one promise: "minimize" in the close prompt hides the window
+/// while every session keeps running, and without this icon a hidden window
+/// would be unreachable — the person would have to end the process from Task
+/// Manager to get back to work. It is created **at startup**, not lazily on
+/// the first hide, because the prompt can be answered through a remembered
+/// policy with no dialog at all (`useWindowClose`), and a lazily-created icon
+/// would then first appear exactly one click too late.
+///
+/// The menu is the three things the icon has to offer and no more: show, a
+/// separator, and quit. Quit goes through `runtime_shutdown` on a thread and
+/// then `destroy` — the same path as the `/exit` command — because the tray
+/// must not raise a close request (the prompt handler would refuse it and
+/// leave the application "quitting" forever), and must not kill running turns
+/// without the graceful wait `runtime_shutdown` provides.
+///
+/// Left click shows the window (the near-universal Windows convention);
+/// double click is deliberately left to bubble through as its own event and
+/// also shows it, via the same `TrayIconEvent::Click` match. The menu still
+/// opens on **right** click, because `show_menu_on_left_click` stays off.
+fn make_tray(app: &AppHandle) -> tauri::Result<()> {
+    let show_item = MenuItem::with_id(app, "tray-show", "Show tudouni-aigo", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[&show_item, &PredefinedMenuItem::separator(app)?, &quit_item],
+    )?;
+
+    let mut tray = TrayIconBuilder::with_id("main")
+        .icon_as_template(false)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "tray-show" => {
+                if let Ok(()) = tray_show_inner(app) {}
+            }
+            "tray-quit" => {
+                let app = app.clone();
+                let shutdown_handle = app.clone();
+                thread::spawn(move || {
+                    let _ = runtime_shutdown(shutdown_handle, None);
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.destroy();
+                    }
+                });
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Left click = show, the Windows convention. The menu opens on
+            // right click only (`show_menu_on_left_click(false)` above).
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let _ = tray_show_inner(tray.app_handle());
+            }
+        });
+
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
+/// Restore the main window from the tray, shared with the tray's own event
+/// handlers.
+fn tray_show_inner(app: &AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or("the main window does not exist")?;
+    window
+        .show()
+        .and_then(|_| window.unminimize())
+        .and_then(|_| window.set_focus())
+        .map_err(|e| format!("could not show the window: {e}"))
+}
+
+/* ============================================================
    Entry point
    ============================================================ */
 
@@ -1487,9 +1579,15 @@ pub fn run() {
         // receives the "a second copy started" message, and a plugin registered
         // earlier would already have run its setup by then.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // Second launch = "I want the app back". That has to work from the
+            // tray too: a window hidden into the tray has no taskbar button,
+            // so launching the exe again is a natural way to look for it —
+            // `unminimize` alone would do nothing for it, so the full restore
+            // (show, unminimize, focus) is the same one the tray applies.
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
+                let _ = window.show();
                 let _ = window.unminimize();
+                let _ = window.set_focus();
             }
         }))
         .plugin(tauri_plugin_dialog::init())
@@ -1526,6 +1624,14 @@ pub fn run() {
             close_prompt_ack,
             window_destroy,
         ])
+        // The tray is built in `setup` rather than in a builder callback so it
+        // can use the app handle the same way the commands do; it must exist
+        // before the first hide, because the remembered "minimize" policy can
+        // hide the window with no dialog ever drawn (see `make_tray`).
+        .setup(|app| {
+            make_tray(app.handle())?;
+            Ok(())
+        })
         .on_window_event(|window, event| {
             // Closing the window **asks first**, because the X button now means
             // two different things and only the person knows which one they
