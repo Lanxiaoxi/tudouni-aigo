@@ -308,6 +308,20 @@ var sessionScopedToolNames = []string{
 	"update_goal",
 	"load_skill",
 	"ask_user",
+	// The SSH tools are withheld for a reason of their own, and it is not the map
+	// race above: a session is a **process-scoped resource**, not the parent's
+	// memory. Two agents reading one session is silent data loss rather than a
+	// crash — `ssh_read` drains the buffer, so whoever reads first takes the bytes
+	// and the other gets a hole it cannot see. The child could not open a session
+	// of its own either (it has no asker, so `ssh_connect` is refused), which is
+	// exactly why it must not be handed the parent's.
+	//
+	// A child that genuinely needs SSH should get its own manager, not this one.
+	"ssh_connect",
+	"ssh_write",
+	"ssh_read",
+	"ssh_close",
+	"ssh_sessions",
 }
 
 // toolsForChild is the parent's tool set minus what belongs to the parent.

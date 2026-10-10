@@ -130,6 +130,26 @@ func run(argv []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	// **The process-exit path for the resources `Boot` created.**
+	//
+	// These two managers are process-scoped, so neither can be closed when a
+	// *session* closes: switching sessions must not kill a shell somebody is
+	// working in. That leaves exactly one place they can be released, and it is
+	// here. Until this was wired, `terminal.Manager.Close` had **no caller at all**
+	// — the Windows terminal was only spared a leak by its ConPTY job object's
+	// kill-on-close, which is a platform guarantee rather than this program doing
+	// its job, and an SSH session has no such fallback.
+	//
+	// Both halves matter for the same reason. A local shell that outlives this
+	// process is an orphan holding a port or a file lock, invisible because the
+	// window that could show it is gone; a remote session that outlives it is worse
+	// in one way, because the login stays open on a machine that is not this one
+	// until the far end's own keepalive notices. Closing the transport is what tells
+	// it to end the session, and nothing else does.
+	defer func() {
+		_ = booted.Terminals.Close()
+		_ = booted.SSH.CloseAll()
+	}()
 
 	// Which interface this run gets. The rules live in `useFullScreen` so that the
 	// precedence can be tested without a terminal.

@@ -24,6 +24,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/proxy"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
+	sshlib "github.com/Lanxiaoxi/tudouni-aigo/internal/ssh"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/subagent"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/terminal"
@@ -62,6 +63,11 @@ type Booted struct {
 	// runtime that process mounts, so session and terminal end up as siblings under
 	// the workspace rather than parent and child.
 	Terminals *terminal.Manager
+	// SSH owns this workspace's remote sessions, and it lives here for exactly the
+	// same reason the terminals do. A remote shell is a longer-lived resource than
+	// a terminal if anything: reconnecting because somebody switched sessions would
+	// drop a half-finished deployment, and the far end would keep the login.
+	SSH *sshlib.Manager
 }
 
 // Boot makes the directories and opens the two append-only stores.
@@ -83,7 +89,16 @@ func Boot() (Booted, error) {
 	if err != nil {
 		return Booted{}, err
 	}
-	return Booted{Store: store, Logs: logs, Terminals: terminals}, nil
+	// The SSH manager takes no workspace: its boundary is the remote host's, and
+	// the local directory the agent works in has nothing to do with where a remote
+	// command runs. What it does read is the user's own `~/.ssh` configuration,
+	// with empty arguments meaning "the real one".
+	return Booted{
+		Store:     store,
+		Logs:      logs,
+		Terminals: terminals,
+		SSH:       sshlib.NewManager("", ""),
+	}, nil
 }
 
 // ResolveSession picks the session a run should start on.
@@ -317,6 +332,9 @@ type Runtime struct {
 	// from `Booted`, which is created once per process, because a terminal has to
 	// outlive the session that happened to be mounted when it was created.
 	Terminals *terminal.Manager
+	// SSH owns this workspace's remote sessions, and it comes from `Booted` for the
+	// same reason the terminals do. See `Booted.SSH`.
+	SSH *sshlib.Manager
 	// Skills is the loaded-skill board, which the payload tail renders from.
 	Skills *builtin.SkillBoard
 	// Goal is the session's long-running objective: the board the goal tools write
@@ -494,6 +512,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		// disagree one door is guarded and the other is not.
 		Files:     files.NewServiceFromWorkspace(workspace),
 		Terminals: options.Booted.Terminals,
+		SSH:       options.Booted.SSH,
 		mcpNames:  mcpNames,
 		httpClient: &http.Client{Timeout: 120 * time.Second},
 		startedAt:  time.Now(),
@@ -572,6 +591,13 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	extra := append([]tools.Tool{}, jobTools...)
 	extra = append(extra, builtin.NewFetchWeb(runtimeValue.httpClient))
 	hasFetch := true
+
+	// The SSH tools. They are registered only when a manager exists, and the
+	// manager carries the *user's* configuration rather than this session's — the
+	// same rule the terminals follow, and for a sharper reason: a remote shell the
+	// agent is halfway through a deployment in must not be torn down because
+	// somebody switched sessions.
+	extra = append(extra, builtin.NewSSHTools(runtimeValue.SSH)...)
 
 	// The goal tools. Their commit goes straight to the session store rather than
 	// waiting for the next step boundary: a goal change is a decision about what
