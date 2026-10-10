@@ -45,6 +45,7 @@ import {
   railBlocked,
   selectLiveOnlyKey,
   selectLiveSessionIds,
+  selectModalVisible,
   selectRowStatus,
   selectSavedSessions,
   useApp,
@@ -590,6 +591,85 @@ test('with nothing open the rail is live', () => {
   // would pass both assertions above and disable the rail for ever.
   install({}, [], null);
   assert.equal(railBlocked(useApp.getState()), false);
+});
+
+/* ============================================================
+   Group 3: a request the session board is holding
+   ============================================================ */
+
+/**
+ * The two modals gate their render on `selectModalVisible`, so the interesting
+ * inputs are the two places a held request can sit: behind a board whose card
+ * carries the "click to reply" nudge, and behind a board that is not actually
+ * what the column is showing — where holding would strand the request with no
+ * surface to surface it from.
+ */
+
+test('a request arriving while the board is up is held, not rendered', () => {
+  // The board is the surface that names the waiting session — its card has
+  // moved into Needs you — so the prompt does not cover it. Nothing answers
+  // the request and nothing drops it; the click on the card is what surfaces
+  // it, by closing the board.
+  const bucket = handshaken('k1', 'C:/work', '20261002-183456');
+  install({ k1: bucket }, ['k1'], 'k1', {
+    boardOpen: true,
+    modal: {
+      kind: 'permission',
+      key: 'k1',
+      req: {
+        id: 'p1',
+        tool: 'shell',
+        risk: 'high',
+        arguments: {},
+        remember: null,
+        remember_hint: null,
+        allow_trust_all: false,
+        trust_all_hint: null,
+      },
+    } as AppStore['modal'],
+  });
+  assert.equal(selectModalVisible(useApp.getState()), false);
+  // And the same request becomes visible the moment the board closes — the
+  // click, or Esc.
+  useApp.setState({ boardOpen: false });
+  assert.equal(selectModalVisible(useApp.getState()), true);
+});
+
+test('a held request becomes visible when the terminal outranks the board', () => {
+  // The deadlock guard. With a shell attached, the conversation column shows
+  // the terminal, not the board — so nothing would be carrying the "click to
+  // reply" nudge, and holding the prompt there is holding it with no way to
+  // reach it. Holding happens **only** in the exact state where the board
+  // holds the column.
+  const bucket = handshaken('k1', 'C:/work', '20261002-183456');
+  bucket.activeTerminalId = 'term-01';
+  install({ k1: bucket }, ['k1'], 'k1', {
+    boardOpen: true,
+    modal: {
+      kind: 'permission',
+      key: 'k1',
+      req: {
+        id: 'p1',
+        tool: 'shell',
+        risk: 'high',
+        arguments: {},
+        remember: null,
+        remember_hint: null,
+        allow_trust_all: false,
+        trust_all_hint: null,
+      },
+    } as AppStore['modal'],
+  });
+  assert.equal(selectModalVisible(useApp.getState()), true);
+});
+
+test('a board with no request under it renders nothing to hold', () => {
+  // The other half of the pair: `selectModalVisible` also answers for the two
+  // components' `open`, so a board that is up **without** a request must yield
+  // a dead modal rather than a phantom one.
+  const bucket = handshaken('k1', 'C:/work', '20261002-183456');
+  install({ k1: bucket }, ['k1'], 'k1', { boardOpen: true });
+  assert.equal(selectModalVisible(useApp.getState()), false);
 });
 
 /* ============================================================

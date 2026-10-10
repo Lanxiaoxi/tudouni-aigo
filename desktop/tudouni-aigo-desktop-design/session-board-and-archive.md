@@ -110,7 +110,7 @@ const showSidebar = sidebarVisible && !hiddenByCss && !boardOpen;
 | 动作 | 板子开着时 | 理由 |
 | --- | --- | --- |
 | 切工作区 / 切会话（左栏） | ✅ 允许 | 不发消息，不影响任何 pending |
-| 别的会话的审批 / 提问 | ✅ 允许 | 板子不是模态，审批盖上来即可；答完板子还在 |
+| 别的会话的审批 / 提问 | ✅ 停在卡上（`selectModalVisible`） | 板子不是模态，**审批不盖上来**：请求在队列里保活但**不渲染**，Needs you 列的卡片带着"等你回答——点我回复"的提示。它曾经直接盖到板子上，把"三四个会话谁在等我"的整屏盖掉——正是板子存在的那个时刻。点卡片（或 Esc 关板）即浮出提示，答完板子状态不受影响。压住的判据是**视图**（`conversationView`）而不是 `boardOpen` 这个旗子：终端或启动失败盖过板子时，板子不在屏幕上、nudge 无处安放，此时压住提醒就是死锁，所以照常渲染 |
 | **`Ctrl+B` / 右栏的收起控件** | ❌ inert **且可见地 inert** | 见上。复用左栏那套 `disabled` + 视觉弱化 |
 | 新建 / 关闭会话 | ❌ 禁止 | 与阻塞模态期间同一条规矩 |
 
@@ -121,13 +121,15 @@ const showSidebar = sidebarVisible && !hiddenByCss && !boardOpen;
 `useGlobalKeys` 现在链是：**模态 > 面板 > 中断回合**。板子插在**面板之后、中断之前**：
 
 ```
-if (s.modal !== null) return;              // 模态自己处理
+if (selectModalVisible(s)) return;         // 可见的模态自己处理
 if (s.panel !== null) { close; return; }   // 面板
 if (s.boardOpen) { close board; return; }  // ← 新增
 if (phase === 'running') interrupt;        // 回合
 ```
 
 不能排在模态之前（会抢掉模态的 Esc），也不能排在中断之后（`Esc` 在回合运行时会被吃成中断，板子关不掉）。
+
+判据是 **`selectModalVisible` 而不是 `s.modal !== null`**，配合 §3.4 的"审批停在卡上"：请求被板子压住（不渲染）时，屏幕上没有一个可以按 Esc 面对的提示，把它当模态会让板子自己的出口被一个看不见的提示吃掉——Esc 关板，关板即浮出提示，fail-closed 的回答路径一条不少。`Ctrl+K/B/S/T/`…` 与 `Ctrl+1..9` 的阻塞段同样是这个判据：板开时左栏可用（§3.4），这些键就也要可用——它们没有一个会替压住的请求作答。
 
 ### 3.6 列与卡片
 

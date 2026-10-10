@@ -132,6 +132,7 @@
 
   --info:          #60A5FA;  --info-subtle:    rgba(96, 165, 250, 0.14);
   --warning:       #F59E0B;  --warning-subtle: rgba(245, 158, 11, 0.15);
+  --warning-border: rgba(245, 158, 11, 0.45);  /* 看板卡片「等你回答」的描边，配对 accent-border */
   --destructive:   #EF4444;  --destructive-subtle: rgba(239, 68, 68, 0.14);
   --success:       #22C55E;  --success-subtle: var(--accent-subtle);
 
@@ -174,6 +175,7 @@
 
   --info:          #2563EB;  --info-subtle:    rgba(37, 99, 235, 0.08);
   --warning:       #B45309;  --warning-subtle: rgba(180, 83, 9, 0.10);
+  --warning-border: rgba(180, 83, 9, 0.40);  /* 看板卡片「等你回答」的描边，配对 accent-border */
   --destructive:   #DC2626;  --destructive-subtle: rgba(220, 38, 38, 0.08);
   --success:       #16A34A;  --success-subtle: var(--accent-subtle);
 

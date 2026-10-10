@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import {
   activeRuntime,
   activeWorkspaceOf,
+  selectModalVisible,
   selectPhase,
   selectSavedSessions,
   useApp,
@@ -105,8 +106,12 @@ export function useGlobalKeys(): void {
 
       /* ---- Esc: modal > panel > board > interrupt the turn ---- */
       if (e.key === 'Escape') {
-        // A modal handles its own Esc (it resolves to deny / skip).
-        if (s.modal !== null) return;
+        // A modal handles its own Esc (it resolves to deny / skip). Asked of
+        // **visibility**, not of `modal`: a request the session board is
+        // holding unrendered has drawn nothing to press Esc at, and letting it
+        // answer here would strand the board — its own way out would be eaten
+        // by a prompt that is not on screen.
+        if (selectModalVisible(s)) return;
         if (s.panel !== null) {
           e.preventDefault();
           useApp.getState().closePanel();
@@ -118,9 +123,9 @@ export function useGlobalKeys(): void {
         // keypress whose result is off screen. Before the interrupt because a
         // turn that happens to be running must not eat the key: with the board
         // up, Esc's one job is "leave the board", and a running session behind
-        // it is not what the person is looking at. It may not come before the
-        // modal: that Esc is the modal's, and a board that stole it would make a
-        // fail-closed approval unanswerable from the keyboard.
+        // it is not what the person is looking at. It may not come before a
+        // **visible** modal: that Esc is the modal's, and a board that stole it
+        // would make a fail-closed approval unanswerable from the keyboard.
         if (s.boardOpen) {
           e.preventDefault();
           s.setBoardOpen(false);
@@ -141,8 +146,14 @@ export function useGlobalKeys(): void {
        * Only Esc was checked above, so Ctrl+K/B/S/T/` and Ctrl+1..9 all ran
        * straight through a fail-closed approval prompt: a person could open the
        * command palette *behind* the prompt, answer it, and watch a panel appear
-       * that they had no memory of asking for. "Blocking" has to mean blocked. */
-      if (s.modal !== null) return;
+       * that they had no memory of asking for. "Blocking" has to mean blocked.
+       *
+       * Asked of **visibility**, like the Esc chain above: while the session
+       * board is up, its prompt is held unrendered (`selectModalVisible`) and
+       * the board is explicitly *not* a modal — §3.4 keeps the rail live under
+       * it, so these keys stay live too. The held request itself is untouched
+       * by all of them: nothing here answers anything. */
+      if (selectModalVisible(s)) return;
 
       /* ---- Ctrl/Cmd combinations ---- */
       if (mod && !e.shiftKey) {

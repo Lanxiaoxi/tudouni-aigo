@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Check, MessageCircleQuestion, SkipForward } from 'lucide-react';
-import { selectModalOrigin, selectQueuedModals, useApp } from '@/state/store';
+import { selectModalOrigin, selectModalVisible, selectQueuedModals, useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge } from '@/components/ui/kit';
 import { isTypingTarget } from '@/hooks/useListKeys';
@@ -29,8 +29,14 @@ export function QuestionModal() {
   // answer goes to whichever one asked, so knowing which is not cosmetic.
   const origin = useApp((s) => (s.modal ? selectModalOrigin(s, s.modal.key) : ''));
   const queued = useApp(selectQueuedModals);
+  // **Held is not the same as rendered.** The session board holds the
+  // conversation column while it is open, and it is the surface that already
+  // names the session that is waiting — so a question arriving there stays
+  // unrendered (see `selectModalVisible`) until the click on its card surfaces
+  // it. The queue keeps it alive; nobody answers it from here.
+  const visible = useApp(selectModalVisible);
 
-  const open = modal?.kind === 'question';
+  const open = visible && modal?.kind === 'question';
   const req = open ? modal.req : null;
 
   const [selected, setSelected] = useState<string[]>([]);

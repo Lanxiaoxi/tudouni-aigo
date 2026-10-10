@@ -292,6 +292,13 @@ export const en = {
      runtime has not written it down. Saying so beats a row of zeroes, which
      would read as "this conversation is empty" rather than "not saved yet". */
   'board.noCounts': 'not saved yet',
+  /* The card-level call to action for a session waiting on a blocking request.
+     The board is where a person watching several sessions learns that one of
+     them needs them (the card has moved into Needs you); this line is what
+     tells them the click on the card is also the way to answer it — the prompt
+     itself surfaces only after the click, so without it the card would look
+     like any other. */
+  'board.card.asking': 'Waiting on your answer — click to reply',
 
   /* Which conversation a blocking request belongs to, and how many are behind
      it. Both exist because a prompt with several sessions open is otherwise

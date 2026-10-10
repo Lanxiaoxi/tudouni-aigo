@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { X } from 'lucide-react';
+import { MessageCircleQuestion, X } from 'lucide-react';
 import {
   activeWorkspaceOf,
   selectRowStatusKey,
@@ -182,11 +182,16 @@ export function SessionBoard() {
                   status wobbles, which is the same rule the rail's rows follow. */}
               {column.cards.map((card) => {
                 const isCurrent = card.key === activeKey;
+                // The Needs-you card owes the reader one more sentence than the
+                // others: while the board is up a blocking request is held
+                // unrendered (`selectModalVisible`), so the amber dot alone
+                // would not say that clicking this card is how it gets answered.
+                const isAsking = card.status === 'asking';
                 return (
                   <button
                     key={card.key}
                     type="button"
-                    className={`board-card${isCurrent ? ' is-current' : ''}`}
+                    className={`board-card${isCurrent ? ' is-current' : ''}${isAsking ? ' is-asking' : ''}`}
                     aria-current={isCurrent ? 'true' : undefined}
                     // Clicking a card is the board's second exit and the more
                     // useful one: it focuses that conversation's chat and closes
@@ -215,6 +220,14 @@ export function SessionBoard() {
                         {card.id === null ? t('lb.sessionPending') : t('board.noPreview')}
                       </span>
                     )}
+                    {/* The held prompt, named where it waits. Shown for `asking`
+                        only — a card that merely runs needs no call to action. */}
+                    {isAsking ? (
+                      <span className="board-card-nudge">
+                        <MessageCircleQuestion size={12} />
+                        {t('board.card.asking')}
+                      </span>
+                    ) : null}
                     <span className="board-card-meta">
                       {card.messages !== null
                         ? t('panel.resume.messages', { n: card.messages })

@@ -1,6 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { AlertOctagon, AlertTriangle, ShieldCheck } from 'lucide-react';
-import { selectModalOrigin, selectQueuedModals, useApp } from '@/state/store';
+import { selectModalOrigin, selectModalVisible, selectQueuedModals, useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, Fact, RiskTag } from '@/components/ui/kit';
 import { formatArguments } from '@/utils/format';
@@ -37,8 +37,14 @@ export function PermissionModal() {
   // unknown session — and a decision made for the wrong one.
   const origin = useApp((s) => (s.modal ? selectModalOrigin(s, s.modal.key) : ''));
   const queued = useApp(selectQueuedModals);
+  // **Held is not the same as rendered.** The session board holds the
+  // conversation column while it is open, and it is the surface that already
+  // names the session that is waiting — so a request arriving there stays
+  // unrendered (see `selectModalVisible`) until the click on its card surfaces
+  // it. The queue keeps it alive; nobody answers it from here.
+  const visible = useApp(selectModalVisible);
 
-  const open = modal?.kind === 'permission';
+  const open = visible && modal?.kind === 'permission';
   const req = open ? modal.req : null;
 
   return (

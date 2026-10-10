@@ -2206,3 +2206,27 @@
 .board-card .board-card-time {
   font-variant-numeric: tabular-nums;
 }
+
+/* The card that is waiting on a person. The dot has already moved it into
+   Needs you; this row is what says the click on the card is also the way to
+   answer — the prompt itself is deliberately held unrendered while the board
+   is up (`selectModalVisible`), so without this line the card would read like
+   any other. Warning colours, the same pair the amber dot uses. */
+.board-card.is-asking {
+  border-color: var(--warning-border);
+  box-shadow: inset 2px 0 0 var(--warning);
+}
+
+.board-card-nudge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: 2px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.board-card.is-current .board-card-nudge {
+  color: var(--warning);
+}

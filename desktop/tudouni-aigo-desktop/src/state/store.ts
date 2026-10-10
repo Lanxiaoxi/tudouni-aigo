@@ -25,6 +25,7 @@
  */
 
 import { create } from 'zustand';
+import { conversationView } from '@/conversationView';
 import type {
   FileEntry,
   FrontendMsg,
@@ -1428,6 +1429,12 @@ function enqueueModal(s: AppStore, entry: ModalEntry): Partial<AppStore> {
     // A blocking request clears any panel, but only when it becomes the head:
     // a queued one must not close a panel the person opened after answering the
     // current prompt.
+    //
+    // **It clears no board.** `boardOpen` is not a panel and is not touched
+    // here; a request that arrives while the board is up is held unrendered by
+    // the modal components (`SessionBoard`'s design: the card in Needs you is
+    // the surface that says who is asking, and the click that focuses it is the
+    // click that surfaces the prompt).
     ...(s.modal === null ? { modal: entry, panel: null } : {}),
   };
 }
@@ -4519,6 +4526,50 @@ export function selectModalOrigin(s: AppStore, key: string): string {
  */
 export function selectQueuedModals(s: AppStore): number {
   return Math.max(0, s.pendingModals.length - 1);
+}
+
+/**
+ * Whether the held blocking request is **rendered**.
+ *
+ * `modal` says a request is being held; this says whether the person can see
+ * it. The session board holds the conversation column while it is open, and the
+ * board is the one surface that already names the session that is waiting — its
+ * card has moved into Needs you — so a request arriving there stays unrendered
+ * instead of covering the overview with the prompt. Nothing answers it and
+ * nothing drops it (the queue only loses an entry by having it answered); the
+ * click on that card is the click that surfaces it: it focuses the session and
+ * closes the board, and a closed board turns this back to `true`.
+ *
+ * **Held, not hidden.** The card, the queue and the fail-closed answer path all
+ * still hold; what is suppressed is only the prompt's own render, and the
+ * window can always reach it: Esc closes the board first (the chain in
+ * `useGlobalKeys` asks about visibility too), and every click on the board's
+ * cards closes it.
+ *
+ * The condition is **the view, not the flag**: `boardOpen` is true, but when a
+ * terminal or a start-up problem outranks the board the prompt would cover
+ * neither anything the board is saying nor anything the board needs the
+ * person to click — and holding it there *is* a deadlock, because the board
+ * that was supposed to carry the nudge is not the thing on screen. Holding the
+ * request only in the exact state where the board holds the column is what
+ * keeps "unrendered" and "unreachable" from ever coexisting.
+ *
+ * The same inputs `App` feeds `conversationView`, evaluated against the
+ * session the column would draw.
+ */
+export function selectModalVisible(s: AppStore): boolean {
+  if (s.modal === null) return false;
+  const rt = s.sessions[s.activeKey ?? ''];
+  const view = conversationView({
+    startupProblem: s.startupProblem !== null,
+    sessionProblem: rt?.problem != null,
+    attachedTerminalId: rt?.activeTerminalId ?? null,
+    boardOpen: s.boardOpen,
+    hasSession: s.activeKey !== null,
+    ready: rt?.ready ?? false,
+    hasConversation: (rt?.entries ?? []).some((entry) => entry.kind !== 'note'),
+  });
+  return view !== 'board';
 }
 
 /** How many sessions are running a turn right now. A window-level summary. */
