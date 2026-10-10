@@ -62,12 +62,25 @@ const SUITES = [
   // are both invisible in a rendered string, which is why they are asserted here
   // rather than by looking at the window.
   'turn-rail.test.ts',
+  // The stream's step blocks: one panel per model call, prose and thinking kept
+  // outside. The partition's rules ride on the wire's own ordering (a step's
+  // tool events follow its `model_call` record; a retry is a backoff row, not
+  // new work), so a partition that assumed otherwise would look correct on a
+  // session that never exercises the case — which is why the pure function is
+  // asserted here, over events shaped like the real audit stream.
+  'stream-blocks.test.ts',
   // Whether the start-up arguments the settings panel owns actually reach the
   // child. `--ericai` is the one that matters most: the runtime decides at open
   // whether it manages the session's token, so a flag that never arrives is a
   // session that 401s forever once its token expires — while the panel says it is
   // in force. This is the "the desktop never refreshes my EricAI token" report.
   'ericai-launch.test.ts',
+  // When a session is worth a system notification, and what the window's X button
+  // does. Both are rules rather than behaviours: a notification that should not
+  // have been sent looks identical on screen to one that should have, and a close
+  // policy that forgot a choice simply asks again — so neither failure is visible
+  // in a rendered string, and both have to be asserted here.
+  'notify.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

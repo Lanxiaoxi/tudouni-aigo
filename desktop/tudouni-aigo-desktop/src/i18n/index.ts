@@ -194,6 +194,13 @@ export const en = {
   'entry.model': 'model call',
   'entry.modelRetry': 'retry · waiting {ms}ms',
   'entry.modelMetrics': '{ms} · in {input} · cached {cached}',
+  /** The step card's head metrics, as two labelled figures: what the call sent
+   *  and what a cache served of it. Same numbers as `modelMetrics` drew as one
+   *  line before; the labels move onto the head bar because a card's head is
+   *  where a reader glances, and an unlabelled number pair there does not
+   *  survive the glance. */
+  'entry.modelIn': 'in {n}',
+  'entry.modelCached': 'cached {n}',
   'entry.modelNoMetrics': 'in progress',
   'entry.toolResultOk': 'done',
   'entry.toolResultError': 'error',

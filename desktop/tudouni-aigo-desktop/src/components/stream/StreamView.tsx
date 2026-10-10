@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, Sparkles } from 'lucide-react';
 import { NO_ENTRIES, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { EntryView } from './EntryView';
 import { QuietGroup } from './QuietGroup';
 import { TurnRail } from './TurnRail';
 import { MIN_RAIL_TURNS, turnRail, LANDING_PX } from '@/turnRail';
+import { streamBlocks, type StreamBlock, type StreamRow } from '@/streamBlocks';
+import { formatDuration, formatTokens } from '@/utils/format';
 import type { Entry } from '@/state/entries';
 
 /**
@@ -28,9 +30,7 @@ import type { Entry } from '@/state/entries';
  * so a session with one turn keeps every pixel of width it had.
  */
 
-type Row =
-  | { kind: 'entry'; key: string; entry: Entry }
-  | { kind: 'quiet'; key: string; entries: Entry[] };
+type Row = StreamRow;
 
 /** Quiet mode collapses tool rows; everything else keeps its own shape. */
 const QUIETABLE = new Set(['tool', 'batch', 'denied']);
@@ -61,6 +61,17 @@ function buildRows(entries: Entry[], quiet: boolean): Row[] {
   return rows;
 }
 
+/**
+ * The stream's drawn list: rows partitioned into step blocks.
+ *
+ * **`streamBlocks` runs on the drawn rows, not on `entries`.** Quiet mode and
+ * the block partition answer the same question — "how is this step's work
+ * shown" — at two levels, and running the partition under quiet would put a
+ * rollup inside a panel whose own head says "model call", both naming the
+ * same calls. The row list is the one surface both shapes agree on, so the
+ * partition reads rows and treats a quiet group as one row of tool work.
+ */
+
 export function StreamView() {
   const t = useT();
   // The transcript and its shape both come from the session being shown. Quiet
@@ -73,6 +84,11 @@ export function StreamView() {
   const [pinned, setPinned] = useState(true);
 
   const rows = useMemo(() => buildRows(entries, quiet), [entries, quiet]);
+  // The drawn rows, pulled tight into step panels. Same cadence as `rows`
+  // above — one pass per change to `entries`, including every streamed chunk —
+  // and the same saving rule applies: earlier blocks keep the same row objects,
+  // so a memo'd block re-renders only when its own rows moved.
+  const blocks = useMemo(() => streamBlocks(rows), [rows]);
   // One pass over the transcript, in its own order. Called on every change to
   // `entries` — including every chunk of every answer — so it walks the entries
   // once rather than scanning each turn's span independently: the spans
@@ -149,11 +165,11 @@ export function StreamView() {
         aria-label={t('stream.label')}
       >
         <div className="stream-inner">
-          {rows.map((row) =>
-            row.kind === 'quiet' ? (
-              <QuietGroup key={row.key} entries={row.entries} />
+          {blocks.map((block) =>
+            block.kind === 'step' ? (
+              <StepBlock key={block.key} block={block} />
             ) : (
-              <EntryView key={row.key} entry={row.entry} />
+              <StreamRowView key={block.row.key} row={block.row} />
             ),
           )}
         </div>
@@ -172,5 +188,79 @@ export function StreamView() {
 
       {rail ? <TurnRail turns={turns} scrollRef={scrollRef} /> : null}
     </div>
+  );
+}
+
+/**
+ * One stream row, on its own, exactly as `EntryView` drew it before the block
+ * partition existed. Prose, turn heads, user prompts, notes, retries and
+ * orphans all pass through here unchanged — the partition only ever *groups*
+ * rows, never redraws them, which is what keeps the twelve entry kinds' own
+ * tests true of the layout around them too.
+ */
+function StreamRowView({ row }: { row: StreamRow }) {
+  if (row.kind === 'quiet') return <QuietGroup key={row.key} entries={row.entries} />;
+  return <EntryView key={row.key} entry={row.entry} />;
+}
+
+/**
+ * One step block: the redesign's card form of "this call and its work".
+ *
+ * **The head is the old `model` row's facts, restated on a bar.** The loose row
+ * drew one metrics line ("56s · in 67,337 · cached 66,368") as a paragraph
+ * between the tool lines above and below it — which is exactly why the
+ * transcript read as scatter. The head carries the same three figures, from
+ * the same entry, at the same place in the order; a call in flight says "in
+ * progress" the row said it with.
+ *
+ * The tools, permissions, batch and denial rows render **inside** the card,
+ * through `EntryView` — same components, same folding, same toggles. A body
+ * row (streamed text, the answer) is never in here: the partition holds them
+ * out, and the head should never gain a `max-height`, because the answer is
+ * the one thing this panel is not.
+ */
+function StepBlock({ block }: { block: Extract<StreamBlock, { kind: 'step' }> }) {
+  const t = useT();
+  const m = block.metrics;
+
+  // The card's edge follows its riskiest row: a MEDIUM or HIGH call is one a
+  // person is meant to notice from across the transcript, and the row's own
+  // badge still says which call it was. `high` wins over `medium`, and neither
+  // is present on the ordinary call — the edge stays neutral there.
+  let elevated = '';
+  for (const row of block.rows) {
+    if (row.kind !== 'entry' || row.entry.kind !== 'tool') continue;
+    if (row.entry.risk === 'high') {
+      elevated = 'has-high';
+      break;
+    }
+    if (row.entry.risk === 'medium') elevated = 'has-medium';
+  }
+
+  return (
+    <section
+      className={`e-step${block.running ? ' is-running' : ''}${
+        elevated !== '' ? ` is-elevated ${elevated}` : ''
+      }`}
+    >
+      <header className="e-step-head">
+        <Sparkles size={13} className="e-step-icon" />
+        <span className="e-step-title">{t('entry.model')}</span>
+        <span className="e-step-metrics">
+          {m.durationMs !== null ? formatDuration(m.durationMs) : t('entry.modelNoMetrics')}
+          {m.inputTokens !== null ? ` · ${t('entry.modelIn', { n: formatTokens(m.inputTokens) })}` : ''}
+          {m.cachedTokens !== null ? ` · ${t('entry.modelCached', { n: formatTokens(m.cachedTokens) })}` : ''}
+        </span>
+      </header>
+      <div className="e-step-rows">
+        {block.rows.map((row) =>
+          row.kind === 'quiet' ? (
+            <QuietGroup key={row.key} entries={row.entries} />
+          ) : (
+            <EntryView key={row.key} entry={row.entry} />
+          ),
+        )}
+      </div>
+    </section>
   );
 }

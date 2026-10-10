@@ -162,6 +162,104 @@
   font-size: var(--text-caption);
 }
 
+/* ---------------- 3. 模型步（分块后的面板，见 `streamBlocks.ts`）--------
+   一个 step 的行件——调用记录、工具、权限、批次、拒绝——被拉进同一张
+   卡片：头部条承载调用自身的数字，卡内放这次调用"做过的事"。散开时代的
+   `.e-model` 行不再是悬浮在流里的一条；重试行（`retry`）不进块，继续用
+   `.e-model` 单独成行。 */
+.e-step {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+/* The head bar. 面板的第一行：调用名在左、数字在右——数字读在一眼处，
+   名字读在两眼处，和 redesign 卡片头的布局次序一致。 */
+.e-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row-h);
+  padding: 5px var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.e-step-icon {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.e-step-title {
+  flex: none;
+  font-size: var(--text-compact);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+.e-step-metrics {
+  margin-left: auto;
+  flex: none;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The card's work rows. 行自身保留原有形状（折叠、徽章、hover），只是从
+   "散开的一条"变为"卡内一行"。 */
+.e-step-rows {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* 卡内的工具行不再自带上边框和圆角——那是它作为悬浮行时的边缘——块内
+   用分隔线分开每行。 */
+.e-step-rows .e-tool {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.e-step-rows .e-tool + .e-tool {
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* An in-flight step says so on its head, twice-coloured: the bar's title and
+   the metrics share the "no measurement yet" state, and the accent under the
+   icon is the one motion the card gets — the same continuing-condition
+   carve-out the board's working dot holds. */
+.e-step.is-running .e-step-head {
+  background: var(--accent-subtle);
+}
+
+.e-step.is-running .e-step-icon {
+  color: var(--accent);
+}
+
+.e-step.is-running .e-step-metrics {
+  color: var(--accent);
+}
+
+/* 风险等级抬升的调用：卡片边沿带 warning / destructive 的细色，与工具行
+   自身的 is-medium / is-high 同色对——卡片是行所在的壳，壳的边沿和行的
+   边沿说同一件事，而不是两种说法。 */
+.e-step.is-elevated {
+  border-color: var(--warning-border);
+}
+
+.e-step.is-elevated.has-high {
+  border-color: var(--destructive);
+}
+
 /* ---------------- 4. 工具调用 ---------------- */
 .e-tool {
   display: flex;
