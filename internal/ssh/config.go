@@ -601,6 +601,12 @@ func expandTokens(value, alias, remoteUser, home string) string {
 // at a directory it made must not have the real user's `~/.ssh/id_rsa` offered as
 // a candidate, or the test would pass on the machine of whoever wrote it and
 // nowhere else.
+//
+// The fallback chain mirrors `localUsername`: a runtime process launched from a
+// desktop session can be missing the home environment variables on Windows, and
+// `os.UserHomeDir` then fails — so the operating system is asked for the user
+// record before giving up on `"."`, which would otherwise make every
+// `IdentityFile` and default-key lookup search the working directory.
 func homeDirFor(configPath string) string {
 	if configPath != "" {
 		sshDir := filepath.Dir(configPath)
@@ -610,6 +616,11 @@ func homeDirFor(configPath string) string {
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		return home
+	}
+	if current, err := user.Current(); err == nil {
+		if info, err := os.Stat(current.HomeDir); err == nil && info.IsDir() {
+			return current.HomeDir
+		}
 	}
 	return "."
 }
