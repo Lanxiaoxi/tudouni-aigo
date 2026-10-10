@@ -127,9 +127,24 @@ func (m *Manager) Host(alias string) (Host, error) {
 // approval: the permission layer runs before this handler, which is why the tool
 // declares a risk level rather than trying to ask.
 func (m *Manager) Connect(alias string, cols, rows int, timeout time.Duration) (Info, error) {
+	return m.ConnectWithPassword(alias, "", cols, rows, timeout)
+}
+
+// ConnectWithPassword is Connect with a password supplied at call time.
+//
+// The password is a **model-supplied override** of the configuration's own
+// `Password`, not a third credential source: it replaces whatever the Host block
+// said, and an empty one means "use the configuration". It exists for hosts that
+// have no key set up and whose password nobody wants to write into `~/.ssh/config`
+// just for one session — the same reason `user@host` overrides `User` without a
+// config edit.
+func (m *Manager) ConnectWithPassword(alias, password string, cols, rows int, timeout time.Duration) (Info, error) {
 	host, err := m.Host(alias)
 	if err != nil {
 		return Info{}, err
+	}
+	if password != "" {
+		host.Password = password
 	}
 	if cols <= 0 {
 		cols = DefaultCols

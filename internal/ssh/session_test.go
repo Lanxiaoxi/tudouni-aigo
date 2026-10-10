@@ -685,3 +685,91 @@ func TestNonsenseWindowSizesAreIgnored(t *testing.T) {
 		}
 	}
 }
+
+// TestConnectWithPasswordOverridesConfig: a password passed at connect time is a
+// temporary credential, and it must reach the connector as the host's password —
+// replacing whatever the Host block said, not merging with it.
+func TestConnectWithPasswordOverridesConfig(t *testing.T) {
+	configPath, home := writeConfig(t, `
+Host prod
+    HostName 10.0.1.5
+    User deploy
+    Password config-password
+`)
+	var got []Host
+	var mu sync.Mutex
+	connector := func(host Host, cols, rows int, timeout time.Duration) (Channel, error) {
+		mu.Lock()
+		got = append(got, host)
+		mu.Unlock()
+		return newFakeChannel(), nil
+	}
+	manager := NewManagerWithConnector(connector, configPath, home)
+	defer manager.CloseAll()
+
+	if _, err := manager.ConnectWithPassword("prod", "override-password", 0, 0, time.Second); err != nil {
+		t.Fatalf("ConnectWithPassword: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("the connector saw %d hosts, want 1", len(got))
+	}
+	if got[0].Password != "override-password" {
+		t.Errorf("Password = %q, want the call-time override", got[0].Password)
+	}
+}
+
+// TestConnectWithPasswordEmptyKeepsConfig: an empty call-time password means
+// "use the configuration", not "wipe the configured password".
+func TestConnectWithPasswordEmptyKeepsConfig(t *testing.T) {
+	configPath, home := writeConfig(t, `
+Host prod
+    HostName 10.0.1.5
+    User deploy
+    Password config-password
+`)
+	var got []Host
+	var mu sync.Mutex
+	connector := func(host Host, cols, rows int, timeout time.Duration) (Channel, error) {
+		mu.Lock()
+		got = append(got, host)
+		mu.Unlock()
+		return newFakeChannel(), nil
+	}
+	manager := NewManagerWithConnector(connector, configPath, home)
+	defer manager.CloseAll()
+
+	if _, err := manager.ConnectWithPassword("prod", "", 0, 0, time.Second); err != nil {
+		t.Fatalf("ConnectWithPassword: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("the connector saw %d hosts, want 1", len(got))
+	}
+	if got[0].Password != "config-password" {
+		t.Errorf("Password = %q, want the configured one", got[0].Password)
+	}
+}
+
+// TestPasswordOnlyHostConnectsWithoutKeys: a host whose configuration carries a
+// password and no key at all must open a session — the resolve step already
+// accepts it, and this pins that the manager passes it through end to end.
+func TestPasswordOnlyHostConnectsWithoutKeys(t *testing.T) {
+	configPath, home := writeConfig(t, `
+Host prod
+    HostName 10.0.1.5
+    User deploy
+    Password s3cret!
+`)
+	fake := newFakeChannel()
+	manager := newTestManager(t, configPath, home, fake)
+	defer manager.CloseAll()
+
+	info, err := manager.Connect("prod", 0, 0, time.Second)
+	if err != nil {
+		t.Fatalf("Connect on a password-only host: %v", err)
+	}
+	waitForStatus(t, manager, info.ID, StatusRunning)
+}

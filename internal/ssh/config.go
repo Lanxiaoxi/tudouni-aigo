@@ -157,9 +157,15 @@ type Host struct {
 	HostName string
 	Port     int
 	User     string
-	// IdentityFiles are the private keys to try, in order. At least one, or the
-	// connection cannot be attempted.
+	// IdentityFiles are the private keys to try, in order. May be empty when a
+	// `Password` is configured: the connection then authenticates with the
+	// password instead of a key.
 	IdentityFiles []string
+	// Password is the password to authenticate with, from a `Password` directive.
+	// Empty means no password is configured here, and the connector decides what
+	// that leaves — key-only today, or key-then-password when the model passes
+	// one at connect time.
+	Password string
 	// Warnings are the fields that were read past, for the audit log.
 	Warnings []string
 }
@@ -453,11 +459,16 @@ func (c *Config) Lookup(alias string) (Host, error) {
 			requested)
 	}
 
+	if field, ok := values["password"]; ok {
+		resolved.Password = field.value
+	}
 	// Identity files. An explicit list is used as given (resolved against the home
 	// directory, so `~` and bare names both work); with none, the OpenSSH defaults
 	// are tried in order and **only the ones that exist**, because a missing file
 	// would otherwise become an authentication failure that names a file the
-	// person never mentioned.
+	// person never mentioned. A configured `Password` makes an empty key list a
+	// valid state rather than a dead end — the connection then authenticates with
+	// the password, which is exactly what a person writing `Password` there means.
 	if field, ok := values["identityfile"]; ok {
 		for _, candidate := range strings.Fields(field.value) {
 			path := expandTokens(candidate, name, resolved.User, homeDirFor(c.path))
@@ -472,7 +483,7 @@ func (c *Config) Lookup(alias string) (Host, error) {
 			}
 		}
 	}
-	if len(resolved.IdentityFiles) == 0 {
+	if len(resolved.IdentityFiles) == 0 && strings.TrimSpace(resolved.Password) == "" {
 		return Host{}, fmt.Errorf(
 			"no private key for %q: none is named by IdentityFile and none of the usual files "+
 				"(%s) exist in %s. Create a key, or add IdentityFile to its Host block",
@@ -494,6 +505,7 @@ var knownFields = map[string]bool{
 	"user":         true,
 	"identityfile": true,
 	"identitiesonly": true,
+	"password":     true,
 }
 
 // hostMatches reports whether a `Host` block applies to a name.

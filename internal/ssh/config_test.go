@@ -515,3 +515,68 @@ Host prod
 		t.Errorf("HostName = %q, want 10.0.1.5 (the comment must be stripped)", host.HostName)
 	}
 }
+
+// TestPasswordDirectiveIsResolved: a `Password` in a Host block is a credential
+// the resolve step must carry, or the connector would never see it.
+func TestPasswordDirectiveIsResolved(t *testing.T) {
+	configPath, home := writeConfig(t, `
+Host prod
+    HostName 10.0.1.5
+    User deploy
+    Password s3cret!
+`)
+	config, err := LoadConfig(configPath, home)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	host, err := config.Lookup("prod")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if host.Password != "s3cret!" {
+		t.Errorf("Password = %q, want %q", host.Password, "s3cret!")
+	}
+}
+
+// TestPasswordMakesAnEmptyKeyListValid: a host configured with a password and no
+// key must resolve rather than die in the "no private key" refusal — that refusal
+// is about having no way in at all, and a password is a way in.
+func TestPasswordMakesAnEmptyKeyListValid(t *testing.T) {
+	configPath, home := writeConfig(t, `
+Host prod
+    HostName 10.0.1.5
+    User deploy
+    Password s3cret!
+`)
+	config, err := LoadConfig(configPath, home)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	host, err := config.Lookup("prod")
+	if err != nil {
+		t.Fatalf("Lookup refused a password-only host: %v", err)
+	}
+	if len(host.IdentityFiles) != 0 {
+		t.Errorf("IdentityFiles = %v, want none", host.IdentityFiles)
+	}
+	if host.Password == "" {
+		t.Error("Password is empty alongside an empty key list")
+	}
+}
+
+// TestNoKeyAndNoPasswordIsStillRefused: the password escape hatch must not
+// swallow the ordinary case of a host with no credentials configured anywhere.
+func TestNoKeyAndNoPasswordIsStillRefused(t *testing.T) {
+	configPath, _ := writeConfig(t, `
+Host prod
+    HostName 10.0.1.5
+    User deploy
+`)
+	config, err := LoadConfig(configPath, "")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if _, err := config.Lookup("prod"); err == nil {
+		t.Fatal("Lookup succeeded with no key and no password")
+	}
+}

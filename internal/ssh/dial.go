@@ -120,11 +120,18 @@ func dial(host Host, timeout time.Duration, home string) (*ssh.Client, error) {
 		return nil, err
 	}
 
+	auth := []ssh.AuthMethod{ssh.PublicKeys(signers...)}
+	// A configured password rides along as a fallback: key auth is tried first
+	// because it is what the config names, and the password is what a host with
+	// keys but none permitted (or a stale authorized_keys) still accepts. Empty
+	// means no password is configured, and key-only is then the whole story.
+	if password := strings.TrimSpace(host.Password); password != "" {
+		auth = append(auth, ssh.Password(password))
+	}
+
 	config := &ssh.ClientConfig{
 		User: host.User,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signers...),
-		},
+		Auth: auth,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			// The callback is given the name the dialer used, which for us is the
 			// **resolved** host name rather than the alias. That matters: the person
@@ -188,7 +195,7 @@ func loadIdentityFiles(host Host) ([]ssh.Signer, error) {
 		signers = append(signers, signer)
 	}
 
-	if len(signers) == 0 {
+	if len(signers) == 0 && strings.TrimSpace(host.Password) == "" {
 		return nil, fmt.Errorf("no usable private key for %s:\n  - %s",
 			host.Alias, strings.Join(problems, "\n  - "))
 	}

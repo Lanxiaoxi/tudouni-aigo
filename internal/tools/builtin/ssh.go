@@ -65,7 +65,11 @@ func newSSHConnect(manager *sshlib.Manager) tools.Tool {
 			"**这是一次授权**：批准之后，这个会话上后续的命令不再逐条审批。" +
 			"所以审批面板上显示的是解析出来的 `user@host:port` —— 看清楚连的是哪一台。\n" +
 			"连不上时常见原因：主机不在 known_hosts 里（先用 `ssh` 连一次记下来）、" +
-			"私钥有 passphrase（一期不支持）、配置里写了 ProxyJump（一期不支持，会明确报错）。",
+			"配置里写了 ProxyJump（一期不支持，会明确报错）。\n" +
+			"`password` 可选，仅在远程主机只支持密码认证（没有配可用密钥）时提供；" +
+			"配置里已有 `Password` 时会优先使用配置里的密码，此参数可临时覆盖它。" +
+			"提供 password 时连接会先尝试密钥认证，失败后回落到密码认证。" +
+			"注意：写在这里的密码会进入会话记录与审计日志。",
 		Risk: security.RiskHigh,
 		Schema: tools.ObjectSchema(map[string]any{
 			"host": tools.StringSchema("`~/.ssh/config` 里的 Host 名字，或 `user@host`，或一个主机名", tools.MinLength(1)),
@@ -76,13 +80,17 @@ func newSSHConnect(manager *sshlib.Manager) tools.Tool {
 					sshlib.DefaultConnectTimeoutSeconds, sshlib.MaxConnectTimeoutSeconds),
 				tools.Default(sshlib.DefaultConnectTimeoutSeconds),
 				tools.Minimum(1), tools.Maximum(sshlib.MaxConnectTimeoutSeconds)),
+			"password": tools.StringSchema(
+				"可选：密码认证。仅在主机没有可用密钥时提供，会先试密钥、失败回落到密码；"+
+					"配置里已有 `Password` 时此参数优先。注意它会进入会话记录与审计日志"),
 		}, "host"),
 		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			alias := strings.TrimSpace(stringArg(args, "host"))
 			cols, rows := intArg(args, "cols", sshlib.DefaultCols), intArg(args, "rows", sshlib.DefaultRows)
 			timeout := time.Duration(intArg(args, "timeout_seconds", sshlib.DefaultConnectTimeoutSeconds)) * time.Second
+			password := stringArg(args, "password")
 
-			info, err := manager.Connect(alias, cols, rows, timeout)
+			info, err := manager.ConnectWithPassword(alias, password, cols, rows, timeout)
 			if err != nil {
 				// A failure is a **result**, not a thrown error: the model has to
 				// read it and decide what else to try, and the audit still needs to
