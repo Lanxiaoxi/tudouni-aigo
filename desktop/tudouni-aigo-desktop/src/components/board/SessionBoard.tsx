@@ -9,7 +9,6 @@ import {
 } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
-import { SessionDot } from '@/components/sidebar/SessionDot';
 import { EmptyState, Tip } from '@/components/ui/kit';
 import { formatRelative } from '@/utils/format';
 
@@ -122,6 +121,10 @@ export function SessionBoard() {
             model: bucket.session?.model ?? '',
             provider: bucket.session?.provider ?? '',
             modifiedAt: row?.modifiedAt ?? null,
+            // The handshake's own "this conversation was started fresh" fact,
+            // shown as the card's one flag — the same word the session bar
+            // uses (`session.fresh`), never a second vocabulary for it.
+            fresh: bucket.session?.resumed === false,
           },
         ];
       }),
@@ -173,6 +176,12 @@ export function SessionBoard() {
           {columns.map((column) => (
             <section key={column.id} className="board-col" aria-label={t(column.title)}>
               <div className="board-col-head">
+                {/* The column's state dot. The palette is the rail's (`lb-dot`
+                    is-*), but the component is the board's own `BoardColDot`:
+                    a column head labels a state the column always has —
+                    including Idle, which the rail's component deliberately
+                    draws nothing for. */}
+                <BoardColDot status={column.statuses[0]} />
                 <span className="board-col-title">{t(column.title)}</span>
                 <span className="board-col-count">{column.cards.length}</span>
               </div>
@@ -187,6 +196,13 @@ export function SessionBoard() {
                 // unrendered (`selectModalVisible`), so the amber dot alone
                 // would not say that clicking this card is how it gets answered.
                 const isAsking = card.status === 'asking';
+                // The progress row renders only for the two states in which a
+                // task list means something: the turn in flight, or the turn
+                // waiting on a person mid-list. Idle and Finished do not.
+                const progressText =
+                  (card.status === 'running' || isAsking) && card.todos !== ''
+                    ? card.todos
+                    : null;
                 return (
                   <button
                     key={card.key}
@@ -204,7 +220,6 @@ export function SessionBoard() {
                     }}
                   >
                     <span className="board-card-top">
-                      <SessionDot status={card.status} />
                       {/* The runtime's own name for the conversation, or the
                           honest placeholder while `init` has not landed: a new
                           session's id is minted by the runtime, so inventing one
@@ -212,6 +227,22 @@ export function SessionBoard() {
                       <span className="board-card-id">
                         {card.id !== null ? card.id : t('lb.sessionPending')}
                       </span>
+                      {/* One flag, and only ever one: the flag names *this
+                          card's owner* — "waiting on you" outranks "new", and
+                          two flags together say nothing more than the truer
+                          one alone. The dot sits on the column head, not on
+                          the card, which is where the redesign's own spec put
+                          it: the column is the state, the card is the
+                          conversation. */}
+                      {isAsking ? (
+                        <span className="board-card-flag is-asking">
+                          {t('board.card.askingTag')}
+                        </span>
+                      ) : card.fresh ? (
+                        <span className="board-card-flag is-new">
+                          {t('board.card.newTag')}
+                        </span>
+                      ) : null}
                     </span>
                     {card.preview !== '' ? (
                       <span className="board-card-preview">{card.preview}</span>
@@ -220,6 +251,16 @@ export function SessionBoard() {
                         {card.id === null ? t('lb.sessionPending') : t('board.noPreview')}
                       </span>
                     )}
+                    {/* The task progress, only where a list mid-run means
+                        something (see `progressText`). The runtime's own
+                        progress line ("2/5 done, now: …") is shown verbatim —
+                        it is what the rail row would read too, and rewording
+                        it here would be a second source for one fact. */}
+                    {progressText ? (
+                      <span className="board-card-progress" title={progressText}>
+                        {progressText}
+                      </span>
+                    ) : null}
                     {/* The held prompt, named where it waits. Shown for `asking`
                         only — a card that merely runs needs no call to action. */}
                     {isAsking ? (
@@ -228,30 +269,65 @@ export function SessionBoard() {
                         {t('board.card.asking')}
                       </span>
                     ) : null}
-                    <span className="board-card-meta">
-                      {card.messages !== null
-                        ? t('panel.resume.messages', { n: card.messages })
-                        : t('board.noCounts')}
-                      {card.steps !== null ? ` · ${t('panel.resume.steps', { n: card.steps })}` : ''}
-                      {card.todos ? ` · ${card.todos}` : ''}
+                    <span className="board-card-foot">
+                      {card.model !== '' ? (
+                        <span className="board-card-model">
+                          {card.provider !== '' ? `${card.provider}/${card.model}` : card.model}
+                        </span>
+                      ) : null}
+                      <span className="board-card-meta">
+                        {card.messages !== null
+                          ? t('panel.resume.messages', { n: card.messages })
+                          : t('board.noCounts')}
+                        {card.steps !== null
+                          ? ` · ${t('panel.resume.steps', { n: card.steps })}`
+                          : ''}
+                      </span>
+                      {card.modifiedAt !== null ? (
+                        <span className="board-card-time">
+                          {formatRelative(card.modifiedAt * 1000)}
+                        </span>
+                      ) : null}
                     </span>
-                    {card.model !== '' ? (
-                      <span className="board-card-model">
-                        {card.provider !== '' ? `${card.provider}/${card.model}` : card.model}
-                      </span>
-                    ) : null}
-                    {card.modifiedAt !== null ? (
-                      <span className="board-card-time">
-                        {formatRelative(card.modifiedAt * 1000)}
-                      </span>
-                    ) : null}
                   </button>
                 );
               })}
+              {/* Finished, rendered honestly: an empty column is not whitespace,
+                  it is "nothing here yet" — the dashed placeholder states that
+                  instead of reading as a rendering bug. */}
+              {column.cards.length === 0 ? (
+                <div className="board-col-empty">{t('board.col.empty')}</div>
+              ) : null}
             </section>
           ))}
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * The column head's status dot.
+ *
+ * **Not `SessionDot`.** The rail's component implements a contract the board's
+ * column head does not have: `idle` draws *nothing* there ("no process, no
+ * dot" — a saved session has no state), while a column head is a *label* for a
+ * state the column always has, including Idle. So the board draws its own dot,
+ * reusing the rail's CSS classes (`lb-dot is-*`) so the two surfaces keep one
+ * palette; every state it can show is covered, and the component's colour rules
+ * are never the only signal — the uppercase title says the same thing in words.
+ */
+function BoardColDot({ status }: { status: RowStatus }) {
+  // One class per state, including Idle: the column head always draws a mark,
+  // and an explicit class beats an absence-based CSS selector (`:not([class*=…])`
+  // would silently match any future state that forgot its own rule).
+  const cls =
+    status === 'broken' || status === 'asking'
+      ? 'is-asking'
+      : status === 'running'
+        ? 'is-running'
+        : status === 'unseen'
+          ? 'is-unseen'
+          : 'is-idle';
+  return <span className={`board-col-dot ${cls}`} aria-hidden />;
 }

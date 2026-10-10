@@ -2180,27 +2180,72 @@
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-5);
   overflow: auto;
   flex: 1 1 auto;
   min-height: 0;
 }
 
+/* **The columns are panels, not ruled lists.** Depth comes from layering
+   surfaces, not from stacking borders: the column carries the muted well, the
+   card carries the raised surface, and the only hairlines left are the ones
+   inside a card. This is the same trick the rail's rows already use
+   (`--bg-secondary` rows on `--bg`), one level down. */
 .board-col {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   flex: 1 1 0;
-  min-width: 210px;
+  min-width: 230px;
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  background: var(--bg-muted);
 }
 
 .board-col-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   gap: var(--space-2);
-  padding-bottom: var(--space-1);
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-1) var(--space-1) var(--space-2);
+}
+
+/* The column's own status dot — the rail's palette, drawn even for Idle
+   (see `BoardColDot` for why it is not the rail's component). Running breathes,
+   because "a turn is in flight" is a continuing condition, the same carve-out
+   the status bar's own dot holds; Needs you is steady amber, which is also
+   what the *card* is edged with, so the column that wants a person reads
+   before any card in it has been read. */
+.board-col-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.board-col-dot.is-running {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+  animation: board-breathe 2.4s ease-in-out infinite;
+}
+
+.board-col-dot.is-asking {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-subtle);
+}
+
+.board-col-dot.is-unseen,
+.board-col-dot.is-idle {
+  background: var(--fg-faint);
+}
+
+@keyframes board-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .board-col-title {
@@ -2213,11 +2258,17 @@
 
 /* The count is a fact, not a badge: an idle column with forty cards and a
    "needs you" column with one are both told the same way, and the number is
-   what makes the difference legible without reading every card. */
+   what makes the difference legible without reading every card. Pushed to the
+   head's far edge — it is a property of the column, not of the title. */
 .board-col-count {
+  margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 99px;
+  padding: 0 8px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2225,27 +2276,34 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: var(--space-2);
+  padding: var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  border-radius: var(--radius-md);
+  /* The raised surface above the column well — white-on-grey in light mode,
+     bright-on-dim in dark, whichever tokens are live. */
+  background: var(--bg-card);
   text-align: left;
   color: var(--fg-secondary);
   cursor: pointer;
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
+    border-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .board-card:hover {
-  background: var(--bg-muted);
   border-color: var(--border);
+  /* A one-pixel lift and the faintest shadow on the palette's own tone — no
+     scale, no glow. The tokens carry the lift, so both themes read it. */
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(2, 6, 23, 0.14);
 }
 
 /* The session on screen, marked the same way the rail marks it — the accent
    edge and the accent wash — because the two surfaces are showing the same
-   fact and a card that looked "current" differently would be a second idiom for
-   one state. */
+   fact and a card that looked "current" differently would be a second idiom
+   for one state. */
 .board-card.is-current {
   border-color: var(--accent-border);
   background: var(--accent-subtle);
@@ -2253,10 +2311,16 @@
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+.board-card.is-current:hover {
+  background: var(--accent-subtle);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .board-card .board-card-top {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
 .board-card .board-card-id {
@@ -2267,11 +2331,33 @@
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
-  color: var(--fg-secondary);
+  color: var(--fg);
+  font-weight: 500;
 }
 
 .board-card.is-current .board-card-id {
   color: var(--fg);
+}
+
+/* One flag, at the top row's far edge. The two tones are the dot palette's
+   own: amber for "this card wants you", the accent pair for "newest, never
+   spoken to". Never both at once — see the TSX for the precedence. */
+.board-card-flag {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 99px;
+}
+
+.board-card-flag.is-asking {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.board-card-flag.is-new {
+  background: var(--accent-subtle);
+  color: var(--accent);
 }
 
 /* Two lines, like the rail's row: a preview is a reminder of which conversation
@@ -2283,12 +2369,37 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
   font-size: var(--text-compact);
+  line-height: var(--leading-body);
   color: var(--fg-secondary);
   word-break: break-word;
+  margin-bottom: var(--space-1);
 }
 
 .board-card.is-current .board-card-preview {
   color: var(--fg);
+}
+
+/* The runtime's own progress line ("2/5 done, now: …"), shown only where a
+   list mid-run means something. One line, clipped: the full text is in
+   `title`, and a wrapped progress line would make a two-line card three. */
+.board-card-progress {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  margin-bottom: var(--space-1);
+}
+
+/* The foot: model chip left, counts and time right. One row instead of the
+   three stacked lines the board used to draw, which is what makes the card
+   read as one object rather than as a paragraph. */
+.board-card-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .board-card .board-card-meta,
@@ -2298,12 +2409,43 @@
   color: var(--fg-faint);
 }
 
+.board-card .board-card-meta {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .board-card .board-card-model {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  background: var(--bg-muted);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
 }
 
 .board-card .board-card-time {
+  margin-left: auto;
+  flex: none;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* The empty column: dashed, centred, honest. A blank column reads as a
+   rendering bug; a dashed panel says "this state exists, it is just empty". */
+.board-col-empty {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
 }
 
 /* The card that is waiting on a person. The dot has already moved it into
@@ -2316,11 +2458,15 @@
   box-shadow: inset 2px 0 0 var(--warning);
 }
 
+.board-card.is-asking:hover {
+  box-shadow: inset 2px 0 0 var(--warning);
+}
+
 .board-card-nudge {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  margin-top: 2px;
+  margin-bottom: var(--space-1);
   font-size: var(--text-caption);
   font-weight: 600;
   color: var(--warning);

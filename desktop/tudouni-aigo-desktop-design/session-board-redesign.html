@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Board — Redesign</title>
+<style>
+  :root {
+    --bg-page: #f6f6f4;
+    --bg-col: #eff0ec;
+    --bg-card: #ffffff;
+    --ink-1: #1c1c1a;
+    --ink-2: #6f6f68;
+    --ink-3: #a3a39a;
+    --line: #e4e4de;
+    --line-strong: #d5d5cd;
+    --green: #2f7d4f;
+    --green-bg: #e7f2ea;
+    --amber: #9a6b1f;
+    --amber-bg: #f7efdd;
+    --gray-bg: #ececea;
+    --radius: 12px;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: var(--bg-page);
+    color: var(--ink-1);
+    padding: 32px 36px 48px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .board-header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
+  .board-header h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .board-header p { font-size: 12.5px; color: var(--ink-2); margin-top: 3px; }
+  .board-meta { display: flex; gap: 8px; align-items: center; }
+  .pill {
+    font-size: 11.5px; color: var(--ink-2);
+    border: 1px solid var(--line-strong); border-radius: 99px;
+    padding: 4px 12px; background: var(--bg-card);
+    font-variant-numeric: tabular-nums;
+  }
+  .pill b { color: var(--ink-1); font-weight: 600; }
+  .board { display: grid; grid-template-columns: repeat(4, minmax(230px, 1fr)); gap: 14px; align-items: start; }
+
+  .col { background: var(--bg-col); border-radius: var(--radius); padding: 10px; min-height: 420px; }
+  .col-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px 12px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot.idle { background: var(--ink-3); }
+  .dot.working { background: var(--green); box-shadow: 0 0 0 3px var(--green-bg); animation: breathe 2.4s ease-in-out infinite; }
+  .dot.needs { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-bg); }
+  .dot.finished { background: var(--line-strong); }
+  @keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+  .col-title { font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  .col-count {
+    margin-left: auto; font-size: 11px; font-family: var(--mono);
+    color: var(--ink-2); background: var(--bg-card);
+    border: 1px solid var(--line); border-radius: 99px;
+    padding: 1px 8px; font-variant-numeric: tabular-nums;
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px 11px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+  }
+  .card:hover {
+    border-color: var(--line-strong);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(28,28,26,.06);
+  }
+  .card.active { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+  .card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .sid { font-family: var(--mono); font-size: 11.5px; color: var(--ink-1); font-weight: 500; letter-spacing: -0.02em; }
+  .flag { margin-left: auto; font-size: 10.5px; padding: 1px 7px; border-radius: 99px; font-weight: 500; }
+  .flag.needs { background: var(--amber-bg); color: var(--amber); }
+  .flag.new { background: var(--green-bg); color: var(--green); }
+  .snippet {
+    font-size: 12.5px; line-height: 1.55; color: var(--ink-1);
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; margin-bottom: 10px;
+  }
+  .card-foot { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-3); }
+  .model {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+    background: var(--gray-bg); border-radius: 5px; padding: 2px 7px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px;
+  }
+  .stat { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .time { margin-left: auto; white-space: nowrap; }
+
+  .progress { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; }
+  .progress .track {
+    flex: 1; height: 3px; border-radius: 99px;
+    background: var(--gray-bg); overflow: hidden;
+  }
+  .progress .fill { height: 100%; border-radius: 99px; }
+  .progress .fill.green { background: var(--green); }
+  .progress .fill.amber { background: var(--amber); }
+  .progress .pct {
+    font-family: var(--mono); font-size: 10px; color: var(--ink-2);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+
+  .empty {
+    border: 1px dashed var(--line-strong); border-radius: 10px;
+    padding: 22px 12px; text-align: center;
+    font-size: 11.5px; color: var(--ink-3); margin-top: 2px;
+  }
+
+  .spec { margin-top: 40px; max-width: 860px; }
+  .spec h2 { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--ink-2); letter-spacing: 0.04em; text-transform: uppercase; }
+  .spec ul { list-style: none; }
+  .spec li { font-size: 13px; line-height: 1.9; color: var(--ink-1); padding-left: 18px; position: relative; }
+  .spec li::before { content: ""; position: absolute; left: 2px; top: 11px; width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+  .spec code { font-family: var(--mono); font-size: 11.5px; background: var(--gray-bg); padding: 1px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+  <div class="board-header">
+    <div>
+      <h1>Session board</h1>
+      <p>Every session open in this workspace, right now.</p>
+    </div>
+    <div class="board-meta">
+      <span class="pill"><b>4</b> active</span>
+      <span class="pill">updated <b>just now</b></span>
+    </div>
+  </div>
+
+  <div class="board">
+
+    <div class="col">
+      <div class="col-head">
+        <span class="dot idle"></span>
+        <span class="col-title">Idle</span>
+        <span class="col-count">3</span>
+      </div>
+      <div class="card">
+        <div class="card-top">
+          <span class="sid">20261010-182931</span>
+          <span class="flag new">new</span>
+        </div>
+        <p class="snippet">tudouni/paste/5/paste-1791628177360.png…</p>
+        <div class="card-foot">
+          <span class="model">opencode-go/glm-5.3-flash</span>
+          <span class="time">56m ago</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-top">
+          <span class="sid">20261010-181933</span>
+        </div>
+        <p class="snippet">你现在有哪些ssh相关的工具？</p>
+        <div class="card-foot">
+          <span class="model">opencode-go/glm-5.3-flash</span>
+          <span class="time">24m ago</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-top">
+          <span class="sid">20261010-191341</span>
+        </div>
+        <p class="snippet">你试试ssh链接到 192.168.1.200 tudouni 密码是chu12…</p>
+        <div class="card-foot">
+          <span class="stat">172 messages</span>
+          <span class="stat">·</span>
+          <span class="stat">86 steps</span>
+          <span class="time">1m ago</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="col-head">
+        <span class="dot working"></span>
+        <span class="col-title">Working</span>
+        <span class="col-count">1</span>
+      </div>
+      <div class="card active">
+        <div class="card-top">
+          <span class="sid">20261010-192032</span>
+        </div>
+        <p class="snippet">刚刚刚使用 session board 的时候发现一个问题，一个会话到need y…</p>
+        <div class="progress">
+          <div class="track"><div class="fill green" style="width: 17%"></div></div>
+          <span class="pct">1/6</span>
+        </div>
+        <div class="card-foot">
+          <span class="model">opencode-go/glm-5.3-flash</span>
+          <span class="time">1m ago</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="col-head">
+        <span class="dot needs"></span>
+        <span class="col-title">Needs you</span>
+        <span class="col-count">1</span>
+      </div>
+      <div class="card">
+        <div class="card-top">
+          <span class="sid">20261010-190055</span>
+          <span class="flag needs">asking</span>
+        </div>
+        <p class="snippet">看板卡片对 Needs you 会话显示可点击的提示（asking nudge，…</p>
+        <div class="progress">
+          <div class="track"><div class="fill amber" style="width: 17%"></div></div>
+          <span class="pct">1/6</span>
+        </div>
+        <div class="card-foot">
+          <span class="model">opencode-go/glm-5.3-flash</span>
+          <span class="time">9m ago</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="col-head">
+        <span class="dot finished"></span>
+        <span class="col-title">Finished</span>
+        <span class="col-count">8</span>
+      </div>
+      <div class="empty">8 completed sessions</div>
+    </div>
+
+  </div>
+
+  <div class="spec">
+    <h2>设计要点</h2>
+    <ul>
+      <li>列容器用浅灰底 <code>#eff0ec</code> + 圆角 12px，卡片白底浮在其上 —— 靠「底色分层」而不是边框堆叠产生深度</li>
+      <li>列头：状态点 + 大写字距标签 + 等宽字体计数徽章；Working 的点带柔和呼吸动画（唯一动效，可删）</li>
+      <li>卡片信息分三段：会话 ID（等宽、小号）→ 摘要两行截断 → 底部元信息（模型 chip + 统计 + 时间右对齐）</li>
+      <li>悬停只做 translateY(-1px) + 极淡投影，无缩放无发光</li>
+      <li>Needs you 有待办时卡片右侧带琥珀色 flag，Finished 为空时用虚线占位而非空白</li>
+      <li>进度条：仅在 todo 进行中时渲染（Working / Needs you），3px 圆角轨道 + tabular 等宽计数；进行中为绿色，等待用户时为琥珀色，Idle / Finished 不显示</li>
+      <li>数字一律 tabular-nums，避免等宽跳动</li>
+    </ul>
+  </div>
+
+</body>
+</html>

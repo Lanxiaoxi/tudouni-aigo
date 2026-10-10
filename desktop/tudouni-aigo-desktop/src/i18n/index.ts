@@ -306,6 +306,16 @@ export const en = {
      itself surfaces only after the click, so without it the card would look
      like any other. */
   'board.card.asking': 'Waiting on your answer — click to reply',
+  /* The card's compact flags, next to the id. Two of them, one per card:
+     "asking" is the card that moved into Needs you, "new" is the conversation
+     this end started fresh. One word each on purpose — a pill is a label, not
+     a sentence, and the nudge line below an asking card carries the full call
+     to action. */
+  'board.card.askingTag': 'asking',
+  'board.card.newTag': 'new',
+  /* The empty column's honest placeholder. Dashed, centred, one line: "eight
+     ended sessions" reads as a state, bare emptiness does not. */
+  'board.col.empty': 'Nothing here right now',
 
   /* Which conversation a blocking request belongs to, and how many are behind
      it. Both exist because a prompt with several sessions open is otherwise
