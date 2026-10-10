@@ -910,31 +910,62 @@ async function main() {
   const panel = await evaluate(`(() => {
     const row = document.querySelector('.dialog-body .cmdk-item');
     if (!row) return JSON.stringify({ missing: true });
-    const top = (sel) => {
-      const el = row.querySelector(sel);
-      return el ? Math.round(el.getBoundingClientRect().top) : null;
-    };
+    const rows = row.querySelectorAll('.row');
+    const top = (el) => (el ? Math.round(el.getBoundingClientRect().top) : null);
+    const topicLine = rows[0];
+    const factsLine = rows[1];
     return JSON.stringify({
       text: (row.innerText ?? '').replace(/\\s+/g, ' ').trim(),
-      topic: top('.truncate'),
-      meta: top('.row'),
+      topic: top(topicLine?.querySelector('.truncate')),
+      meta: top(factsLine),
       // The topic inherits the panel row's own colour (--fg-secondary); the id
       // is the faint layer under it. What has to hold is that they are not the
       // same layer — the exact rgb is the theme's business, not this check's.
       topicColour: getComputedStyle(row.querySelector('.truncate')).color,
       idColour: getComputedStyle(row.querySelector('.mono')).color,
+      // The archive action sits **on the topic line**, next to the topic it
+      // acts on — not in a footer or a separate manage screen.
+      archiveBtn: !!topicLine?.querySelector('button[aria-label*="rchive"]'),
+      // The fixture's single live session is the harness's own bucket (its
+      // session id was never in the saved list), so nothing here should be
+      // disabled — "a person can archive every row they see" is the default.
+      archiveDisabled: topicLine?.querySelector('button[aria-label*="rchive"]')?.disabled ?? true,
+      // The field-level search box and the Active/Archived tabs are the two
+      // new controls; both must be present and the search must take focus on
+      // open, so a typed letter goes into the query rather than a row.
+      search: !!row.closest('.dialog')?.querySelector('input[aria-label]'),
+      searchFocused: !!row.closest('.dialog')?.querySelector('input[aria-label]')?.matches(':focus'),
+      tabs: [...(row.closest('.dialog')?.querySelectorAll('[role="tab"]') ?? [])].map((b) => ({
+        text: (b.innerText ?? '').replace(/\\s+/g, ' ').trim(),
+        on: b.getAttribute('aria-selected') === 'true',
+      })),
     });
   })()`);
   console.log('resume panel row:', panel);
   const rp = JSON.parse(panel ?? '{}');
   if (rp.missing) throw new Error('the /resume panel rendered no session row');
-  if (!(rp.topic < rp.meta)) {
+  if (!(rp.topic !== null && rp.meta !== null && rp.topic < rp.meta)) {
     throw new Error(`the /resume row is not topic -> facts: ${JSON.stringify(rp)}`);
   }
   if (rp.idColour === rp.topicColour) {
     throw new Error(
       `the /resume row's id is painted as strongly as the topic (${rp.idColour}): the topic is the title and the id is a footnote`,
     );
+  }
+  if (!rp.archiveBtn) {
+    throw new Error('the /resume row has no archive action on its topic line');
+  }
+  if (rp.archiveDisabled) {
+    throw new Error('the archive action is disabled for a row nothing is running');
+  }
+  if (!rp.search) {
+    throw new Error('the /resume panel has no search box');
+  }
+  if (!Array.isArray(rp.tabs) || rp.tabs.length !== 2) {
+    throw new Error(`the /resume panel must have exactly two tabs (Active/Archived), saw ${JSON.stringify(rp.tabs)}`);
+  }
+  if (rp.tabs.filter((b) => b.on).length !== 1) {
+    throw new Error(`exactly one tab is selected, saw ${JSON.stringify(rp.tabs)}`);
   }
   // Closed again before the next step, so nothing below runs under a modal.
   await evaluate(`(() => { window.__aigoStore.getState().openPanel(null); return true; })()`);

@@ -48,7 +48,9 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
   const session = useSessionField((rt) => rt.session, null);
   // The list is the **workspace's**, read from the window-level record rather
   // than from whichever child is focused — see `SavedSessions`.
-  const sessionList = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)).items);
+  // `active`: the first screen's "recent" slots are the same list the rail
+  // shows, and an archived conversation does not belong on it.
+  const sessionList = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)).active);
   const openSession = useApp((s) => s.openSession);
   const openPanel = useApp((s) => s.openPanel);
 

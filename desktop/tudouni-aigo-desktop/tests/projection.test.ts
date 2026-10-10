@@ -2335,7 +2335,11 @@ test('entering another workspace opens beside the current one, and clears nothin
       [normPath(workspace)]: {
         workspace,
         items: [
-          { id: 's-1', messages: 0, steps: 0, todos: '', preview: '', modifiedAt: null },
+          { id: 's-1', messages: 0, steps: 0, todos: '', preview: '', modifiedAt: null, archived: false },
+        ],
+        // The rail's view — see `SavedSessions.active`.
+        active: [
+          { id: 's-1', messages: 0, steps: 0, todos: '', preview: '', modifiedAt: null, archived: false },
         ],
         listed: true,
       },

@@ -153,7 +153,8 @@ Rust 层刻意**只做字节搬运**：它把一行 JSON 原样交给 WebView，
 | --- | --- | --- |
 | `user_message` | `text` | 跑一个回合 |
 | `session_switch` | （`session_id` 可选） | **原地换会话，进程不动**。`session_id` 缺失/`null` = **新会话**（id 由运行时分配）；给了 id 但文件不存在**也算新会话**。<br>⚠️ **桌面端不再发这条消息**：它会让运行时重建自己并 `pending.abandonAll()`，而那正是"两个会话不能同时跑"的成因。桌面端的"换会话"现在是"聚焦另一个子进程"（不发消息）或"起一个新子进程"。协议保留它给 TUI 与 CLI，语义未变 |
-| `session_list` | —— | 回答是 `sessions` |
+| `session_list` | `filter` 可选 | `"active"` / `"all"`，回答是 `sessions`。**缺省 = `all`**，而且缺省必须是 `all`：归档只受桌面端管理，TUI/CLI 没有解除归档的手段，默认过滤会让它们看到一份少了会话、却无从找回的清单。桌面端**显式**发 `active`（稳态），库打开时发 `all` |
+| `session_archive` | `session_id`, `archived`(bool) | **绝对状态，不是动作**（与 `set_*` 同一条规矩）：重发幂等，前端不必先知道当前值。它写的是会话文件 `meta` 记录里的一个键，处理完运行时**重发一份 `sessions`**。需要活着的子进程来发（与 `session_delete` 同构） |
 | `interrupt` | —— | 中断当前轮 |
 | `set_autopilot` | `on`(bool) | **绝对状态，不是开关动作**，幂等 |
 | `set_model` | `model` | 必须在 `init.model_catalog` 里，**精确匹配，不做模糊** |
@@ -184,7 +185,7 @@ Rust 层刻意**只做字节搬运**：它把一行 JSON 原样交给 WebView，
 | `delta` | `session_id, run_id, step, channel, text, reset` | 流式增量 |
 | `delta_reset` | `session_id, run_id, step` | 作废某一步已画出的增量 |
 | `notice` | `level, code, text` | **`code` 是机器认的类别**（info/warn） |
-| `sessions` | `items` | 会话清单 |
+| `sessions` | `items` | 会话清单。`items[]` 每行**始终**带 `archived`(bool)——「有没有归档」是行的事实，「会不会出现在列表里」才是请求的 `filter`，二者不合并。过滤发生在运行时**截断（`SessionListLimit=50`）之前**，所以归档的会话真正让开名额 |
 | `permission_request` | 见 §4.6 | **阻塞** |
 | `question_request` | 见 §4.7 | **阻塞** |
 | `runtime_exited` | 无 | **由客户端自己合成**，见 §3.4 |
@@ -459,7 +460,11 @@ src/
 
 顶部栏 · 会话栏 · 会话列（正文 + 输入框）· 左右侧栏 · 折叠摘要行 · 状态栏。
 
-**高度总账要闭合**：整屏 = 顶栏 + 会话栏 +（摘要行）+ 会话列 + 状态栏。会话列是**唯一 1fr 行**，其余 auto——它内部再分一次：正文是其中唯一可伸缩的行，输入框 `flex: none`。面板按内容设高，**超出可用高度时裁尾部**，不许把状态栏或输入框挤出可视区。
+**会话列有七个互斥占用者**，谁赢是一个优先级顺序（`conversationView.ts`）：启动失败 > 会话启动失败 > 终端 > **会话状态板** > 首屏 > 启动中 > 转录。板子是第 7 个，位置的理由与终端同构：**在首屏之上**（板子的用途正是"三四个会话在跑，打开看一眼"，而那时当前会话往往刚说完话或还没说话），**在终端之下**（`TerminalView` 是离开终端唯一的出路，能盖住它的占用者就是一条进得去出不来的路——这正是首屏盖住终端那个缺陷）。它不画输入框（`showsComposer` 对 `terminal` 与 `board` 都返回 false），并且必须自带可见的退出。详见 `session-board-and-archive.md` §3。
+
+**会话状态板**是第 7 个占用者，窗口级，**不持久化**（"我正在看板"是一个瞬间状态，不是设置）。右栏收起与折叠摘要行的抑制都是**派生**（`showSidebar = sidebarVisible && !hiddenByCss && !boardOpen`、`showSummary = !showSidebar && !boardOpen`），不写任何持久化偏好——用户从来没被改写过设置，关板后栏回到原本的设置。板子**不接收人工改状态**（无拖拽、无列间移动、无"手动置为完成"）：状态是从 `entries` / `pendingModals` / `runtimeExit` / `unseen` 投影出来的，协议里没有任何一条消息能改变它。
+
+**高度总账要闭合**：整屏 = 顶栏 + 会话栏 +（摘要行）+ 会话列 + 状态栏。会话列是**唯一 1fr 行**，其余 auto——它内部再分一次：正文是其中唯一可伸缩的行，输入框 `flex: none`。面板按内容设高，**超出可用高度时裁尾部**，不许把状态栏或输入框挤出可视区。板子开着时右栏收起（**派生**：`showSidebar && !hiddenByCss && !boardOpen`，不写持久化偏好），折叠摘要行一并抑制（`showSummary = !showSidebar || boardOpen`）。
 
 **输入框属于会话列，不属于窗口外壳**（这是与早期草案的区别，早期把输入框当作与正文并列的第七个分区）：
 
@@ -509,6 +514,10 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 
 **不画登录，不画插件市场**：这个窗口后面没有账号，运行时也没有插件注册表——它的扩展面是 MCP 与技能，那是右侧栏的事。画出来就是一个「按了不会有任何事发生」的控件。
 
+**footer 有四个入口**：Files · Terminal · **Session board** · Settings。板子的 gate **不是** Files/Terminal 用的 `hasSession`（那两个 key 在"当前会话就绪"）：板子讲的是全工作区，当前会话启动失败时它更该能开——它要的是"**这个工作区有活着的子进程**"（`hasLiveChild`）。
+
+**已归档的会话不出现在已保存列表里**，这是归档唯一改变左栏行为的地方。它读的是 `SavedSessions.active`（构建时按 `archived` 过滤出的那份），**不是** `items`——因为库打开时连接会向运行时请求 `all`，若读 `items`，归档的会话会在有人开着 `/resume` 的那段时间里重新冒回左栏，且"左栏显示哪些行"会取决于一个无关面板。`Ctrl+1..9` 读同一份 `active`。
+
 **阻塞模态期间，这一栏的动作要重新划范围**——旧规则"全部惰性"的理由已经消失：
 
 | 动作 | 有阻塞模态时 | 理由 |
@@ -548,6 +557,7 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 - 模型面板要能区分**同名模型跨路由**（`provider/model`）。
 - 思考强度清单**随模型变**，来源是 `init.effort_levels` / `ui(state).effort_levels`（是 `string[]`，label/description 由前端配）。
 - 会话选择的预览与进度**由运行时算好**（`preview` / `todos`），前端**不读会话文件**。
+- **`/resume` 是库**：加一个搜索框（搜**行字段**，不是全文）与 Active / Archived 两个标签，每行一个归档动作。它和左栏读同一个源（`selectSavedSessions` / `activeWorkspaceOf`）。**打开库时连接向运行时请求 `all`，关闭时恢复 `active`**——过滤的唯一拥有者是运行时（见 §4.3）。归档动作在**有活子进程持有该 id** 时 inert 且可见地 inert（门禁在桌面端，理由见 `session-board-and-archive.md` §4.4）。归档**一次**即可（可逆），删除仍要两次确认（不可逆）。
 
 ### 7.6 命令与键位
 
@@ -637,6 +647,9 @@ Goal · Tasks · Loaded skills · Background jobs · MCP。顺序固定，各有
 | 10 | **审批模态按字段显隐**：`remember` 有才显示「总是允许」；`allow_trust_all=true` 才显示「全部允许」；两者都无则只有允许/拒绝 | 详见 §4.6。`always_group` 覆盖哪些工具由运行时按 id 查它手里的快照，**前端不许自己带名单** |
 | 11 | **`/new` 开一个新会话（一个新子进程），不发 `session_switch`** | 原始结论是"发不带 `session_id` 的 `session_switch`，丢弃 `"__new__"` 哨兵"——哨兵那半仍然成立，但机制变了：桌面端**一条 `session_switch` 都不发**，因为它会让运行时重建自己并 `pending.abandonAll()`。协议保留它给 TUI/CLI |
 | 12 | **加 single-instance 插件**：第二个实例只把窗口拉回前台，不启第二份应用 | ⚠️ **理由已更正**。原文说两个实例会同时写 `permissions.json`、`mcp.json`、会话文件、审计日志和 artifacts；逐路径核实后只有 `permissions.json` 成立（其余按 id 分文件/目录，`mcp.json` 只读），而那条冲突与实例数无关——一个应用本来就有多个运行时。插件保留，但它现在买的是"桌面上不该开两个窗口"，不是文件安全 |
+| 13 | **会话状态板是主区视图（第 7 个占用者），不是浮层面板** | 面板是 Radix 模态，三条已有机制恰好都打在板子的用途上：`body` 的 `pointer-events: none` 继承后锁死左栏（`railBlocked`）、`focusSession` 会 `panel: null`（点卡就关板）、`enqueueModal` 在请求成为队首时 `panel: null`（审批到达时把"还有谁在等我"的总览顶掉）。视图形态三条全避开。板子**不接收人工改状态**（无拖拽、无列间移动）：状态是投影出来的，协议里没有任何一条消息能改变它，能拖而拖了没反应更糟 |
+| 14 | **归档是会话事实**（会话文件 `meta` 记录里的键），过滤在运行时的**截断之前** | 它得跟着会话走、且各前端看法一致；放 localStorage 会让"归档不占 50 个名额"拿不到——放前端过滤，你永远只能拿到"最新 50 条里去掉归档的那些"，比截断点更旧的非归档会话直接消失。协议 `session_list` 加**可选** `filter`，**缺省 = `all`**：TUI/CLI 没有解除归档的手段，默认过滤会藏起它们找不回的会话。新增 `session_archive`（绝对状态，幂等）。归档可逆、**一次**即可；删除不可逆、两次确认 |
+| 15 | **正在跑的会话不能归档**；门禁落在桌面端 | "谁持有这个会话"是桌面端的事实（`sessionId → key` 索引），运行时看不到别的 child。② 就算写得进去，一个"已归档但有活进程"的会话会从左栏的已保存列表掉出去、落进"open now"分组——那正是归档要消除的东西。**归档一个会话的前提是它已经关了** |
 
 ### 10.1 附带核实（原计划列为「未确认」，已查清）
 

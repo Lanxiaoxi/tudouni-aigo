@@ -33,7 +33,7 @@ func TestSessionSummariesOrdersByCreationAndHidesChildren(t *testing.T) {
 	save("20260102-120000", 200, "the middle one")
 	save("sub-20260101-120000-1", 400, "a delegation")
 
-	rows := SessionSummaries(store, 50)
+	rows := SessionSummaries(store, 50, true)
 	if len(rows) != 3 {
 		t.Fatalf("got %d rows, want 3 (sub- sessions are not resumable)", len(rows))
 	}
@@ -74,7 +74,7 @@ func TestSessionSummariesCountsMessagesStepsAndTodos(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	rows := SessionSummaries(store, 50)
+	rows := SessionSummaries(store, 50, true)
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1", len(rows))
 	}
@@ -116,7 +116,7 @@ func TestSessionSummariesKeepsAnUnreadableFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows := SessionSummaries(store, 50)
+	rows := SessionSummaries(store, 50, true)
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}
@@ -153,12 +153,97 @@ func TestSessionSummariesRespectsTheLimit(t *testing.T) {
 			t.Fatalf("save: %v", err)
 		}
 	}
-	rows := SessionSummaries(store, 2)
+	rows := SessionSummaries(store, 2, true)
 	if len(rows) != 2 {
 		t.Fatalf("got %d rows, want 2", len(rows))
 	}
 	if rows[0]["session_id"] != "s5" || rows[1]["session_id"] != "s4" {
 		t.Errorf("the limit kept %v and %v, want the two newest",
 			rows[0]["session_id"], rows[1]["session_id"])
+	}
+}
+
+// TestSessionSummariesFiltersArchivedBeforeTheLimit is the whole reason the filter
+// lives in the runtime rather than in a front end.
+//
+// The cap keeps the **newest** N. If a front end filtered the answer, archiving the
+// newest session would free no slot at all — the older, un-archived one would stay
+// outside the cap and out of the list. So the test archives the newest two of five
+// and asks for two: the answer must be the two newest *un-archived* ones, which are
+// `s3` and `s2`, not `s5` and `s4` (archived) and not an empty list.
+func TestSessionSummariesFiltersArchivedBeforeTheLimit(t *testing.T) {
+	store, err := state.NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for created := 1; created <= 5; created++ {
+		session := state.NewEmptySession(fmt.Sprintf("s%d", created))
+		session.CreatedAt = float64(created)
+		if err := store.Save(session); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+	for _, id := range []string{"s5", "s4"} {
+		if err := store.Archive(id, true); err != nil {
+			t.Fatalf("archive %s: %v", id, err)
+		}
+	}
+
+	rows := SessionSummaries(store, 2, false)
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	if rows[0]["session_id"] != "s3" || rows[1]["session_id"] != "s2" {
+		t.Errorf("the filter kept %v and %v, want s3 and s2 — archived rows must free a slot, not be filtered out of the newest N",
+			rows[0]["session_id"], rows[1]["session_id"])
+	}
+
+	// With archived included, the newest two are back and each row states its flag.
+	all := SessionSummaries(store, 2, true)
+	if len(all) != 2 || all[0]["session_id"] != "s5" {
+		t.Fatalf("includeArchived kept %+v, want the two newest with s5 first", all)
+	}
+	if all[0]["archived"] != true || all[1]["archived"] != true {
+		t.Errorf("archived flag not stated: %v / %v", all[0]["archived"], all[1]["archived"])
+	}
+}
+
+// TestSessionSummariesArchiveRoundTripsThroughMetadata: archiving is a metadata
+// change, so it must survive a save/load cycle and be readable from the summary.
+func TestSessionSummariesArchiveRoundTripsThroughMetadata(t *testing.T) {
+	store, err := state.NewSessionStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := state.NewEmptySession("20260101-120000")
+	session.CreatedAt = 100
+	session.Append(map[string]any{"role": "user", "content": "keep me"})
+	if err := store.Save(session); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := store.Archive("20260101-120000", true); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	rows := SessionSummaries(store, 50, true)
+	if len(rows) != 1 || rows[0]["archived"] != true {
+		t.Fatalf("after archive: %+v", rows)
+	}
+	// The transcript is untouched — archiving is not deletion.
+	if rows[0]["messages"] != 1 || rows[0]["preview"] != "keep me" {
+		t.Errorf("archiving changed the session's content: %+v", rows[0])
+	}
+
+	if err := store.Archive("20260101-120000", false); err != nil {
+		t.Fatalf("unarchive: %v", err)
+	}
+	loaded, err := store.Load("20260101-120000")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if state.IsArchived(loaded.Metadata) {
+		t.Error("un-archiving left the flag set")
+	}
+	if _, present := loaded.Metadata[state.ArchivedAtKey]; present {
+		t.Error("un-archiving left archived_at behind")
 	}
 }

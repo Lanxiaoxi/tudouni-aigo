@@ -61,6 +61,7 @@ const (
 	InSessionSwitch      = "session_switch"
 	InSessionList        = "session_list"
 	InSessionDelete      = "session_delete"
+	InSessionArchive     = "session_archive"
 	InInterrupt          = "interrupt"
 	InSetAutopilot       = "set_autopilot"
 	InSetModel           = "set_model"

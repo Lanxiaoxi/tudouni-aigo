@@ -111,14 +111,15 @@ func StartAuth(runtime Runtime) {
 // reason on stderr and **nothing at all on stdout** — a front end that sees a
 // partially written handshake has to guess, and the guess is always worse than
 // being told.
-func Main(opener RuntimeOpener, summaries func() []map[string]any,
-	deleter func(id string) error,
+func Main(opener RuntimeOpener, summaries func(includeArchived bool) []map[string]any,
+	deleter func(id string) error, archiver func(id string, archived bool) error,
 	initialSession string, autopilot, stream, debug bool) int {
 
 	transport := OpenStdio()
 	server := NewServer(transport, Bootstrap{
 		SessionSummaries: summaries,
 		DeleteSession:    deleter,
+		ArchiveSession:   archiver,
 		Autopilot:        autopilot,
 		Stream:           stream,
 		Debug:            debug,

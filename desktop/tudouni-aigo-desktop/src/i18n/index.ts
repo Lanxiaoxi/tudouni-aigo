@@ -272,6 +272,27 @@ export const en = {
   'lb.dot.unseen': 'Finished — you have not looked at it yet',
   'lb.attention': '{n} need your attention',
 
+  /* ---------------- session board ---------------- */
+  /* The board is a view of the **whole workspace**, so its words are about
+     "the sessions", never "this session" — the distinction the view's own
+     comment is about. */
+  'board.title': 'Session board',
+  'board.subtitle': 'Every session open in this workspace, right now.',
+  'board.openHint': 'See what every session is doing',
+  'board.close': 'Close the board',
+  'board.closeHint': 'Back to the conversation (Esc)',
+  'board.col.needs': 'Needs you',
+  'board.col.working': 'Working',
+  'board.col.finished': 'Finished',
+  'board.col.idle': 'Idle',
+  'board.empty.title': 'No session open',
+  'board.empty.hint': 'The board shows the sessions that are running in this workspace.',
+  'board.noPreview': 'Nothing said yet',
+  /* A live session whose file does not exist yet has no counts to show — the
+     runtime has not written it down. Saying so beats a row of zeroes, which
+     would read as "this conversation is empty" rather than "not saved yet". */
+  'board.noCounts': 'not saved yet',
+
   /* Which conversation a blocking request belongs to, and how many are behind
      it. Both exist because a prompt with several sessions open is otherwise
      anonymous — see `selectModalOrigin`. */
@@ -363,6 +384,21 @@ export const en = {
   'panel.resume.empty': 'The runtime reported no sessions',
   'panel.resume.messages': '{n} messages',
   'panel.resume.steps': '{n} steps',
+  /** The two views of the library. "Active" is what the rail shows; "Archived"
+   *  is what it deliberately does not. */
+  'panel.resume.tab.active': 'Active',
+  'panel.resume.tab.archived': 'Archived',
+  'panel.resume.search': 'Search sessions',
+  /** Field-level search: the topic and the session id. */
+  'panel.resume.searchHint': 'Matches the topic and the session id',
+  'panel.resume.noMatch': 'No session matches',
+  'panel.resume.archivedEmpty': 'No archived session',
+  'panel.resume.archive': 'Archive',
+  /** The row action's tooltip when a live child holds the id — archiving would
+   *  edit a session file something else is still writing. */
+  'panel.resume.archiveLive': 'Running — cannot archive',
+  'panel.resume.unarchive': 'Unarchive',
+  'panel.resume.archivedTag': 'archived',
   'panel.mcp.title': 'MCP servers',
   'panel.mcp.empty': 'No server configured',
   'panel.mcp.notes': 'This batch',

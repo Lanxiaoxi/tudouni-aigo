@@ -92,11 +92,21 @@ type Factory func(sessionID string) (Runtime, error)
 // MCP connections — but these stay: the second session must write to the same audit
 // directory and load skills from the same place.
 type Bootstrap struct {
-	// SessionSummaries lists the saved sessions, for the picker.
-	SessionSummaries func() []map[string]any
+	// SessionSummaries lists the saved sessions, for the picker. The argument is
+	// whether archived sessions are included: the filter has to happen here, before
+	// the list's own cap, or archiving would free no slot (see the runtime's
+	// `SessionSummaries`). A front end that has no archive concept asks for the
+	// unfiltered list, which is why the protocol's default is to include them.
+	SessionSummaries func(includeArchived bool) []map[string]any
 	// DeleteSession removes one saved session. A nil hook refuses to delete —
 	// the same fail-closed rule the nil Factory follows for switching.
 	DeleteSession func(id string) error
+	// ArchiveSession sets or clears one session's archived flag. A nil hook refuses,
+	// like the two above. It is a separate hook from DeleteSession because the two
+	// act on different things: one erases a file, the other edits a flag, and a
+	// caller wired with a deleter but no archiver should be told archiving is
+	// unavailable rather than have it silently do nothing.
+	ArchiveSession func(id string, archived bool) error
 	// Factory builds a runtime for a session id. A nil factory refuses to switch.
 	Factory Factory
 	// Autopilot is the process-level switch; a new runtime is assembled with it.
@@ -156,6 +166,21 @@ type Server struct {
 	// the same reason `turnDone` is: both happen under turnMu, and turnMu is held
 	// for the whole handover.
 	goalRound GoalRound
+
+	// sessionFilter remembers whether the last `session_list` asked for archived
+	// sessions. It exists because the list is also re-sent for reasons the front end
+	// did not ask about — after a delete, after an archive — and those answers must
+	// carry the same filter as the request that established the view. Answering them
+	// unfiltered would put an archived row back on a list that had just hidden it,
+	// and answering them filtered when the front end wanted everything would hide a
+	// session it could not get back. Default true: the unfiltered list is what a
+	// front end with no archive concept (CLI, TUI) must get.
+	sessionIncludeArchived bool
+
+	// sessionFilterSet records whether the default above has been overridden. It is
+	// separate from the boolean so "no request yet" and "asked for everything" stay
+	// distinguishable, which keeps the default honest for the first answer.
+	sessionFilterSet bool
 }
 
 // GoalRound is one reserved automatic round, as this layer needs to see it.
@@ -369,10 +394,13 @@ func (s *Server) Dispatch(message map[string]any) bool {
 		s.switchSession(message)
 
 	case InSessionList:
-		s.sendSessions()
+		s.sessionList(message)
 
 	case InSessionDelete:
 		s.deleteSession(message)
+
+	case InSessionArchive:
+		s.archiveSession(message)
 
 	case InSetAutopilot:
 		on, _ := Bool(message, "on")
@@ -914,16 +942,98 @@ func (s *Server) stateMessage(withCatalog bool) map[string]any {
 	return payload
 }
 
+// sessionList answers `session_list`, recording the filter it carried.
+//
+// The filter is a **view** the front end is establishing, not a one-off argument:
+// the list is re-sent for reasons the front end did not ask about (a delete, an
+// archive, a fresh session switch), and every one of those answers has to carry
+// the same filter — otherwise a deleted row comes straight back, or a hidden one
+// reappears. Remembering it here is what makes those re-sends correct without
+// every call site having to thread the flag through.
+//
+// The value is validated rather than trusted: an unknown filter is treated as the
+// default (include archived) instead of as "active", because silently hiding
+// sessions on a typo is the failure that cannot be recovered from the wire.
+func (s *Server) sessionList(message map[string]any) {
+	filter, _ := String(message, "filter")
+	switch filter {
+	case "active":
+		s.sessionIncludeArchived = false
+		s.sessionFilterSet = true
+	case "all", "":
+		s.sessionIncludeArchived = true
+		s.sessionFilterSet = true
+	default:
+		// Unknown value: keep whatever was in effect rather than changing the view
+		// on a string nobody recognises.
+	}
+	s.sendSessions()
+}
+
 func (s *Server) sendSessions() {
 	items := s.bootstrap.SessionSummaries
 	var list []map[string]any
 	if items != nil {
-		list = items()
+		list = items(s.sessionIncludeArchived)
 	}
 	if list == nil {
 		list = []map[string]any{}
 	}
 	s.Send(map[string]any{"v": VERSION, "t": OutSessions, "items": list})
+}
+
+// archiveSession sets or clears one session's archived flag.
+//
+// It is deliberately **not** gated on the session being unmounted the way
+// `deleteSession` is. Deleting the mounted session has to rebuild the runtime
+// because the file it is running against is gone; archiving leaves the file
+// exactly where it was, so the session in progress is unaffected. The real gate —
+// "do not archive a session some running child is writing" — lives in the front
+// end, which is the only side that can see the other connections; the runtime
+// cannot know about them and must not pretend to.
+func (s *Server) archiveSession(message map[string]any) {
+	raw, present := message["session_id"]
+	sessionID := ""
+	if present && raw != nil {
+		text, ok := raw.(string)
+		if !ok {
+			s.notice("warn", "session", i18n.T("channels.session.needs_string"))
+			return
+		}
+		sessionID = text
+	}
+	if sessionID == "" {
+		s.notice("warn", "session", i18n.T("channels.session.archive_failed",
+			"name", sessionID, "problem", "no session id was given"))
+		return
+	}
+	archived, ok := Bool(message, "archived")
+	if !ok {
+		s.notice("warn", "session", i18n.T("channels.session.archive_failed",
+			"name", sessionID, "problem", "archived must be a boolean"))
+		return
+	}
+
+	if s.bootstrap.ArchiveSession == nil {
+		// Fail-closed, like a nil Factory or a nil deleter: a runtime wired without
+		// an archiver refuses rather than guessing at one.
+		s.notice("warn", "session", i18n.T("channels.session.archive_failed",
+			"name", sessionID, "problem", "this runtime cannot archive sessions"))
+		return
+	}
+
+	if err := s.bootstrap.ArchiveSession(sessionID, archived); err != nil {
+		s.notice("warn", "session", i18n.T("channels.session.archive_failed",
+			"name", sessionID, "problem", err.Error()))
+		return
+	}
+
+	s.sendSessions()
+	if archived {
+		s.notice("info", "session", i18n.T("channels.session.archived", "name", sessionID))
+	} else {
+		s.notice("info", "session", i18n.T("channels.session.unarchived", "name", sessionID))
+	}
 }
 
 func (s *Server) setAutopilot(on bool) {

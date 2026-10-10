@@ -44,14 +44,17 @@ import {
   createSessionBucket,
   railBlocked,
   selectLiveOnlyKey,
+  selectLiveSessionIds,
   selectRowStatus,
   selectSavedSessions,
   useApp,
   type AppStore,
   type SessionRuntime,
 } from '@/state/store';
+import { registerRuntime } from '@/runtime/bus';
 import { reduceEvent, type Entry } from '@/state/entries';
 import { normPath } from '@/utils/format';
+import type { FrontendMsg } from '@/protocol/types';
 
 /** A store with the given sessions and nothing else carried over. */
 function install(
@@ -71,11 +74,35 @@ function install(
     modal: null,
     pendingModals: [],
     panel: null,
+    // The two window facts the archive work added, reset here so one test cannot
+    // hand a borrowed filter or an open board to the next — neither is persisted,
+    // so a fresh window is exactly this.
+    boardOpen: false,
+    sessionFilter: 'active',
     startupProblem: null,
     startupNotice: null,
     lastWorkspace: null,
     ...overrides,
   });
+}
+
+/** Capture what the store sends to `k1`, the shape `captureOutbound` has in the
+ *  projection suite: a handle per key, because the real bridge addresses one. */
+function captureSent(): FrontendMsg[] {
+  const sent: FrontendMsg[] = [];
+  registerRuntime({
+    key: 'k1',
+    send(msg) {
+      sent.push(msg);
+    },
+    subscribe() {
+      return () => undefined;
+    },
+    dispose() {
+      return undefined;
+    },
+  });
+  return sent;
 }
 
 /**
@@ -90,21 +117,28 @@ function install(
  */
 function savedFor(
   workspace: string,
-  items: { id: string; messages?: number; steps?: number; preview?: string }[],
+  items: { id: string; messages?: number; steps?: number; preview?: string; archived?: boolean }[],
 ): void {
+  const rows = items.map((row) => ({
+    id: row.id,
+    messages: row.messages ?? 0,
+    steps: row.steps ?? 0,
+    todos: '',
+    preview: row.preview ?? '',
+    modifiedAt: 1,
+    archived: row.archived ?? false,
+  }));
   useApp.setState((s) => ({
     savedSessions: {
       ...s.savedSessions,
       [normPath(workspace)]: {
         workspace,
-        items: items.map((row) => ({
-          id: row.id,
-          messages: row.messages ?? 0,
-          steps: row.steps ?? 0,
-          todos: '',
-          preview: row.preview ?? '',
-          modifiedAt: 1,
-        })),
+        items: rows,
+        // The same derivation the store does on write — `SavedSessions.active`.
+        // A hand-built record that omitted this would make every `.active`
+        // reader crash on `undefined`, which is exactly the kind of gap that
+        // hides until a component finally reads the field.
+        active: rows.filter((row) => !row.archived),
         listed: true,
       },
     },
@@ -695,3 +729,97 @@ test('a failure outranks an unread finished turn, and asking outranks both', () 
   });
   assert.equal(selectRowStatus(useApp.getState(), 'k1'), 'asking', 'amber over red');
 });
+
+/* ============================================================
+   Group 4: archive, and the two lists that must not disagree
+   ============================================================ */
+
+test('the rail never shows an archived row, even when the connection asks for all', () => {
+  // **The whole reason the rail reads `active` and not `items`.** The library's
+  // Archived tab needs the archived rows, and the runtime's list is one per
+  // connection — so while the library is open the connection is asking for
+  // `all`. If the rail drew `items`, an archived conversation would reappear in
+  // it for exactly as long as somebody had `/resume` open, and *which rows the
+  // rail shows* would depend on an unrelated panel.
+  install({}, [], null, { sessionFilter: 'all' });
+  savedFor('C:/work', [
+    { id: 'kept', preview: 'still here' },
+    { id: 'gone', preview: 'put away', archived: true },
+  ]);
+
+  const saved = selectSavedSessions(useApp.getState(), 'C:/work');
+  assert.deepEqual(saved.items.map((r) => r.id), ['kept', 'gone'], 'the library sees both');
+  assert.deepEqual(saved.active.map((r) => r.id), ['kept'], 'the rail sees only the active one');
+});
+
+test('the library borrows the connection filter, and hands it back on close', () => {
+  // The steady state is `active` — the desktop archives, and archiving only
+  // frees one of the runtime's fifty slots if the runtime is the one that drops
+  // the row. Opening the library has to widen it, because its Archived tab draws
+  // rows the steady request excludes; closing it has to narrow it again, or the
+  // rail keeps reporting archived sessions for the rest of the window's life.
+  const sent = captureSent();
+  install({ k1: handshaken('k1', 'C:/work', 's-1') }, ['k1'], 'k1');
+
+  useApp.getState().openPanel('resume');
+  assert.equal(useApp.getState().sessionFilter, 'all');
+  assert.equal(useApp.getState().panel, 'resume');
+  const widened = sent.filter((m) => m.t === 'session_list');
+  assert.deepEqual(widened[widened.length - 1], { v: 1, t: 'session_list', filter: 'all' });
+
+  useApp.getState().closePanel();
+  assert.equal(useApp.getState().sessionFilter, 'active');
+  const narrowed = sent.filter((m) => m.t === 'session_list');
+  assert.deepEqual(narrowed[narrowed.length - 1], { v: 1, t: 'session_list', filter: 'active' });
+});
+
+test('closing a panel that is not the library leaves the filter alone', () => {
+  // The other half, and the half that would make this a message per panel close:
+  // every other panel has nothing to do with archived sessions, so restoring the
+  // filter on their way out would be a request nobody asked for.
+  const sent = captureSent();
+  install({ k1: handshaken('k1', 'C:/work', 's-1') }, ['k1'], 'k1');
+
+  useApp.getState().openPanel('skills');
+  const before = sent.filter((m) => m.t === 'session_list').length;
+  useApp.getState().closePanel();
+
+  assert.equal(useApp.getState().sessionFilter, 'active');
+  assert.equal(sent.filter((m) => m.t === 'session_list').length, before);
+});
+
+test('archiving is refused while a live child holds the id', () => {
+  // **The one gate the runtime cannot keep.** Whether a session file is being
+  // written is a fact about this end's connections; the runtime sees no other
+  // process, so it neither can nor should refuse. The store refuses on this
+  // end's behalf, and sends nothing — the visible half of the same rule is the
+  // disabled button in the library.
+  const sent = captureSent();
+  install({ k1: handshaken('k1', 'C:/work', 's-live') }, ['k1'], 'k1');
+
+  useApp.getState().archiveSession('s-live', true);
+  assert.equal(sent.filter((m) => m.t === 'session_archive').length, 0);
+
+  // A file nobody has open is a plain request, and an absolute state rather than
+  // a toggle — so re-sending it is idempotent.
+  useApp.getState().archiveSession('s-old', true);
+  assert.deepEqual(
+    sent.find((m) => m.t === 'session_archive'),
+    { v: 1, t: 'session_archive', session_id: 's-old', archived: true },
+  );
+});
+
+test('the live-id lookup is the same answer the gate and the button read', () => {
+  // One rule, one source: the library disables the action from this, and
+  // `archiveSession` refuses from the same set, so the claim and the check
+  // cannot drift apart.
+  install({ k1: handshaken('k1', 'C:/work', 's-live'), k2: fresh('k2', 'C:/work') }, ['k1', 'k2'], 'k1');
+
+  const ids = selectLiveSessionIds(useApp.getState());
+  assert.equal(ids.has('s-live'), true);
+  // A child whose `init` has not landed has no id, which is not the empty-string
+  // session — `has('')` would make every unknown id look live.
+  assert.equal(ids.has(''), false);
+  assert.equal(ids.size, 1);
+});
+

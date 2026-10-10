@@ -34,7 +34,11 @@ export function PanelHost() {
     <DialogPrimitive.Root
       open={panel !== null}
       onOpenChange={(open) => {
-        if (!open) useApp.setState({ panel: null });
+        // Through the store action, not `setState`: the library borrows the
+        // connection's session filter while it is open and closing is where it
+        // is handed back. Esc and the overlay are two of the ways out, and this
+        // is the only path they have. See `AppStore.closePanel`.
+        if (!open) useApp.getState().closePanel();
       }}
     >
       <DialogPrimitive.Portal>

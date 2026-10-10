@@ -2025,3 +2025,184 @@
     transform: translateX(4px);
   }
 }
+
+/* ============================================================
+   The session board (`SessionBoard`).
+   It replaces the transcript's column while it is open — a
+   seventh occupant of `conversationView`, not a dialog — so it is
+   a full-height flex column with one scrolling region, exactly
+   like `.term-view` above.
+   ============================================================ */
+
+.board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.board-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 0 0 auto;
+}
+
+.board-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* The subtitle states the board's scope, which is the one thing a person can
+   otherwise get wrong about it: it is the **workspace's** sessions, and most of
+   them are idle because only open ones have a state at all. */
+.board-sub {
+  margin: 2px 0 0;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.board-loading {
+  padding: var(--space-4);
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+/* Four columns, horizontally scrolling rather than squeezing. A board whose
+   columns shrink to slivers is unreadable, and the window's minimum width
+   (`tauri.conf.json`, 960) already leaves room for all four at a usable size. */
+.board-cols {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.board-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 0;
+  min-width: 210px;
+}
+
+.board-col-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.board-col-title {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--fg-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* The count is a fact, not a badge: an idle column with forty cards and a
+   "needs you" column with one are both told the same way, and the number is
+   what makes the difference legible without reading every card. */
+.board-col-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  text-align: left;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.board-card:hover {
+  background: var(--bg-muted);
+  border-color: var(--border);
+}
+
+/* The session on screen, marked the same way the rail marks it — the accent
+   edge and the accent wash — because the two surfaces are showing the same
+   fact and a card that looked "current" differently would be a second idiom for
+   one state. */
+.board-card.is-current {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+  color: var(--fg);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.board-card .board-card-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.board-card .board-card-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+}
+
+.board-card.is-current .board-card-id {
+  color: var(--fg);
+}
+
+/* Two lines, like the rail's row: a preview is a reminder of which conversation
+   this is, not the conversation. */
+.board-card .board-card-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  word-break: break-word;
+}
+
+.board-card.is-current .board-card-preview {
+  color: var(--fg);
+}
+
+.board-card .board-card-meta,
+.board-card .board-card-model,
+.board-card .board-card-time {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.board-card .board-card-model {
+  font-family: var(--font-mono);
+}
+
+.board-card .board-card-time {
+  font-variant-numeric: tabular-nums;
+}

@@ -226,6 +226,15 @@ export interface VmSessionListItem {
   preview: string;
   /** Epoch **seconds**, or null when unreadable. */
   modifiedAt: number | null;
+  /**
+   * Whether this session is archived.
+   *
+   * Always present, never optional — the library's archive filter needs the fact
+   * on every row. Whether archived rows are in the list at all is the request's
+   * `filter`; the rail hides them by this flag regardless, so the list is drawn
+   * the same way no matter which filter the last request used.
+   */
+  archived: boolean;
 }
 
 export interface VmCompaction {
@@ -498,6 +507,10 @@ export function projectSessionList(items: SessionListItem[] | undefined): VmSess
     todos: str(row.todos),
     preview: str(row.preview),
     modifiedAt: num(row.modified_at),
+    // `bool` rather than a truthiness test: the runtime always sends it, and a
+    // missing key would otherwise read as false — which would silently hide an
+    // archived session from the library's Archived tab.
+    archived: bool(row.archived),
   }));
 }
 

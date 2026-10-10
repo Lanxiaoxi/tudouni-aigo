@@ -21,7 +21,7 @@ export function CommandPalette() {
   const t = useT();
   const [q, setQ] = useState('');
 
-  const close = () => useApp.setState({ panel: null });
+  const close = () => useApp.getState().closePanel();
 
   const rows = useMemo<Row[]>(() => {
     const parsed = lookup(q);

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, FileText, FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
+import { ChevronRight, FileText, FolderPlus, Folder, LayoutGrid, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -68,6 +68,31 @@ export function WorkspaceSidebar() {
   const hasSession = rt !== null && rt.ready;
   const currentWorkspace = rt?.session?.workspace ?? rt?.workspace ?? '';
   const currentSessionId = rt?.session?.id ?? null;
+  /**
+   * Whether any session in this workspace has a live child.
+   *
+   * **Not `hasSession`.** That asks "is the session on screen ready", which is
+   * the right gate for Files and Terminal — both act on the conversation you are
+   * looking at. The board is about all of them, so it must still open in the one
+   * case the other two cannot: the session on screen is the one whose child
+   * failed, and the others are running fine. What it actually needs is a child to
+   * answer `session_list` for this workspace, and this is that question asked of
+   * the whole workspace rather than of the focused bucket.
+   *
+   * A child whose own workspace is not known yet (`init` has not landed) counts
+   * as live: it is in the store because this end just started it, and refusing
+   * the board until the handshake arrives would be a button that is dead for the
+   * first second of every session.
+   */
+  const hasLiveChild = useApp((s) =>
+    s.order.some((key) => {
+      const bucket = s.sessions[key];
+      if (!bucket) return false;
+      const own = bucket.session?.workspace ?? bucket.workspace;
+      if (currentWorkspace === '' || own === '') return true;
+      return samePath(own, currentWorkspace);
+    }),
+  );
 
   const enterWorkspace = useApp((s) => s.enterWorkspace);
   const addWorkspace = useApp((s) => s.addWorkspace);
@@ -94,6 +119,9 @@ export function WorkspaceSidebar() {
   // is the same kind of decision as the workspace above it — what the runtime
   // process *is* — rather than a per-turn control like the status bar's.
   const openPanel = useApp((s) => s.openPanel);
+  // The session board is a **view**, not a panel (`store.boardOpen`), so it is
+  // reached through its own action rather than `openPanel`.
+  const setBoardOpen = useApp((s) => s.setBoardOpen);
 
   /**
    * The status of every live session, keyed by the runtime's own session id.
@@ -185,6 +213,25 @@ export function WorkspaceSidebar() {
   // whenever a panel was up, which is one of the two ways "New session" was
   // reported as a button that does nothing. See `railBlocked`.
   const blocked = useApp(railBlocked);
+  const boardOpen = useApp((s) => s.boardOpen);
+  /**
+   * The two actions the session board forbids: **creating and destroying a
+   * session.**
+   *
+   * The board is not a modal, so the rail stays usable while it is up — switching
+   * workspace and switching session are allowed, because they send nothing and
+   * disturb no pending request. What the board does forbid is the pair that
+   * changes *which conversations exist*: starting one, or erasing one. The board
+   * is a statement about the set of sessions, and a control that adds to or
+   * subtracts from that set under it is the same shape of problem a blocking
+   * modal has — the screen's subject is being edited out from under it.
+   *
+   * Read separately from `blocked` rather than folded into it, because folding
+   * would also disable the row buttons, and those are exactly what §3.4 keeps
+   * alive. A control that is enabled must be genuinely usable and one that is
+   * disabled must say why; the two conditions are different questions.
+   */
+  const blockedByBoard = blocked || boardOpen;
 
   async function onAdd() {
     if (blocked) return;
@@ -233,7 +280,7 @@ export function WorkspaceSidebar() {
           <button
             type="button"
             className="btn btn-outline btn-block"
-            disabled={blocked}
+            disabled={blockedByBoard}
             onClick={() => void openSession(null)}
           >
             <Plus size={13} />
@@ -469,7 +516,7 @@ export function WorkspaceSidebar() {
 
               {!savedSessions.listed ? (
                 <div className="lb-note">{t('common.loading')}</div>
-              ) : savedSessions.items.length === 0 ? (
+              ) : savedSessions.active.length === 0 ? (
                 // Only when there is nothing open either: with a live row above,
                 // "no past session" is a statement about files and the screen
                 // already has a conversation on it.
@@ -482,7 +529,7 @@ export function WorkspaceSidebar() {
                 )
               ) : (
                 <div className="lb-rows">
-                  {savedSessions.items.map((item) => {
+                  {savedSessions.active.map((item) => {
                     const isCurrent = item.id === currentSessionId;
                     const armed = armedDelete === item.id;
                     return (
@@ -559,7 +606,7 @@ export function WorkspaceSidebar() {
                             aria-label={
                               armed ? t('lb.deleteConfirm') : t('lb.deleteSession')
                             }
-                            disabled={blocked}
+                            disabled={blockedByBoard}
                             onClick={() => {
                               if (armed) {
                                 setArmedDelete(null);
@@ -619,6 +666,25 @@ export function WorkspaceSidebar() {
           >
             <SquareTerminal size={14} />
             <span>{t('panel.term.title')}</span>
+          </button>
+        </Tip>
+        {/* The session board. It sits with the other two because it is the same
+            kind of thing — a way *out* of the transcript — but its gate is
+            deliberately **not** `hasSession`, which is what Files and Terminal
+            use. Those two key off "the session on screen is ready"; the board is
+            about the whole workspace, so it must open in exactly the case they
+            cannot: when the session on screen was the one that failed to start
+            and the others are running fine. What it needs instead is **some live
+            child in this workspace** to answer for the list. */}
+        <Tip label={t('board.openHint')}>
+          <button
+            type="button"
+            className="lb-foot-btn"
+            disabled={blocked || !hasLiveChild}
+            onClick={() => setBoardOpen(true)}
+          >
+            <LayoutGrid size={14} />
+            <span>{t('board.title')}</span>
           </button>
         </Tip>
         <Tip label={t('lb.settings')}>

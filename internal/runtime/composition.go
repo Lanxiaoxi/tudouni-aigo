@@ -150,7 +150,15 @@ const subagentMaxDepth = subagent.DefaultMaxDepth
 // session twice — once to sort, once to describe — and each load parsed the whole
 // transcript; on a workspace with a few dozen sessions that was seconds of work
 // for forty characters of preview per row.
-func SessionSummaries(store *state.SessionStore, limit int) []map[string]any {
+//
+// `includeArchived` decides whether archived sessions are in the answer. The
+// filter runs **before the cap**, and that order is the whole point of putting
+// this decision here rather than in a front end: the cap keeps the newest N, so a
+// front end that filtered the answer would be filtering the newest N — and an
+// older un-archived session would drop out of the list entirely. Only the side
+// that owns the cap can make archiving free up a slot. It still reads every
+// file: the answer is shorter, the work is not.
+func SessionSummaries(store *state.SessionStore, limit int, includeArchived bool) []map[string]any {
 	// Delegated agents share this store, and their sessions are not sessions
 	// anybody resumes: one belongs to a task that is already over, and picking it
 	// opens a transcript whose other half is the parent. They are told apart by
@@ -161,15 +169,24 @@ func SessionSummaries(store *state.SessionStore, limit int) []map[string]any {
 		err      error
 		created  float64
 		id       string
+		archived bool
 	}
 	entries := make([]entry, 0, len(ids))
 	for _, id := range ids {
 		summary, err := store.LoadSummary(id, PreviewChars)
 		created := 0.0
+		archived := false
 		if err == nil {
 			created = summary.CreatedAt
+			archived = state.IsArchived(summary.Metadata)
 		}
-		entries = append(entries, entry{summary: summary, err: err, created: created, id: id})
+		// Archived sessions are dropped **here**, before the sort and the cap.
+		// See the function comment: filtering after the cap would hide old
+		// un-archived sessions instead.
+		if archived && !includeArchived {
+			continue
+		}
+		entries = append(entries, entry{summary: summary, err: err, created: created, id: id, archived: archived})
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].created > entries[j].created })
 
@@ -186,6 +203,10 @@ func SessionSummaries(store *state.SessionStore, limit int) []map[string]any {
 			"todos":      "",
 			"preview":    "",
 			"modified_at": nil,
+			// Always stated, like every other field here: a front end drawing an
+			// archive filter needs the flag on every row, and "absent" would be a
+			// second way of saying false.
+			"archived": item.archived,
 		}
 		if item.err != nil {
 			// A file that cannot be read stays in the list with the reason in place
@@ -1975,8 +1996,14 @@ func (r *Runtime) Compact() (map[string]any, error) {
 }
 
 // SessionSummaries implements protocol.Runtime.
+//
+// It includes archived sessions, because this method is what the CLI's `/resume`
+// prints — and the CLI has no way to un-archive, so hiding rows from it would be
+// hiding conversations it cannot get back. The desktop front end asks for the
+// filtered list over the protocol instead (`session_list` with `filter=active`),
+// where the filter runs before the cap.
 func (r *Runtime) SessionSummaries() []map[string]any {
-	return SessionSummaries(r.Store, SessionListLimit)
+	return SessionSummaries(r.Store, SessionListLimit, true)
 }
 
 // SetModel implements protocol.Runtime.

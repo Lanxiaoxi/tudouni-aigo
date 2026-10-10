@@ -859,6 +859,15 @@ export interface SessionListItem {
   preview: string;
   /** Epoch **seconds**, or null when the file could not be read. */
   modified_at: number | null;
+  /**
+   * Whether this session is archived.
+   *
+   * Always on the row, never optional: a front end drawing an archive filter
+   * needs the fact on every row, and "absent" would be a second way of saying
+   * false. Whether archived rows appear in the list at all is the request's
+   * `filter` (see `FrontendMsg`), which the runtime applies **before** its cap.
+   */
+  archived: boolean;
 }
 
 export interface SessionsMsg {
@@ -954,11 +963,28 @@ export type FrontendMsg =
   /** Missing or null `session_id` means a new session; an id whose file does not
    *  exist means a new session too. */
   | { v: number; t: 'session_switch'; session_id?: string | null }
-  | { v: number; t: 'session_list' }
+  /** Ask for the saved-session list.
+   *
+   *  `filter` chooses whether archived sessions are in the answer, and it is the
+   *  **view** this front end is establishing rather than a one-off argument: the
+   *  list is re-sent for reasons nobody asked about (a delete, an archive,
+   *  a session switch) and every one of those answers carries the same filter.
+   *  Omitted means `all`, which is the compatibility default — the CLI and TUI
+   *  send a bare `session_list` and have no way to un-archive, so hiding rows
+   *  from them would hide conversations they cannot get back. */
+  | { v: number; t: 'session_list'; filter?: 'active' | 'all' }
   /** Delete one saved session. The runtime waits for the running turn, deletes
    *  the file, then re-sends `sessions`. Deleting the mounted session makes it
    *  open a fresh one and re-send the opening triple. */
   | { v: number; t: 'session_delete'; session_id: string }
+  /** Archive or un-archive one saved session.
+   *
+   *  `archived` is an **absolute state**, not a toggle, so re-sending is
+   *  idempotent and the front end need not know the current value. Archiving is a
+   *  metadata edit, not a move: a session being written by another child is a
+   *  race the runtime cannot see, so **this front end gates the action** on "no
+   *  live child holds this id". */
+  | { v: number; t: 'session_archive'; session_id: string; archived: boolean }
   | { v: number; t: 'interrupt' }
   | { v: number; t: 'set_autopilot'; on: boolean }
   | { v: number; t: 'set_model'; model: string }

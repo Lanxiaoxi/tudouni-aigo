@@ -27,6 +27,7 @@ import { SessionProblem } from '@/components/SessionProblem';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { StreamView } from '@/components/stream/StreamView';
 import { TerminalView } from '@/components/terminal/TerminalView';
+import { SessionBoard } from '@/components/board/SessionBoard';
 import { PanelHost } from '@/components/panels/PanelHost';
 import { PermissionModal } from '@/components/modals/PermissionModal';
 import { QuestionModal } from '@/components/modals/QuestionModal';
@@ -60,6 +61,7 @@ export function App() {
   const handshakeNotices = rt?.handshakeNotices ?? NO_NOTES;
   const sidebarVisible = useApp((s) => s.sidebarVisible);
   const leftbarVisible = useApp((s) => s.leftbarVisible);
+  const boardOpen = useApp((s) => s.boardOpen);
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   // Live while a rail-width drag is in flight: the rail drops its width
   // transition so it tracks the pointer instead of easing behind it.
@@ -102,6 +104,7 @@ export function App() {
     startupProblem: startupProblem !== null,
     sessionProblem: problem !== null,
     attachedTerminalId,
+    boardOpen,
     // No session open means nothing to boot: `ready` can never become true, so
     // "starting the runtime…" would be a sentence about a process nobody
     // started. Closing the last session is how that state is reached.
@@ -114,9 +117,22 @@ export function App() {
   // the stylesheet's 1024px rule — which is why the summary row cannot be driven
   // by the preference alone. When the CSS hides the sidebar, the summary must
   // take its place, or the two vanish together and the screen goes blank.
+  //
+  // **A third reason, and it is derived rather than remembered.** The board
+  // takes the right rail's place while it is up — the rail reports on the
+  // conversation on screen, and with the board up there is no conversation on
+  // screen. It is `&& !boardOpen` rather than a written preference because
+  // `sidebarVisible` is the person's setting: writing it would mean the rail did
+  // not come back when the board closed, and that the change survived a restart
+  // they never asked for. Nothing is stored, so there is nothing to restore.
   const hiddenByCss = useSidebarHiddenByCss();
-  const showSidebar = sidebarVisible && !hiddenByCss;
-  const showSummary = !showSidebar;
+  const showSidebar = sidebarVisible && !hiddenByCss && !boardOpen;
+  // The summary row says "the conversation on screen is in this phase, with this
+  // much usage" — so it must not take the rail's place while the board is up: it
+  // would be talking about a conversation nobody is looking at. `|| boardOpen`
+  // suppresses it; without this it appears the instant the rail folds, which is
+  // the same "two things vanished" shape the CSS rule above exists to prevent.
+  const showSummary = !showSidebar && !boardOpen;
 
   // The left sidebar has its own off-switch, and one more rule on top: a
   // blocking prompt takes the whole screen's attention, and every action in that
@@ -187,6 +203,8 @@ export function App() {
                 <SessionProblem />
               ) : view === 'terminal' ? (
                 <TerminalView />
+              ) : view === 'board' ? (
+                <SessionBoard />
               ) : view === 'welcome' ? (
                 <Welcome notices={handshakeNotices} />
               ) : view === 'booting' ? (

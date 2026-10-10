@@ -188,10 +188,12 @@ func run(argv []string) int {
 	if opts.stdio {
 		return protocol.Main(func(sessionID string, hooks protocol.RuntimeHooks) (protocol.Runtime, error) {
 			return openRuntime(booted, sessionID, hooks, opts)
-		}, func() []map[string]any {
-			return runtime.SessionSummaries(booted.Store, runtime.SessionListLimit)
+		}, func(includeArchived bool) []map[string]any {
+			return runtime.SessionSummaries(booted.Store, runtime.SessionListLimit, includeArchived)
 		}, func(id string) error {
 			return booted.Store.Delete(id)
+		}, func(id string, archived bool) error {
+			return booted.Store.Archive(id, archived)
 		}, opts.session, opts.autopilot, opts.stream, opts.debug)
 	}
 

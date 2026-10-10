@@ -162,6 +162,41 @@ func (s *SessionStore) Delete(id string) error {
 	return nil
 }
 
+// Archive sets or clears the archived flag on one stored session.
+//
+// It is a load-modify-save rather than a separate file format, because archiving
+// is a metadata change and `Save` already appends a fresh `meta` record whenever
+// the metadata differs from what the file holds. The reader takes the last such
+// record, so this needs no new machinery and no rewrite of the transcript.
+//
+// The id must name a real file: archiving something that is not there is a bug on
+// the caller's side, and silently creating an empty session would be the worst
+// possible way to report it. Delegated subagents are refused for the same reason
+// `Delete` refuses them — they are not sessions anyone lists.
+//
+// It does **not** wait for a running turn. The caller is responsible for not
+// archiving a session it is running: a writer appending to the file while this
+// rewrites its metadata is a race no amount of care here can settle, which is why
+// the front end gates the action on "no live child holds this id" instead.
+func (s *SessionStore) Archive(id string, archived bool) error {
+	if IsChildSessionID(id) {
+		return fmt.Errorf("%s", missingKey("store.archive_child", "name", id))
+	}
+	if !s.Exists(id) {
+		path, err := s.Path(id)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("%s", missingKey("store.missing_file", "path", path))
+	}
+	session, err := s.Load(id)
+	if err != nil {
+		return err
+	}
+	SetArchived(session.Metadata, archived, float64(time.Now().Unix()))
+	return s.Save(session)
+}
+
 // ListIDs returns the ids of every session file, sorted.
 //
 // It includes delegated subagents. A caller that is offering sessions for a

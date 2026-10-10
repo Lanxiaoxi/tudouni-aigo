@@ -606,7 +606,30 @@ export interface SessionRuntime {
 export interface SavedSessions {
   /** The workspace this list describes, as the runtime named it. */
   workspace: string;
+  /**
+   * Every row the runtime reported, **as it reported them**.
+   *
+   * This is the library's input: while `/resume` is open the connection asks for
+   * everything (see `AppStore.sessionFilter`), and its archive tabs then filter
+   * this list themselves.
+   */
   items: VmSessionListItem[];
+  /**
+   * The rows with archived sessions removed — what the rail, the first screen
+   * and `Ctrl+1..9` draw.
+   *
+   * **Filtered by the flag, not by the request.** The two are not the same
+   * question: the request decides what the *runtime* sends, and it says `all`
+   * whenever the library is open. Nothing outside the library may show an
+   * archived session — "archived" means "out of the list", and the rail going
+   * blank for a moment and then showing archived rows again would be exactly the
+   * "the list changed under me" symptom `SavedSessions` is about.
+   *
+   * Computed **once, on write**, rather than by a selector that filters: a
+   * selector returning a fresh array never compares equal under zustand's
+   * identity comparison, so the rail would re-render forever and never commit.
+   */
+  active: VmSessionListItem[];
   /** Whether the runtime has answered for this workspace yet. */
   listed: boolean;
 }
@@ -773,6 +796,42 @@ export interface AppStore {
   pendingModals: ModalEntry[];
   /** One panel at a time, and that is a window fact rather than a session one. */
   panel: PanelKind | null;
+  /**
+   * Whether the session board is the conversation column's occupant.
+   *
+   * The board answers "what is every session in this workspace doing right
+   * now", which is a fact about the workspace rather than about one
+   * conversation, so it does not live in a bucket. It is a **view** rather than
+   * a dialog because every property a dialog has works against the one thing the
+   * board is for: a Radix dialog inherits `pointer-events: none` from `body` (so
+   * the left rail goes dead — `railBlocked`), `focusSession` clears `panel` (so
+   * clicking a card would close the board), and `enqueueModal` clears `panel`
+   * when a request reaches the head of the queue (so an approval arriving would
+   * close the one surface that says other sessions are waiting too). See
+   * `conversationView`.
+   *
+   * **Not persisted.** "I am looking at the board" is a moment, not a setting;
+   * remembering it would land the next launch on a screen with no transcript on
+   * it for no reason the person gave.
+   */
+  boardOpen: boolean;
+  /**
+   * Which sessions this end is asking the runtime to report.
+   *
+   * **The desktop always sends this explicitly.** The protocol's own default is
+   * `all`, deliberately: the CLI and the TUI have no way to un-archive, so
+   * hiding rows from them would hide conversations they cannot get back. This
+   * front end does archive, so leaving the default in place would let archived
+   * sessions keep consuming the runtime's fifty-row cap — and the whole reason
+   * the filter lives in the runtime is that archiving must free a slot (see
+   * `SessionSummaries`). So the steady state here is `active`.
+   *
+   * **It is not a user preference and it is not persisted.** It describes what
+   * this connection is currently asking for: the library flips it to `all` while
+   * it is open (its Archived tab needs the rows), and `closePanel` puts it back.
+   * Persisting it would mean a restart remembered a question nobody asked again.
+   */
+  sessionFilter: 'active' | 'all';
 
   /* ---------------- front-end preferences (window-level) ---------------- */
   sidebarVisible: boolean;
@@ -1010,6 +1069,31 @@ export interface AppStore {
   clearPastedImages(): void;
 
   openPanel(p: PanelKind | null): void;
+  /**
+   * Close whatever panel is open, restoring the steady session filter.
+   *
+   * Closing goes through the store rather than a bare `setState({ panel: null })`
+   * for one reason: the library borrows the connection's filter while it is open
+   * (see `sessionFilter`), and every way out of a panel — Esc, the close button,
+   * the overlay, picking a row — has to give it back. Six call sites each
+   * remembering to do that is six chances for one of them not to, and the symptom
+   * would be a rail that keeps reporting archived sessions until the next
+   * restart.
+   */
+  closePanel(): void;
+  /** Show or hide the session board in the conversation column. */
+  setBoardOpen(open: boolean): void;
+  toggleBoard(): void;
+  /**
+   * Change which sessions the runtime is asked to report, and ask again.
+   *
+   * The library's archive tabs call this; so does `openPanel`/`closePanel`, so
+   * the filter always matches which of them is on screen. It is a store action
+   * rather than a message argument because the runtime remembers it per
+   * connection — a list re-sent after a delete or an archive carries the same
+   * view, which is what keeps a just-hidden row from reappearing.
+   */
+  setSessionFilter(filter: 'active' | 'all'): void;
   setQuiet(q: boolean): void;
   toggleQuiet(): void;
   toggleSidebar(): void;
@@ -1036,6 +1120,17 @@ export interface AppStore {
   /** Delete one saved session. The list updates when the runtime's next
    *  `sessions` arrives — never on send (no optimistic removal). */
   deleteSession(id: string): void;
+  /**
+   * Archive or un-archive one saved session.
+   *
+   * **This is where "not while it is running" is enforced.** A live child holding
+   * the id means a writer appending to the file while the runtime rewrites its
+   * metadata — a race the runtime cannot see, because it does not know about the
+   * other connections. The action checks the `sessionId → key` index (this
+   * end's own fact) and refuses; the caller is expected to have disabled the
+   * control so the refusal is never the thing a person discovers by pressing.
+   */
+  archiveSession(id: string, archived: boolean): void;
   setAutopilot(on: boolean): void;
   chooseModel(model: string): void;
   chooseEffort(effort: string): void;
@@ -1591,7 +1686,12 @@ export const NO_STRINGS: string[] = [];
  * workspace, and that is a different statement from "this workspace has no saved
  * sessions", which is `listed: true` with an empty list.
  */
-export const NO_SAVED_SESSIONS: SavedSessions = { workspace: '', items: [], listed: false };
+export const NO_SAVED_SESSIONS: SavedSessions = {
+  workspace: '',
+  items: [],
+  active: [],
+  listed: false,
+};
 /** The empty terminal list, for the same reason: a selector's fallback must be
  *  a stable reference or every render of an empty workspace is a new frame. */
 export const NO_TERMINALS: TerminalRow[] = [];
@@ -1933,10 +2033,13 @@ export const useApp = create<AppStore>((set, get) => {
   ): void {
     if (workspace.trim() === '') return;
     const key = normPath(workspace);
+    // The rail's view, computed here rather than in a selector — see
+    // `SavedSessions.active` for why a filtering selector would loop forever.
+    const active = items.filter((row) => !row.archived);
     set((s) => ({
       savedSessions: {
         ...s.savedSessions,
-        [key]: { workspace, items, listed },
+        [key]: { workspace, items, active, listed },
       },
     }));
   }
@@ -1997,6 +2100,10 @@ export const useApp = create<AppStore>((set, get) => {
     modal: null,
     pendingModals: [],
     panel: null,
+    boardOpen: false,
+    // The desktop's steady state: archived sessions are hidden, so archiving
+    // frees one of the runtime's fifty slots. See `SessionFilter`.
+    sessionFilter: 'active',
 
     sidebarVisible: prefs.sidebarVisible,
     leftbarVisible: prefs.leftbarVisible,
@@ -2210,7 +2317,7 @@ export const useApp = create<AppStore>((set, get) => {
 
       // The session list is what the left rail draws saved conversations from,
       // and a fresh child is the only thing that can answer for this workspace.
-      sendTo(key, { v: 1, t: 'session_list' });
+      sendTo(key, { v: 1, t: 'session_list', filter: get().sessionFilter });
 
       // The other half of a switch: the session this one displaced is now off
       // screen, and if it never became a conversation it is closed rather than
@@ -2471,7 +2578,7 @@ export const useApp = create<AppStore>((set, get) => {
           // runtime's own name for the directory, which is the key the reply will
           // be filed under.
           markSavedSessionsPending(init.workspace);
-          sendTo(key, { v: 1, t: 'session_list' });
+          sendTo(key, { v: 1, t: 'session_list', filter: get().sessionFilter });
           break;
         }
 
@@ -2563,7 +2670,7 @@ export const useApp = create<AppStore>((set, get) => {
             //
             // A conversation with no id yet has no file and nothing to list.
             if (bucket.sessionId !== null) {
-              sendTo(key, { v: 1, t: 'session_list' });
+              sendTo(key, { v: 1, t: 'session_list', filter: get().sessionFilter });
             }
           }
           break;
@@ -3126,15 +3233,20 @@ export const useApp = create<AppStore>((set, get) => {
     openPanel(p) {
       set({ panel: p });
       const key = get().activeKey;
+      // **The library borrows the connection's filter.** Its Archived tab draws
+      // rows the rail is not supposed to show, and the runtime's list is one
+      // per connection — so while this panel is up the connection asks for
+      // everything, and `closePanel` hands the steady state back. Sending it
+      // through `setSessionFilter` is what keeps the two in step rather than
+      // having this one call site remember to restore it.
+      if (p === 'resume') get().setSessionFilter('all');
       // Every request a panel makes is about the session being shown, and with
       // several open that is the only one whose answer this panel could mean.
       if (key === null) return;
       if (p === 'resume') {
         // The picker lists the **workspace's** sessions, so what goes back to
         // loading is that workspace's list — not this child's bucket, which no
-        // longer holds one.
-        markSavedSessionsPending(activeWorkspaceOf(get()));
-        sendTo(key, { v: 1, t: 'session_list' });
+        // longer holds one. `setSessionFilter` already asked for it.
       }
       if (p === 'skills') {
         sendTo(key, { v: 1, t: 'skills' });
@@ -3158,6 +3270,38 @@ export const useApp = create<AppStore>((set, get) => {
         // sent this would still show terminals, one snapshot later.
         sendTo(key, { v: 1, t: 'terminal_list' });
       }
+    },
+
+    closePanel() {
+      const wasLibrary = get().panel === 'resume';
+      set({ panel: null });
+      // Only when the library was the one open: every other panel leaves the
+      // filter alone, and asking for a list nobody wants would be a message per
+      // panel close.
+      if (wasLibrary) get().setSessionFilter('active');
+    },
+
+    setSessionFilter(filter) {
+      if (get().sessionFilter === filter) return;
+      set({ sessionFilter: filter });
+      const key = get().activeKey;
+      if (key === null) return;
+      // Asked for immediately: the caller just changed which rows should be on
+      // screen, and waiting for the next unrelated `session_list` would leave the
+      // list showing the previous view under the new tab's label.
+      markSavedSessionsPending(activeWorkspaceOf(get()));
+      sendTo(key, { v: 1, t: 'session_list', filter });
+    },
+
+    setBoardOpen(open) {
+      // **Closing a panel, not preserving it.** The board is a view and a panel is
+      // a dialog; the conversation column can only show one thing, so opening one
+      // must put the other away rather than leave a panel stacked over the board.
+      set(open ? { boardOpen: true, panel: null } : { boardOpen: false });
+    },
+
+    toggleBoard() {
+      get().setBoardOpen(!get().boardOpen);
     },
 
     setQuiet(q) {
@@ -3281,7 +3425,7 @@ export const useApp = create<AppStore>((set, get) => {
       // bucket would leave the rail drawing the old list over a refresh that is
       // on its way.
       markSavedSessionsPending(activeWorkspaceOf(get()));
-      sendTo(key, { v: 1, t: 'session_list' });
+      sendTo(key, { v: 1, t: 'session_list', filter: get().sessionFilter });
     },
 
     deleteSession(id) {
@@ -3303,6 +3447,32 @@ export const useApp = create<AppStore>((set, get) => {
       // `sessions` arrives, because the delete can fail (a locked file, a
       // `sub-` id) and a row that vanished on send would be a lie.
       sendTo(key, { v: 1, t: 'session_delete', session_id: id });
+    },
+
+    archiveSession(id, archived) {
+      const s = get();
+      const key = s.activeKey;
+      if (key === null) return;
+
+      // **The one gate the runtime cannot keep.** "Do not archive a session a
+      // running child is writing" is a fact about *this end's* connections — the
+      // runtime has no view of the other processes, so it neither can nor should
+      // refuse. The index is the same one `openSession` maintains; a hit means a
+      // live child holds this id, and archiving would edit metadata under a
+      // writer.
+      //
+      // The control is expected to be disabled for such a row, so this is a
+      // backstop rather than the thing a person runs into. It is checked here as
+      // well because a disabled button is a claim about the state of the
+      // application, and this is the state it claims.
+      for (const other of s.order) {
+        if (s.sessions[other]?.sessionId === id) return;
+      }
+
+      // No optimistic change: the row's flag and the list both wait for the
+      // runtime's next `sessions`. The filter's effect (a newly archived row
+      // leaving an `active`-only list) is the runtime's to apply, before its cap.
+      sendTo(key, { v: 1, t: 'session_archive', session_id: id, archived });
     },
 
     setAutopilot(on) {
@@ -4214,6 +4384,54 @@ export function selectWorkspaceAttentionKey(s: AppStore): string {
 export function selectSavedSessions(s: AppStore, workspace: string): SavedSessions {
   if (workspace.trim() === '') return NO_SAVED_SESSIONS;
   return s.savedSessions[normPath(workspace)] ?? NO_SAVED_SESSIONS;
+}
+
+/**
+ * The session ids a live child of **this end** holds, as a lookup.
+ *
+ * "Do not archive a session something is still writing" is a fact the runtime
+ * cannot check — it sees no other process — so the desktop is where it becomes
+ * enforceable, and both the button's disabled state and `archiveSession`'s
+ * backstop read it from here so the claim and the check cannot drift.
+ *
+ * Takes the whole store because a child's id is not in the workspace list: it is
+ * whatever that child's `init` named, which is exactly the case (`Ctrl+1..9` and
+ * the rail both draw a row for a session whose file may not be written yet).
+ */
+/**
+ * **The compact key, and the only form a component may subscribe to.**
+ * The same ids as `selectLiveSessionIds`, as `id\u0001` per row in `s.order`
+ * order. Control separator: a session id is a runtime-minted
+ * `YYYYMMDD-HHMMSS`-ish token and cannot contain one.
+ *
+ * **This split is a fix, not a style choice.** `selectLiveSessionIds` builds a
+ * fresh `Set` on every call, and a zustand selector is compared by reference:
+ * a new `Set` on every read is an unstable selection, so `useSyncExternalStore`
+ * concluded the store changed on every render and the panel looped into
+ * "Maximum update depth exceeded". `useShallow` would not have saved it either
+ * (its equality walks `Object.keys`, which is empty for a Set). A compact
+ * string is a stable primitive — the same escape hatch `selectRowStatusKey`
+ * and `selectWorkspaceAttentionKey` use for their collections.
+ */
+export function selectLiveSessionIdsKey(s: AppStore): string {
+  const parts: string[] = [];
+  for (const key of s.order) {
+    const id = s.sessions[key]?.sessionId;
+    if (id !== null && id !== undefined && id !== '') parts.push(id);
+  }
+  return parts.join('\u0001');
+}
+
+/** The ids a live child of this end holds, as a lookup.
+ *  **Not for `useApp`** — see `selectLiveSessionIdsKey`. Derive it there with
+ *  `useMemo` and rebuild it only when the key changes. */
+export function selectLiveSessionIds(s: AppStore): Set<string> {
+  const ids = new Set<string>();
+  for (const key of s.order) {
+    const id = s.sessions[key]?.sessionId;
+    if (id !== null && id !== undefined && id !== '') ids.add(id);
+  }
+  return ids;
 }
 
 export function selectLiveOnlyKey(s: AppStore, workspace: string): string {

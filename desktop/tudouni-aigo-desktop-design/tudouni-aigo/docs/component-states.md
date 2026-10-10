@@ -54,6 +54,7 @@
 - 选中：底部 2px `--accent` 指示条，文字 `--fg`；未选中：`--fg-muted`。
 - 切换：指示条 `transform` 位移，`--motion-base`，`--ease-standard`；内容区直接换，无淡入。
 - 关闭按钮 hover 才显示（`:hover` 于 tab 本身时），`--radius-xs` 背景 `--bg-muted`。
+- **面板里的标签条（`.panel-tabs` / `.panel-tab`）**：标签是**视图切换**，不是动作，所以不穿主按钮的填充，只保留"当前项"的语言——2px accent 指示条 + 大写小字标签。计数角标 `.count` 跟在同一行里（库的 Active / Archived 各带一个），**不用来承担"有没有内容"的判断**，只是数字。
 
 ## 4. 列表行 / 树节点（会话列表、文件树）
 

@@ -45,6 +45,7 @@ function healthy(overrides: Partial<ConversationViewInput> = {}): ConversationVi
     startupProblem: false,
     sessionProblem: false,
     attachedTerminalId: null,
+    boardOpen: false,
     hasSession: true,
     ready: true,
     hasConversation: true,
@@ -97,9 +98,11 @@ test('an attached terminal outranks "starting the runtime…" too', () => {
   assert.equal(conversationView(input), 'terminal');
 });
 
-test('the composer is drawn for every view except the terminal', () => {
-  // The contract in one assertion, so a seventh view added later cannot be
-  // forgotten here: only a shell takes the keyboard away.
+test('the composer is drawn for every view except the terminal and the board', () => {
+  // The contract in one assertion, so an eighth view added later cannot be
+  // forgotten here: only the shell and the board take the keyboard away — the
+  // shell because it owns every keystroke, the board because there is no
+  // single conversation to speak into while it is up.
   const others: ConversationViewInput[] = [
     healthy({ startupProblem: true }),
     healthy({ sessionProblem: true }),
@@ -111,8 +114,11 @@ test('the composer is drawn for every view except the terminal', () => {
   for (const input of others) {
     const view = conversationView(input);
     assert.notEqual(view, 'terminal');
+    assert.notEqual(view, 'board');
     assert.equal(showsComposer(view), true, `${view} must leave the composer in place`);
   }
+  assert.equal(showsComposer('board'), false, 'the board has no addressee, so no composer');
+  assert.equal(showsComposer('terminal'), false, 'the shell owns the keyboard');
 });
 
 /* ============================================================
@@ -170,4 +176,39 @@ test('the first screen needs a ready session with nothing said in it', () => {
 
 test('a conversation on screen is the transcript', () => {
   assert.equal(conversationView(healthy()), 'stream');
+});
+
+/* ============================================================
+   The board: above the first screen, below the terminal
+   ============================================================ */
+
+test('the board covers the first screen — the case it is built for', () => {
+  // The board exists for "three or four sessions are running, let me look at
+  // all of them", and that is *precisely* the state in which the session on
+  // screen has just spoken or has not spoken yet. Placed under the first screen
+  // it would be covered in the one case it was made for.
+  assert.equal(conversationView(healthy({ boardOpen: true, hasConversation: false })), 'board');
+  assert.equal(conversationView(healthy({ boardOpen: true })), 'board');
+});
+
+test('an attached terminal outranks the board, for the reason the terminal outranks everything', () => {
+  // The other half of the pairing. `TerminalView` is the only place the way out
+  // of a shell lives, so nothing may cover it — including the board. Without
+  // this, "open the board" would strand the person over a running shell they
+  // cannot see and cannot leave, the same deadlock the first screen used to
+  // produce.
+  assert.equal(conversationView(healthy({ boardOpen: true, attachedTerminalId: 'term-01' })), 'terminal');
+  // And the composer stays withdrawn while either of them is on screen.
+  assert.equal(showsComposer('board'), false);
+  assert.equal(showsComposer('terminal'), false);
+});
+
+test('the board is reachable from a booting and a no-session workspace', () => {
+  // It has no `hasSession` / `ready` condition on purpose: those describe the
+  // session on screen, and the board is about *all* of them. A workspace whose
+  // session is still starting, or has no session open at all, are both states
+  // the board must be reachable from — "there is nothing here" is not a reason
+  // to hide "what is running".
+  assert.equal(conversationView(healthy({ boardOpen: true, ready: false })), 'board');
+  assert.equal(conversationView(healthy({ boardOpen: true, hasSession: false })), 'board');
 });

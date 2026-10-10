@@ -103,13 +103,27 @@ export function useGlobalKeys(): void {
         return;
       }
 
-      /* ---- Esc: modal > panel > interrupt the turn ---- */
+      /* ---- Esc: modal > panel > board > interrupt the turn ---- */
       if (e.key === 'Escape') {
         // A modal handles its own Esc (it resolves to deny / skip).
         if (s.modal !== null) return;
         if (s.panel !== null) {
           e.preventDefault();
-          useApp.setState({ panel: null });
+          useApp.getState().closePanel();
+          return;
+        }
+        // **The board, after the panel and before the interrupt.** After the
+        // panel so a panel stacked over the board closes first — that is the
+        // visible top of the stack, and closing the board under it would be a
+        // keypress whose result is off screen. Before the interrupt because a
+        // turn that happens to be running must not eat the key: with the board
+        // up, Esc's one job is "leave the board", and a running session behind
+        // it is not what the person is looking at. It may not come before the
+        // modal: that Esc is the modal's, and a board that stole it would make a
+        // fail-closed approval unanswerable from the keyboard.
+        if (s.boardOpen) {
+          e.preventDefault();
+          s.setBoardOpen(false);
           return;
         }
         // Esc interrupts **the session on screen** and nothing else. With
@@ -140,6 +154,17 @@ export function useGlobalKeys(): void {
           }
           case 'b': {
             e.preventDefault();
+            // **Inert, and visibly so.** With the board up the right rail is
+            // derived away (`showSidebar && !hiddenByCss && !boardOpen`), so
+            // toggling `sidebarVisible` would change the person's stored
+            // preference with **no visible effect at all** — and the rail would
+            // then come back in the opposite state from the one they left it in
+            // when the board closed. That is the "a key that appears to do
+            // nothing" failure `railBlocked` exists to make impossible, so the
+            // key is swallowed here and the rail's own control is drawn
+            // `disabled` as well; both say the same thing rather than one of
+            // them silently doing nothing.
+            if (s.boardOpen) return;
             s.toggleSidebar();
             return;
           }
@@ -189,7 +214,11 @@ export function useGlobalKeys(): void {
            because the child that had the newest copy of the files answered
            differently. See `SavedSessions`. */
         if (/^[1-9]$/.test(e.key) && s.panel === null) {
-          const item = selectSavedSessions(s, activeWorkspaceOf(s)).items[Number(e.key) - 1];
+          // `active`, not `items`: `Ctrl+1..9` numbers the conversations the rail
+          // shows, and an archived session is not one of them. Reading `items`
+          // would make the numbering depend on whether the library happened to be
+          // open, since that is what flips the connection to the unfiltered list.
+          const item = selectSavedSessions(s, activeWorkspaceOf(s)).active[Number(e.key) - 1];
           if (item) {
             e.preventDefault();
             void s.openSession(item.id);

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowUp, Bot, Download, Folder, Plus, Upload, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowUp, Bot, Download, Folder, Plus, Search, Upload, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { notesByServer } from '@/runtime/adapt';
 import {
@@ -15,6 +15,7 @@ import {
   activeWorkspaceOf,
   selectAskOn,
   selectEffortLevels,
+  selectLiveSessionIdsKey,
   selectSavedSessions,
   useApp,
   useSessionField,
@@ -22,7 +23,7 @@ import {
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { useListKeys } from '@/hooks/useListKeys';
-import { Badge, EmptyState, Info, RiskTag } from '@/components/ui/kit';
+import { Badge, EmptyState, Info, RiskTag, Tip } from '@/components/ui/kit';
 import { InBlock } from '@/components/stream/InBlock';
 import { PanelBody, PanelRow, PanelShell } from './PanelShell';
 import { COMMANDS } from '@/commands';
@@ -30,7 +31,11 @@ import { formatDuration, formatPath, formatRelative, formatTokens, oneLine } fro
 import { formatBytes } from '@/runtime/paste';
 import type { FileEntry } from '@/protocol/types';
 
-const closePanel = () => useApp.setState({ panel: null });
+// Through the store's action rather than `setState({ panel: null })`: the
+// library borrows the connection's session filter while it is open, and this is
+// what gives it back. Every panel close in this file goes through here, so none
+// of them has to remember. See `AppStore.closePanel`.
+const closePanel = () => useApp.getState().closePanel();
 
 /* ============================================================
    Model selection.
@@ -200,16 +205,56 @@ export function EffortPanel() {
    Preview and progress are computed by the runtime; this view never
    reads a session file.
    ============================================================ */
+/**
+ * The library: every session this workspace has, active or archived.
+ *
+ * **Two tabs, not two panels.** "Active" is the list the rail shows; "Archived"
+ * is what the rail deliberately does not. They are two views of one fact — the
+ * workspace's saved sessions — so a tab strip is the honest shape, and the
+ * archive action lives on the rows rather than in a separate "manage" screen.
+ *
+ * **The connection's filter follows the tab.** The runtime's list is one per
+ * connection and its cap is fifty rows, so the desktop asks for `active` in its
+ * steady state and switches to `all` while this panel is open (see
+ * `AppStore.sessionFilter`). That is why the search below filters the rows it was
+ * given rather than asking the runtime: the rows are already the union of both
+ * tabs.
+ *
+ * **Archiving is reversible; deleting is not.** Archive moves a row to the other
+ * tab and back; delete (the rail's action, `Ctrl+Del`) is not offered here, so
+ * the destructive one keeps its single, deliberate home.
+ */
 export function ResumePanel() {
   const t = useT();
+  const [tab, setTab] = useState<'active' | 'archived'>('active');
+  const [q, setQ] = useState('');
   // The picker shows the **workspace's** saved sessions, so it reads the same
   // window-level list the left rail does — one source, so the two can never
   // disagree about what exists (see `SavedSessions`).
   const saved = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)));
-  const list = saved.items;
   const listed = saved.listed;
   const openSession = useApp((s) => s.openSession);
+  const archiveSession = useApp((s) => s.archiveSession);
+  // The compact key, not the Set: `selectLiveSessionIds` builds a fresh Set on
+  // every call, and a zustand selection that is a new reference on every read
+  // loops the panel into "Maximum update depth exceeded". The key is a stable
+  // primitive; the Set is derived from it and rebuilt only when the ids do.
+  const liveIdsKey = useApp(selectLiveSessionIdsKey);
+  const liveIds = useMemo(() => new Set(liveIdsKey === '' ? [] : liveIdsKey.split('\u0001')), [liveIdsKey]);
   const currentId = useSessionField((rt) => rt.session?.id ?? null, null);
+
+  /** Field-level match: the topic and the session id, in that order.
+   *  Not fuzzy and not the metadata — `preview` is the topic the runtime
+   *  computed, and `id` is the name `/resume` itself uses, so these are the two
+   *  strings a person could actually have typed. */
+  const list = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    const byTab = saved.items.filter((row) => (tab === 'archived' ? row.archived : !row.archived));
+    if (needle === '') return byTab;
+    return byTab.filter(
+      (row) => row.preview.toLowerCase().includes(needle) || row.id.toLowerCase().includes(needle),
+    );
+  }, [saved.items, tab, q]);
 
   const { active, setActive } = useListKeys({
     count: list.length,
@@ -217,48 +262,121 @@ export function ResumePanel() {
     onPick: (i) => list[i] && void openSession(list[i].id),
   });
 
+  const archivedCount = useMemo(() => saved.items.filter((r) => r.archived).length, [saved.items]);
+  const activeCount = saved.items.length - archivedCount;
+
   return (
     <PanelShell title={t('panel.resume.title')} count={list.length} note={t('cmd.resume.desc')}>
+      <div className="cmdk-head">
+        <Search size={14} className="muted" />
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            // The cursor must not stay on a row the new query hid — it would
+            // select the wrong conversation on Enter.
+            setActive(0);
+          }}
+          placeholder={t('panel.resume.search')}
+          title={t('panel.resume.searchHint')}
+          aria-label={t('panel.resume.search')}
+          spellCheck={false}
+        />
+      </div>
+      <div className="panel-tabs" role="tablist">
+        {(['active', 'archived'] as const).map((which) => (
+          <button
+            key={which}
+            type="button"
+            role="tab"
+            aria-selected={tab === which}
+            className={`panel-tab${tab === which ? ' is-on' : ''}`}
+            onClick={() => {
+              setTab(which);
+              setActive(0);
+            }}
+          >
+            {t(which === 'active' ? 'panel.resume.tab.active' : 'panel.resume.tab.archived')}
+            <span className="count">{which === 'active' ? activeCount : archivedCount}</span>
+          </button>
+        ))}
+      </div>
       <PanelBody>
         {!listed ? (
           <EmptyState title={t('common.loading')} />
         ) : list.length === 0 ? (
-          <EmptyState title={t('panel.resume.empty')} />
+          <EmptyState
+            title={
+              q.trim() !== ''
+                ? t('panel.resume.noMatch')
+                : tab === 'archived'
+                  ? t('panel.resume.archivedEmpty')
+                  : t('panel.resume.empty')
+            }
+          />
         ) : (
-          list.map((item, i) => (
-            <PanelRow
-              key={item.id}
-              index={i + 1}
-              active={active === i}
-              selected={item.id === currentId}
-              onHover={() => setActive(i)}
-              onPick={() => void openSession(item.id)}
-              aside={
-                item.modifiedAt === null
-                  ? t('common.unknown')
-                  : formatRelative(item.modifiedAt * 1000)
-              }
-            >
-              {/* The topic first, the facts under it — the order the rail's rows
-                  and the first screen's cards use. The row inherits the panel's
-                  `--fg-secondary` at `--text-compact`, which is the same pair the
-                  rail gives its topic line; `caption` would have demoted it to
-                  the metadata it is no longer. */}
-              <div className="truncate">{item.preview}</div>
-              <div className="row" style={{ gap: 'var(--space-2)' }}>
-                {/* The id is a footnote now, not the title: it is a timestamp
-                    (`YYYYMMDD-HHMMSS`) and the topic above is what identifies the
-                    conversation. It stays because it is the name `/resume` and the
-                    rail's own row use. */}
-                <span className="mono faint">{item.id}</span>
-                <span className="caption faint">{t('panel.resume.messages', { n: item.messages })}</span>
-                <span className="caption faint">{t('panel.resume.steps', { n: item.steps })}</span>
-                {/* `todos` is ready-made progress text; an empty string means
-                    there is no task list, which is not the same as zero. */}
-                {item.todos ? <span className="caption faint">{item.todos}</span> : null}
-              </div>
-            </PanelRow>
-          ))
+          list.map((item, i) => {
+            // A live child holds this id, so archiving would edit a session file
+            // something else is still writing. The button is disabled rather than
+            // hidden: "why can't I archive this one" has an answer, and the
+            // tooltip is it. `archiveSession` refuses the same case again — this
+            // is the visible half of one rule, not the only half.
+            const live = liveIds.has(item.id);
+            const target = item.archived ? false : true;
+            return (
+              <PanelRow
+                key={item.id}
+                index={i + 1}
+                active={active === i}
+                selected={item.id === currentId}
+                onHover={() => setActive(i)}
+                onPick={() => void openSession(item.id)}
+                aside={
+                  item.modifiedAt === null
+                    ? t('common.unknown')
+                    : formatRelative(item.modifiedAt * 1000)
+                }
+              >
+                <div className="row" style={{ gap: 'var(--space-2)', alignItems: 'center' }}>
+                  <span className="truncate grow">{item.preview}</span>
+                  {item.archived ? (
+                    <Badge tone="neutral">{t('panel.resume.archivedTag')}</Badge>
+                  ) : null}
+                  <Tip label={live && !item.archived ? t('panel.resume.archiveLive') : ''}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-icon"
+                      aria-label={
+                        target ? t('panel.resume.archive') : t('panel.resume.unarchive')
+                      }
+                      disabled={live && !item.archived}
+                      // The row is itself a button; without this the click would
+                      // also pick the row and open the session.
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        archiveSession(item.id, target);
+                      }}
+                    >
+                      {target ? <Archive size={13} /> : <ArchiveRestore size={13} />}
+                    </button>
+                  </Tip>
+                </div>
+                <div className="row" style={{ gap: 'var(--space-2)' }}>
+                  {/* The id is a footnote now, not the title: it is a timestamp
+                      (`YYYYMMDD-HHMMSS`) and the topic above is what identifies the
+                      conversation. It stays because it is the name `/resume` and the
+                      rail's own row use. */}
+                  <span className="mono faint">{item.id}</span>
+                  <span className="caption faint">{t('panel.resume.messages', { n: item.messages })}</span>
+                  <span className="caption faint">{t('panel.resume.steps', { n: item.steps })}</span>
+                  {/* `todos` is ready-made progress text; an empty string means
+                      there is no task list, which is not the same as zero. */}
+                  {item.todos ? <span className="caption faint">{item.todos}</span> : null}
+                </div>
+              </PanelRow>
+            );
+          })
         )}
       </PanelBody>
     </PanelShell>
