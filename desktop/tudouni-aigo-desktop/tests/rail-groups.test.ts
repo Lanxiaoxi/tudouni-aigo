@@ -44,10 +44,12 @@ import {
   createSessionBucket,
   railBlocked,
   selectLiveOnlyKey,
+  selectRowStatus,
   useApp,
   type AppStore,
   type SessionRuntime,
 } from '@/state/store';
+import { reduceEvent, type Entry } from '@/state/entries';
 
 /** A store with the given sessions and nothing else carried over. */
 function install(
@@ -438,4 +440,142 @@ test('with nothing open the rail is live', () => {
   // would pass both assertions above and disable the rail for ever.
   install({}, [], null);
   assert.equal(railBlocked(useApp.getState()), false);
+});
+
+/* ============================================================
+   Group 4: a red dot that would not go away
+   ============================================================ */
+
+/**
+ * Feed one audit record through the same path the store's `event` case uses.
+ *
+ * The status is a pure function of the transcript, so the interesting input is
+ * the **sequence of turns** that produced it — and replaying the real events is
+ * the only way to assert a state that depends on there having been two turns.
+ * `lookup` is the one option the reducer takes that needs no store: no tool row
+ * is drawn here.
+ */
+function replay(bucket: SessionRuntime, events: Record<string, unknown>[]): void {
+  for (const ev of events) {
+    const result = reduceEvent(bucket.entries, ev as never, {
+      activeRunId: bucket.activeRunId,
+      lastRunId: bucket.lastRunId,
+      lookup: () => null,
+      maxSteps: 100,
+    });
+    assert.ok(!result.stale, `the replay dropped ${ev.kind} as stale`);
+    bucket.entries = result.entries;
+    bucket.activeRunId =
+      result.startedRunId ?? (result.runEnded ? null : bucket.activeRunId);
+    bucket.lastRunId =
+      result.startedRunId ?? (result.runEnded ? (ev.run_id as string) : bucket.lastRunId);
+  }
+}
+
+/** The turn heads of a bucket, which is what the status is read off. */
+function heads(bucket: SessionRuntime): string[] {
+  return bucket.entries.flatMap((e: Entry) => (e.kind === 'turn' ? [e.status] : []));
+}
+
+test('a turn in flight is not outranked by a failure that is already history', () => {
+  // **The reported symptom: "it failed once and the red dot never went away."**
+  // `lastStopReason` reads the most recent *finished* turn, so after a
+  // `model_error` it kept answering `broken` — including while the next turn was
+  // running. The recovered turn below is exactly the real sequence from
+  // `.tudouni/logs/20261010-120142.jsonl`: `cancelled`, `answered`, `model_error`,
+  // then a turn that ran to completion. The retry ran for four minutes under a red
+  // dot while the status bar beside it read "running" — two surfaces of one window
+  // disagreeing about one session.
+  const bucket = handshaken('k1', 'C:/work', '20261010-120142');
+  install({ k1: bucket }, ['k1'], 'k1');
+
+  replay(bucket, [
+    { kind: 'run_started', run_id: 'r1', step: 0 },
+    { kind: 'run_finished', run_id: 'r1', step: 1, stop_reason: 'cancelled' },
+    { kind: 'run_started', run_id: 'r2', step: 0 },
+    { kind: 'run_finished', run_id: 'r2', step: 1, stop_reason: 'answered' },
+    { kind: 'run_started', run_id: 'r3', step: 0 },
+    { kind: 'run_finished', run_id: 'r3', step: 1, stop_reason: 'model_error' },
+  ]);
+
+  assert.equal(selectRowStatus(useApp.getState(), 'k1'), 'broken', 'the failure is reported');
+
+  // The person sends the next message, and it is working.
+  replay(bucket, [{ kind: 'run_started', run_id: 'r4', step: 0 }]);
+  install({ k1: bucket }, ['k1'], 'k1');
+
+  const status = selectRowStatus(useApp.getState(), 'k1');
+  assert.equal(heads(bucket).at(-1), 'running', 'the newest turn is the live one');
+  assert.equal(status, 'running', 'a session that is demonstrably working is not red');
+
+  // And it stays that way for the whole turn, not just its first frame.
+  replay(bucket, [
+    { kind: 'model_call', run_id: 'r4', step: 1, status: 'ok', duration_ms: 10 },
+    { kind: 'model_call', run_id: 'r4', step: 2, status: 'ok', duration_ms: 10 },
+  ]);
+  install({ k1: bucket }, ['k1'], 'k1');
+  assert.equal(selectRowStatus(useApp.getState(), 'k1'), 'running');
+});
+
+test('a turn that ends badly earns the red dot back', () => {
+  // The other half, and the half that makes the rule safe: the failure must still
+  // be reported for as long as it is the latest thing that happened. A fix that
+  // simply deleted `model_error` from the check would pass the test above and
+  // silently stop reporting the one state the dot exists for.
+  const bucket = handshaken('k1', 'C:/work', '20261010-120142');
+  replay(bucket, [
+    { kind: 'run_started', run_id: 'r1', step: 0 },
+    { kind: 'run_finished', run_id: 'r1', step: 1, stop_reason: 'model_error' },
+    { kind: 'run_started', run_id: 'r2', step: 0 },
+    { kind: 'run_finished', run_id: 'r2', step: 1, stop_reason: 'model_error' },
+  ]);
+  install({ k1: bucket }, ['k1'], 'k1');
+
+  assert.equal(selectRowStatus(useApp.getState(), 'k1'), 'broken');
+});
+
+test('a child that died unasked is red even with no live turn', () => {
+  // `runtimeExit` is the other failure the dot reports, and it is not in the
+  // transcript: `settleAbandonedTurn` closes the turn such a child was in, so
+  // there is no running turn for it to be outranked by. Asserted here because the
+  // reordered check must not have swallowed it.
+  const bucket = handshaken('k1', 'C:/work', '20261010-120142');
+  bucket.runtimeExit = { code: 1, requested: false };
+  install({ k1: bucket }, ['k1'], 'k1');
+
+  assert.equal(selectRowStatus(useApp.getState(), 'k1'), 'broken');
+});
+
+test('a failure outranks an unread finished turn, and asking outranks both', () => {
+  // The priority order is the point of the selector, so the pair that does **not**
+  // change is asserted too: a failure nobody has seen is still red rather than
+  // blue, and a session waiting on an approval is amber however it got there.
+  const bucket = handshaken('k1', 'C:/work', '20261010-120142');
+  bucket.unseen = true;
+  replay(bucket, [
+    { kind: 'run_started', run_id: 'r1', step: 0 },
+    { kind: 'run_finished', run_id: 'r1', step: 1, stop_reason: 'model_error' },
+  ]);
+  install({ k1: bucket }, ['k1'], 'k2');
+  assert.equal(selectRowStatus(useApp.getState(), 'k1'), 'broken', 'red over blue');
+
+  install({ k1: bucket }, ['k1'], 'k2', {
+    pendingModals: [
+      {
+        kind: 'permission',
+        key: 'k1',
+        req: {
+          id: 'p1',
+          tool: 'shell',
+          risk: 'high',
+          arguments: {},
+          remember: null,
+          remember_hint: null,
+          allow_trust_all: false,
+          trust_all_hint: null,
+        },
+      },
+    ] as AppStore['pendingModals'],
+  });
+  assert.equal(selectRowStatus(useApp.getState(), 'k1'), 'asking', 'amber over red');
 });

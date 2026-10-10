@@ -3949,17 +3949,35 @@ export function selectRowStatus(s: AppStore, key: string): RowStatus {
   // at all will happen until somebody acts.
   if (s.pendingModals.some((entry) => entry.key === key)) return 'asking';
 
+  // **A turn in flight outranks a failure that is already history**, and the
+  // order of these two blocks is the whole of one reported bug: a red dot that
+  // would not go away. `lastStopReason` reads the most recent **finished** turn,
+  // so after a `model_error` it keeps answering `broken` — including while the
+  // *next* turn is running, which is the one moment the session is demonstrably
+  // working. The retry that recovered from that failure was watched for its whole
+  // four minutes under a red dot while the status bar beside it read "running":
+  // two surfaces of one window disagreeing about one session, and the dot is the
+  // one with no action attached to it.
+  //
+  // A turn that ends badly brings the red back the instant it ends, because
+  // `lastStopReason` then names *that* turn — the failure is reported for as long
+  // as it is the latest thing that happened, never for ever.
+  if (hasRunningTurn(bucket.entries)) return 'running';
+
   // **Red is only for "you did not stop it, and it broke."** `interrupted`,
   // `step_limit` and `empty` are deliberately *not* here: pressing Esc three
   // times must not earn three red dots, or red stops meaning anything.
+  //
+  // A child that died unasked is the other half of the same judgement, and it is
+  // read off `runtimeExit` rather than the transcript: `settleAbandonedTurn`
+  // closes the turn such a child was in, so there is no running turn for it to
+  // have been outranked by above.
   const stop = lastStopReason(bucket.entries);
   const failed =
     stop === 'model_error' ||
     stop === 'model_fatal' ||
     (bucket.runtimeExit !== null && !bucket.runtimeExit.requested);
   if (failed) return 'broken';
-
-  if (hasRunningTurn(bucket.entries)) return 'running';
 
   // Finished, and nobody has looked. This is the state a three-colour scheme
   // would render as nothing, at exactly the moment it matters most.
