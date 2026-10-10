@@ -48,14 +48,17 @@ import { formatRelative } from '@/utils/format';
  * already uses: `asking` and `broken` both mean **a person has to do something**,
  * while `running` and `unseen` do not.
  *
- * The order is by who needs the person first — the same order `selectRowStatus`
- * ranks its own conditions in, so a card's column and its dot never disagree.
+ * The order is the one the person asked for: Idle first, then Working, then the
+ * two columns that want the person (Needs you), and Finished last — so the
+ * columns a session passes through while nobody is watching sit on the left,
+ * and the one that demands action sits nearest the middle. Inside a column a
+ * card keeps its creation order regardless.
  */
-const COLUMNS: { id: 'needs' | 'working' | 'finished' | 'idle'; statuses: RowStatus[]; title: TKey }[] = [
-  { id: 'needs', statuses: ['asking', 'broken'], title: 'board.col.needs' },
-  { id: 'working', statuses: ['running'], title: 'board.col.working' },
-  { id: 'finished', statuses: ['unseen'], title: 'board.col.finished' },
+const COLUMNS: { id: 'idle' | 'needs' | 'working' | 'finished'; statuses: RowStatus[]; title: TKey }[] = [
   { id: 'idle', statuses: ['idle'], title: 'board.col.idle' },
+  { id: 'working', statuses: ['running'], title: 'board.col.working' },
+  { id: 'needs', statuses: ['asking', 'broken'], title: 'board.col.needs' },
+  { id: 'finished', statuses: ['unseen'], title: 'board.col.finished' },
 ];
 
 export function SessionBoard() {
@@ -102,11 +105,16 @@ export function SessionBoard() {
         if (!bucket) return [];
         const id = bucket.sessionId;
         const row = id === null ? undefined : byId.get(id);
+        // `statusByKey` is keyed by **sessionId** (`selectRowStatusKey` builds
+        // `sessionId:status`), not by the child key this card is otherwise
+        // addressed by — looking the key up directly always missed and dropped
+        // every card into Idle, green running dots and all.
+        const status = id === null ? ('idle' as const) : (statusByKey.get(id) ?? 'idle');
         return [
           {
             key,
             id,
-            status: statusByKey.get(key) ?? 'idle',
+            status,
             preview: row?.preview ?? '',
             messages: row?.messages ?? null,
             steps: row?.steps ?? null,
