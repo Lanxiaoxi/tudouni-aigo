@@ -41,6 +41,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(windows)]
+use std::ffi::c_void;
 
 /// How long a graceful shutdown is given before the child is killed.
 ///
@@ -937,6 +939,90 @@ fn runtime_version(binary: String) -> Result<Option<String>, String> {
     Ok(version)
 }
 
+/// Keep the screen awake, or let it sleep.
+///
+/// This talks to the OS directly rather than through a Tauri API, for a
+/// concrete reason: the locked tauri 2.12 exposes no prevent-sleep method
+/// (checked against the crate source), and the `tauri-plugin-prevent-sleep`
+/// that provides one is published as a crate with no JavaScript bindings — so
+/// the windowing layer would be reached through a dependency that the front
+/// end cannot address. The native calls are one function each:
+///
+///   - **Windows**: `SetThreadExecutionState` from kernel32, loaded at runtime
+///     with `LoadLibrary`/`GetProcAddress` so no link dependency is added.
+///   - **macOS**: the IOKit display-sleep assertion pair.
+///
+/// The state is process-wide rather than per-window, which is the right
+/// scope: the question the OS must answer is "is work running in this
+/// program", and there is one process. Calling it twice with the same value
+/// is a no-op, so the front end may re-assert on every state change without
+/// tracking what it sent last.
+///
+/// `ES_DISPLAY_REQUIRED` and not only `ES_SYSTEM_REQUIRED`: the reported bug
+/// is the **screen lock**, and the system-required flag alone would still let
+/// the display go dark.
+///
+/// **The value is the front end's call, and this command only carries it.**
+/// The rule "wake only while a session is actually running, never while the app
+/// merely sits open" is a policy about sessions, and the sessions live in the
+/// front end's store — which is where it is enforced (see `keepAwake`).
+#[tauri::command]
+fn set_prevent_sleep(_app: AppHandle, on: bool) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        const ES_CONTINUOUS: u32 = 0x8000_0000;
+        const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
+
+        type SetThreadExecutionStateFn =
+            unsafe extern "system" fn(flags: u32) -> u32;
+
+        // The function has been in kernel32 since Windows 2000, so loading it
+        // at runtime is a portability formality rather than a compatibility
+        // gate — but the gate is kept anyway: a platform without it is a
+        // refusal with a sentence, not a crash inside a FFI call.
+        unsafe {
+            // Both lookups report failure as NULL, not as an Option.
+            let k32 = LoadLibraryA(b"kernel32.dll\0".as_ptr() as *const i16);
+            if k32.is_null() {
+                return Err("could not load kernel32.dll".to_string());
+            }
+            let f = GetProcAddress(k32, b"SetThreadExecutionState\0".as_ptr() as *const i8);
+            if f.is_null() {
+                return Err("SetThreadExecutionState was not found in kernel32.dll".to_string());
+            }
+            let set_state = std::mem::transmute::<*mut c_void, SetThreadExecutionStateFn>(f);
+            // Off means "no flags other than ES_CONTINUOUS": that is how the
+            // API spells "return to the default" rather than "nothing".
+            let flags = if on {
+                ES_CONTINUOUS | ES_DISPLAY_REQUIRED
+            } else {
+                ES_CONTINUOUS
+            };
+            let applied = set_state(flags);
+            if applied == 0 {
+                return Err("SetThreadExecutionState refused the change".to_string());
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = on;
+        Err("keeping the screen awake is not implemented on this platform yet")
+    }
+
+    Ok(())
+}
+
+// `LoadLibraryA` from kernel32. The calling process always has kernel32
+// mapped, and `LoadLibrary` itself lives in it, so this lookup never needs a
+// second library.
+#[cfg(windows)]
+unsafe extern "system" {
+    fn LoadLibraryA(name: *const i16) -> *mut c_void;
+    fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
+}
+
 /// The OS user name, for the greeting. The protocol has no such field, and the
 /// greeting omits the name when this returns nothing rather than saying
 /// "unknown".
@@ -1229,6 +1315,7 @@ pub fn run() {
             runtime_kill,
             runtime_version,
             runtime_stderr,
+            set_prevent_sleep,
             os_user_name,
             workspace_check,
             image_stash,

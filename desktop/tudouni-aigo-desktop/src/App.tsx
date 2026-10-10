@@ -5,6 +5,7 @@ import { activeRuntime, NO_ENTRIES, NO_NOTES, useApp } from '@/state/store';
 import { conversationView, showsComposer } from '@/conversationView';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
+import { useKeepAwake } from '@/hooks/useKeepAwake';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useInputModality } from '@/hooks/useInputModality';
 import { useSidebarHiddenByCss } from '@/hooks/useLayout';
@@ -33,6 +34,10 @@ import { QuestionModal } from '@/components/modals/QuestionModal';
 export function App() {
   useRuntimeBridge();
   useGlobalKeys();
+  // The OS's screen lock does not know a session is running, so a long turn
+  // ends at an arbitrary wall-clock moment. This holds the display awake
+  // while any open session has a turn in flight, and releases it otherwise.
+  useKeepAwake();
   useFileDrop();
   // Publishes `data-input-mode` on <html>, which is what tells a pointer-driven
   // focus from a keyboard one. `:focus-visible` cannot do it for a text field.
