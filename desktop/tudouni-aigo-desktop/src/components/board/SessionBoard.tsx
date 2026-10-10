@@ -109,6 +109,17 @@ export function SessionBoard() {
         // addressed by — looking the key up directly always missed and dropped
         // every card into Idle, green running dots and all.
         const status = id === null ? ('idle' as const) : (statusByKey.get(id) ?? 'idle');
+        // The task tally is read from the child's own `ui(state)` snapshot,
+        // never from the saved row. The saved list is rebuilt at turn
+        // boundaries only, so its `todos` sentence trails the live list by up
+        // to a whole turn — a bar fed from it would show stale progress for
+        // exactly the running cards that should be moving. The snapshot is
+        // pushed every step (the same source the rail's Tasks block draws),
+        // which makes it the one source whose freshness is guaranteed.
+        const live = bucket.uiState?.todos ?? [];
+        const todoDone = live.filter((task) => task.status === 'completed').length;
+        const todoTotal = live.length;
+        const todoSentence = row?.todos ?? '';
         return [
           {
             key,
@@ -117,9 +128,9 @@ export function SessionBoard() {
             preview: row?.preview ?? '',
             messages: row?.messages ?? null,
             steps: row?.steps ?? null,
-            todos: row?.todos ?? '',
-            todoDone: row?.todoDone ?? 0,
-            todoTotal: row?.todoTotal ?? 0,
+            todoDone,
+            todoTotal,
+            todos: todoSentence,
             model: bucket.session?.model ?? '',
             provider: bucket.session?.provider ?? '',
             modifiedAt: row?.modifiedAt ?? null,

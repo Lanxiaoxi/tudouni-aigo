@@ -855,13 +855,6 @@ export interface SessionListItem {
   steps: number;
   /** Ready-made progress text; empty string means no tasks. */
   todos: string;
-  /**
-   * The task tally in numbers, beside the pre-rendered sentence in `todos`:
-   * a front end that draws a bar reads these, never the sentence's wording.
-   * `0, 0` means no list; both are always stated, absent included.
-   */
-  todo_done: number;
-  todo_total: number;
   /** Truncated preview of the first user message; empty means never spoke. */
   preview: string;
   /** Epoch **seconds**, or null when the file could not be read. */

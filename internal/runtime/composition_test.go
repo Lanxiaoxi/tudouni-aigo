@@ -92,24 +92,6 @@ func TestSessionSummariesCountsMessagesStepsAndTodos(t *testing.T) {
 	if todos == "" {
 		t.Error("todos line is empty for a session with a task list")
 	}
-	// The structured tally sits beside the pre-rendered sentence: a front end
-	// drawing a bar reads the numbers, never the sentence's wording.
-	if row["todo_done"] != 1 || row["todo_total"] != 2 {
-		t.Errorf("todo counts = %v/%v, want 1/2", row["todo_done"], row["todo_total"])
-	}
-	// Zero totals are stated even with no list, never left absent — the same
-	// never-optional rule `archived` follows on every row.
-	session2 := state.NewEmptySession("20260101-130000")
-	session2.CreatedAt = 200
-	session2.Append(map[string]any{"role": "user", "content": "hello"})
-	if err := store.Save(session2); err != nil {
-		t.Fatalf("save second: %v", err)
-	}
-	rows = SessionSummaries(store, 50, true)
-	row = rows[0]
-	if row["todo_done"] != 0 || row["todo_total"] != 0 {
-		t.Errorf("todo counts without a list = %v/%v, want 0/0", row["todo_done"], row["todo_total"])
-	}
 }
 
 // TestSessionSummariesKeepsAnUnreadableFile: a file that cannot be read stays on

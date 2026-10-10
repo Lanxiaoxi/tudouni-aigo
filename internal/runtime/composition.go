@@ -201,13 +201,6 @@ func SessionSummaries(store *state.SessionStore, limit int, includeArchived bool
 			"messages":   0,
 			"steps":      0,
 			"todos":      "",
-			// The board's tally in numbers, beside the pre-rendered sentence in
-			// `todos`: a front end that draws a bar needs the two separately, and
-			// parsing them out of the sentence would break on rewording. `0, 0`
-			// means "no list", and every row states them, absent included — the
-			// same never-optional rule `archived` follows below.
-			"todo_done":  0,
-			"todo_total": 0,
 			"preview":    "",
 			"modified_at": nil,
 			// Always stated, like every other field here: a front end drawing an
@@ -235,7 +228,6 @@ func SessionSummaries(store *state.SessionStore, limit int, includeArchived bool
 		if line := todoProgressLine(summary.Metadata); line != "" {
 			row["todos"] = line
 		}
-		row["todo_done"], row["todo_total"] = builtin.TodoCounts(summary.Metadata)
 		row["preview"] = summary.Preview
 		out = append(out, row)
 	}

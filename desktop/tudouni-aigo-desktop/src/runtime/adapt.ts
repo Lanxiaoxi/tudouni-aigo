@@ -222,13 +222,6 @@ export interface VmSessionListItem {
   steps: number;
   /** Ready-made progress text; empty means no tasks. */
   todos: string;
-  /**
-   * The task tally in numbers, beside the pre-rendered sentence in `todos`:
-   * a front end that draws a bar reads these, never the sentence's wording.
-   * `0, 0` means no list; both are always stated, absent included.
-   */
-  todoDone: number;
-  todoTotal: number;
   /** Empty means the session never spoke. */
   preview: string;
   /** Epoch **seconds**, or null when unreadable. */
@@ -512,11 +505,6 @@ export function projectSessionList(items: SessionListItem[] | undefined): VmSess
     messages: num(row.messages) ?? 0,
     steps: num(row.steps) ?? 0,
     todos: str(row.todos),
-    // Legacy runtimes (an older staged binary) send no tally; the sentence in
-    // `todos` still carries the fact, so absence degrades to "no bar", not to a
-    // wrong bar. Same defensive reading as `num(...) ?? 0` everywhere else here.
-    todoDone: num(row.todo_done) ?? 0,
-    todoTotal: num(row.todo_total) ?? 0,
     preview: str(row.preview),
     modifiedAt: num(row.modified_at),
     // `bool` rather than a truthiness test: the runtime always sends it, and a

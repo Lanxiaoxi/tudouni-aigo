@@ -182,25 +182,6 @@ func loadTodos(metadata map[string]any) []todoEntry {
 	return out
 }
 
-// TodoCounts returns the board's tally: how many items are completed and how
-// many the list holds, or `0, 0` when there is no list.
-//
-// It is for surfaces that draw **a bar**, not the pre-rendered progress sentence
-// (`ProgressLine`): a bar needs the two numbers separately, and parsing them back
-// out of the sentence would break the moment its wording changed or was
-// translated. Like `TodoRows` it goes through `loadTodos`, so it inherits the
-// two-shape tolerance at the source instead of hoping each caller got the in-memory
-// versus on-disk distinction right.
-func TodoCounts(metadata map[string]any) (done int, total int) {
-	items := loadTodos(metadata)
-	for _, item := range items {
-		if item.Status == Completed {
-			done++
-		}
-	}
-	return done, len(items)
-}
-
 // TodoRows returns the stored list in the shape a front end reads: a plain `[]any`
 // of `{content, status}` maps, empty when there is no list.
 //
