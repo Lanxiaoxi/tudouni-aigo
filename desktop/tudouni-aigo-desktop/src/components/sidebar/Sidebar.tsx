@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
-import { CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
+import { CheckCircle2, ChevronRight, CircleDashed, Loader, PanelRightClose } from 'lucide-react';
 import { NO_SKILLS, useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
+import { Logo } from '@/components/ui/Logo';
 import { oneLine } from '@/utils/format';
 import type { JobState } from '@/protocol/types';
 import type { VmGoal, VmJob, VmMcp, VmTask } from '@/runtime/adapt';
@@ -40,6 +41,7 @@ export function Sidebar() {
   if (!snap) {
     return (
       <aside className="app-sidebar">
+        <RailHead />
         <div className="sidebar-inner">
           <div className="caption" style={{ padding: 'var(--space-3) var(--space-2)' }}>
             {t('common.loading')}
@@ -56,6 +58,7 @@ export function Sidebar() {
 
   return (
     <aside className="app-sidebar">
+      <RailHead />
       <div className="sidebar-inner scroll">
         {/* 1 · Goal */}
         <Block
@@ -145,6 +148,66 @@ export function Sidebar() {
         </Block>
       </div>
     </aside>
+  );
+}
+
+/* ---------------- the rail's own head ---------------- */
+
+/**
+ * The right rail's head: the mark, **what this rail is**, and the way to put it
+ * away.
+ *
+ * It is the left rail's head mirrored (`.lb-head`), deliberately: the two rails
+ * flank the transcript, and one of them starting with a named head while the
+ * other began straight at "Goal" made them read as two unrelated designs rather
+ * than as a pair.
+ *
+ * **The mark is on both on purpose.** The left head carries it as the window's
+ * identity; here it identifies whose "Session runtime" this is — the same
+ * application's. It is the application icon file, not a second drawing (see
+ * `Logo`), so the two marks cannot drift apart.
+ *
+ * **The collapse control is drawn here, and that is a correction to what this
+ * rail had before.** `Ctrl+B` was the only way to fold it, plus the `Show`
+ * button in `CollapsedSummary` once it was already gone — which is a control
+ * *inside* the thing that hides it, i.e. unusable for the act of hiding.
+ * `SessionBar` solved exactly this for the left rail by keeping its toggle
+ * outside the rail; here the rail's head is the equivalent place, because the
+ * rail is only folded by its own width and the head scrolls with nothing (the
+ * blocks below scroll, this does not — see the CSS).
+ *
+ * It is `disabled` while the session board is up, and that is not tidiness:
+ * `showSidebar` is derived (`sidebarVisible && !hiddenByCss && !boardOpen`), so
+ * toggling the preference under the board would change nothing on screen and
+ * then bring the rail back in the opposite state — the "a key that appears to do
+ * nothing" failure `Ctrl+B` already refuses (`useGlobalKeys`). The two must
+ * agree, so they ask the same question.
+ */
+function RailHead() {
+  const t = useT();
+  const boardOpen = useApp((s) => s.boardOpen);
+  const toggleSidebar = useApp((s) => s.toggleSidebar);
+
+  return (
+    <div className="rb-head">
+      <Logo size={20} title={t('app.name')} />
+      <span className="rb-title">{t('rail.head')}</span>
+      <Tip label={t('rail.collapse')}>
+        <button
+          type="button"
+          // The shared rail icon-button shape (`.lb-icon`), which the board's
+          // close control already borrows. One shape, so the two heads' buttons
+          // cannot drift into two sizes.
+          className="lb-icon"
+          aria-label={t('rail.collapse')}
+          aria-keyshortcuts="Control+B"
+          disabled={boardOpen}
+          onClick={toggleSidebar}
+        >
+          <PanelRightClose size={15} />
+        </button>
+      </Tip>
+    </div>
   );
 }
 

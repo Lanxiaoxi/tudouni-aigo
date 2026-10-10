@@ -768,6 +768,51 @@
    §3 侧栏 5 区块
    ============================================================ */
 
+/* The right rail's own head: mark + "Session runtime" + the way to fold it.
+   The left rail's `.lb-head` (§3b below), crossed over that rail's own axis: the
+   same order (mark, title, button) and the same numbers, with the **padding
+   swapped**, so the roomier side (12px) is against the window's outer frame in
+   both rails — the left head's left edge, this one's right edge. The mark ends up
+   on this rail's inner side and the button on the outer one, which is where each
+   belongs: the button is the one a pointer aims at from the window's edge.
+
+   The height and the `border-bottom` are deliberately the same number as
+   `.lb-head`'s. The two heads sit at one height on either side of the
+   transcript, so indeed they draw one horizontal band across the window, and a
+   height difference here shows up as a step at the transcript's edges rather
+   than as a wrong header. Change one, change both.
+
+   `flex: none` is the left head's too, and it is not tidiness: only
+   `.sidebar-inner` scrolls, and a head that scrolled would let the goal text
+   push the rail's own identity off the top, which is the failure the left head's
+   comment names. */
+.rb-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 42px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* Sans, where the left head's brand is mono. The left head carries a product
+   name, which the mono face suits; this one is a description of the rail, and
+   mono on a two-word English sentence reads as code. Same size and weight as
+   `.lb-brand` so the two heads' text lines up in rank — the hierarchy that
+   matters is against the block titles below (13px / 600 / `--fg-secondary`),
+   and this head is one step above them. */
+.rb-head .rb-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-h2);
+  font-weight: 600;
+  color: var(--fg);
+}
+
 .sidebar-inner {
   flex: 1 1 auto;
   min-height: 0;

@@ -324,6 +324,12 @@ export const en = {
   'modal.queued': '{n} more waiting',
 
   /* ---------------- sidebar blocks ---------------- */
+  /* The right rail's own head. It says what the rail is, because its five blocks
+     below say what is *in it* and none of them names the rail itself. The word
+     is the running runtime's, not the transcript's: everything below is a fact
+     about the session in flight. */
+  'rail.head': 'Session runtime',
+  'rail.collapse': 'Hide this sidebar',
   'block.goal': 'Goal',
   'block.tasks': 'Tasks',
   'block.skills': 'Loaded skills',

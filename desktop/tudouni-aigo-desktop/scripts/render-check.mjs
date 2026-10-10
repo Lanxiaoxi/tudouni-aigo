@@ -665,6 +665,21 @@ async function main() {
       toggleInTopbar: !!q('.topbar .rail-toggle'),
       toggleFirstInBar: q('.sessionbar')?.firstElementChild?.classList.contains('rail-toggle') ?? null,
       store: { leftbarVisible: st.leftbarVisible, sidebarVisible: st.sidebarVisible },
+      // The right rail's own head: the title, the mark, and the way out.
+      rightHead: q('.rb-head')?.innerText?.replace(/\\s+/g,' ').trim() ?? null,
+      rightHeadButton: !!q('.rb-head button'),
+      rightHeadButtonDisabled: q('.rb-head button')?.disabled ?? null,
+      // The head must sit **outside** the scrolling region: a head that scrolled
+      // would let the goal text push the rail's own name off the top, which is
+      // the failure the left head's comment names.
+      rightHeadInScroller: !!q('.sidebar-inner .rb-head'),
+      rightHeadMark: !!q('.rb-head .app-mark'),
+      band: {
+        leftTop: Math.round(q('.lb-head')?.getBoundingClientRect().top ?? -1),
+        rightTop: Math.round(q('.rb-head')?.getBoundingClientRect().top ?? -1),
+        leftH: Math.round(q('.lb-head')?.getBoundingClientRect().height ?? -1),
+        rightH: Math.round(q('.rb-head')?.getBoundingClientRect().height ?? -1),
+      },
     });
   })()`);
 
@@ -686,6 +701,42 @@ async function main() {
   if (bt.toggleInTopbar) throw new Error('the rail toggle is still in the top bar');
   if (bt.toggleFirstInBar !== true) {
     throw new Error('the rail toggle is not the first element in the session bar');
+  }
+
+  // ---- the right rail's own head ----
+  //
+  // The mirror of the left rail's head, and the reasons it is asserted are the
+  // same ones: a missing title renders as a rail that starts at "Goal" with
+  // nothing saying what the rail *is*, and a missing collapse control leaves
+  // `Ctrl+B` as the only way to fold it — plus a `Show` button that lives inside
+  // the thing it would show, which is a control that cannot perform its own act.
+  //
+  // The head being **outside** `.sidebar-inner` is the non-obvious half. Both
+  // rails keep their head out of the scrolling region; put it inside and the
+  // goal text scrolls the rail's own name off the top. That is invisible in a
+  // rendering where the blocks happen to fit.
+  if (bt.rightHead === null) throw new Error('the right rail has no head');
+  if (!bt.rightHead.includes('Session runtime')) {
+    throw new Error(`the right rail's head does not name the rail: "${bt.rightHead}"`);
+  }
+  if (!bt.rightHeadMark) {
+    throw new Error('the right rail\'s head has no mark, so the two heads do not read as a pair');
+  }
+  if (bt.rightHeadInScroller) {
+    throw new Error('the right rail\'s head is inside the scrolling region: the goal text will push it off');
+  }
+  if (!bt.rightHeadButton) {
+    throw new Error("the right rail's head has no collapse control: `Ctrl+B` would be the only way out");
+  }
+  if (bt.rightHeadButtonDisabled === true) {
+    throw new Error("the right rail's collapse control starts disabled with no board open");
+  }
+  // One horizontal band across the window: the two heads are read as a pair, so
+  // a height difference shows up as a step at the transcript's edges.
+  if (bt.band.leftH !== bt.band.rightH || bt.band.leftTop !== bt.band.rightTop) {
+    throw new Error(
+      `the two rail heads do not form one band: left ${JSON.stringify({ h: bt.band.leftH, y: bt.band.leftTop })} vs right ${JSON.stringify({ h: bt.band.rightH, y: bt.band.rightTop })}`,
+    );
   }
 
   // Press the left rail's own collapse button, as a person would.
@@ -729,6 +780,53 @@ async function main() {
   if (!(as.rightW > WIDE)) throw new Error('restoring the left rail took the right one with it');
   if (as.store.leftbarVisible !== true) throw new Error('the restore did not reach the preference');
   if (as.leftInert) throw new Error('the restored left rail is still inert');
+
+  // And the right rail's own control, pressed as a person would press it. This
+  // is the same crossed-setter defect from the other side: the new button is the
+  // third control in this window that folds a rail, and the two setters take the
+  // same `boolean`, so a copy-paste between them type-checks and hides the wrong
+  // rail. The left rail's button is checked above; this is the right one's.
+  await evaluate(`(() => {
+    document.querySelector('.rb-head .lb-icon').click();
+    return true;
+  })()`);
+  await sleep(500);
+
+  const afterRightHide = await railState();
+  console.log('after hiding the right rail from its own head:', afterRightHide);
+  const rh = JSON.parse(afterRightHide ?? '{}');
+  if (rh.rightW > FOLDED) throw new Error(`the right rail did not fold away: width ${rh.rightW}`);
+  if (rh.leftW < WIDE) {
+    throw new Error(`the right rail's control hid the left one (width ${rh.leftW}) — the two setters are crossed`);
+  }
+  if (rh.store.leftbarVisible !== true) {
+    throw new Error("the right rail's control wrote the left rail's preference");
+  }
+  if (rh.store.sidebarVisible !== false) {
+    throw new Error("the right rail's control did not write its own preference");
+  }
+
+  // Back up with the summary row's own button: while the rail is hidden that row
+  // is the only control on screen that can bring it back, and it is the half of
+  // this that a `Ctrl+B`-only implementation would be missing.
+  const summaryShow = await evaluate(`(() => {
+    const btn = document.querySelector('.collapsed-summary button');
+    if (!btn) return null;
+    btn.click();
+    return btn.innerText.trim();
+  })()`);
+  await sleep(500);
+  const afterRightShow = await railState();
+  console.log('after restoring the right rail:', afterRightShow);
+  if (summaryShow === null) {
+    throw new Error('no control in the collapsed summary row: the right rail has no way back');
+  }
+  const rs2 = JSON.parse(afterRightShow ?? '{}');
+  if (!(rs2.rightW > WIDE)) throw new Error(`the right rail did not come back: width ${rs2.rightW}`);
+  if (rs2.store.sidebarVisible !== true) throw new Error('the restore did not reach the preference');
+  if (rs2.rightHeadButtonDisabled === true) {
+    throw new Error('the right rail\'s collapse control is disabled while the rail is on screen');
+  }
 
   // The session list, as the runtime answers it. `messages`, `steps`, `todos`
   // and `preview` are all computed by the runtime — this rail counts nothing
