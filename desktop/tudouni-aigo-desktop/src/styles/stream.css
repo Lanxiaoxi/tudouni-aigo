@@ -2437,17 +2437,38 @@
   color: var(--fg);
 }
 
-/* The runtime's own progress line ("2/5 done, now: …"), shown only where a
-   list mid-run means something. One line, clipped: the full text is in
-   `title`, and a wrapped progress line would make a two-line card three. */
+/* The two shapes of the progress row. With the tally on hand it is a flex row:
+   the kit's bar flexes to the card's width and the n/m count sits fixed at its
+   right, which is the one place a fraction reads as a fraction. Without the
+   tally it degrades to the runtime's own sentence — one clipped line, the full
+   text in `title`, and a wrapped progress line would make a two-line card
+   three. */
 .board-card-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-bottom: var(--space-1);
+}
+
+.board-card-progress > .progress {
+  min-width: 0;
+}
+
+.board-card-progress-count {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-card-progress-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
   color: var(--fg-muted);
-  margin-bottom: var(--space-1);
 }
 
 /* The foot, on two rows: the model chip gets its own line above the counts +

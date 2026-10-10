@@ -9,7 +9,7 @@ import {
 } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
-import { EmptyState, Tip } from '@/components/ui/kit';
+import { EmptyState, Progress, Tip } from '@/components/ui/kit';
 import { formatRelative } from '@/utils/format';
 
 /**
@@ -118,6 +118,8 @@ export function SessionBoard() {
             messages: row?.messages ?? null,
             steps: row?.steps ?? null,
             todos: row?.todos ?? '',
+            todoDone: row?.todoDone ?? 0,
+            todoTotal: row?.todoTotal ?? 0,
             model: bucket.session?.model ?? '',
             provider: bucket.session?.provider ?? '',
             modifiedAt: row?.modifiedAt ?? null,
@@ -199,10 +201,15 @@ export function SessionBoard() {
                 // The progress row renders only for the two states in which a
                 // task list means something: the turn in flight, or the turn
                 // waiting on a person mid-list. Idle and Finished do not.
+                // A bar needs the tally in numbers (`todoDone`/`todoTotal`,
+                // the runtime's own counts); the pre-rendered sentence in
+                // `todos` is the fallback when the tally has not landed —
+                // wrong to parse the sentence for numbers, wrong to show
+                // nothing when the fact is on hand.
+                const showProgress = card.status === 'running' || isAsking;
+                const hasTally = showProgress && card.todoTotal > 0;
                 const progressText =
-                  (card.status === 'running' || isAsking) && card.todos !== ''
-                    ? card.todos
-                    : null;
+                  showProgress && !hasTally && card.todos !== '' ? card.todos : null;
                 return (
                   <button
                     key={card.key}
@@ -252,12 +259,27 @@ export function SessionBoard() {
                       </span>
                     )}
                     {/* The task progress, only where a list mid-run means
-                        something (see `progressText`). The runtime's own
-                        progress line ("2/5 done, now: …") is shown verbatim —
-                        it is what the rail row would read too, and rewording
-                        it here would be a second source for one fact. */}
-                    {progressText ? (
-                      <span className="board-card-progress" title={progressText}>
+                        something (see `showProgress`). With the tally on hand
+                        it is the kit's `Progress` bar plus "n/m" — the same
+                        component the rail's Tasks block draws, in the card's
+                        own tones (accent for running, amber for asking),
+                        because a second bar design would be a second idiom
+                        for one fact. Without the tally the runtime's own
+                        progress sentence ("2/5 done, now: …") shows verbatim
+                        instead — it is what the rail row would read too. */}
+                    {hasTally ? (
+                      <span className="board-card-progress">
+                        <Progress
+                          value={card.todoDone}
+                          max={card.todoTotal}
+                          tone={isAsking ? 'warn' : undefined}
+                        />
+                        <span className="board-card-progress-count mono">
+                          {card.todoDone}/{card.todoTotal}
+                        </span>
+                      </span>
+                    ) : progressText ? (
+                      <span className="board-card-progress-text" title={progressText}>
                         {progressText}
                       </span>
                     ) : null}
