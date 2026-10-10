@@ -1353,11 +1353,7 @@ func openContext(session *state.Session, chat model.ChatModel, catalog state.Reg
 		}
 	}
 
-	var window *int
-	if ref, ok := catalog.Find(chat.ModelName(), chat.ProviderName()); ok && ref.Window != nil {
-		value := *ref.Window
-		window = &value
-	}
+	window := windowFor(chat.ModelName(), chat.ProviderName(), catalog)
 
 	manager := ctxwin.NewManager(store, restored, ctxwin.NewBudget(window),
 		func(current *ctxwin.ContextState) {
@@ -2075,6 +2071,7 @@ func (r *Runtime) SetModel(name string) (bool, string) {
 	r.ModelState.SelectRoute(ref.Provider, ref.ID, 0)
 	r.applyDefaultEffortFor(ref)
 	r.syncReasoning()
+	r.rebindContextWindow()
 	r.checkpoint()
 
 	if previous == "" {
@@ -2155,6 +2152,30 @@ func (r *Runtime) syncReasoning() {
 	r.Chat.SetReasoning(r.ModelState.Thinking(), r.ModelState.Effort())
 }
 
+// rebindContextWindow re-points the context budget at the model now in use.
+//
+// **The budget is built once, at assembly, and a model switch does not rebuild
+// it.** That is the whole bug this fixes: `/model` moves the adapter, the session
+// record and the audit, and the context layer kept whatever window it was handed
+// when the runtime opened. A session that opened on a 262144 model and moved to a
+// 524288 one went on compacting at the smaller model's threshold — it folded
+// history at ~200k on a half-million-token window, which reads from the outside
+// as "the context window was misjudged". The ledger made the contradiction
+// visible in one screen: `window` tracked the live model while `limit_tokens`
+// did not.
+//
+// Nil-safe on both sides. A runtime assembled without a context layer has
+// nothing to re-point, and a model that declares no window turns the budget
+// **off** (see Budget.SetWindow) rather than keeping a ceiling that belonged to
+// a model this session is no longer talking to.
+func (r *Runtime) rebindContextWindow() {
+	if r.ContextValue == nil {
+		return
+	}
+	r.ContextValue.Budget.SetWindow(
+		windowFor(r.Chat.ModelName(), r.Chat.ProviderName(), r.Catalog))
+}
+
 // routeNames lists the configured route names, for a "no such route" message that
 // tells the user what there is.
 func routeNames(catalog state.Registry) []string {
@@ -2214,12 +2235,29 @@ func (r *Runtime) todos() []any {
 	return builtin.TodoRows(r.SessionValue.Metadata)
 }
 
-func (r *Runtime) modelWindow() any {
-	ref, ok := r.Catalog.Find(r.Chat.ModelName(), r.Chat.ProviderName())
+// windowFor is the declared context window of one catalogue entry, or nil when
+// the model is unknown or declares none.
+//
+// It is one function because two callers have to agree: assembling the context
+// budget and re-pointing it after a model switch. A second lookup would be a
+// second answer to "how big is this model's window", and the symptom when they
+// disagree is a budget that compacts against one model while the request goes to
+// another.
+func windowFor(modelID, provider string, catalog state.Registry) *int {
+	ref, ok := catalog.Find(modelID, provider)
 	if !ok || ref.Window == nil {
 		return nil
 	}
-	return *ref.Window
+	value := *ref.Window
+	return &value
+}
+
+func (r *Runtime) modelWindow() any {
+	window := windowFor(r.Chat.ModelName(), r.Chat.ProviderName(), r.Catalog)
+	if window == nil {
+		return nil
+	}
+	return *window
 }
 
 func (r *Runtime) contextTokens() any { return r.modelWindow() }

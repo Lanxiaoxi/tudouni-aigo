@@ -143,6 +143,29 @@ func NewBudget(maxTokens *int) *Budget {
 	}
 }
 
+// SetWindow re-points the budget at another model's window.
+//
+// It exists because a session outlives the model it opened on. The budget is
+// built once, when the context layer is assembled, from whatever model the
+// adapter carried **then**; a `/model` after that moves the adapter but leaves
+// the budget behind. Left alone, a switch to a model with a larger window keeps
+// compacting and degrading against the smaller one, and the symptom reads as a
+// false bug report: "it compacted at 200k on a 512k model". The ledger shows the
+// contradiction in one screen — `window` follows the live model while
+// `limit_tokens` does not.
+//
+// Nil means the new model declares no window, and the budget switches **off**
+// rather than keeping the previous ceiling: that ceiling belonged to a model
+// this session is no longer talking to, and acting on it would degrade a context
+// that fits.
+//
+// The calibration factor is deliberately kept. It is a ratio of measured to
+// estimated tokens for this provider's tokenizer, not a property of the window,
+// and re-learning it would make the first estimate after every switch wrong.
+func (b *Budget) SetWindow(maxTokens *int) {
+	b.MaxTokens = maxTokens
+}
+
 // Enabled reports whether a ceiling exists at all. When it does not, Fit does
 // nothing but count.
 func (b *Budget) Enabled() bool {

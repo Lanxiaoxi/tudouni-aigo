@@ -234,6 +234,48 @@ func TestDegradeOrderIsDetermined(t *testing.T) {
 	}
 }
 
+// TestSetWindowRepointsTheCeilingAndKeepsTheCalibrationFactor pins both halves of
+// a re-point: the limit moves to the new window, and the factor survives.
+//
+// Keeping the factor is deliberate rather than incidental. It is a ratio of
+// measured to estimated tokens for one provider's tokenizer, not a property of
+// the window; throwing it away on every model switch would make the first
+// estimate after each switch wrong again, which is exactly the noise Calibrate
+// exists to remove.
+func TestSetWindowRepointsTheCeilingAndKeepsTheCalibrationFactor(t *testing.T) {
+	budget := NewBudget(windowOf(100_000))
+	if got := budget.Calibrate(50_000, 90_000); got == 1.0 {
+		t.Fatalf("a large sample did not move the factor (still %v)", got)
+	}
+	before := budget.Factor()
+
+	budget.SetWindow(windowOf(500_000))
+	if got, want := budget.EffectiveLimit(), (500000-4096)*9/10; got != want {
+		t.Errorf("limit after SetWindow = %d, want %d", got, want)
+	}
+	if budget.Factor() != before {
+		t.Errorf("SetWindow moved the calibration factor: %v → %v", before, budget.Factor())
+	}
+}
+
+// TestSetWindowToNilTurnsTheBudgetOff: a model that declares no window must not
+// inherit the previous model's ceiling. The old ceiling would degrade a context
+// that fits, and "why can the model not see the whole file" would have no answer.
+func TestSetWindowToNilTurnsTheBudgetOff(t *testing.T) {
+	budget := NewBudget(windowOf(100_000))
+	if !budget.Enabled() {
+		t.Fatal("a budget with a window is not enabled")
+	}
+
+	budget.SetWindow(nil)
+	if budget.Enabled() {
+		t.Errorf("a nil window left the budget enabled (limit %d)", budget.EffectiveLimit())
+	}
+	if budget.CompactThreshold() != 0 {
+		t.Errorf("a nil window still reports a compaction threshold of %d", budget.CompactThreshold())
+	}
+}
+
 // TestCalibrationIgnoresSmallSamples ...
 //
 // In a 200-token request the absolute error is tiny while the ratio can be absurd
