@@ -348,6 +348,22 @@ func (c *Config) build(flat []directive) {
 // find no user at all and fall back to the local login name, which is a different
 // account on the far end.
 func (c *Config) Lookup(alias string) (Host, error) {
+	return c.lookup(alias, "")
+}
+
+// LookupWithPassword resolves an alias knowing a password may be supplied at
+// connect time.
+//
+// The password is applied **during resolution** rather than after it, and that
+// order is the point: a host with no key configured must not be refused at the
+// resolve step when the caller holds a password that answers the same question.
+// A non-empty password also wins over whatever the Host block said, so a caller
+// can override the stored credential for one session without editing the file.
+func (c *Config) LookupWithPassword(alias, password string) (Host, error) {
+	return c.lookup(alias, password)
+}
+
+func (c *Config) lookup(alias, overridePassword string) (Host, error) {
 	requested := strings.TrimSpace(alias)
 	if requested == "" {
 		return Host{}, fmt.Errorf("no host was named")
@@ -482,6 +498,13 @@ func (c *Config) Lookup(alias string) (Host, error) {
 				resolved.IdentityFiles = append(resolved.IdentityFiles, candidate)
 			}
 		}
+	}
+	// The call-time password is applied here, **before** the key-or-password
+	// refusal below: an override must widen what is reachable, and applying it
+	// after the refusal would mean a host with no key stays unreachable no matter
+	// what password the caller holds.
+	if strings.TrimSpace(overridePassword) != "" {
+		resolved.Password = overridePassword
 	}
 	if len(resolved.IdentityFiles) == 0 && strings.TrimSpace(resolved.Password) == "" {
 		return Host{}, fmt.Errorf(

@@ -187,6 +187,68 @@ func connectAndGet(t *testing.T, manager *Manager, alias string) Info {
 	return info
 }
 
+// passwordConfig is `prodConfig` minus the key: a host that can only be reached
+// with a password, which is the shape every password-override test needs.
+func passwordConfig(t *testing.T) (configPath, home string) {
+	t.Helper()
+	configPath, home = writeConfig(t, `
+Host prod
+    HostName 10.0.1.5
+    User deploy
+`)
+	return configPath, home
+}
+
+// TestOverridePasswordMakesKeylessHostReachable: the whole reason the password
+// override exists — a host with no key anywhere, reached by passing a password at
+// connect time. It also pins the order: the override is applied during resolution,
+// not after it, or the "no private key" refusal would fire first.
+func TestOverridePasswordMakesKeylessHostReachable(t *testing.T) {
+	configPath, home := passwordConfig(t)
+	fake := newFakeChannel()
+	manager := newTestManager(t, configPath, home, fake)
+	defer manager.CloseAll()
+
+	info, err := manager.ConnectWithPassword("prod", "chu123", 0, 0, time.Second)
+	if err != nil {
+		t.Fatalf("ConnectWithPassword refused a keyless host despite a password: %v", err)
+	}
+	waitForStatus(t, manager, info.ID, StatusRunning)
+}
+
+// TestOverridePasswordWithoutKeyAndNoPasswordStillRefused: missing both
+// credentials is still refused, so the escape hatch cannot become a laxer default.
+func TestOverridePasswordWithoutKeyAndNoPasswordStillRefused(t *testing.T) {
+	configPath, home := passwordConfig(t)
+	manager := newTestManager(t, configPath, home, newFakeChannel())
+	defer manager.CloseAll()
+
+	if _, err := manager.Connect("prod", 0, 0, time.Second); err == nil {
+		t.Fatal("Connect succeeded with no key and no password")
+	}
+}
+
+// TestResolveWithPasswordAcceptsKeylessHost pins the resolve step directly: this
+// was the exact failure seen live — a password in hand, the host still refused,
+// because the override was applied after the refusal.
+func TestResolveWithPasswordAcceptsKeylessHost(t *testing.T) {
+	configPath, home := passwordConfig(t)
+	config, err := LoadConfig(configPath, home)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	host, err := config.LookupWithPassword("prod", "chu123")
+	if err != nil {
+		t.Fatalf("LookupWithPassword refused a keyless host despite a password: %v", err)
+	}
+	if host.Password != "chu123" {
+		t.Errorf("Password = %q, want the override to have been applied", host.Password)
+	}
+	if len(host.IdentityFiles) != 0 {
+		t.Errorf("IdentityFiles = %v, want none", host.IdentityFiles)
+	}
+}
+
 // waitForStatus polls until a session reaches a status, or fails.
 func waitForStatus(t *testing.T, manager *Manager, id string, want Status) {
 	t.Helper()

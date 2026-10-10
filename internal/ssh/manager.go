@@ -108,6 +108,12 @@ func (m *Manager) SetEventSink(sink func(kind string, info Info, extra map[strin
 // It is exposed so the tool layer can report what a connect *would* do, and so a
 // test can assert on resolution without a socket.
 func (m *Manager) Host(alias string) (Host, error) {
+	return m.HostWithPassword(alias, "")
+}
+
+// HostWithPassword resolves an alias with a call-time password in scope, so the
+// resolve step can accept a password-only host that it would otherwise refuse.
+func (m *Manager) HostWithPassword(alias, password string) (Host, error) {
 	m.mu.Lock()
 	configPath, home := m.configPath, m.home
 	m.mu.Unlock()
@@ -115,7 +121,7 @@ func (m *Manager) Host(alias string) (Host, error) {
 	if err != nil {
 		return Host{}, err
 	}
-	return config.Lookup(alias)
+	return config.LookupWithPassword(alias, password)
 }
 
 // Connect resolves an alias, opens a session and registers it.
@@ -139,12 +145,12 @@ func (m *Manager) Connect(alias string, cols, rows int, timeout time.Duration) (
 // just for one session — the same reason `user@host` overrides `User` without a
 // config edit.
 func (m *Manager) ConnectWithPassword(alias, password string, cols, rows int, timeout time.Duration) (Info, error) {
-	host, err := m.Host(alias)
+	// The override travels into resolution, not after it: a host with no key in
+	// its configuration must be reachable when a password is in hand, and that
+	// decision lives in the resolve step — see `Config.lookup`.
+	host, err := m.HostWithPassword(alias, password)
 	if err != nil {
 		return Info{}, err
-	}
-	if password != "" {
-		host.Password = password
 	}
 	if cols <= 0 {
 		cols = DefaultCols
