@@ -892,7 +892,7 @@ test('a permission verdict without waited_ms means nobody was asked', () => {
 
 test('model_call.reasoning replaces a streamed thinking block in full', () => {
   let entries: Entry[] = [];
-  // Streamed first, in pieces.
+  // Streamed first, in pieces, with the **deltas'** step number 0.
   entries = applyDelta(entries, 'r1', 0, 'reasoning', 'let me ', 'r1', null).entries;
   entries = applyDelta(entries, 'r1', 0, 'reasoning', 'think', 'r1', null).entries;
   assert.equal((entries[0] as Extract<Entry, { kind: 'reason' }>).text, 'let me think');
@@ -909,6 +909,62 @@ test('model_call.reasoning replaces a streamed thinking block in full', () => {
   assert.equal(reasons.length, 1, 'the streamed block is replaced, not duplicated');
   assert.equal((reasons[0] as Extract<Entry, { kind: 'reason' }>).text, 'let me think carefully');
   assert.equal((reasons[0] as Extract<Entry, { kind: 'reason' }>).streaming, false);
+});
+
+test('the record\'s step trails the deltas by one, and the full copy still replaces the live block', () => {
+  // The real numbering, stated twice in the runtime (`internal/agent/agent.go`):
+  // deltas carry the user-facing step (`a.step + 1`), the `model_call` record
+  // carries the loop's 0-based counter. So a step's thinking streams in as
+  // step 1 and its record lands with `step: 0` — and this was not always
+  // matched on the equal step alone, which is what drew the same thinking
+  // twice (once live, once settled).
+  let entries: Entry[] = [];
+
+  entries = reduceEvent(entries, ev('run_started', {}), freshOptions({ activeRunId: null })).entries;
+  entries = applyDelta(entries, 'r1', 1, 'reasoning', 'thinking out loud', 'r1', null).entries;
+  entries = reduceEvent(
+    entries,
+    ev('model_call', { status: 'ok', step: 0, reasoning: 'the whole thinking, settled' }),
+    freshOptions(),
+  ).entries;
+
+  const reasons = entries.filter((entry) => entry.kind === 'reason');
+  assert.equal(reasons.length, 1, 'the settled copy replaced the streamed one across the +1');
+  assert.equal(
+    (reasons[0] as Extract<Entry, { kind: 'reason' }>).text,
+    'the whole thinking, settled',
+  );
+  assert.equal((reasons[0] as Extract<Entry, { kind: 'reason' }>).streaming, false);
+});
+
+test('the equal-step fallback does not overwrite the previous call\'s settled block', () => {
+  // The +1 rule's collision case: call A's record (step 0) has replaced its
+  // streamed block, which stayed at step 1; a later record at the **same**
+  // step as a settled block must not treat that block as its own. The
+  // fallback accepts only a still-streaming block, so a settled one holds.
+  let entries: Entry[] = [];
+
+  entries = reduceEvent(entries, ev('run_started', {}), freshOptions({ activeRunId: null })).entries;
+  entries = applyDelta(entries, 'r1', 1, 'reasoning', 'call A thinking', 'r1', null).entries;
+  entries = reduceEvent(
+    entries,
+    ev('model_call', { status: 'ok', step: 0, reasoning: 'call A settled' }),
+    freshOptions(),
+  ).entries;
+
+  // Call B streams at step 2 and its record arrives with step 2 (a +1 that
+  // would not collide, but a lost delta or a same-number revision could): the
+  // settled call-A block at step 1 is not a match for anything below it.
+  entries = reduceEvent(
+    entries,
+    ev('model_call', { status: 'ok', step: 1, reasoning: 'call B settled' }),
+    freshOptions(),
+  ).entries;
+
+  const aBlock = entries.find(
+    (entry) => entry.kind === 'reason' && (entry as Extract<Entry, { kind: 'reason' }>).text.includes('call A'),
+  ) as Extract<Entry, { kind: 'reason' }> | undefined;
+  assert.equal(aBlock?.text, 'call A settled', 'the settled block was not overwritten');
 });
 
 /* ============================================================

@@ -258,6 +258,35 @@ function sameCall(entry: Entry, runId: string, step: number, index: number): boo
   );
 }
 
+/**
+ * Where the finalized reasoning of one **recorded** call sits in the transcript.
+ *
+ * The wire numbers a stream and its record one apart, and the runtime states
+ * that twice: deltas carry the user-facing step (`a.step + 1`, captured per call
+ * in `completeWithRetry`), while the `model_call` audit record carries the
+ * loop's own 0-based counter (`reportAttempt`). So the block the deltas opened —
+ * the one this record's full copy must **replace**, not duplicate — sits at
+ * `recordStep + 1`. Matching on the record's own number found nothing on the
+ * wire, so the full copy was appended beside the streamed one: the same thinking
+ * drawn twice, once live and once settled.
+ *
+ * The equal-step fallback exists for numbering that has not drifted apart, and
+ * it only accepts a block that is still **streaming**: a settled block at the
+ * equal step is the *previous* call's (already replaced, step kept), and
+ * overwriting it would paste this call's thinking over the last one's — the
+ * exact collision the +1 rule avoids, because a call never matches a block
+ * below its own number there.
+ */
+function finalizeReasonIndex(entries: Entry[], runId: string, step: number): number {
+  let at = entries.findIndex(
+    (e) => e.kind === 'reason' && e.runId === runId && e.step === step + 1,
+  );
+  if (at >= 0) return at;
+  return entries.findIndex(
+    (e) => e.kind === 'reason' && e.runId === runId && e.step === step && e.streaming,
+  );
+}
+
 /* ============================================================
    Identifiers
    ============================================================ */
@@ -449,15 +478,17 @@ export function reduceEvent(
         return called(bumpStep(withModel, ev.run_id, ev.step));
       }
 
-      const index = withModel.findIndex(
-        (e) => e.kind === 'reason' && e.runId === ev.run_id && e.step === ev.step,
-      );
+      const index = finalizeReasonIndex(withModel, ev.run_id, ev.step);
       if (index >= 0) {
         const next = withModel.slice();
         const target = next[index];
         if (target.kind === 'reason') {
           next[index] = { ...target, text: reasoning, streaming: false };
         }
+        // In-place, not re-appended: the streamed block already sits **before**
+        // the record row (deltas land first), and replacing it there keeps the
+        // transcript in arrival order. Appending the full copy would be the
+        // duplicated thinking this edit exists to remove.
         return called(bumpStep(next, ev.run_id, ev.step));
       }
 
@@ -467,7 +498,7 @@ export function reduceEvent(
           kind: 'reason',
           id: nextId('reason'),
           runId: ev.run_id,
-          step: ev.step,
+          step: ev.step + 1,
           text: reasoning,
           streaming: false,
         },
