@@ -109,6 +109,12 @@ import {
   type TerminalState,
 } from '@/runtime/terminalOutput';
 import { baseName, normPath, samePath } from '@/utils/format';
+import { readClosePolicy, type ClosePolicy } from '@/runtime/windowClose';
+import {
+  encodeNotifySnapshot,
+  readNotifyEnabled,
+  type NotifyRow,
+} from '@/runtime/notify';
 import {
   attachRuntime,
   chooseWorkspaceDirectory,
@@ -798,6 +804,17 @@ export interface AppStore {
   /** One panel at a time, and that is a window fact rather than a session one. */
   panel: PanelKind | null;
   /**
+   * Whether the minimize-or-close prompt is up.
+   *
+   * Window-level, like `panel`, and not per session: it is a question about the
+   * whole window, asked once. It is deliberately **not** a Radix `modal` entry —
+   * `ModalState` is the runtime's blocking requests, which the runtime waits on
+   * forever and which therefore have their own fail-closed rules. Nothing is
+   * waiting on this one, and conflating them would put a local question into the
+   * queue that decides whether an approval is answerable.
+   */
+  closePrompt: boolean;
+  /**
    * Whether the session board is the conversation column's occupant.
    *
    * The board answers "what is every session in this workspace doing right
@@ -914,6 +931,23 @@ export interface AppStore {
   ericaiDefault: boolean;
   maxStepsDefault: number | null;
 
+  /**
+   * Whether session notifications are switched on.
+   *
+   * Read by `useNotifications`, which is the only consumer. It is state rather
+   * than a hook-local flag so the settings row can flip it and the watcher picks
+   * the change up without a restart — and so a test can set it without a window.
+   */
+  notifyEnabled: boolean;
+  /**
+   * What the window's X button does.
+   *
+   * `ask` → the prompt; `minimize` / `close` → applied directly, with no prompt.
+   * The choice is remembered from two places (the prompt's own checkbox and the
+   * settings row), and both write this one field.
+   */
+  closePolicy: ClosePolicy;
+
   /* ---------------- composer ---------------- */
   /** An OS drag is currently over the window. Purely local, purely visual. */
   dragging: boolean;
@@ -998,6 +1032,26 @@ export interface AppStore {
   /** Read once at start-up; not part of the protocol. `version` is the
    *  runtime's own (`--version`), null when it could not be read. */
   setRuntimeInfo(info: { version: string | null; userName: string | null }): void;
+
+  /**
+   * Switch session notifications on or off, and remember it.
+   *
+   * An ordinary preference write — nothing is sent to the runtime and no session
+   * is touched. The hook that watches for transitions reads this field, so
+   * turning it off takes effect on the next change rather than needing anything
+   * to be unwound.
+   */
+  setNotifyEnabled(on: boolean): void;
+  /**
+   * Set what the window's X button does, and remember it.
+   *
+   * Written from two places, and they are the same act: the close prompt's
+   * "remember this" checkbox, and the settings row. `ask` is a real value here
+   * rather than a way of clearing the preference — a person who has been
+   * prompted, remembered a choice, and then wants the question back has to be
+   * able to say so, and there is no separate "unset".
+   */
+  setClosePolicy(policy: ClosePolicy): void;
 
   /** Record why the runtime could not be started at all, or clear it. */
   setStartupProblem(problem: string | null): void;
@@ -1085,6 +1139,8 @@ export interface AppStore {
   /** Show or hide the session board in the conversation column. */
   setBoardOpen(open: boolean): void;
   toggleBoard(): void;
+  /** Raise or dismiss the minimize-or-close prompt. Raised by `useWindowClose`. */
+  setClosePrompt(open: boolean): void;
   /**
    * Change which sessions the runtime is asked to report, and ask again.
    *
@@ -1332,6 +1388,23 @@ type Prefs = {
    */
   ericaiDefault: boolean;
   maxStepsDefault: number | null;
+  /**
+   * Whether session notifications are switched on.
+   *
+   * A preference like the rest of this record, and read back through
+   * `readNotifyEnabled` — which is where the "absent means on" rule lives and is
+   * the one preference whose malformed-value fallback is to work rather than to
+   * do nothing. See that function.
+   */
+  notifyEnabled: boolean;
+  /**
+   * What the window's X button does: ask, minimize, or close.
+   *
+   * Written only when somebody asks for it to be remembered (the prompt's own
+   * checkbox, or the settings row). The default is `ask`, and so is the fallback
+   * for a value that is not one of the three — see `readClosePolicy`.
+   */
+  closePolicy: ClosePolicy;
 };
 
 function loadPrefs(): Prefs {
@@ -1356,6 +1429,13 @@ function loadPrefs(): Prefs {
     // Null is "no `--max-steps` on the command line", which is how the runtime's
     // own default applies. A remembered number would silently outrank it.
     maxStepsDefault: null,
+    // On, and the reasoning is in `readNotifyEnabled`: a notifier that starts
+    // switched off is a feature nobody finds.
+    notifyEnabled: true,
+    // Ask. Neither of the other two is safe to apply without being asked for —
+    // one ends every session, the other leaves a window the person thinks they
+    // closed.
+    closePolicy: 'ask',
   };
   try {
     const raw = localStorage.getItem('aigo.prefs');
@@ -1405,6 +1485,13 @@ function loadPrefs(): Prefs {
         parsed.maxStepsDefault > 0
           ? parsed.maxStepsDefault
           : null,
+      // Through the readers, not inline: both have a fallback that is a
+      // deliberate decision rather than a default (`absent means on`, and
+      // `anything unrecognised means ask`), and restating either here would put
+      // a second copy of the rule where only one of them would be updated.
+      notifyEnabled: readNotifyEnabled(parsed.notifyEnabled),
+      /** @see readClosePolicy for why an unrecognised value means `ask`. */
+      closePolicy: readClosePolicy(parsed.closePolicy),
     };
   } catch {
     return fallback;
@@ -1464,6 +1551,8 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
         lastWorkspace: s.lastWorkspace,
         ericaiDefault: s.ericaiDefault,
         maxStepsDefault: s.maxStepsDefault,
+        notifyEnabled: s.notifyEnabled,
+        closePolicy: s.closePolicy,
       }),
     );
   } catch {
@@ -2107,6 +2196,7 @@ export const useApp = create<AppStore>((set, get) => {
     modal: null,
     pendingModals: [],
     panel: null,
+    closePrompt: false,
     boardOpen: false,
     // The desktop's steady state: archived sessions are hidden, so archiving
     // frees one of the runtime's fifty slots. See `SessionFilter`.
@@ -2126,6 +2216,8 @@ export const useApp = create<AppStore>((set, get) => {
 
     ericaiDefault: prefs.ericaiDefault,
     maxStepsDefault: prefs.maxStepsDefault,
+    notifyEnabled: prefs.notifyEnabled,
+    closePolicy: prefs.closePolicy,
 
     dragging: false,
     resizing: false,
@@ -2426,6 +2518,16 @@ export const useApp = create<AppStore>((set, get) => {
 
     setRuntimeInfo(info) {
       set({ runtimeVersion: info.version, userName: info.userName ?? '' });
+    },
+
+    setNotifyEnabled(on) {
+      set({ notifyEnabled: on });
+      persistPrefs(get());
+    },
+
+    setClosePolicy(policy) {
+      set({ closePolicy: policy });
+      persistPrefs(get());
     },
 
     setStartupProblem(problem) {
@@ -3309,6 +3411,13 @@ export const useApp = create<AppStore>((set, get) => {
 
     toggleBoard() {
       get().setBoardOpen(!get().boardOpen);
+    },
+
+    setClosePrompt(open) {
+      // **It closes no panel, and that is deliberate.** Closing a panel here
+      // would be a silent edit to a screen the person put in a particular state,
+      // and nothing about the prompt needs the panel gone: it is its own layer.
+      set({ closePrompt: open });
     },
 
     setQuiet(q) {
@@ -4575,6 +4684,53 @@ export function selectModalVisible(s: AppStore): boolean {
 /** How many sessions are running a turn right now. A window-level summary. */
 export function selectRunningCount(s: AppStore): number {
   return s.order.filter((key) => hasRunningTurn(s.sessions[key]?.entries ?? [])).length;
+}
+
+/**
+ * Every live session's notification-relevant facts, as one compact string.
+ *
+ * **Subscribed to as a string, not as buckets**, and for the reason the other
+ * `...Key` selectors document: zustand compares by identity, so a selector that
+ * built a fresh array on every call would re-render forever without committing,
+ * and subscribing to `sessions` directly would re-render on every streamed token
+ * — dragging the notifier through every chunk of a long answer.
+ *
+ * Two things are deliberately left out of it, and both would make the string
+ * change for no reason a notification cares about:
+ *
+ *   - the **preview**, which is `sessions.items`' text and changes as a session
+ *     is written; it is read at send time instead, from the store, not from here;
+ *   - the **status of a session without an id**, which cannot be reported about
+ *     anyway (there is nothing to name it by) — see `selectRowStatusKey`, which
+ *     makes the same exclusion for the same reason.
+ *
+ * The prefix is the **active key and whether a prompt is drawn**, so a change in
+ * what is being watched also changes this string. Without that, focusing a
+ * session — which is a local act that sends nothing — would leave the notifier
+ * holding a stale idea of which session is watched, and the first transition
+ * after it would be judged against the wrong one.
+ */
+export function selectNotifyKey(s: AppStore): string {
+  const rows: NotifyRow[] = [];
+  for (const key of s.order) {
+    const rt = s.sessions[key];
+    // A session whose handshake has not landed has no workspace to name it by
+    // and no id to be reported, so it cannot produce a notification yet.
+    if (!rt?.sessionId) continue;
+    rows.push({
+      key,
+      sessionId: rt.sessionId,
+      status: selectRowStatus(s, key),
+      workspace: rt.session?.workspace ?? rt.workspace,
+    });
+  }
+  const visible = selectModalVisible(s);
+  return encodeNotifySnapshot({
+    activeKey: s.activeKey ?? '',
+    modalVisible: visible,
+    modalKey: visible && s.modal !== null ? s.modal.key : '',
+    rows,
+  });
 }
 
 /** How many sessions in a workspace want attention (asking, broken, unseen). */

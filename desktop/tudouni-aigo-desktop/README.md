@@ -342,6 +342,80 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 18 | **A launch opens the workspace last worked in.** Remembered from `init.workspace` (the runtime's own answer), never from a path the front end assembled, and it follows the session on screen rather than the last one opened. With nothing remembered — or nothing that still works — **no child is started** and the first screen says why, instead of falling back to the app's own directory | `lastWorkspace` / `rememberWorkspace` / `resolveAttachWorkspace` in `state/store.ts`, `openFirstSession` in `runtime/useRuntime.ts` (`workspace_check`), `StartupNotice` in `components/Welcome.tsx` |
 | 19 | **A child that would not start says so, on its own session.** `SessionRuntime.problem` was written on every failed attach and read by nothing, so the refusal produced no sentence anywhere — and because such a session never becomes `ready`, the screen showed "Starting the runtime…" over a process that had already given up. It is now rendered by `SessionProblem`, above the `!ready` branch, with the two ways out | `SessionProblem.tsx`, the render order in `App.tsx`, `problem` in `state/store.ts` |
 | 20 | **The empty workspace list offers a named button.** The only way forward used to be an unlabelled `FolderPlus` glyph in the section head, while the notice above it said "choose one below" over a list that was empty. The notice's direction also moved out of its wording into a button, because that list can be folded away or hidden by a narrow window | `.lb-empty-add` in `WorkspaceSidebar.tsx`, `ChooseWorkspaceButton` in `components/StartupNotice.tsx` |
+| 21 | **The X button asks: minimize or close, and offers to remember.** The two outcomes are indistinguishable before the fact and entirely different after it — one hides the window with every session still running, the other asks every child to finish and exits — so the window asks once rather than guessing. The answer is a front-end preference (`closePolicy`), applied without a prompt the second time; `ask` is both the default and the fallback for an unreadable stored value, because it is the only one that cannot be wrong | `close_prompt_answer` / `close_prompt_ack` / `window_destroy` and the `CloseRequested` handler in `lib.rs`, `runtime/windowClose.ts` (the rule), `hooks/useWindowClose.ts`, `modals/CloseConfirm.tsx`, `closePolicy` in `state/store.ts` |
+| 22 | **A session behind the window says so.** A notification when a session changes *into* asking / broken / finished — never for a session just seen, never for one somebody is looking at, and never for `idle` on its own (that is where a fresh session sits and where a read one returns). "Looking at" requires the window to be **in the foreground**: a minimized window is nobody's attention, which is the one case the whole feature exists for | `notifyReason` / `isWatched` / `notifyDecision` in `runtime/notify.ts` (pure, asserted in `tests/notify.test.ts`), `hooks/useNotifications.ts`, `selectNotifyKey` in `state/store.ts`, `tauri-plugin-notification` in `lib.rs` / `capabilities/default.json` |
+
+### 21 · Why the close prompt has a deadline, but the person does not
+
+`CloseRequested` **refuses the close** and asks the front end to draw a dialog,
+because every overlay here is DOM and a native dialog would be a second visual
+language for one question. That refusal is what makes a deadline necessary: a
+window that hands its closability to another process needs a way back if that
+process is wedged, or a renderer that never mounted the dialog would trap the
+window on screen for good. So Rust arms a five-second watchdog on the **round
+trip**.
+
+It must not be a deadline on the person. The prompt offers to remember the
+choice, so reading it before answering is the expected behaviour rather than an
+edge case — and a window that closed itself while somebody was deciding would be
+worse than no prompt at all. So the front end calls `close_prompt_ack` as it is
+about to draw the dialog, the watchdog disarms itself on seeing that, and from
+then on the wait is unbounded. Two flags rather than one, because "a question is
+outstanding" and "the question is on screen" are different facts and the second
+is the one that ends the deadline.
+
+`CLOSE_PROMPT_GENERATION` covers the third case: a watchdog that wakes to find
+the number moved is looking at a prompt that is already over — answered, or
+superseded by a newer request — and must not close a window on the strength of a
+question nobody is asking any more.
+
+Three ways out, and all three clear the same state (`end_close_prompt`):
+**minimize**, **close**, and **cancel**. Cancel is not padding. Esc and a click
+outside resolve to it, because a prompt with no way out turns one stray click on
+the frame into a forced choice between hiding the window and ending every
+session — and, mechanically, a dismissal that left `CLOSE_PROMPT_PENDING` set
+would make the next press of X read as "already asking" and be ignored, giving a
+window that can only be closed once.
+
+`/exit` is the one path that skips the question: typing it *is* the answer, so
+`quitApp` ends in `window_destroy`. It ends there rather than at `close()` for
+the same reason the prompt's own answer does — `close()` raises another request,
+which would ask again.
+
+### 22 · Why `idle` is not news, and why "focused" is not "watched"
+
+The notification rule is small because the ways to get it wrong are all noise,
+and noise is what makes people switch a notifier off:
+
+- **A status seen for the first time is never news.** Its value is simply what it
+  is; at start-up there would otherwise be one notification per open session.
+- **`idle` notifies only when a turn was really running the moment before.** It
+  is also where a session that has never been spoken to sits, and where one goes
+  after being read. A rule that fired on `idle` would announce nothing having
+  happened, twice.
+- **`running` is never news.** Work starting is not something to interrupt
+  somebody for, and the toast would arrive before the work it announces.
+
+The status itself comes from `selectRowStatus` — the same function behind the
+rail's dots, the workspace badges and the board's columns. That is what stops a
+notification disagreeing with the dot beside it: there is one definition of
+"needs you", and it is not restated in the notifier.
+
+`isWatched` is where multi-session is decided, and it needs **the window to be in
+the foreground** as well as the session to be the one on screen. Dropping the
+first half is the tempting simplification and the one that breaks the feature: a
+turn that ends while the window is minimized leaves its session `idle` (there is
+no `unseen` for the session on screen), so a rule that read "on screen" as
+"watched" would stay silent at exactly the moment the notification is the only
+way to learn the work finished. A third case joins them: a **blocking prompt is
+watched wherever its session is**, because the prompt is drawn over whatever
+conversation is on screen — but only when it is genuinely rendered, so a request
+the session board is holding does not suppress the notification that would
+surface it.
+
+Both rules are pure functions in `runtime/notify.ts` and asserted in
+`tests/notify.test.ts`, because neither failure is visible: a notification that
+should not have been sent looks identical, on screen, to one that should have.
 
 ### 5 · Why the status bar's numbers no longer wait for a turn to end
 
@@ -469,8 +543,8 @@ blank or as 0, and the screen looks plausible.
 rule. Nothing else can see it — the element renders, it is just unstyled, so a
 control lands in the wrong place and only a screenshot shows it.
 
-**Before a release, these two as well.** Both need a running runtime or a
-browser, so neither is in `npm test`:
+**Before a release, these as well.** They need a running runtime or a browser, so
+none of them is in `npm test`:
 
 ```bash
 # 1. Against the real binary.  <exe> <workspace> are both required.
@@ -481,6 +555,9 @@ node scripts/render-check.mjs http://127.0.0.1:5178/ 9333
 
 # 3. Can a person actually click the window controls?  Same prerequisites.
 npm run check:window -- http://127.0.0.1:5178/ 9333
+
+# 4. Does X ask, and does a session behind the window say so?  Same prerequisites.
+npm run check:close-notify -- http://127.0.0.1:5178/ 9333
 ```
 
 **Against the real binary.** Starts `tudouni-aigo --runtime-stdio` the way the
@@ -558,6 +635,52 @@ Two things about it are the point rather than the plumbing:
   **approval modal** the prompt must stay up: a stray click is not a decision.
   Anything touching an overlay's `z-index` can flip both, and nothing on the page
   looks different when it does.
+
+**Does X ask, and does a session behind the window say so?** `check:close-notify`
+answers both new decisions, and it is the check that needs the most from the fake
+host:
+
+```bash
+npm run check:close-notify -- http://127.0.0.1:5178/ 9333
+```
+
+It drives `window://close-requested` into the page **from the harness** — the
+event is emitted by Rust, so nothing the page does can produce one — and asserts
+the four ends of the close rule: the prompt is raised and acknowledged, Esc
+resolves to `cancel` (and clears the state, so the *next* X still works), a
+remembered choice answers without raising anything, and a dismissal destroys no
+window. Then it counts notifications across the transitions that matter: a
+session seen for the first time, a background finish, a request that arrives with
+the window minimized, and the two cases that must stay **silent** — a prompt
+already rendered in front of the person, and a session merely returning to idle.
+
+Three traps, all of which cost real time here and all of which are the harness
+being wrong rather than the application:
+
+- **`unlisten` needs `__TAURI_EVENT_PLUGIN_INTERNALS__`.** The real `_unlisten`
+  calls `window.__TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener` *before* it
+  invokes anything. A fake host that omits that object makes every `unlisten()`
+  throw on its first statement, so the listener is never removed — and under
+  StrictMode's mount / unmount / remount the **cancelled** closure is the one an
+  event reaches. Its writes are skipped by design, so a perfectly working hook
+  looks like a broken one. The failure that exposed this was "a minimized window
+  is not notified"; the measurement that identified it was `is_focused` returning
+  `false` while the hook's own ref still read `true`.
+- **Listeners are keyed by id, not by name.** A registry with one slot per event
+  name drops the live listener in favour of a stale one. `__emit` must therefore
+  fire at *every* id registered for a name, exactly as the real bridge does.
+- **`transformCallback` returns a number; the handler is at `window['_' + id]`.**
+  The real backend reaches the callback through that prefixed global. Calling
+  `window[id]` looks up `window[7]`, which is nothing at all — and the error
+  (`window[handler] is not a function`) points at the harness, not the app.
+
+One more, about the *assertions* rather than the plumbing: an `asking` status is
+**not** always worth a notification. A request drawn over the transcript is
+already in front of the person, so `isWatched` counts it as seen and silence is
+correct — the case that must speak up is a request arriving while the window is
+in the tray. Both halves are asserted now, and the focus and minimize conditions
+are exercised **separately**: testing them together lets a broken focus path hide
+behind a working minimize one.
 
 ---
 

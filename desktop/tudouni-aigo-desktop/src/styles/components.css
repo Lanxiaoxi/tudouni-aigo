@@ -1315,6 +1315,145 @@ table.table td.mono {
   color: var(--fg-faint);
 }
 
+/* ============================================================
+   The minimize-or-close prompt
+   ============================================================
+
+   Two choices as two **full-width rows** rather than a pair of buttons in the
+   footer, and that is the one deliberate departure from every other dialog here.
+   A footer with two buttons side by side reads as a form to fill in and submit;
+   these are two different outcomes, each with a sentence explaining it, and the
+   row shape is what lets the explanation sit beside the word instead of in a
+   tooltip nobody opens.
+
+   `close-choice-danger` is the only destructive-looking one. It is not styled
+   with a filled red button — that is what an irrecoverable action gets, and this
+   one is a graceful shutdown that lets the current turn finish. The colour is on
+   the icon, which is where the eye already is, and the `--destructive-subtle`
+   background matches the approval modal's high-risk header. */
+
+.close-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.close-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.close-choice:hover {
+  border-color: var(--border-strong);
+}
+
+.close-choice-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--fg-secondary);
+}
+
+.close-choice-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The icon carries the colour; the row's own surface stays neutral, so the two
+   choices read as equally available. */
+.close-choice-danger .close-choice-icon {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.close-remember {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+
+.close-remember input {
+  flex: none;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.close-remember-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* ---- the settings row's three-way choice ----
+   A vertical list rather than a segmented control: each option carries a
+   sentence describing what the X button will then do, and three sentences do not
+   fit on one line inside a 233px rail-width panel. */
+.set-choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.set-choice-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.set-choice-item:hover {
+  background: var(--bg-muted);
+}
+
+.set-choice-item[data-state='checked'] {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+
+.set-choice-item input {
+  flex: none;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.set-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 /* ---------------- §10 终端 / Diff / 日志 ---------------- */
 .terminal {
   background: var(--terminal-bg);

@@ -6,6 +6,8 @@ import { conversationView, showsComposer } from '@/conversationView';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
 import { useKeepAwake } from '@/hooks/useKeepAwake';
+import { useNotifications } from '@/hooks/useNotifications';
+import { useWindowClose } from '@/hooks/useWindowClose';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useInputModality } from '@/hooks/useInputModality';
 import { useSidebarHiddenByCss } from '@/hooks/useLayout';
@@ -31,6 +33,7 @@ import { SessionBoard } from '@/components/board/SessionBoard';
 import { PanelHost } from '@/components/panels/PanelHost';
 import { PermissionModal } from '@/components/modals/PermissionModal';
 import { QuestionModal } from '@/components/modals/QuestionModal';
+import { CloseConfirm } from '@/components/modals/CloseConfirm';
 
 export function App() {
   useRuntimeBridge();
@@ -43,6 +46,14 @@ export function App() {
   // Publishes `data-input-mode` on <html>, which is what tells a pointer-driven
   // focus from a keyboard one. `:focus-visible` cannot do it for a text field.
   useInputModality();
+  // The X button now means two things, so it asks — unless a previous answer was
+  // remembered. Window-level: one question, asked once, about the whole window.
+  useWindowClose();
+  // Say something when a session behind this window wants a person: a blocking
+  // request, a failure, or a turn that ended while nobody was looking. Window
+  // level because it is about every session at once, and it is the one place
+  // that can see a background session change status.
+  useNotifications();
 
   // Everything the transcript draws comes from **the session being shown**, and
   // with several open that is a bucket rather than the store. `activeRuntime` is
@@ -250,6 +261,13 @@ export function App() {
       <PanelHost />
       <PermissionModal />
       <QuestionModal />
+      {/* After the two blocking modals, and it is the last thing raised: it is
+          the newest question and the only one that is about the window rather
+          than about a session. It cannot stack with them in practice — the
+          title bar is above every overlay, so X is reachable while a prompt is
+          up, but a close request does not disturb a pending approval (minimize
+          leaves it, and close ends the session it belongs to). */}
+      <CloseConfirm />
       </ErrorBoundary>
     </TooltipPrimitive.Provider>
   );

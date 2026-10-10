@@ -535,6 +535,19 @@ export const en = {
   'panel.settings.blockedTurn': 'A turn is in flight — finish or stop it first.',
   'panel.settings.blockedModal': 'Answer the prompt first.',
   'panel.settings.blockedBooting': 'The runtime is still starting.',
+  /* ---- the second group: this window's own behaviour ----
+   *
+   * No confirmation and no restart, because none of it reaches the runtime. The
+   * heading says so plainly rather than leaving it to be inferred from the
+   * absence of an Apply button. */
+  'panel.settings.window': 'This window',
+  'panel.settings.windowHint':
+    'These are kept for this application as a whole and take effect at once — no restart, and nothing is sent to the runtime.',
+  'panel.settings.notify': 'Session notifications',
+  'panel.settings.notifyDesc':
+    'A system notification when a session asks for an answer, fails, or finishes while you are looking at something else.',
+  'panel.settings.close': 'Closing the window',
+  'panel.settings.closeDesc': 'What the X button does.',
   'panel.close': 'Close',
 
   /* ---------------- in-stream blocks ---------------- */
@@ -599,6 +612,45 @@ export const en = {
   'q.freeTextPriority': 'Free text wins over the selection',
   'q.noOptions': 'No preset options — answer in free text.',
   'q.pickAtLeastOne': 'Pick an option, type an answer, or use “Skip”.',
+
+  /* ---------------- closing the window ----------------
+   *
+   * The prompt the title bar's X raises, now that the button means two things.
+   * `{count}` is how many sessions are open, so the sentence can say what
+   * "close" would actually end — with several running, that is the fact that
+   * decides the answer. */
+  'close.title': 'Minimize or close?',
+  'close.subtitle': 'Closing ends every session; minimizing keeps them running.',
+  'close.minimize': 'Minimize',
+  'close.minimizeHint': 'Hide the window. Every session keeps running.',
+  'close.close': 'Close',
+  'close.closeHint': 'Finish every session, then exit.',
+  'close.remember': 'Remember this choice',
+  'close.rememberHint': 'Change it later under Settings.',
+  /** How many conversations "close" would end. Plural-blind like the rest of
+   *  this table (`{n} items`), and the count is this front end's own (`order`). */
+  'close.sessions': '{n} sessions open',
+  /* The same three values the prompt offers, named for the settings row, which
+     has room to spell out what "ask" means. */
+  'close.policy.ask': 'Ask every time',
+  'close.policy.minimize': 'Minimize',
+  'close.policy.close': 'Close',
+  /* What the window will do next time, under the setting. A remembered choice is
+     reported as a sentence rather than left to be inferred from which radio is
+     filled: with three options the selection is a fact about the future, not
+     just about the control. */
+  'close.policy.summaryAsk': 'The X button asks, the same as now.',
+  'close.policy.summaryMinimize': 'The X button hides the window; sessions keep running.',
+  'close.policy.summaryClose': 'The X button finishes every session and exits.',
+
+  /* ---------------- system notifications ----------------
+   *
+   * The four transitions worth a toast. Each title is a sentence a person can
+   * act on, and they are deliberately not "the session changed state": the
+   * reason to interrupt somebody is that something wants them. */
+  'notify.title.needsYou': 'Waiting for your answer',
+  'notify.title.failed': 'Stopped with an error',
+  'notify.title.finished': 'Finished',
 
   /* ---------------- composer ---------------- */
   'composer.placeholder': 'Say something…  Enter sends, Shift+Enter newlines',

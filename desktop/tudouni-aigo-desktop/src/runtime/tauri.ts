@@ -559,6 +559,12 @@ export async function shutdownRuntime(key?: string): Promise<void> {
  * false, and a deliberate quit would have been reported, in red, as a
  * runtime that died unexpectedly with code 0.
  *
+ * **It ends in `window_destroy`, not `close()`.** `close()` raises a close
+ * request, and the window now answers those with the minimize-or-close prompt —
+ * so a person who typed `/exit` would be asked whether they meant to exit. They
+ * did; that is what typing it means. `window_destroy` is the one path that skips
+ * the question, and this is the only caller.
+ *
  * The window is closed even if the graceful wait fails: a quit that leaves the
  * window open is a quit that did not happen.
  */
@@ -568,12 +574,105 @@ export async function quitApp(): Promise<void> {
     await tauriInvoke('runtime_shutdown', { key: null });
   } finally {
     try {
-      const mod = await import('@tauri-apps/api/window');
-      await mod.getCurrentWindow().close();
+      await tauriInvoke('window_destroy');
     } catch {
       /* Already gone. */
     }
   }
+}
+
+/* ============================================================
+   Closing the window: minimize, or close for real
+   ============================================================ */
+
+/**
+ * Tell Rust the close prompt is **on screen**.
+ *
+ * The counterpart to the deadline in `lib.rs`, and the reason the prompt can be
+ * read at leisure: Rust opens a window close request, arms a watchdog for the
+ * round trip, and this call disarms it. Without it the window would close itself
+ * a few seconds after the dialog appeared — while somebody was still deciding,
+ * which for a dialog that offers to remember the choice is the normal case.
+ *
+ * Called before the dialog renders, not after, because the deadline it clears is
+ * short and a render is a frame the front end cannot promise the timing of. What
+ * it claims is "the dialog is up", and the component that calls it is the one
+ * that is about to draw it.
+ */
+export async function acknowledgeClosePrompt(): Promise<void> {
+  if (!isHosted()) return;
+  try {
+    await tauriInvoke('close_prompt_ack');
+  } catch {
+    // Rust will close the window when the deadline expires. That is the correct
+    // outcome for a front end that cannot reach it, and there is nothing a
+    // sentence here could add.
+  }
+}
+
+/** Which of the three things the close prompt can resolve to. */
+export type CloseChoice = 'minimize' | 'close' | 'cancel';
+
+/**
+ * Answer the close prompt.
+ *
+ * **The only way the window closes from that dialog.** Calling
+ * `getCurrentWindow().close()` here would raise a fresh close request, which the
+ * handler refuses and turns into another prompt — so the dialog would reappear
+ * every time it was answered, and the window could never be closed through it.
+ *
+ * "Minimize" leaves every session running; that is the whole meaning of the
+ * choice, and Rust does not touch a child for it. "Cancel" is a dismissal: the
+ * window stays up and the close request is over, which is what Esc and a click
+ * outside both resolve to.
+ */
+export async function answerClosePrompt(choice: CloseChoice): Promise<void> {
+  if (!isHosted()) return;
+  try {
+    await tauriInvoke('close_prompt_answer', { choice });
+  } catch (err) {
+    // The window is gone already, or the command was refused. Nothing to report:
+    // the alternative to a failed close is a torn-down window in every case.
+    console.warn('could not answer the close prompt:', err);
+  }
+}
+
+/**
+ * Listen for a window close request.
+ *
+ * The bridge emits `window://close-requested` (no payload) from the
+ * `CloseRequested` handler, having already called `prevent_close()` — so the
+ * window is guaranteed still to be there when this fires, and the dialog has as
+ * long as it needs.
+ *
+ * Returns the unsubscribe function, like the bridge's other listeners, so the
+ * caller can tear it down. `listen` is a promise, so an unmount that races the
+ * subscription is possible; the returned function handles that by awaiting the
+ * same promise and unsubscribing when it lands, rather than by dropping the
+ * handle and leaking the listener.
+ */
+export function onCloseRequested(cb: () => void): () => void {
+  let unlisten: (() => void) | null = null;
+  let stopped = false;
+  void (async () => {
+    if (!isHosted()) return;
+    try {
+      const mod = await import('@tauri-apps/api/event');
+      const off = await mod.listen('window://close-requested', () => cb());
+      // The component unmounted while that was in flight.
+      if (stopped) off();
+      else unlisten = off;
+    } catch {
+      // Not hosted, or the capability is missing. The Rust watchdog then closes
+      // the window after its deadline, which is the documented fallback rather
+      // than a hang.
+    }
+  })();
+  return () => {
+    stopped = true;
+    unlisten?.();
+    unlisten = null;
+  };
 }
 
 /** The kill switch, for when the graceful wait is not enough. `key` omitted
