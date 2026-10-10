@@ -24,12 +24,12 @@ import type { TKey } from '@/i18n';
  *    reader to separate. So every dot carries an accessible name saying what it
  *    means.
  *
- * 2. **No pulse.** `component-states.md` §7 forbids expressing a state change
- *    with a breathing animation, and the status bar's own `.is-working` has a
- *    specific justification — "a turn is in flight **right now**" is a
- *    continuing condition, not a transition. Several dots breathing at once
- *    destroys that argument and pulls attention off the conversation. A change
- *    of state changes the colour and nothing else.
+ * 2. **Breathe only for a continuing condition.** `component-states.md` §7
+ *    forbids announcing a **state change** with a breathing light — but `running`
+ *    and `asking` are continuing conditions (a turn in flight, a person being
+ *    waited on), the same case the status bar's own `.is-working` breathes for,
+ *    so the CSS breathes those two. `unseen` and `broken` are settled: a change
+ *    into them changes the colour and nothing else, and `idle` draws nothing.
  *
  * 3. **Idle draws nothing.** Fifty grey dots read as "everything is fine" while
  *    saying nothing at all.

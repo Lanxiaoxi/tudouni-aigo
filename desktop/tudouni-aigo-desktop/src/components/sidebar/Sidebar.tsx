@@ -263,7 +263,7 @@ function TaskRow({ task }: { task: VmTask }) {
     task.status === 'completed' ? (
       <CheckCircle2 size={12} color="var(--accent)" />
     ) : task.status === 'in_progress' ? (
-      <Loader size={12} color="var(--info)" />
+      <Loader size={12} color="var(--info)" className="sb-spinner" aria-hidden />
     ) : (
       <CircleDashed size={12} color="var(--fg-faint)" />
     );

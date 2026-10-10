@@ -1291,11 +1291,12 @@
    What each dot means, and why the fourth colour exists, is in `SessionDot`.
    Three things about the styling are deliberate:
 
-   - **No animation.** `component-states.md` §7 forbids expressing a state
-     change with a breathing light, and the status bar's own `.is-working` has a
-     specific justification this would destroy: several dots pulsing at once is
-     not "a turn is in flight", it is noise. A change of state changes the
-     colour (`--motion-fast`) and nothing else.
+   - **Breathe only for a continuing condition.** `running` and `asking` are
+     states that last while something is happening (a turn in flight, a
+     person being waited on) — the same justification the status bar's own
+     `.is-working` has — so they reuse its `breathe` keyframes. `unseen` and
+     `broken` are settled states, and a change **into** them must not be
+     announced with a light: the colour alone changes, per component-states §7.
    - **`flex: none`.** The dot must not be squeezed: the session id beside it is
      the flexible cell, and a 6px circle shrunk to 2px is a mark nobody can read.
    - **An optical nudge, not a layout one.** `margin-top: 1px` aligns the circle
@@ -1312,21 +1313,25 @@
   transition: background-color var(--motion-fast) var(--ease-out);
 }
 
-/* Waiting on a person: the only state where nothing at all happens until
-   somebody acts. */
+/* Waiting on a person: a turn that will not move until somebody acts — a
+   continuing condition, so the dot breathes for as long as it waits. */
 .lb-dot.is-asking {
   background: var(--warning);
+  animation: breathe 1.2s var(--ease-standard) infinite alternate;
 }
 
 /* Broken. Reserved for "you did not stop it and it failed" — `interrupted`,
    `step_limit` and `empty` are blue, or pressing Esc three times would earn
-   three red dots. */
+   three red dots. A settled state: the colour says it, and nothing moves. */
 .lb-dot.is-broken {
   background: var(--destructive);
 }
 
+/* A turn is in flight: the same continuing condition the status bar's
+   `.is-working` breathes for. */
 .lb-dot.is-running {
   background: var(--success);
+  animation: breathe 1.2s var(--ease-standard) infinite alternate;
 }
 
 /* Finished, and nobody has looked. The state a three-colour scheme cannot

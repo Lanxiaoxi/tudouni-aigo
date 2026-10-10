@@ -1,6 +1,6 @@
 [package]
 name = "tudouni-aigo-desktop"
-version = "1.3.0"
+version = "1.4.0"
 description = "tudouni-aigo desktop client"
 authors = ["tudouni-aigo"]
 edition = "2021"

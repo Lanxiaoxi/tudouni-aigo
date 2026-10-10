@@ -457,6 +457,24 @@ body.is-resizing {
   animation: breathe 1.2s var(--ease-standard) infinite alternate;
 }
 
+/**
+ * 「进行中」的图标旋转：只表示「这件事正在被做」这一个持续状态。
+ *
+ * 与 `breathe` 同理——component-states §7 禁止的是用动画表达**状态翻转**，
+ * 「一个任务正在执行」是持续条件，旋转合法；状态一变（完成/挂起）图标换掉，
+ * 动画随之消失。减弱动效下上面的全局规则会把时长归零，图标静止。
+ */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sb-spinner {
+  animation: spin 1.4s linear infinite;
+  transform-origin: center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
