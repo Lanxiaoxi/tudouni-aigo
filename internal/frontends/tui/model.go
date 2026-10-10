@@ -91,6 +91,12 @@ type panelstate struct {
 	// events would be a second answer that drifts by exactly the events that
 	// arrive out of order.
 	terminals []any
+	// ssh is the workspace's SSH remote-session list, exactly as the runtime
+	// reports it — on every snapshot. Same reasoning as `terminals`: "which of
+	// these is still running" is the runtime's judgement, and recomputing it
+	// from events would be a second answer that drifts by the events that
+	// arrive out of order.
+	ssh []any
 }
 
 type model struct {
@@ -250,6 +256,7 @@ type railSeen struct {
 	todos bool
 	goal  bool
 	jobs  bool
+	ssh   bool
 }
 
 func newModel(client *protocol.Client, bridge *bridge, options Options) model {
@@ -931,6 +938,23 @@ func (m *model) noteRail() {
 	m.noteRailTrigger(&m.railSeen.todos, len(m.panel.todos) > 0)
 	m.noteRailTrigger(&m.railSeen.goal, goalObjective(m.panel.goal) != "")
 	m.noteRailTrigger(&m.railSeen.jobs, len(m.panel.jobs) > 0)
+	m.noteRailTrigger(&m.railSeen.ssh, sshLiveCount(m.panel.ssh) > 0)
+}
+
+// sshLiveCount is how many of the reported sessions are still running. The
+// ended ones the workspace keeps on its list are history, not load: a block —
+// or a summary line — that counted them would read "1 SSH session" over a
+// connection that is already gone.
+func sshLiveCount(sessions []any) int {
+	live := 0
+	for _, item := range sessions {
+		if row, ok := item.(map[string]any); ok {
+			if status, _ := row["status"].(string); status == "running" {
+				live++
+			}
+		}
+	}
+	return live
 }
 
 // noteRailTrigger moves one edge and opens the rail when it rises.
@@ -1342,6 +1366,9 @@ func (m *model) applyState(payload map[string]any) {
 				m.attached.status = row.status
 			}
 		}
+	}
+	if value, ok := payload["ssh"].([]any); ok {
+		m.panel.ssh = value
 	}
 	if value, ok := payload["risk_scope"].([]any); ok {
 		m.panel.riskScope = value

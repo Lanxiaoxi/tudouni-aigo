@@ -407,6 +407,20 @@ var catalog = map[string]string{
 	"mcp.not_loaded":       "not loaded",
 	"mcp.summary":          "MCP: {running} running / {total} configured (/mcp opens the panel to toggle them)",
 
+	// --- SSH ---------------------------------------------------------------
+	// The rail's display-only SSH block. It shows what `ssh_sessions` reports —
+	// id, destination, whether it is still running — and offers nothing: the
+	// operations live in the tools the model drives, and a block that also
+	// acted would be a second surface for the same controls.
+	"rail.ssh":               "SSH sessions",
+	"rail.ssh.empty":         "No SSH sessions",
+	"rail.ssh.empty_hint":    "opened by ssh_connect",
+	"rail.ssh.live":          "  live",
+	"rail.ssh.ended":         "  ended ({why})",
+	"rail.ssh.no_code":       "  ended, no exit code",
+	"rail.summary.ssh.one":   "{n} SSH session",
+	"rail.summary.ssh.other": "{n} SSH sessions",
+
 	// --- one row of the session list ---------------------------------------
 	"session.row":                "  {mark}{name} {messages} · {steps}   {preview}{todos}",
 	"session.row.messages.one":   "{n:>4} message",

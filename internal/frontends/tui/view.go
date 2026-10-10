@@ -230,6 +230,9 @@ func (m model) renderRailSummary() string {
 	if running, _ := mcpTally(m.panel.mcp); running > 0 {
 		parts = append(parts, i18n.Tn("rail.summary.mcp", running, "n", running))
 	}
+	if live := sshLiveCount(m.panel.ssh); live > 0 {
+		parts = append(parts, i18n.Tn("rail.summary.ssh", live, "n", live))
+	}
 	if todo := railTodoSummary(m.panel.todos); todo != "" {
 		parts = append(parts, todo)
 	}

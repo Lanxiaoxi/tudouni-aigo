@@ -1672,6 +1672,12 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		// the `terminal_created` message — learns about it from the next snapshot
 		// instead of never.
 		"terminals": r.terminalsPanel(),
+		// The workspace's SSH remote sessions. They are carried on this snapshot
+		// for the same reason the terminals are: the session list belongs to the
+		// workspace, the snapshot is restated on every tool result and turn end,
+		// and a front end that lost or never saw a connect learns the current
+		// list from the next snapshot instead of never.
+		"ssh": r.sshPanel(),
 		// Always present, in both the "there is one" and "there is not" shapes: a
 		// front end with two cases to draw has two places to get the empty one
 		// wrong.

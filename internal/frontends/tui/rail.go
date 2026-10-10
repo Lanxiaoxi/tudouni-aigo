@@ -136,6 +136,16 @@ func (m model) railBlocks(width int) []railBlock {
 			empty: i18n.T("rail.jobs.empty"), hint: i18n.T("rail.jobs.empty_hint"),
 		},
 		{
+			title: i18n.T("rail.ssh"),
+			// The badge is the live count only: "2 sessions, 1 live" is the
+			// answer the block's rows already give in full, and a denominator
+			// that includes ended sessions the list still holds makes "how
+			// many remote shells am I actually logged into" a subtraction.
+			count: sshCount(m.panel.ssh),
+			rows:  sshRowsTUI(m.panel.ssh),
+			empty: i18n.T("rail.ssh.empty"), hint: i18n.T("rail.ssh.empty_hint"),
+		},
+		{
 			title: i18n.T("rail.mcp"),
 			count: mcpCount(m.panel.mcp),
 			rows:  mcpRows(m.panel.mcp),
@@ -549,6 +559,76 @@ func jobCount(jobs []any) string {
 		}
 	}
 	return fmt.Sprintf("%d / %d", outstanding, len(jobs))
+}
+
+// sshRowName is one session's display name: the alias when the model asked for
+// one and it differs from where the connection actually went, the destination
+// otherwise. A session whose alias equals the destination renders the
+// destination alone — "tudouni → tudouni" is one fact drawn twice.
+func sshRowName(row map[string]any) string {
+	destination, _ := row["destination"].(string)
+	alias, _ := row["alias"].(string)
+	if alias != "" && alias != destination {
+		return alias + " → " + destination
+	}
+	return destination
+}
+
+// sshRowsTUI is the rail's SSH block: one row per session the workspace still
+// knows about.
+//
+// Ended sessions keep their row for the same reason they keep it in
+// `ssh_sessions`: "what was I connected to" is worth one line, and an id that
+// vanished the moment its shell exited would leave nothing to check a write
+// against. The mark answers "is this live" before the text does — shape first,
+// colour second — so a monochrome terminal still tells the two apart.
+func sshRowsTUI(sessions []any) []string {
+	var rows []string
+	for _, item := range sessions {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		status, _ := row["status"].(string)
+		name := sshRowName(row)
+		// A live session just names itself; an ended one says how it ended.
+		// The exit code is worth carrying when there is one and absent when
+		// there is not — the runtime already drew that distinction on the
+		// wire, and flattening it to one "ended" would un-draw it.
+		var mark, role, tail string
+		switch {
+		case status == "running":
+			mark, role, tail = "●", "answer", name
+		case row["exit_code"] != nil:
+			ended := i18n.T("rail.ssh.ended", "why", status)
+			mark, role = "○", "rule"
+			tail = name + currentTheme.styleFor("rule").Render(ended)
+		default:
+			mark, role = "○", "rule"
+			tail = name + currentTheme.styleFor("rule").Render(i18n.T("rail.ssh.no_code"))
+		}
+		rows = append(rows, currentTheme.styleFor(role).Render(mark+" ")+
+			currentTheme.styleFor("process").Render(tail))
+	}
+	return rows
+}
+
+// sshCount is the badge beside the SSH title: how many sessions are live,
+// or "" when the workspace has never had one — "0" over a block that says
+// "No SSH sessions" would say the same thing twice.
+func sshCount(sessions []any) string {
+	if len(sessions) == 0 {
+		return ""
+	}
+	live := 0
+	for _, item := range sessions {
+		if row, ok := item.(map[string]any); ok {
+			if status, _ := row["status"].(string); status == "running" {
+				live++
+			}
+		}
+	}
+	return fmt.Sprintf("%d", live)
 }
 
 func windowText(window any) string {
