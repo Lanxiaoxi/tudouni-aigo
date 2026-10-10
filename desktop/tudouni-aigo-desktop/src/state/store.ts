@@ -107,7 +107,7 @@ import {
   initialTerminalState,
   type TerminalState,
 } from '@/runtime/terminalOutput';
-import { baseName, samePath } from '@/utils/format';
+import { baseName, normPath, samePath } from '@/utils/format';
 import {
   attachRuntime,
   chooseWorkspaceDirectory,
@@ -330,8 +330,6 @@ export interface SessionRuntime {
   launch: LaunchArgs;
 
   session: SessionInfo | null;
-  sessionList: VmSessionListItem[];
-  listedSessions: boolean;
   /** A local fact: has this session been spoken to. "Never spoken" and "idle"
    *  are two different labels in the status bar. */
   hasSpoken: boolean;
@@ -582,6 +580,38 @@ export interface SessionRuntime {
 }
 
 /**
+ * The saved sessions of **one workspace**, as the runtime last reported them.
+ *
+ * **Window-level, not per bucket, and that is the whole of one reported bug.**
+ * This used to live on `SessionRuntime` — `sessionList` / `listedSessions`, one
+ * copy per child — while the fact it holds is the workspace's: `session_list` is
+ * answered by reading the session *files* in one directory, so every child in
+ * that workspace would answer identically. Storing it per child gave the left
+ * rail a different list depending on which conversation happened to be focused
+ * ("switching sessions seems to change the list itself"), because `focusSession`
+ * sends nothing and the rail simply switched to another child's frozen snapshot.
+ * The fingerprints were in the numbers: a session still growing showed 240 · 99
+ * in one child's copy and 141 · 55 in another's, while the file on disk held 240
+ * messages and 99 steps.
+ *
+ * Keyed by workspace, because that is the scope the runtime answers in — the
+ * rail draws the conversation list of the workspace on screen, and a list
+ * belonging to another directory is not this list's business. **A map rather
+ * than a single slot**, and that is not symmetry for its own sake: two sessions
+ * in two workspaces can both answer `session_list`, and one slot would let a
+ * background workspace's reply overwrite the list the person is looking at —
+ * the same "the list changed under me" symptom, one layer down. The key is
+ * `normPath(workspace)`, so it is built the same way it is looked up.
+ */
+export interface SavedSessions {
+  /** The workspace this list describes, as the runtime named it. */
+  workspace: string;
+  items: VmSessionListItem[];
+  /** Whether the runtime has answered for this workspace yet. */
+  listed: boolean;
+}
+
+/**
  * A fresh bucket for a session whose child has just been started.
  *
  * Exported because a bucket is a real thing to need outside this module: the
@@ -605,8 +635,6 @@ export function createSessionBucket(
     runtimeExit: null,
     launch,
     session: null,
-    sessionList: [],
-    listedSessions: false,
     hasSpoken: false,
     lastTurnMs: null,
     liveCall: null,
@@ -673,15 +701,30 @@ export interface AppStore {
    * Every session with a live child, by key.
    *
    * Membership is "this session has a process right now". A session that exists
-   * only as a file on disk is in `sessions[x].sessionList`, not here — and that
-   * distinction is what the left rail's status dots are built on: **no process,
-   * no state**.
+   * only as a file on disk is in `savedSessions` (keyed by workspace), not here —
+   * and that distinction is what the left rail's status dots are built on: **no
+   * process, no state**.
    */
   sessions: Record<string, SessionRuntime>;
   /** Display order for the left rail. Appended when a session is started. */
   order: string[];
   /** Which session is drawn. **It decides nothing else.** */
   activeKey: string | null;
+
+  /**
+   * The saved sessions of each workspace this window has heard about, keyed by
+   * `normPath(workspace)`. **Window-level because the fact is the workspace's**,
+   * not any one child's — see `SavedSessions` for the report this fixed.
+   *
+   * A record rather than one entry: several sessions in several workspaces can
+   * each answer `session_list`, and a single slot would let a background
+   * workspace's reply overwrite the list on screen.
+   *
+   * No selector builds a fresh object from this — the rail and the picker read
+   * **one row** out of it — so it does not have the identity problem the
+   * fallback constants exist for.
+   */
+  savedSessions: Record<string, SavedSessions>;
 
   /** The runtime's own version, read once via `--version` at start-up. `dev`
    *  when it was not a release build — shown as-is, not prettified. */
@@ -1415,6 +1458,22 @@ export function activeRuntime(s: AppStore): SessionRuntime | null {
 }
 
 /**
+ * The workspace the session on screen is in, as its own runtime named it.
+ *
+ * `init.workspace` first — the runtime's own answer about where it is — and
+ * `bucket.workspace` (what the bridge was started with) as the fallback for the
+ * moment before the handshake lands. This is the same precedence the left rail
+ * and the top bar use, in one place, because it is also the **key** the saved
+ * session list is filed under: two expressions of "which workspace is this"
+ * would eventually file a list where nothing looks for it.
+ */
+export function activeWorkspaceOf(s: AppStore): string {
+  const rt = activeRuntime(s);
+  if (!rt) return '';
+  return rt.session?.workspace ?? rt.workspace;
+}
+
+/**
  * Which workspace a child about to be started should be given.
  *
  * Three answers, in order of how directly a person said them:
@@ -1520,7 +1579,19 @@ export function isUntouchedSession(s: AppStore, key: string): boolean {
 export const NO_ENTRIES: Entry[] = [];
 export const NO_NOTES: NoteEntry[] = [];
 export const NO_STRINGS: string[] = [];
-export const NO_SESSION_LIST: VmSessionListItem[] = [];
+/**
+ * The saved-session list for a workspace nothing has been heard about yet.
+ *
+ * A shared constant for the usual reason: `selectSavedSessions` returns an
+ * object, and a fresh `{ items: [] }` per call never compares equal under
+ * zustand's identity comparison — the rail would re-render forever and never
+ * commit, which shows up as an empty screen rather than an error.
+ *
+ * `listed: false` is the honest value: no runtime has answered for this
+ * workspace, and that is a different statement from "this workspace has no saved
+ * sessions", which is `listed: true` with an empty list.
+ */
+export const NO_SAVED_SESSIONS: SavedSessions = { workspace: '', items: [], listed: false };
 /** The empty terminal list, for the same reason: a selector's fallback must be
  *  a stable reference or every render of an empty workspace is a new frame. */
 export const NO_TERMINALS: TerminalRow[] = [];
@@ -1843,6 +1914,45 @@ export const useApp = create<AppStore>((set, get) => {
     patch(key, changes);
   }
 
+  /**
+   * Record the saved sessions a runtime reported for one workspace.
+   *
+   * The workspace is a parameter rather than being read off the reply, because
+   * `sessions.items` does not name one: the runtime answers for the directory
+   * its child is in, and the connection is the only place that fact exists —
+   * exactly like the session attribution `applyRuntimeMessage` takes a key for.
+   *
+   * Written into `savedSessions[key]` and nothing else: this is a **workspace**
+   * fact, so it must not land in the bucket of whichever child happened to
+   * answer. That was the bug — see `SavedSessions`.
+   */
+  function noteSavedSessions(
+    workspace: string,
+    items: VmSessionListItem[],
+    listed: boolean,
+  ): void {
+    if (workspace.trim() === '') return;
+    const key = normPath(workspace);
+    set((s) => ({
+      savedSessions: {
+        ...s.savedSessions,
+        [key]: { workspace, items, listed },
+      },
+    }));
+  }
+
+  /** Mark one workspace's list as not-yet-answered, so a reader shows loading
+   *  rather than a stale list that a request is on its way to replace. */
+  function markSavedSessionsPending(workspace: string): void {
+    if (workspace.trim() === '') return;
+    const key = normPath(workspace);
+    set((s) => {
+      const current = s.savedSessions[key];
+      if (!current) return {};
+      return { savedSessions: { ...s.savedSessions, [key]: { ...current, listed: false } } };
+    });
+  }
+
   /** The key a message should be sent to: the active session, or nothing. */
   function activeKeyForSend(): string | null {
     return get().activeKey;
@@ -1876,6 +1986,7 @@ export const useApp = create<AppStore>((set, get) => {
     sessions: {},
     order: [],
     activeKey: null,
+    savedSessions: {},
 
     runtimeVersion: null,
     desktopVersion: __DESKTOP_VERSION__,
@@ -2338,7 +2449,6 @@ export const useApp = create<AppStore>((set, get) => {
             toolRegistry: init.tools,
             handshakeNotices: notices,
             entries: [...bucket.entries, ...notices],
-            listedSessions: false,
             // The handshake means this child is up, so a previous refusal is no
             // longer true.
             problem: null,
@@ -2355,6 +2465,12 @@ export const useApp = create<AppStore>((set, get) => {
           // The first screen shows the four most recent sessions, and only this
           // message ever asks for them. Without it those slots stay empty until
           // somebody opens `/resume`, and `Ctrl+1..9` has nothing to switch to.
+          //
+          // The list is a **workspace** fact, so what is marked pending is that
+          // workspace's list — not this child's bucket. `init.workspace` is the
+          // runtime's own name for the directory, which is the key the reply will
+          // be filed under.
+          markSavedSessionsPending(init.workspace);
           sendTo(key, { v: 1, t: 'session_list' });
           break;
         }
@@ -2426,21 +2542,27 @@ export const useApp = create<AppStore>((set, get) => {
             wakePolling(key);
             throttled(key, () => sendTo(key, { v: 1, t: 'status' }));
 
-            // **The rail's two groups change membership here, and only here.**
-            // A conversation gets its file on the first checkpoint, so this is
-            // the moment a row moves out of the "open now" group and into the
-            // saved list — and without a re-read the row would keep claiming it
-            // is unsaved for the rest of its life, because `sessions.items` is
-            // the only source for the saved list and nothing else asks again.
+            // **The rail's saved list is re-read here, and this is the fix for
+            // the frozen numbers.** A row used to carry whatever `sessions.items`
+            // said the first time, and the list was only ever asked for again
+            // while the *active* conversation was still missing from its own
+            // child's copy — so a conversation's message and step counts stayed
+            // at their first-ever values for the life of the window: one session
+            // showed 135 · 48 in the rail while its file held 237 messages.
             //
-            // Asked **only while this conversation is still missing from that
-            // list**, so it is one extra round trip per session rather than one
-            // per turn: the list is built by reading up to fifty session files,
-            // which is not something to re-read at the end of every turn.
-            if (
-              bucket.sessionId !== null &&
-              !bucket.sessionList.some((row) => row.id === bucket.sessionId)
-            ) {
+            // A finished turn is the right moment and the only one needed: the
+            // checkpoint that ends it is what writes the messages down, so this
+            // is when any row's numbers can have changed. It is bounded by
+            // **turns**, not by time, which is why it needs no throttle of its
+            // own — a turn is not a heartbeat. The read is `LoadSummary` per
+            // session, which skips the `ctx` records that make up the bulk of a
+            // real file.
+            //
+            // The reply is filed under this child's **workspace**, so it also
+            // refreshes the rail for every other conversation open in it.
+            //
+            // A conversation with no id yet has no file and nothing to list.
+            if (bucket.sessionId !== null) {
               sendTo(key, { v: 1, t: 'session_list' });
             }
           }
@@ -2790,7 +2912,16 @@ export const useApp = create<AppStore>((set, get) => {
         }
 
         case 'sessions': {
-          patch(key, { sessionList: projectSessionList(msg.items), listedSessions: true });
+          // **A workspace fact, not a session one.** The list is built by reading
+          // the session files of one directory, so every child in that workspace
+          // would answer identically — and storing it in the bucket of whichever
+          // child replied is what made the rail's list change when nobody asked
+          // it to. See `SavedSessions`.
+          noteSavedSessions(
+            bucket.session?.workspace ?? bucket.workspace,
+            projectSessionList(msg.items),
+            true,
+          );
           break;
         }
 
@@ -2999,7 +3130,10 @@ export const useApp = create<AppStore>((set, get) => {
       // several open that is the only one whose answer this panel could mean.
       if (key === null) return;
       if (p === 'resume') {
-        patch(key, { listedSessions: false });
+        // The picker lists the **workspace's** sessions, so what goes back to
+        // loading is that workspace's list — not this child's bucket, which no
+        // longer holds one.
+        markSavedSessionsPending(activeWorkspaceOf(get()));
         sendTo(key, { v: 1, t: 'session_list' });
       }
       if (p === 'skills') {
@@ -3142,7 +3276,11 @@ export const useApp = create<AppStore>((set, get) => {
     requestSessionList() {
       const key = get().activeKey;
       if (key === null) return;
-      patch(key, { listedSessions: false });
+      // The **workspace's** list goes back to loading, not this child's: the
+      // reply is filed under the workspace (see `SavedSessions`), so marking a
+      // bucket would leave the rail drawing the old list over a refresh that is
+      // on its way.
+      markSavedSessionsPending(activeWorkspaceOf(get()));
       sendTo(key, { v: 1, t: 'session_list' });
     },
 
@@ -4064,9 +4202,31 @@ export function selectWorkspaceAttentionKey(s: AppStore): string {
  * characters for the same reason `selectWorkspaceAttentionKey` uses them: none of
  * a child key, a session id or a status name can contain one.
  */
+/**
+ * One workspace's saved-session list, or the shared empty one.
+ *
+ * The lookup is by `normPath`, the same function the write is keyed with, so the
+ * two cannot disagree about which directory a list belongs to. A workspace that
+ * has never been asked about answers `listed: false` — "no runtime has told me
+ * yet" — rather than an empty list that would read as "this workspace has
+ * nothing in it".
+ */
+export function selectSavedSessions(s: AppStore, workspace: string): SavedSessions {
+  if (workspace.trim() === '') return NO_SAVED_SESSIONS;
+  return s.savedSessions[normPath(workspace)] ?? NO_SAVED_SESSIONS;
+}
+
 export function selectLiveOnlyKey(s: AppStore, workspace: string): string {
   // What the saved list already holds, so one conversation is never two rows.
-  const saved = new Set((activeRuntime(s)?.sessionList ?? []).map((row) => row.id));
+  //
+  // **The list of the workspace being drawn, not of whichever child is
+  // focused.** This read `activeRuntime(s)?.sessionList`, which is the same
+  // mistake one layer over: a conversation that the *focused* child's copy had
+  // not caught up with yet was drawn in the "open now" group, and which group it
+  // landed in changed when the person clicked another row — one session shown as
+  // "open now / Nothing has run in it yet" in one screenshot and as a normal
+  // saved row in the next.
+  const saved = new Set(selectSavedSessions(s, workspace).items.map((row) => row.id));
   const parts: string[] = [];
   for (const key of s.order) {
     const bucket = s.sessions[key];

@@ -8,13 +8,14 @@ import {
   NO_JOBS,
   NO_MCP_ROWS,
   NO_MODEL_ROWS,
-  NO_SESSION_LIST,
   NO_SKILLS,
   NO_STRINGS,
   NO_SUBAGENTS,
   NO_TERMINALS,
+  activeWorkspaceOf,
   selectAskOn,
   selectEffortLevels,
+  selectSavedSessions,
   useApp,
   useSessionField,
 } from '@/state/store';
@@ -201,8 +202,12 @@ export function EffortPanel() {
    ============================================================ */
 export function ResumePanel() {
   const t = useT();
-  const list = useSessionField((rt) => rt.sessionList, NO_SESSION_LIST);
-  const listed = useSessionField((rt) => rt.listedSessions, false);
+  // The picker shows the **workspace's** saved sessions, so it reads the same
+  // window-level list the left rail does — one source, so the two can never
+  // disagree about what exists (see `SavedSessions`).
+  const saved = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)));
+  const list = saved.items;
+  const listed = saved.listed;
   const openSession = useApp((s) => s.openSession);
   const currentId = useSessionField((rt) => rt.session?.id ?? null, null);
 

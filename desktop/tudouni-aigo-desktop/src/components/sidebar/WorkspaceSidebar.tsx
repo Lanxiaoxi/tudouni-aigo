@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react';
 import { ChevronRight, FileText, FolderPlus, Folder, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
 import {
   activeRuntime,
-  NO_SESSION_LIST,
+  activeWorkspaceOf,
   railBlocked,
   selectLiveOnlyKey,
   selectRowStatusKey,
+  selectSavedSessions,
   selectWorkspaceAttentionKey,
   useApp,
   type RowStatus,
@@ -50,6 +51,15 @@ export function WorkspaceSidebar() {
   // is no single workspace for the window, and this rail's first row names the
   // one the transcript below belongs to.
   const rt = useApp(activeRuntime);
+  // The session list is the **workspace's**, so it is read from the store's
+  // window-level record keyed by the workspace on screen — not from the focused
+  // child's bucket. Reading it per child is what made the list appear to change
+  // when the person clicked another row: `focusSession` sends nothing, so the
+  // rail simply switched to another child's frozen copy of the same files.
+  //
+  // The selector returns either the stored entry or the shared empty constant,
+  // so its identity only changes when the list actually does.
+  const savedSessions = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)));
   // Whether there is a child to talk to at all. Both workspace capabilities
   // need one: a terminal belongs to a workspace the runtime is *in*, and a file
   // listing is answered by that child against that child's boundary. With no
@@ -57,8 +67,6 @@ export function WorkspaceSidebar() {
   // than offered and then refused.
   const hasSession = rt !== null && rt.ready;
   const currentWorkspace = rt?.session?.workspace ?? rt?.workspace ?? '';
-  const sessionList = rt?.sessionList ?? NO_SESSION_LIST;
-  const listed = rt?.listedSessions ?? false;
   const currentSessionId = rt?.session?.id ?? null;
 
   const enterWorkspace = useApp((s) => s.enterWorkspace);
@@ -459,9 +467,9 @@ export function WorkspaceSidebar() {
                 </div>
               ) : null}
 
-              {!listed ? (
+              {!savedSessions.listed ? (
                 <div className="lb-note">{t('common.loading')}</div>
-              ) : sessionList.length === 0 ? (
+              ) : savedSessions.items.length === 0 ? (
                 // Only when there is nothing open either: with a live row above,
                 // "no past session" is a statement about files and the screen
                 // already has a conversation on it.
@@ -474,7 +482,7 @@ export function WorkspaceSidebar() {
                 )
               ) : (
                 <div className="lb-rows">
-                  {sessionList.map((item) => {
+                  {savedSessions.items.map((item) => {
                     const isCurrent = item.id === currentSessionId;
                     const armed = armedDelete === item.id;
                     return (

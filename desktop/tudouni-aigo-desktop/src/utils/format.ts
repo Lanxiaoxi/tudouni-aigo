@@ -103,6 +103,21 @@ export function baseName(p: string): string {
 }
 
 /**
+ * One workspace path in the form comparisons are made in: both separators
+ * normalised to `/`, trailing separators dropped, lower-cased.
+ *
+ * Exported because a comparison is not the only thing that needs it: the saved
+ * session list is **keyed** by workspace, and a key has to be built the same way
+ * it is looked up. Two implementations of "the same directory" — one for the
+ * lookup and one for the key — is exactly how a list ends up stored under a path
+ * nothing ever asks for. `samePath` is written in terms of this so the two
+ * cannot drift.
+ */
+export function normPath(p: string): string {
+  return p.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/**
  * Are these two paths the same workspace?
  *
  * A comparison of two strings, not a filesystem call. A workspace bookmark is
@@ -113,6 +128,5 @@ export function baseName(p: string): string {
  * draws the current workspace twice, once as "current" and once as a bookmark.
  */
 export function samePath(a: string, b: string): boolean {
-  const norm = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
-  return norm(a) === norm(b);
+  return normPath(a) === normPath(b);
 }

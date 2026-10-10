@@ -45,11 +45,13 @@ import {
   railBlocked,
   selectLiveOnlyKey,
   selectRowStatus,
+  selectSavedSessions,
   useApp,
   type AppStore,
   type SessionRuntime,
 } from '@/state/store';
 import { reduceEvent, type Entry } from '@/state/entries';
+import { normPath } from '@/utils/format';
 
 /** A store with the given sessions and nothing else carried over. */
 function install(
@@ -62,6 +64,10 @@ function install(
     sessions,
     order,
     activeKey,
+    // The saved session list is **window-level** now, keyed by workspace, so a
+    // test that wants one has to file it under the workspace it describes —
+    // `savedFor` below. An empty record is the state a fresh window is in.
+    savedSessions: {},
     modal: null,
     pendingModals: [],
     panel: null,
@@ -70,6 +76,39 @@ function install(
     lastWorkspace: null,
     ...overrides,
   });
+}
+
+/**
+ * File a saved-session list under one workspace, the way the `sessions` reply
+ * does.
+ *
+ * Written through the **store action path** rather than by hand-building the
+ * record: the key is `normPath(workspace)` and the lookup is too, so a test that
+ * spelled the key itself would be asserting its own arithmetic instead of the
+ * store's. The runtime's own `session_list` answer goes through
+ * `noteSavedSessions`, and this is that call with the same arguments.
+ */
+function savedFor(
+  workspace: string,
+  items: { id: string; messages?: number; steps?: number; preview?: string }[],
+): void {
+  useApp.setState((s) => ({
+    savedSessions: {
+      ...s.savedSessions,
+      [normPath(workspace)]: {
+        workspace,
+        items: items.map((row) => ({
+          id: row.id,
+          messages: row.messages ?? 0,
+          steps: row.steps ?? 0,
+          todos: '',
+          preview: row.preview ?? '',
+          modifiedAt: 1,
+        })),
+        listed: true,
+      },
+    },
+  }));
 }
 
 /** A bucket that has just been started: no id yet, nothing said, no file. */
@@ -130,14 +169,93 @@ test('a session the saved list already holds is not drawn twice', () => {
   // saved belongs to that list — its row carries the message count, the step
   // count and the preview, none of which this end knows. Drawing it in both
   // groups would be one conversation shown as two.
-  const bucket = handshaken('k1', 'C:/work', '20260101-120000');
-  bucket.sessionList = [
-    { id: '20260101-120000', messages: 4, steps: 2, todos: '', preview: 'hi', modifiedAt: 1 },
-  ];
-  bucket.listedSessions = true;
-  install({ k1: bucket }, ['k1'], 'k1');
+  //
+  // The list is filed under the **workspace**, not under the child: that is the
+  // change this suite was extended for. A row in the wrong group was one of the
+  // two visible symptoms, and it was caused by the same per-child copy.
+  install({ k1: handshaken('k1', 'C:/work', '20260101-120000') }, ['k1'], 'k1');
+  savedFor('C:/work', [{ id: '20260101-120000', messages: 4, steps: 2, preview: 'hi' }]);
 
   assert.equal(selectLiveOnlyKey(useApp.getState(), 'C:/work'), '');
+});
+
+/* ============================================================
+   Group 1b: the list is the workspace's, not the focused child's
+   ============================================================ */
+
+test('the same row lands in the same group whichever session is focused', () => {
+  // **This is the reported symptom, in one assertion.** Two children in one
+  // workspace: `k1` is the focused one and its copy of the files is stale, `k2`
+  // is a second conversation whose copy happens to be newer. Before this change
+  // the "open now" test read `activeRuntime(s)?.sessionList`, so focusing `k1`
+  // drew the saved conversation as a live row reading "Nothing has run in it
+  // yet" — and clicking `k2` moved it back into the saved list. One list that
+  // changed when nobody asked it to.
+  //
+  // The list now lives in `savedSessions`, keyed by workspace, so it does not
+  // depend on which row is selected at all.
+  //
+  // Both buckets are **resumed** conversations, deliberately: a `handshaken`
+  // bucket is a session that never became a conversation, and switching away
+  // from one closes it (`abandonIfUntouched`, Group 3) — which would make this
+  // test pass for the wrong reason, with `k1` gone rather than merely not drawn.
+  const saved = [{ id: '20261010-120142', messages: 244, steps: 78, preview: 'a topic' }];
+  install(
+    {
+      k1: resumed('k1', 'C:/work', '20261010-124807'),
+      k2: resumed('k2', 'C:/work', '20261010-135118'),
+    },
+    ['k1', 'k2'],
+    'k1',
+  );
+  savedFor('C:/work', saved);
+
+  const first = selectLiveOnlyKey(useApp.getState(), 'C:/work');
+
+  useApp.getState().focusSession('k2');
+  const second = selectLiveOnlyKey(useApp.getState(), 'C:/work');
+
+  assert.equal(first, second, 'the rail does not change when the focus does');
+  // And the saved conversation is not duplicated into the live group by either.
+  assert.ok(!first.includes('20261010-120142'));
+});
+
+test('two children in one workspace read one and the same list', () => {
+  // The other half, stated as the fact rather than as the symptom: the list is
+  // **one** value for the workspace, so the count a row shows does not depend on
+  // which of the workspace's children answered last. A `sessions` reply from
+  // either is filed under the workspace.
+  install(
+    {
+      k1: handshaken('k1', 'C:/work', '20261010-124807'),
+      k2: handshaken('k2', 'C:/work', '20261010-135118'),
+    },
+    ['k1', 'k2'],
+    'k1',
+  );
+  savedFor('C:/work', [{ id: '20261010-120142', messages: 244, steps: 78, preview: 'a topic' }]);
+
+  // Both children's own `init.workspace` names the same directory, so both read
+  // the one entry — and a selector does not allocate a fresh object per call, or
+  // the rail would re-render forever.
+  const a = selectSavedSessions(useApp.getState(), 'C:/work');
+  const b = selectSavedSessions(useApp.getState(), 'c:/work/');
+  assert.equal(a, b, 'case and trailing separator name the same workspace');
+  assert.equal(a.items[0]?.messages, 244);
+});
+
+test('a workspace nothing has answered for reads "loading", not "empty"', () => {
+  // `listed: false` and `items: []` are different statements, and the rail draws
+  // them differently: "no runtime has told me yet" versus "this workspace has no
+  // saved sessions". Collapsing them would put "no past session" on screen for
+  // the second before the reply lands.
+  install({ k1: handshaken('k1', 'C:/work', '20260101-120000') }, ['k1'], 'k1');
+
+  const nothing = selectSavedSessions(useApp.getState(), 'C:/elsewhere');
+  assert.equal(nothing.listed, false);
+  assert.deepEqual(nothing.items, []);
+  // A shared constant, so this does not re-render the rail forever.
+  assert.equal(nothing, selectSavedSessions(useApp.getState(), 'C:/elsewhere'));
 });
 
 test('before init lands there is no id yet, and the row still exists', () => {
@@ -213,13 +331,11 @@ test('the idle session a launch opened is closed when the person moves on', () =
   // of the window's life — with no delete button, because there is no file.
   const idle = handshaken('k1', 'C:/work', '20261002-183456');
   const past = handshaken('k2', 'C:/work', '20261002-183131');
+  install({ k1: idle, k2: past }, ['k1', 'k2'], 'k1');
   // A conversation with a file, which is what makes it a **past** session: the
   // runtime's list holds it, so it is drawn from there and not from this group.
-  past.sessionList = [
-    { id: '20261002-183131', messages: 21, steps: 8, todos: '', preview: 'hi', modifiedAt: 1 },
-  ];
-  past.listedSessions = true;
-  install({ k1: idle, k2: past }, ['k1', 'k2'], 'k1');
+  // Filed under the workspace, since that is what the list describes.
+  savedFor('C:/work', [{ id: '20261002-183131', messages: 21, steps: 8, preview: 'hi' }]);
 
   useApp.getState().focusSession('k2');
 

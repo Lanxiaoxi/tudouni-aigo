@@ -48,11 +48,13 @@ import {
   createSessionBucket,
   selectModalOrigin,
   selectQueuedModals,
+  selectSavedSessions,
   selectTurnMs,
   selectUsage,
   useApp,
   type SessionRuntime,
 } from '@/state/store';
+import { normPath } from '@/utils/format';
 import type { FrontendMsg } from '@/protocol/types';
 
 /* ============================================================
@@ -2323,10 +2325,20 @@ test('entering another workspace opens beside the current one, and clears nothin
   const sent = captureOutbound();
   resetStore();
   applyInit();
+  // The saved list belongs to the **workspace**, so it is filed under that
+  // workspace in the window-level record — not in the bucket of the child that
+  // happens to have answered. `normPath` is the key the store itself uses.
+  const workspace = String(INIT_PAYLOAD.workspace);
   useApp.setState((s) => ({
-    sessions: {
-      ...s.sessions,
-      [KEY]: { ...s.sessions[KEY]!, sessionList: [{ id: 's-1' } as never], listedSessions: true },
+    savedSessions: {
+      ...s.savedSessions,
+      [normPath(workspace)]: {
+        workspace,
+        items: [
+          { id: 's-1', messages: 0, steps: 0, todos: '', preview: '', modifiedAt: null },
+        ],
+        listed: true,
+      },
     },
   }));
 
@@ -2346,8 +2358,11 @@ test('entering another workspace opens beside the current one, and clears nothin
       //
       // So the old conversation survives, untouched, in its own bucket.
       assert.ok(s.sessions[KEY], 'the conversation that was open must survive');
-      assert.deepEqual(s.sessions[KEY]?.sessionList, [{ id: 's-1' }]);
-      assert.equal(s.sessions[KEY]?.listedSessions, true);
+      // And so does its workspace's saved list — still filed under that
+      // workspace, which is also what keeps it from being drawn in the list of
+      // the workspace the window just moved to.
+      assert.deepEqual(selectSavedSessions(s, workspace).items.map((row) => row.id), ['s-1']);
+      assert.equal(selectSavedSessions(s, workspace).listed, true);
       assert.equal(s.sessions[KEY]?.session?.workspace, INIT_PAYLOAD.workspace);
 
       // And nothing was switched in place: a workspace is a process, so this is

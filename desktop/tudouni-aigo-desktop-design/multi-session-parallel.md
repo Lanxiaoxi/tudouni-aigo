@@ -335,8 +335,6 @@ interface SessionRuntime {
   skillShadowed: string[];
   models: VmModel[];
   modelAliases: ModelAlias[];
-  sessionList: VmSessionListItem[];
-  listedSessions: boolean;
 
   /* 左栏那个点要说的事——见 §4.5「会话行的状态点」 */
   /** 回合在这个会话**不在屏幕上**的时候结束了。它成为 activeKey 的那一刻清掉；
@@ -358,6 +356,12 @@ interface AppStore {
   sessions: Record<string, SessionRuntime>;   // key -> 事实
   order: string[];                            // 左栏顺序
   activeKey: string | null;                   // 只决定显示哪个
+  /* **按工作区键控**（`normPath(workspace)`）。会话列表是**工作区**的事实：
+     `session_list` 是读一个目录下的会话文件得到的，同一工作区的每个子进程
+     答案都一样。**不能放进桶里** —— 放进去之后左栏读的是"当前聚焦那个子进程
+     的副本"，于是切换会话（`focusSession` 不发任何协议消息）看起来像列表本身
+     变了，同一行还会在「open now」组和已保存组之间跳。 */
+  savedSessions: Record<string, SavedSessions>;
   /* 全局：*/
   runtimeVersion, userName, desktopVersion;
   startupProblem: string | null;               // 全局启动失败，见下
@@ -398,7 +402,7 @@ interface AppStore {
 | `chrome/Composer.tsx` | `draft` / `history` / `composerNotice` / `pastedImages` / `phase` | 每会话 |
 | `stream/StreamView.tsx` + `EntryView` + `QuietGroup` | `entries` / `toolRegistry` / `tools` / `reasoningOpen` / `toolOpen` / `quiet` | 每会话，**但折叠状态 `reasoningOpen` / `toolOpen` 保持全局**——它们按 entry id 索引，而 `nextId`（`entries.ts:211`）是模块级单调计数，跨会话不重号，所以不需要跟着分桶 |
 | `sidebar/Sidebar.tsx`（右栏 5 区块） | `uiState`（goal/todos/skills/jobs/subagents/mcp）、`skills`、`mcpPending` | 每会话 |
-| `sidebar/WorkspaceSidebar.tsx`（左栏） | `workspaces`（全局）、`session.workspace`（当前）、`sessionList`、`modal` | **这一栏是导航**，见下。它还要新增一样东西：**会话行的状态点**（跨所有会话读，不只是当前这个——这正是它存在的理由） |
+| `sidebar/WorkspaceSidebar.tsx`（左栏） | `workspaces`（全局）、`session.workspace`（当前）、`savedSessions`（按工作区，**不是**当前子进程的）、`modal` | **这一栏是导航**，见下。它还要新增一样东西：**会话行的状态点**（跨所有会话读，不只是当前这个——这正是它存在的理由） |
 | `panels/*`（9 面板） | 多数读 `uiState` / `session` / `tools` / `status` / `models` | 每会话，除了 `settings`（启动参数，见 §4.2）和 `audit`（路径来自 `session.auditPath`，本身是每会话） |
 | `modals/*` | `modal` / `pendingModals` | **队列全局，每条带 key**（§4.5「阻塞模态队列」） |
 | 全局偏好 | `sidebarVisible` / `leftbarVisible` / `blockCollapsed` / `blockTouched` / `sessionsCollapsed` / `workspaces` / `reasoningOpen` / `toolOpen` | **保持全局**——它们说的是窗口怎么摆，或者按 entry id 索引。`blockTouched` / `blockAutoExpanded`（右栏 5 区块的自动展开一次）语义上是"每个会话第一次出现该区块时展开一次"，多会话下**共用一份也不会出错**（最坏是第二个会话不自动展开），所以不动它 |

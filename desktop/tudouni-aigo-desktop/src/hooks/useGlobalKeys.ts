@@ -1,5 +1,11 @@
 import { useEffect } from 'react';
-import { activeRuntime, selectPhase, useApp } from '@/state/store';
+import {
+  activeRuntime,
+  activeWorkspaceOf,
+  selectPhase,
+  selectSavedSessions,
+  useApp,
+} from '@/state/store';
 
 /** The class the terminal pane carries. Named here so the guard below and the
  *  pane itself cannot disagree about what "the terminal" is. */
@@ -175,9 +181,15 @@ export function useGlobalKeys(): void {
            Focusing rather than switching: with one process per conversation,
            what this changes is which transcript is drawn. It sends nothing, so
            it cannot disturb a turn that is running — in this session or in any
-           other. */
+           other.
+
+           **The list is the workspace's, not the focused child's.** Reading it
+           per child made the numbering depend on which row was already selected
+           — Ctrl+2 named a different conversation before and after a click,
+           because the child that had the newest copy of the files answered
+           differently. See `SavedSessions`. */
         if (/^[1-9]$/.test(e.key) && s.panel === null) {
-          const item = (activeRuntime(s)?.sessionList ?? [])[Number(e.key) - 1];
+          const item = selectSavedSessions(s, activeWorkspaceOf(s)).items[Number(e.key) - 1];
           if (item) {
             e.preventDefault();
             void s.openSession(item.id);

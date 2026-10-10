@@ -1,6 +1,11 @@
 import { useMemo } from 'react';
 import { Clock, Terminal } from 'lucide-react';
-import { NO_SESSION_LIST, useApp, useSessionField } from '@/state/store';
+import {
+  activeWorkspaceOf,
+  selectSavedSessions,
+  useApp,
+  useSessionField,
+} from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { StartupNoticeLine, ChooseWorkspaceButton } from '@/components/StartupNotice';
 import { Kbd } from '@/components/ui/kit';
@@ -41,7 +46,9 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
   const runtimeVersion = useApp((s) => s.runtimeVersion);
   const startupNotice = useApp((s) => s.startupNotice);
   const session = useSessionField((rt) => rt.session, null);
-  const sessionList = useSessionField((rt) => rt.sessionList, NO_SESSION_LIST);
+  // The list is the **workspace's**, read from the window-level record rather
+  // than from whichever child is focused — see `SavedSessions`.
+  const sessionList = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)).items);
   const openSession = useApp((s) => s.openSession);
   const openPanel = useApp((s) => s.openPanel);
 
