@@ -3,7 +3,6 @@ import { CheckCircle2, ChevronRight, CircleDashed, Loader, PanelRightClose } fro
 import { NO_SKILLS, useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
-import { Logo } from '@/components/ui/Logo';
 import { oneLine } from '@/utils/format';
 import type { JobState } from '@/protocol/types';
 import type { VmGoal, VmJob, VmMcp, VmTask } from '@/runtime/adapt';
@@ -154,18 +153,18 @@ export function Sidebar() {
 /* ---------------- the rail's own head ---------------- */
 
 /**
- * The right rail's head: the mark, **what this rail is**, and the way to put it
- * away.
+ * The right rail's head: **what this rail is**, and the way to put it away.
  *
  * It is the left rail's head mirrored (`.lb-head`), deliberately: the two rails
  * flank the transcript, and one of them starting with a named head while the
  * other began straight at "Goal" made them read as two unrelated designs rather
  * than as a pair.
  *
- * **The mark is on both on purpose.** The left head carries it as the window's
- * identity; here it identifies whose "Session runtime" this is — the same
- * application's. It is the application icon file, not a second drawing (see
- * `Logo`), so the two marks cannot drift apart.
+ * **No mark here, and that is deliberate.** The left rail's head carries the
+ * application icon as the window's identity; the right rail repeats the app's
+ * name in words ("Session runtime"), which is all this rail needs — a second
+ * copy of the mark two inches from the left one read as decoration, not as
+ * information.
  *
  * **The collapse control is drawn here, and that is a correction to what this
  * rail had before.** `Ctrl+B` was the only way to fold it, plus the `Show`
@@ -190,7 +189,6 @@ function RailHead() {
 
   return (
     <div className="rb-head">
-      <Logo size={20} title={t('app.name')} />
       <span className="rb-title">{t('rail.head')}</span>
       <Tip label={t('rail.collapse')}>
         <button

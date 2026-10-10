@@ -679,9 +679,10 @@ export function WorkspaceSidebar() {
         <Tip label={t('board.openHint')}>
           <button
             type="button"
-            className="lb-foot-btn"
-            disabled={blocked || !hasLiveChild}
-            onClick={() => setBoardOpen(true)}
+            className={`lb-foot-btn${boardOpen ? ' is-active' : ''}`}
+            disabled={blocked || (!hasLiveChild && !boardOpen)}
+            aria-pressed={boardOpen}
+            onClick={() => setBoardOpen(!boardOpen)}
           >
             <LayoutGrid size={14} />
             <span>{t('board.title')}</span>

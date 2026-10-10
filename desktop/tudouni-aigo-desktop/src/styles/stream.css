@@ -768,13 +768,13 @@
    §3 侧栏 5 区块
    ============================================================ */
 
-/* The right rail's own head: mark + "Session runtime" + the way to fold it.
+/* The right rail's own head: "Session runtime" + the way to fold it.
    The left rail's `.lb-head` (§3b below), crossed over that rail's own axis: the
-   same order (mark, title, button) and the same numbers, with the **padding
+   same order (title, button) and the same numbers, with the **padding
    swapped**, so the roomier side (12px) is against the window's outer frame in
-   both rails — the left head's left edge, this one's right edge. The mark ends up
-   on this rail's inner side and the button on the outer one, which is where each
-   belongs: the button is the one a pointer aims at from the window's edge.
+   both rails — the left head's left edge, this one's right edge. The button on
+   the outer edge is where it belongs: it is the one a pointer aims at from the
+   window's edge.
 
    The height and the `border-bottom` are deliberately the same number as
    `.lb-head`'s. The two heads sit at one height on either side of the
@@ -792,7 +792,7 @@
   align-items: center;
   gap: var(--space-2);
   height: 42px;
-  padding: 0 var(--space-3) 0 var(--space-2);
+  padding: 0 var(--space-3);
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -1546,6 +1546,15 @@
   color: var(--fg);
 }
 
+/* The board's own button reads as a toggle while the board is up: the view has
+   replaced the transcript, so the button is the way back and has to say so —
+   otherwise a second press reads as a dead click on a control that looks
+   already on. Same idiom as the other `is-active` toggles in this rail. */
+.lb-foot-btn.is-active {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
 .lb-foot-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -2221,9 +2230,13 @@
 /* Four columns, horizontally scrolling rather than squeezing. A board whose
    columns shrink to slivers is unreadable, and the window's minimum width
    (`tauri.conf.json`, 960) already leaves room for all four at a usable size. */
+/* **Equal column heights.** A column that shrank to fit its shortest content
+   (or an empty placeholder) broke the board's silhouette: the four panels are
+   one row of the layout, so they stretch to fill the shared height and read
+   as four lanes, not four boxes of different sizes. */
 .board-cols {
   display: flex;
-  align-items: flex-start;
+  align-items: stretch;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4) var(--space-5);
   overflow: auto;
@@ -2353,12 +2366,12 @@
   border-color: var(--accent-border);
   background: var(--accent-subtle);
   color: var(--fg);
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
 .board-card.is-current:hover {
   background: var(--accent-subtle);
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
 .board-card .board-card-top {
@@ -2437,33 +2450,45 @@
   margin-bottom: var(--space-1);
 }
 
-/* The foot: model chip left, counts and time right. One row instead of the
-   three stacked lines the board used to draw, which is what makes the card
-   read as one object rather than as a paragraph. */
+/* The foot, on two rows: the model chip gets its own line above the counts +
+   time row. Cramming all three into one row left every part truncated — the
+   chip ate the middle (`max-width: 60%`), the counts collapsed to "54…", and
+   the three time values fought for what was left. A chip on its own row has
+   room for the full provider/model, and the numbers row stays scannable. */
 .board-card-foot {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  margin-top: auto;
   min-width: 0;
 }
 
+/* The counts · time row under the chip: numbers left, relative time pushed to
+   the card's right edge. */
 .board-card .board-card-meta,
-.board-card .board-card-model,
 .board-card .board-card-time {
   font-size: var(--text-caption);
   color: var(--fg-faint);
 }
 
 .board-card .board-card-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.board-card .board-card-meta > .board-card-meta-counts {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .board-card .board-card-model {
-  flex: none;
-  max-width: 60%;
+  align-self: flex-start;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

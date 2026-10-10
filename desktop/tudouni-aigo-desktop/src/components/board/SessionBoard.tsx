@@ -276,18 +276,20 @@ export function SessionBoard() {
                         </span>
                       ) : null}
                       <span className="board-card-meta">
-                        {card.messages !== null
-                          ? t('panel.resume.messages', { n: card.messages })
-                          : t('board.noCounts')}
-                        {card.steps !== null
-                          ? ` · ${t('panel.resume.steps', { n: card.steps })}`
-                          : ''}
-                      </span>
-                      {card.modifiedAt !== null ? (
-                        <span className="board-card-time">
-                          {formatRelative(card.modifiedAt * 1000)}
+                        <span className="board-card-meta-counts">
+                          {card.messages !== null
+                            ? t('panel.resume.messages', { n: card.messages })
+                            : t('board.noCounts')}
+                          {card.steps !== null
+                            ? ` · ${t('panel.resume.steps', { n: card.steps })}`
+                            : ''}
                         </span>
-                      ) : null}
+                        {card.modifiedAt !== null ? (
+                          <span className="board-card-time">
+                            {formatRelative(card.modifiedAt * 1000)}
+                          </span>
+                        ) : null}
+                      </span>
                     </span>
                   </button>
                 );

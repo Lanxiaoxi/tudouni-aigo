@@ -3406,7 +3406,21 @@ export const useApp = create<AppStore>((set, get) => {
       // **Closing a panel, not preserving it.** The board is a view and a panel is
       // a dialog; the conversation column can only show one thing, so opening one
       // must put the other away rather than leave a panel stacked over the board.
-      set(open ? { boardOpen: true, panel: null } : { boardOpen: false });
+      if (!open) {
+        set({ boardOpen: false });
+        return;
+      }
+      // **An attached shell loses the screen to the board, explicitly.** The
+      // view's priority order keeps the terminal above the board — `TerminalView`
+      // is the only way out of a shell, so nothing may cover it — which is why
+      // merely setting `boardOpen` here was invisible whenever a shell was on
+      // screen: the flag flipped, the terminal kept drawing, and the press read
+      // as dead until the shell was left by hand. Opening the board is an
+      // explicit act, exactly like pressing the detach control, so it detaches
+      // the same way — through `attachTerminal(null)`, so the "still running"
+      // note is written by the one place that writes it.
+      get().attachTerminal(null);
+      set({ boardOpen: true, panel: null });
     },
 
     toggleBoard() {
