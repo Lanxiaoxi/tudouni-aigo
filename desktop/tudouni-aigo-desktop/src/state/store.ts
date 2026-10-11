@@ -88,6 +88,7 @@ import {
   type VmSubagent,
   type VmTool,
 } from '@/runtime/adapt';
+import type { SshRow } from '@/protocol/types';
 import {
   registerRuntime,
   sendTo,
@@ -156,9 +157,11 @@ export type PanelKind =
   | 'files'
   | 'terminal';
 
-export type SidebarBlockKey = 'goal' | 'tasks' | 'skills' | 'jobs' | 'mcp';
+/* `ssh` sits with the workspace-capability blocks (jobs, mcp): it is about
+ * things running in the workspace, not about this turn's conversation. */
+export type SidebarBlockKey = 'goal' | 'tasks' | 'skills' | 'jobs' | 'mcp' | 'ssh';
 
-export const SIDEBAR_BLOCKS: SidebarBlockKey[] = ['goal', 'tasks', 'skills', 'jobs', 'mcp'];
+export const SIDEBAR_BLOCKS: SidebarBlockKey[] = ['goal', 'tasks', 'skills', 'jobs', 'mcp', 'ssh'];
 
 /**
  * A blocking request, with the session it came from.
@@ -456,6 +459,17 @@ export interface SessionRuntime {
    */
   terminals: TerminalRow[];
   /**
+   * The workspace's SSH remote sessions, from every `ui(state)` (`snap.ssh` —
+   * the full list, replaced rather than merged, exactly like `terminals`).
+   *
+   * Display only: the `ssh_*` tools own the operations, so nothing here acts on
+   * a row — the rail answers "what is this workspace connected to", nothing
+   * more. Per **session** bucket for the same reason `terminals` is: this is
+   * "what this child told me", and two sessions in one workspace each hear the
+   * same list from their own child, neither wrong.
+   */
+  ssh: SshRow[];
+  /**
    * Which terminal this session's terminal view is attached to.
    *
    * A **front-end** preference, like `draft`: the design says a client may keep
@@ -696,6 +710,7 @@ export function createSessionBucket(
     // Terminals belong to the workspace, but "what this child told me" is the
     // only thing a bucket can hold — see the field's own comment.
     terminals: [],
+    ssh: [],
     activeTerminalId: null,
     terminalTails: {},
     terminalPending: [],
@@ -1321,6 +1336,7 @@ const EMPTY_BLOCKS: Record<SidebarBlockKey, boolean> = {
   skills: true,
   jobs: true,
   mcp: true,
+  ssh: true,
 };
 
 /**
@@ -4040,6 +4056,10 @@ function applyStateSnapshot(
     skills: snap.skills.length > 0,
     jobs: snap.jobs.length > 0,
     mcp: snap.mcp.some((server) => server.state === 'loaded'),
+    // Ended sessions the list still keeps are history, not load — but they are
+    // content the block can say something about, so they count here. The badge
+    // counts live ones only; this gate is about "is there a row to show".
+    ssh: snap.ssh.length > 0,
   };
 
   // The block-fold preferences are **window-level**, and they stay that way: a
@@ -4106,6 +4126,10 @@ function applyStateSnapshot(
           // `terminal_exit` remain the immediate patch for the moments between
           // two snapshots.
           ...applyTerminalList(live, snap.terminals),
+          // Same rule as the terminal list: the snapshot's list is replaced,
+          // never merged — an ended session leaving the runtime's list must
+          // stop being shown here too.
+          ssh: snap.ssh,
           ...(session
             ? {
                 session: {
