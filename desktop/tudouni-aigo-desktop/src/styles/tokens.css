@@ -160,6 +160,30 @@
 
   --terminal-bg:   #0B0E13;  /* 终端 / 代码块专用更深底 */
   --terminal-fg:   #e4e9f0;  /* 终端 / 代码块前景，与底成对 */
+  /* ---------- 终端 ANSI 16 色（SGR 30–37 / 90–97 / 40–47 / 100–107） ----------
+     终端里跑的程序（`ls --color`、npm、git、PSReadLine）发的是**调色板索引**，
+     不是颜色本身，索引到颜色的对应关系由前端决定——这就是这组变量的作用。
+     取的是各家终端通用的那套语义（1 红、2 绿、3 黄……），只是按本项目的深底
+     重新调过明度：0–7 取"正常档"，8–15 取"亮档"，两者都保证在 --terminal-bg
+     上有足够对比度。浅色主题下终端**仍然保持深底**（见下方 light 主题），所以
+     这 16 个值在两种主题下是同一份，不需要各写一套。
+     要换配色只改这里：terminalOutput.ts 只发 `var(--term-ansi-N)`，不写死颜色。 */
+  --term-ansi-0:   #3B4048;  /* black */
+  --term-ansi-1:   #E06C75;  /* red */
+  --term-ansi-2:   #98C379;  /* green */
+  --term-ansi-3:   #E5C07B;  /* yellow */
+  --term-ansi-4:   #61AFEF;  /* blue */
+  --term-ansi-5:   #C678DD;  /* magenta */
+  --term-ansi-6:   #56B6C2;  /* cyan */
+  --term-ansi-7:   #DCDFE4;  /* white */
+  --term-ansi-8:   #5C6370;  /* bright black */
+  --term-ansi-9:   #FF7B86;  /* bright red */
+  --term-ansi-10:  #B4D98A;  /* bright green */
+  --term-ansi-11:  #FFD68A;  /* bright yellow */
+  --term-ansi-12:  #8AC7FF;  /* bright blue */
+  --term-ansi-13:  #DFA6F0;  /* bright magenta */
+  --term-ansi-14:  #7FD3DE;  /* bright cyan */
+  --term-ansi-15:  #FFFFFF;  /* bright white */
   --scrollbar-thumb: #3A424D;
 
   /* ---------- 装饰层（光晕 / 渐变主按钮 / 卡片浮起） ---------- */

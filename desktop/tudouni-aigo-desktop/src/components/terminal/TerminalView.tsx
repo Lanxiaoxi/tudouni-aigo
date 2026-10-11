@@ -4,7 +4,7 @@ import { selectModalVisible, useApp, useSessionField, EMPTY_TAIL, NO_STRINGS, NO
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { encodeKey } from '@/runtime/terminalKeys';
-import { caretPosition } from '@/runtime/terminalOutput';
+import { attrStyle, caretPosition, lineSegments, NO_RUNS } from '@/runtime/terminalOutput';
 import type { TerminalRow } from '@/protocol/types';
 
 /**
@@ -254,10 +254,35 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
   const t = useT();
   const tail = useSessionField((rt) => rt.terminalTails[row.id] ?? EMPTY_TAIL, EMPTY_TAIL);
   const lines = tail.lines;
-  // **Where the caret goes, or `null` when the shell has hidden it.** Read from
-  // the same tail as `lines` rather than from a second source: the cursor and the
-  // row text only mean anything together, which is why they are one value.
+  /**
+   * **Each row, cut into the pieces to draw.** One derivation for the whole pane
+   * rather than a per-row call inside the render callback, and the reason is the
+   * colour: `lineSegments` needs the row's runs *and* the caret together (a caret
+   * can sit exactly where a colour changes), so doing it per row would mean
+   * looking the cursor up again in every one of the several thousand rows this
+   * pane can hold.
+   *
+   * Memoised on the tail, which is the identity the store hands out: a batch
+   * replaces it, so this recomputes when — and only when — the output changed.
+   * Without the memo, every unrelated re-render (a toast, a rail fold, the
+   * caret's own blink) would re-split every row in the scrollback.
+   *
+   * Indexed by the **buffer** row, which is what `tail.runs` is keyed by and what
+   * `caretPosition` answers with, so the caret lands on the row it belongs to
+   * rather than on the row with the same index on screen.
+   */
   const caret = useMemo(() => caretPosition(tail, lines), [tail, lines]);
+  const rows = useMemo(
+    () =>
+      lines.map((line, i) =>
+        lineSegments(
+          line,
+          tail.runs[i] ?? NO_RUNS,
+          caret !== null && caret.line === i ? caret.col : null,
+        ),
+      ),
+    [lines, tail.runs, caret],
+  );
   const terminalInput = useApp((s) => s.terminalInput);
   const resizeTerminal = useApp((s) => s.resizeTerminal);
   const ref = useRef<HTMLDivElement>(null);
@@ -420,7 +445,7 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
         aria-label={t('panel.term.title')}
         onKeyDown={onKeyDown}
       >
-        {lines.map((line, i) => (
+        {rows.map((segments, i) => (
           // **The absolute line number, not the index.** The array is bounded and
           // drops from the front, so index `0` is a *different* line before and
           // after a drop: with `key={i}` every row's key shifts at once and React
@@ -432,20 +457,33 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
           // content hash would be the other candidate and is wrong here: a build
           // log repeats the same line many times, so equal keys would collide.
           <div className="term-line" key={tail.dropped + i}>
-            {/* **The row the shell's cursor is on is drawn as a grid of two
-                spans**, so the caret can sit *between* two characters rather than
-                next to them — the one thing `textContent` cannot express. Splitting
-                only this row (and only when its column is inside it) keeps the rest
-                of the pane as plain text, which is what `white-space: pre` and the
-                row's `content-visibility` were written for. */}
-            {caret !== null && caret.line === i ? (
-              <>
-                <span>{line.slice(0, caret.col)}</span>
-                <span className="term-caret" />
-                <span>{line.slice(caret.col)}</span>
-              </>
+            {/* **One span per colour change, and the caret as its own span among
+                them.** The caret has to sit *between* two characters rather than
+                next to them — the one thing `textContent` cannot express — and a
+                colour change can be in exactly the same place, so both are decided
+                by one pass (`lineSegments`) rather than by two that would have to
+                agree about where the row is cut.
+
+                A row with no colours and no caret is a **single text child**, not a
+                span: that is the shape `white-space: pre` and the row's
+                `content-visibility` were written for, and it is what almost every
+                row of ordinary output is. */}
+            {segments.length === 1 && !segments[0].caret ? (
+              segments[0].attr === null ? (
+                segments[0].text
+              ) : (
+                <span style={attrStyle(segments[0].attr)}>{segments[0].text}</span>
+              )
             ) : (
-              line
+              segments.map((segment, at) =>
+                segment.caret ? (
+                  <span className="term-caret" key={`caret-${at}`} />
+                ) : (
+                  <span key={at} style={segment.attr === null ? undefined : attrStyle(segment.attr)}>
+                    {segment.text}
+                  </span>
+                ),
+              )
             )}
           </div>
         ))}

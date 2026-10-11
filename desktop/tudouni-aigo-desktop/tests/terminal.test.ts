@@ -18,17 +18,25 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { test } from 'node:test';
 
 import { encodeKey, isTerminalKey } from '@/runtime/terminalKeys';
 import {
+  ansiColour,
   applyTerminalOutput,
+  attrStyle,
   caretPosition,
+  DEFAULT_ATTR,
   DEFAULT_VIEWPORT_ROWS,
   fitViewport,
   initialTerminalState,
+  lineSegments,
+  rgbColour,
   tokenizeTerminalChunk,
 } from '@/runtime/terminalOutput';
+import type { TerminalAttr } from '@/runtime/terminalOutput';
 import {
   appendTerminalOutput,
   nextTerminalId,
@@ -236,15 +244,339 @@ test('a lone carriage return rewrites its line rather than appending', () => {
   assert.deepEqual(state.lines, ['100% done']);
 });
 
-test('sgr colour codes go, and the text between them stays', () => {
+test('sgr colour codes are instructions: the text stays, the colour is kept', () => {
   // `\x1b[93mecho \x1b[37mMARK` is a real PowerShell line: the colours are
-  // instructions, the words are the output.
+  // instructions, the words are the output. Both halves matter — the codes must
+  // not be drawn as text (which is what the old version tested), and the colour
+  // they set must not be thrown away either (which is what it did).
   const state = applyTerminalOutput(
     initialTerminalState(),
     '\x1b[93mecho \x1b[37mMARK\x1b[?25h',
     TERMINAL_SCROLLBACK,
   );
   assert.deepEqual(state.lines, ['echo MARK']);
+  // Two runs, because the colour changes in the middle of the line.
+  assert.deepEqual(
+    state.runs[0].map((run) => [run.start, run.end, run.attr.color]),
+    [
+      [0, 5, ansiColour(11)],
+      [5, 9, ansiColour(7)],
+    ],
+  );
+});
+
+/* ============================================================
+   Colour: the pen, the runs, and where they have to follow the text.
+
+   The failures these cover are all **silent and positional**: a run that is not
+   moved with its text draws the right colours on the wrong words, and nothing
+   about the pane looks broken enough to notice until a long command has scrolled.
+   ============================================================ */
+
+/** The colour a run reports, as the CSS the pane will paint. */
+function colourOf(attr: TerminalAttr | null): string | null {
+  return attr === null ? null : attr.color;
+}
+
+test('the pen survives a batch boundary', () => {
+  // A shell emits `ESC[93m`, flushes, and the text arrives in the next read. A pen
+  // reset per batch would colour the first fragment of every flush and nothing
+  // else — which reads as "the colours flicker", not as a bug in a buffer.
+  let store = appendTerminalOutput({}, 'term-01', '\x1b[31mred ');
+  store = appendTerminalOutput(store, 'term-01', 'still red\n');
+  const tail = store['term-01'];
+  assert.deepEqual(tail.lines, ['red still red', '']);
+  assert.deepEqual(
+    tail.runs[0].map((run) => [run.start, run.end, run.attr.color]),
+    [[0, 13, ansiColour(1)]],
+  );
+});
+
+test('the off codes end a colour, rather than colouring the rest of the session', () => {
+  // `ESC[1m…ESC[22m` is how a shell does one bold word. Reading only the "on" half
+  // would leave everything after that word bold for ever — a renderer that "forgot
+  // where the word ended", which is exactly what it would be.
+  const state = applyTerminalOutput(
+    initialTerminalState(),
+    '\x1b[1mbold\x1b[22m plain\x1b[31m then red\x1b[39m back',
+    TERMINAL_SCROLLBACK,
+  );
+  assert.deepEqual(state.lines, ['bold plain then red back']);
+  const runs = state.runs[0];
+  const bold = runs.find((run) => run.attr.bold);
+  assert.equal(bold?.start, 0);
+  assert.equal(bold?.end, 4);
+  // 22 clears bold, and the default pen is the absence of a run — so the word after
+  // it must not be inside any run at all.
+  assert.equal(
+    runs.some((run) => run.start < 5 && run.end > 5 && run.attr.bold),
+    false,
+  );
+  // 39 restores the default foreground, so the tail is uncoloured.
+  assert.equal(runs.some((run) => run.start >= 20), false);
+});
+
+test('a 256-colour select reads its index, not its selector', () => {
+  // The bug this pins: reading the colour out of the parameters *after* the `38`
+  // takes the `5` as the index, so `38;5;196` draws colour 5 and swallows the 196.
+  const state = applyTerminalOutput(initialTerminalState(), '\x1b[38;5;196mX', TERMINAL_SCROLLBACK);
+  assert.equal(colourOf(state.runs[0][0].attr), ansiColour(196));
+  assert.notEqual(colourOf(state.runs[0][0].attr), ansiColour(5));
+});
+
+test('truecolour is read in both the semicolon and the colon form', () => {
+  // The colon form carries a colour-space id between the `2` and the components
+  // (`38:2:0:255:0:0`), and programs do write it with the id empty. Stepping over
+  // it in the semicolon form too would lose the red channel — which is a wrong
+  // colour that still looks plausible.
+  const semi = applyTerminalOutput(initialTerminalState(), '\x1b[38;2;255;0;0mS', TERMINAL_SCROLLBACK);
+  assert.equal(colourOf(semi.runs[0][0].attr), rgbColour(255, 0, 0));
+  const colon = applyTerminalOutput(initialTerminalState(), '\x1b[38:2::255:0:0mC', TERMINAL_SCROLLBACK);
+  assert.equal(colourOf(colon.runs[0][0].attr), rgbColour(255, 0, 0));
+});
+
+test('a private sequence that happens to end in `m` is not SGR', () => {
+  // `CSI >4;2m` shares the final byte with SGR and means something else entirely.
+  // Reading it as colour would paint a shell's output from an instruction that was
+  // never about colour — and `?25m` is not even a mode anyone sets.
+  const state = applyTerminalOutput(initialTerminalState(), '\x1b[>4;2mplain', TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.runs[0], []);
+  assert.deepEqual(state.lines, ['plain']);
+});
+
+test('a redraw lands its colour on the characters it redraws', () => {
+  // The prompt-redraw shape, with colour: PSReadLine moves the cursor back over the
+  // part of the line that did not change — with a backspace for one column and with
+  // an absolute movement when it is longer — and re-sends the colour before writing.
+  // The run has to follow the *text*, so a rewrite that replaces columns 0..3 leaves
+  // exactly those columns coloured.
+  const moved = '\x1b[3D';
+  let state = applyTerminalOutput(initialTerminalState(), '\x1b[93mabc', TERMINAL_SCROLLBACK);
+  state = applyTerminalOutput(state, `${moved}\x1b[93mXYc`, TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.lines, ['XYc']);
+  assert.deepEqual(
+    state.runs[0].map((run) => [run.start, run.end, run.attr.color]),
+    [[0, 3, ansiColour(11)]],
+  );
+});
+
+test('a shorter rewrite does not leave the old colour behind it', () => {
+  // The failure this exists for: `red-and-long` rewritten as `short` used to leave
+  // the run covering columns past the new end, so the *next* thing written on that
+  // row inherited a colour nobody set.
+  let state = applyTerminalOutput(initialTerminalState(), '\x1b[31mred-and-long', TERMINAL_SCROLLBACK);
+  state = applyTerminalOutput(state, '\rshort\x1b[K', TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.lines, ['short']);
+  assert.deepEqual(
+    state.runs[0].map((run) => [run.start, run.end]),
+    [[0, 5]],
+  );
+});
+
+test('erasing a row takes its colours with it', () => {
+  // `ESC[2J` clears the screen; a model that cleared the text and kept the runs
+  // would colour the rows the shell writes next with the colours of the rows it
+  // wiped. Asserted **on the wipe itself**, before anything is written: the pen is
+  // sticky by design (see the batch-boundary case above), so a `fresh` written
+  // after this is still red — and that is the shell's business, not the erase's.
+  let state = applyTerminalOutput(initialTerminalState(), '\x1b[41mone\r\ntwo', TERMINAL_SCROLLBACK);
+  assert.equal(state.runs[0].length, 1);
+  state = applyTerminalOutput(state, '\x1b[2J\x1b[H', TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.lines, ['']);
+  assert.deepEqual(state.runs[0], []);
+});
+
+test('an erase-to-end keeps the colour that is still on screen', () => {
+  // `ESC[K` from the middle of a coloured line wipes the tail and keeps the head —
+  // including the head's colour, which is still visible and still the shell's.
+  // `green tail` is ten columns, so `3D` leaves the cursor on column 7.
+  let state = applyTerminalOutput(initialTerminalState(), '\x1b[32mgreen tail', TERMINAL_SCROLLBACK);
+  state = applyTerminalOutput(state, '\x1b[3D\x1b[K', TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.lines, ['green t']);
+  assert.deepEqual(
+    state.runs[0].map((run) => [run.start, run.end, run.attr.color]),
+    [[0, 7, ansiColour(2)]],
+  );
+});
+
+test('the two row lists stay the same length through a scroll', () => {
+  // `runs.length === rows.length` is the model's structural invariant, and a scroll
+  // is where it breaks if the two are not moved together: from that moment on every
+  // row wears the colours of the row above it.
+  const state = applyTerminalOutput(
+    initialTerminalState(2),
+    'one\r\ntwo\r\n\x1b[31mthree\r\nfour',
+    TERMINAL_SCROLLBACK,
+  );
+  assert.equal(state.runs.length, state.rows.length);
+});
+
+test('a tall pane grows both lists, not just the text one', () => {
+  // A resize to a taller screen appends blank rows. Appending them without their
+  // (empty) runs is the same off-by-one as an unscrolled run list.
+  const grown = fitViewport(initialTerminalState(4), 40);
+  assert.equal(grown.rows.length, grown.runs.length);
+  assert.equal(grown.rows.length, grown.screenTop + grown.viewportRows);
+});
+
+test('the trim carries the colours of the newest rows, and only those', () => {
+  // The buffer bound drops the oldest rows. A trim that sliced only the text would
+  // shift every colour up by the number of rows dropped, and the pane would show
+  // the last line of a build in the colour of the third-to-last.
+  const state = applyTerminalOutput(initialTerminalState(2), 'a\r\nb\r\n\x1b[31mRED', 2);
+  assert.deepEqual(state.lines, ['b', 'RED']);
+  const last = state.runs[state.runs.length - 1];
+  assert.equal(colourOf(last[0]?.attr ?? null), ansiColour(1));
+  assert.deepEqual(state.runs[0], []);
+});
+
+test('the same pen twice is one run, not two', () => {
+  // A shell writes a line across several flushes, and PSReadLine re-sends the
+  // colour before every redraw. One run per flush would be thousands of spans in a
+  // build log, each with its own style object for React to diff.
+  let state = applyTerminalOutput(initialTerminalState(), '\x1b[36mabc', TERMINAL_SCROLLBACK);
+  state = applyTerminalOutput(state, 'def', TERMINAL_SCROLLBACK);
+  state = applyTerminalOutput(state, '\x1b[36mghi', TERMINAL_SCROLLBACK);
+  assert.deepEqual(
+    state.runs[0].map((run) => [run.start, run.end]),
+    [[0, 9]],
+  );
+});
+
+test('the same pen twice is the same object, which is what the pane caches on', () => {
+  // The pane keys its style cache by attr identity. Re-sending the colour a shell
+  // already had must therefore keep the object rather than build an equal one —
+  // otherwise every keystroke invalidates a style and the identity is worthless.
+  let state = applyTerminalOutput(initialTerminalState(), '\x1b[36mabc', TERMINAL_SCROLLBACK);
+  const first = state.runs[0][0].attr;
+  state = applyTerminalOutput(state, '\x1b[36mdef', TERMINAL_SCROLLBACK);
+  assert.equal(state.runs[0][0].attr, first);
+});
+
+test('plain output records no runs at all', () => {
+  // The common case, and the representation's rule: "no colours" is the absence of
+  // a run rather than a run that says "no colours". A build log would otherwise be
+  // one style object per line for the whole scrollback.
+  const state = applyTerminalOutput(initialTerminalState(), 'ordinary output\r\nmore', TERMINAL_SCROLLBACK);
+  assert.deepEqual(state.runs[0], []);
+  assert.deepEqual(state.runs[1], []);
+});
+
+/* ---- attr → the CSS the pane paints ---- */
+
+test('the default pen paints nothing, so the pane passes no style at all', () => {
+  // `undefined` rather than `{}`: it is what makes React skip the style attribute
+  // on the many rows that have no colour, and it is why the default pen is tested
+  // as its own case rather than as "an attr with nulls in it".
+  assert.equal(attrStyle(DEFAULT_ATTR), undefined);
+});
+
+test('bold, faint, italic, underline and strike all reach the style', () => {
+  const attr: TerminalAttr = {
+    ...DEFAULT_ATTR,
+    bold: true,
+    dim: true,
+    italic: true,
+    underline: true,
+    strike: true,
+  };
+  const css = attrStyle(attr);
+  assert.equal(css?.fontWeight, 600);
+  assert.equal(css?.opacity, 0.65);
+  assert.equal(css?.fontStyle, 'italic');
+  assert.equal(css?.textDecoration, 'underline line-through');
+});
+
+test('inverse swaps the pair, including the default half', () => {
+  // The half that matters: `ESC[7m` on text with **no** colours set is the one case
+  // where the swapped value has to come from the pane rather than from the attr.
+  // The pane's background is `--terminal-bg` in both themes, so that is what "the
+  // default background" means on this surface.
+  const inverted = attrStyle({ ...DEFAULT_ATTR, inverse: true });
+  assert.equal(inverted?.color, 'var(--terminal-bg)');
+  assert.equal(inverted?.backgroundColor, 'var(--terminal-fg)');
+  const both = attrStyle({
+    ...DEFAULT_ATTR,
+    inverse: true,
+    color: ansiColour(1),
+    background: ansiColour(4),
+  });
+  assert.equal(both?.color, ansiColour(4));
+  assert.equal(both?.backgroundColor, ansiColour(1));
+});
+
+test('an index past the palette is clamped rather than crashing the pane', () => {
+  // `ESC[38;5;999m` is malformed, and a program that emits it must not take the
+  // terminal down with it.
+  assert.equal(ansiColour(999), ansiColour(255));
+  assert.equal(ansiColour(-5), ansiColour(0));
+});
+
+/* ---- a row, cut into the pieces the pane draws ---- */
+
+test('a row with no colour and no caret is one piece of text', () => {
+  // This is what keeps the pane's ordinary rows as plain text children: one text
+  // node per row, which is the shape `white-space: pre` and the row's
+  // `content-visibility` were written for.
+  const pieces = lineSegments('plain output', [], null);
+  assert.equal(pieces.length, 1);
+  assert.equal(pieces[0].text, 'plain output');
+  assert.equal(pieces[0].attr, null);
+  assert.equal(pieces[0].caret, false);
+});
+
+test('a colour change splits the row at the column it changes', () => {
+  const state = applyTerminalOutput(initialTerminalState(), '\x1b[31mab\x1b[32mcd', TERMINAL_SCROLLBACK);
+  const pieces = lineSegments(state.lines[0], state.runs[0], null);
+  assert.deepEqual(
+    pieces.map((piece) => [piece.text, colourOf(piece.attr)]),
+    [
+      ['ab', ansiColour(1)],
+      ['cd', ansiColour(2)],
+    ],
+  );
+});
+
+test('the caret is placed between two characters, whatever their colours', () => {
+  // The case two independent passes would get wrong: the caret sits exactly where
+  // the colour changes, so an implementation that split on colour and then inserted
+  // the caret would have to choose which half it belongs to — and dropping a
+  // character between them is the failure.
+  const pieces = lineSegments('abcd', [{ start: 2, end: 4, attr: { ...DEFAULT_ATTR, bold: true } }], 2);
+  assert.deepEqual(
+    pieces.map((piece) => (piece.caret ? '|' : piece.text)),
+    ['ab', '|', 'cd'],
+  );
+  // Nothing is lost: the pieces reassemble into the row.
+  assert.equal(pieces.map((piece) => piece.text).join(''), 'abcd');
+});
+
+test('the caret past the end of the text is simply last', () => {
+  // The ordinary "about to type" position, which the shell reports as a column past
+  // the end of what it has drawn.
+  const pieces = lineSegments('ab', [], 5);
+  assert.deepEqual(
+    pieces.map((piece) => (piece.caret ? '|' : piece.text)),
+    ['ab', '|'],
+  );
+});
+
+test('the caret on an empty row is the only thing on it', () => {
+  const pieces = lineSegments('', [], 0);
+  assert.equal(pieces.length, 1);
+  assert.equal(pieces[0].caret, true);
+});
+
+test('a run that outlives its text draws less, never text from another row', () => {
+  // Defensive clipping: a stale run is possible (an erase path could leave one),
+  // and the consequence has to be a piece that is too short rather than a slice of
+  // a row the run does not belong to.
+  const pieces = lineSegments('ab', [{ start: 1, end: 99, attr: { ...DEFAULT_ATTR, bold: true } }], null);
+  assert.equal(pieces.map((piece) => piece.text).join(''), 'ab');
+  assert.deepEqual(
+    pieces.map((piece) => piece.text),
+    ['a', 'b'],
+  );
 });
 
 /* ============================================================
@@ -838,4 +1170,31 @@ test('a pane measured mid-layout still reports a size a shell can use', () => {
   });
   assert.equal(box.width, 1);
   assert.equal(box.height, 1);
+});
+
+/* ============================================================
+   The palette token names, against the stylesheet that defines them.
+   ============================================================ */
+
+test('every palette token `ansiColour` emits is actually defined', () => {
+  // The one failure in this whole change that is **invisible in every test above**
+  // and plainly wrong on screen: `var(--term-ansi-3)` with no such custom property
+  // resolves to nothing, so those runs fall back to the inherited foreground and
+  // the text is drawn in the ordinary colour — "some of the colours don't work",
+  // with the model, the pane and the CSS all looking correct in isolation.
+  //
+  // Read as text for the same reason `stream-layout.test.ts` reads `app.css`: there
+  // is no runtime behaviour to observe in Node, and the thing being protected is
+  // the *presence* of a declaration. The test does not check the values — those are
+  // a design decision — only that the name a run paints with exists.
+  const tokens = readFileSync(resolve(process.cwd(), 'src', 'styles', 'tokens.css'), 'utf8');
+  const missing = [];
+  for (let index = 0; index < 16; index += 1) {
+    const value = ansiColour(index);
+    const expected = `var(--term-ansi-${index})`;
+    assert.equal(value, expected, `index ${index} must be painted through a token`);
+    const name = expected.slice('var(--'.length, -1);
+    if (!new RegExp(`^\\s*--${name}\\s*:`, 'm').test(tokens)) missing.push(name);
+  }
+  assert.deepEqual(missing, [], `tokens.css is missing: ${missing.join(', ')}`);
 });

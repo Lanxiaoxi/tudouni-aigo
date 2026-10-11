@@ -79,6 +79,33 @@
  * happen often enough to look like a memory bug. An incomplete trailing sequence
  * is therefore held back in `carry` and prepended to the next batch — the same
  * shape the runtime uses for a rune split across a read.
+ *
+ * ## Colour, and why it is an overlay rather than a grid
+ *
+ * SGR (`CSI … m`) is applied instead of dropped, so a shell's colours survive:
+ * `ls --color`, a PowerShell prompt, `npm`'s warnings, PSReadLine's syntax
+ * highlighting. The runtime does not need to change for this — it forwards the
+ * PTY's bytes verbatim (`internal/terminal/session.go`), so the codes were always
+ * on the wire and only this end was throwing them away.
+ *
+ * A real emulator would store one attribute set **per cell**. That is not what
+ * happens here, and the choice is deliberate: a row stays a plain `string`, and
+ * the colour lives beside it as **style runs** — `runs[row]` is a sorted,
+ * non-overlapping list of `{ start, end, attr }`. Everything that depends on the
+ * text keeps working unchanged (`lines` is still `string[]`, `visibleLines` still
+ * slices rows), and only the pane, which has to paint it, reads the runs.
+ *
+ * The alternative — `rows: Cell[][]` — would have made every one of the string
+ * assertions in `terminal.test.ts` wrong instead of merely incomplete, and it buys
+ * nothing this pane needs: it does not emulate a screen grid (see above), so there
+ * is no cell for an attribute to belong to.
+ *
+ * The cost of the overlay is that **every write has to carry its runs with it**,
+ * and that is where the remaining difficulty in this module lives: a write replaces
+ * a span, an erase clears one, a scroll and a trim move whole rows. Each of those
+ * is a place where the text and its colours can drift apart, and the symptom (a
+ * line that is suddenly the wrong colour, only after a long build) is invisible in
+ * a short test — so each of them sets its runs at the same moment it sets the text.
  */
 
 /** The escape byte, spelled once. */
@@ -105,6 +132,196 @@ const MAX_CARRY = 512;
  */
 export const DEFAULT_VIEWPORT_ROWS = 24;
 
+/* ============================================================
+   Colour: the pen, the runs, and the pixels
+   ============================================================ */
+
+/**
+ * One SGR state: the colours and the switches a piece of text is drawn with.
+ *
+ * `color` and `background` are **CSS values, already resolved**. `null` means "the
+ * terminal's default", which is what SGR 39/49 restore — it is not the same thing
+ * as "the colour happens to be white", because the pane's default pair changes
+ * with nothing here while a white foreground does not.
+ *
+ * Resolving indices to CSS in this module, rather than handing the pane a palette
+ * index to look up, is what keeps the drawing side free of palette logic: the 16
+ * base colours name the theme's own tokens (`--term-ansi-0` … `--term-ansi-15` in
+ * `tokens.css`, so a theme may choose them), the 216-colour cube and the 24-step
+ * greyscale are the standard xterm values (`ansiColour`), and a truecolour
+ * sequence is the `rgb(...)` it asked for. One pure function knows how an index
+ * becomes a colour, and it is asserted on its own.
+ *
+ * Attrs are treated as **immutable**, and that is load-bearing rather than
+ * stylistic: the pane caches each one's inline style by identity (a `WeakMap`
+ * keyed by the attr object), so an attr mutated in place would paint the old
+ * colours for ever. Every write path below therefore builds a new attr instead of
+ * editing the one it has, and `DEFAULT_ATTR` is frozen because it is shared.
+ */
+export interface TerminalAttr {
+  /** Foreground, or `null` for the terminal's default. */
+  color: string | null;
+  /** Background, or `null` for the terminal's default. */
+  background: string | null;
+  bold: boolean;
+  dim: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  /** SGR 7: the two colours swap at draw time. */
+  inverse: boolean;
+}
+
+/** The pen a terminal starts with: no colours, no switches. */
+export const DEFAULT_ATTR: TerminalAttr = Object.freeze({
+  color: null,
+  background: null,
+  bold: false,
+  dim: false,
+  italic: false,
+  underline: false,
+  strike: false,
+  inverse: false,
+});
+
+/** Whether an attr paints anything at all — i.e. equals the default. */
+export function isDefaultAttr(attr: TerminalAttr): boolean {
+  return (
+    attr.color === null &&
+    attr.background === null &&
+    !attr.bold &&
+    !attr.dim &&
+    !attr.italic &&
+    !attr.underline &&
+    !attr.strike &&
+    !attr.inverse
+  );
+}
+
+/**
+ * One stretch of a row that shares one attr. `start` inclusive, `end` exclusive.
+ *
+ * Runs within a row are **sorted and non-overlapping**, and they never claim a
+ * range that the row's text does not have — because a run is only ever produced by
+ * a write, and a write sets the text and the runs in the same operation (see
+ * `spliceRuns`). The pane still clips defensively: a stale run would otherwise be
+ * a slice of a shorter line, which is harmless, rather than a shifted colour,
+ * which is not.
+ */
+export interface StyleRun {
+  start: number;
+  end: number;
+  attr: TerminalAttr;
+}
+
+/**
+ * The rows' runs, parallel to `rows`.
+ *
+ * A parallel array rather than a map keyed by row index, because a row index
+ * shifts on a trim and on a scroll: with one list the two facts move together by
+ * construction (`rows.slice(over)` / `runs.slice(over)`, `rows.push('')` /
+ * `runs.push(NO_RUNS)`), and the invariant a reader has to hold is one sentence —
+ * `runs.length === rows.length`, index for index.
+ *
+ * Most entries are the shared frozen `NO_RUNS`, so plain output costs one pointer
+ * per row rather than an array per row.
+ */
+export const NO_RUNS: StyleRun[] = Object.freeze([]) as unknown as StyleRun[];
+
+/** The xterm 6×6×6 cube's levels, and the only place they are written down. */
+const CUBE_LEVELS = [0, 95, 135, 175, 215, 255];
+
+/**
+ * An ANSI palette index as a CSS colour.
+ *
+ * 0–15 go through the theme's tokens so the base colours are a design decision
+ * rather than a hard-coded guess; 16–231 are the xterm colour cube and 232–255 the
+ * 24-step greyscale, both by the standard formula, because there is no token for
+ * "index 173" and inventing one would be 240 variables nobody would ever edit.
+ */
+export function ansiColour(index: number): string {
+  const at = Math.max(0, Math.min(255, Math.floor(index)));
+  if (at < 16) return `var(--term-ansi-${at})`;
+  if (at < 232) {
+    const n = at - 16;
+    const r = CUBE_LEVELS[Math.floor(n / 36) % 6];
+    const g = CUBE_LEVELS[Math.floor(n / 6) % 6];
+    const b = CUBE_LEVELS[n % 6];
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  const level = 8 + (at - 232) * 10;
+  return `rgb(${level}, ${level}, ${level})`;
+}
+
+/** A truecolour sequence's components as CSS, each clamped to a byte. */
+export function rgbColour(r: number, g: number, b: number): string {
+  const byte = (value: number) => Math.max(0, Math.min(255, Math.round(value)));
+  return `rgb(${byte(r)}, ${byte(g)}, ${byte(b)})`;
+}
+
+/**
+ * The inline style for one attr: the fields the pane hands to React.
+ *
+ * Typed as its own record rather than as `CSSProperties` so that this module stays
+ * free of a React import, and `fontStyle` is the literal `'italic'` rather than
+ * `string` so the object is assignable to `CSSProperties` without a cast (React's
+ * own type is a union, and a plain `string` does not fit it).
+ */
+export interface TerminalAttrCss {
+  color?: string;
+  backgroundColor?: string;
+  fontWeight?: number;
+  fontStyle?: 'italic';
+  textDecoration?: string;
+  opacity?: number;
+}
+
+/**
+ * The style for one attr, **cached by identity**.
+ *
+ * The cache is why `undefined` is a return value rather than an empty object: the
+ * default pen is the overwhelmingly common case (any output that never changes
+ * colour), and returning `undefined` for it means the pane hands React no `style`
+ * at all rather than an object it has to diff. Every other attr is built once and
+ * reused for as long as that attr is on screen — a build log has a handful of
+ * distinct attrs and tens of thousands of spans.
+ */
+const ATTR_CSS_CACHE = new WeakMap<TerminalAttr, TerminalAttrCss>();
+
+export function attrStyle(attr: TerminalAttr): TerminalAttrCss | undefined {
+  if (isDefaultAttr(attr)) return undefined;
+  const cached = ATTR_CSS_CACHE.get(attr);
+  if (cached !== undefined) return cached;
+  const css = attrCssOf(attr);
+  ATTR_CSS_CACHE.set(attr, css);
+  return css;
+}
+
+function attrCssOf(attr: TerminalAttr): TerminalAttrCss {
+  // Inverse swaps the pair, and the swapped *default* is this pane's own pair
+  // rather than the browser's black-on-white: the pane's background is
+  // `--terminal-bg` in both themes, so that is what "the default background"
+  // means on this surface.
+  const color = attr.inverse ? (attr.background ?? 'var(--terminal-bg)') : attr.color;
+  const background = attr.inverse ? (attr.color ?? 'var(--terminal-fg)') : attr.background;
+  const css: TerminalAttrCss = {};
+  if (color !== null) css.color = color;
+  if (background !== null) css.backgroundColor = background;
+  // 600 rather than `bold`, because the pane is set in a monospace face whose
+  // bold is what a terminal's bold looks like — and `bolder` would depend on the
+  // parent's weight, which is the pane's, not the run's.
+  if (attr.bold) css.fontWeight = 600;
+  // Faint is drawn the way a terminal draws it where the font has no light
+  // weight, which is what the shipped face is.
+  if (attr.dim) css.opacity = 0.65;
+  if (attr.italic) css.fontStyle = 'italic';
+  const decoration = [attr.underline ? 'underline' : '', attr.strike ? 'line-through' : '']
+    .filter(Boolean)
+    .join(' ');
+  if (decoration !== '') css.textDecoration = decoration;
+  return css;
+}
+
 /**
  * One terminal's output: the rows, and the cursor on the screen they show.
  *
@@ -123,6 +340,24 @@ export interface TerminalState {
   lines: string[];
   /** Every row this front end still holds: the scrollback, then the screen. */
   rows: string[];
+  /**
+   * Each row's coloured stretches, index for index with `rows`.
+   *
+   * `runs.length === rows.length` is the module's one structural invariant, and
+   * it is maintained by moving the two together: `rows.slice` with `runs.slice`,
+   * `rows.push('')` with `runs.push(NO_RUNS)`. A row with no colour at all holds
+   * the shared `NO_RUNS`, so the common case costs a pointer rather than an array.
+   */
+  runs: StyleRun[][];
+  /**
+   * The pen the shell has set: what the next text written will look like.
+   *
+   * It lives on the state rather than being local to a batch because SGR is
+   * **sticky across batches** — a shell emits `ESC[93m`, then flushes, and the
+   * text that carries that colour arrives in the next read. A pen reset at each
+   * batch boundary would colour the first line of each flush and nothing else.
+   */
+  attrs: TerminalAttr;
   /** The index in `rows` of the screen's first row. */
   screenTop: number;
   /** How many of `rows` — from `screenTop` on — are the screen. */
@@ -172,6 +407,8 @@ export interface TerminalState {
 export const EMPTY_TERMINAL_STATE: TerminalState = Object.freeze({
   lines: Object.freeze(['']) as unknown as string[],
   rows: Object.freeze(['']) as unknown as string[],
+  runs: Object.freeze([NO_RUNS]) as unknown as StyleRun[][],
+  attrs: DEFAULT_ATTR,
   screenTop: 0,
   viewportRows: 1,
   row: 0,
@@ -392,6 +629,105 @@ function bufferIndex(state: TerminalState, screenRow: number): number {
 }
 
 /**
+ * Append one run, **unless it paints nothing**.
+ *
+ * "The default pen is the absence of a run" is the representation's one rule, and
+ * this is where it is enforced: a stretch written with no colours and no switches is
+ * simply not recorded, and the pane draws a gap. That is why plain output — which is
+ * most output — makes no runs at all rather than a list of runs saying "no colour".
+ *
+ * Adjacent runs with the **same attr object** merge, because a shell that writes a
+ * line in several flushes (which is ordinary: the PTY flushes where it flushes)
+ * would otherwise leave one run per flush. Identity is the test rather than a deep
+ * comparison, and that is enough: the pen is carried on the state and only replaced
+ * when a sequence actually changes it, so consecutive writes with the same pen hold
+ * the same object.
+ */
+function appendRun(into: StyleRun[], start: number, end: number, attr: TerminalAttr): void {
+  if (end <= start) return;
+  if (isDefaultAttr(attr)) return;
+  const last = into[into.length - 1];
+  if (last !== undefined && last.attr === attr && last.end === start) {
+    into[into.length - 1] = { start: last.start, end, attr };
+    return;
+  }
+  into.push({ start, end, attr });
+}
+
+/** The runs list for a row, or the shared empty one. Never `undefined`. */
+function runsAt(state: TerminalState, at: number): StyleRun[] {
+  return state.runs[at] ?? NO_RUNS;
+}
+
+/**
+ * Replace the runs covering `[start, end)` with one run in `attr`.
+ *
+ * This is the operation the whole colour model rests on, and it is deliberately the
+ * **same** operation for every write: text is written over a span, so its colour is
+ * written over the same span. The three cases a row can be in are all here — a run
+ * that ends before the span survives, one that starts after it survives, and one
+ * that overlaps it is split into whatever lies outside the span. Doing it anywhere
+ * else (patching runs after the fact, or recomputing them from the row's text) is how
+ * the colours end up describing a row the text no longer is.
+ *
+ * The result is sorted and non-overlapping by construction, since a single in-order
+ * pass over a sorted list emits the kept parts in order and inserts the new run
+ * exactly once — at the first position where it belongs.
+ */
+function spliceRuns(
+  runs: StyleRun[],
+  start: number,
+  end: number,
+  attr: TerminalAttr,
+): StyleRun[] {
+  if (end <= start) return runs;
+  const next: StyleRun[] = [];
+  let placed = false;
+  const place = () => {
+    if (placed) return;
+    appendRun(next, start, end, attr);
+    placed = true;
+  };
+  for (const run of runs) {
+    if (run.end <= start) {
+      appendRun(next, run.start, run.end, run.attr);
+      continue;
+    }
+    if (run.start >= end) {
+      place();
+      appendRun(next, run.start, run.end, run.attr);
+      continue;
+    }
+    // Overlaps the span: the part before it and the part after it are kept, and the
+    // middle — which is exactly what is being overwritten — is not.
+    //
+    // Both kept parts go through `appendRun` rather than being pushed, and that is
+    // what makes "the same pen twice is one run" hold in the case a shell actually
+    // produces: a redraw that rewrites the *middle* of a coloured line with that
+    // same colour. Pushed directly, the three pieces would be three adjacent runs of
+    // one colour — the same pixels, three times the spans and three style objects
+    // for React to diff, on every keystroke of a coloured prompt.
+    if (run.start < start) appendRun(next, run.start, start, run.attr);
+    place();
+    if (run.end > end) appendRun(next, end, run.end, run.attr);
+  }
+  place();
+  return next.length === 0 ? NO_RUNS : next;
+}
+
+/** The runs clipped to `[0, end)` — what an erase that shortens a row leaves. */
+function clipRuns(runs: StyleRun[], end: number): StyleRun[] {
+  if (runs === NO_RUNS) return NO_RUNS;
+  if (end <= 0) return NO_RUNS;
+  const next: StyleRun[] = [];
+  for (const run of runs) {
+    if (run.start >= end) break;
+    appendRun(next, run.start, Math.min(run.end, end), run.attr);
+  }
+  return next.length === 0 ? NO_RUNS : next;
+}
+
+/**
  * Overwrite the cursor's row from the cursor's column onwards.
  *
  * The two details that make this a screen write rather than an append:
@@ -400,6 +736,11 @@ function bufferIndex(state: TerminalState, screenRow: number): number {
  *     homes to column 60 writes there and stays aligned with what is on screen;
  *   - the write **replaces** the same columns rather than inserting, so a redraw of
  *     the line being typed lands on the characters it is redrawing.
+ *
+ * The padding columns are deliberately **left without runs**: a shell that moves its
+ * cursor past the end of a line has not written there, so those columns are blank
+ * cells in whatever attr the row already had for them — which is the default, and
+ * therefore the absence of a run.
  */
 function writeAtCursor(state: TerminalState, value: string): void {
   const at = bufferIndex(state, state.row);
@@ -407,6 +748,7 @@ function writeAtCursor(state: TerminalState, value: string): void {
   const padded =
     current.length < state.col ? current + ' '.repeat(state.col - current.length) : current;
   state.rows[at] = padded.slice(0, state.col) + value + padded.slice(state.col + value.length);
+  state.runs[at] = spliceRuns(runsAt(state, at), state.col, state.col + value.length, state.attrs);
   state.col += value.length;
 }
 
@@ -417,15 +759,24 @@ function writeAtCursor(state: TerminalState, value: string): void {
  * screen row, which is now that new row. Nothing is rewritten and no index is
  * renumbered, which is what keeps an absolute `CSI r;cH` sent after a scroll
  * landing where the shell meant.
+ *
+ * The runs move with the rows — `push` here, `push` there. This is the invariant in
+ * practice: **every** place that touches `rows` touches `runs` in the same breath,
+ * and a scroll that appended a row without appending its (empty) runs would shift
+ * every colour in the pane by one line from that moment on.
  */
 function advanceRow(state: TerminalState): void {
   if (state.row + 1 < state.viewportRows) {
     state.row += 1;
     const at = bufferIndex(state, state.row);
-    if (state.rows[at] === undefined) state.rows[at] = '';
+    if (state.rows[at] === undefined) {
+      state.rows[at] = '';
+      state.runs[at] = NO_RUNS;
+    }
     return;
   }
   state.rows.push('');
+  state.runs.push(NO_RUNS);
   state.screenTop += 1;
   state.col = 0;
 }
@@ -435,31 +786,223 @@ function eraseLine(state: TerminalState, mode: number): void {
   const at = bufferIndex(state, state.row);
   const current = state.rows[at] ?? '';
   if (mode === 1) {
-    state.rows[at] = ' '.repeat(Math.min(state.col, current.length)) + current.slice(state.col);
+    // The prefix is replaced by spaces rather than removed, so what lies from the
+    // cursor on **keeps its column and its colour** — this is the erasure a shell
+    // uses to wipe the part of a line it is about to redraw.
+    const kept = Math.min(state.col, current.length);
+    state.rows[at] = ' '.repeat(kept) + current.slice(state.col);
+    state.runs[at] = spliceRuns(runsAt(state, at), 0, kept, DEFAULT_ATTR);
     return;
   }
   if (mode === 2) {
     state.rows[at] = '';
+    state.runs[at] = NO_RUNS;
     return;
   }
   state.rows[at] = current.slice(0, state.col);
+  state.runs[at] = clipRuns(runsAt(state, at), state.col);
 }
 
 /** Erase part of the screen. `0` cursor→end, `1` start→cursor, `2` everything. */
 function eraseDisplay(state: TerminalState, mode: number): void {
+  const clear = (screenRow: number) => {
+    const at = bufferIndex(state, screenRow);
+    state.rows[at] = '';
+    state.runs[at] = NO_RUNS;
+  };
   if (mode === 2) {
-    for (let r = 0; r < state.viewportRows; r += 1) state.rows[bufferIndex(state, r)] = '';
+    for (let r = 0; r < state.viewportRows; r += 1) clear(r);
     return;
   }
   if (mode === 0) {
     eraseLine(state, 0);
-    for (let r = state.row + 1; r < state.viewportRows; r += 1) {
-      state.rows[bufferIndex(state, r)] = '';
-    }
+    for (let r = state.row + 1; r < state.viewportRows; r += 1) clear(r);
     return;
   }
-  for (let r = 0; r < state.row; r += 1) state.rows[bufferIndex(state, r)] = '';
+  for (let r = 0; r < state.row; r += 1) clear(r);
   eraseLine(state, 1);
+}
+
+/** Whether two attrs are the same pen, field by field. */
+function sameAttr(a: TerminalAttr, b: TerminalAttr): boolean {
+  return (
+    a.color === b.color &&
+    a.background === b.background &&
+    a.bold === b.bold &&
+    a.dim === b.dim &&
+    a.italic === b.italic &&
+    a.underline === b.underline &&
+    a.strike === b.strike &&
+    a.inverse === b.inverse
+  );
+}
+
+/**
+ * Set some fields of the pen, **keeping the previous object when nothing changed**.
+ *
+ * The identity is what makes run merging work (see `appendRun`) and what makes the
+ * pane's style cache hit: PSReadLine re-sends `ESC[93m` before every redraw, and a
+ * fresh object each time would turn a cosmetic repeat into a new style for every
+ * keystroke.
+ */
+function withAttr(current: TerminalAttr, patch: Partial<TerminalAttr>): TerminalAttr {
+  const next: TerminalAttr = { ...current, ...patch };
+  return sameAttr(current, next) ? current : next;
+}
+
+/**
+ * The SGR parameters of one `CSI … m`, as numbers.
+ *
+ * An empty parameter means `0` (`ESC[m` is a reset, and `ESC[1;;31m` means
+ * `1;0;31`), which is the rule the sequence itself is defined with rather than a
+ * convenience. A **private** sequence (`CSI >4;2m`, `CSI ?25m`) is not SGR at all
+ * and returns nothing: those share the final byte `m` and mean something else
+ * entirely, and reading them as colour would paint somebody's output from an
+ * instruction that was never about colour.
+ *
+ * Both separator forms are accepted. Semicolons are the common form; **colons** are
+ * the ITU T.416 form (`38:5:196`), which is what some modern programs emit, and
+ * leaving it unparsed would silently drop the colour of exactly those programs.
+ */
+function sgrParams(params: string): number[] {
+  if (params === '') return [0];
+  if (/^[?<=>]/.test(params)) return [];
+  return params.split(/[;:]/).map((raw) => {
+    if (raw === '') return 0;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : 0;
+  });
+}
+
+/**
+ * Apply one SGR sequence to the pen.
+ *
+ * Everything a terminal is expected to understand is here: the eight/ sixteen base
+ * colours, the bright pair, the 256-colour and truecolour selects, and the switches
+ * a shell actually uses (`bold`, `faint`, `italic`, `underline`, `inverse`,
+ * `strike`) together with the codes that turn each of them back off.
+ *
+ * The **off** codes are not optional detail. A shell emits `ESC[1m…ESC[22m` around a
+ * bold word, and a model that only read the "on" half would leave everything after
+ * that word bold for the rest of the session — the failure would look like a
+ * renderer that forgot where the word ended, which is exactly what it would be.
+ *
+ * Codes with no representation here (blink, conceal, fonts, ideogram attributes)
+ * are skipped rather than treated as errors: a terminal that drew them as text would
+ * be far worse than one that ignores them, and that is the same rule the module
+ * applies to every unrecognised sequence.
+ */
+function applySgr(current: TerminalAttr, params: string): TerminalAttr {
+  const codes = sgrParams(params);
+  if (codes.length === 0) return current;
+  let attr = current;
+  for (let i = 0; i < codes.length; i += 1) {
+    const code = codes[i];
+    if (code === 0) {
+      attr = DEFAULT_ATTR;
+      continue;
+    }
+    if (code >= 30 && code <= 37) {
+      attr = withAttr(attr, { color: ansiColour(code - 30) });
+      continue;
+    }
+    if (code >= 40 && code <= 47) {
+      attr = withAttr(attr, { background: ansiColour(code - 40) });
+      continue;
+    }
+    if (code >= 90 && code <= 97) {
+      attr = withAttr(attr, { color: ansiColour(code - 90 + 8) });
+      continue;
+    }
+    if (code >= 100 && code <= 107) {
+      attr = withAttr(attr, { background: ansiColour(code - 100 + 8) });
+      continue;
+    }
+    if (code === 38 || code === 48) {
+      // `…;5;n` selects a palette index, `…;2;r;g;b` a truecolour triple. The colon
+      // form of the latter carries a colour-space id between the `2` and the
+      // components (`38:2:0:255:0:0`, and programs write it with the id empty), so
+      // one value is stepped over there — and only there, or the semicolon form
+      // `38;2;255;0;0` would lose its red channel.
+      //
+      // The offsets are spelled out rather than derived from a "rest of the list"
+      // slice, and that is the whole point of this block being written out: the
+      // selector and its argument live at `i + 1` and `i + 2`, and reading the
+      // **argument** out of `slice(i + 1)` would take the selector (`5`) as the
+      // colour index — `38;5;196` would draw colour 5 and swallow the 196.
+      const colon = params.includes(':');
+      const mode = codes[i + 1];
+      let value: string | null = null;
+      // How many parameters after `code` this sequence consumed, the selector
+      // included. `i` advances by this and then by the loop's own step.
+      let used = 0;
+      if (mode === 5) {
+        value = ansiColour(codes[i + 2] ?? 0);
+        used = 2;
+      } else if (mode === 2) {
+        // `base` is the first component; the colon form puts the colour-space id
+        // immediately before it.
+        const base = i + 2 + (colon ? 1 : 0);
+        value = rgbColour(codes[base] ?? 0, codes[base + 1] ?? 0, codes[base + 2] ?? 0);
+        used = base + 3 - i;
+      }
+      if (value !== null) {
+        attr = withAttr(attr, code === 38 ? { color: value } : { background: value });
+        // The consumed numbers are parameters like any other and must not be read
+        // again: otherwise the `196` of `38;5;196` would be read as SGR 196 next
+        // time round, which happens to mean nothing — but `38;5;1` would come back
+        // as SGR 1 and turn the rest of the line bold.
+        i += used;
+      }
+      continue;
+    }
+    switch (code) {
+      case 1:
+        attr = withAttr(attr, { bold: true });
+        break;
+      case 2:
+        attr = withAttr(attr, { dim: true });
+        break;
+      case 3:
+        attr = withAttr(attr, { italic: true });
+        break;
+      case 4:
+        attr = withAttr(attr, { underline: true });
+        break;
+      case 7:
+        attr = withAttr(attr, { inverse: true });
+        break;
+      case 9:
+        attr = withAttr(attr, { strike: true });
+        break;
+      case 22:
+        // `22` clears **both**, which is what the code says: there is no separate
+        // "not faint".
+        attr = withAttr(attr, { bold: false, dim: false });
+        break;
+      case 23:
+        attr = withAttr(attr, { italic: false });
+        break;
+      case 24:
+        attr = withAttr(attr, { underline: false });
+        break;
+      case 27:
+        attr = withAttr(attr, { inverse: false });
+        break;
+      case 29:
+        attr = withAttr(attr, { strike: false });
+        break;
+      case 39:
+        attr = withAttr(attr, { color: null });
+        break;
+      case 49:
+        attr = withAttr(attr, { background: null });
+        break;
+      default:
+        break;
+    }
+  }
+  return attr;
 }
 
 /**
@@ -546,6 +1089,21 @@ function applyToken(state: TerminalState, token: Token): void {
     case 'K':
       eraseLine(state, param(token.params, 0, 0));
       return;
+    case 'm':
+      // **SGR, and it changes the pen rather than the screen.** Nothing is written
+      // here: the sequence says what the *next* text looks like, which is why the
+      // attr is state (and state that survives a batch boundary) rather than an
+      // argument to the write.
+      //
+      // It is also why the erase paths need care about colour at all. Erasing does
+      // not use the current pen here, and that is the ordinary behaviour: the cells
+      // an erase clears are blank in the row's own attributes rather than in the
+      // pen's, so a `ESC[41m ESC[K` leaves the row without a red run — a difference
+      // from a real emulator, and one this model cannot express, because a row has
+      // no attribute for cells nobody wrote to. What it can express, and does, is
+      // that an erase never leaves a colour behind on text that is gone.
+      state.attrs = applySgr(state.attrs, token.params);
+      return;
     case 'h':
     case 'l': {
       // **DECTCEM, the cursor show/hide pair — `CSI ?25h` and `CSI ?25l`.**
@@ -569,10 +1127,11 @@ function applyToken(state: TerminalState, token: Token): void {
       return;
     }
     default:
-      // Colour (`m`), the other modes (`h`/`l`), window manipulation (`t`), device
-      // status (`n`), scroll regions (`r`), saved cursors (`s`/`u`) and everything
-      // else: recognised, and deliberately without an effect. See the module
-      // comment for which of these is a real remaining limitation.
+      // The other modes (`h`/`l`), window manipulation (`t`), device status (`n`),
+      // scroll regions (`r`), saved cursors (`s`/`u`) and everything else:
+      // recognised, and deliberately without an effect. Colour used to be on this
+      // list; it is applied now (see the `m` case). See the module comment for
+      // which of the rest are real remaining limitations.
       return;
   }
 }
@@ -637,6 +1196,86 @@ export function caretPosition(
   return { line, col: Math.max(0, state.col) };
 }
 
+/** One thing the pane draws on a row: a stretch of text, or the caret. */
+export interface LineSegment {
+  text: string;
+  /**
+   * The colours to draw it in, or **`null` for the pane's own**.
+   *
+   * `null` rather than a `DEFAULT_ATTR` because the pane's default is a CSS
+   * variable pair, and the two are not the same thing: a run that explicitly
+   * selected colour 7 draws that colour, while a row with no run at all draws
+   * whatever the theme's terminal foreground is. The pane distinguishes them by
+   * passing `style={undefined}` for `null`.
+   */
+  attr: TerminalAttr | null;
+  /** True for the zero-width caret marker, which carries no text. */
+  caret: boolean;
+}
+
+/**
+ * One row, cut into the pieces the pane draws: its text split where its colours
+ * change, and the caret inserted where the shell's cursor is.
+ *
+ * The caret is folded in here rather than being a second special case in the view,
+ * and that is the whole point of the function: **a caret and a colour change can be
+ * in the same place**, and two independent passes over the row would each have to
+ * know about the other to avoid dropping a character between them. Splitting once,
+ * in string-offset order, is what makes "the caret sits between two characters" and
+ * "those two characters are different colours" one operation instead of a matrix of
+ * cases.
+ *
+ * `runs` is walked rather than assumed to cover the row: a run may start past a gap,
+ * and the gaps are emitted as uncoloured text. Everything is clipped to the row's
+ * own length, so a stale run — which a later erase could leave behind — draws too
+ * little rather than slicing text out of a row it no longer belongs to.
+ *
+ * `caret` is a **string index**, like the cursor's `col` everywhere else, and it is
+ * allowed to be past the end of the text: that is the ordinary "about to type"
+ * position, and the caret goes at the end there.
+ */
+export function lineSegments(line: string, runs: StyleRun[], caret: number | null): LineSegment[] {
+  const pieces: LineSegment[] = [];
+  let at = 0;
+  for (const run of runs) {
+    const start = Math.max(run.start, at);
+    const end = Math.min(run.end, line.length);
+    if (end <= start) continue;
+    if (start > at) pieces.push({ text: line.slice(at, start), attr: null, caret: false });
+    pieces.push({ text: line.slice(start, end), attr: run.attr, caret: false });
+    at = end;
+  }
+  if (at < line.length) pieces.push({ text: line.slice(at), attr: null, caret: false });
+  if (caret === null) return pieces;
+
+  const target = Math.max(0, caret);
+  const out: LineSegment[] = [];
+  let placed = false;
+  let before = 0;
+  for (const piece of pieces) {
+    const end = before + piece.text.length;
+    if (!placed && target <= before) {
+      out.push({ text: '', attr: null, caret: true });
+      placed = true;
+    }
+    if (!placed && target < end) {
+      const cut = target - before;
+      out.push({ text: piece.text.slice(0, cut), attr: piece.attr, caret: false });
+      out.push({ text: '', attr: null, caret: true });
+      placed = true;
+      const rest = piece.text.slice(cut);
+      if (rest !== '') out.push({ text: rest, attr: piece.attr, caret: false });
+    } else {
+      out.push(piece);
+    }
+    before = end;
+  }
+  // Past the end of every piece: the caret is simply the last thing on the row,
+  // which is where it sits while a line is being typed on an empty prompt.
+  if (!placed) out.push({ text: '', attr: null, caret: true });
+  return out;
+}
+
 /**
  * Fit the screen to a new height.
  *
@@ -651,10 +1290,18 @@ export function fitViewport(state: TerminalState, viewportRows: number): Termina
   const height = Math.max(1, Math.floor(viewportRows));
   if (height === state.viewportRows) return state;
   const rows = [...state.rows];
-  while (rows.length < state.screenTop + height) rows.push('');
+  const runs = [...state.runs];
+  // The two grow together, or the invariant `runs.length === rows.length` is broken
+  // by exactly the rows a taller screen just added — and the colours of every row
+  // below the first new one would be attributed to the row above it.
+  while (rows.length < state.screenTop + height) {
+    rows.push('');
+    runs.push(NO_RUNS);
+  }
   return {
     ...state,
     rows,
+    runs,
     row: Math.min(state.row, height - 1),
     viewportRows: height,
   };
@@ -685,14 +1332,21 @@ export function applyTerminalOutput(
   // A shallow copy of the mutable half, then the tokens are applied in order. The
   // rows array is copied once here rather than inside `writeAtCursor`, so a batch
   // of pure cursor movement — which is most of what a repaint is — does not copy
-  // the array once per token.
-  const next: TerminalState = { ...state, rows: [...state.rows] };
+  // the array once per token. `runs` is copied alongside it for the same reason and
+  // as a single act: the two lists are one structure with two halves, and a batch
+  // that wrote text into a copied `rows` while pushing to the previous `runs` is the
+  // one way the invariant can be broken without anybody noticing.
+  const next: TerminalState = { ...state, rows: [...state.rows], runs: [...state.runs] };
   for (const token of tokens) applyToken(next, token);
   next.carry = carry;
 
   if (next.rows.length > limit) {
     const over = next.rows.length - limit;
     next.rows = next.rows.slice(over);
+    // The runs are trimmed by the same `over`, so a row's colours stay attached to
+    // that row — a trim that sliced only the text would shift every colour in the
+    // pane up by the number of rows dropped, from the first bound onwards.
+    next.runs = next.runs.slice(over);
     next.screenTop = Math.max(0, next.screenTop - over);
     next.dropped = next.dropped + over;
   }
@@ -709,9 +1363,12 @@ export function applyTerminalOutput(
  */
 export function initialTerminalState(viewportRows = DEFAULT_VIEWPORT_ROWS): TerminalState {
   const height = Math.max(1, Math.floor(viewportRows));
+  const rows = new Array<string>(height).fill('');
   const state: TerminalState = {
     lines: [],
-    rows: new Array<string>(height).fill(''),
+    rows,
+    runs: new Array<StyleRun[]>(height).fill(NO_RUNS),
+    attrs: DEFAULT_ATTR,
     screenTop: 0,
     viewportRows: height,
     row: 0,
