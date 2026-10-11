@@ -186,10 +186,10 @@ export function SessionBar() {
           <Fact mono title="session id" className="sb-id">
             {session.id || '—'}
           </Fact>
-          {/* Secondary statements go first when the bar runs out of room: the
-              container-query tiers in `app.css` fold them one by one, and this
-              fact is the first to leave. */}
-          <Fact className="sb-hide-1150">{session.resumed ? t('session.resumed') : t('session.fresh')}</Fact>
+          {/* Every group keeps its value on the row at any width; what the two
+              container tiers in `app.css` remove are the qualifiers around it —
+              this fact is one of them. */}
+          <Fact className="sb-extra">{session.resumed ? t('session.resumed') : t('session.fresh')}</Fact>
         </div>
 
         <div className="sb-group">
@@ -200,11 +200,11 @@ export function SessionBar() {
             onClick={() => openPanel('model')}
             title={t('panel.model.title')}
           >
-            <span className="mono">{session.model || '—'}</span>
+            <span className="mono sb-model">{session.model || '—'}</span>
             {/* The provider is shown separately on purpose: two routes can carry
                 the same model name, and "where the request went" is a different
-                fact from "which model". First to go when the row narrows. */}
-            <span className="faint sb-hide-1150">@{session.provider || '—'}</span>
+                fact from "which model". A qualifier, so the first tier folds it. */}
+            <span className="faint sb-extra">@{session.provider || '—'}</span>
           </button>
         </div>
 
@@ -216,7 +216,7 @@ export function SessionBar() {
           <Tip label={t('panel.effort.note')}>
             <button
               type="button"
-              className="btn btn-ghost btn-compact sb-hide-920"
+              className="btn btn-ghost btn-compact sb-extra"
               onClick={() => openPanel('effort')}
             >
               <span className="faint">{t('session.effort')}</span>
@@ -227,7 +227,7 @@ export function SessionBar() {
           </Tip>
         </div>
 
-        <div className="sb-group sb-hide-820">
+        <div className="sb-group">
           <span className="sb-label">{t('session.maxSteps')}</span>
           <Fact mono>{session.maxSteps}</Fact>
         </div>
