@@ -734,7 +734,32 @@ async function main() {
       toggleInScroller: !!q('.sessionbar .sb-scroll .rail-toggle'),
       rightToggleDisabled: q('.sessionbar > .rail-toggle:last-child')?.disabled ?? null,
       rightToggleExpanded: q('.sessionbar > .rail-toggle:last-child')?.getAttribute('aria-expanded') ?? null,
-      store: { leftbarVisible: st.leftbarVisible, sidebarVisible: st.sidebarVisible },
+      // The session board's door, which lives here for the reason the two
+      // toggles do: the rail's own copy of this button is inert the moment the
+      // rail is folded. Its **position** is asserted rather than merely its
+      // existence — "right of the collapse button" is the request, and a button
+      // that drifted to the far end would render, work, and be wrong.
+      boardBtn: !!q('.sessionbar .sb-board'),
+      // Outside the scroller, like the toggles: with the left rail folded this
+      // is the only way to the board, so a long session id must not be able to
+      // scroll it away.
+      boardBtnInScroller: !!q('.sessionbar .sb-scroll .sb-board'),
+      boardBtnIndex: (() => {
+        const bar = q('.sessionbar');
+        const b = q('.sessionbar .sb-board');
+        return bar && b ? [...bar.children].indexOf(b) : -1;
+      })(),
+      boardBtnLabel: q('.sessionbar .sb-board')?.getAttribute('aria-label') ?? null,
+      boardBtnPressed: q('.sessionbar .sb-board')?.getAttribute('aria-pressed') ?? null,
+      boardBtnDisabled: q('.sessionbar .sb-board')?.disabled ?? null,
+      // Tallied here so the assertion can compare the two doors' own state
+      // rather than restating the gate: the rail foot's row carries
+      // aria-pressed too, and the two must agree in every frame.
+      footBoardDisabled:
+        [...document.querySelectorAll('.lb-foot .lb-foot-btn')].find(
+          (b) => b.hasAttribute('aria-pressed'),
+        )?.disabled ?? null,
+      store: { leftbarVisible: st.leftbarVisible, sidebarVisible: st.sidebarVisible, boardOpen: st.boardOpen },
       // The rail heads: the title each carries, and — the point of the change —
       // the fact that **neither head has a collapse control any more**. A button
       // that lives inside the thing it hides cannot perform its own act.
@@ -789,6 +814,46 @@ async function main() {
   }
   if (bt.rightToggleExpanded !== 'true') {
     throw new Error(`the trailing toggle disagrees with the rail it folds: aria-expanded=${bt.rightToggleExpanded}`);
+  }
+
+  // ---- the session board's door in the session bar ----
+  //
+  // It is the left rail's foot button reached from a surface that survives the
+  // rail. Two things about it are invisible to every other assertion here:
+  //
+  //   1. **Where it is.** "Right of the collapse button" is the whole request,
+  //      and a button that had been appended after `.sb-scroll` instead would
+  //      render, work, and sit on the wrong side of every fact on the row. The
+  //      index is asserted against the bar's own children, so the bar's leading
+  //      order — toggle, board, facts, toggle — is the property under test.
+  //   2. **That it is readable.** Its name is in `aria-label` and its state in
+  //      `aria-pressed`; the icon alone carries neither, so a copy that dropped
+  //      them would be an unlabelled square to a screen reader.
+  if (!bt.boardBtn) {
+    throw new Error('the session bar has no session-board button: with the left rail folded there is no way to the board');
+  }
+  if (bt.boardBtnInScroller) {
+    throw new Error('the board button is inside the horizontal scroller: a long session id can carry it off the edge');
+  }
+  if (bt.boardBtnIndex !== 1) {
+    throw new Error(
+      `the board button is not the second child of the session bar (index ${bt.boardBtnIndex}): it belongs immediately right of the leading rail toggle`,
+    );
+  }
+  if (bt.boardBtnLabel !== 'Session board') {
+    throw new Error(`the board button carries no usable name: aria-label=${bt.boardBtnLabel}`);
+  }
+  if (bt.boardBtnPressed !== 'false') {
+    throw new Error(`the board button claims a board is up before one was opened: aria-pressed=${bt.boardBtnPressed}`);
+  }
+  // The two doors must agree in every frame, because they read one gate. The
+  // foot's row is drawn from the same `selectBoardAvailable`, so a divergence
+  // here is exactly the "one door open, the other dead" defect the selector was
+  // lifted out of `WorkspaceSidebar` to prevent.
+  if (bt.boardBtnDisabled !== bt.footBoardDisabled) {
+    throw new Error(
+      `the two board doors disagree: session bar disabled=${bt.boardBtnDisabled}, rail foot disabled=${bt.footBoardDisabled}`,
+    );
   }
 
   // ---- the rail heads, and what they no longer carry ----
@@ -1034,6 +1099,97 @@ async function main() {
   if (SF.collapsed !== true) throw new Error('the summary row did not fold when the rail came back');
   if (!(SF.h <= 1)) throw new Error(`the folded summary row still has height ${SF.h}`);
   if (SF.inert !== true) throw new Error('the folded summary row is still reachable by Tab: no `inert`');
+
+  // ---- the board button actually opens the board, from the bar ----
+  //
+  // **The half that a structural assertion cannot reach.** The button could be
+  // in the right place, correctly labelled, correctly gated, and wired to the
+  // wrong action — `toggleSidebar`, most plausibly, since this row already
+  // carries two buttons that take a `boolean` and fold a rail. So the click is
+  // driven for real and the *store* is asked, not the button's own `aria-pressed`:
+  // a control that reports a state it did not cause is the defect this whole
+  // file exists for.
+  //
+  // Driven with the **left rail folded**, deliberately: that is the state the
+  // button was asked for. With the rail on screen the foot's own row is
+  // equivalent, so a check that ran there would pass without the new door
+  // existing at all.
+  await evaluate(`(() => {
+    document.querySelector('.sessionbar > .rail-toggle:first-child').click();
+    return true;
+  })()`);
+  await sleep(500);
+  const foldedForBoard = JSON.parse((await railState()) ?? '{}');
+  if (foldedForBoard.leftW > FOLDED) {
+    throw new Error(`the left rail did not fold before the board test: width ${foldedForBoard.leftW}`);
+  }
+
+  await evaluate(`(() => {
+    document.querySelector('.sessionbar .sb-board').click();
+    return true;
+  })()`);
+  await sleep(300);
+
+  const afterBoardOpen = JSON.parse((await railState()) ?? '{}');
+  console.log('after opening the board from the session bar:', JSON.stringify(afterBoardOpen));
+  if (afterBoardOpen.store.boardOpen !== true) {
+    throw new Error('the session bar\'s board button did not open the board');
+  }
+  // **Not the rail's preference.** The crossed-wire failure this row is prone
+  // to: `sidebarVisible` must be untouched, or the button is a second `Ctrl+B`.
+  if (afterBoardOpen.store.sidebarVisible !== true || afterBoardOpen.store.leftbarVisible !== false) {
+    throw new Error(
+      `the board button wrote a rail preference instead: sidebarVisible=${afterBoardOpen.store.sidebarVisible}, leftbarVisible=${afterBoardOpen.store.leftbarVisible}`,
+    );
+  }
+  if (afterBoardOpen.boardBtnPressed !== 'true') {
+    throw new Error(`the board button does not report the open board: aria-pressed=${afterBoardOpen.boardBtnPressed}`);
+  }
+  // The board is the column's occupant now, so the column must be showing it
+  // rather than a rail the button had hidden on its way past.
+  const boardView = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    return JSON.stringify({
+      board: !!q('.app-stream .board'),
+      // The right rail is derived away under the board, so its toggle says so.
+      rightToggleDisabled: q('.sessionbar > .rail-toggle:last-child')?.disabled ?? null,
+    });
+  })()`);
+  const BV = JSON.parse(boardView ?? '{}');
+  if (!BV.board) throw new Error('the board is not what the conversation column is showing');
+  if (BV.rightToggleDisabled !== true) {
+    throw new Error('the trailing rail toggle stayed enabled under the board');
+  }
+
+  // And the same door closes it. A view opened from a button that cannot be
+  // shut from that button is a one-way trip, which is the failure the two rail
+  // toggles were moved into this row to avoid.
+  await evaluate(`(() => {
+    document.querySelector('.sessionbar .sb-board').click();
+    return true;
+  })()`);
+  await sleep(300);
+  const afterBoardClose = JSON.parse((await railState()) ?? '{}');
+  console.log('after closing the board from the session bar:', JSON.stringify(afterBoardClose));
+  if (afterBoardClose.store.boardOpen !== false) {
+    throw new Error('the board button does not close the board it opened');
+  }
+  if (afterBoardClose.boardBtnPressed !== 'false') {
+    throw new Error(`the board button still claims an open board: aria-pressed=${afterBoardClose.boardBtnPressed}`);
+  }
+  // And the button is still there and still enabled, with the board gone and
+  // the left rail folded: the state it was asked for.
+  if (!afterBoardClose.boardBtn) throw new Error('the board button vanished with the board');
+  if (afterBoardClose.boardBtnDisabled === true) {
+    throw new Error('the board button is disabled with the board closed and a session live');
+  }
+
+  // Put the left rail back, so every assertion below sees the tree it expects.
+  await evaluate(`(() => {
+    document.querySelector('.sessionbar > .rail-toggle:first-child').click();
+    return true;
+  })()`);
+  await sleep(500);
 
   // The session list, as the runtime answers it. `messages`, `steps`, `todos`
   // and `preview` are all computed by the runtime — this rail counts nothing

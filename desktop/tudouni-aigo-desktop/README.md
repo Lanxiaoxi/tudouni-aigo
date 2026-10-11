@@ -345,6 +345,7 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 21 | **The X button asks: minimize or close, and offers to remember.** The two outcomes are indistinguishable before the fact and entirely different after it — one hides the window with every session still running, the other asks every child to finish and exits — so the window asks once rather than guessing. The answer is a front-end preference (`closePolicy`), applied without a prompt the second time; `ask` is both the default and the fallback for an unreadable stored value, because it is the only one that cannot be wrong | `close_prompt_answer` / `close_prompt_ack` / `window_destroy` and the `CloseRequested` handler in `lib.rs`, `runtime/windowClose.ts` (the rule), `hooks/useWindowClose.ts`, `modals/CloseConfirm.tsx`, `closePolicy` in `state/store.ts` |
 | 22 | **A session behind the window says so.** A notification when a session changes *into* asking / broken / finished — never for a session just seen, never for one somebody is looking at, and never for `idle` on its own (that is where a fresh session sits and where a read one returns). "Looking at" requires the window to be **in the foreground**: a minimized window is nobody's attention, which is the one case the whole feature exists for | `notifyReason` / `isWatched` / `notifyDecision` in `runtime/notify.ts` (pure, asserted in `tests/notify.test.ts`), `hooks/useNotifications.ts`, `selectNotifyKey` in `state/store.ts`, `tauri-plugin-notification` in `lib.rs` / `capabilities/default.json` |
 | 23 | **Both rails are folded from the session bar, and only from there.** One toggle at each end of that bar — outside the facts' scroller, so nothing can scroll them off — and **neither rail head carries a collapse control any more**: a button inside the thing it hides cannot perform its own act. The trailing toggle is `disabled` while the session board is up, because the board is what derives the rail away. The replaced rail's summary row is the conversation column's own second header (under the session bar, same width), and carries **no** `Sidebar hidden` label and **no** `Show` button — that pair was the same mistake a third time | `SessionBar` in `components/chrome/SessionBar.tsx`, `CollapsedSummary.tsx`, `RailHead` in `components/sidebar/Sidebar.tsx`, `.sb-scroll` / `.rail-toggle` / `.collapsed-summary` in `styles/app.css`, `rail.head` / `rail.collapse` / `rail.show` in `i18n/index.ts` |
+| 24 | **The session board has a second door in the session bar**, immediately right of the leading rail toggle. The rail's foot row is one way *out* of the transcript, so it is `inert` exactly when the left rail is folded — the toggle's own lesson, one control over. The two doors share the gate (`selectBoardAvailable`), the action and the words, so they cannot disagree about whether the board is reachable; the bar's copy is `disabled` while a panel or a drawn prompt owns the screen, and stays enabled while the board is up, because that is the way back | `.sb-board` in `SessionBar.tsx` / `styles/app.css`, `selectBoardAvailable` in `state/store.ts` (read by both doors), `board.openHint` / `board.title` in `i18n/index.ts` |
 
 ### 21 · Why the close prompt has a deadline, but the person does not
 
@@ -456,6 +457,51 @@ same height on either side of the transcript, so `.rb-head` repeats `.lb-head`'s
 numbers drift apart. A height difference there shows up as a step at the
 transcript's edges, which is the kind of thing that looks like a rendering
 artefact rather than a header.
+
+### 24 · Why the board is reachable from two places, and why that is not a duplicate
+
+The session board's button lives in the left rail's foot, beside Files and
+Terminal. That is the right shelf — it is a way *out* of the transcript, the same
+kind of thing as the other two — and it is the **wrong side of the fold**. The
+rail is not unmounted when it is collapsed, it is `inert` (a rail nobody can see
+must leave the tab order), so with the rail away the board's only door is behind
+a door. That is the failure `SessionBar` was built to end for the rail toggles
+themselves, arriving one control over.
+
+So the bar carries a second entrance, one step in from the leading toggle. Three
+things about it are decisions rather than styling:
+
+- **It is one control with two doors, not two controls.** The act
+  (`setBoardOpen`), the gate and the words are shared, and the gate was *lifted
+  out of* `WorkspaceSidebar` for this (`selectBoardAvailable`). A second
+  hand-written copy of that condition is the version of this change that would
+  go wrong: the two buttons would agree on the day they were written and drift on
+  the next edit, and the symptom — one door open, the other dead on the same
+  screen — is exactly the "a button that does nothing" report this suite exists
+  for. `render-check.mjs` compares the two doors' `disabled` state in the same
+  frame, so a future divergence is caught rather than merely unlikely.
+- **The gate is the workspace's, not the screen's.** Not `hasSession` (Files and
+  Terminal's question) but "some live child in this workspace": the board reports
+  on every session at once, so it must open in the case the other two cannot —
+  the session on screen is the one whose child failed to start, and the others
+  are running fine. That is precisely the screen where somebody needs to see that
+  the other sessions are alive.
+- **It reads as a toggle, and it stays enabled while the board is up.** It wears
+  the two rail toggles' square, because all three fold something away from this
+  row and a differently-shaped control in the same run would read as one more
+  fact. `aria-pressed` carries the state, and `--accent-subtle` with a real
+  foreground colour carries it visually — the accent rather than the neutral
+  hover, because this one describes what the whole column is currently showing,
+  where the rail toggles point at nothing on screen. Its `disabled` is
+  `blocked || (!boardAvailable && !boardOpen)`: the trailing clause is what keeps
+  an open board from being a room with no door when its last child exits.
+
+The button sits **outside `.sb-scroll`**, like the toggles and for the same
+reason — which here is stronger: with the left rail folded this is the only way
+to the board, so a long session id must not be able to scroll it off the edge.
+`render-check.mjs` asserts its index in the bar's own children rather than merely
+its existence, because "right of the collapse button" is the whole request and a
+button appended after the facts would render, work, and be in the wrong place.
 
 ### 5 · Why the status bar's numbers no longer wait for a turn to end
 

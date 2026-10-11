@@ -307,6 +307,59 @@
   cursor: not-allowed;
 }
 
+/* The session board's door, one step in from the leading edge and wearing the
+   rail toggle's shape. It is the **same square as the two toggles** on purpose:
+   all three fold something away from this bar, and a differently-sized control
+   in the same run would read as belonging to the facts instead of to the
+   controls. Same `flex: none`, same reason — it is outside `.sb-scroll` and
+   must stay there.
+
+   Its gap is on the right like the leading toggle's, so the leading cluster is
+   spaced evenly and the two rail toggles stay the outermost pair. */
+.sessionbar .sb-board {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h);
+  height: var(--control-h);
+  flex: none;
+  margin-right: var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.sessionbar .sb-board:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* **Engaged, not merely hovered.** While the board holds the column the button
+   is the way back to the transcript, so it has to say so — the same idiom as
+   the rail's foot (`.lb-foot-btn.is-active`) and, before either, `Ctrl+L`'s own
+   toggles. The accent rather than the neutral `--bg-muted` because this one is
+   a *view* replacing the conversation, not a preference being flipped: the
+   leading toggle's pressed state has nothing on screen to point at, whereas
+   this one is describing what the whole column is currently showing.
+   `--accent-subtle` and a real foreground: `--accent-tint-text` is the pair
+   that survives on top of it in both themes. */
+.sessionbar .sb-board.is-active {
+  background: var(--accent-subtle);
+  color: var(--accent-tint-text);
+}
+
+/* The same disclosure the toggles carry: a panel is a Radix dialog, whose
+   `pointer-events: none` the whole body inherits, so a button that looked
+   available would be a lie the browser would not even deliver a click to. The
+   board's own *availability* comes from the workspace, which `disabled` also
+   says here — one state, one rendering. */
+.sessionbar .sb-board:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* The permission statement's dashed chip. Nowhere on this bar any more: the
    statement lives where the rail it belongs to renders it — the collapsed
    summary and the SettingsPanel — and a dashed edge outlived the row that

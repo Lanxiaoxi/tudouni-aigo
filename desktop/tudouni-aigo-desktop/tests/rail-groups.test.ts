@@ -43,6 +43,7 @@ import { test } from 'node:test';
 import {
   createSessionBucket,
   railBlocked,
+  selectBoardAvailable,
   selectLiveOnlyKey,
   selectLiveSessionIds,
   selectModalVisible,
@@ -726,6 +727,149 @@ test('a board with no request under it renders nothing to hold', () => {
   const bucket = handshaken('k1', 'C:/work', '20261002-183456');
   install({ k1: bucket }, ['k1'], 'k1', { boardOpen: true });
   assert.equal(selectModalVisible(useApp.getState()), false);
+});
+
+/* ============================================================
+   Group 3b: the board's gate, and the two doors that read it
+   ============================================================ */
+
+/**
+ * The board is reached from two places — the left rail's foot and the session
+ * bar's leading edge — and this is the one question both must ask.
+ *
+ * `selectBoardAvailable` was lifted out of `WorkspaceSidebar` for that: the
+ * gate cannot be "the session on screen is ready" (that is Files and
+ * Terminal's), and a second hand-written copy of it in the session bar would
+ * eventually be written differently, leaving one door open and the other dead
+ * on the same screen. So the assertions below are as much about the *shape* of
+ * the answer as about the answer: it is a pure function of the workspace, and
+ * both surfaces call it.
+ */
+
+test('the board is available while any child in this workspace is alive', () => {
+  // The ordinary case, and the one the design's §3.4 relies on: the rail stays
+  // usable under the board, so `focusSession` can move between conversations —
+  // and with two children in one workspace the question is answered by the
+  // workspace, not by the focused bucket.
+  install(
+    {
+      k1: handshaken('k1', 'C:/work', '20261002-183456'),
+      k2: handshaken('k2', 'C:/work', '20261002-183131'),
+    },
+    ['k1', 'k2'],
+    'k1',
+  );
+  assert.equal(selectBoardAvailable(useApp.getState()), true);
+});
+
+test('a failed session on screen does not close the board', () => {
+  // **The case the gate exists for, and the reason it is not `hasSession`.**
+  // The session on screen is the one whose child never came up — so Files and
+  // Terminal are correctly unavailable — while the other conversation in the
+  // workspace is running fine. The board is about the whole workspace, so it
+  // must open here more than anywhere: this is exactly the screen where a
+  // person needs to see that the other sessions are alive.
+  const broken = handshaken('k1', 'C:/work', '20261002-183456');
+  broken.ready = false;
+  broken.problem = 'the workspace C:/work cannot be used';
+  install(
+    { k1: broken, k2: handshaken('k2', 'C:/work', '20261002-183131') },
+    ['k1', 'k2'],
+    'k1',
+  );
+  assert.equal(selectBoardAvailable(useApp.getState()), true);
+});
+
+test('a child whose workspace is unknown yet still counts as live', () => {
+  // The second before `init` lands. It is in the store because this end just
+  // started it, and answering "no" here would make the board's button dead for
+  // the first second of every session — the "a press that does nothing"
+  // failure this whole suite is about.
+  const fresh_ = fresh('k1', '');
+  install({ k1: fresh_ }, ['k1'], 'k1');
+  assert.equal(selectBoardAvailable(useApp.getState()), true);
+});
+
+test('nothing open means no board, which is the other half', () => {
+  // A gate that answered `true` unconditionally would pass every test above
+  // and offer a board over a workspace with nothing in it to report.
+  install({}, [], null);
+  assert.equal(selectBoardAvailable(useApp.getState()), false);
+});
+
+test('the gate is the workspace\'s, and the screen\'s own child answers for it', () => {
+  // **What the gate can and cannot say**, pinned because the workspace clause
+  // reads like a filter and is worth being honest about. `activeWorkspaceOf`
+  // reads `init.workspace` off the session **on screen**, so once a session is
+  // open its own bucket is necessarily inside the set being scanned and
+  // necessarily matches — which means the gate is `false` exactly when nothing
+  // is open, and its workspace clause is a statement of *scope* rather than a
+  // filter that can currently exclude anything.
+  //
+  // Asserted rather than argued because it constrains the selector's future: the
+  // day `activeWorkspaceOf` answers from somewhere else (a remembered path, a
+  // workspace row), that clause becomes load-bearing and this test's second
+  // assertion is what says so.
+  install(
+    {
+      k1: handshaken('k1', 'C:/work', '20261002-183456'),
+      k2: handshaken('k2', 'C:/other', '20261002-183131'),
+    },
+    ['k1', 'k2'],
+    'k1',
+  );
+  assert.equal(selectBoardAvailable(useApp.getState()), true, 'the screen\'s own child answers');
+
+  // And it is asked of the **screen's** workspace, not of the workspace that
+  // happens to sort first: focusing the other conversation changes which bucket
+  // answers, and not the answer.
+  useApp.getState().focusSession('k2');
+  assert.equal(selectBoardAvailable(useApp.getState()), true);
+});
+
+test('a drawn prompt does not close the board, but it does disable the door', () => {
+  // The two facts `` disabled={blocked || (!boardAvailable && !boardOpen)} ``
+  // combines, asserted separately because they are different questions. A
+  // prompt makes every control on the surface inert (`railBlocked` — the body
+  // inherits `pointer-events: none`), and it does **not** make the board
+  // unavailable: `setBoardOpen` is local, sends nothing and disturbs no
+  // pending request, so the board is still openable from the keyboard chain
+  // once the prompt is answered. A gate that folded the prompt in would have
+  // written "the prompt is showing" into the workspace's answer.
+  const bucket = handshaken('k1', 'C:/work', '20261002-183456');
+  install({ k1: bucket }, ['k1'], 'k1', {
+    modal: {
+      kind: 'permission',
+      key: 'k1',
+      req: {
+        id: 'p1',
+        tool: 'shell',
+        risk: 'high',
+        arguments: {},
+        remember: null,
+        remember_hint: null,
+        allow_trust_all: false,
+        trust_all_hint: null,
+      },
+    } as AppStore['modal'],
+  });
+  assert.equal(selectBoardAvailable(useApp.getState()), true, 'the workspace is still able to answer');
+  assert.equal(railBlocked(useApp.getState()), true, 'but the control must say it is inert');
+});
+
+test('the board stays openable from the bar once the children are gone', () => {
+  // The escape hatch, and the half that has to survive the fix: while the board
+  // is up its button must not be disabled by its own gate, or the view would be
+  // a room with no door — the rail's foot being the other one, and also gone
+  // with the rail. `disabled` is `!boardAvailable && !boardOpen`, so the open
+  // board answers for itself.
+  install({}, [], null, { boardOpen: true });
+  assert.equal(selectBoardAvailable(useApp.getState()), false);
+  assert.equal(
+    !selectBoardAvailable(useApp.getState()) && !useApp.getState().boardOpen,
+    false,
+    'an open board is still closable from its own button',
+  );
 });
 
 /* ============================================================

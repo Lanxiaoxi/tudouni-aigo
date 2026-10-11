@@ -4,6 +4,7 @@ import {
   activeRuntime,
   activeWorkspaceOf,
   railBlocked,
+  selectBoardAvailable,
   selectLiveOnlyKey,
   selectLiveSessionIdsKey,
   selectRowStatusKey,
@@ -70,30 +71,14 @@ export function WorkspaceSidebar() {
   const currentWorkspace = rt?.session?.workspace ?? rt?.workspace ?? '';
   const currentSessionId = rt?.session?.id ?? null;
   /**
-   * Whether any session in this workspace has a live child.
-   *
-   * **Not `hasSession`.** That asks "is the session on screen ready", which is
-   * the right gate for Files and Terminal — both act on the conversation you are
-   * looking at. The board is about all of them, so it must still open in the one
-   * case the other two cannot: the session on screen is the one whose child
-   * failed, and the others are running fine. What it actually needs is a child to
-   * answer `session_list` for this workspace, and this is that question asked of
-   * the whole workspace rather than of the focused bucket.
-   *
-   * A child whose own workspace is not known yet (`init` has not landed) counts
-   * as live: it is in the store because this end just started it, and refusing
-   * the board until the handshake arrives would be a button that is dead for the
-   * first second of every session.
+   * Whether any session in this workspace has a live child — the board's gate,
+   * and **the same value the session bar's board button reads**
+   * (`selectBoardAvailable`, which carries the reasoning). Two doors to one
+   * view, so the question is asked in one place: a gate written twice here
+   * would eventually be written twice *differently*, leaving one door open and
+   * the other dead on the same screen.
    */
-  const hasLiveChild = useApp((s) =>
-    s.order.some((key) => {
-      const bucket = s.sessions[key];
-      if (!bucket) return false;
-      const own = bucket.session?.workspace ?? bucket.workspace;
-      if (currentWorkspace === '' || own === '') return true;
-      return samePath(own, currentWorkspace);
-    }),
-  );
+  const hasLiveChild = useApp(selectBoardAvailable);
 
   const enterWorkspace = useApp((s) => s.enterWorkspace);
   const addWorkspace = useApp((s) => s.addWorkspace);

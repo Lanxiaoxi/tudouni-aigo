@@ -1,5 +1,5 @@
-import { PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from 'lucide-react';
-import { useApp, useSessionField } from '@/state/store';
+import { LayoutGrid, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from 'lucide-react';
+import { railBlocked, selectBoardAvailable, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Fact, Tip } from '@/components/ui/kit';
 
@@ -35,6 +35,17 @@ import { Fact, Tip } from '@/components/ui/kit';
  * Both of those in-rail buttons are gone, and these two are the whole of the
  * mechanism: always on screen, in the row that names the conversation, one above
  * the rail it folds.
+ *
+ * ## And so is the session board, for the same reason
+ *
+ * The board's own button sits in the left rail's foot, which is exactly the
+ * situation the two toggles were moved here to escape: fold the rail and the
+ * control goes with it (`inert`, since a folded rail must leave the tab order).
+ * The board is not a rail, so it does not get a toggle — it gets a **second
+ * door**, next to the leading toggle and outside the scroller, reading the same
+ * gate (`selectBoardAvailable`), the same action and the same labels as the
+ * foot's row. One control with two entrances rather than two controls that can
+ * disagree.
  */
 export function SessionBar() {
   const t = useT();
@@ -47,6 +58,18 @@ export function SessionBar() {
   const toggleLeftbar = useApp((s) => s.toggleLeftbar);
   const sidebarVisible = useApp((s) => s.sidebarVisible);
   const toggleSidebar = useApp((s) => s.toggleSidebar);
+  const setBoardOpen = useApp((s) => s.setBoardOpen);
+  // The board's gate is the **workspace's**, not the conversation on screen's:
+  // it reports on every session at once, so it must open in the one case Files
+  // and Terminal cannot — the session on screen is the one whose child failed
+  // to start. `selectBoardAvailable` is the left rail's foot's own question, and
+  // reading it from one place is what keeps the bar's copy of this control from
+  // ever disagreeing with the rail's about whether it can be pressed.
+  const boardAvailable = useApp(selectBoardAvailable);
+  // And a panel is a Radix dialog, whose `pointer-events: none` the whole body
+  // inherits — so the button has to *say* it is inert, exactly as the rail's
+  // foot does. See `railBlocked`.
+  const blocked = useApp(railBlocked);
   // `Ctrl+B` refuses to toggle under the session board, because `showSidebar` is
   // *derived* (`sidebarVisible && !hiddenByCss && !boardOpen`): writing the
   // preference there would change nothing on screen and then bring the rail back
@@ -65,6 +88,47 @@ export function SessionBar() {
         onClick={toggleLeftbar}
       >
         {leftbarVisible ? <PanelLeftClose size={14} /> : <PanelLeft size={14} />}
+      </button>
+    </Tip>
+  );
+
+  /**
+   * The session board's second door, one step in from the leading edge.
+   *
+   * **The same control as the left rail's foot, not a second one.** The act, the
+   * gate and the labels are the same: `selectBoardAvailable` is the question
+   * both ask (it is about the *workspace*, so a session whose child failed can
+   * still see the board), `setBoardOpen` is the action, and `board.openHint` /
+   * `board.title` are the words. Placed here because this bar is where a person
+   * looks when the question is "what is everything else doing" — and because it
+   * is the one door that survives the rail being folded, which the rail's own
+   * foot demonstrably does not: that button is inside the thing it would have to
+   * cross, and `inert` while the rail is away.
+   *
+   * It is drawn as an icon-sized sibling of the two rail toggles rather than as
+   * the foot's labelled row: this row is 34px of compact facts, and a labelled
+   * button in it would read as one more fact. The tooltip and `aria-label`
+   * carry the name, so nothing is lost but pixels.
+   *
+   * Like them it sits **outside `.sb-scroll`**, so a long session id cannot
+   * carry it off the edge — which matters more here than for a toggle: with the
+   * left rail folded, this is the only way back to the board.
+   */
+  const boardButton = (
+    <Tip label={t('board.openHint')}>
+      <button
+        type="button"
+        className={`sb-board${boardOpen ? ' is-active' : ''}`}
+        aria-label={t('board.title')}
+        aria-pressed={boardOpen}
+        // The same condition the rail's foot draws, from the same selector:
+        // inert while a panel or a drawn prompt owns the screen, and otherwise
+        // available whenever the workspace has a child to answer for it —
+        // **except** while the board is up, where the button is the way back.
+        disabled={blocked || (!boardAvailable && !boardOpen)}
+        onClick={() => setBoardOpen(!boardOpen)}
+      >
+        <LayoutGrid size={14} />
       </button>
     </Tip>
   );
@@ -96,6 +160,7 @@ export function SessionBar() {
     return (
       <div className="sessionbar">
         {leftToggle}
+        {boardButton}
         <div className="sb-scroll">
           <span className="sb-label">{t('session.label')}</span>
           <span className="muted">—</span>
@@ -108,6 +173,7 @@ export function SessionBar() {
   return (
     <div className="sessionbar">
       {leftToggle}
+      {boardButton}
 
       {/* The facts, in their own scroller so the two toggles stay put. The
           `<span className="sep" />` rules that used to sit between the four

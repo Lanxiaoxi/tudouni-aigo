@@ -4758,6 +4758,37 @@ export function railBlocked(s: AppStore): boolean {
 }
 
 /**
+ * Whether the session board's door should be usable: **some live child in the
+ * workspace on screen** to answer `session_list` for it.
+ *
+ * **Not `hasSession`**, which is what Files and Terminal ask. Those two act on
+ * the conversation you are looking at, so they key off "the session on screen is
+ * ready". The board reports on the whole workspace, so it must open in the one
+ * case they cannot: the session on screen is the one whose child failed to
+ * start, and the others are running fine.
+ *
+ * A child whose own workspace is not known yet (`init` has not landed) counts as
+ * live: it is in the store because this end just started it, and refusing the
+ * board until the handshake arrives would be a button dead for the first second
+ * of every session.
+ *
+ * **Exported because two doors read it.** The board is reached both from the
+ * left rail's foot and from the session bar's leading edge, and a gate written
+ * twice would eventually be written twice *differently* — one door open and the
+ * other dead on the same screen. One question, one answer.
+ */
+export function selectBoardAvailable(s: AppStore): boolean {
+  const current = activeWorkspaceOf(s);
+  return s.order.some((key) => {
+    const bucket = s.sessions[key];
+    if (!bucket) return false;
+    const own = bucket.session?.workspace ?? bucket.workspace;
+    if (current === '' || own === '') return true;
+    return samePath(own, current);
+  });
+}
+
+/**
  * Which session a blocking request came from, as one short label.
  *
  * The two requests carry no `session_id` (`protocol/schema/outbound.schema.json`),
