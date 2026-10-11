@@ -28,6 +28,11 @@
 import type { FrontendMsg, RuntimeMsg } from '@/protocol/types';
 import { decodeLine } from '@/protocol/types';
 import type { Runtime } from './bus';
+// The panel's own shapes for the two configuration files, which the Rust side
+// produces (`src-tauri/src/config_file.rs`). Imported as types only: the rules
+// that go with them live in that module, and this file is the bridge, not a
+// second place that decides what a route may hold.
+import type { ConfigDocument, ConfigPatch } from './userConfig';
 
 type UnlistenFn = () => void;
 
@@ -746,6 +751,75 @@ export async function checkWorkspace(path: string): Promise<string | null> {
     return await tauriInvoke<string | null>('workspace_check', { path });
   } catch {
     return null;
+  }
+}
+
+/**
+ * Read the configuration files the config panel edits.
+ *
+ * **Rust does the reading, not this end**, even though `tauri-plugin-fs` is in
+ * the dependency tree. The file has to be *merged* — a save sets the keys the
+ * form owns and leaves everything else byte-equivalent — and a merge written in
+ * Rust is one implementation instead of two, next to the atomic write it has to
+ * agree with. It also means the WebView never needs filesystem permission to a
+ * file full of API keys, which is the narrower capability.
+ *
+ * A failure here is returned as `null` rather than thrown: the panel's job with
+ * it is to say that the files could not be read at all, and an exception would
+ * land in an error boundary with nothing to say about which of the two was the
+ * problem.
+ */
+export async function readUserConfig(): Promise<ConfigDocument | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<ConfigDocument>('config_read');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Apply one save, and get the files back as they are **afterwards**.
+ *
+ * The reply is a re-read rather than the patch echoed back, so what the panel
+ * draws next is the file's own content — the same rule the settings panel
+ * follows when it shows the argv a child was actually given. For that reason a
+ * successful save **must** be applied from the reply: keeping the draft would
+ * leave the screen showing a value that is not what the runtime will read.
+ *
+ * The error is propagated rather than swallowed. Every refusal here is a reason
+ * nothing was written, and a save that silently did nothing is the one outcome
+ * this feature can least afford — the person would believe their key is in the
+ * file.
+ */
+export async function writeUserConfig(patch: ConfigPatch): Promise<ConfigDocument> {
+  return tauriInvoke<ConfigDocument>('config_write', { patch });
+}
+
+/**
+ * Show one configuration file in the OS file manager.
+ *
+ * This is the panel's **only** non-form affordance, and it is here for the state
+ * the form cannot fix itself: a file that will not parse. The panel shows the
+ * sentence explaining what is wrong and refuses to write, and the answer is for
+ * the person to open the file — so the way to reach it has to be on the screen
+ * next to that sentence.
+ *
+ * `revealItemInDir` rather than opening it in the default application: the file
+ * manager is where somebody decides *which* editor, and handing a file full of
+ * API keys to whatever happens to be associated with `.json` is a decision this
+ * panel has no business making for them.
+ */
+export async function revealConfigFile(path: string): Promise<void> {
+  if (!isHosted() || path.trim() === '') return;
+  try {
+    const mod = await import('@tauri-apps/plugin-opener');
+    await mod.revealItemInDir(path);
+  } catch (err) {
+    // Nothing to report and nothing to fall back to: the path is already on
+    // screen for anybody who has to type it, and a failure here means the OS
+    // refused — which no sentence from this end changes.
+    console.warn('could not reveal the configuration file:', err);
   }
 }
 

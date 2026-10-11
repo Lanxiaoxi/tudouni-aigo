@@ -47,6 +47,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[cfg(windows)]
 use std::ffi::c_void;
 
+/// The configuration files the desktop reads and writes directly.
+///
+/// A module rather than a pair of commands in this file, because it is the one
+/// thing here that touches a file the runtime also owns and it carries rules of
+/// its own. See its comment for why the desktop is the writer, and for the three
+/// rules that keep a save from destroying what the form does not draw.
+mod config_file;
+
 /// How long a graceful shutdown is given before the child is killed.
 ///
 /// The Go client hard-codes the same 30 seconds inside `Close()`, and for the
@@ -1137,6 +1145,44 @@ fn workspace_check(path: String) -> Option<String> {
     })
 }
 
+/* ============================================================
+   The configuration files
+   ============================================================ */
+
+/// Read `~/.tudouni/config.json` and `mcp.json` for the config panel.
+///
+/// The front end draws this, so it is the panel's own shape rather than the
+/// runtime's `providers` object: routes as a **list** (which keeps the file's
+/// order, and the order is what decides the default route), headers as pairs (a
+/// map would re-arrange itself between renders), and a `problem` field per file
+/// instead of an error.
+///
+/// That last one is the load-bearing part. A file that will not parse still has
+/// to be **shown** — its path, and the sentence saying what is wrong — because a
+/// panel that answers "it could not be read" with nothing on screen leaves the
+/// person with no idea which file to open. The `problem` is also what the panel
+/// reads to decide that saving is off: a merge needs an object to preserve, and
+/// there is none.
+#[tauri::command]
+fn config_read() -> Result<config_file::ConfigDocument, String> {
+    config_file::read_document()
+}
+
+/// Apply one save and return the files as they are **afterwards**.
+///
+/// The reply is a fresh read, not the patch echoed back: what the panel draws
+/// next is therefore the file's own content. That is the same rule the settings
+/// panel follows when it shows the argv a child was actually given rather than
+/// what somebody typed — a remembered value must not read as "this is in force".
+///
+/// Failures are sentences for a person, and every one of them is a reason
+/// **nothing was written**: the merge is built in memory and the rename at the
+/// end is the only step that touches the file.
+#[tauri::command]
+fn config_write(patch: config_file::ConfigPatch) -> Result<config_file::ConfigDocument, String> {
+    config_file::write_document(patch)
+}
+
 /// One picture written into the workspace, as the front end needs it back.
 #[derive(Clone, Serialize)]
 struct StashedImage {
@@ -1619,6 +1665,8 @@ pub fn run() {
             set_prevent_sleep,
             os_user_name,
             workspace_check,
+            config_read,
+            config_write,
             image_stash,
             close_prompt_answer,
             close_prompt_ack,

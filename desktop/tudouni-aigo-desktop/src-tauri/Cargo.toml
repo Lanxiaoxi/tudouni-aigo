@@ -1,6 +1,6 @@
 [package]
 name = "tudouni-aigo-desktop"
-version = "2.6.1"
+version = "2.8.0"
 description = "tudouni-aigo desktop client"
 authors = ["tudouni-aigo"]
 edition = "2021"
@@ -20,7 +20,15 @@ tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `preserve_order` is **load-bearing, not a preference**. `config.json`'s
+# `providers` object is read in file order, and the first route with a key is the
+# default route (`internal/state/catalog.go`, `Registry.DefaultProvider`).
+# Without this feature `serde_json` backs objects with a `BTreeMap`, so a single
+# save from the config panel would re-sort the routes — silently handing the
+# default route to whichever name sorts first, and re-arranging the `/model`
+# list — while nothing anywhere reported it. JSON objects have no order of their
+# own, so this is the only thing that keeps it.
+serde_json = { version = "1", features = ["preserve_order"] }
 
 [profile.release]
 codegen-units = 1

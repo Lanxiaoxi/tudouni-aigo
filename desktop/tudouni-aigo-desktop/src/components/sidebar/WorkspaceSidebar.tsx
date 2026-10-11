@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, FileText, FolderPlus, Folder, LayoutGrid, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
+import { ChevronRight, FileJson, FileText, FolderPlus, Folder, LayoutGrid, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -697,6 +697,28 @@ export function WorkspaceSidebar() {
           >
             <Settings size={14} />
             <span>{t('lb.settings')}</span>
+          </button>
+        </Tip>
+        {/* The configuration files, next to Settings and deliberately **not**
+            inside it. Settings holds this session's start-up arguments, and
+            changing one restarts a child; this edits the files that are read
+            *when* a child starts, and what it writes outlives every session.
+
+            Its gate is `blocked` alone — **not** `hasSession`, which is what
+            Files and Terminal require. That difference is the whole point of
+            putting it here: configuration is what a child reads at open, so the
+            person who needs this panel most is the one with no session at all,
+            because no route is configured yet. Requiring a session would hide the
+            key editor behind the very failure it exists to fix. */}
+        <Tip label={t('lb.configHint')}>
+          <button
+            type="button"
+            className="lb-foot-btn"
+            disabled={blocked}
+            onClick={() => openPanel('config')}
+          >
+            <FileJson size={14} />
+            <span>{t('lb.config')}</span>
           </button>
         </Tip>
       </div>

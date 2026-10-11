@@ -243,6 +243,13 @@ export const en = {
   'lb.refreshSessions': 'Re-read the session list',
   'lb.collapse': 'Hide this sidebar',
   'lb.settings': 'Settings',
+  /* The configuration files, beside Settings in the rail's foot. The tooltip
+     says what the two are *apart* from each other, because the difference is the
+     one thing a person needs to know before opening it: Settings is this
+     session's start-up arguments, this is the file every session reads at open. */
+  'lb.config': 'Config',
+  'lb.configHint':
+    'The configuration files: routes, keys, and MCP servers. Read when a session starts.',
   'lb.show': 'Show the workspace sidebar',
   'rail.drag': 'Drag to resize the sidebar. Double-click to reset it.',
   'lb.foldSessions': 'Fold the session list',
@@ -585,6 +592,100 @@ export const en = {
   'panel.settings.close': 'Closing the window',
   'panel.settings.closeDesc': 'What the X button does.',
   'panel.close': 'Close',
+
+  /* ---------------- the configuration files ----------------
+   *
+   * A panel of its own rather than a third group inside Settings, and the copy
+   * is where that has to be legible: nothing here restarts anything, and nothing
+   * here reaches a running session. What it edits is the file a session reads
+   * *when it opens*, which is why the effect sentence is a statement about next
+   * time rather than a badge about now. */
+  'panel.config.title': 'Configuration',
+  'panel.config.unreadable': 'The configuration files could not be read.',
+  'panel.config.routes': 'Routes',
+  'panel.config.routesHint':
+    'One entry per provider route. The key is the route name; the order is the order the /model list shows, and the first route with a key is the default.',
+  'panel.config.web': 'Web search',
+  'panel.config.webHint': 'The keys the web_search tool uses.',
+  'panel.config.webAbsent':
+    'Leave them empty and web_search is not registered. fetch_web is unaffected — a missing key is not an error there.',
+  'panel.config.tavilyKey': 'Tavily API key',
+  'panel.config.tavilyBaseUrl': 'Tavily base URL',
+  'panel.config.tavilyBaseUrlHint': 'Empty uses the runtime’s own default.',
+  'panel.config.mcp': 'MCP servers',
+  'panel.config.mcpHint':
+    'Servers the runtime connects at start-up. A command runs locally; a URL is a remote server.',
+  'panel.config.name': 'Name',
+  'panel.config.nameHint': 'The key in the file, and what /model and the panels show.',
+  'panel.config.untitled': 'untitled',
+  'panel.config.baseUrl': 'Base URL',
+  'panel.config.apiKey': 'API key',
+  'panel.config.apiStyle': 'Protocol',
+  'panel.config.apiStyleHint': 'Leave it on “infer” unless this endpoint needs otherwise.',
+  'panel.config.apiStyleAuto': 'infer from the URL',
+  'panel.config.displayName': 'Display name',
+  'panel.config.displayNameHint': 'Optional. Shown instead of the route name.',
+  'panel.config.verify': 'TLS',
+  'panel.config.skipVerify': 'Skip certificate verification',
+  'panel.config.verifyHint':
+    'On by default. Only turn this off for an endpoint whose certificate does not check out.',
+  'panel.config.headers': 'Extra headers',
+  'panel.config.headersHint': 'One per line, name = value. Sent with every request to this route.',
+  'panel.config.pairsHint': 'One per line, name = value.',
+  'panel.config.effortLevels': 'Thinking levels',
+  'panel.config.effortLevelsHint':
+    'One per line; applies to every model on this route. Empty offers the whole vocabulary.',
+  'panel.config.models': 'Models',
+  'panel.config.modelsHint':
+    'A route with no models cannot be selected. Leave the context window empty rather than guessing — a wrong percentage is worse than none.',
+  'panel.config.modelId': 'Model id',
+  'panel.config.modelLabel': 'Label',
+  'panel.config.contextWindow': 'Context window',
+  'panel.config.contextWindowHint':
+    'In tokens. Empty means the interface reports usage without a percentage.',
+  'panel.config.contextWindowAbsent': 'not set',
+  'panel.config.reasoningEffort': 'Starts at',
+  'panel.config.reasoningEffortHint':
+    'The thinking level this model starts on. Empty means the default.',
+  'panel.config.modelEffortLevels': 'Thinking levels',
+  'panel.config.modelEffortLevelsHint': 'One per line. Overrides the route’s list for this model.',
+  'panel.config.vision': 'Pictures',
+  'panel.config.visionOn': 'This model accepts images',
+  'panel.config.visionHint': 'Off unless the model takes them.',
+  'panel.config.noKey': 'no key',
+  'panel.config.mcpTransport': 'Transport',
+  'panel.config.mcpStdio': 'Command',
+  'panel.config.mcpRemote': 'URL',
+  'panel.config.mcpCommand': 'Command',
+  'panel.config.mcpArgs': 'Arguments',
+  'panel.config.mcpArgsHint': 'One per line, verbatim — each line is one argument.',
+  'panel.config.mcpUrl': 'URL',
+  'panel.config.mcpHeaders': 'Headers',
+  'panel.config.mcpEnv': 'Environment',
+  'panel.config.mcpTimeout': 'Timeout',
+  'panel.config.mcpTimeoutHint': 'Seconds. Empty means the runtime’s own default.',
+  'panel.config.addRoute': 'Add a route',
+  'panel.config.addModel': 'Add a model',
+  'panel.config.addServer': 'Add a server',
+  'panel.config.removeRoute': 'Remove this route',
+  'panel.config.removeModel': 'Remove this model',
+  'panel.config.removeServer': 'Remove this server',
+  'panel.config.moveUp': 'Move up',
+  'panel.config.moveDown': 'Move down',
+  'panel.config.showKeys': 'Show keys',
+  'panel.config.hideKeys': 'Hide keys',
+  'panel.config.save': 'Save',
+  'panel.config.saving': 'Saving…',
+  'panel.config.revert': 'Discard changes',
+  'panel.config.saved': 'Saved',
+  'panel.config.unsaved': 'Unsaved changes',
+  'panel.config.readOnly': 'This file cannot be written — see above.',
+  'panel.config.blocked': '{n} problem(s) have to be fixed first.',
+  'panel.config.missing':
+    'The file does not exist yet. Saving creates it with only what is on this screen.',
+  'panel.config.reveal': 'Show the file in the file manager',
+  'panel.config.effect':
+    'Saved now, read the next time a session starts. A session that is already running keeps the configuration it opened with.',
 
   /* ---------------- in-stream blocks ---------------- */
   'inblock.status.title': 'Current status',

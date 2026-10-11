@@ -81,6 +81,12 @@ const SUITES = [
   // policy that forgot a choice simply asks again — so neither failure is visible
   // in a rendered string, and both have to be asserted here.
   'notify.test.ts',
+  // The config panel's two invisible rules: the order of `providers` decides the
+  // default route, so a save that re-orders them silently moves every request to
+  // another account; and a section that did not change must not be sent, or
+  // opening the panel to fix a key would create `mcp.json`. Neither is visible
+  // in a rendered string — the screen looks identical either way.
+  'user-config.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

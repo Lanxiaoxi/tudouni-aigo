@@ -15,6 +15,7 @@ import {
   TerminalPanel,
 } from './panels';
 import { SettingsPanel } from './SettingsPanel';
+import { ConfigPanel } from './ConfigPanel';
 
 /**
  * §5 Panel host.
@@ -44,7 +45,7 @@ export function PanelHost() {
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="overlay-mask" />
         <DialogPrimitive.Content
-          className={`dialog${panel === 'commands' ? ' cmdk' : ''}`}
+          className={`dialog${panel === 'commands' ? ' cmdk' : ''}${panel === 'config' ? ' dialog-wide' : ''}`}
           aria-label={t('topbar.commands')}
         >
           {panel === 'commands' ? <CommandPalette /> : null}
@@ -57,6 +58,7 @@ export function PanelHost() {
           {panel === 'subagents' ? <SubagentsPanel /> : null}
           {panel === 'audit' ? <AuditPanel /> : null}
           {panel === 'settings' ? <SettingsPanel /> : null}
+          {panel === 'config' ? <ConfigPanel /> : null}
           {panel === 'files' ? <FilesPanel /> : null}
           {panel === 'terminal' ? <TerminalPanel /> : null}
         </DialogPrimitive.Content>

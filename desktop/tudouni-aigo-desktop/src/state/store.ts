@@ -151,6 +151,12 @@ export type PanelKind =
   | 'subagents'
   | 'audit'
   | 'settings'
+  /* The configuration files themselves. A panel of its own rather than a third
+   * group inside Settings, because it is a different kind of decision from
+   * everything there: Settings holds **this session's start-up arguments**, and
+   * changing one restarts a child; this edits the files that are read when a
+   * child starts, and what it writes outlives every session. */
+  | 'config'
   /* The workspace's two capabilities. They are panels rather than windows
    * because they share the app's one interaction model (§5), and because
    * neither is a destination: a person opens one, looks, and goes back. */
