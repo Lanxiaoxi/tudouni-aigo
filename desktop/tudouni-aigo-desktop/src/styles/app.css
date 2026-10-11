@@ -198,6 +198,10 @@
      the text. Painting `--bg` here also cut the green halo off at a hard line
      the design does not have. */
   background: none;
+  /* The degradation container. Its inline size is the conversation column's
+     own — the thing that actually shrinks when a rail opens — so the tiers
+     below respond to *that*, which a window media query cannot see. */
+  container: sessionbar / inline-size;
 }
 
 /* The facts scroll; the two rail toggles do not.
@@ -283,6 +287,52 @@
 
 .sessionbar .sb-group .btn-ghost:active:not(:disabled) {
   filter: brightness(0.96);
+}
+
+/* ---------------- 会话栏的响应式降级 ----------------
+   The bar is a size container (`container: sessionbar / inline-size`
+   on `.sessionbar`), so these tiers fire on **the bar's own width** —
+   the width the rails actually leave it, not the window's. Each tier
+   removes one rung of decoration, the order the facts lose their
+   qualifiers:
+     1150  the secondary statements (resumed/fresh, @provider) — the
+           card keeps "an id", "a model name"
+     1020  the group labels (Session / model / thinking / step cap) —
+           the values speak for themselves as chips
+      920  the effort control — thinking's own value stays
+      820  the step-cap group whole; the session id gains an ellipsis
+   Under the last tier the scroller scrolls, as it always did. */
+@container sessionbar (max-width: 1150px) {
+  .sb-hide-1150 {
+    display: none !important;
+  }
+}
+
+@container sessionbar (max-width: 1020px) {
+  .sessionbar .sb-label {
+    display: none;
+  }
+}
+
+@container sessionbar (max-width: 920px) {
+  .sb-hide-920 {
+    display: none !important;
+  }
+}
+
+@container sessionbar (max-width: 820px) {
+  .sb-hide-820 {
+    display: none !important;
+  }
+
+  /* The id is the one value that can outgrow everything left on the row;
+     at this width it stops pushing the rest into the scroller. */
+  .sessionbar .sb-id {
+    max-width: 16ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* The two rail toggles, at the two ends of the session bar.

@@ -51,13 +51,15 @@ export function Fact({
   children,
   mono,
   title,
+  className,
 }: {
   children: ReactNode;
   mono?: boolean;
   title?: string;
+  className?: string;
 }) {
   return (
-    <span className={`fact${mono ? ' fact-mono' : ''}`} title={title}>
+    <span className={`fact${mono ? ' fact-mono' : ''}${className ? ` ${className}` : ''}`} title={title}>
       {children}
     </span>
   );
