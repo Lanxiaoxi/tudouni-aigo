@@ -85,6 +85,11 @@ export type PasteRefusal =
 /**
  * Build the next placeholder.
  *
+ * `kind` picks the token's family: `pimg` for pasted pictures, `file` for files
+ * attached from the plus menu. The families share one numbering space per kind
+ * but not across kinds — a picture and a file can both be `0` because their
+ * restore maps are separate lists, and the tokens are distinct strings.
+ *
  * The shape is deliberately far from anything the runtime's scanner could read
  * as a path: the `⟦⟧` brackets are not in its path-character set (nor are they
  * whitespace, so the token survives intact), and the name is a literal — the
@@ -96,12 +101,12 @@ export type PasteRefusal =
  * number the person deleted is recycled rather than skipped: the sentence is
  * the surface these tokens live on, and a gap (`1`, `3`) reads as a mistake.
  */
-export function nextPlaceholder(taken: string): string {
+export function nextPlaceholder(taken: string, kind: 'pimg' | 'file' = 'pimg'): string {
   let number = 0;
-  let candidate = `⟦pimg-${number}⟧`;
+  let candidate = `⟦${kind}-${number}⟧`;
   while (taken.includes(candidate)) {
     number += 1;
-    candidate = `⟦pimg-${number}⟧`;
+    candidate = `⟦${kind}-${number}⟧`;
   }
   return candidate;
 }
@@ -126,8 +131,8 @@ export function nextPlaceholder(taken: string): string {
  * resolve, and a silently unattached picture is the one failure this layer
  * exists to prevent.
  */
-export function restorePastedPaths(draft: string, images: PastedImage[]): string {
-  if (images.length === 0) return draft;
+export function restorePastedPaths(draft: string, images: PastedImage[], files: AttachedFile[] = []): string {
+  if (images.length === 0 && files.length === 0) return draft;
   let text = draft;
   const orphans: string[] = [];
   for (const image of images) {
@@ -135,6 +140,16 @@ export function restorePastedPaths(draft: string, images: PastedImage[]): string
       text = text.replaceAll(image.placeholder, image.path);
     } else {
       orphans.push(image.path);
+    }
+  }
+  // The files ride the same sentence and the same rule: a marker the person
+  // deleted means the file is not going, and the path is appended rather than
+  // silently dropped — visible, removable, never a chip that ships nothing.
+  for (const file of files) {
+    if (text.includes(file.placeholder)) {
+      text = text.replaceAll(file.placeholder, file.path);
+    } else {
+      orphans.push(file.path);
     }
   }
   if (orphans.length === 0) return text;
@@ -156,6 +171,39 @@ export function removePlaceholderFromDraft(draft: string, placeholder: string): 
     .join('')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
+}
+
+/**
+ * One file attached from the plus menu, as the composer needs to know it.
+ *
+ * The mechanism is the pasted picture's, minus the bytes: a file picked from a
+ * dialog or the workspace browser **already has a path**, so there is nothing to
+ * write — the draft still carries a placeholder (a full path is machine noise in
+ * a sentence), and the real path is put back at submit time. There is no `url`
+ * and no `mime`: a file chip is a name and a title, not a preview.
+ *
+ * `path` may be workspace-relative (picked from the files panel) or absolute
+ * (picked from a native dialog); either way it is what the sentence carries, and
+ * the runtime's own scanner is the judge of whether it resolves.
+ */
+export interface AttachedFile {
+  path: string;
+  placeholder: string;
+  name: string;
+}
+
+/**
+ * The files the draft still carries — the same rule as `referencedImages`,
+ * reading a different list. Kept as a separate function rather than one generic
+ * so each call site names what it is counting.
+ */
+export function referencedFiles(draft: string, files: AttachedFile[]): AttachedFile[] {
+  if (files.length === 0) return [];
+  const placed = files
+    .map((file) => ({ file, at: draft.indexOf(file.placeholder) }))
+    .filter((entry) => entry.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  return placed.map((entry) => entry.file);
 }
 
 /** One picture this front end stashed, as the composer needs to know it. */

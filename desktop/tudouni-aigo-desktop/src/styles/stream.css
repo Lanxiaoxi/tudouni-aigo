@@ -207,16 +207,24 @@
 }
 
 .e-step-icon {
-  /* A pale green badge rather than a bare glyph: a 22px rounded square with the
+  /* A pale green badge rather than a bare glyph: a rounded square with the
      accent's pale fill and its dark green for the icon, which is the same
      treatment the rail's primary action wears. `flex: none` stays — the metrics
-     beside it are the flexible cell and must not squash the mark. */
+     beside it are the flexible cell and must not squash the mark.
+
+     **18px, not 22px.** 22 was the rail's *control* size (`.lb-icon`), and this
+     mark is not a control: it is a label for the card's head, and at control
+     size it read as the loudest thing in the head — as big as the "New session"
+     button's own icon, on a bar whose actual content is the figures on the
+     right. The head's `min-height` is what sets the bar's height, so shrinking
+     the badge lowers nothing; it only stops the mark competing with the title
+     beside it. The glyph inside follows it (`StreamView`, 11px). */
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--radius-sm);
   background: var(--accent-tint);
   color: var(--accent-tint-text);

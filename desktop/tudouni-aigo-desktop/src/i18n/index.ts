@@ -476,6 +476,9 @@ export const en = {
   'panel.files.empty': 'This directory is empty',
   'panel.files.loading': 'Reading the directory…',
   'panel.files.root': 'workspace root',
+  /** Picker mode (the plus menu's "workspace file"): the note that says what
+   *  picking a row does, in place of the path note the browser shows. */
+  'panel.files.pick': 'pick a file to attach it to the message',
   'panel.files.parent': 'Up one level',
   /* `panel.files.dir` ('directory') was never read: the panel marks a directory
      with a trailing `/` and an icon, which is the runtime's own `type` shown as
@@ -808,10 +811,22 @@ export const en = {
   'composer.placeholder': 'Say something…  Enter sends, Shift+Enter newlines',
   'composer.blocked': 'Resolve the prompt above first',
   'composer.send': 'Send',
-  /** The `+` at the left of the control row: it opens the command palette, the
-   *  same panel `Ctrl+K` does. Named for what it offers rather than for the
-   *  glyph, since a bare "+" says nothing about where it leads. */
-  'composer.tools': 'Commands and panels',
+  /** The `+` at the left of the control row: it opens the plus menu — files,
+   *  skills, commands. Named for what it offers rather than for the glyph,
+   *  since a bare "+" says nothing about where it leads. */
+  'composer.tools': 'Add files, skills and commands',
+  /** The plus menu's entries (`PlusMenu.tsx`). */
+  'plus.file': 'Add file',
+  'plus.workspaceFile': 'Workspace file',
+  'plus.browse': 'Browse…',
+  'plus.skills': 'Skills',
+  'plus.commands': 'Commands',
+  /** The workspace-file entry, disabled: there is no tree to walk yet. */
+  'plus.noWorkspace': 'no workspace',
+  /** The row of attached files beside the pasted pictures. Its accessible
+   *  name, not a visible heading: the chips are self-explanatory. */
+  'composer.files': 'Attached files',
+  'composer.removeFile': 'Remove this file',
   'composer.hint.send': 'Enter send · Shift+Enter newline · Esc interrupt',
   'composer.hint.modal': 'The runtime is blocked by a modal — answer it to continue',
   'composer.dropHint': 'Drop a file to insert its path, or drop it in the workspace — pictures are attached by naming their path',

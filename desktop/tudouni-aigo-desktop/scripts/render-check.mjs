@@ -2660,6 +2660,14 @@ async function main() {
     throw new Error(`the model-call icon's glyph does not contrast with its fill (${stc.iconColor})`);
   }
   if (!(stc.iconW > 0)) throw new Error(`the model-call icon has no size (${stc.iconW})`);
+  // And it stays a **label-sized** mark: 18px, below the rail's own control size
+  // (`.lb-icon`, 22px). The badge was that 22 — the head's mark was drawn at the
+  // size of a *button*, which is why it read as the loudest thing on a bar whose
+  // content is the figures on the right. A size is invisible to every text
+  // assertion, so the bound is the only thing that keeps it from drifting back.
+  if (stc.iconW > 18) {
+    throw new Error(`the model-call icon is back at control size (${stc.iconW}px)`);
+  }
   if (stc.headBg === null || stc.headBg === 'rgba(0, 0, 0, 0)') {
     throw new Error(`the model-call head has no wash (${stc.headBg})`);
   }

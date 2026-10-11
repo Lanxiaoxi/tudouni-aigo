@@ -97,9 +97,11 @@ import {
 } from '@/runtime/bus';
 import {
   insertAtCaret,
+  nameOfPath,
   nextPlaceholder,
   removePlaceholderFromDraft,
   restorePastedPaths,
+  type AttachedFile,
   type PastedImage,
 } from '@/runtime/paste';
 import {
@@ -599,6 +601,16 @@ export interface SessionRuntime {
    */
   pastedImages: PastedImage[];
   /**
+   * Files attached from the plus menu (workspace browser or native dialog).
+   *
+   * The pasted picture's mechanism without the bytes: the draft carries the
+   * placeholder and the path is restored at submit (`restorePastedPaths`).
+   * Per session for the same reason `pastedImages` is — the path each entry
+   * holds means "relative to *this* workspace", and a chip from another
+   * conversation would name a different place or nothing at all.
+   */
+  attachedFiles: AttachedFile[];
+  /**
    * Quiet mode for this session's stream.
    *
    * Per session, and that is a change from when it was one window preference. It
@@ -737,6 +749,7 @@ export function createSessionBucket(
     historyCursor: null,
     composerNotice: null,
     pastedImages: [],
+    attachedFiles: [],
     quiet: prefsQuietDefault(),
   };
 }
@@ -841,6 +854,15 @@ export interface AppStore {
   pendingModals: ModalEntry[];
   /** One panel at a time, and that is a window fact rather than a session one. */
   panel: PanelKind | null;
+  /**
+   * Whether the files panel is open **as a picker** (the plus menu's
+   * "workspace file" entry) rather than as the plain browser.
+   *
+   * Window-level, like `panel`: the question is about why the panel is open,
+   * not about any conversation. `openPanel`/`closePanel` keep it in step, so a
+   * panel opened any other way can never inherit a stale pick mode.
+   */
+  filePick: boolean;
   /**
    * Whether the minimize-or-close prompt is up.
    *
@@ -1160,8 +1182,24 @@ export interface AppStore {
   forgetPastedImage(path: string): void;
   /** Drop every stashed picture of the active session, releasing their URLs. */
   clearPastedImages(): void;
+  /**
+   * Attach one file by path and put its placeholder into the active session's
+   * draft. The counterpart of `stashPastedImage` for a file that already has a
+   * path — no bridge write, no preview — so the same contract holds: `at` is the
+   * caret, and the **return is where the caret should go**, or `null` when
+   * nothing was inserted.
+   */
+  attachFilePath(path: string, at: number): number | null;
+  /** Forget one attached file. Called when its chip is dismissed. */
+  forgetAttachedFile(path: string): void;
 
   openPanel(p: PanelKind | null): void;
+  /**
+   * Open the files panel **as a picker**: picking a row attaches the file to
+   * the draft instead of reading it. The plain `/files` command goes through
+   * `openPanel`, which clears this — the two entries never leak into each other.
+   */
+  openFilePicker(): void;
   /**
    * Close whatever panel is open, restoring the steady session filter.
    *
@@ -1831,7 +1869,7 @@ export function isUntouchedSession(s: AppStore, key: string): boolean {
   // out, so it covers the turn that follows it.
   if (rt.hasSpoken || rt.activeRunId !== null || hasRunningTurn(rt.entries)) return false;
   // Typed something, or staged a picture, without sending it.
-  if (rt.draft.trim() !== '' || rt.pastedImages.length > 0) return false;
+  if (rt.draft.trim() !== '' || rt.pastedImages.length > 0 || rt.attachedFiles.length > 0) return false;
   // A shell is running, made by this session's child — closing the session ends
   // it, and the scrollback this end holds goes with it.
   if (rt.terminals.length > 0 || rt.activeTerminalId !== null) return false;
@@ -1896,6 +1934,7 @@ export const NO_OUTPUT: string[] = [];
 export const NO_SKILLS: VmSkill[] = [];
 export const NO_MCP_ROWS: VmMcp[] = [];
 export const NO_PASTED: PastedImage[] = [];
+export const NO_ATTACHED: AttachedFile[] = [];
 export const NO_INIT_TOOLS: VmInitTool[] = [];
 export const NO_MODEL_ROWS: VmModel[] = [];
 export const NO_ALIASES: ModelAlias[] = [];
@@ -2294,6 +2333,7 @@ export const useApp = create<AppStore>((set, get) => {
     modal: null,
     pendingModals: [],
     panel: null,
+    filePick: false,
     closePrompt: false,
     boardOpen: false,
     // The desktop's steady state: archived sessions are hidden, so archiving
@@ -3404,6 +3444,44 @@ export const useApp = create<AppStore>((set, get) => {
       patch(key, { pastedImages: [] });
     },
 
+    attachFilePath(path, at) {
+      const s = get();
+      const key = s.activeKey;
+      if (key === null) return null;
+
+      // The file already exists, so there is nothing to write and nothing to
+      // wait for: the insertion is synchronous, and the caret answer is exact.
+      const fresh = get().sessions[key]?.draft ?? '';
+      const placeholder = nextPlaceholder(fresh, 'file');
+      const { text, caret } = insertAtCaret(fresh, at, placeholder);
+
+      const file: AttachedFile = {
+        path,
+        placeholder,
+        name: nameOfPath(path),
+      };
+
+      patchWith(key, (bucket) => ({
+        draft: text,
+        historyCursor: null,
+        attachedFiles: [...bucket.attachedFiles, file],
+      }));
+      return caret;
+    },
+
+    forgetAttachedFile(path) {
+      patchWith(get().activeKey ?? '', (current) => {
+        const doomed = current.attachedFiles.find((file) => file.path === path);
+        // The marker comes out with the entry, exactly as a picture chip's
+        // dismissal does: the tray and the draft are two readings of one list.
+        return {
+          attachedFiles: current.attachedFiles.filter((file) => file.path !== path),
+          draft: doomed ? removePlaceholderFromDraft(current.draft, doomed.placeholder) : current.draft,
+          historyCursor: null,
+        };
+      });
+    },
+
     historyNav(dir) {
       const current = activeRuntime(get());
       if (!current) return;
@@ -3437,7 +3515,7 @@ export const useApp = create<AppStore>((set, get) => {
       // because a path in the text is the only image channel the runtime has.
       // The transcript keeps the draft — the placeholder is what the person said,
       // and the chip row above the input already told them the picture was there.
-      const sent = restorePastedPaths(current.draft, current.pastedImages).trim();
+      const sent = restorePastedPaths(current.draft, current.pastedImages, current.attachedFiles).trim();
       const text = current.draft.trim();
       if (sent === '') return;
       // A **visible** modal is blocking: nothing may be sent over the top of
@@ -3458,6 +3536,7 @@ export const useApp = create<AppStore>((set, get) => {
         historyCursor: null,
         hasSpoken: true,
         pastedImages: [],
+        attachedFiles: [],
         // Whatever was said about this input has been answered by sending it.
         composerNotice: null,
       }));
@@ -3474,7 +3553,10 @@ export const useApp = create<AppStore>((set, get) => {
        Panels and preferences
        ========================================================== */
     openPanel(p) {
-      set({ panel: p });
+      // A pick mode is never inherited: only `openFilePicker` turns it on, and
+      // any other way into a panel is the plain browser's. ('files' keeps
+      // whatever `openFilePicker` just set; everything else clears it.)
+      set({ panel: p, filePick: p === 'files' ? get().filePick : false });
       const key = get().activeKey;
       // **The library borrows the connection's filter.** Its Archived tab draws
       // rows the rail is not supposed to show, and the runtime's list is one
@@ -3517,11 +3599,19 @@ export const useApp = create<AppStore>((set, get) => {
 
     closePanel() {
       const wasLibrary = get().panel === 'resume';
-      set({ panel: null });
+      set({ panel: null, filePick: false });
       // Only when the library was the one open: every other panel leaves the
       // filter alone, and asking for a list nobody wants would be a message per
       // panel close.
       if (wasLibrary) get().setSessionFilter('active');
+    },
+
+    openFilePicker() {
+      // The flag goes down first: `openPanel` reads it (`filePick` survives a
+      // transition into 'files' only when it is already raised) so the picker
+      // opens with the workspace root listing that `openPanel('files')` sends.
+      set({ filePick: true });
+      get().openPanel('files');
     },
 
     setSessionFilter(filter) {

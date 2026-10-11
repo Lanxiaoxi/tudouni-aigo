@@ -244,7 +244,7 @@ function StepBlock({ block }: { block: Extract<StreamBlock, { kind: 'step' }> })
       }`}
     >
       <header className="e-step-head">
-        <Sparkles size={13} className="e-step-icon" />
+        <Sparkles size={11} className="e-step-icon" />
         <span className="e-step-title">{t('entry.model')}</span>
         <span className="e-step-metrics">
           {m.durationMs !== null ? formatDuration(m.durationMs) : t('entry.modelNoMetrics')}

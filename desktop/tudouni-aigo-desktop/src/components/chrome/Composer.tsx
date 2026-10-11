@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { ArrowUp, Plus, Square } from 'lucide-react';
+import { ArrowUp, Square } from 'lucide-react';
 import { selectModalVisible, selectPhase, useApp, useSessionField, type ComposerNotice } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { ImageTray } from '@/components/chrome/ImageTray';
+import { FileTray } from '@/components/chrome/FileTray';
+import { PlusMenu } from '@/components/chrome/PlusMenu';
 import { useClipboardPaste } from '@/hooks/useClipboardPaste';
 
 /**
@@ -17,11 +19,10 @@ import { useClipboardPaste } from '@/hooks/useClipboardPaste';
  * control's label changes.
  *
  * Only two controls, on purpose. The reference has four (attach, permission,
- * model, send); this build has no attachment channel to offer, and permission
- * and model already have their own statements in the session bar above — a
- * second copy here would be a control for a fact that is already on screen. The
- * `+` opens the command palette, the same panel `Ctrl+K` opens, which is what
- * the reference's plus does in spirit: one entry point to everything else.
+ * model, send); this build's plus opens the **plus menu** (`PlusMenu`): files
+ * (workspace picker or OS dialog), this session's skills, and the command
+ * palette — the same panel `Ctrl+K` opens, which was what the plus did before
+ * the menu gave it company.
  *
  * There is **no hint line below the box**. What used to live there is either
  * already elsewhere (the key list is in `/help` and on the first screen) or is
@@ -74,7 +75,6 @@ export function Composer() {
   const dragging = useApp((s) => s.dragging);
   const composerNotice = useSessionField((rt) => rt.composerNotice, null);
   const setComposerNotice = useApp((s) => s.setComposerNotice);
-  const openPanel = useApp((s) => s.openPanel);
   const onPaste = useClipboardPaste(taRef);
   const running = phase === 'running' && !blocked;
 
@@ -198,6 +198,10 @@ export function Composer() {
   return (
     <div className="composer">
       <div className={`cp-box${blocked ? ' is-blocked' : ''}`}>
+        {/* The files attached from the plus menu, beside the pasted pictures.
+            Same tray shape, same derive-from-the-draft rule; see `FileTray`. */}
+        <FileTray />
+
         {/* The pasted pictures, above the input. They are a *reading* of the
             draft, not a second list of attachments: a chip is drawn while its
             path is still in the sentence and gone the moment it is not. See
@@ -222,21 +226,12 @@ export function Composer() {
 
         {/* Row 2: the controls, and only two of them. */}
         <div className="cp-row">
-          <Tip label={t('composer.tools')}>
-            <button
-              type="button"
-              className="cp-add"
-              aria-label={t('composer.tools')}
-              aria-keyshortcuts="Control+K"
-              disabled={blocked}
-              // The command palette, which is the same panel `Ctrl+K` opens —
-              // the button and the shortcut are one thing, so they share one
-              // action rather than each having its own way in.
-              onClick={() => openPanel('commands')}
-            >
-              <Plus size={16} />
-            </button>
-          </Tip>
+          {/* The plus menu: files, skills, commands. The command palette it
+              used to open directly is now the menu's third page's target, and
+              `Ctrl+K` still opens it — the shortcut is unchanged, the button
+              just gained the two entries the palette could not hold (a file
+              needs a picker, a skill needs a list). */}
+          <PlusMenu taRef={taRef} disabled={blocked} />
 
           {/* The transient statements that used to live in a hint row under the
               box. They belong on this row because they are about what is

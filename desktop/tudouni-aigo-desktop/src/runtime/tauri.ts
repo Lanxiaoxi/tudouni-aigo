@@ -885,6 +885,26 @@ export async function chooseWorkspaceDirectory(): Promise<string | null> {
 }
 
 /**
+ * A file picker — the plus menu's "浏览" entry. Null when the person cancels or
+ * the host refuses (not hosted, missing permission), and the caller says
+ * nothing in the null case: a cancelled dialog is not an event worth a sentence.
+ *
+ * `directory: false` is the default and stated anyway, to be the visible
+ * counterpart of `chooseWorkspaceDirectory` above: the two pickers differ by
+ * exactly this flag and sit next to each other so it stays that way.
+ */
+export async function chooseAttachmentFile(): Promise<string | null> {
+  if (!isHosted()) return null;
+  try {
+    const mod = await import('@tauri-apps/plugin-dialog');
+    const picked = await mod.open({ directory: false, multiple: false });
+    return typeof picked === 'string' ? picked : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Why the runtime could not be started in this directory, or null when it could.
  *
  * Asked **before** a directory becomes a row in the list. The rule is the same

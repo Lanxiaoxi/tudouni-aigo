@@ -235,7 +235,7 @@
   flex: none;
   height: 24px;
   padding: 0 var(--space-2);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-card);
 }
@@ -876,6 +876,21 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   object-fit: cover;
   border-radius: var(--radius-xs);
   background: var(--bg);
+}
+
+/* The attached-file chip's icon box: the picture chip's 32px thumbnail's
+   counterpart. The same fixed box, so a tray of files and a tray of pictures
+   take the same room and the input does not jump between the two. */
+.composer .cp-chip-file {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--fg-muted);
 }
 
 .composer .cp-chip-name {

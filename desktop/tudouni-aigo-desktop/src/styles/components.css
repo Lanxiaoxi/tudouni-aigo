@@ -1117,6 +1117,88 @@ table.table td.mono {
   flex: none;
 }
 
+/* ---------------- 加号菜单（PlusMenu） ----------------
+   锚在输入框左下角 `+` 上的 popover，内部以「页」切换根菜单与子菜单。
+   表面同 dialog：elevated 底 + strong 边 + modal 阴影，宽度收窄成菜单。 */
+.plus-menu {
+  z-index: var(--z-dialog);
+  width: 240px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.plus-menu-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-1);
+}
+
+.plus-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.plus-item:hover:not(:disabled),
+.plus-item:focus-visible {
+  background: var(--accent-subtle);
+  color: var(--fg);
+}
+
+.plus-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.plus-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plus-item-hint {
+  flex: none;
+  color: var(--fg-faint);
+  font-size: var(--text-caption);
+}
+
+/* 子页头部的「已加载」小标：同 Badge 的语义，但尺寸贴菜单行。 */
+.plus-item-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+}
+
+.plus-menu-empty {
+  padding: var(--space-3);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  text-align: center;
+}
+
 /* ---------------- §11 设置面板（启动参数） ----------------
 
    One group, and it is a start-up group: `--ericai` and `--max-steps` are read

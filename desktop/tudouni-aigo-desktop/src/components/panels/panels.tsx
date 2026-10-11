@@ -774,14 +774,31 @@ export function FilesPanel() {
   const view = useSessionField((rt) => rt.fileView, null);
   const listFiles = useApp((s) => s.listFiles);
   const readFile = useApp((s) => s.readFile);
+  // **Picker mode.** Opened from the plus menu rather than `/files`: picking a
+  // file attaches it to the draft instead of reading it. Window-level, so the
+  // same panel serves both entries without a second component.
+  const pickMode = useApp((s) => s.filePick);
+  const attachFilePath = useApp((s) => s.attachFilePath);
 
   function open(entry: FileEntry) {
     // A directory is **listed**; a file is **read**. Which one this is comes
     // from the runtime's own `type`, never from a guess about the name — a
     // symlink to a directory is reported as a directory, and a name with a dot
     // in it is not evidence of anything.
-    if (entry.type === 'directory') listFiles(entry.path);
-    else readFile(entry.path);
+    if (entry.type === 'directory') {
+      listFiles(entry.path);
+      return;
+    }
+    if (pickMode) {
+      // Attach, not read. The placeholder goes at the end of the draft: the
+      // panel holds no caret (it is a modal layer over the composer), and a
+      // token appended is a complete word wherever the sentence ends.
+      const draft = useApp.getState().sessions[useApp.getState().activeKey ?? '']?.draft ?? '';
+      attachFilePath(entry.path, draft.length);
+      closePanel();
+      return;
+    }
+    readFile(entry.path);
   }
 
   const { active, setActive } = useListKeys({
@@ -801,7 +818,7 @@ export function FilesPanel() {
     <PanelShell
       title={t('panel.files.title')}
       count={entries.length}
-      note={path === '' ? t('panel.files.root') : path}
+      note={pickMode ? t('panel.files.pick') : path === '' ? t('panel.files.root') : path}
     >
       <PanelBody>
         {path !== '' ? (
