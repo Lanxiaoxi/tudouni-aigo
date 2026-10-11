@@ -1427,9 +1427,39 @@
   padding-right: calc(var(--space-2) + 22px + var(--space-1));
 }
 
+/* The pointer's answer: the accent's pale wash, on the whole card.
+   **The rest of this rule used to be a no-op** — the card is `--bg-card` at
+   rest, so `background: var(--bg-card)` repainted the same white and the only
+   thing the pointer actually changed was the hairline. A row that answers a
+   hover with one grey line reads as if it had not noticed.
+
+   **The fill is the accent's, not a neutral grey, and that is a deliberate
+   departure from the reference.** The reference's own session row hovers to
+   `--bg-inset` (a neutral), and this file's `.lb-session` still says "one step
+   above the rail" for the resting card. But the rail has already left that
+   behind once: the session bar's ghost buttons now hover to `--accent-subtle`
+   because a hover means "this opens something" and the accent is this token
+   set's word for that (`app.css`). Two hovers in one window disagreeing about
+   what green means is the thing worth avoiding, so this follows the session bar.
+
+   **The edge pairs with the wash, and is not the current row's.** It is
+   `--accent-tint-border` (the reference's `--green-tint-border`, the hairline
+   that exists to sit around a pale green fill) rather than `--accent-border`,
+   because `--accent-border` is what the *current* row's edge is made of. The
+   two states stay one glance apart: a hover is a pale fill with a pale hairline,
+   while the current row is white, holds the stronger edge, the ring and the
+   lift. Reusing the current row's edge here would make "the one I am in" and
+   "the one under my pointer" the same picture.
+
+   **Enabled, non-current rows only.** The current row is `disabled` — it is the
+   conversation you are already in, so pressing it does nothing — and a fill that
+   says "you could open this" would be a lie on it. It answers the pointer its
+   own way instead (the band comes back and the actions appear, above).
+   Keyboard focus is deliberately not given this fill: it has the focus ring,
+   which is a different fact and a different mark (`global.css`). */
 .lb-session-wrap:hover .lb-session:not(.is-current):not(:disabled) {
-  background: var(--bg-card);
-  border-color: var(--border);
+  background: var(--accent-subtle);
+  border-color: var(--accent-tint-border);
 }
 
 /* The design's `.session-card`: **every** row is a card on the rail, not only

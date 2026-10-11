@@ -2670,6 +2670,154 @@ async function main() {
     throw new Error(`the model-call head still draws a border under its wash (${stc.headBorderBottom})`);
   }
 
+  // ---- a hovered idle row takes the accent's wash ----
+  //
+  // The row's hover used to be a no-op with a hairline: it repainted
+  // `--bg-card`, which is what the card already *is* at rest, so the only thing
+  // the pointer changed was a grey 1px border. Nothing in this script could see
+  // that — a computed `background-color` reads the same white either way, and a
+  // row that answers a hover with one grey line renders perfectly.
+  //
+  // `:hover` cannot be produced by a synthetic JS event, so the pointer is moved
+  // with a real CDP mouse event. Two things are asserted, and the second is what
+  // makes the first mean something:
+  //
+  //   - the hovered idle card's fill is the accent wash and **not** the resting
+  //     card fill, so "it changed" cannot be satisfied by a repaint of the same
+  //     colour;
+  //   - the **current** row keeps its own picture under the pointer. It is
+  //     `disabled`, and a fill reading "you could open this" on the conversation
+  //     you are already in is a lie. This half also guards the `:not(:disabled)`
+  //     that makes it true.
+  //
+  // The wash is compared against the token rather than against a hard-coded
+  // rgb: `--accent-subtle` is a different value in each theme, and this check
+  // runs with the light token set (the theme is switched to light above). The
+  // dark set was measured by hand rather than assumed, and reads
+  // `rgba(52, 211, 153, 0.14)` where light reads `rgba(5, 150, 105, 0.1)`.
+  // Node-side selectors, scoped to the **saved** list on purpose: the live
+  // group's row (a conversation with no file yet) is `.lb-session.is-current`
+  // too, so an unscoped selector would end up hovering the wrong element.
+  const hoverIdleSel = '.lb-rows:not(.lb-live-rows) .lb-session:not(.is-current)';
+  const selSavedCurrent = '.lb-rows:not(.lb-live-rows) .lb-session.is-current';
+  const hoverGeometry = JSON.parse(
+    (await evaluate(`(() => {
+      const q = (s) => document.querySelector(s);
+      const read = (s) => {
+        const el = q(s);
+        if (!el) return null;
+        const c = getComputedStyle(el);
+        return { bg: c.backgroundColor, border: c.borderTopColor, w: Math.round(el.getBoundingClientRect().width) };
+      };
+      const idle = q(${JSON.stringify(hoverIdleSel)});
+      const cur = q(${JSON.stringify(selSavedCurrent)});
+      if (!idle || !cur) return JSON.stringify({ missing: true });
+      const cs = getComputedStyle(document.documentElement);
+      const centre = (el) => {
+        const b = el.getBoundingClientRect();
+        return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+      };
+      return JSON.stringify({
+        idleRest: read(${JSON.stringify(hoverIdleSel)}),
+        currentRest: read(${JSON.stringify(selSavedCurrent)}),
+        idleAt: centre(idle),
+        currentAt: centre(cur),
+        accentSubtle: cs.getPropertyValue('--accent-subtle').trim(),
+        bgCard: cs.getPropertyValue('--bg-card').trim(),
+      });
+    })()`)) ?? {},
+  );
+  if (hoverGeometry.missing) {
+    throw new Error('the rail has no idle saved row and current saved row to hover');
+  }
+  if (!hoverGeometry.idleAt || !hoverGeometry.currentAt) {
+    throw new Error(`could not locate the rows to hover: ${JSON.stringify(hoverGeometry)}`);
+  }
+  const dispatch = (type, x, y, extra = {}) =>
+    send('Input.dispatchMouseEvent', { type, x, y, button: 'none', buttons: 0, ...extra });
+  const readStyles = async () =>
+    JSON.parse(
+      (await evaluate(`(() => {
+        const read = (s) => {
+          const el = document.querySelector(s);
+          if (!el) return null;
+          const c = getComputedStyle(el);
+          return { bg: c.backgroundColor, border: c.borderTopColor };
+        };
+        return JSON.stringify({
+          idle: read(${JSON.stringify(hoverIdleSel)}),
+          current: read(${JSON.stringify(selSavedCurrent)}),
+        });
+      })()`)) ?? {},
+    );
+  // Normalise an `rgb()`/`rgba()` string to a comparable tuple, because the
+  // resolved value's spacing is the browser's business, not this check's.
+  //
+  // This is Node-side code, **not** inside a template literal, so the escapes
+  // are single-backslash: `\\(` here would look for a literal backslash.
+  const channels = (c) => {
+    const m = String(c).match(/rgba?\(([^)]+)\)/);
+    return m ? m[1].split(',').map((s) => s.trim()) : null;
+  };
+  const sameColour = (a, b) => {
+    const x = channels(a);
+    const y = channels(b);
+    if (!x || !y) return false;
+    // Alpha is compared too: an opaque white and a 10% wash are not the same
+    // colour even though two of their channels agree.
+    if (x.length !== y.length) return false;
+    return x.every((v, i) => Math.abs(Number(v) - Number(y[i])) < 0.6);
+  };
+  // Alpha of a colour, defaulting to 1 for the `rgb()` form.
+  const alphaOf = (c) => {
+    const ch = channels(c);
+    return ch && ch.length === 4 ? Number(ch[3]) : 1;
+  };
+
+  await dispatch('mouseMoved', 1400, 880);
+  await sleep(250);
+  const rest = await readStyles();
+  if (rest.idle?.bg !== hoverGeometry.idleRest?.bg) {
+    throw new Error(
+      `parking the pointer changed the idle card (${hoverGeometry.idleRest?.bg} -> ${rest.idle?.bg}): the probe cannot tell a hover from a rest`,
+    );
+  }
+
+  await dispatch('mouseMoved', hoverGeometry.idleAt.x, hoverGeometry.idleAt.y);
+  await sleep(300);
+  const hovered = await readStyles();
+  if (hovered.idle?.bg === hoverGeometry.bgCard) {
+    throw new Error(
+      `hovering an idle row repaints the card fill it already has (${hovered.idle?.bg}): the hover is a no-op`,
+    );
+  }
+  if (!sameColour(hovered.idle?.bg, hoverGeometry.accentSubtle)) {
+    throw new Error(
+      `a hovered session row is not filled with the accent wash: got ${hovered.idle?.bg}, expected --accent-subtle (${hoverGeometry.accentSubtle})`,
+    );
+  }
+  // A wash over an opaque card must keep its alpha: an opaque fill would hide the
+  // card rather than tint it, and would read as a selected row.
+  if (!(alphaOf(hovered.idle?.bg) < 1)) {
+    throw new Error(`the hover wash is opaque (${hovered.idle?.bg}), so it covers the card instead of tinting it`);
+  }
+
+  // The current row: the pointer must not hand it the "you could open this"
+  // fill. Read while the pointer is **on** it, not merely after.
+  await dispatch('mouseMoved', hoverGeometry.currentAt.x, hoverGeometry.currentAt.y);
+  await sleep(300);
+  const onCurrent = await readStyles();
+  if (onCurrent.current?.bg !== hoverGeometry.currentRest?.bg) {
+    throw new Error(
+      `the current session row takes the hover wash (${hoverGeometry.currentRest?.bg} -> ${onCurrent.current?.bg}): ` +
+        'it is the conversation on screen, so a fill saying it can be opened is a lie',
+    );
+  }
+
+  // Park the pointer again, so nothing below reads a hovered rail.
+  await dispatch('mouseMoved', 1400, 880);
+  await sleep(200);
+
   // ---- the current row opens right and its actions retract ----
   //
   // The visible half of the motion. The card gives up the band its actions sit
