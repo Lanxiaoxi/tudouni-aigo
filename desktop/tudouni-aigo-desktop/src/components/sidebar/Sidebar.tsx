@@ -4,12 +4,12 @@ import { NO_SKILLS, useApp, useSessionField, type SidebarBlockKey } from '@/stat
 import { useT } from '@/i18n/useT';
 import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
 import { oneLine } from '@/utils/format';
-import type { JobState } from '@/protocol/types';
+import type { JobState, SshRow } from '@/protocol/types';
 import type { VmGoal, VmJob, VmMcp, VmTask } from '@/runtime/adapt';
 
 /**
- * §3 Sidebar, five blocks, fixed order:
- * Goal → Tasks → Loaded skills → Background jobs → MCP.
+ * §3 Sidebar, six blocks, fixed order:
+ * Goal → Tasks → Loaded skills → Background jobs → MCP → SSH sessions.
  *
  * Each block is: title + count badge + content rows + empty-state text + a
  * pointer.
@@ -54,6 +54,11 @@ export function Sidebar() {
   const uncollected = snap.jobs.filter((job) => job.uncollected).length;
   const outstanding = snap.jobs.filter((job) => job.outstanding).length;
   const mcpLoaded = snap.mcp.filter((server) => server.state === 'loaded').length;
+  // The badge is the live count only: ended sessions the list still keeps are
+  // history, not load, and a denominator that included them would make "how
+  // many remote shells am I actually logged into" a subtraction — the same
+  // rule the TUI's SSH block badge follows (`internal/frontends/tui/rail.go`).
+  const sshLive = snap.ssh.filter((row) => row.status === 'running').length;
 
   return (
     <aside className="app-sidebar">
@@ -143,6 +148,23 @@ export function Sidebar() {
         >
           {snap.mcp.map((server) => (
             <McpRow key={server.name} server={server} />
+          ))}
+        </Block>
+
+        {/* 6 · SSH sessions. Display only — the operations stay with the
+            `ssh_*` tools, so unlike the MCP rows above there is no action
+            button here. The badge counts live sessions; ended rows stay on
+            the list so "what was I connected to" keeps an answer. */}
+        <Block
+          blockKey="ssh"
+          title={t('block.ssh')}
+          count={sshLive}
+          isEmpty={snap.ssh.length === 0}
+          emptyTitle={t('empty.ssh.title')}
+          emptyHint={t('empty.ssh.hint')}
+        >
+          {snap.ssh.map((row) => (
+            <SshSessionRow key={row.id} row={row} />
           ))}
         </Block>
       </div>
@@ -390,6 +412,71 @@ function JobRow({ job }: { job: VmJob }) {
     </div>
   );
 }
+
+/* ---------------- SSH sessions ---------------- */
+
+const SSH_TONE: Record<SshRow['status'], 'success' | 'warning' | 'destructive' | 'neutral'> = {
+  running: 'success',
+  exited: 'neutral',
+  killed: 'destructive',
+  timed_out: 'warning',
+};
+
+/**
+ * One SSH remote session in the rail — display only.
+ *
+ * The row mirrors the TUI's SSH block rows (`internal/frontends/tui/rail.go`):
+ * the name is the alias when the model asked for one and it differs from where
+ * the connection actually resolved; "tudouni — tudouni" is one fact drawn
+ * twice. The badge answers "is this live" before the text does, and an ended
+ * row says how it ended — `timed_out` gets its own word because it invites
+ * reconnecting, while `killed` does not (the runtime keeps them separate for
+ * the same reason, `internal/ssh/session.go`).
+ */
+function SshSessionRow({ row }: { row: SshRow }) {
+  const t = useT();
+
+  const name = row.alias !== '' && row.alias !== row.destination
+    ? `${row.alias} — ${row.destination}`
+    : row.destination;
+
+  const label =
+    row.status === 'running'
+      ? t('ssh.live')
+      : row.exit_code !== null
+        ? t('ssh.ended', { why: row.status })
+        : t('ssh.noCode');
+
+  // A live row has nothing to add beyond its shot at reading "still up"; the
+  // badge already says it. An ended row's aside is the exit code when the
+  // runtime carried one — inventing a number for one that exited without a
+  // code would say "clean" where nothing was learned — and the runtime's own
+  // status word when it did not (`timed_out` especially, which invites
+  // reconnecting rather than mourning).
+  const aside =
+    row.exit_code !== null
+      ? t('jobs.exit', { n: row.exit_code })
+      : row.status === 'running'
+        ? null
+        : row.status;
+
+  return (
+    <div className="sb-row">
+      <Badge tone={SSH_TONE[row.status] ?? 'neutral'} dot={row.status === 'running'}>
+        {label}
+      </Badge>
+      <span className="sbr-main" title={name}>
+        <span className="mono">{oneLine(name, 40)}</span>
+      </span>
+      {aside !== null ? (
+        <span className="sbr-aside" title={aside}>
+          {aside}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 
 /* ---------------- MCP ---------------- */
 

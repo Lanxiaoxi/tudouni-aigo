@@ -1038,6 +1038,21 @@
   padding: var(--space-3);
 }
 
+/* The rail's primary action gets a soft accent fill instead of the shared
+   outline style: a pale accent tint (not a solid fill) keeps it light in both
+   themes, while the accent text/border tie it to the theme's green. */
+.lb-new .btn-outline {
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.lb-new .btn-outline:hover:not(:disabled) {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* The one icon-button shape in the rail: a real 24px target, and a visible
    disabled state, because most of these are inert while a prompt is up. */
 .lb-icon {

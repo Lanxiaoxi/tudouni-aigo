@@ -87,6 +87,16 @@ export function CollapsedSummary() {
         <span>{t('block.skills')}</span>
         <b>{snap.skills.length}</b>
       </span>
+
+      {/* The collapsed line answers the same question the SSH block's badge
+          answers: how many connections are actually live. Ended sessions the
+          list still keeps are history, and counting them here would read
+          "2 SSH" over shells that are already gone — the same rule the TUI's
+          summary segment follows (`internal/frontends/tui/rail.go`). */}
+      <span className="cs-item">
+        <span>{t('block.ssh')}</span>
+        <b>{snap.ssh.filter((row) => row.status === 'running').length}</b>
+      </span>
     </div>
   );
 }

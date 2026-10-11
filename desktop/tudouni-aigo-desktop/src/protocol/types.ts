@@ -447,6 +447,33 @@ export interface UiTerminalsMsg {
   terminals: TerminalRow[];
 }
 
+/**
+ * One SSH remote session, as the runtime reports it.
+ *
+ * Like a terminal, a session belongs to the **workspace**: the runtime's
+ * snapshot restates the list every `ui(state)` so a front end that started
+ * after a connection was opened — or lost a message — learns about it rather
+ * than never (`internal/runtime/ssh.go`, the same reason the terminal list
+ * rides on every snapshot).
+ *
+ * Display only: the operations stay with the `ssh_*` tools, so nothing here
+ * acts on a row.
+ */
+export interface SshRow {
+  id: string;
+  /** What the model asked for. Empty when it addressed the host directly. */
+  alias: string;
+  /** Where the connection actually resolved. Can differ from `alias`. */
+  destination: string;
+  /** The runtime's `ssh.Status`: running, exited, killed, or timed_out. **Never
+   *  derived here** — the runtime owns the lifecycle, the same rule as a
+   *  terminal's `status`. */
+  status: 'running' | 'exited' | 'killed' | 'timed_out';
+  /** Null while it runs — "no exit code yet", not "the runtime did not say". */
+  exit_code: number | null;
+  created_at: number;
+}
+
 /** `ui(terminal_created)` — the answer to a successful `terminal_create`. */
 export interface UiTerminalCreatedMsg {
   v: number;
@@ -613,6 +640,11 @@ export interface UiStateMsg {
    *  `ui(terminals)` so a front end that started after a shell was created — or
    *  that lost a message — learns about it rather than never. */
   terminals: TerminalRow[];
+  /** The workspace's SSH remote sessions, on every snapshot. Same reason as
+   *  `terminals`, and the same shape the `ssh_sessions` tool reports
+   *  (`internal/runtime/ssh.go`). Empty — `[]`, never `null` — before the
+   *  first connection. */
+  ssh: SshRow[];
 }
 
 /** `ui(status).status` — grouped on purpose; the screen spans four layers. */

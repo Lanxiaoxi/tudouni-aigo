@@ -29,6 +29,7 @@ import type {
   RiskScopeRow,
   SessionListItem,
   SessionMessage,
+  SshRow,
   SkillCatalogRow,
   SkillPointer,
   StatusGroup,
@@ -328,6 +329,14 @@ export interface VmState {
    * list only ever changed when somebody happened to open the panel.
    */
   terminals: TerminalRow[];
+  /**
+   * The workspace's SSH remote sessions, carried on every snapshot — the same
+   * snapshot-restated list `terminals` is, from `internal/runtime/ssh.go`.
+   * Passed through, not reshaped: a row is the runtime's, and a copy built
+   * field by field here would be a second description of it that drifts the
+   * first time the runtime adds one.
+   */
+  ssh: SshRow[];
 }
 
 /* ============================================================
@@ -650,6 +659,10 @@ export function projectState(msg: UiStateMsg): VmState {
     // field by field here would be a second description of it that drifts the
     // first time the runtime adds one.
     terminals: Array.isArray(msg.terminals) ? msg.terminals : [],
+    // Same passthrough as `terminals`, same reasoning: the full list rides on
+    // every snapshot, so a front end that started after a connection was opened
+    // learns about it from the next one instead of never.
+    ssh: Array.isArray(msg.ssh) ? msg.ssh : [],
   };
 }
 

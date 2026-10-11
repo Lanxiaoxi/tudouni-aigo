@@ -317,6 +317,13 @@ export const en = {
      ended sessions" reads as a state, bare emptiness does not. */
   'board.col.empty': 'Nothing here right now',
 
+  /* The card context menu: three words and the one sentence the menu owes — the
+     reconcile step closes the session before it acts, so the archive row's
+     label says that cost instead of a disabled button pretending it away. */
+  'board.menu.title': 'Session actions',
+  'board.menu.delete': 'Delete…',
+  'board.menu.deleteArm': 'Delete the file. Click again to confirm.',
+
   /* Which conversation a blocking request belongs to, and how many are behind
      it. Both exist because a prompt with several sessions open is otherwise
      anonymous — see `selectModalOrigin`. */
@@ -335,6 +342,7 @@ export const en = {
   'block.skills': 'Loaded skills',
   'block.jobs': 'Background jobs',
   'block.mcp': 'MCP',
+  'block.ssh': 'SSH sessions',
   'block.collapse': 'Collapse',
   'block.expand': 'Expand',
 
@@ -348,6 +356,11 @@ export const en = {
   'empty.jobs.hint': 'Long commands sent to the background show uncollected results here.',
   'empty.mcp.title': 'Nothing attached',
   'empty.mcp.hint': 'Open /mcp to load an external tool server.',
+  'empty.ssh.title': 'No SSH sessions',
+  'empty.ssh.hint': 'Sessions opened by ssh_connect show their host here.',
+  'ssh.live': 'connected',
+  'ssh.ended': 'ended ({why})',
+  'ssh.noCode': 'ended, no exit code',
 
   'goal.armed': 'armed',
   'goal.disarmed': 'disarmed',
