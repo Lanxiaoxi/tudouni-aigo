@@ -256,6 +256,35 @@
   background: none;
 }
 
+/* The two *clickable* facts inside a card (model, effort) are `.btn-ghost`s.
+   The ghost's own hover fills `--bg-muted` — a grey blob sitting inside an
+   already-bordered card, one rectangle drawn inside another. Overridden here
+   to the accent tint the board button engages with: a hover says "this value
+   opens something", and the accent is the idiom for that, not a neutral fill.
+   The button also drops to bare text at rest so the card remains the only box. */
+.sessionbar .sb-group .btn-ghost {
+  height: auto;
+  padding: 1px var(--space-1);
+  margin: -1px calc(-1 * var(--space-1));
+  border-radius: var(--radius-sm);
+}
+
+.sessionbar .sb-group .btn-ghost:hover:not(:disabled) {
+  background: var(--accent-subtle);
+  color: var(--accent-tint-text);
+}
+
+/* `.faint` pins its own colour, so the label span ("effort") would stay grey
+   while the value turns green — the hover would read as half-applied. */
+.sessionbar .sb-group .btn-ghost:hover:not(:disabled) .faint {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.sessionbar .sb-group .btn-ghost:active:not(:disabled) {
+  filter: brightness(0.96);
+}
+
 /* The two rail toggles, at the two ends of the session bar.
    `flex: none` keeps them from being squeezed when the facts between them are
    long, and being *outside* `.sb-scroll` is what makes them dependable: only the
