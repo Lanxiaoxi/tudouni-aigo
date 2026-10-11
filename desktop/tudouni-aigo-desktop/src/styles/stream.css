@@ -1455,6 +1455,38 @@
   background: var(--destructive-subtle);
 }
 
+/* The pair of row actions, **a column**: archive above delete — the reversible
+   one above the irreversible one, the same order the board's menu stacks them
+   in, so the two surfaces read one rule. The gap is a hair tighter than the
+   rail's normal rhythm because two 22px buttons stacked must not double the
+   row's air; the wrap's `align-items: stretch` is overridden here or the column
+   would stretch its children to each other's width. The reveal is the wrap's
+   own hover/focus-within rule (`.lb-session-wrap:hover .lb-row-action`), so the
+   pair appears and hides together, as one affordance.
+
+   **Outside the card's border, not inside it.** The card now carries a real
+   border, and a hover-revealed button punched through its edge would clip
+   against the card's corner radius — so the column floats free of the wrap's
+   edge with its own negative margin, keeping the buttons inside the rail's
+   gutter where the rail's padding (`--space-2`) already left room. */
+.lb-session-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  align-self: center;
+  margin-right: var(--space-1);
+}
+
+.lb-session-actions > .lb-row-action {
+  flex: none;
+  /* The side-by-side rule's spacing reads wrong in a column: `margin-right`
+     was the gap between a button and nothing, and its `align-self: center`
+     would centre each button in the column instead of stacking them flush. */
+  margin-right: 0;
+  align-self: stretch;
+}
+
 /* ---------------- session status dots ---------------- */
 /*
    What each dot means, and why the fourth colour exists, is in `SessionDot`.
@@ -2567,6 +2599,69 @@
   flex: none;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- the card's context menu ---------------- */
+/*
+   Hand-rolled rather than a Radix popover: the board is a *view*, not inside
+   any dialog namespace, and a context menu wants coordinates rather than an
+   anchor. The scrim is the "click elsewhere" mechanism and nothing else — it
+   draws nothing, so the board itself never dims behind its own menu.
+
+   The stack (`--z-popover`, the same layer the overlay surfaces use) is above
+   the board and below the modal layer, which keeps the visible-prompt-first
+   rule honest in the pointer dimension too: a modal drawn over the board sits
+   over this menu as well.
+*/
+.board-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-popover);
+}
+
+.board-menu {
+  position: fixed;
+  min-width: 200px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  display: flex;
+  flex-direction: column;
+}
+
+.board-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.board-menu-item:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* Delete keeps the rail's own idiom for "the next press is real": the
+   destructive pair, the icon already swapped to an X, and the label changed
+   with it — colour is never the only signal. */
+.board-menu-item.is-destructive {
+  color: var(--destructive);
+}
+
+.board-menu-item.is-destructive:hover,
+.board-menu-item.is-destructive.is-armed {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
 }
 
 /* The empty column: dashed, centred, honest. A blank column reads as a
