@@ -217,11 +217,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  /* Spare width is distributed **between the groups**, not left as one void
-     after the last one: a half-empty bar read as broken, and the void grew
-     every time a rail closed. When the groups overflow, spare width is zero
-     and this silently becomes the packed, scrolling row it always was. */
-  justify-content: space-between;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
