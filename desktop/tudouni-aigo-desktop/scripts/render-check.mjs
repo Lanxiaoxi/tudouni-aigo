@@ -2034,6 +2034,15 @@ async function main() {
   console.log('theme after switching the system to light:', lightTheme);
   if (lightTheme !== 'light') throw new Error('the theme did not follow the system');
 
+  // The **light** shot is the one worth keeping, and it is the one this check
+  // used to throw away: it switched the media feature, asserted the attribute,
+  // and then switched back before capturing. The paint is exactly what an
+  // attribute check cannot see — a card whose shadow was written for a dark
+  // canvas is invisible here and red under the light tokens.
+  const lightShot = await send('Page.captureScreenshot', { format: 'png' });
+  writeFileSync('render-check-light.png', Buffer.from(lightShot.result.data, 'base64'));
+  console.log('screenshot: render-check-light.png (light)');
+
   // ---- 7. a screenshot, for the record ----
   await send('Emulation.setEmulatedMedia', {
     features: [{ name: 'prefers-color-scheme', value: 'dark' }],

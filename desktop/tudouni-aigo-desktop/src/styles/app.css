@@ -36,7 +36,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-3);
-  background: var(--bg-secondary);
+  background: var(--bg-bar);
   border-bottom: 1px solid var(--border-subtle);
   position: relative;
   z-index: var(--z-shell);
@@ -96,7 +96,11 @@
   height: 42px;
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg);
+  /* The title bar's own shade, so the two read as one chrome strip: the
+     reference draws a single 46px bar above the canvas, and this is the same
+     band split over the app's two rows. A canvas-coloured top bar made the
+     workspace chip and the palette trigger look like content. */
+  background: var(--bg-bar);
 }
 
 .topbar .brand {
@@ -187,7 +191,12 @@
   height: 34px;
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
+  /* The canvas, not a bar: in the reference the session header's chips sit
+     directly on the transcript's own surface (`.main`), so they read as facts
+     about the conversation rather than as a third chrome strip between the
+     title bar and the text. `--bg` is also what the conversation column shows
+     through, so the bar disappears into it. */
+  background: var(--bg);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -396,7 +405,7 @@
   height: 26px;
   padding: 0 var(--space-4);
   border-top: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
+  background: var(--bg-bar);
   font-size: var(--text-caption);
   color: var(--fg-muted);
   overflow: hidden;
@@ -598,7 +607,11 @@
   padding: var(--space-3) var(--space-3) var(--space-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
-  background: var(--bg-secondary);
+  /* The design puts the composer on the card surface and lifts it with its own
+     (larger) shadow, so the thing you type into floats above the transcript
+     instead of being a grey well cut into it. */
+  background: var(--bg-card);
+  box-shadow: var(--shadow-composer);
   transition: border-color var(--motion-fast) var(--ease-out);
 }
 
@@ -959,21 +972,29 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
+  /* The first screen's session slots are cards on the canvas, and the design
+     lifts every surface in that position — the transcript's step cards, the
+     board's cards, these. The empty slot below clears it, because a dashed
+     outline means "nothing here yet" and a shadow would contradict that. */
+  box-shadow: var(--shadow-card);
   text-align: left;
   cursor: pointer;
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .recent-slot:hover {
   background: var(--bg-muted);
   border-color: var(--border);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .recent-slot.is-empty {
   border-style: dashed;
   background: transparent;
+  box-shadow: none;
   cursor: default;
   align-items: center;
   justify-content: center;
@@ -982,6 +1003,7 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
 .recent-slot.is-empty:hover {
   background: transparent;
   border-color: var(--border-subtle);
+  box-shadow: none;
 }
 
 /* The card's **last** line: the runtime's own name for the conversation and when

@@ -114,6 +114,14 @@
   --bg-elevated:   #20252D;  /* 浮层（dialog / popover / kbd）专用，比面板亮一档 */
   --bg-muted:      #262C35;  /* hover 底 / 嵌套面 */
   --bg-inverse:    #F2F3F6;  /* 深色 tooltip 上的反向 */
+  /* Header bars and the right rail keep the rail's own shade in the dark
+     theme, and that is the same decision the comment above makes: the Light
+     Green reference is a light-only design, and giving the rail a second dark
+     value here would split it from the block panels it holds — the exact
+     split that comment exists to prevent. The light theme, which is the one
+     with a reference to follow, does distinguish them; see below. */
+  --bg-bar:        #1A1E25;
+  --bg-rail:       #1A1E25;
 
   --fg:            #F2F3F6;
   --fg-secondary:  #B9BFC9;
@@ -150,7 +158,14 @@
   --shadow-accent: 0 4px 14px rgba(16, 185, 129, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.16);
   --halo-green:    rgba(52, 211, 153, 0.055);
   --halo-warm:     rgba(217, 119, 6, 0.045);
-  --shadow-card:        0 1px 2px rgba(0, 0, 0, 0.30), 0 2px 8px rgba(0, 0, 0, 0.25);
+  /* The design's card lift is a wide, very soft drop — that width is what reads
+     as "floating above the surface" rather than as a dark edge under it. The
+     dark theme keeps the same geometry with the offset pushed the other way:
+     on a near-black canvas the shadow has to be *darker*, not larger, or it
+     disappears into the background it is meant to lift away from. */
+  --shadow-card:        0 8px 20px -6px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.30);
+  --shadow-card-hover:  0 12px 26px -6px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.32);
+  --shadow-composer:    0 12px 32px -8px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.30);
   --shadow-card-active: 0 4px 14px -2px rgba(52, 211, 153, 0.16), 0 2px 6px rgba(0, 0, 0, 0.28);
 }
 
@@ -168,6 +183,14 @@
   --bg-elevated:   #FFFFFF;  /* 浮层专用 */
   --bg-muted:      #E9ECF1;  /* hover 底 / 嵌套面 */
   --bg-inverse:    #1A1D21;
+  /* The design separates three flat greys by depth, and the window chrome is
+     what needs all three: the side bar is the darkest (`--bg-secondary`), the
+     canvas sits on top of it (`--bg`), and the top / bottom bars and the right
+     rail go one step lighter still (#FBFBFD / #F7F8FA). Collapsing them onto
+     the side bar's grey — which is what the app did before — is why the bars
+     read as part of the rail instead of as the frame around it. */
+  --bg-bar:        #FBFBFD;  /* 顶栏 / 状态栏 */
+  --bg-rail:       #F7F8FA;  /* 右栏：比画布亮一档，块面板再浮在它上面 */
 
   --fg:            #1A1D21;
   --fg-secondary:  #5C626B;
@@ -210,6 +233,12 @@
   --shadow-accent: 0 4px 12px rgba(5, 150, 105, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.20);
   --halo-green:    rgba(5, 150, 105, 0.08);
   --halo-warm:     rgba(217, 119, 6, 0.07);
-  --shadow-card:        0 1px 2px rgba(23, 26, 31, 0.04), 0 2px 8px rgba(23, 26, 31, 0.06);
+  /* Verbatim from the reference (`--shadow-card` / `--shadow-composer`), down
+     to the negative spread. A card on the canvas is white on #F2F3F6, which is
+     a 3% difference — the whole lift is carried by these two layers, so the
+     exact values are the design, not a starting point. */
+  --shadow-card:        0 8px 20px -6px rgba(23, 26, 31, 0.05), 0 1px 3px rgba(23, 26, 31, 0.02);
+  --shadow-card-hover:  0 12px 26px -6px rgba(23, 26, 31, 0.10), 0 2px 6px rgba(23, 26, 31, 0.04);
+  --shadow-composer:    0 12px 32px -8px rgba(23, 26, 31, 0.08), 0 2px 6px rgba(23, 26, 31, 0.03);
   --shadow-card-active: 0 6px 16px -4px rgba(5, 150, 105, 0.14), 0 2px 6px rgba(23, 26, 31, 0.05);
 }

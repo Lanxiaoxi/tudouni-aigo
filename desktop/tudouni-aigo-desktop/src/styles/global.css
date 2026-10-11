@@ -184,7 +184,7 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
      the content outran the column. */
   height: 100%;
   border-left: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
+  background: var(--bg-rail);
   display: flex;
   flex-direction: column;
   overflow: hidden;

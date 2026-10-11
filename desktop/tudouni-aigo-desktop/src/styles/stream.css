@@ -173,6 +173,10 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
+  /* The design's `.mc-card` — the one shape it lifts off the transcript — is
+     this card. Nothing else in the stream takes a shadow, so the lift keeps
+     meaning "this is a step you can open" rather than "this is a box". */
+  box-shadow: var(--shadow-card);
   overflow: hidden;
 }
 
@@ -823,14 +827,17 @@
   gap: var(--space-2);
 }
 
-/* The block panels are transparent on purpose: the rail behind them is the
-   surface (`--bg-secondary` == `--bg-card` in tokens.css), so a folded block
-   reveals the rail itself rather than a second, different shade. Keeping a
-   border is what keeps each block recognisable without painting over it. */
+/* The block panels take the **card** surface, which on the light theme is the
+   white of the design's rail cards floating on the rail's own grey. The rule
+   that matters is the one this replaced: `--bg-card` and the rail keep the same
+   value in the **dark** theme (tokens.css says why), so nothing changes there —
+   a folded block still reveals the rail itself rather than a second shade. The
+   light theme is the one with a reference to follow, and in it the rail is
+   `--bg-rail` (#F7F8FA) while the card is white. */
 .sb-block {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  background: transparent;
+  background: var(--bg-card);
   overflow: hidden;
   flex: none;
 }
@@ -2413,6 +2420,7 @@
   /* The raised surface above the column well — white-on-grey in light mode,
      bright-on-dim in dark, whichever tokens are live. */
   background: var(--bg-card);
+  box-shadow: var(--shadow-card);
   text-align: left;
   color: var(--fg-secondary);
   cursor: pointer;
@@ -2426,9 +2434,11 @@
 .board-card:hover {
   border-color: var(--border);
   /* A one-pixel lift and the faintest shadow on the palette's own tone — no
-     scale, no glow. The tokens carry the lift, so both themes read it. */
+     scale, no glow. The tokens carry the lift, so both themes read it; the
+     hard-coded dark shadow that used to sit here read as a smudge under a card
+     that is white in the light theme. */
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(2, 6, 23, 0.14);
+  box-shadow: var(--shadow-card-hover);
 }
 
 /* The session on screen, marked the same way the rail marks it — the accent
@@ -2439,12 +2449,18 @@
   border-color: var(--accent-border);
   background: var(--accent-subtle);
   color: var(--fg);
-  box-shadow: inset 0 0 0 1.5px var(--accent);
+  /* The ring and the lift are two layers, so the card that is marked stays at
+     the same height as its neighbours instead of dropping out of the column. */
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    var(--shadow-card);
 }
 
 .board-card.is-current:hover {
   background: var(--accent-subtle);
-  box-shadow: inset 0 0 0 1.5px var(--accent);
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    var(--shadow-card-hover);
 }
 
 .board-card .board-card-top {
@@ -2682,11 +2698,15 @@
    any other. Warning colours, the same pair the amber dot uses. */
 .board-card.is-asking {
   border-color: var(--warning-border);
-  box-shadow: inset 2px 0 0 var(--warning);
+  box-shadow:
+    inset 2px 0 0 var(--warning),
+    var(--shadow-card);
 }
 
 .board-card.is-asking:hover {
-  box-shadow: inset 2px 0 0 var(--warning);
+  box-shadow:
+    inset 2px 0 0 var(--warning),
+    var(--shadow-card-hover);
 }
 
 .board-card-nudge {

@@ -8,6 +8,7 @@ dist/
 .wv2-data/
 .webview-data/
 render-check.png
+render-check-light.png
 
 # The throwaway production bundle `scripts/stream-perf.mjs` measures against: a
 # real production build with the harness handles kept
