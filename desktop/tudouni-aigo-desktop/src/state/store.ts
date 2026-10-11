@@ -167,7 +167,7 @@ export type PanelKind =
  * things running in the workspace, not about this turn's conversation. */
 export type SidebarBlockKey = 'goal' | 'tasks' | 'skills' | 'jobs' | 'mcp' | 'ssh';
 
-export const SIDEBAR_BLOCKS: SidebarBlockKey[] = ['goal', 'tasks', 'skills', 'jobs', 'mcp', 'ssh'];
+export const SIDEBAR_BLOCKS: SidebarBlockKey[] = ['goal', 'tasks', 'jobs', 'skills', 'mcp', 'ssh'];
 
 /**
  * A blocking request, with the session it came from.

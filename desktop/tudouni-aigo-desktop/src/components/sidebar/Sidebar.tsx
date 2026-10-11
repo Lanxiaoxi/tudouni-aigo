@@ -9,7 +9,7 @@ import type { VmGoal, VmJob, VmMcp, VmTask } from '@/runtime/adapt';
 
 /**
  * §3 Sidebar, six blocks, fixed order:
- * Goal → Tasks → Loaded skills → Background jobs → MCP → SSH sessions.
+ * Goal → Tasks → Background jobs → Loaded skills → MCP → SSH sessions.
  *
  * Each block is: title + count badge + content rows + empty-state text + a
  * pointer.
@@ -96,7 +96,24 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 3 · Loaded skills.
+        {/* 3 · Background jobs */}
+        <Block
+          blockKey="jobs"
+          title={t('block.jobs')}
+          count={
+            outstanding > 0 ? `${outstanding} / ${snap.jobs.length}` : `${snap.jobs.length}`
+          }
+          countAttention={uncollected > 0}
+          isEmpty={snap.jobs.length === 0}
+          emptyTitle={t('empty.jobs.title')}
+          emptyHint={t('empty.jobs.hint')}
+        >
+          {snap.jobs.map((job) => (
+            <JobRow key={job.id} job={job} />
+          ))}
+        </Block>
+
+        {/* 4 · Loaded skills.
             `snap.skills` is `ui(state).skills`, which is pointers for whatever
             the snapshot happened to record; the merged store list is what
             `ui(skills).active` says is actually loaded. The sidebar shows the
@@ -117,23 +134,6 @@ export function Sidebar() {
                 <span className="mono">{skill.name}</span>
               </span>
             </div>
-          ))}
-        </Block>
-
-        {/* 4 · Background jobs */}
-        <Block
-          blockKey="jobs"
-          title={t('block.jobs')}
-          count={
-            outstanding > 0 ? `${outstanding} / ${snap.jobs.length}` : `${snap.jobs.length}`
-          }
-          countAttention={uncollected > 0}
-          isEmpty={snap.jobs.length === 0}
-          emptyTitle={t('empty.jobs.title')}
-          emptyHint={t('empty.jobs.hint')}
-        >
-          {snap.jobs.map((job) => (
-            <JobRow key={job.id} job={job} />
           ))}
         </Block>
 

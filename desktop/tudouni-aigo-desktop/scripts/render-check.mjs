@@ -1387,7 +1387,7 @@ async function main() {
   // order comment): a display-only block added after this probe was written,
   // which is why the count check below used to read five.
   if (sb.blockCount !== 6) throw new Error(`expected 6 sidebar blocks, got ${sb.blockCount}`);
-  const expected = ['Goal', 'Tasks', 'Loaded skills', 'Background jobs', 'MCP', 'SSH sessions'];
+  const expected = ['Goal', 'Tasks', 'Background jobs', 'Loaded skills', 'MCP', 'SSH sessions'];
   if (JSON.stringify(sb.titles) !== JSON.stringify(expected)) {
     throw new Error(`block order/titles wrong: ${JSON.stringify(sb.titles)}`);
   }
