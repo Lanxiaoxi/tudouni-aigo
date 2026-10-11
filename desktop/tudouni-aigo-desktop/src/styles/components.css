@@ -1709,6 +1709,43 @@ table.table td.mono {
   white-space: nowrap;
 }
 
+/* A card's own fold control. It is a button **around the name**, not a click on
+   the whole head: the head also carries three icon buttons, and a wrapper that
+   took the click would fire on their presses too (a button inside a button is
+   not markup a browser accepts, either). */
+.cfg-fold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The card's fold takes the row, so whatever follows it — reorder and delete —
+   stays at the right edge however long the name is. */
+.cfg-card-head .cfg-fold {
+  flex: 1 1 auto;
+}
+
+.cfg-fold:hover .caret {
+  color: var(--fg);
+}
+
+/* What a folded card still says: how many models are in it. It is the fact the
+   name does not carry, and the reason a route with none cannot be picked. */
+.cfg-card-meta {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+}
+
 .cfg-card-body {
   display: flex;
   flex-direction: column;
@@ -1816,7 +1853,12 @@ table.table td.mono {
 }
 
 .cfg-add {
+  /* At the end of the list it appends to, at the width of its own label: a
+     full-width bar under a card reads as a section divider rather than as the
+     button that adds the next one. `align-self` is what does it inside the
+     flex column; a block parent needs nothing. */
   margin-top: var(--space-1);
+  align-self: flex-start;
 }
 
 /* ---- the models block inside a route ---- */
@@ -1832,6 +1874,14 @@ table.table td.mono {
 .cfg-models-head {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
+}
+
+/* The models list folds too, so the column layout sits here rather than on
+   `.cfg-models` — the `.collapse` grid in between only ever holds one child. */
+.cfg-models-body {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-2);
 }
 

@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Check, Eye, EyeOff, FolderOpen, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ChevronRight, Eye, EyeOff, FolderOpen, Plus, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
-import { Badge, Info, Tip } from '@/components/ui/kit';
+import { Badge, Count, Info, Tip } from '@/components/ui/kit';
 import { readUserConfig, revealConfigFile, writeUserConfig } from '@/runtime/tauri';
 import {
   API_STYLES,
@@ -67,6 +67,10 @@ export function ConfigPanel() {
   const [saved, setSaved] = useState(false);
   const [showKeys, setShowKeys] = useState(false);
   const [tab, setTab] = useState<'routes' | 'web' | 'mcp'>('routes');
+  // The index the last press of "Add a route" gave a card. That one is drawn
+  // unfolded, so the form somebody just asked for is the one they can type into;
+  // every other card stays folded, which is the point of folding them at all.
+  const [addedRoute, setAddedRoute] = useState(-1);
 
   // Read once, on open. There is nothing to poll: the file changes when somebody
   // changes it, and the panel is the only writer acting on behalf of this window
@@ -278,6 +282,7 @@ export function ConfigPanel() {
                 index={index}
                 total={draft.providers.length}
                 showKeys={showKeys}
+                defaultOpen={index === addedRoute}
                 onChange={(patch) => updateRoute(index, patch)}
                 onModel={(modelIndex, patch) => updateModel(index, modelIndex, patch)}
                 onMove={(to) => editDraft((current) => ({ ...current, providers: moved(current.providers, index, to) }))}
@@ -292,8 +297,14 @@ export function ConfigPanel() {
 
             <button
               type="button"
-              className="btn btn-outline btn-block cfg-add"
-              onClick={() => editDraft((current) => ({ ...current, providers: [...current.providers, emptyRoute()] }))}
+              className="btn btn-outline btn-compact cfg-add"
+              onClick={() => {
+                // The new card is the one that opens: it is the form the person
+                // just asked for, and it is empty. Every other card keeps the
+                // fold the reader left it in.
+                setAddedRoute(draft.providers.length);
+                editDraft((current) => ({ ...current, providers: [...current.providers, emptyRoute()] }));
+              }}
             >
               <Plus size={13} />
               {t('panel.config.addRoute')}
@@ -360,7 +371,7 @@ export function ConfigPanel() {
 
             <button
               type="button"
-              className="btn btn-outline btn-block cfg-add"
+              className="btn btn-outline btn-compact cfg-add"
               onClick={() => editDraft((current) => ({ ...current, mcp: [...current.mcp, emptyServer()] }))}
             >
               <Plus size={13} />
@@ -404,6 +415,7 @@ function RouteCard({
   index,
   total,
   showKeys,
+  defaultOpen = false,
   onChange,
   onModel,
   onMove,
@@ -413,26 +425,48 @@ function RouteCard({
   index: number;
   total: number;
   showKeys: boolean;
+  /** Drawn unfolded on the one render that follows "Add a route". */
+  defaultOpen?: boolean;
   onChange: (patch: Partial<RouteView>) => void;
   onModel: (modelIndex: number, patch: Partial<ModelView>) => void;
   onMove: (to: number) => void;
   onRemove: () => void;
 }) {
   const t = useT();
+  /* Folded by default. Six rows of fields plus a list of models is a screenful
+     per route, and what the panel is opened for most of the time is one route's
+     credentials — with every card open, the list of routes is not a list. */
+  const [open, setOpen] = useState(defaultOpen);
+  /* The models block folds on its own, inside an open card, and starts folded
+     too: it is the longest part of a card and the part reached least often. */
+  const [modelsOpen, setModelsOpen] = useState(false);
   return (
     <section className="cfg-card">
       <div className="cfg-card-head">
-        <span className="cfg-card-title mono">{route.name.trim() === '' ? t('panel.config.untitled') : route.name}</span>
-        {/* No key means the route is in the catalogue but cannot be selected
-            (`Provider.Usable()`), which is a state worth showing rather than a
-            validation error: a route somebody is about to paste a key into is
-            exactly this. */}
-        {route.apiKey.trim() === '' ? (
-          <Badge tone="warning" dot={false}>
-            {t('panel.config.noKey')}
-          </Badge>
-        ) : null}
-        <span className="grow" />
+        {/* The fold control wraps the name rather than the whole head: the head
+            also carries three icon buttons, and a wrapper that took the click
+            would fire on their presses too — a button inside a button is not
+            markup a browser accepts, either. */}
+        <button type="button" className="cfg-fold" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <ChevronRight size={13} className={`caret${open ? ' caret-open' : ''}`} />
+          <span className="cfg-card-title mono">
+            {route.name.trim() === '' ? t('panel.config.untitled') : route.name}
+          </span>
+          {/* No key means the route is in the catalogue but cannot be selected
+              (`Provider.Usable()`), which is a state worth showing rather than a
+              validation error: a route somebody is about to paste a key into is
+              exactly this — and it is the reason a folded card says what it does
+              below. */}
+          {route.apiKey.trim() === '' ? (
+            <Badge tone="warning" dot={false}>
+              {t('panel.config.noKey')}
+            </Badge>
+          ) : null}
+          {/* What a folded card still has to say. The model count is the one
+              fact the name does not carry, and a route with none of them cannot
+              be selected. */}
+          <span className="cfg-card-meta">{t('panel.config.modelCount', { n: route.models.length })}</span>
+        </button>
         <Tip label={t('panel.config.moveUp')}>
           <button
             type="button"
@@ -467,203 +501,248 @@ function RouteCard({
         </Tip>
       </div>
 
-      <div className="cfg-card-body">
-        <div className="cfg-grid">
-          <Field label={t('panel.config.name')} hint={t('panel.config.nameHint')}>
-            <input
-              type="text"
-              className="cfg-input mono"
-              value={route.name}
-              spellCheck={false}
-              onChange={(e) => onChange({ name: e.target.value })}
-            />
-          </Field>
-          <Field label={t('panel.config.baseUrl')}>
-            <input
-              type="text"
-              className="cfg-input mono"
-              value={route.baseUrl}
-              spellCheck={false}
-              placeholder="https://api.example.com"
-              onChange={(e) => onChange({ baseUrl: e.target.value })}
-            />
-          </Field>
-        </div>
+      {/* Folded, not unmounted: an element that appears and disappears has
+          nothing to transition, so the class is what changes. `inert` while
+          folded rather than `aria-hidden`, because the body is full of form
+          controls — `aria-hidden` over focusable content leaves the Tab key
+          reaching things a screen reader has been told to ignore.
 
-        <div className="cfg-grid">
-          <Field label={t('panel.config.apiKey')}>
-            <input
-              type={showKeys ? 'text' : 'password'}
-              className="cfg-input mono"
-              value={route.apiKey}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(e) => onChange({ apiKey: e.target.value })}
-            />
-          </Field>
-          <Field label={t('panel.config.apiStyle')} hint={t('panel.config.apiStyleHint')}>
-            {/* A select, not a text field: `styleField` refuses a value it does
-                not recognise rather than defaulting, so a fourth one typed here
-                would only ever produce a file the runtime will not open. */}
-            <select
-              className="cfg-input"
-              value={route.apiStyle}
-              onChange={(e) => onChange({ apiStyle: e.target.value })}
-            >
-              {API_STYLES.map((style) => (
-                <option key={style} value={style}>
-                  {style === '' ? t('panel.config.apiStyleAuto') : style}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
+          The plain `<div>` in between is load-bearing, and is the same level the
+          sidebar's blocks use. A folded track is 0px tall and `.collapse > *`
+          gives the child `min-height: 0` so it can be squeezed there — but a
+          child carrying vertical padding of its own cannot shrink past it, and
+          `.cfg-card-body` has 12px of it. Padding is not what `overflow: hidden`
+          clips, so with the body as the direct child a "folded" card still stood
+          26px tall with the first row of labels peeking out. The extra level has
+          no padding, so the box really does reach zero. */}
+      <div className={`collapse${open ? '' : ' is-collapsed'}`} inert={!open}>
+        <div>
+          <div className="cfg-card-body">
+            <div className="cfg-grid">
+              <Field label={t('panel.config.name')} hint={t('panel.config.nameHint')}>
+                <input
+                  type="text"
+                  className="cfg-input mono"
+                  value={route.name}
+                  spellCheck={false}
+                  onChange={(e) => onChange({ name: e.target.value })}
+                />
+              </Field>
+              <Field label={t('panel.config.baseUrl')}>
+                <input
+                  type="text"
+                  className="cfg-input mono"
+                  value={route.baseUrl}
+                  spellCheck={false}
+                  placeholder="https://api.example.com"
+                  onChange={(e) => onChange({ baseUrl: e.target.value })}
+                />
+              </Field>
+            </div>
 
-        <div className="cfg-grid">
-          <Field label={t('panel.config.displayName')} hint={t('panel.config.displayNameHint')}>
-            <input
-              type="text"
-              className="cfg-input"
-              value={route.displayName}
-              onChange={(e) => onChange({ displayName: e.target.value })}
-            />
-          </Field>
-          <div className="cfg-field">
-            <span className="cfg-label">{t('panel.config.verify')}</span>
-            <label className="cfg-check">
-              <input
-                type="checkbox"
-                checked={!route.verify}
-                onChange={(e) => onChange({ verify: !e.target.checked })}
-              />
-              <span>{t('panel.config.skipVerify')}</span>
-            </label>
-            <span className="cfg-hint">{t('panel.config.verifyHint')}</span>
-          </div>
-        </div>
+            <div className="cfg-grid">
+              <Field label={t('panel.config.apiKey')}>
+                <input
+                  type={showKeys ? 'text' : 'password'}
+                  className="cfg-input mono"
+                  value={route.apiKey}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => onChange({ apiKey: e.target.value })}
+                />
+              </Field>
+              <Field label={t('panel.config.apiStyle')} hint={t('panel.config.apiStyleHint')}>
+                {/* A select, not a text field: `styleField` refuses a value it
+                    does not recognise rather than defaulting, so a fourth one
+                    typed here would only ever produce a file the runtime will
+                    not open. */}
+                <select
+                  className="cfg-input"
+                  value={route.apiStyle}
+                  onChange={(e) => onChange({ apiStyle: e.target.value })}
+                >
+                  {API_STYLES.map((style) => (
+                    <option key={style} value={style}>
+                      {style === '' ? t('panel.config.apiStyleAuto') : style}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
 
-        <div className="cfg-grid">
-          <Field label={t('panel.config.headers')} hint={t('panel.config.headersHint')}>
-            <textarea
-              className="cfg-textarea mono"
-              rows={3}
-              value={textOfPairs(route.headers)}
-              spellCheck={false}
-              onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
-            />
-          </Field>
-          <Field label={t('panel.config.effortLevels')} hint={t('panel.config.effortLevelsHint')}>
-            <textarea
-              className="cfg-textarea mono"
-              rows={3}
-              value={textOfLines(route.effortLevels)}
-              spellCheck={false}
-              onChange={(e) => onChange({ effortLevels: linesOf(e.target.value) })}
-            />
-          </Field>
-        </div>
+            <div className="cfg-grid">
+              <Field label={t('panel.config.displayName')} hint={t('panel.config.displayNameHint')}>
+                <input
+                  type="text"
+                  className="cfg-input"
+                  value={route.displayName}
+                  onChange={(e) => onChange({ displayName: e.target.value })}
+                />
+              </Field>
+              <div className="cfg-field">
+                <span className="cfg-label">{t('panel.config.verify')}</span>
+                <label className="cfg-check">
+                  <input
+                    type="checkbox"
+                    checked={!route.verify}
+                    onChange={(e) => onChange({ verify: !e.target.checked })}
+                  />
+                  <span>{t('panel.config.skipVerify')}</span>
+                </label>
+                <span className="cfg-hint">{t('panel.config.verifyHint')}</span>
+              </div>
+            </div>
 
-        <div className="cfg-models">
-          <div className="cfg-models-head">
-            <span className="cfg-label">{t('panel.config.models')}</span>
-            <Info label={t('panel.config.modelsHint')} />
-          </div>
+            <div className="cfg-grid">
+              <Field label={t('panel.config.headers')} hint={t('panel.config.headersHint')}>
+                <textarea
+                  className="cfg-textarea mono"
+                  rows={3}
+                  value={textOfPairs(route.headers)}
+                  spellCheck={false}
+                  onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
+                />
+              </Field>
+              <Field label={t('panel.config.effortLevels')} hint={t('panel.config.effortLevelsHint')}>
+                <textarea
+                  className="cfg-textarea mono"
+                  rows={3}
+                  value={textOfLines(route.effortLevels)}
+                  spellCheck={false}
+                  onChange={(e) => onChange({ effortLevels: linesOf(e.target.value) })}
+                />
+              </Field>
+            </div>
 
-          {route.models.map((model, at) => (
-            <div key={at} className="cfg-model">
-              <div className="cfg-model-head">
-                <span className="mono">{model.id.trim() === '' ? t('panel.config.untitled') : model.id}</span>
-                <span className="grow" />
-                <Tip label={t('panel.config.removeModel')}>
+            <div className="cfg-models">
+              <div className="cfg-models-head">
+                {/* The second fold, inside an open card. Folding it is what keeps
+                    a route readable when it carries several models: the list is
+                    the longest part of the card and the part opened least. */}
+                <button
+                  type="button"
+                  className="cfg-fold"
+                  aria-expanded={modelsOpen}
+                  onClick={() => setModelsOpen(!modelsOpen)}
+                >
+                  <ChevronRight size={13} className={`caret${modelsOpen ? ' caret-open' : ''}`} />
+                  <span className="cfg-label">{t('panel.config.models')}</span>
+                  {/* A route with no models cannot be selected, so the count is
+                      the one number a folded row has to carry. */}
+                  <Count value={route.models.length} />
+                </button>
+                <Info label={t('panel.config.modelsHint')} />
+              </div>
+
+              <div className={`collapse${modelsOpen ? '' : ' is-collapsed'}`} inert={!modelsOpen}>
+                <div className="cfg-models-body">
+                  {route.models.map((model, at) => (
+                    <div key={at} className="cfg-model">
+                      <div className="cfg-model-head">
+                        <span className="mono">
+                          {model.id.trim() === '' ? t('panel.config.untitled') : model.id}
+                        </span>
+                        <span className="grow" />
+                        <Tip label={t('panel.config.removeModel')}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-icon btn-compact cfg-danger"
+                            aria-label={t('panel.config.removeModel')}
+                            onClick={() => onChange({ models: route.models.filter((_, i) => i !== at) })}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </Tip>
+                      </div>
+                      <div className="cfg-grid">
+                        <Field label={t('panel.config.modelId')}>
+                          <input
+                            type="text"
+                            className="cfg-input mono"
+                            value={model.id}
+                            spellCheck={false}
+                            onChange={(e) => onModel(at, { id: e.target.value })}
+                          />
+                        </Field>
+                        <Field label={t('panel.config.modelLabel')}>
+                          <input
+                            type="text"
+                            className="cfg-input"
+                            value={model.label}
+                            onChange={(e) => onModel(at, { label: e.target.value })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="cfg-grid">
+                        <Field label={t('panel.config.contextWindow')} hint={t('panel.config.contextWindowHint')}>
+                          {/* Empty is a real answer and not zero: it means "the
+                              catalogue does not know", and the interface then
+                              reports usage without a percentage. A wrong
+                              percentage is worse than none. */}
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            className="cfg-input"
+                            value={model.contextWindow === null ? '' : String(model.contextWindow)}
+                            placeholder={t('panel.config.contextWindowAbsent')}
+                            spellCheck={false}
+                            onChange={(e) => onModel(at, { contextWindow: readNumber(e.target.value) })}
+                          />
+                        </Field>
+                        <Field
+                          label={t('panel.config.reasoningEffort')}
+                          hint={t('panel.config.reasoningEffortHint')}
+                        >
+                          <input
+                            type="text"
+                            className="cfg-input mono"
+                            value={model.reasoningEffort}
+                            spellCheck={false}
+                            onChange={(e) => onModel(at, { reasoningEffort: e.target.value })}
+                          />
+                        </Field>
+                      </div>
+                      <div className="cfg-grid">
+                        <Field
+                          label={t('panel.config.modelEffortLevels')}
+                          hint={t('panel.config.modelEffortLevelsHint')}
+                        >
+                          <textarea
+                            className="cfg-textarea mono"
+                            rows={2}
+                            value={textOfLines(model.effortLevels)}
+                            spellCheck={false}
+                            onChange={(e) => onModel(at, { effortLevels: linesOf(e.target.value) })}
+                          />
+                        </Field>
+                        <div className="cfg-field">
+                          <span className="cfg-label">{t('panel.config.vision')}</span>
+                          <label className="cfg-check">
+                            <input
+                              type="checkbox"
+                              checked={model.vision}
+                              onChange={(e) => onModel(at, { vision: e.target.checked })}
+                            />
+                            <span>{t('panel.config.visionOn')}</span>
+                          </label>
+                          <span className="cfg-hint">{t('panel.config.visionHint')}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
                   <button
                     type="button"
-                    className="btn btn-ghost btn-icon btn-compact cfg-danger"
-                    aria-label={t('panel.config.removeModel')}
-                    onClick={() => onChange({ models: route.models.filter((_, i) => i !== at) })}
+                    className="btn btn-outline btn-compact cfg-add"
+                    onClick={() => onChange({ models: [...route.models, emptyModel()] })}
                   >
-                    <Trash2 size={12} />
+                    <Plus size={13} />
+                    {t('panel.config.addModel')}
                   </button>
-                </Tip>
-              </div>
-              <div className="cfg-grid">
-                <Field label={t('panel.config.modelId')}>
-                  <input
-                    type="text"
-                    className="cfg-input mono"
-                    value={model.id}
-                    spellCheck={false}
-                    onChange={(e) => onModel(at, { id: e.target.value })}
-                  />
-                </Field>
-                <Field label={t('panel.config.modelLabel')}>
-                  <input
-                    type="text"
-                    className="cfg-input"
-                    value={model.label}
-                    onChange={(e) => onModel(at, { label: e.target.value })}
-                  />
-                </Field>
-              </div>
-              <div className="cfg-grid">
-                <Field label={t('panel.config.contextWindow')} hint={t('panel.config.contextWindowHint')}>
-                  {/* Empty is a real answer and not zero: it means "the
-                      catalogue does not know", and the interface then reports
-                      usage without a percentage. A wrong percentage is worse
-                      than none. */}
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    className="cfg-input"
-                    value={model.contextWindow === null ? '' : String(model.contextWindow)}
-                    placeholder={t('panel.config.contextWindowAbsent')}
-                    spellCheck={false}
-                    onChange={(e) => onModel(at, { contextWindow: readNumber(e.target.value) })}
-                  />
-                </Field>
-                <Field label={t('panel.config.reasoningEffort')} hint={t('panel.config.reasoningEffortHint')}>
-                  <input
-                    type="text"
-                    className="cfg-input mono"
-                    value={model.reasoningEffort}
-                    spellCheck={false}
-                    onChange={(e) => onModel(at, { reasoningEffort: e.target.value })}
-                  />
-                </Field>
-              </div>
-              <div className="cfg-grid">
-                <Field label={t('panel.config.modelEffortLevels')} hint={t('panel.config.modelEffortLevelsHint')}>
-                  <textarea
-                    className="cfg-textarea mono"
-                    rows={2}
-                    value={textOfLines(model.effortLevels)}
-                    spellCheck={false}
-                    onChange={(e) => onModel(at, { effortLevels: linesOf(e.target.value) })}
-                  />
-                </Field>
-                <div className="cfg-field">
-                  <span className="cfg-label">{t('panel.config.vision')}</span>
-                  <label className="cfg-check">
-                    <input
-                      type="checkbox"
-                      checked={model.vision}
-                      onChange={(e) => onModel(at, { vision: e.target.checked })}
-                    />
-                    <span>{t('panel.config.visionOn')}</span>
-                  </label>
-                  <span className="cfg-hint">{t('panel.config.visionHint')}</span>
                 </div>
               </div>
             </div>
-          ))}
-
-          <button
-            type="button"
-            className="btn btn-outline btn-block cfg-add"
-            onClick={() => onChange({ models: [...route.models, emptyModel()] })}
-          >
-            <Plus size={13} />
-            {t('panel.config.addModel')}
-          </button>
+          </div>
         </div>
       </div>
     </section>
@@ -693,15 +772,23 @@ function ServerCard({
   // exactly one and refuses the both-and-neither cases, so offering both at once
   // would be inviting a refusal.
   const remote = server.url.trim() !== '';
+  // Folded like a route, for the same reason and to the same end: both tabs
+  // hold cards of one kind, and a head that opens in one tab and not the other
+  // is a control nobody can predict.
+  const [open, setOpen] = useState(false);
 
   return (
     <section className="cfg-card">
       <div className="cfg-card-head">
-        <span className="cfg-card-title mono">{server.name.trim() === '' ? t('panel.config.untitled') : server.name}</span>
-        <Badge tone="neutral" dot={false}>
-          {remote ? t('panel.config.mcpRemote') : t('panel.config.mcpStdio')}
-        </Badge>
-        <span className="grow" />
+        <button type="button" className="cfg-fold" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <ChevronRight size={13} className={`caret${open ? ' caret-open' : ''}`} />
+          <span className="cfg-card-title mono">
+            {server.name.trim() === '' ? t('panel.config.untitled') : server.name}
+          </span>
+          <Badge tone="neutral" dot={false}>
+            {remote ? t('panel.config.mcpRemote') : t('panel.config.mcpStdio')}
+          </Badge>
+        </button>
         <Tip label={t('panel.config.moveUp')}>
           <button
             type="button"
@@ -736,113 +823,121 @@ function ServerCard({
         </Tip>
       </div>
 
-      <div className="cfg-card-body">
-        <div className="cfg-grid">
-          <Field label={t('panel.config.name')} hint={t('panel.config.nameHint')}>
-            <input
-              type="text"
-              className="cfg-input mono"
-              value={server.name}
-              spellCheck={false}
-              onChange={(e) => onChange({ name: e.target.value })}
-            />
-          </Field>
-          <div className="cfg-field">
-            <span className="cfg-label">{t('panel.config.mcpTransport')}</span>
-            <div className="cfg-choice">
-              <label className="cfg-check">
+      {/* The same extra level as a route's card, for the same reason: the body
+          carries vertical padding, and a padded child cannot be squeezed to the
+          0px a folded track gives it. See the note on `RouteCard`. */}
+      <div className={`collapse${open ? '' : ' is-collapsed'}`} inert={!open}>
+        <div>
+          <div className="cfg-card-body">
+            <div className="cfg-grid">
+              <Field label={t('panel.config.name')} hint={t('panel.config.nameHint')}>
                 <input
-                  type="radio"
-                  name={`transport-${index}`}
-                  checked={!remote}
-                  onChange={() => onChange({ url: '' })}
+                  type="text"
+                  className="cfg-input mono"
+                  value={server.name}
+                  spellCheck={false}
+                  onChange={(e) => onChange({ name: e.target.value })}
                 />
-                <span>{t('panel.config.mcpStdio')}</span>
-              </label>
-              <label className="cfg-check">
+              </Field>
+              <div className="cfg-field">
+                <span className="cfg-label">{t('panel.config.mcpTransport')}</span>
+                <div className="cfg-choice">
+                  <label className="cfg-check">
+                    <input
+                      type="radio"
+                      name={`transport-${index}`}
+                      checked={!remote}
+                      onChange={() => onChange({ url: '' })}
+                    />
+                    <span>{t('panel.config.mcpStdio')}</span>
+                  </label>
+                  <label className="cfg-check">
+                    <input
+                      type="radio"
+                      name={`transport-${index}`}
+                      checked={remote}
+                      // Switching to remote **clears the command**, because the
+                      // runtime refuses a server that names both. Leaving it
+                      // behind would produce exactly that refusal on the next
+                      // save, and the field it complains about would not even be
+                      // on screen.
+                      onChange={() => onChange({ command: '' })}
+                    />
+                    <span>{t('panel.config.mcpRemote')}</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {remote ? (
+              <div className="cfg-grid">
+                <Field label={t('panel.config.mcpUrl')}>
+                  <input
+                    type="text"
+                    className="cfg-input mono"
+                    value={server.url}
+                    spellCheck={false}
+                    placeholder="https://mcp.example.com/mcp"
+                    onChange={(e) => onChange({ url: e.target.value })}
+                  />
+                </Field>
+                <Field label={t('panel.config.mcpHeaders')} hint={t('panel.config.headersHint')}>
+                  <textarea
+                    className="cfg-textarea mono"
+                    rows={2}
+                    value={textOfPairs(server.headers)}
+                    spellCheck={false}
+                    onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
+                  />
+                </Field>
+              </div>
+            ) : (
+              <div className="cfg-grid">
+                <Field label={t('panel.config.mcpCommand')}>
+                  <input
+                    type="text"
+                    className="cfg-input mono"
+                    value={server.command}
+                    spellCheck={false}
+                    placeholder="npx"
+                    onChange={(e) => onChange({ command: e.target.value })}
+                  />
+                </Field>
+                <Field label={t('panel.config.mcpArgs')} hint={t('panel.config.mcpArgsHint')}>
+                  <textarea
+                    className="cfg-textarea mono"
+                    rows={2}
+                    value={textOfLines(server.args)}
+                    spellCheck={false}
+                    onChange={(e) => onChange({ args: linesOf(e.target.value) })}
+                  />
+                </Field>
+              </div>
+            )}
+
+            <div className="cfg-grid">
+              <Field label={t('panel.config.mcpEnv')} hint={t('panel.config.pairsHint')}>
+                <textarea
+                  className="cfg-textarea mono"
+                  rows={2}
+                  value={textOfPairs(server.env)}
+                  spellCheck={false}
+                  onChange={(e) => onChange({ env: pairsOfText(e.target.value) })}
+                />
+              </Field>
+              <Field label={t('panel.config.mcpTimeout')} hint={t('panel.config.mcpTimeoutHint')}>
                 <input
-                  type="radio"
-                  name={`transport-${index}`}
-                  checked={remote}
-                  // Switching to remote **clears the command**, because the
-                  // runtime refuses a server that names both. Leaving it behind
-                  // would produce exactly that refusal on the next save, and the
-                  // field it complains about would not even be on screen.
-                  onChange={() => onChange({ command: '' })}
+                  type="text"
+                  inputMode="decimal"
+                  className="cfg-input"
+                  value={server.timeoutSeconds === null ? '' : String(server.timeoutSeconds)}
+                  placeholder={t('panel.config.contextWindowAbsent')}
+                  spellCheck={false}
+                  onChange={(e) => onChange({ timeoutSeconds: readNumber(e.target.value) })}
                 />
-                <span>{t('panel.config.mcpRemote')}</span>
-              </label>
+              </Field>
             </div>
           </div>
-        </div>
-
-        {remote ? (
-          <div className="cfg-grid">
-            <Field label={t('panel.config.mcpUrl')}>
-              <input
-                type="text"
-                className="cfg-input mono"
-                value={server.url}
-                spellCheck={false}
-                placeholder="https://mcp.example.com/mcp"
-                onChange={(e) => onChange({ url: e.target.value })}
-              />
-            </Field>
-            <Field label={t('panel.config.mcpHeaders')} hint={t('panel.config.headersHint')}>
-              <textarea
-                className="cfg-textarea mono"
-                rows={2}
-                value={textOfPairs(server.headers)}
-                spellCheck={false}
-                onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
-              />
-            </Field>
-          </div>
-        ) : (
-          <div className="cfg-grid">
-            <Field label={t('panel.config.mcpCommand')}>
-              <input
-                type="text"
-                className="cfg-input mono"
-                value={server.command}
-                spellCheck={false}
-                placeholder="npx"
-                onChange={(e) => onChange({ command: e.target.value })}
-              />
-            </Field>
-            <Field label={t('panel.config.mcpArgs')} hint={t('panel.config.mcpArgsHint')}>
-              <textarea
-                className="cfg-textarea mono"
-                rows={2}
-                value={textOfLines(server.args)}
-                spellCheck={false}
-                onChange={(e) => onChange({ args: linesOf(e.target.value) })}
-              />
-            </Field>
-          </div>
-        )}
-
-        <div className="cfg-grid">
-          <Field label={t('panel.config.mcpEnv')} hint={t('panel.config.pairsHint')}>
-            <textarea
-              className="cfg-textarea mono"
-              rows={2}
-              value={textOfPairs(server.env)}
-              spellCheck={false}
-              onChange={(e) => onChange({ env: pairsOfText(e.target.value) })}
-            />
-          </Field>
-          <Field label={t('panel.config.mcpTimeout')} hint={t('panel.config.mcpTimeoutHint')}>
-            <input
-              type="text"
-              inputMode="decimal"
-              className="cfg-input"
-              value={server.timeoutSeconds === null ? '' : String(server.timeoutSeconds)}
-              placeholder={t('panel.config.contextWindowAbsent')}
-              spellCheck={false}
-              onChange={(e) => onChange({ timeoutSeconds: readNumber(e.target.value) })}
-            />
-          </Field>
         </div>
       </div>
     </section>

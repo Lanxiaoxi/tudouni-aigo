@@ -636,6 +636,10 @@ export const en = {
   'panel.config.effortLevelsHint':
     'One per line; applies to every model on this route. Empty offers the whole vocabulary.',
   'panel.config.models': 'Models',
+  /** The count a folded route card still shows. `(s)` rather than a plural
+   *  rule, matching `panel.config.blocked` — the catalogue is English-only and
+   *  interpolation deliberately stops at `{name}`. */
+  'panel.config.modelCount': '{n} model(s)',
   'panel.config.modelsHint':
     'A route with no models cannot be selected. Leave the context window empty rather than guessing — a wrong percentage is worse than none.',
   'panel.config.modelId': 'Model id',
