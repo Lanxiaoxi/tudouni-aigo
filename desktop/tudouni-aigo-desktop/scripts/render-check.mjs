@@ -2431,7 +2431,49 @@ async function main() {
     const stepHead = step?.querySelector('.e-step-head');
     const curActs = savedCurrentEl?.closest('.lb-session-wrap')?.querySelector('.lb-session-actions');
     const idleActs = idleEl?.closest('.lb-session-wrap')?.querySelector('.lb-session-actions');
+    // The current card's second edge layer, and what could cut it. Read here as
+    // two facts because the first is only correct *because* of the second: a
+    // box-shadow with a positive spread paints outside the border box, and the
+    // session fold's body (".collapse > *", overflow: hidden, global.css) sits
+    // exactly on the card's own edges with no padding of its own. So the layer
+    // has to be inset, and the ancestor that would cut it has to still be there —
+    // otherwise the "inset" reads as decoration and the next reader deletes it.
+    // See the assertion below for the defect this measured.
+    const ringCard = savedCurrentEl ?? currentEl;
+    const ring = (() => {
+      const raw = cs(ringCard)?.boxShadow ?? '';
+      // The layer that is the accent edge: not the wide lift, not the drop.
+      const accent = /rgba\\(5, ?150, ?105/;
+      const layer = raw.split(/,(?![^(]*\\))/).map((s) => s.trim())
+        .find((s) => accent.test(s)) ?? null;
+      return { layer, inset: layer ? /(^|\\s)inset(\\s|$)/.test(layer) : null };
+    })();
+    const clippers = (() => {
+      if (!ringCard) return null;
+      const r = ringCard.getBoundingClientRect();
+      const out = [];
+      let node = ringCard.parentElement;
+      while (node && node !== document.documentElement) {
+        const c = getComputedStyle(node);
+        const b = node.getBoundingClientRect();
+        const sides = [];
+        // 1px of slack: the ring is 1px, and the question is whether this
+        // ancestor's box stops at the card's own edge or beyond it.
+        if (c.overflowX !== 'visible') {
+          if (b.left > r.left - 1) sides.push('left');
+          if (b.right < r.right + 1) sides.push('right');
+        }
+        if (c.overflowY !== 'visible') {
+          if (b.top > r.top - 1) sides.push('top');
+          if (b.bottom < r.bottom + 1) sides.push('bottom');
+        }
+        if (sides.length) out.push({ cls: String(node.className || node.tagName), sides });
+        node = node.parentElement;
+      }
+      return out;
+    })();
     return JSON.stringify({
+      ring: { ...ring, clippers },
       rail: bg(railEl),
       idle: bg(idleEl),
       current: bg(currentEl),
@@ -2506,6 +2548,38 @@ async function main() {
   }
   if (!sk.currentShadow || sk.currentShadow === 'none') {
     throw new Error('the current session card is not lifted');
+  }
+  // ---- the heavier edge has to reach all four sides ----
+  //
+  // A `box-shadow` with a positive spread is painted **outside** the border box,
+  // and this card has a clipping ancestor sitting exactly on its own edges: the
+  // session fold's body (`.collapse > *`, `overflow: hidden`, global.css) is as
+  // wide as the rows and has no padding. So a ring drawn outside the border lost
+  // its top and both sides, and the topmost row's edge came out no heavier than
+  // an idle row's — while the check above, which only reads the computed value,
+  // passed either way. Measured off the reported screenshot: two device pixels of
+  // green across the top, four down the bottom.
+  //
+  // Both halves are asserted, and the second is the one that keeps this from
+  // regressing: the ring has to be `inset`, **and** the ancestor that would cut
+  // it has to still be there. If the fold ever stops clipping, the `inset` looks
+  // redundant and the next reader deletes it — and then the fold's own change
+  // takes an argument with it that this check no longer holds.
+  const ring = sk.ring ?? {};
+  if (!ring.layer) {
+    throw new Error(`no accent layer among the current card's shadows: ${sk.currentShadow}`);
+  }
+  if (!ring.inset) {
+    throw new Error(
+      `the current card's second edge layer is drawn outside the border box (${ring.layer}) — ` +
+        'the session fold clips it, so three of its four sides never paint',
+    );
+  }
+  if (!Array.isArray(ring.clippers) || ring.clippers.length === 0) {
+    throw new Error(
+      'no ancestor clips the session list, so the ring can be drawn outside the border box again: ' +
+        'this assertion is the one that holds the change (see `ring.inset` above)',
+    );
   }
   // The workspace row is a card too, on the same surface as the active one —
   // it used to be an accent wash, i.e. the only green rectangle in the rail.

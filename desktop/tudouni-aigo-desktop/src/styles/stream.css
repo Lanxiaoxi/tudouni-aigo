@@ -1472,15 +1472,35 @@
    **The edge is a border plus a ring, and the second layer is what thickens it
    without a reflow.** `border-width: 2px` was the obvious way to say "a bit
    thicker" and it moves every pixel inside the card by one, on a row whose
-   whole point is that its text lines up with its neighbours'. The ring is drawn
-   *outside* the border, so the two abut into one edge that reads about twice as
-   heavy, and nothing inside moves. */
+   whole point is that its text lines up with its neighbours'. The ring sits
+   against the border's inner edge, so the two abut into one edge that reads
+   about twice as heavy, and nothing inside moves.
+
+   **The ring is `inset`, and that half is not a style choice — drawn outside,
+   it was clipped away.** This row lives inside the session fold's clipping body
+   (`.collapse > *` is `overflow: hidden`, global.css), whose box is *exactly*
+   the row's own box: every row here is full width and the body has no padding.
+   So anything painted outside the border box is cut off at the body's top, left
+   and right — and the topmost row and both sides of every row lost the ring
+   while the bottom of an interior row kept it. Measured off the reported
+   screenshot: one cell of green across the top of the current card, two down
+   the bottom. Inset, the second layer lands on the other side of the border and
+   all four sides carry the same edge — and both cells are now the same green,
+   instead of one over the rail's grey and one over the card's white.
+
+   The fold cannot be given room instead: that body's `overflow` is what makes a
+   folded section zero-height, so the padding that would hold the ring back
+   would hold the fold open with it.
+
+   The lift in `--shadow-card-active` stays outside and stays clipped on the
+   sides, which costs little: it is `0 6px 16px -4px`, so nearly all of its
+   visible extent is below the card by construction. */
 .lb-session.is-current {
   background: var(--bg-card);
   border-color: var(--accent-border);
   color: var(--fg);
   box-shadow:
-    0 0 0 1px var(--accent-border),
+    inset 0 0 0 1px var(--accent-border),
     var(--shadow-card-active);
 }
 
