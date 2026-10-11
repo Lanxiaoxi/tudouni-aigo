@@ -122,6 +122,14 @@
      with a reference to follow, does distinguish them; see below. */
   --bg-bar:        #1A1E25;
   --bg-rail:       #1A1E25;
+  /* The rail's card rung — the surface an **idle** session card sits on. Light
+     takes the reference's `#F7F8FA` (`.session-card.idle`), one step above the
+     sidebar; here it collapses onto the rail, because this theme has no lighter
+     step between `--bg-secondary` and `--bg-card` to give it and inventing one
+     would re-tune every card surface in the app. An idle card in this theme is
+     therefore the rail's own colour plus its hairline edge — which is exactly
+     how the rail's rows already read here. */
+  --bg-card-subtle: #1A1E25;
 
   --fg:            #F2F3F6;
   --fg-secondary:  #B9BFC9;
@@ -191,6 +199,11 @@
      read as part of the rail instead of as the frame around it. */
   --bg-bar:        #FBFBFD;  /* 顶栏 / 状态栏 */
   --bg-rail:       #F7F8FA;  /* 右栏：比画布亮一档，块面板再浮在它上面 */
+  /* The reference's `.session-card.idle` surface: `#F7F8FA`, one step above the
+     sidebar's `#EDEFF3` and one below the active card's white. Three rungs, and
+     the idle/active distinction is carried by the **card**, not by a row
+     highlight — which is what makes the list read as cards at all. */
+  --bg-card-subtle: #F7F8FA;
 
   --fg:            #1A1D21;
   --fg-secondary:  #5C626B;
@@ -232,7 +245,7 @@
   --accent-grad:   linear-gradient(180deg, #059669 0%, #047857 100%);
   --shadow-accent: 0 4px 12px rgba(5, 150, 105, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.20);
   --halo-green:    rgba(5, 150, 105, 0.08);
-  --halo-warm:     rgba(217, 119, 6, 0.07);
+  --halo-warm:     rgba(217, 131, 36, 0.07);  /* = 设计稿 .aurora.warm 的原值 */
   /* Verbatim from the reference (`--shadow-card` / `--shadow-composer`), down
      to the negative spread. A card on the canvas is white on #F2F3F6, which is
      a 3% difference — the whole lift is carried by these two layers, so the

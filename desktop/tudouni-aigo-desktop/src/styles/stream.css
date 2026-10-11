@@ -1151,7 +1151,11 @@
 .lb-rows {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  /* A real gutter, because these rows are cards: at the 1px this used to be,
+     adjacent cards read as one rounded block cut by hairlines. The reference
+     separates them by roughly this much (measured off it, not read off its
+     `gap`, which is the sidebar's own section rhythm). */
+  gap: var(--space-2);
 }
 
 /* The group of conversations that are open but have no file yet, above the saved
@@ -1185,27 +1189,38 @@
 
 /* ---------------- workspace rows ---------------- */
 
+/* The design's `.ws-row`: a **white card on the rail** — the same surface the
+   session cards are, one step above the rail's grey. Where the runtime actually
+   is used to be painted into the row (an accent wash plus a 2px inset bar),
+   which made the row the only green rectangle in the rail and put it on a
+   different surface from every other row in the list. The word "current" and
+   the accent icon say the same thing without taking the row off the card
+   surface, and the green edge ties it to the session card's own current state. */
 .lb-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--row-h);
   padding: 0 var(--space-1) 0 var(--space-2);
-  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
   color: var(--fg-secondary);
-  transition: background-color var(--motion-fast) var(--ease-out);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
 .lb-row:hover {
-  background: var(--bg-muted);
+  border-color: var(--border);
+  box-shadow: var(--shadow-card);
 }
 
-/* Where the runtime actually is. Marked by colour **and** by the word
-   "current", never by colour alone. */
 .lb-row.is-current {
-  background: var(--accent-subtle);
+  border-color: var(--accent-border);
   color: var(--fg);
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: var(--shadow-card-active);
 }
 
 .lb-row .lb-row-icon {
@@ -1291,18 +1306,15 @@
 
 /* ---------------- session rows ---------------- */
 
-/* The row is now a wrapper (session button + delete button side by side). The
-   wrapper owns the hover background so it reads as one row; the session button
-   keeps its own current-state styling. */
+/* The row is a wrapper (the session card + the two per-row actions beside it).
+   The **card** owns the surface and the hover, not the wrapper: a wrapper that
+   painted too would draw a second rectangle around the card's rounded one. It
+   stays a plain flex row, which is also what lets the rule below lift the card
+   when the pointer is anywhere on the row — including over the revealed
+   buttons, which sit outside the card. */
 .lb-session-wrap {
   display: flex;
   align-items: stretch;
-  border-radius: var(--radius-sm);
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.lb-session-wrap:hover {
-  background: var(--bg-muted);
 }
 
 .lb-session-wrap .lb-session {
@@ -1310,41 +1322,50 @@
   min-width: 0;
 }
 
-.lb-session-wrap:hover .lb-session:not(.is-current) {
-  background: none;
+.lb-session-wrap:hover .lb-session:not(.is-current):not(:disabled) {
+  background: var(--bg-card);
+  border-color: var(--border);
 }
 
+/* The design's `.session-card`: **every** row is a card on the rail, not only
+   the one you are looking at. An idle row takes the reference's `#F7F8FA`
+   (`--bg-card-subtle`) — one step lighter than the rail it sits on, so the list
+   reads as cards instead of as text with a highlight on it. The border is
+   present from the start and transparent, so turning it on for hover or for the
+   current state moves nothing by a pixel. */
 .lb-session {
   display: flex;
   flex-direction: column;
   gap: 1px;
   width: 100%;
   padding: var(--space-2);
-  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card-subtle);
   text-align: left;
   color: var(--fg-secondary);
   cursor: pointer;
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.lb-session:hover:not(:disabled) {
-  background: var(--bg-muted);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
 }
 
 .lb-session:disabled {
   cursor: default;
 }
 
-/* Current session = design's "Session Card — Active": a lifted white card with
-   a green ring + coloured shadow (ring via 0 0 0 1px so no border shifts the
-   box model). Replaces the old inset accent bar. */
+/* Current session = the design's "Session Card — Active": the white card, the
+   soft green edge (`#B4E5CD` in the reference — `--accent-border` is this
+   token set's version of it, and the ring it replaces was `-strong`, which on
+   a white card read as a much harder green than the design's hairline) and the
+   coloured shadow. The edge is a real border now rather than a `0 0 0 1px` ring
+   because the idle card already reserves the pixel, so there is nothing to
+   shift. */
 .lb-session.is-current {
   background: var(--bg-card);
+  border-color: var(--accent-border);
   color: var(--fg);
-  border-radius: var(--radius-md);
-  box-shadow:
-    0 0 0 1px var(--accent-border-strong),
-    var(--shadow-card-active);
+  box-shadow: var(--shadow-card-active);
 }
 
 .lb-session .lb-session-top {

@@ -191,12 +191,13 @@
   height: 34px;
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
-  /* The canvas, not a bar: in the reference the session header's chips sit
-     directly on the transcript's own surface (`.main`), so they read as facts
-     about the conversation rather than as a third chrome strip between the
-     title bar and the text. `--bg` is also what the conversation column shows
-     through, so the bar disappears into it. */
-  background: var(--bg);
+  /* Transparent, not a bar: in the reference the session chips sit directly on
+     the transcript's own surface (`.main` has no background of its own), so the
+     aurora wash passes behind them and they read as facts about the
+     conversation rather than as a third chrome strip between the title bar and
+     the text. Painting `--bg` here also cut the green halo off at a hard line
+     the design does not have. */
+  background: none;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -577,7 +578,11 @@
 .composer {
   flex: none;
   border-top: 1px solid var(--border-subtle);
-  background: var(--bg);
+  /* No background of its own: the reference's `.composer-wrap` is part of the
+     transcript's surface and the warm halo reaches through the band the box
+     sits in. An opaque `--bg` here drew a grey rectangle across the bottom of
+     the canvas and stopped the wash at a straight edge. */
+  background: none;
   /* The horizontal padding matches `.stream-inner`'s, and that is the point: both
      children below cap at 980px, so equal padding is what makes the box's left
      edge land on the same pixel as the first character of the transcript. With
@@ -972,29 +977,26 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
-  /* The first screen's session slots are cards on the canvas, and the design
-     lifts every surface in that position — the transcript's step cards, the
-     board's cards, these. The empty slot below clears it, because a dashed
-     outline means "nothing here yet" and a shadow would contradict that. */
-  box-shadow: var(--shadow-card);
+  /* **No shadow on an idle card.** The reference is explicit about which
+     surfaces float: the model-call card, the composer, the primary buttons and
+     the **active** session card. An idle session card is flat — card surface,
+     hairline edge, nothing else — and that restraint is what keeps the lift
+     meaning something when it does appear. */
   text-align: left;
   cursor: pointer;
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out),
-    box-shadow var(--motion-fast) var(--ease-out);
+    border-color var(--motion-fast) var(--ease-out);
 }
 
 .recent-slot:hover {
   background: var(--bg-muted);
   border-color: var(--border);
-  box-shadow: var(--shadow-card-hover);
 }
 
 .recent-slot.is-empty {
   border-style: dashed;
   background: transparent;
-  box-shadow: none;
   cursor: default;
   align-items: center;
   justify-content: center;
@@ -1003,7 +1005,6 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
 .recent-slot.is-empty:hover {
   background: transparent;
   border-color: var(--border-subtle);
-  box-shadow: none;
 }
 
 /* The card's **last** line: the runtime's own name for the conversation and when

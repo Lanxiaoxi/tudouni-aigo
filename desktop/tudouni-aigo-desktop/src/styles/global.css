@@ -125,11 +125,27 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  /* Aurora 光晕：右上绿 + 左下暖橙，两团极淡 radial 渐变铺在画布上，
-     侧栏 / 面板自带不透明底会自然盖住自己那一侧。纯背景装饰，不参与布局。 */
+  /* Aurora 光晕：两团极淡 radial 渐变铺在画布上，侧栏 / 面板自带不透明底会
+     自然盖住自己那一侧。纯背景装饰，不参与布局。
+
+     几何取自设计稿（`.aurora.cool` 1000×700 @ left:320 top:-260、
+     `.aurora.warm` 800×600 @ left:-200 bottom:-120，相对 1520×960 的窗口），
+     换算成百分比：绿心在窗口宽 54% / 高 9% 处，暖心在 13% / 81% 处 —— 也就是
+     「正文上沿偏右」和「左下角」。**这两个中心必须落在画布可见范围内**：最初写成
+     `at 82% -18%` 和 `at -12% 112%`，中心双双跑到窗口外，椭圆的可见部分只剩边缘，
+     于是渐变几乎不存在（实测峰值 α≈0.02，而设计稿同处是 0.07）。
+
+     **长度要取设计稿的一半。** 设计稿的 `.aurora` 是一个 1000×700 的绝对定位元素、
+     内部 `radial-gradient(closest-side, ...)`，所以椭圆的**半径**是 500×350；
+     而 CSS 写 `radial-gradient(1000px 700px at ...)` 时那两个长度本身就是半径。
+     照抄 1000/700 会把光晕放大一倍（实测半径 990px 对 500px）。
+
+     收尾不再写 `transparent 62%`：提前收口等于把半径再缩到六成，设计稿是画到椭圆
+     边缘 (`closest-side`) 的。`transparent` 按预乘 alpha 插值，与
+     `rgba(...,0)` 等价，不需要额外 token。 */
   background:
-    radial-gradient(1100px 760px at 82% -18%, var(--halo-green), transparent 62%),
-    radial-gradient(900px 640px at -12% 112%, var(--halo-warm), transparent 62%),
+    radial-gradient(500px 350px at 54% 9%, var(--halo-green), transparent),
+    radial-gradient(400px 300px at 13% 81%, var(--halo-warm), transparent),
     var(--bg);
 }
 

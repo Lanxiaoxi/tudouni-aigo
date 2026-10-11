@@ -2034,6 +2034,85 @@ async function main() {
   console.log('theme after switching the system to light:', lightTheme);
   if (lightTheme !== 'light') throw new Error('the theme did not follow the system');
 
+  // ---- 6b. the rail is cards on a rail, and the canvas has a gradient ----
+  //
+  // Both of these were "done" and neither was: the rail painted every session
+  // row the **same** colour as the rail it sat on, so the reference's session
+  // cards were not there at all, and the app's aurora gradients were centred
+  // outside the window (`at 82% -18%`), which leaves only the ellipse's falling
+  // edge on screen — measured at a peak alpha of 0.02 against the design's 0.08.
+  // Neither is visible to any assertion above: the rows exist, the text is
+  // right, the gradient string is a well-formed gradient.
+  //
+  // So what is asserted is *depth* (three surfaces, strictly ordered) and
+  // *geometry* (each gradient's centre is inside the box that paints it).
+  const skin = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const bg = (el) => (el ? getComputedStyle(el).backgroundColor : null);
+    const railEl = q('.app-leftbar');
+    // An idle card specifically: the live group's row is the current one.
+    const idleEl = q('.lb-rows:not(.lb-live-rows) .lb-session');
+    const currentEl = q('.lb-session.is-current');
+    const rowEl = q('.lb-row');
+    const appEl = q('.app');
+    const image = appEl ? getComputedStyle(appEl).backgroundImage : '';
+    // Every \`at <x> <y>\` in the background, as percentages. The failure this
+    // catches is a centre outside 0-100: the gradient still parses and still
+    // paints, so nothing else notices.
+    const centres = [...image.matchAll(/at\\s+(-?[\\d.]+)%\\s+(-?[\\d.]+)%/g)].map((m) => ({
+      x: Number(m[1]),
+      y: Number(m[2]),
+    }));
+    return JSON.stringify({
+      rail: bg(railEl),
+      idle: bg(idleEl),
+      current: bg(currentEl),
+      row: bg(rowEl),
+      idleShadow: idleEl ? getComputedStyle(idleEl).boxShadow : null,
+      currentShadow: currentEl ? getComputedStyle(currentEl).boxShadow : null,
+      gradients: (image.match(/radial-gradient/g) ?? []).length,
+      centres,
+    });
+  })()`);
+  console.log('light skin:', skin);
+  const sk = JSON.parse(skin ?? '{}');
+  if (!sk.rail || !sk.idle || !sk.current) {
+    throw new Error(`the rail's cards are not all on screen: ${JSON.stringify(sk)}`);
+  }
+  // Three rungs, and the idle card must not be the rail's own colour — that is
+  // the whole "session card" look, and it is exactly what was missing.
+  if (sk.idle === sk.rail) {
+    throw new Error(`an idle session card is painted the rail's own colour (${sk.idle}), so there are no cards`);
+  }
+  if (sk.current === sk.idle) {
+    throw new Error(`the current session card is not lifted above an idle one (both ${sk.idle})`);
+  }
+  // The lift itself: only the current card floats. An idle card carrying a
+  // shadow is the inverse error — every row competing for the same emphasis.
+  if (sk.idleShadow !== 'none') {
+    throw new Error(`an idle session card carries a shadow (${sk.idleShadow})`);
+  }
+  if (!sk.currentShadow || sk.currentShadow === 'none') {
+    throw new Error('the current session card is not lifted');
+  }
+  // The workspace row is a card too, on the same surface as the active one —
+  // it used to be an accent wash, i.e. the only green rectangle in the rail.
+  if (sk.row !== sk.current) {
+    throw new Error(`the workspace row is not on the card surface: ${sk.row} vs ${sk.current}`);
+  }
+  // Both halos, each centred inside the element. A centre outside it means the
+  // visible part is only the falloff, which reads as "no gradient" at these
+  // alphas.
+  if (sk.gradients !== 2) throw new Error(`expected 2 canvas gradients, got ${sk.gradients}`);
+  if (sk.centres.length !== 2) {
+    throw new Error(`could not read the gradients' centres: ${sk.centres.length}`);
+  }
+  for (const c of sk.centres) {
+    if (!(c.x >= 0 && c.x <= 100 && c.y >= 0 && c.y <= 100)) {
+      throw new Error(`a halo is centred outside the window (${c.x}%, ${c.y}%), so only its edge shows`);
+    }
+  }
+
   // The **light** shot is the one worth keeping, and it is the one this check
   // used to throw away: it switched the media feature, asserted the attribute,
   // and then switched back before capturing. The paint is exactly what an
