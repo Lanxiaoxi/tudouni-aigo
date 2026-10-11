@@ -142,6 +142,7 @@ export function StatusBar() {
   const hasSpoken = useSessionField((rt) => rt.hasSpoken, false);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
   const openPanel = useApp((s) => s.openPanel);
+  const requestBlock = useApp((s) => s.requestBlock);
   const setAutopilot = useApp((s) => s.setAutopilot);
   const toggleQuiet = useApp((s) => s.toggleQuiet);
   const toggleTerminalView = useApp((s) => s.toggleTerminalView);
@@ -308,17 +309,28 @@ export function StatusBar() {
             amount only — a wrong percentage is worse than no percentage. The
             context layer's local estimate is a *different fact* and gets its
             own chip below; showing it here would label an estimate as a
-            measurement. */}
+            measurement.
+
+            A button, not a read-only chip: pressing it asks the runtime for the
+            same `/context` block the palette's command does — one control with
+            two entrances, the same rule as the audit chip at the far end.
+            Disabled while no prompt has been measured, so the click can never
+            be a lie. */}
         <Tip
           label={
             usage.used === null
               ? t('status.contextNoPrompt')
               : usage.window === null
                 ? t('status.contextUnknown', { used: formatTokens(usage.used) })
-                : `${formatTokens(usage.used)} / ${formatTokens(usage.window)} tok`
+                : `${formatTokens(usage.used)} / ${formatTokens(usage.window)} tok · ${t('cmd.context.desc')}`
           }
         >
-          <span className="st-chip hide-b980">
+          <button
+            type="button"
+            className="st-toggle hide-b980"
+            onClick={() => requestBlock('context')}
+            disabled={usage.used === null}
+          >
             <Gauge size={11} />
             <span className="st-metric">
               {usage.used === null
@@ -327,7 +339,7 @@ export function StatusBar() {
                   ? formatTokens(usage.used)
                   : `${formatPercent(usage.percent)} · ${formatTokens(usage.used)}`}
             </span>
-          </span>
+          </button>
         </Tip>
 
         {/* The context ledger's own estimate. Labelled as an estimate and never
