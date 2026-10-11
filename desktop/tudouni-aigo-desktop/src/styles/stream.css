@@ -1335,17 +1335,35 @@
 /* The row is a wrapper (the session card + the two per-row actions beside it).
    The **card** owns the surface and the hover, not the wrapper: a wrapper that
    painted too would draw a second rectangle around the card's rounded one. It
-   stays a plain flex row, which is also what lets the rule below lift the card
-   when the pointer is anywhere on the row — including over the revealed
-   buttons, which sit outside the card. */
+   stays a plain flex row, and the rule below lifts the card when the pointer is
+   anywhere on the row — including over the revealed buttons.
+
+   **The actions are positioned against this box, not laid out inside it.** As a
+   flex item the column took 26px of the row (a 22px button plus its margin) and
+   the card absorbed the loss: measured, the card was 201px against the
+   workspace row's 227px, so the two lists had different right edges and the
+   session cards looked outdented. `position: relative` here is what lets the
+   column be anchored to the row's edge instead of shrinking the card. */
 .lb-session-wrap {
   display: flex;
   align-items: stretch;
+  position: relative;
 }
 
 .lb-session-wrap .lb-session {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* A saved row wears the actions; a live row (`lb-live-rows`) has none at all,
+   and `:has` is what tells them apart without a second class in the markup.
+   The reserved band is the **card's own padding**, which is what makes the
+   card's outer box reach the same edge as the workspace row's while the text
+   inside it keeps exactly the width it had when the buttons were a flex item:
+   8px of padding + the 22px button + its 4px margin = 34px, so the text still
+   stops at 201px and the buttons still land on 209..231. */
+.lb-session-wrap:has(.lb-session-actions) .lb-session {
+  padding-right: calc(var(--space-2) + 22px + var(--space-1));
 }
 
 .lb-session-wrap:hover .lb-session:not(.is-current):not(:disabled) {
@@ -1519,18 +1537,32 @@
    own hover/focus-within rule (`.lb-session-wrap:hover .lb-row-action`), so the
    pair appears and hides together, as one affordance.
 
-   **Outside the card's border, not inside it.** The card now carries a real
-   border, and a hover-revealed button punched through its edge would clip
-   against the card's corner radius — so the column floats free of the wrap's
-   edge with its own negative margin, keeping the buttons inside the rail's
-   gutter where the rail's padding (`--space-2`) already left room. */
+   **Outside the card's border, not inside it.** The card carries a real border,
+   and a hover-revealed button punched through its edge would clip against the
+   card's corner radius — so the column is **absolutely positioned** against the
+   wrapper (which is `position: relative`) rather than being a flex item, and
+   sits in the rail's own gutter.
+
+   It has to come out of the flex flow, and that is a measured decision, not a
+   stylistic one: as a flex item it took 26px of the row and the card paid for
+   it — 201px against the workspace row's 227px, which is the two lists having
+   different right edges. `right: 0` anchors it to the wrapper's edge, so the
+   card's own box reaches that edge too; the card reserves the same 26px inside
+   its padding instead (see `.lb-session-wrap:has(...)` above), so no text moves.
+
+   `top: 50%`/`translateY(-50%)` centres the pair without `align-self`, which
+   only has meaning for a flex item. `right` keeps the 4px the column used to
+   carry as `margin-right`, so the buttons land on exactly the pixels they did
+   before this change (209..231) and stay clear of the scrollbar's gutter. */
 .lb-session-actions {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
-  align-self: center;
-  margin-right: var(--space-1);
 }
 
 .lb-session-actions > .lb-row-action {

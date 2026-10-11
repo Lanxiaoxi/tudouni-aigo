@@ -2046,6 +2046,13 @@ async function main() {
   //
   // So what is asserted is *depth* (three surfaces, strictly ordered) and
   // *geometry* (each gradient's centre is inside the box that paints it).
+  //
+  // And a third, added after a report: the two lists in this rail must share a
+  // **right edge**. The saved rows carry a hover-revealed actions column beside
+  // the card, and as a flex item that column took 26px of the row and the card
+  // paid for it — 201px against the workspace row's 227px, so the session cards
+  // were visibly outdented from everything above them. Both rows existed and
+  // both carried the right text, which is why nothing here noticed.
   const skin = await evaluate(`(() => {
     const q = (s) => document.querySelector(s);
     const bg = (el) => (el ? getComputedStyle(el).backgroundColor : null);
@@ -2063,6 +2070,10 @@ async function main() {
       x: Number(m[1]),
       y: Number(m[2]),
     }));
+    // The right edges of the two rows that must line up. Rounded to whole
+    // pixels: the columns are all integers here, and a sub-pixel difference is
+    // not what anyone can see.
+    const right = (el) => (el ? Math.round(el.getBoundingClientRect().right) : null);
     return JSON.stringify({
       rail: bg(railEl),
       idle: bg(idleEl),
@@ -2074,6 +2085,7 @@ async function main() {
       currentShadow: currentEl ? getComputedStyle(currentEl).boxShadow : null,
       gradients: (image.match(/radial-gradient/g) ?? []).length,
       centres,
+      rightEdges: { workspace: right(rowEl), saved: right(idleEl), live: right(currentEl) },
     });
   })()`);
   console.log('light skin:', skin);
@@ -2122,6 +2134,30 @@ async function main() {
     if (!(c.x >= 0 && c.x <= 100 && c.y >= 0 && c.y <= 100)) {
       throw new Error(`a halo is centred outside the window (${c.x}%, ${c.y}%), so only its edge shows`);
     }
+  }
+  // ---- the two lists share a right edge ----
+  //
+  // The workspace row and a saved session card are the rail's two kinds of row
+  // and they sit one above the other, so their right edges have to agree. The
+  // saved row's actions column is what broke this: as a flex item it took 26px
+  // and the card shrank to 201px against 227px above it. A tolerance of 1px,
+  // because these are rounded to whole pixels and nothing here is fractional.
+  const re = sk.rightEdges ?? {};
+  if (re.workspace === null || re.saved === null || re.live === null) {
+    throw new Error(`could not measure the rail's row edges: ${JSON.stringify(re)}`);
+  }
+  if (Math.abs(re.workspace - re.saved) > 1) {
+    throw new Error(
+      `the session card's right edge (${re.saved}) does not line up with the workspace row's (${re.workspace})`,
+    );
+  }
+  // And the live row has no actions of its own, so it must agree too — it is
+  // the control for the rule: if this one drifts, the reservation is being
+  // applied to a row that has nothing to reserve for.
+  if (Math.abs(re.workspace - re.live) > 1) {
+    throw new Error(
+      `the live session card's right edge (${re.live}) does not line up with the workspace row's (${re.workspace})`,
+    );
   }
 
   // The **light** shot is the one worth keeping, and it is the one this check
