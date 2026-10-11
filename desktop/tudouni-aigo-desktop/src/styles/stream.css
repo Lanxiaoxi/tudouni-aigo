@@ -2314,7 +2314,14 @@
   box-shadow: 0 0 0 3px var(--warning-subtle);
 }
 
-.board-col-dot.is-unseen,
+/* Finished. The rail's own `is-unseen` blue (`--info`), not the faint grey Idle
+   uses: a column head carries no words about *why* it is empty, so sharing
+   `--fg-faint` with Idle made the one column that means "it stopped and you
+   have not looked" indistinguishable from the one that means "nothing here". */
+.board-col-dot.is-unseen {
+  background: var(--info);
+}
+
 .board-col-dot.is-idle {
   background: var(--fg-faint);
 }
