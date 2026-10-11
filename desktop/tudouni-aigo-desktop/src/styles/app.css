@@ -217,6 +217,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  /* Spare width is distributed **between the groups**, not left as one void
+     after the last one: a half-empty bar read as broken, and the void grew
+     every time a rail closed. When the groups overflow, spare width is zero
+     and this silently becomes the packed, scrolling row it always was. */
+  justify-content: space-between;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -299,12 +304,12 @@
              @provider, and the on/off fact. What is left per group:
              the id, the model name, the **effort level** (the button
              stays — degraded, it is the thinking group's value), the
-             step cap. Thresholds sit low on purpose: the remaining
-             values are narrow, and a row that folded early would
-             leave the bar mostly empty.
+             step cap. The threshold is the measured width of the full
+             row (~890px) plus headroom, not a guess: below it the
+             full row genuinely cannot fit.
      tier 2  only when even that cannot fit, the two values that can
              be long (id, model name) gain an ellipsis. */
-@container sessionbar (max-width: 1020px) {
+@container sessionbar (max-width: 920px) {
   .sessionbar .sb-label {
     display: none;
   }
