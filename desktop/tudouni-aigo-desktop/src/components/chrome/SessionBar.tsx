@@ -210,13 +210,16 @@ export function SessionBar() {
 
         <div className="sb-group">
           <span className="sb-label">{t('session.thinking')}</span>
-          <Fact mono>
+          {/* Degraded, this group's value is the **effort level**, not on/off:
+              the level is the decision a reader acts on, and the effort button
+              stays as the row's control while this fact folds first. */}
+          <Fact mono className="sb-extra">
             {session.thinking ? t('session.thinkingOn') : t('session.thinkingOff')}
           </Fact>
           <Tip label={t('panel.effort.note')}>
             <button
               type="button"
-              className="btn btn-ghost btn-compact sb-extra"
+              className="btn btn-ghost btn-compact"
               onClick={() => openPanel('effort')}
             >
               <span className="faint">{t('session.effort')}</span>

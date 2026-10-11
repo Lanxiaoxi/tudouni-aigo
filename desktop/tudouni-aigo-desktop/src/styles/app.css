@@ -295,11 +295,15 @@
    the width the rails actually leave it, not the window's. All four
    groups stay on the row at every width; two tiers, and each group
    degrades inside itself:
-     tier 1  qualifiers go — the group labels, resumed/fresh,
-             @provider, the effort control. What is left is one value
-             per group: the id, the model name, on/off, the cap.
-     tier 2  the two values that can still be long (id, model name)
-             gain an ellipsis, so the row fits without scrolling. */
+     tier 1  the pure qualifiers go — group labels, resumed/fresh,
+             @provider, and the on/off fact. What is left per group:
+             the id, the model name, the **effort level** (the button
+             stays — degraded, it is the thinking group's value), the
+             step cap. Thresholds sit low on purpose: the remaining
+             values are narrow, and a row that folded early would
+             leave the bar mostly empty.
+     tier 2  only when even that cannot fit, the two values that can
+             be long (id, model name) gain an ellipsis. */
 @container sessionbar (max-width: 1020px) {
   .sessionbar .sb-label {
     display: none;
@@ -310,7 +314,7 @@
   }
 }
 
-@container sessionbar (max-width: 820px) {
+@container sessionbar (max-width: 680px) {
   .sessionbar .sb-id,
   .sessionbar .sb-model {
     display: inline-block;
