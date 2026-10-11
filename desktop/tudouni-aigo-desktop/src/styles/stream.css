@@ -636,7 +636,7 @@
 .md pre code {
   background: none;
   padding: 0;
-  color: #e2e8f0;
+  color: var(--terminal-fg);
 }
 
 .md blockquote {
@@ -1038,19 +1038,23 @@
   padding: var(--space-3);
 }
 
-/* The rail's primary action gets a soft accent fill instead of the shared
-   outline style: a pale accent tint (not a solid fill) keeps it light in both
-   themes, while the accent text/border tie it to the theme's green. */
+/* The rail's primary action takes the design's hero shape: solid emerald
+   gradient, white text, coloured drop shadow — the one loud element in the
+   rail, matching `.btn-primary`'s treatment. */
 .lb-new .btn-outline {
-  background: var(--accent-subtle);
-  border-color: var(--accent-border);
-  color: var(--accent);
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-accent);
 }
 
 .lb-new .btn-outline:hover:not(:disabled) {
-  background: var(--accent-subtle);
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--accent-grad);
+  border-color: transparent;
+  color: #ffffff;
+  filter: brightness(1.06);
 }
 
 /* The one icon-button shape in the rail: a real 24px target, and a visible
@@ -1324,10 +1328,16 @@
   cursor: default;
 }
 
+/* Current session = design's "Session Card — Active": a lifted white card with
+   a green ring + coloured shadow (ring via 0 0 0 1px so no border shifts the
+   box model). Replaces the old inset accent bar. */
 .lb-session.is-current {
-  background: var(--accent-subtle);
+  background: var(--bg-card);
   color: var(--fg);
-  box-shadow: inset 2px 0 0 var(--accent);
+  border-radius: var(--radius-md);
+  box-shadow:
+    0 0 0 1px var(--accent-border-strong),
+    var(--shadow-card-active);
 }
 
 .lb-session .lb-session-top {

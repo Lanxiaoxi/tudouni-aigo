@@ -125,7 +125,12 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  background: var(--bg);
+  /* Aurora 光晕：右上绿 + 左下暖橙，两团极淡 radial 渐变铺在画布上，
+     侧栏 / 面板自带不透明底会自然盖住自己那一侧。纯背景装饰，不参与布局。 */
+  background:
+    radial-gradient(1100px 760px at 82% -18%, var(--halo-green), transparent 62%),
+    radial-gradient(900px 640px at -12% 112%, var(--halo-warm), transparent 62%),
+    var(--bg);
 }
 
 .app-main {
