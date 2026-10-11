@@ -176,13 +176,16 @@
 }
 
 /* ---------------- §1·2 会话栏 ---------------- */
+/* It is **`.app-conversation`'s** header, drawn inside it so the two sidebars
+   reach the top of this row: the facts on this bar name the conversation on
+   screen, and the rails beside it have their own heads. */
 .sessionbar {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   height: 34px;
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
   background: var(--bg-secondary);
   overflow-x: auto;
@@ -236,15 +239,10 @@
   color: var(--fg);
 }
 
-.sessionbar .sb-right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: none;
-}
-
-/* 权限状态：只读事实展示，非控件 */
+/* The permission statement's dashed chip. Nowhere on this bar any more: the
+   statement lives where the rail it belongs to renders it — the collapsed
+   summary and the SettingsPanel — and a dashed edge outlived the row that
+   carried it. Kept for whichever surface borrows the shape next. */
 .perm-scope {
   display: inline-flex;
   align-items: center;

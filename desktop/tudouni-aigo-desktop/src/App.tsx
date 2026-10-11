@@ -161,7 +161,6 @@ export function App() {
       <div className={`app${dragging ? ' is-dragging' : ''}`}>
         <TitleBar />
         <TopBar />
-        <SessionBar />
         {/* Folded rather than conditionally rendered, like the rails: the row
             replaces the right rail, so having the rail slide away while this
             snapped into existence read as two unrelated events. `inert` while
@@ -199,7 +198,14 @@ export function App() {
               The status bar is deliberately *not* in here: it reports on the
               whole application (phase, autopilot, usage, the audit log), not on
               this column, so it stays a sibling and spans the window. */}
+          {/* The session bar is **the conversation column's** header, not the
+              window's. Every fact on it names the conversation on screen — with
+              several sessions open the rail heads next to it name theirs, and a
+              window-wide bar read all four columns as one session's. Its width
+              follows `.app-conversation`, so the two sidebars reach the top of
+              this row; the facts they would have shown are theirs to draw. */}
           <div className="app-conversation">
+            <SessionBar />
             <main className="app-stream">
               {/* Six occupants, one order, and **the order is the decision** —
                   see `conversationView.ts`, where it is written down and

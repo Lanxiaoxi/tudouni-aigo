@@ -138,7 +138,8 @@ async function main() {
     throw new Error('with no session attached the UI should show the first screen');
   }
 
-  // ---- 1b. the conversation column owns the composer, the status bar spans the window ----
+  // ---- 1b. the conversation column owns the composer AND the session bar;
+  //          the status bar spans the window ----
   //
   // A layout is not testable by asserting that elements exist — they all existed
   // in the old shape too. What has to be asserted is the *relationship*: which
@@ -153,6 +154,9 @@ async function main() {
     const box = (el) => { const r = el?.getBoundingClientRect(); return r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } : null; };
     const convBox = box(conv);
     const statusBox = box(sb);
+    const sessionBar = q('.sessionbar');
+    const leftTop = Math.round(q('.lb-head')?.getBoundingClientRect().top ?? -1);
+    const rightTop = Math.round(q('.rb-head')?.getBoundingClientRect().top ?? -1);
     return JSON.stringify({
       // The composer must be a descendant of the conversation column, and NOT a
       // direct child of the shell — that is the whole change.
@@ -165,6 +169,16 @@ async function main() {
       statusAfterMain: !!(main && sb && (main.compareDocumentPosition(sb) & Node.DOCUMENT_POSITION_FOLLOWING)),
       // And it must not be inside the conversation column.
       statusInConversation: !!conv?.querySelector('.statusbar'),
+      // The session bar is the **conversation column's** header: a direct child
+      // of the column, NOT of the shell. A window-wide bar read every rail as
+      // one conversation's facts and stopped the rails from reaching this row.
+      sessionbarIsShellChild: !!q('.app > .sessionbar'),
+      sessionbarInConversation: !!conv?.querySelector(':scope > .sessionbar'),
+      sessionbarBox: box(sessionBar),
+      // With the bar inside the column, both rail heads and it share one band:
+      // their tops agree, which is what alignments across a rail boundary need.
+      leftTop,
+      rightTop,
       convBox,
       statusBox,
       viewportW: window.innerWidth,
@@ -188,10 +202,37 @@ async function main() {
   if (L.statusInConversation) {
     throw new Error('the status bar moved into the conversation column instead of spanning the window');
   }
+  if (L.sessionbarIsShellChild) {
+    throw new Error("the session bar is still a window-spanning row: it should be the conversation column's header");
+  }
+  if (!L.sessionbarInConversation) {
+    throw new Error("the session bar is not the conversation column's header");
+  }
   // The status bar spans the whole window, so it starts at x=0 and is as wide as
   // the viewport — the rails must not extend past it to the bottom.
   if (L.statusBox && (L.statusBox.x !== 0 || L.statusBox.w !== L.viewportW)) {
     throw new Error(`the status bar does not span the window: ${JSON.stringify(L.statusBox)} of ${L.viewportW}px`);
+  }
+  // The session bar is the conversation column's own header: exactly as wide as
+  // the column — not the window — so the two sidebars reach the top of this row.
+  if (L.sessionbarBox && L.convBox) {
+    if (Math.abs(L.sessionbarBox.w - L.convBox.w) > 1) {
+      throw new Error(`the session bar is not the conversation column's width: bar ${L.sessionbarBox.w}, column ${L.convBox.w}`);
+    }
+    if (Math.abs(L.sessionbarBox.x - L.convBox.x) > 1) {
+      throw new Error(`the session bar's left edge is not the column's: ${L.sessionbarBox.x} vs ${L.convBox.x}`);
+    }
+  }
+  // One band across the conversation row: the two rail heads and the session bar
+  // start at the same y. A head taller than its neighbours shows as a step at the
+  // rail boundary — the exact failure the band check below watches for.
+  if (L.sessionbarBox && L.leftTop >= 0 && L.rightTop >= 0) {
+    if (Math.abs(L.leftTop - L.rightTop) > 1) {
+      throw new Error(`the two rail heads do not share one band: left ${L.leftTop}, right ${L.rightTop}`);
+    }
+    if (Math.abs(L.sessionbarBox.y - L.leftTop) > 2) {
+      throw new Error(`the session bar and the rail heads are not on one band: bar ${L.sessionbarBox.y}, heads ${L.leftTop}`);
+    }
   }
   // The conversation column is above it, and together they close the height
   // budget: the composer sits inside the column, so column bottom == status top.
@@ -557,6 +598,13 @@ async function main() {
   if (!ai.welcome) throw new Error('a session with no conversation should show the first screen');
   if (!ai.sessionbar?.includes('deepseek-chat')) {
     throw new Error(`the session bar did not pick up the model: ${ai.sessionbar}`);
+  }
+  // The permission statement moved out with the bar's demotion to a
+  // column-level header: it named the sidebar's disposition, and the collapsed
+  // summary + the SettingsPanel are its homes now. A leftover "asks on" here
+  // would be a second copy of the runtime's judgement.
+  if (ai.sessionbar?.includes('asks on')) {
+    throw new Error(`the session bar still draws the permission statement: ${ai.sessionbar}`);
   }
 
   // ---- the left rail: workspaces and sessions ----

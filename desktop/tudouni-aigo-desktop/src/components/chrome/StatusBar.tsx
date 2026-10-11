@@ -158,9 +158,8 @@ export function StatusBar() {
   // selectUsage(s, key))` never compares equal: the store re-renders forever,
   // React gives up with "Maximum update depth exceeded", and the error boundary
   // takes the whole tree down — the window renders nothing at all. The rule is
-  // the one `store.ts` states above `selectAskOn`, and the three other call
-  // sites that need it (`CollapsedSummary`, `SessionBar`, `EffortPanel`) already
-  // follow it.
+  // the one `store.ts` states above `selectAskOn`, and the other call sites
+  // that need it (`CollapsedSummary`, `EffortPanel`) already follow it.
   const usage: UsageView = useApp(useShallow((s) => selectUsage(s, key)));
 
   // "Never spoken" and "idle" are two different labels.

@@ -10,8 +10,10 @@ import { formatPath } from '@/utils/format';
  * Narrow windows may drop the right-hand side; the brand never shrinks.
  *
  * The left rail's toggle is **not** here — it lives in the session bar, to the
- * left of the "Session" label, which is where the rail it folds begins. See
- * `SessionBar` for why it has to be outside the rail itself.
+ * left of the "Session" label. That bar is now the conversation column's own
+ * header (see `SessionBar`), which puts the toggle at the top of the very
+ * column the checkbox folds — the window's own bars keep only window-level
+ * facts. See `SessionBar` for why it has to be outside the rail itself.
  *
  * There is no language switch here: the interface is English only, matching the
  * runtime, and the protocol carries no locale to switch to.
