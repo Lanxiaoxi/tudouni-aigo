@@ -1168,6 +1168,20 @@ table.table td.mono {
   cursor: not-allowed;
 }
 
+/* 子页的返回行：贴列表头、弱化，读作路径而非动作。 */
+.plus-item-back {
+  color: var(--fg-faint);
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  margin-bottom: var(--space-1);
+  padding-bottom: 8px;
+}
+
+.plus-item-back:hover:not(:disabled) {
+  background: transparent;
+  color: var(--fg);
+}
+
 .plus-item-label {
   flex: 1 1 auto;
   min-width: 0;
