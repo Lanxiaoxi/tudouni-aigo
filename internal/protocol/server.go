@@ -1022,6 +1022,14 @@ func (s *Server) archiveSession(message map[string]any) {
 		return
 	}
 
+	// Wait the turn out before touching metadata, the way `deleteSession` waits
+	// before touching the file. The id being archived is often the *mounted*
+	// session — the desktop's card menu sends it through that session's own
+	// child — and the agent appends to this same file between steps, so a
+	// mid-turn rewrite would race the writer. With no turn running this is a
+	// no-op: `turnDone` is already closed.
+	s.joinTurn()
+
 	if err := s.bootstrap.ArchiveSession(sessionID, archived); err != nil {
 		s.notice("warn", "session", i18n.T("channels.session.archive_failed",
 			"name", sessionID, "problem", err.Error()))

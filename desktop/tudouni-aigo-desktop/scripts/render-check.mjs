@@ -767,8 +767,15 @@ async function main() {
   if (!bt.rightHead.includes('Session runtime')) {
     throw new Error(`the right rail's head does not name the rail: "${bt.rightHead}"`);
   }
-  if (!bt.rightHeadMark) {
-    throw new Error('the right rail\'s head has no mark, so the two heads do not read as a pair');
+  // **No mark here, and that is deliberate** (`708a168` removed the Logo from
+  // this head and said so in its comment: the rail's name in words is all this
+  // rail needs). The assertion below held the *opposite* for a while — it
+  // originally paired with the mark's introduction (`826434d`) and was never
+  // turned around when the mark left, so every run failed here and none of the
+  // checks after it ran. The probe stays so the flip is cheap if the head's
+  // shape changes again.
+  if (bt.rightHeadMark) {
+    throw new Error('the right rail\'s head still carries the app mark that was deliberately removed');
   }
   if (bt.rightHeadInScroller) {
     throw new Error('the right rail\'s head is inside the scrolling region: the goal text will push it off');
@@ -1224,9 +1231,11 @@ async function main() {
   })()`);
   console.log('sidebar:', sidebar);
   const sb = JSON.parse(sidebar ?? '{}');
-  // Five blocks, in the fixed order.
-  if (sb.blockCount !== 5) throw new Error(`expected 5 sidebar blocks, got ${sb.blockCount}`);
-  const expected = ['Goal', 'Tasks', 'Loaded skills', 'Background jobs', 'MCP'];
+  // Six blocks, in the fixed order. **SSH is the sixth** (see the Sidebar's own
+  // order comment): a display-only block added after this probe was written,
+  // which is why the count check below used to read five.
+  if (sb.blockCount !== 6) throw new Error(`expected 6 sidebar blocks, got ${sb.blockCount}`);
+  const expected = ['Goal', 'Tasks', 'Loaded skills', 'Background jobs', 'MCP', 'SSH sessions'];
   if (JSON.stringify(sb.titles) !== JSON.stringify(expected)) {
     throw new Error(`block order/titles wrong: ${JSON.stringify(sb.titles)}`);
   }

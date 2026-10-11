@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { ChevronRight, FileJson, FileText, FolderPlus, Folder, LayoutGrid, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ChevronRight, FileJson, FileText, FolderPlus, Folder, LayoutGrid, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
   railBlocked,
   selectLiveOnlyKey,
+  selectLiveSessionIdsKey,
   selectRowStatusKey,
   selectSavedSessions,
   selectWorkspaceAttentionKey,
@@ -105,6 +106,25 @@ export function WorkspaceSidebar() {
   const activeKey = useApp((s) => s.activeKey);
   const requestSessionList = useApp((s) => s.requestSessionList);
   const deleteSession = useApp((s) => s.deleteSession);
+  // The archive action, next to the rail row's delete. **The gate is the same
+  // one the library's row disables by** — a session a live child of this end is
+  // holding cannot be archived, because the runtime would rewrite its metadata
+  // under that writer (`archiveSession` refuses it again as a backstop; the
+  // button just makes the refusal visible with a tooltip instead of hidden).
+  // Archive is one press against the delete's two, because it is reversible —
+  // pressing it from the rail of a past workspace is the point of having it
+  // there.
+  //
+  // The compact key, not a Set selector: `selectLiveSessionIds` builds a fresh
+  // Set on every call, and that unstable snapshot is exactly what looped the
+  // library into "Maximum update depth exceeded" (see its comment). The key is
+  // a stable primitive; the Set is derived in `useMemo`.
+  const archiveSession = useApp((s) => s.archiveSession);
+  const liveIdsKey = useApp(selectLiveSessionIdsKey);
+  const liveIds = useMemo(
+    () => new Set(liveIdsKey === '' ? [] : liveIdsKey.split('\u0001')),
+    [liveIdsKey],
+  );
   // The session list folds on its own; the workspace list above it does not
   // follow, because "where am I" must survive folding the conversation list.
   const sessionsCollapsed = useApp((s) => s.sessionsCollapsed);
@@ -595,33 +615,78 @@ export function WorkspaceSidebar() {
                             </span>
                           </span>
                         </button>
-                        {/* Delete the file, not the row: the runtime waits for the
-                            running turn, then re-sends the list. No optimistic
-                            removal — the row goes when the runtime says so. Two
-                            presses, because a delete cannot be undone. */}
-                        <Tip label={armed ? t('lb.deleteConfirm') : t('lb.deleteSession')}>
-                          <button
-                            type="button"
-                            className={`lb-icon lb-row-action${armed ? ' is-armed' : ''}`}
-                            aria-label={
-                              armed ? t('lb.deleteConfirm') : t('lb.deleteSession')
+                        {/* The two per-row actions, **stacked** in a column at
+                            the wrap's right edge: archive on top, delete under
+                            it — the deliberate one above the irreversible one,
+                            on both screens that offer the pair (this rail and
+                            the board's menu). Both are `lb-row-action`s, so the
+                            hover/focus reveal and the armed styling are the
+                            wrap's existing rules applied twice, not a second
+                            mechanism; the column only arranges them.
+                            Archive is one press because it is reversible; the
+                            label carries what the next press will do
+                            ("Unarchive" on an archived row), which is also what
+                            makes an archived row's button honest without an
+                            armed state of its own. Disabled for a live child —
+                            the same rule the library's rows disable by, shown
+                            by the tooltip (`archiveLive`) rather than hidden. */}
+                        <div className="lb-session-actions">
+                          <Tip
+                            label={
+                              liveIds.has(item.id)
+                                ? t('panel.resume.archiveLive')
+                                : item.archived
+                                  ? t('panel.resume.unarchive')
+                                  : t('panel.resume.archive')
                             }
-                            disabled={blockedByBoard}
-                            onClick={() => {
-                              if (armed) {
-                                setArmedDelete(null);
-                                deleteSession(item.id);
-                              } else {
-                                setArmedDelete(item.id);
-                              }
-                            }}
-                            onMouseLeave={() => {
-                              if (armedDelete === item.id) setArmedDelete(null);
-                            }}
                           >
-                            {armed ? <X size={12} /> : <Trash2 size={12} />}
-                          </button>
-                        </Tip>
+                            <button
+                              type="button"
+                              className="lb-icon lb-row-action"
+                              aria-label={
+                                item.archived
+                                  ? t('panel.resume.unarchive')
+                                  : t('panel.resume.archive')
+                              }
+                              disabled={blockedByBoard || liveIds.has(item.id)}
+                              onClick={() => archiveSession(item.id, !item.archived)}
+                            >
+                              {item.archived ? (
+                                <ArchiveRestore size={12} />
+                              ) : (
+                                <Archive size={12} />
+                              )}
+                            </button>
+                          </Tip>
+                          {/* Delete the file, not the row: the runtime waits
+                              for the running turn, then re-sends the list. No
+                              optimistic removal — the row goes when the runtime
+                              says so. Two presses, because a delete cannot be
+                              undone. */}
+                          <Tip label={armed ? t('lb.deleteConfirm') : t('lb.deleteSession')}>
+                            <button
+                              type="button"
+                              className={`lb-icon lb-row-action${armed ? ' is-armed' : ''}`}
+                              aria-label={
+                                armed ? t('lb.deleteConfirm') : t('lb.deleteSession')
+                              }
+                              disabled={blockedByBoard}
+                              onClick={() => {
+                                if (armed) {
+                                  setArmedDelete(null);
+                                  deleteSession(item.id);
+                                } else {
+                                  setArmedDelete(item.id);
+                                }
+                              }}
+                              onMouseLeave={() => {
+                                if (armedDelete === item.id) setArmedDelete(null);
+                              }}
+                            >
+                              {armed ? <X size={12} /> : <Trash2 size={12} />}
+                            </button>
+                          </Tip>
+                        </div>
                       </div>
                     );
                   })}

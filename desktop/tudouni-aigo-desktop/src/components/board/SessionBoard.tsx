@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
-import { MessageCircleQuestion, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Archive, ArchiveRestore, MessageCircleQuestion, Trash2, X } from 'lucide-react';
 import {
   activeWorkspaceOf,
+  selectModalVisible,
   selectRowStatusKey,
   selectSavedSessions,
   useApp,
@@ -65,6 +66,68 @@ export function SessionBoard() {
   const setBoardOpen = useApp((s) => s.setBoardOpen);
   const focusSession = useApp((s) => s.focusSession);
   const activeKey = useApp((s) => s.activeKey);
+
+  /**
+   * The card context menu, open state.
+   *
+   * **It is hand-rolled, deliberately not a Radix popover**, for the same three
+   * reasons the board itself is a view and not a dialog: the board sits outside
+   * the Radix namespace this window's dialogs live in (`body`'s inherited
+   * `pointer-events: none` would not apply to it — the board is not inside a
+   * closed panel), and a context menu over a *view* needs coordinates, not
+   * anchoring. A fixed scrim closes it, which also folds "click elsewhere"
+   * and "scroll elsewhere" into one mechanism — plus an Escape that must be
+   * *heard before the board's own* Esc closes the whole view, which is why the
+   * listener below is a capture listener that stops propagation: the global
+   * window keydown (`useGlobalKeys`) is a bubble listener, and capture on
+   * window — the first handler in the path — takes the key out from under it.
+   */
+  const [menu, setMenu] = useState<
+    { key: string; id: string; archived: boolean; armed?: boolean; x: number; y: number } | null
+  >(null);
+
+  useEffect(() => {
+    if (menu === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // **A visible prompt is still above the menu.** The window's global
+      // handler answers Esc as modal → panel → board; the menu is a fourth,
+      // *underneath* the first. When a request is on screen it keeps its own
+      // Esc (its buttons are the answer), and the menu stays where it is.
+      if (selectModalVisible(useApp.getState())) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [menu]);
+
+  /**
+   * Run one menu act, routed through the card's own child.
+   *
+   * Every card here is a **live child**, and archive over an appender is the
+   * race the desktop's gate exists to prevent — so the store's gate would
+   * refuse every row this surface could name. That gate is not bypassed so
+   * much as *satisfied on the route*: the menu sends through the session's own
+   * connection (`via`), and the runtime — which has now seen this shape —
+   * **waits the mounted session's own turn out** (`Server.archiveSession` joins
+   * the turn, exactly as `deleteSession` always has) before rewriting the
+   * metadata. The holder's writes are quiesced by coupling them to the archive;
+   * any *other* holder is still refused by the store, as it always was.
+   *
+   * What this buys over closing the card first is the person's turn: a running
+   * session can be archived without ending its turn, and a delete travels one
+   * route with one answer. Delete keeps the two-press arm (first press only
+   * arms, see the item's own handler); archive is one press, as everywhere.
+   */
+  function menuAct(what: 'archive' | 'unarchive' | 'delete') {
+    if (menu === null) return;
+    const { key, id } = menu;
+    setMenu(null);
+    if (what === 'delete') useApp.getState().deleteSession(id, key);
+    else useApp.getState().archiveSession(id, what === 'archive', key);
+  }
 
   // Every live session, in the order the rail draws them. `order` is the store's
   // own list of child keys, so this is "the conversations that are open right
@@ -138,6 +201,10 @@ export function SessionBoard() {
             // shown as the card's one flag — the same word the session bar
             // uses (`session.fresh`), never a second vocabulary for it.
             fresh: bucket.session?.resumed === false,
+            // The saved row's own fact, carried whole: the menu's verb depends
+            // on it ("Archive" or "Unarchive"), and the saved list is already
+            // subscribed via `byId` — reading it here costs nothing.
+            archived: row?.archived ?? false,
           },
         ];
       }),
@@ -235,6 +302,28 @@ export function SessionBoard() {
                     onClick={() => {
                       focusSession(card.key);
                       setBoardOpen(false);
+                    }}
+                    // The card's third exit is a right-click: archive and
+                    // delete, on the card itself. Offered only when the card
+                    // names a session — a card still waiting for `init` has no
+                    // id, and a menu that names nothing is where a disabled
+                    // item goes to be ignored (the browser's default menu
+                    // simply stays).
+                    onContextMenu={(e) => {
+                      if (card.id === null) return;
+                      e.preventDefault();
+                      // Clamped so the menu never opens off the window edge:
+                      // ~the menu's own footprint in each axis.
+                      setMenu({
+                        key: card.key,
+                        id: card.id,
+                        archived: card.archived,
+                        // The delete item's two-press arm starts closed, like
+                        // the rail row's.
+                        armed: false,
+                        x: Math.min(e.clientX, window.innerWidth - 200),
+                        y: Math.min(e.clientY, window.innerHeight - 110),
+                      });
                     }}
                   >
                     <span className="board-card-top">
@@ -337,6 +426,66 @@ export function SessionBoard() {
           ))}
         </div>
       )}
+
+      {/* The card's context menu: fixed at the right-click's coordinates, over
+          a full-viewport scrim that folds "click elsewhere" into one mechanism.
+          **Act, don't gate**: every card is a live child, so a disabled archive
+          row here would be permanently disabled — the menu instead sends
+          through the card's own connection (`via`), which the runtime answers
+          by waiting that session's own turn out before rewriting. Two rows
+          only, with archive above delete — the same order the rail's stacked
+          buttons read; delete keeps its rail rule (two presses; the first only
+          arms, and leaves the menu up about it). */}
+      {menu !== null ? (
+        <div
+          className="board-menu-scrim"
+          onClick={() => setMenu(null)}
+          // A right-click on the scrim itself re-opens the browser's menu
+          // unless it is claimed here — and claiming it reads as "nothing
+          // here either", so it closes the menu instead.
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu(null);
+          }}
+        >
+          <div
+            className="board-menu"
+            role="menu"
+            aria-label={t('board.menu.title')}
+            style={{ left: menu.x, top: menu.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="board-menu-item"
+              onClick={() => menuAct(menu.archived ? 'unarchive' : 'archive')}
+            >
+              {menu.archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
+              {menu.archived ? t('panel.resume.unarchive') : t('panel.resume.archive')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className={`board-menu-item is-destructive${menu.armed ? ' is-armed' : ''}`}
+              aria-label={menu.armed ? t('lb.deleteConfirm') : t('lb.deleteSession')}
+              title={menu.armed ? t('lb.deleteConfirm') : t('board.menu.deleteArm')}
+              onClick={() => {
+                if (menu.armed) {
+                  menuAct('delete');
+                } else {
+                  // Arms, and stays: the next press is the delete. Anything
+                  // else — the scrim, Escape, another card — closes the menu
+                  // and disarms with it, so a stray first press costs nothing.
+                  setMenu({ ...menu, armed: true });
+                }
+              }}
+            >
+              {menu.armed ? <X size={13} /> : <Trash2 size={13} />}
+              {menu.armed ? t('lb.deleteConfirm') : t('board.menu.delete')}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1196,8 +1196,10 @@ export interface AppStore {
 
   requestSessionList(): void;
   /** Delete one saved session. The list updates when the runtime's next
-   *  `sessions` arrives — never on send (no optimistic removal). */
-  deleteSession(id: string): void;
+   *  `sessions` arrives — never on send (no optimistic removal). `via` names
+   *  the connection to send on, for a caller acting on a specific child (the
+   *  board's card menu) rather than on whichever conversation is focused. */
+  deleteSession(id: string, via?: string): void;
   /**
    * Archive or un-archive one saved session.
    *
@@ -1207,8 +1209,14 @@ export interface AppStore {
    * other connections. The action checks the `sessionId → key` index (this
    * end's own fact) and refuses; the caller is expected to have disabled the
    * control so the refusal is never the thing a person discovers by pressing.
+   *
+   * **The route is the exemption.** `via` names a connection to send through —
+   * the board's card menu sends through the holder itself, which is safe the
+   * other way: the runtime waits the *mounted* session's own turn out before
+   * rewriting (`Server.archiveSession` joins the turn), so that holder's writes
+   * are quiesced. Any *other* writer is still refused here.
    */
-  archiveSession(id: string, archived: boolean): void;
+  archiveSession(id: string, archived: boolean, via?: string): void;
   setAutopilot(on: boolean): void;
   chooseModel(model: string): void;
   chooseEffort(effort: string): void;
@@ -3580,9 +3588,12 @@ export const useApp = create<AppStore>((set, get) => {
       sendTo(key, { v: 1, t: 'session_list', filter: get().sessionFilter });
     },
 
-    deleteSession(id) {
+    deleteSession(id, via) {
       const s = get();
-      const key = s.activeKey;
+      // The default route is the focused child, as always; a caller that names
+      // `via` (the board's card menu) acts through that card's own connection —
+      // the process whose workspace the session file actually lives in.
+      const key = via ?? s.activeKey;
       if (key === null) return;
 
       // **Any other child holding this session is stopped first.** The runtime
@@ -3601,9 +3612,12 @@ export const useApp = create<AppStore>((set, get) => {
       sendTo(key, { v: 1, t: 'session_delete', session_id: id });
     },
 
-    archiveSession(id, archived) {
+    archiveSession(id, archived, via) {
       const s = get();
-      const key = s.activeKey;
+      // The default route is the focused child, as always; the board's card
+      // menu names the card's own connection, which is the one process whose
+      // workspace this session file actually lives in.
+      const key = via ?? s.activeKey;
       if (key === null) return;
 
       // **The one gate the runtime cannot keep.** "Do not archive a session a
@@ -3613,11 +3627,16 @@ export const useApp = create<AppStore>((set, get) => {
       // live child holds this id, and archiving would edit metadata under a
       // writer.
       //
-      // The control is expected to be disabled for such a row, so this is a
-      // backstop rather than the thing a person runs into. It is checked here as
-      // well because a disabled button is a claim about the state of the
-      // application, and this is the state it claims.
+      // **One route is exempt on purpose: the holder itself.** The runtime
+      // waits its *mounted* session's turn out before rewriting
+      // (`Server.archiveSession` joins the turn), so the holder's own writes are
+      // quiesced — coupling the next write to the archive instead of racing it.
+      // Any *other* holder is still a writer outside that wait, and the action
+      // refuses it. The controls disable for any live row, so the default path
+      // never files an archive under a holder; the exemption is what lets the
+      // card menu act on a card that is definitionally open.
       for (const other of s.order) {
+        if (other === via) continue;
         if (s.sessions[other]?.sessionId === id) return;
       }
 

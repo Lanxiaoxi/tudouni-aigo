@@ -1,8 +1,10 @@
 package protocol
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // archiveStub records what the archive hook was asked to do.
@@ -206,5 +208,85 @@ func TestTheListFilterIsRememberedForLaterResends(t *testing.T) {
 	}
 	if sawInclude[0] || sawInclude[1] {
 		t.Errorf("resend passed includeArchived=%v, want false — the view must persist", sawInclude[1])
+	}
+}
+
+// archiveTurnStub is a runtime whose turn the test holds in flight: RunTurn
+// blocks on a channel the test closes, so a Dispatch that joins the turn can be
+// observed to wait for it.
+type archiveTurnStub struct {
+	stubRuntime
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *archiveTurnStub) RunTurn(context.Context, string) (string, error) {
+	select {
+	case r.started <- struct{}{}:
+	default:
+	}
+	<-r.release
+	return "turn done", nil
+}
+
+// TestArchivingTheMountedSessionWaitsForTheTurn is the contract the delete path
+// has always had (`Server.deleteSession` joins the turn), now on the archive
+// side: the board's card menu sends `session_archive` through the *holder's own*
+// connection, so the runtime is the one that has to keep the metadata rewrite
+// off the appender — a turn in flight means the agent is appending to this same
+// session file between steps. The hook runs only once that turn has settled.
+func TestArchivingTheMountedSessionWaitsForTheTurn(t *testing.T) {
+	var out strings.Builder
+	archivedAt := make(chan struct{}, 1)
+	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{
+		ArchiveSession: func(id string, archived bool) error {
+			archivedAt <- struct{}{}
+			return nil
+		},
+	})
+	stub := &archiveTurnStub{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	server.Attach(stub)
+
+	server.startTurn("把重连修好")
+	select {
+	case <-stub.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the turn never started")
+	}
+
+	// The archive request arrives while the turn is running. Dispatch cannot
+	// return until the turn has (it joins the turn), so it runs on its own
+	// goroutine and the ordering is asserted through the channels.
+	done := make(chan struct{})
+	go func() {
+		server.Dispatch(map[string]any{
+			"v": VERSION, "t": InSessionArchive, "session_id": "s", "archived": true,
+		})
+		close(done)
+	}()
+
+	select {
+	case <-archivedAt:
+		t.Fatal("the archive hook ran while the turn was still in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// The turn settles, and only then is the metadata touched.
+	close(stub.release)
+	select {
+	case <-archivedAt:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the archive hook never ran after the turn settled")
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the archive Dispatch never returned")
+	}
+	if got := len(sessionNotices(sentMessages(t, &out))); got < 1 {
+		t.Errorf("sent %d session notices, want at least the archive confirmation", got)
 	}
 }

@@ -154,7 +154,7 @@ Rust 层刻意**只做字节搬运**：它把一行 JSON 原样交给 WebView，
 | `user_message` | `text` | 跑一个回合 |
 | `session_switch` | （`session_id` 可选） | **原地换会话，进程不动**。`session_id` 缺失/`null` = **新会话**（id 由运行时分配）；给了 id 但文件不存在**也算新会话**。<br>⚠️ **桌面端不再发这条消息**：它会让运行时重建自己并 `pending.abandonAll()`，而那正是"两个会话不能同时跑"的成因。桌面端的"换会话"现在是"聚焦另一个子进程"（不发消息）或"起一个新子进程"。协议保留它给 TUI 与 CLI，语义未变 |
 | `session_list` | `filter` 可选 | `"active"` / `"all"`，回答是 `sessions`。**缺省 = `all`**，而且缺省必须是 `all`：归档只受桌面端管理，TUI/CLI 没有解除归档的手段，默认过滤会让它们看到一份少了会话、却无从找回的清单。桌面端**显式**发 `active`（稳态），库打开时发 `all` |
-| `session_archive` | `session_id`, `archived`(bool) | **绝对状态，不是动作**（与 `set_*` 同一条规矩）：重发幂等，前端不必先知道当前值。它写的是会话文件 `meta` 记录里的一个键，处理完运行时**重发一份 `sessions`**。需要活着的子进程来发（与 `session_delete` 同构） |
+| `session_archive` | `session_id`, `archived`(bool) | **绝对状态，不是动作**（与 `set_*` 同一条规矩）：重发幂等，前端不必先知道当前值。它写的是会话文件 `meta` 记录里的一个键，处理完运行时**重发一份 `sessions`**。需要活着的子进程来发（与 `session_delete` 同构）。**运行时在写 metadata 前 join 等待中的回合**（与 `session_delete` 同一条纪律）——这使「经卡片自己的子进程连接归档一张还在跑的卡」成为安全动作（桌面端 store 的默认门禁不变，持有者本人经 `via` 路由豁免） |
 | `interrupt` | —— | 中断当前轮 |
 | `set_autopilot` | `on`(bool) | **绝对状态，不是开关动作**，幂等 |
 | `set_model` | `model` | 必须在 `init.model_catalog` 里，**精确匹配，不做模糊** |
