@@ -697,12 +697,12 @@ export function WorkspaceSidebar() {
         </section>
       </div>
 
-      {/* The settings affordance, at the foot of the rail rather than in the
-          command palette. Two reasons, and the second is the load-bearing one:
-          it sits next to the workspace list because what it holds is the same
-          kind of decision (what the runtime process is), and the workspace's own
-          two capabilities sit beside it for the same reason — where the runtime
-          works is one decision, and what it can do there is the next. */}
+      {/* The foot of the rail: a way out of the transcript, then the two
+          settings-shaped entries, in the order Files · Terminal · Board ·
+          Config · Settings. They are here rather than in the command palette
+          because they sit next to the workspace list and hold the same kind of
+          decision — where the runtime works, what it may do there, and what the
+          process itself is. */}
       <div className="lb-foot">
         {/* Files and Terminal. The design's left rail lists exactly these three
             (§20: Chat / Files / Terminal), and this build's "Chat" is the
@@ -753,18 +753,7 @@ export function WorkspaceSidebar() {
             <span>{t('board.title')}</span>
           </button>
         </Tip>
-        <Tip label={t('lb.settings')}>
-          <button
-            type="button"
-            className="lb-foot-btn"
-            disabled={blocked}
-            onClick={() => openPanel('settings')}
-          >
-            <Settings size={14} />
-            <span>{t('lb.settings')}</span>
-          </button>
-        </Tip>
-        {/* The configuration files, next to Settings and deliberately **not**
+        {/* The configuration files, above Settings and deliberately **not**
             inside it. Settings holds this session's start-up arguments, and
             changing one restarts a child; this edits the files that are read
             *when* a child starts, and what it writes outlives every session.
@@ -784,6 +773,17 @@ export function WorkspaceSidebar() {
           >
             <FileJson size={14} />
             <span>{t('lb.config')}</span>
+          </button>
+        </Tip>
+        <Tip label={t('lb.settings')}>
+          <button
+            type="button"
+            className="lb-foot-btn"
+            disabled={blocked}
+            onClick={() => openPanel('settings')}
+          >
+            <Settings size={14} />
+            <span>{t('lb.settings')}</span>
           </button>
         </Tip>
       </div>

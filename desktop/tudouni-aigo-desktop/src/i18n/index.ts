@@ -243,7 +243,7 @@ export const en = {
   'lb.refreshSessions': 'Re-read the session list',
   'lb.collapse': 'Hide this sidebar',
   'lb.settings': 'Settings',
-  /* The configuration files, beside Settings in the rail's foot. The tooltip
+  /* The configuration files, above Settings in the rail's foot. The tooltip
      says what the two are *apart* from each other, because the difference is the
      one thing a person needs to know before opening it: Settings is this
      session's start-up arguments, this is the file every session reads at open. */
