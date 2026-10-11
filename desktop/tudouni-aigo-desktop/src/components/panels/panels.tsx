@@ -967,7 +967,15 @@ export function TerminalPanel() {
           className="btn btn-outline btn-block"
           style={{ margin: '0 var(--space-3) var(--space-2)' }}
           disabled={pending.includes('new')}
-          onClick={() => createTerminal()}
+          onClick={() => {
+            createTerminal();
+            // Close immediately, like picking a row: the `terminal_created`
+            // reply attaches the view to the newest shell anyway, and a panel
+            // left open over that view would hide the thing that just changed.
+            // A refusal is not lost by this — `ui(terminals)` still releases
+            // the in-flight sentinel, and the panel can be opened again.
+            closePanel();
+          }}
         >
           <Plus size={13} />
           {t('panel.term.new')}
