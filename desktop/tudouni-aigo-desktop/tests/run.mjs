@@ -87,6 +87,11 @@ const SUITES = [
   // opening the panel to fix a key would create `mcp.json`. Neither is visible
   // in a rendered string — the screen looks identical either way.
   'user-config.test.ts',
+  // Which config fields wear the required marker, against which ones actually
+  // refuse the save. The two are the same list by construction and two lists in
+  // two files by accident, which is the drift this pins: a field with the wrong
+  // marker still works and still refuses correctly, and only its label is a lie.
+  'config-required.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

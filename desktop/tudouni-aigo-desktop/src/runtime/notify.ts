@@ -42,14 +42,28 @@
  * a notification from disagreeing with the dot beside it: there is one
  * definition of "needs you", and it is not restated here.
  *
+ * ## The click
+ *
+ * A toast that names a session is worth nothing if clicking it does not go
+ * there, so this module also holds the **destination** rule — which session a
+ * click should show — as a pure function, and the thin call that hands a
+ * finished sentence to the OS.
+ *
  * ## What is *not* here
  *
- * **No delivery of its own.** The OS handshake, the permission prompt and the
- * platform's own toast are `tauri-plugin-notification`'s; this module holds the
- * rule (pure, and tested) and the thin call that hands a finished sentence over.
- * Reimplementing delivery would be a second implementation of something that
- * already exists, and on Windows it would also mean owning the AppUserModelID
- * registration a toast needs to be attributed to an installed application.
+ * **No delivery of its own.** Showing the toast is Rust's (`notify_send` in
+ * `src-tauri/src/lib.rs`), which is a change from wrapping the notification
+ * plugin's JS directly and worth stating: the plugin reports nothing about a
+ * click on the desktop — its `notify` command drops the notification handle
+ * inside `show()`, and its own `onAction` is documented as mobile-only — so a
+ * toast that has to open its own session cannot be built on it. Windows
+ * therefore gets a toast built on the API *underneath* the plugin
+ * (`tauri-winrt-notification`, the same crate version notify-rust already pulls
+ * in), and everything else keeps the plugin's delivery unchanged.
+ *
+ * That also means the AppUserModelID question is answered in Rust rather than
+ * here, which is where it belongs: it is a fact about the executable and its
+ * installation, not about this window.
  */
 
 import { isHosted } from './tauri';
@@ -365,61 +379,94 @@ export function readNotifyEnabled(raw: unknown): boolean {
 }
 
 /* ============================================================
-   Delivery — the plugin's, wrapped once
+   The click — where a notification leads
    ============================================================ */
 
 /**
- * What the OS last said about permission.
+ * Which session a toast is about, as it travels to the operating system and back.
  *
- * Held in a module rather than in the store because it is not a fact this
- * application owns: it belongs to the operating system, it can be revoked
- * outside this program, and nothing in the interface is rendered from it except
- * the settings row, which asks for itself when it is opened.
- *
- * `'unknown'` is the honest starting value and not a stand-in for "denied". The
- * first send asks.
+ * **Read off the same three facts `NotifyRow` carries**, because the click has to
+ * arrive at the session the sentence named: `key` is the handle the front end
+ * addresses a session by, and the id and workspace are what reopening needs when
+ * that handle is gone.
  */
-let permission: 'unknown' | 'granted' | 'denied' = 'unknown';
-
-/** Whether permission has already been requested in this run. */
-let requested = false;
-
-/**
- * Ask the OS, once per run, and report what it said.
- *
- * **Once per run, deliberately.** The permission prompt is a modal owned by the
- * operating system; asking again after a refusal turns a notification feature
- * into something that interrupts on every turn, which is the opposite of what it
- * is for. A refusal therefore costs the notifications and nothing else — the
- * sessions, the dots and the board all still say what happened, exactly as they
- * did before this existed.
- *
- * `request: false` only **reads** the current state. The settings row uses that
- * on mount, so opening the panel never raises an OS dialog by itself.
- */
-export async function notificationPermission(request: boolean): Promise<'granted' | 'denied' | 'unknown'> {
-  if (!isHosted()) return 'unknown';
-  try {
-    const mod = await import('@tauri-apps/plugin-notification');
-    if (await mod.isPermissionGranted()) {
-      permission = 'granted';
-      return permission;
-    }
-    if (!request) return permission;
-    if (requested) return permission;
-    requested = true;
-    const answer = await mod.requestPermission();
-    permission = answer === 'granted' ? 'granted' : 'denied';
-    return permission;
-  } catch {
-    // The plugin is absent (a plain browser) or the OS refused to be asked. Not
-    // an error worth surfacing: it means no notifications, nothing more.
-    return permission;
-  }
+export interface NotifyTarget {
+  /** The bridge's child key. Empty only if the caller had none, which cannot
+   *  happen: a row without a key is dropped by `decodeNotifyRows`. */
+  key: string;
+  /** The runtime's session id, empty before the handshake has landed. */
+  sessionId: string;
+  /** The workspace this session is in, as the runtime named it. */
+  workspace: string;
 }
 
 /**
- * Send one notification.
+ * What clicking a notification should do.
+ *
+ * Three answers rather than two, because "the session this was about is gone"
+ * is a real case and the alternatives to naming it are both wrong: doing nothing
+ * when the session could be reopened loses the only thing the click promised,
+ * and focusing a key that no longer exists is a silent no-op that looks like the
+ * click was ignored.
+ */
+export type NotifyDestination =
+  | { kind: 'focus'; key: string }
+  | { kind: 'reopen'; sessionId: string; workspace: string }
+  | { kind: 'nothing' };
+
+/**
+ * Which session a click opens, given what is still open.
+ *
+ * **The live key wins, and it is not an optimisation.** Focusing a session that is
+ * still running is a local act that sends nothing (`focusSession`), and it also
+ * clears that session's `unseen` mark — the natural end of "it finished and I had
+ * not looked", which is one of the reasons a notification was sent at all.
+ * Reopening instead would spawn a second process on a session id that already has
+ * one, and `openSession` refuses that anyway, so the two paths would agree by
+ * accident rather than by construction.
+ *
+ * The reopen path exists for the case the notification outlives: a toast is at
+ * least as old as the transition that raised it, and somebody who reads it a
+ * minute later may have closed that conversation in between. `openSession`
+ * handles the rest — it focuses a child that already has that id, and starts one
+ * that does not.
+ *
+ * `nothing` is the honest answer when there is no live key **and** no id: a
+ * session whose `init` never landed has no saved conversation to reopen, and
+ * there is no key left to focus. Both fields empty is the only way to reach it.
+ *
+ * Pure, and takes the live keys rather than the store, so each of these cases can
+ * be asserted without a window — the same reason `isWatched` takes a plain
+ * object.
+ */
+export function notifyDestination(
+  target: NotifyTarget,
+  liveKeys: readonly string[],
+): NotifyDestination {
+  if (target.key !== '' && liveKeys.includes(target.key)) {
+    return { kind: 'focus', key: target.key };
+  }
+  if (target.sessionId !== '') {
+    return { kind: 'reopen', sessionId: target.sessionId, workspace: target.workspace };
+  }
+  return { kind: 'nothing' };
+}
+
+/* ============================================================
+   Delivery — Rust's, wrapped once
+   ============================================================ */
+
+/**
+ * The command that shows the toast, and answers whether a click can come back.
+ *
+ * It is the bridge's, not the plugin's, because only the bridge can hear the
+ * click — see the module header. The name is paired with `notify_send` in
+ * `src-tauri/src/lib.rs`.
+ */
+const NOTIFY_COMMAND = 'notify_send';
+
+/**
+ * Send one notification about one session.
  *
  * Returns whether it was delivered, so a caller can decide whether to mark the
  * notification as already sent. **A failure is never retried and never
@@ -428,19 +475,36 @@ export async function notificationPermission(request: boolean): Promise<'granted
  * would be a sentence about the conversation for something that is not part of
  * it.
  *
- * Permission is requested on the first send rather than at start-up, which is
- * the one behaviour worth arguing for: the OS dialog then appears at a moment
- * that explains itself (a session has just finished), instead of over the first
- * frame of an application the person is still reading.
+ * The target travels **with** the sentence rather than being looked up when the
+ * click arrives, and that is what makes the click work at all: by the time
+ * somebody clicks, the store may no longer hold that session — that is precisely
+ * the case `notifyDestination`'s reopen branch is for. It also keeps the payload
+ * the OS carries to three short strings and no conclusion: what a click *means*
+ * is decided here, at the moment it happens, against the sessions that exist
+ * then.
  */
-export async function sendNotification(content: NotifyContent): Promise<boolean> {
+export async function sendNotification(
+  content: NotifyContent,
+  target: NotifyTarget,
+): Promise<boolean> {
   if (!isHosted()) return false;
-  if ((await notificationPermission(true)) !== 'granted') return false;
   try {
-    const mod = await import('@tauri-apps/plugin-notification');
-    mod.sendNotification({ title: content.title, body: content.body });
+    await invokeNotify({
+      key: target.key,
+      sessionId: target.sessionId,
+      workspace: target.workspace,
+      title: content.title,
+      body: content.body,
+    });
     return true;
   } catch {
     return false;
   }
+}
+
+/** One IPC call, imported lazily like every other bridge call here — this module
+ *  is also loaded in a plain browser, where there is no IPC at all. */
+async function invokeNotify(content: Record<string, string>): Promise<void> {
+  const mod = await import('@tauri-apps/api/core');
+  await mod.invoke(NOTIFY_COMMAND, { content });
 }

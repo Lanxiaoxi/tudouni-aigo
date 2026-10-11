@@ -519,7 +519,7 @@ function RouteCard({
         <div>
           <div className="cfg-card-body">
             <div className="cfg-grid">
-              <Field label={t('panel.config.name')} hint={t('panel.config.nameHint')}>
+              <Field label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
                 <input
                   type="text"
                   className="cfg-input mono"
@@ -528,7 +528,7 @@ function RouteCard({
                   onChange={(e) => onChange({ name: e.target.value })}
                 />
               </Field>
-              <Field label={t('panel.config.baseUrl')}>
+              <Field label={t('panel.config.baseUrl')} required>
                 <input
                   type="text"
                   className="cfg-input mono"
@@ -655,7 +655,7 @@ function RouteCard({
                         </Tip>
                       </div>
                       <div className="cfg-grid">
-                        <Field label={t('panel.config.modelId')}>
+                        <Field label={t('panel.config.modelId')} required>
                           <input
                             type="text"
                             className="cfg-input mono"
@@ -830,7 +830,7 @@ function ServerCard({
         <div>
           <div className="cfg-card-body">
             <div className="cfg-grid">
-              <Field label={t('panel.config.name')} hint={t('panel.config.nameHint')}>
+              <Field label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
                 <input
                   type="text"
                   className="cfg-input mono"
@@ -871,7 +871,7 @@ function ServerCard({
 
             {remote ? (
               <div className="cfg-grid">
-                <Field label={t('panel.config.mcpUrl')}>
+                <Field label={t('panel.config.mcpUrl')} required>
                   <input
                     type="text"
                     className="cfg-input mono"
@@ -893,7 +893,7 @@ function ServerCard({
               </div>
             ) : (
               <div className="cfg-grid">
-                <Field label={t('panel.config.mcpCommand')}>
+                <Field label={t('panel.config.mcpCommand')} required>
                   <input
                     type="text"
                     className="cfg-input mono"
@@ -946,11 +946,46 @@ function ServerCard({
 
 /* ---------------- the small pieces ---------------- */
 
-/** One labelled control. `label` wraps the control, so the two are associated. */
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+/**
+ * One labelled control. `label` wraps the control, so the two are associated.
+ *
+ * `required` draws the asterisk, and **which fields carry it is not decided
+ * here**: they are exactly the ones whose emptiness comes back from
+ * `validateDraft` as a `blocking` problem, i.e. the ones that grey out Save. A
+ * marker keeping a list of its own would be wrong the first time the two
+ * drifted, and it is the kind of wrong nobody reports — the field still works,
+ * it just promises something else than the save button does.
+ *
+ * The word is written for the readers an asterisk never reaches: `sr-only` for a
+ * screen reader, and the same sentence as the tooltip. `title` rides on the
+ * asterisk rather than on the wrapper, so the control's accessible name stays
+ * "Model id Required" instead of picking up the whole sentence.
+ */
+function Field({
+  label,
+  hint,
+  required = false,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  required?: boolean;
+  children: ReactNode;
+}) {
+  const t = useT();
   return (
     <label className="cfg-field">
-      <span className="cfg-label">{label}</span>
+      <span className="cfg-label">
+        {label}
+        {required ? (
+          <>
+            <span className="cfg-required" aria-hidden title={t('panel.config.requiredHint')}>
+              *
+            </span>
+            <span className="sr-only">{t('panel.config.required')}</span>
+          </>
+        ) : null}
+      </span>
       {children}
       {hint ? <span className="cfg-hint">{hint}</span> : null}
     </label>

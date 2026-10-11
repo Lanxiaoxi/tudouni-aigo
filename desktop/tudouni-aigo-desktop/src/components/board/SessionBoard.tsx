@@ -273,7 +273,12 @@ export function SessionBoard() {
                     draws nothing for. */}
                 <BoardColDot status={column.statuses[0]} />
                 <span className="board-col-title">{t(column.title)}</span>
-                <span className="board-col-count">{column.cards.length}</span>
+                {/* The count wears the same state class as the dot beside it,
+                    so the head's number and its mark are one colour — see
+                    `statusClass` for why the mapping is not duplicated. */}
+                <span className={`board-col-count ${statusClass(column.statuses[0])}`}>
+                  {column.cards.length}
+                </span>
               </div>
               {/* **Creation order, never re-sorted by status.** The columns may
                   move a card between them — that is the board's whole value —
@@ -501,6 +506,26 @@ export function SessionBoard() {
 }
 
 /**
+ * The state → colour class map, shared by a column head's dot and its count.
+ *
+ * **One map, because the two marks in a head are one statement.** The count
+ * takes the dot's own token (`--accent` / `--warning` / `--info`, and the
+ * neutral `--fg-faint` Idle already uses — `stream.css`), so a second copy of
+ * this mapping could only ever disagree with the first: a green dot beside a
+ * grey number. Every state is spelled out; an `:not([class*=…])`-style rule
+ * would silently match whatever `RowStatus` is added next.
+ */
+function statusClass(status: RowStatus): string {
+  return status === 'broken' || status === 'asking'
+    ? 'is-asking'
+    : status === 'running'
+      ? 'is-running'
+      : status === 'unseen'
+        ? 'is-unseen'
+        : 'is-idle';
+}
+
+/**
  * The column head's status dot.
  *
  * **Not `SessionDot`.** The rail's component implements a contract the board's
@@ -513,15 +538,7 @@ export function SessionBoard() {
  */
 function BoardColDot({ status }: { status: RowStatus }) {
   // One class per state, including Idle: the column head always draws a mark,
-  // and an explicit class beats an absence-based CSS selector (`:not([class*=…])`
-  // would silently match any future state that forgot its own rule).
-  const cls =
-    status === 'broken' || status === 'asking'
-      ? 'is-asking'
-      : status === 'running'
-        ? 'is-running'
-        : status === 'unseen'
-          ? 'is-unseen'
-          : 'is-idle';
-  return <span className={`board-col-dot ${cls}`} aria-hidden />;
+  // and an explicit class beats an absence-based CSS selector (see
+  // `statusClass`), which is also what keeps the dot and the count in step.
+  return <span className={`board-col-dot ${statusClass(status)}`} aria-hidden />;
 }

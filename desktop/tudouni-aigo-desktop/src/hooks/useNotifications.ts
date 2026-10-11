@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { selectNotifyKey, selectSavedSessions, useApp } from '@/state/store';
-import { isHosted } from '@/runtime/tauri';
+import { isHosted, onNotifyActivated } from '@/runtime/tauri';
 import {
   decodeNotifySnapshot,
   notifyDecision,
   notifyContent,
+  notifyDestination,
   sendNotification,
   type NotifyReason,
 } from '@/runtime/notify';
@@ -26,6 +27,14 @@ import type { RowStatus } from '@/state/store';
  * What is left, and what this file is actually for, is the *transition*: a status
  * has no memory, and "it finished" is a change rather than a state. So the
  * previous observation is kept here, in a ref, keyed by child key.
+ *
+ * ## And the click back
+ *
+ * A notification is worth having only if acting on it is cheap, so this hook also
+ * listens for the click and shows the session it was about. Which session that is
+ * has been decided by then — the child may have been closed in the meantime — so
+ * it goes through `notifyDestination`, which is pure and asserted on its own, and
+ * then through the store's own `focusSession` / `openSession`.
  *
  * ## Why a `ref` and not state
  *
@@ -127,6 +136,44 @@ export function useNotifications(): void {
 
     seen.current = next;
   }, [key, enabled]);
+
+  // The click back: show the session the notification was about.
+  //
+  // Registered once, for the window, and reading the store through
+  // `getState()` rather than through a subscription — a click is a one-off act
+  // and nothing here is rendered, so there is nothing to re-render for. The
+  // children of this effect are empty, because the listener must outlive every
+  // store change; re-subscribing on each one would be a fresh listener per
+  // streamed token.
+  useEffect(() => {
+    return onNotifyActivated((activated) => {
+      const s = useApp.getState();
+      const destination = notifyDestination(
+        {
+          key: activated.key,
+          sessionId: activated.sessionId,
+          workspace: activated.workspace,
+        },
+        s.order.filter((entry) => s.sessions[entry] !== undefined),
+      );
+      if (destination.kind === 'focus') {
+        // The ordinary case, and the whole of what the click promised: the
+        // conversation is still open, so this also clears its `unseen` mark —
+        // see `focusSession`.
+        s.focusSession(destination.key);
+        return;
+      }
+      if (destination.kind === 'reopen') {
+        // The toast outlived the child it was about. `openSession` focuses a
+        // child that already has this id and starts one that does not, which is
+        // the same rule the saved-session list follows.
+        void s.openSession(destination.sessionId, destination.workspace);
+      }
+      // `nothing`: the session has no id to reopen and no key to focus — its
+      // `init` never landed. There is nowhere to go and no sentence worth
+      // showing for it, so the click closes over and does nothing.
+    });
+  }, []);
 }
 
 /**
@@ -141,6 +188,11 @@ export function useNotifications(): void {
  * The session's own workspace is the key, so the lookup is the same
  * `selectSavedSessions` the rail and the board use — one source for what a
  * session's preview is, rather than a second copy assembled here.
+ *
+ * The **target travels with the sentence**, so the click that comes back later
+ * does not have to find this session in a store that may no longer hold it. The
+ * workspace and the id are the same two facts the body names, which is what keeps
+ * a notification and the click on it from being about different sessions.
  */
 async function deliver(reason: NotifyReason, key: string, sessionId: string): Promise<void> {
   const s = useApp.getState();
@@ -158,5 +210,5 @@ async function deliver(reason: NotifyReason, key: string, sessionId: string): Pr
     sessionId,
     preview: row?.preview ?? '',
   });
-  await sendNotification(content);
+  await sendNotification(content, { key, sessionId, workspace });
 }

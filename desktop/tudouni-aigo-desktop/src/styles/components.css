@@ -1778,6 +1778,16 @@ table.table td.mono {
   color: var(--fg-secondary);
 }
 
+/* The asterisk on a field whose emptiness refuses the save.
+   Amber rather than the danger red: a box nobody has typed in yet is not an
+   error, and this panel does draw its errors in red — the blocking problems, at
+   the top of the body, on the way to a disabled Save — so a second red down here
+   would read as one of those. */
+.cfg-required {
+  margin-left: 2px;
+  color: var(--warning);
+}
+
 .cfg-hint {
   font-size: var(--text-caption);
   line-height: var(--leading-tight);

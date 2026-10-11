@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Archive, ArchiveRestore, ChevronRight, FileJson, FileText, FolderPlus, Folder, LayoutGrid, PanelLeftClose, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ChevronRight, FileJson, FileText, FolderPlus, Folder, LayoutGrid, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -129,12 +129,6 @@ export function WorkspaceSidebar() {
   // follow, because "where am I" must survive folding the conversation list.
   const sessionsCollapsed = useApp((s) => s.sessionsCollapsed);
   const toggleSessionsCollapsed = useApp((s) => s.toggleSessionsCollapsed);
-  // The **left** rail's setter. This button used to call `setSidebarVisible`,
-  // which is the right-hand rail's — so hiding the workspace list hid the goal /
-  // tasks / skills / jobs / MCP rail instead and left this one on screen. The two
-  // rails are deliberately separate preferences (`store.ts`), and this is exactly
-  // the mistake that separation is there to make impossible.
-  const setLeftbarVisible = useApp((s) => s.setLeftbarVisible);
   // The settings panel. It lives at the foot of this rail because what it holds
   // is the same kind of decision as the workspace above it — what the runtime
   // process *is* — rather than a per-turn control like the status bar's.
@@ -283,16 +277,6 @@ export function WorkspaceSidebar() {
       <div className="lb-head">
         <Logo size={20} title={t('app.name')} />
         <span className="lb-brand">{t('app.name')}</span>
-        <Tip label={t('lb.collapse')}>
-          <button
-            type="button"
-            className="lb-icon"
-            aria-label={t('lb.collapse')}
-            onClick={() => setLeftbarVisible(false)}
-          >
-            <PanelLeftClose size={15} />
-          </button>
-        </Tip>
       </div>
 
       <div className="lb-new">

@@ -6,9 +6,24 @@ import type { TKey } from '@/i18n';
 /**
  * §1·5 The collapsed summary row.
  *
- * One line standing in for the sidebar while it is hidden: which risks will be
- * asked about, background jobs, MCP, tasks, skills. Rendered only when the
- * sidebar is hidden, so the two never say the same thing twice.
+ * One line standing in for the right rail while it is folded: which risks will
+ * be asked about, background jobs, MCP, tasks, skills. Rendered only when that
+ * rail is folded, so the two never say the same thing twice.
+ *
+ * **It is the conversation column's second header, not a window-level strip.**
+ * It sits inside `.app-conversation`, directly under `.sessionbar`, so it is
+ * exactly as wide as the row above it — everything on it (jobs, MCP, tasks,
+ * skills) is a fact about the conversation beside it, and a bar spanning under
+ * both rails read as a third piece of window chrome belonging to no column.
+ *
+ * **There is no "Sidebar hidden" text and no `Show` button here any more.**
+ * Both existed to announce the fold and to undo it, and both were the second
+ * half of the mistake the two in-rail collapse buttons made: the row that
+ * replaces a rail is the *worst* place to put the control that brings it back,
+ * because it is only on screen once the rail is gone. The way back is the
+ * right-hand toggle at the trailing edge of `SessionBar`, which is on screen in
+ * both states. A row whose only job is the values keeps reading as a statement
+ * rather than as an apology for the missing rail.
  */
 export function CollapsedSummary() {
   const t = useT();
@@ -16,22 +31,12 @@ export function CollapsedSummary() {
   const snap = useSessionField((rt) => rt.uiState, null);
   const autopilot = useSessionField((rt) => rt.uiState?.autopilot ?? false, false);
   const askOn = useApp(useShallow((s) => selectAskOn(s, key)));
-  const setSidebarVisible = useApp((s) => s.setSidebarVisible);
 
-  if (!snap) {
-    return (
-      <div className="collapsed-summary">
-        <span className="cs-item">{t('common.sidebarHidden')}</span>
-        <button
-          type="button"
-          className="btn btn-ghost btn-compact"
-          onClick={() => setSidebarVisible(true)}
-        >
-          {t('common.show')}
-        </button>
-      </div>
-    );
-  }
+  // Before the handshake there is nothing to report. The row is still drawn —
+  // it is the fold the session bar's toggle animates — but it carries no
+  // placeholder text: an empty strip is honest, and "Sidebar hidden" was a
+  // sentence about the chrome rather than about the session.
+  if (!snap) return <div className="collapsed-summary" />;
 
   const jobTotal = snap.jobs.length;
   const jobUncollected = snap.jobs.filter((job) => job.uncollected).length;
@@ -46,15 +51,6 @@ export function CollapsedSummary() {
 
   return (
     <div className="collapsed-summary">
-      <button
-        type="button"
-        className="btn btn-ghost btn-compact"
-        onClick={() => setSidebarVisible(true)}
-        title={t('common.show')}
-      >
-        {t('common.sidebarHidden')}
-      </button>
-
       <span className="cs-item">
         <span>{t('session.permScope')}</span>
         <b>{ask}</b>

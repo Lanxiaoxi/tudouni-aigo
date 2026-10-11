@@ -161,15 +161,6 @@ export function App() {
       <div className={`app${dragging ? ' is-dragging' : ''}`}>
         <TitleBar />
         <TopBar />
-        {/* Folded rather than conditionally rendered, like the rails: the row
-            replaces the right rail, so having the rail slide away while this
-            snapped into existence read as two unrelated events. `inert` while
-            folded rather than `aria-hidden`, because the row is full of buttons. */}
-        <div className={`collapse${showSummary ? '' : ' is-collapsed'}`} inert={!showSummary}>
-          <div>
-            <CollapsedSummary />
-          </div>
-        </div>
 
         <div className="app-main">
           {/* Each rail sits inside a clipping wrapper that owns the width, so
@@ -206,6 +197,24 @@ export function App() {
               this row; the facts they would have shown are theirs to draw. */}
           <div className="app-conversation">
             <SessionBar />
+            {/* The summary row stands in for the right rail once it is folded,
+                so it is drawn **under the session bar and inside the
+                conversation column** — the same width as the row above it,
+                rather than a window-wide strip. It used to be a sibling of
+                `.app-main`, which made it span under both rails: it read as a
+                third chrome bar belonging to the window while everything on it
+                (jobs, MCP, tasks) is a fact about the conversation beside it.
+
+                Folded rather than conditionally rendered, like the rails: the
+                row replaces the right rail, so having the rail slide away while
+                this snapped into existence read as two unrelated events.
+                `inert` while folded rather than `aria-hidden`, because the row
+                is full of buttons. */}
+            <div className={`collapse${showSummary ? '' : ' is-collapsed'}`} inert={!showSummary}>
+              <div>
+                <CollapsedSummary />
+              </div>
+            </div>
             <main className="app-stream">
               {/* Six occupants, one order, and **the order is the decision** —
                   see `conversationView.ts`, where it is written down and

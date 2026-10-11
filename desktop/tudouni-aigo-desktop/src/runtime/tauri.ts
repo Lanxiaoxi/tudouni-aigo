@@ -768,6 +768,70 @@ export function onCloseRequested(cb: () => void): () => void {
   };
 }
 
+/* ============================================================
+   The notification click
+   ============================================================ */
+
+/**
+ * What the bridge says when somebody clicks a system notification.
+ *
+ * Paired with `notify_send` and `notify://activated` in
+ * `src-tauri/src/lib.rs`, which is where the toast and its activation callback
+ * live. The three fields are the ones the notification was sent *about*, echoed
+ * back verbatim — the bridge does not conclude anything from them, because the
+ * only thing that can say whether that session still exists is the store.
+ */
+export interface NotifyActivated {
+  /** The bridge's child key, as a decimal string. May name a session that has
+   *  since been closed — see `notifyDestination`. */
+  key: string;
+  /** The runtime's session id, empty if the handshake had not landed. */
+  sessionId: string;
+  /** The workspace the session was in, for reopening it. */
+  workspace: string;
+}
+
+/**
+ * Listen for a click on a system notification.
+ *
+ * **Windows only in practice, and that is not a defect here.** The event is
+ * emitted by the Rust side, and only the Windows delivery path can produce one:
+ * `tauri-plugin-notification` reports no activation on the desktop, and the two
+ * desktop platforms that keep using it would need a mechanism of their own
+ * (macOS an application delegate, Linux a D-Bus default action). So in a plain
+ * browser, and on a platform whose toast cannot report a click, this simply never
+ * fires — which costs nothing, because the click was never offered.
+ *
+ * Returns the unsubscribe function, with the same promise race handled the same
+ * way as `onCloseRequested`: `listen` is async, so the caller may unmount while
+ * the subscription is in flight, and dropping the handle there would leak a
+ * listener that outlives its component.
+ */
+export function onNotifyActivated(cb: (activated: NotifyActivated) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  let stopped = false;
+  void (async () => {
+    if (!isHosted()) return;
+    try {
+      const mod = await import('@tauri-apps/api/event');
+      const off = await mod.listen<NotifyActivated>('notify://activated', (event) =>
+        cb(event.payload),
+      );
+      if (stopped) off();
+      else unlisten = off;
+    } catch {
+      // Not hosted, or the capability is missing. Nothing to fall back to and
+      // nothing to report: no click will arrive, and the notification itself was
+      // never the only way to notice the session.
+    }
+  })();
+  return () => {
+    stopped = true;
+    unlisten?.();
+    unlisten = null;
+  };
+}
+
 /** The kill switch, for when the graceful wait is not enough. `key` omitted
  *  means every session.
  *

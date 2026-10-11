@@ -1,6 +1,6 @@
 [package]
 name = "tudouni-aigo-desktop"
-version = "2.11.3"
+version = "2.11.5"
 description = "tudouni-aigo desktop client"
 authors = ["tudouni-aigo"]
 edition = "2021"
@@ -19,6 +19,19 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+# The WinRT toast API, **for the click**. `tauri-plugin-notification` shows a
+# toast on every platform, but on desktop that is all it does: its `notify`
+# command drops the notification handle inside `show()` and reports nothing about
+# activation (its own JS documents `onAction` as mobile-only). A toast whose
+# click has to open its own session therefore has to be built on the API
+# underneath the plugin — the same version, already in the tree as notify-rust's
+# Windows backend, so this adds no new build.
+#
+# Windows-only, because it is the only platform that hands activation back to the
+# process that showed the toast. Everywhere else delivery stays with the plugin.
+[target.'cfg(windows)'.dependencies]
+tauri-winrt-notification = "0.8"
+
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` is **load-bearing, not a preference**. `config.json`'s
 # `providers` object is read in file order, and the first route with a key is the

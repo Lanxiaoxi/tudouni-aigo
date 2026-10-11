@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { CheckCircle2, ChevronRight, CircleDashed, Loader, PanelRightClose } from 'lucide-react';
+import { CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
 import { NO_SKILLS, useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
@@ -175,58 +175,28 @@ export function Sidebar() {
 /* ---------------- the rail's own head ---------------- */
 
 /**
- * The right rail's head: **what this rail is**, and the way to put it away.
+ * The right rail's head: **what this rail is**.
  *
  * It is the left rail's head mirrored (`.lb-head`), deliberately: the two rails
  * flank the transcript, and one of them starting with a named head while the
  * other began straight at "Goal" made them read as two unrelated designs rather
- * than as a pair.
+ * than as a pair. It carries no collapse control, and neither does the left
+ * head any more: both rails are folded from the session bar's two toggles, which
+ * are the only place a control can be *and still be reachable after the fold*.
+ * A button inside the rail it hides is a button that disappears with the act of
+ * pressing it (see `SessionBar`).
  *
- * **No mark here, and that is deliberate.** The left rail's head carries the
- * application icon as the window's identity; the right rail repeats the app's
- * name in words ("Session runtime"), which is all this rail needs — a second
- * copy of the mark two inches from the left one read as decoration, not as
- * information.
- *
- * **The collapse control is drawn here, and that is a correction to what this
- * rail had before.** `Ctrl+B` was the only way to fold it, plus the `Show`
- * button in `CollapsedSummary` once it was already gone — which is a control
- * *inside* the thing that hides it, i.e. unusable for the act of hiding.
- * `SessionBar` solved exactly this for the left rail by keeping its toggle
- * outside the rail; here the rail's head is the equivalent place, because the
- * rail is only folded by its own width and the head scrolls with nothing (the
- * blocks below scroll, this does not — see the CSS).
- *
- * It is `disabled` while the session board is up, and that is not tidiness:
- * `showSidebar` is derived (`sidebarVisible && !hiddenByCss && !boardOpen`), so
- * toggling the preference under the board would change nothing on screen and
- * then bring the rail back in the opposite state — the "a key that appears to do
- * nothing" failure `Ctrl+B` already refuses (`useGlobalKeys`). The two must
- * agree, so they ask the same question.
+ * **No mark here either.** The left rail's head carries the application icon as
+ * the window's identity; the right rail repeats the app's name in words
+ * ("Session runtime"), which is all this rail needs — a second copy of the mark
+ * two inches from the left one read as decoration, not as information.
  */
 function RailHead() {
   const t = useT();
-  const boardOpen = useApp((s) => s.boardOpen);
-  const toggleSidebar = useApp((s) => s.toggleSidebar);
 
   return (
     <div className="rb-head">
       <span className="rb-title">{t('rail.head')}</span>
-      <Tip label={t('rail.collapse')}>
-        <button
-          type="button"
-          // The shared rail icon-button shape (`.lb-icon`), which the board's
-          // close control already borrows. One shape, so the two heads' buttons
-          // cannot drift into two sizes.
-          className="lb-icon"
-          aria-label={t('rail.collapse')}
-          aria-keyshortcuts="Control+B"
-          disabled={boardOpen}
-          onClick={toggleSidebar}
-        >
-          <PanelRightClose size={15} />
-        </button>
-      </Tip>
     </div>
   );
 }

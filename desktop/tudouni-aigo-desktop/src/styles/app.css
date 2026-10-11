@@ -198,44 +198,80 @@
      the text. Painting `--bg` here also cut the green halo off at a hard line
      the design does not have. */
   background: none;
+}
+
+/* The facts scroll; the two rail toggles do not.
+   They used to be siblings in one `overflow-x: auto` row, which meant a long
+   session id could scroll the *toggles* out of the bar — and with the in-rail
+   collapse buttons gone (see `SessionBar`), these two are the only way either
+   rail is folded, so one of them leaving the screen would be a one-way trip.
+   Splitting the scroller out is what fixes that: the toggles are `flex: none`
+   at the two ends, and only this middle element overflows. */
+.sessionbar .sb-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
 }
 
-.sessionbar::-webkit-scrollbar {
+.sessionbar .sb-scroll::-webkit-scrollbar {
   display: none;
 }
 
+/* Each group is a **small card**. The four parts — session, model, thinking,
+   step cap — are four separate facts, and on one bare row they read as a single
+   sentence; a card per group is what separates them. The `<span className="sep" />`
+   rules that used to sit between them are gone with the change: a 1px line
+   separates flat text, and between two cards it is a second edge drawn where the
+   cards already have one. */
 .sessionbar .sb-group {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   flex: none;
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
 }
 
 .sessionbar .sb-label {
   font-size: var(--text-caption);
   color: var(--fg-faint);
+  white-space: nowrap;
 }
 
-/* The left rail's toggle, at the head of the session bar.
-   `flex: none` keeps it from being squeezed when the facts to its right are
-   long, and its position **first** is what makes it dependable: the session bar
-   scrolls horizontally (`overflow-x: auto`, scrollbar hidden), so anything
-   further along can be scrolled out of view — but the resting scroll position is
-   the leading edge, which is where this sits. That is the property the rail's
-   own collapse button lacked: it was inside the thing it hid, so hiding the rail
-   removed it from the tree and left `Ctrl+L` as the only way back.
-   No `sep` follows it: the gap plus the button's own padding is enough, and a
-   separator here would read as delimiting a *fact* rather than a control. */
+/* The card is the box, so the fact labels inside it are bare text: a bordered
+   pill inside a bordered card is two rectangles where there is one thing to
+   say. The colour is what keeps them legible as values and not as labels. */
+.sessionbar .sb-group .fact {
+  height: auto;
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+/* The two rail toggles, at the two ends of the session bar.
+   `flex: none` keeps them from being squeezed when the facts between them are
+   long, and being *outside* `.sb-scroll` is what makes them dependable: only the
+   facts scroll, so no session id can carry a toggle off the edge. That is the
+   property the rails' own collapse buttons lacked — they were inside the thing
+   they hid, so hiding a rail removed its control from the tree and left a
+   keyboard shortcut as the only way back. With both in-rail buttons gone, these
+   two are the whole mechanism, which is why neither may ever leave the screen.
+   No `sep` neighbours them: the gap plus the button's own padding is enough, and
+   a separator here would read as delimiting a *fact* rather than a control. */
 .sessionbar .rail-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: var(--control-h);
   height: var(--control-h);
-  margin-right: var(--space-1);
   flex: none;
   border-radius: var(--radius-sm);
   color: var(--fg-muted);
@@ -244,9 +280,31 @@
     color var(--motion-fast) var(--ease-out);
 }
 
-.sessionbar .rail-toggle:hover {
+/* The inner gap the two toggles keep from the facts. It is on the *inner* side
+   of each, so the pair is symmetric against the bar which is `--space-2` wide on
+   both edges — an even gap between toggle and card on each side, rather than one
+   toggle hugging its cards and the other floating. */
+.sessionbar .rail-toggle {
+  margin-right: var(--space-1);
+}
+
+.sessionbar .rail-toggle-end {
+  margin-right: 0;
+  margin-left: var(--space-1);
+}
+
+.sessionbar .rail-toggle:hover:not(:disabled) {
   background: var(--bg-muted);
   color: var(--fg);
+}
+
+/* `disabled` for the same reason `Ctrl+B` is inert: under the session board the
+   right rail is *derived* away, so writing the preference would change nothing
+   on screen and then bring the rail back in the opposite state. A visible
+   disabled state is how the button says so instead of silently doing nothing. */
+.sessionbar .rail-toggle:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 /* The permission statement's dashed chip. Nowhere on this bar any more: the
@@ -267,19 +325,38 @@
 }
 
 /* ---------------- §1·5 折叠摘要行 ---------------- */
+/* **The conversation column's second header**, directly under `.sessionbar` and
+   exactly as wide as it. It used to be a sibling of `.app-main`, i.e. a
+   window-wide strip that ran under both rails — which read as a third piece of
+   window chrome, while every value on it (jobs, MCP, tasks, skills) is a fact
+   about the conversation beside it. Same padding as the bar above so the two
+   line up on both edges.
+
+   No `border-bottom` of its own: the session bar above already draws the rule
+   between the chrome and the transcript, and two stacked hairlines one pixel
+   apart is a seam that looks like a rendering artefact. Transparent for the same
+   reason the session bar is — the aurora wash passes behind it and the row reads
+   as facts about the conversation rather than as a strip of chrome. */
 .collapsed-summary {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   height: 28px;
-  padding: 0 var(--space-4);
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
+  padding: 0 var(--space-2);
+  background: none;
   font-size: var(--text-caption);
   color: var(--fg-muted);
   overflow: hidden;
   white-space: nowrap;
+}
+
+/* The row is a flex item in the conversation column, where everything else
+   (`SessionBar`, `Composer`) is `flex: none` too: the stream is the column's one
+   flexible row, and anything else that could shrink would take its height from
+   the transcript instead of keeping its own. */
+.app-conversation > .collapse {
+  flex: none;
 }
 
 .collapsed-summary .cs-item {
@@ -629,7 +706,7 @@
 
    **`:focus-visible` cannot make that distinction here, and the first version of
    this rule assumed it could.** Browsers deliberately match `:focus-visible` for a
-   `<textarea>` whenever it is focused, whatever the input that got it there — the
+   `<textarea>` whenever it is focused, whatever the input got it there — the
    caret always needs locating, so suppressing its indicator on a click was judged
    worse than showing it. Measured, not guessed: with the caret in the box,
    `matches(':focus-visible')` is `true` after a mousedown as well as after Tab.
@@ -638,9 +715,19 @@
 
    The modality now comes from `data-input-mode` on `<html>`, set by
    `useInputModality` from capture-phase `pointerdown`/`keydown`. It is an
-   `outline` so the ring sits outside the box and moves no layout. */
+   `outline` so the ring sits outside the box and moves no layout.
+
+   **The ring is neutral, not green.** It was `--accent-border`, which read as a
+   green frame around the third of the window you type into — the composer is the
+   largest control on screen, and colouring its frame the accent made the
+   act of clicking into it the loudest thing on the page. A grey ring still says
+   "the keyboard is here" and says nothing else; the accent is left for states
+   the app actually wants to point at. This is a deviation from the reference,
+   which has no composer focus ring at all: dropping the indication entirely
+   would take it away from keyboard users, who have no other way to see where
+   the caret went (the check in `render-check.mjs` holds that line). */
 html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
-  outline: 2px solid var(--accent-border);
+  outline: 2px solid var(--border-strong);
   outline-offset: 2px;
 }
 

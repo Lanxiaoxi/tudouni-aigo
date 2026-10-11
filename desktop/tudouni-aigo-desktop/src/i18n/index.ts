@@ -343,7 +343,12 @@ export const en = {
      is the running runtime's, not the transcript's: everything below is a fact
      about the session in flight. */
   'rail.head': 'Session runtime',
+  /* The right rail's toggle, at the trailing edge of the session bar (`SessionBar`
+     draws both rail toggles). It names the rail the way the left one's does, so
+     the two read as a pair: "this sidebar" is the one the shortcut beside it
+     belongs to (`Ctrl+B` here, `Ctrl+L` there). */
   'rail.collapse': 'Hide this sidebar',
+  'rail.show': 'Show the session runtime sidebar',
   'block.goal': 'Goal',
   'block.tasks': 'Tasks',
   'block.skills': 'Loaded skills',
@@ -617,6 +622,12 @@ export const en = {
     'Servers the runtime connects at start-up. A command runs locally; a URL is a remote server.',
   'panel.config.name': 'Name',
   'panel.config.nameHint': 'The key in the file, and what /model and the panels show.',
+  /** What the asterisk on a field means, said in words for the readers the
+   *  asterisk itself does not reach: `sr-only` for a screen reader, and the same
+   *  sentence as the mouse's tooltip. Which fields carry the marker is decided
+   *  by `validateDraft`'s `blocking` list, not here — see `Field`. */
+  'panel.config.required': 'Required',
+  'panel.config.requiredHint': 'The save is refused while this is empty.',
   'panel.config.untitled': 'untitled',
   'panel.config.baseUrl': 'Base URL',
   'panel.config.apiKey': 'API key',
@@ -868,8 +879,11 @@ export const en = {
   'common.count': '{n} items',
   'common.working': 'working',
   'common.loading': 'loading…',
-  'common.sidebarHidden': 'Sidebar hidden',
-  'common.show': 'Show',
+  /* `common.sidebarHidden` ("Sidebar hidden") and `common.show` ("Show") lived
+     here and are gone with the rest of the row they belonged to: the summary row
+     no longer announces the fold or offers to undo it. Both jobs are now done by
+     the two toggles at the ends of the session bar, which are on screen in *both*
+     states — see `CollapsedSummary`. */
   'common.jumpLatest': 'Jump to latest',
   'common.andMore': 'and {n} more',
 

@@ -468,6 +468,17 @@ async function main() {
   if (FR.backToPointer.outlineIsNone === false) {
     throw new Error('the ring did not clear when the pointer was used again');
   }
+  // And the ring is **neutral**, not the accent. It was `--accent-border`, which
+  // drew a green frame around the largest control on screen and made clicking
+  // into the composer the loudest thing on the page. Asserted as "not the
+  // accent" rather than "is this exact grey" so a future retune of the border
+  // token does not fail here — what must hold is that the focus ring is not
+  // wearing the accent, which is the thing the accent is reserved away from.
+  const ringIsAccent = (c) =>
+    typeof c === 'string' && (/rgba?\(5,\s*150,\s*105/.test(c) || /rgba?\(52,\s*211,\s*153/.test(c));
+  if (ringIsAccent(FR.afterKey.outline)) {
+    throw new Error(`the composer's focus ring is drawn in the accent colour: ${FR.afterKey.outline}`);
+  }
 
   // ---- 1d. (moved) ----
   // The fold check lives further down, immediately after the sidebar's blocks
@@ -709,14 +720,27 @@ async function main() {
       leftCollapsed: !!q('.app-rail-left')?.classList.contains('is-collapsed'),
       rightCollapsed: !!q('.app-rail-right')?.classList.contains('is-collapsed'),
       leftInert: q('.app-rail-left')?.hasAttribute('inert') ?? null,
+      // The two rail toggles, which are now the **only** way either rail is
+      // folded. leftToggle / rightToggle are found by their position in the bar
+      // rather than by a class of their own, so a button that drifted out of the
+      // ends is not found at all.
       toggle: !!q('.sessionbar .rail-toggle'),
+      leftToggle: !!q('.sessionbar > .rail-toggle:first-child'),
+      rightToggle: !!q('.sessionbar > .rail-toggle:last-child'),
+      toggleCount: q('.sessionbar')?.querySelectorAll('.rail-toggle').length ?? 0,
       toggleInTopbar: !!q('.topbar .rail-toggle'),
-      toggleFirstInBar: q('.sessionbar')?.firstElementChild?.classList.contains('rail-toggle') ?? null,
+      // **Outside the scroller** is the property that keeps them reachable: only
+      // .sb-scroll overflows, so no session id can carry a toggle off the edge.
+      toggleInScroller: !!q('.sessionbar .sb-scroll .rail-toggle'),
+      rightToggleDisabled: q('.sessionbar > .rail-toggle:last-child')?.disabled ?? null,
+      rightToggleExpanded: q('.sessionbar > .rail-toggle:last-child')?.getAttribute('aria-expanded') ?? null,
       store: { leftbarVisible: st.leftbarVisible, sidebarVisible: st.sidebarVisible },
-      // The right rail's own head: the title, the mark, and the way out.
+      // The rail heads: the title each carries, and — the point of the change —
+      // the fact that **neither head has a collapse control any more**. A button
+      // that lives inside the thing it hides cannot perform its own act.
+      leftHeadButtons: q('.lb-head')?.querySelectorAll('button').length ?? -1,
       rightHead: q('.rb-head')?.innerText?.replace(/\\s+/g,' ').trim() ?? null,
-      rightHeadButton: !!q('.rb-head button'),
-      rightHeadButtonDisabled: q('.rb-head button')?.disabled ?? null,
+      rightHeadButtons: q('.rb-head')?.querySelectorAll('button').length ?? -1,
       // The head must sit **outside** the scrolling region: a head that scrolled
       // would let the goal text push the rail's own name off the top, which is
       // the failure the left head's comment names.
@@ -747,17 +771,39 @@ async function main() {
     throw new Error('no rail toggle in the session bar: hiding the left rail would be a one-way trip');
   }
   if (bt.toggleInTopbar) throw new Error('the rail toggle is still in the top bar');
-  if (bt.toggleFirstInBar !== true) {
-    throw new Error('the rail toggle is not the first element in the session bar');
+  // **Exactly two**, one at each end, and neither inside the scroller. Both
+  // in-rail collapse buttons are gone, so these two toggles are the whole
+  // mechanism: a third one would be a leftover, one inside `.sb-scroll` could be
+  // scrolled off the edge by a long session id, and either failure leaves a rail
+  // that cannot be folded back by mouse.
+  if (bt.toggleCount !== 2) {
+    throw new Error(`expected exactly 2 rail toggles in the session bar, found ${bt.toggleCount}`);
+  }
+  if (!bt.leftToggle) throw new Error('the session bar has no leading rail toggle');
+  if (!bt.rightToggle) throw new Error('the session bar has no trailing rail toggle');
+  if (bt.toggleInScroller) {
+    throw new Error('a rail toggle is inside the horizontal scroller: a long session id can carry it off the edge');
+  }
+  if (bt.rightToggleDisabled === true) {
+    throw new Error('the trailing rail toggle starts disabled with no board open');
+  }
+  if (bt.rightToggleExpanded !== 'true') {
+    throw new Error(`the trailing toggle disagrees with the rail it folds: aria-expanded=${bt.rightToggleExpanded}`);
   }
 
-  // ---- the right rail's own head ----
+  // ---- the rail heads, and what they no longer carry ----
   //
   // The mirror of the left rail's head, and the reasons it is asserted are the
   // same ones: a missing title renders as a rail that starts at "Goal" with
-  // nothing saying what the rail *is*, and a missing collapse control leaves
-  // `Ctrl+B` as the only way to fold it — plus a `Show` button that lives inside
-  // the thing it would show, which is a control that cannot perform its own act.
+  // nothing saying what the rail *is*.
+  //
+  // **The collapse control is what left.** It used to live here — inside the
+  // rail it hides — so pressing it removed the only control that could bring the
+  // rail back, and `Ctrl+B` (plus a `Show` button that only existed once the
+  // rail was already gone) was what remained. Both rail heads are now controls-
+  // free, and the two toggles in the session bar do the work. A button reappearing
+  // in either head is the defect coming back, which is why the count is asserted
+  // rather than merely the absence of an aria-label.
   //
   // The head being **outside** `.sidebar-inner` is the non-obvious half. Both
   // rails keep their head out of the scrolling region; put it inside and the
@@ -780,11 +826,15 @@ async function main() {
   if (bt.rightHeadInScroller) {
     throw new Error('the right rail\'s head is inside the scrolling region: the goal text will push it off');
   }
-  if (!bt.rightHeadButton) {
-    throw new Error("the right rail's head has no collapse control: `Ctrl+B` would be the only way out");
+  if (bt.rightHeadButtons !== 0) {
+    throw new Error(
+      `the right rail's head carries ${bt.rightHeadButtons} button(s): its collapse control belongs at the session bar's trailing end, where it survives its own press`,
+    );
   }
-  if (bt.rightHeadButtonDisabled === true) {
-    throw new Error("the right rail's collapse control starts disabled with no board open");
+  if (bt.leftHeadButtons !== 0) {
+    throw new Error(
+      `the left rail's head carries ${bt.leftHeadButtons} button(s): its collapse control belongs at the session bar's leading end, where it survives its own press`,
+    );
   }
   // One horizontal band across the window: the two heads are read as a pair, so
   // a height difference shows up as a step at the transcript's edges.
@@ -794,9 +844,12 @@ async function main() {
     );
   }
 
-  // Press the left rail's own collapse button, as a person would.
+  // Fold the left rail from the session bar's **leading** toggle, as a person
+  // would. The two toggles take the same `boolean` setters, so a copy-paste
+  // between them type-checks and folds the wrong rail — one of the two tests
+  // below is what catches that.
   await evaluate(`(() => {
-    document.querySelector('.lb-head .lb-icon').click();
+    document.querySelector('.sessionbar > .rail-toggle:first-child').click();
     return true;
   })()`);
   await sleep(500);
@@ -819,11 +872,16 @@ async function main() {
   if (ah.leftInert !== true) {
     throw new Error('the folded left rail is still reachable by Tab: no `inert`');
   }
+  // Both toggles are still on screen while one rail is folded — that is the
+  // whole point of putting them here rather than in the rails.
+  if (ah.rightToggle !== true) {
+    throw new Error('folding the left rail took the right rail\'s toggle with it');
+  }
 
   // And back, with the mouse only. A rail whose restore path is a keyboard
   // shortcut is a rail a mouse user cannot get back.
   await evaluate(`(() => {
-    document.querySelector('.sessionbar .rail-toggle').click();
+    document.querySelector('.sessionbar > .rail-toggle:first-child').click();
     return true;
   })()`);
   await sleep(500);
@@ -836,52 +894,146 @@ async function main() {
   if (as.store.leftbarVisible !== true) throw new Error('the restore did not reach the preference');
   if (as.leftInert) throw new Error('the restored left rail is still inert');
 
-  // And the right rail's own control, pressed as a person would press it. This
-  // is the same crossed-setter defect from the other side: the new button is the
-  // third control in this window that folds a rail, and the two setters take the
-  // same `boolean`, so a copy-paste between them type-checks and hides the wrong
-  // rail. The left rail's button is checked above; this is the right one's.
+  // And the right rail's control, pressed as a person would press it. The
+  // crossed-setter defect from the other side: the two setters take the same
+  // `boolean`, so a copy-paste between the toggles type-checks and hides the
+  // wrong rail. The leading one is checked above; this is the trailing one's.
   await evaluate(`(() => {
-    document.querySelector('.rb-head .lb-icon').click();
+    document.querySelector('.sessionbar > .rail-toggle:last-child').click();
     return true;
   })()`);
   await sleep(500);
 
   const afterRightHide = await railState();
-  console.log('after hiding the right rail from its own head:', afterRightHide);
+  console.log('after hiding the right rail from the session bar:', afterRightHide);
   const rh = JSON.parse(afterRightHide ?? '{}');
   if (rh.rightW > FOLDED) throw new Error(`the right rail did not fold away: width ${rh.rightW}`);
   if (rh.leftW < WIDE) {
-    throw new Error(`the right rail's control hid the left one (width ${rh.leftW}) — the two setters are crossed`);
+    throw new Error(`the trailing toggle hid the left rail (width ${rh.leftW}) — the two setters are crossed`);
   }
   if (rh.store.leftbarVisible !== true) {
-    throw new Error("the right rail's control wrote the left rail's preference");
+    throw new Error("the trailing toggle wrote the left rail's preference");
   }
   if (rh.store.sidebarVisible !== false) {
-    throw new Error("the right rail's control did not write its own preference");
+    throw new Error("the trailing toggle did not write its own preference");
+  }
+  // The toggle that just folded the rail is still on screen, and now says so.
+  if (rh.rightToggle !== true) {
+    throw new Error('the toggle that folded the right rail vanished with it');
+  }
+  if (rh.rightToggleExpanded !== 'false') {
+    throw new Error(`the trailing toggle did not report the folded rail: aria-expanded=${rh.rightToggleExpanded}`);
   }
 
-  // Back up with the summary row's own button: while the rail is hidden that row
-  // is the only control on screen that can bring it back, and it is the half of
-  // this that a `Ctrl+B`-only implementation would be missing.
-  const summaryShow = await evaluate(`(() => {
-    const btn = document.querySelector('.collapsed-summary button');
-    if (!btn) return null;
-    btn.click();
-    return btn.innerText.trim();
+  // ---- the replacement row is the conversation column's own header ----
+  //
+  // The summary row now stands in for the folded rail **inside the conversation
+  // column, under the session bar**, rather than as a window-wide strip between
+  // `.app-main` and the status bar. Measured, not inferred: the two rows have to
+  // share their left edge and their width, and the row has to be inside the
+  // column — a window-wide strip still renders and its text still reads right, so
+  // only geometry can tell the two apart.
+  const summaryLayout = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const box = (el) => { const r = el?.getBoundingClientRect(); return r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), bottom: Math.round(r.bottom) } : null; };
+    const conv = q('.app-conversation');
+    const bar = q('.sessionbar');
+    const row = q('.collapsed-summary');
+    return JSON.stringify({
+      inConversation: !!conv?.querySelector('.collapsed-summary'),
+      isShellChild: !!q('.app > .collapsed-summary'),
+      // The fold wrapper that animates it: it lives in the column too, so the
+      // animation and the width are the same element's business.
+      foldInConversation: !!conv?.querySelector(':scope > .collapse'),
+      wrapperH: Math.round(q('.app-conversation > .collapse')?.getBoundingClientRect().height ?? -1),
+      barBox: box(bar),
+      rowBox: box(row),
+      convBox: box(conv),
+      // Any control left in the row is a leftover: the way back is the session
+      // bar's trailing toggle, which is on screen in both states.
+      rowButtons: q('.collapsed-summary')?.querySelectorAll('button').length ?? -1,
+      rowText: (q('.collapsed-summary')?.innerText ?? '').replace(/\\s+/g, ' ').trim(),
+    });
+  })()`);
+  console.log('collapsed summary row:', summaryLayout);
+  const SL = JSON.parse(summaryLayout ?? '{}');
+  if (!SL.inConversation) {
+    throw new Error("the summary row is not inside the conversation column: it still spans under both rails");
+  }
+  if (SL.isShellChild) {
+    throw new Error('the summary row is still a window-level strip between `.app-main` and the status bar');
+  }
+  if (!SL.foldInConversation) {
+    throw new Error('the summary row\'s fold wrapper is not the conversation column\'s own child');
+  }
+  if (!(SL.wrapperH > 0)) {
+    throw new Error(`the summary row has no height while the rail is folded: ${SL.wrapperH}`);
+  }
+  if (!(SL.barBox && SL.rowBox && SL.convBox)) {
+    throw new Error(`could not measure the session bar against the summary row: ${summaryLayout}`);
+  }
+  // Same left edge, same width: "the same width as the session bar" is the whole
+  // request, and a bar tucked under the rail boundary would still render.
+  if (Math.abs(SL.rowBox.x - SL.barBox.x) > 1) {
+    throw new Error(
+      `the summary row does not start at the session bar's left edge: ${SL.rowBox.x} vs ${SL.barBox.x}`,
+    );
+  }
+  if (Math.abs(SL.rowBox.w - SL.barBox.w) > 1) {
+    throw new Error(
+      `the summary row is not the session bar's width: ${SL.rowBox.w} vs ${SL.barBox.w}`,
+    );
+  }
+  // Directly under it, and above the transcript.
+  if (Math.abs(SL.rowBox.y - SL.barBox.bottom) > 1) {
+    throw new Error(
+      `the summary row is not directly under the session bar: row at ${SL.rowBox.y}, bar bottom ${SL.barBox.bottom}`,
+    );
+  }
+  if (!(SL.rowBox.bottom <= SL.convBox.bottom)) {
+    throw new Error('the summary row overflows the conversation column');
+  }
+  // The two controls it used to carry — the label and the `Show` button — are
+  // both gone, which is the third of the four changes asked for.
+  if (SL.rowButtons !== 0) {
+    throw new Error(
+      `the summary row still has ${SL.rowButtons} button(s): the way back is the session bar's trailing toggle, not a control that exists only after the fold`,
+    );
+  }
+  if (/sidebar hidden/i.test(SL.rowText)) {
+    throw new Error(`the summary row still announces the fold: "${SL.rowText}"`);
+  }
+
+  // Back up from the same trailing toggle — the one control that is on screen in
+  // both states, and the half of this a `Ctrl+B`-only implementation would miss.
+  await evaluate(`(() => {
+    document.querySelector('.sessionbar > .rail-toggle:last-child').click();
+    return true;
   })()`);
   await sleep(500);
   const afterRightShow = await railState();
   console.log('after restoring the right rail:', afterRightShow);
-  if (summaryShow === null) {
-    throw new Error('no control in the collapsed summary row: the right rail has no way back');
-  }
   const rs2 = JSON.parse(afterRightShow ?? '{}');
   if (!(rs2.rightW > WIDE)) throw new Error(`the right rail did not come back: width ${rs2.rightW}`);
   if (rs2.store.sidebarVisible !== true) throw new Error('the restore did not reach the preference');
-  if (rs2.rightHeadButtonDisabled === true) {
-    throw new Error('the right rail\'s collapse control is disabled while the rail is on screen');
+  if (rs2.rightToggleDisabled === true) {
+    throw new Error('the trailing toggle is disabled while the rail is on screen');
   }
+  // With the rail back, the row is folded away again — and folded, not unmounted,
+  // so the animation has something to run on.
+  const summaryFolded = await evaluate(`(() => {
+    const wrap = document.querySelector('.app-conversation > .collapse');
+    return JSON.stringify({
+      collapsed: wrap?.classList.contains('is-collapsed') ?? null,
+      h: Math.round(wrap?.getBoundingClientRect().height ?? -1),
+      inert: wrap?.hasAttribute('inert') ?? null,
+    });
+  })()`);
+  console.log('summary row, with the rail back:', summaryFolded);
+  const SF = JSON.parse(summaryFolded ?? '{}');
+  if (SF.collapsed !== true) throw new Error('the summary row did not fold when the rail came back');
+  if (!(SF.h <= 1)) throw new Error(`the folded summary row still has height ${SF.h}`);
+  if (SF.inert !== true) throw new Error('the folded summary row is still reachable by Tab: no `inert`');
 
   // The session list, as the runtime answers it. `messages`, `steps`, `todos`
   // and `preview` are all computed by the runtime — this rail counts nothing
@@ -2053,17 +2205,57 @@ async function main() {
   // paid for it — 201px against the workspace row's 227px, so the session cards
   // were visibly outdented from everything above them. Both rows existed and
   // both carried the right text, which is why nothing here noticed.
-  const skin = await evaluate(`(() => {
+  const skin = await evaluate(`(async () => {
+    const store = window.__aigoStore;
+    const key = window.__aigoKey;
     const q = (s) => document.querySelector(s);
     const bg = (el) => (el ? getComputedStyle(el).backgroundColor : null);
+    const cs = (el) => (el ? getComputedStyle(el) : null);
+    // ---- seed what this probe measures ----
+    //
+    // Two of the things asserted below are properties of state the script's own
+    // payloads do not produce, and measuring their absence was a check that
+    // could only fail:
+    //
+    //   - a **step card**. A "reason" row is not in STEP_KINDS, so it closes the
+    //     block and the model row is drawn as a loose ".e-model" line instead
+    //     (see the flush() in streamBlocks). The turn driven earlier carries
+    //     reasoning, so no card exists at this point.
+    //   - a **saved row that is current**. The session on screen is the live one
+    //     (open, no file), and a live row has no per-row actions at all — so the
+    //     retraction, which is about a saved row's actions, has nothing to
+    //     measure.
+    //
+    // So both are seeded here, through the same store the tree renders.
+    const activeId = store.getState().sessions[key]?.session?.id ?? 's-render';
+    const send = (p) => store.getState().applyRuntimeMessage(key, p);
+    send({ v: 1, t: 'sessions', items: [
+      { session_id: activeId, messages: 500, steps: 218, todos: '', preview: 'the current one', modified_at: 1767225600 },
+      { session_id: 's-idle-probe', messages: 12, steps: 4, todos: '', preview: 'an idle one', modified_at: 1767225600 },
+    ]});
+    send({ v: 1, t: 'event', kind: 'run_started', session_id: activeId, run_id: 'r-probe', step: 5,
+      ts: '2026-01-01T00:00:00Z', model: 'deepseek-chat', provider: 'deepseek' });
+    send({ v: 1, t: 'event', kind: 'model_call', session_id: activeId, run_id: 'r-probe', step: 5,
+      ts: '2026-01-01T00:00:01Z', status: 'ok', duration_ms: 1900,
+      prompt_tokens: 277209, cached_tokens: 276224, completion_tokens: 40 });
+    send({ v: 1, t: 'event', kind: 'tool_call', session_id: activeId, run_id: 'r-probe', step: 5,
+      ts: '2026-01-01T00:00:02Z', tool: 'shell', call_id: 'cp1', tool_index: 0,
+      arguments: '{"command":"git status"}' });
+    send({ v: 1, t: 'event', kind: 'tool_result', session_id: activeId, run_id: 'r-probe', step: 5,
+      ts: '2026-01-01T00:00:03Z', call_id: 'cp1', status: 'ok', duration_ms: 42, exit_code: 0, output: 'clean' });
+    send({ v: 1, t: 'event', kind: 'run_finished', session_id: activeId, run_id: 'r-probe', status: 'completed' });
+    await new Promise((r) => setTimeout(r, 500));
+
     const railEl = q('.app-leftbar');
     // An idle card specifically: the live group's row is the current one.
-    const idleEl = q('.lb-rows:not(.lb-live-rows) .lb-session');
+    const savedRows = [...document.querySelectorAll('.lb-rows:not(.lb-live-rows) .lb-session')];
+    const idleEl = savedRows.find((r) => !r.classList.contains('is-current'));
+    const savedCurrentEl = savedRows.find((r) => r.classList.contains('is-current'));
     const currentEl = q('.lb-session.is-current');
     const rowEl = q('.lb-row');
     const appEl = q('.app');
     const image = appEl ? getComputedStyle(appEl).backgroundImage : '';
-    // Every \`at <x> <y>\` in the background, as percentages. The failure this
+    // Every "at <x> <y>" in the background, as percentages. The failure this
     // catches is a centre outside 0-100: the gradient still parses and still
     // paints, so nothing else notices.
     const centres = [...image.matchAll(/at\\s+(-?[\\d.]+)%\\s+(-?[\\d.]+)%/g)].map((m) => ({
@@ -2074,18 +2266,59 @@ async function main() {
     // pixels: the columns are all integers here, and a sub-pixel difference is
     // not what anyone can see.
     const right = (el) => (el ? Math.round(el.getBoundingClientRect().right) : null);
+    // The session bar's groups, the model-call card's head and icon, and the
+    // current row's retraction: all of them are *paint* decisions that no text
+    // assertion can see.
+    const groups = [...document.querySelectorAll('.sessionbar .sb-group')];
+    const step = q('.e-step');
+    const icon = step?.querySelector('.e-step-icon');
+    const stepHead = step?.querySelector('.e-step-head');
+    const curActs = savedCurrentEl?.closest('.lb-session-wrap')?.querySelector('.lb-session-actions');
+    const idleActs = idleEl?.closest('.lb-session-wrap')?.querySelector('.lb-session-actions');
     return JSON.stringify({
       rail: bg(railEl),
       idle: bg(idleEl),
       current: bg(currentEl),
       row: bg(rowEl),
-      idleBorder: idleEl ? getComputedStyle(idleEl).borderTopColor : null,
-      currentBorder: currentEl ? getComputedStyle(currentEl).borderTopColor : null,
-      idleShadow: idleEl ? getComputedStyle(idleEl).boxShadow : null,
-      currentShadow: currentEl ? getComputedStyle(currentEl).boxShadow : null,
+      idleBorder: cs(idleEl)?.borderTopColor ?? null,
+      currentBorder: cs(currentEl)?.borderTopColor ?? null,
+      idleShadow: cs(idleEl)?.boxShadow ?? null,
+      currentShadow: cs(currentEl)?.boxShadow ?? null,
       gradients: (image.match(/radial-gradient/g) ?? []).length,
       centres,
       rightEdges: { workspace: right(rowEl), saved: right(idleEl), live: right(currentEl) },
+      sbGroups: {
+        count: groups.length,
+        fills: groups.map((g) => bg(g)),
+        borders: groups.map((g) => getComputedStyle(g).borderTopWidth),
+        separators: document.querySelectorAll('.sessionbar > .sep').length,
+        innerFactBorders: groups.map((g) => {
+          const f = g.querySelector('.fact');
+          return f ? getComputedStyle(f).borderTopWidth : null;
+        }),
+      },
+      stepCard: {
+        present: !!step,
+        headBg: stepHead ? bg(stepHead) : null,
+        headBorderBottom: stepHead ? getComputedStyle(stepHead).borderBottomWidth : null,
+        iconBg: icon ? bg(icon) : null,
+        iconColor: icon ? getComputedStyle(icon).color : null,
+        iconW: icon ? Math.round(icon.getBoundingClientRect().width) : null,
+      },
+      retraction: {
+        hasSavedCurrent: !!savedCurrentEl,
+        currentPaddingRight: cs(savedCurrentEl)?.paddingRight ?? null,
+        idlePaddingRight: cs(idleEl)?.paddingRight ?? null,
+        currentActionsOpacity: cs(curActs)?.opacity ?? null,
+        currentActionsPointer: cs(curActs)?.pointerEvents ?? null,
+        // The idle row's opacity is deliberately **not** measured: it is the
+        // pre-existing reveal rule, and what it computes to depends on where the
+        // pointer and focus happen to be by this point in the run (an earlier
+        // step leaves focus inside a row, which lights :focus-within). What
+        // distinguishes the two rows is the band and the pointer, not the fade.
+        idleActionsPointer: cs(idleActs)?.pointerEvents ?? null,
+        actionsTransition: cs(curActs)?.transitionProperty ?? null,
+      },
     });
   })()`);
   console.log('light skin:', skin);
@@ -2158,6 +2391,89 @@ async function main() {
     throw new Error(
       `the live session card's right edge (${re.live}) does not line up with the workspace row's (${re.workspace})`,
     );
+  }
+
+  // ---- the session bar's four facts are four cards ----
+  //
+  // Each is its own bordered box, and the 1px separators that used to sit
+  // between them are gone: a line separates flat text, and between two cards it
+  // is a second edge drawn where the cards already have one. The `fact` pills
+  // inside gave up their own border for the same reason — a bordered pill in a
+  // bordered card is two rectangles for one fact.
+  const sbg = sk.sbGroups ?? {};
+  if (sbg.count !== 4) {
+    throw new Error(`expected 4 session-bar cards, got ${sbg.count}`);
+  }
+  if (sbg.separators !== 0) {
+    throw new Error(`${sbg.separators} separator(s) left between the session bar's cards`);
+  }
+  for (const w of sbg.borders ?? []) {
+    if (w !== '1px') throw new Error(`a session-bar card has no border (${w})`);
+  }
+  for (const b of sbg.innerFactBorders ?? []) {
+    if (b !== null && b !== '0px') {
+      throw new Error(`a fact inside a session-bar card still draws its own border (${b})`);
+    }
+  }
+
+  // ---- the model-call card's head and icon ----
+  //
+  // The icon is a pale green badge, and the head carries the accent's wash. The
+  // head used to be `--bg-secondary` — the rail's grey, inside a white card —
+  // which is the slab the change was about, so what is asserted is that the head
+  // is **not** the rail's colour and **is** a wash of the card's own accent.
+  const stc = sk.stepCard ?? {};
+  if (stc.iconBg === null || stc.iconBg === 'rgba(0, 0, 0, 0)') {
+    throw new Error(`the model-call icon has no fill (${stc.iconBg})`);
+  }
+  if (stc.iconColor === null || stc.iconColor === stc.iconBg) {
+    throw new Error(`the model-call icon's glyph does not contrast with its fill (${stc.iconColor})`);
+  }
+  if (!(stc.iconW > 0)) throw new Error(`the model-call icon has no size (${stc.iconW})`);
+  if (stc.headBg === null || stc.headBg === 'rgba(0, 0, 0, 0)') {
+    throw new Error(`the model-call head has no wash (${stc.headBg})`);
+  }
+  if (stc.headBg === sk.rail) {
+    throw new Error(`the model-call head is painted the rail's own grey (${stc.headBg})`);
+  }
+  if (stc.headBorderBottom !== '0px') {
+    throw new Error(`the model-call head still draws a border under its wash (${stc.headBorderBottom})`);
+  }
+
+  // ---- the current row opens right and its actions retract ----
+  //
+  // The visible half of the motion. The card gives up the band its actions sit
+  // in and the buttons fade out of it, so the current conversation reads wider
+  // than the others. Asserted as "the current card reserves less than an idle
+  // one" rather than as exact pixels: the band is a sum of a padding and a
+  // button size, and pinning the number here would make a future resize of the
+  // rail's icon button fail a check about an animation.
+  const rt = sk.retraction ?? {};
+  const px = (v) => Number(String(v ?? '').replace('px', ''));
+  if (!(px(rt.currentPaddingRight) >= 0) || !(px(rt.idlePaddingRight) >= 0)) {
+    throw new Error(`could not read the rows' reserved bands: ${JSON.stringify(rt)}`);
+  }
+  if (!(px(rt.currentPaddingRight) < px(rt.idlePaddingRight))) {
+    throw new Error(
+      `the current session card does not open up when its actions retract: current reserves ${rt.currentPaddingRight}, idle reserves ${rt.idlePaddingRight}`,
+    );
+  }
+  if (rt.currentActionsOpacity !== '0') {
+    throw new Error(`the current row's actions are not retracted (opacity ${rt.currentActionsOpacity})`);
+  }
+  if (rt.currentActionsPointer !== 'none') {
+    throw new Error(
+      `the retracted actions still take the pointer (${rt.currentActionsPointer}), so they can be clicked while invisible`,
+    );
+  }
+  // The idle row keeps its own actions interacting, which is what makes the
+  // retraction a property of the current row rather than of every row.
+  if (rt.idleActionsPointer === 'none') {
+    throw new Error('an idle row\'s actions are not reachable, so the retraction leaked onto every row');
+  }
+  // A motion needs a transition; without one the card would jump.
+  if (!String(rt.actionsTransition ?? '').includes('opacity')) {
+    throw new Error(`the retraction has no transition, so it jumps: ${rt.actionsTransition}`);
   }
 
   // The **light** shot is the one worth keeping, and it is the one this check

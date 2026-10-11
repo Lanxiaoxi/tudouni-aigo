@@ -344,7 +344,7 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 20 | **The empty workspace list offers a named button.** The only way forward used to be an unlabelled `FolderPlus` glyph in the section head, while the notice above it said "choose one below" over a list that was empty. The notice's direction also moved out of its wording into a button, because that list can be folded away or hidden by a narrow window | `.lb-empty-add` in `WorkspaceSidebar.tsx`, `ChooseWorkspaceButton` in `components/StartupNotice.tsx` |
 | 21 | **The X button asks: minimize or close, and offers to remember.** The two outcomes are indistinguishable before the fact and entirely different after it — one hides the window with every session still running, the other asks every child to finish and exits — so the window asks once rather than guessing. The answer is a front-end preference (`closePolicy`), applied without a prompt the second time; `ask` is both the default and the fallback for an unreadable stored value, because it is the only one that cannot be wrong | `close_prompt_answer` / `close_prompt_ack` / `window_destroy` and the `CloseRequested` handler in `lib.rs`, `runtime/windowClose.ts` (the rule), `hooks/useWindowClose.ts`, `modals/CloseConfirm.tsx`, `closePolicy` in `state/store.ts` |
 | 22 | **A session behind the window says so.** A notification when a session changes *into* asking / broken / finished — never for a session just seen, never for one somebody is looking at, and never for `idle` on its own (that is where a fresh session sits and where a read one returns). "Looking at" requires the window to be **in the foreground**: a minimized window is nobody's attention, which is the one case the whole feature exists for | `notifyReason` / `isWatched` / `notifyDecision` in `runtime/notify.ts` (pure, asserted in `tests/notify.test.ts`), `hooks/useNotifications.ts`, `selectNotifyKey` in `state/store.ts`, `tauri-plugin-notification` in `lib.rs` / `capabilities/default.json` |
-| 23 | **The right rail names itself and folds itself.** A head on the rail — mark + "Session runtime" + a collapse control — mirroring the left rail's, and `disabled` while the session board is up because the board is what derives the rail away | `RailHead` in `components/sidebar/Sidebar.tsx`, `.rb-head` / `.rb-title` in `styles/stream.css`, `rail.head` / `rail.collapse` in `i18n/index.ts` |
+| 23 | **Both rails are folded from the session bar, and only from there.** One toggle at each end of that bar — outside the facts' scroller, so nothing can scroll them off — and **neither rail head carries a collapse control any more**: a button inside the thing it hides cannot perform its own act. The trailing toggle is `disabled` while the session board is up, because the board is what derives the rail away. The replaced rail's summary row is the conversation column's own second header (under the session bar, same width), and carries **no** `Sidebar hidden` label and **no** `Show` button — that pair was the same mistake a third time | `SessionBar` in `components/chrome/SessionBar.tsx`, `CollapsedSummary.tsx`, `RailHead` in `components/sidebar/Sidebar.tsx`, `.sb-scroll` / `.rail-toggle` / `.collapsed-summary` in `styles/app.css`, `rail.head` / `rail.collapse` / `rail.show` in `i18n/index.ts` |
 
 ### 21 · Why the close prompt has a deadline, but the person does not
 
@@ -424,9 +424,9 @@ The right rail used to begin straight at "Goal". Its five blocks say what is *in
 the rail; nothing said what the rail **is**, and the two rails flanking the
 transcript did not read as a pair — the left one opened with a mark and a name,
 the right one with a block. So the head is the left rail's head mirrored: the
-same mark, a title, and an icon button on the window's side.
+same title, on the same 42px band.
 
-Three things about it are decisions rather than styling:
+Two things about it are decisions rather than styling:
 
 - **The title is "Session runtime", not a second "tudouni-aigo".** The left head
   carries the product name because it identifies the window; this head has to
@@ -434,21 +434,21 @@ Three things about it are decisions rather than styling:
   goal, tasks, skills, jobs, MCP — is a fact about the session in flight and not
   about the transcript beside it. A repeated product name would have been a
   second copy of the left head's fact and would have said nothing new.
-- **The collapse control lives here, and that is a correction.** `Ctrl+B` was the
-  only way to fold this rail, and the `Show` button in `CollapsedSummary` only
-  exists once the rail is already gone — a control inside the thing it would go
-  on to show, i.e. useless for the act of hiding. `SessionBar` had already solved
-  this for the left rail by keeping that toggle outside the rail; the right rail
-  has no session bar to borrow from, so its head is where the control belongs,
-  and it is out of the scrolling region for the same reason the left head is (a
-  head inside the scroller gets pushed off the top by a long goal).
-- **It is `disabled` while the session board is up, and it asks the same question
-  `Ctrl+B` does.** `showSidebar` is *derived* (`sidebarVisible && !hiddenByCss &&
-  !boardOpen`), so the key already refuses to toggle under the board: writing the
-  preference there would change nothing on screen and then bring the rail back in
-  the opposite state when the board closed. A button that appeared to do nothing
-  would be the worse half of the same bug, so the two now agree instead of one of
-  them silently doing nothing.
+- **Neither head carries a collapse control any more.** Both did, and both were
+  the same mistake from two directions: a control that lives *inside* the thing
+  it hides cannot perform its own act — pressing it removes the control, and the
+  rail comes back only from `Ctrl+B` / `Ctrl+L`, or from a `Show` button that
+  exists solely in the collapsed row. `SessionBar` had already solved this for
+  the left rail by keeping its toggle outside the rail. That is now the **only**
+  place either rail is folded from: one toggle at each end of the session bar,
+  both `flex: none` outside the facts' scroller, so neither can be scrolled out
+  of reach by a long session id. The trailing one is `disabled` while the session
+  board is up, because `showSidebar` is *derived*
+  (`sidebarVisible && !hiddenByCss && !boardOpen`) and the key refuses for the
+  same reason: writing the preference under the board would change nothing on
+  screen and then bring the rail back in the opposite state. A button that
+  appeared to do nothing would be the worse half of the same bug, so the two
+  agree instead of one of them silently doing nothing.
 
 The two heads are asserted as **one band**, not as two elements: they sit at the
 same height on either side of the transcript, so `.rb-head` repeats `.lb-head`'s

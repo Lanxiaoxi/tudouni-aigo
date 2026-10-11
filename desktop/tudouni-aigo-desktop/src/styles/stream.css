@@ -196,12 +196,30 @@
   gap: var(--space-2);
   min-height: var(--row-h);
   padding: 5px var(--space-3) 4px;
-  background: transparent;
+  /* A pale wash across the head. This row had `--bg-secondary` — the *rail's*
+     grey, inside a white card — and what was wrong with it was the colour, not
+     the idea of the head having a surface: #EDEFF3 read as a slab of the sidebar
+     dropped into the card. This is the accent's own wash, so the head belongs to
+     the card it is on. It carries no `border-bottom`: the fill is what separates
+     the head from the rows, and doing both draws a line the reference does not
+     have. */
+  background: var(--accent-subtle);
 }
 
 .e-step-icon {
+  /* A pale green badge rather than a bare glyph: a 22px rounded square with the
+     accent's pale fill and its dark green for the icon, which is the same
+     treatment the rail's primary action wears. `flex: none` stays — the metrics
+     beside it are the flexible cell and must not squash the mark. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: none;
-  color: var(--fg-faint);
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-tint);
+  color: var(--accent-tint-text);
 }
 
 .e-step-title {
@@ -244,23 +262,22 @@
   border-top: 1px solid var(--border-subtle);
 }
 
-/* An in-flight step says so on its head, twice-coloured: the bar's title and
-   the metrics share the "no measurement yet" state, and the accent under the
-   icon is the one motion the card gets — the same continuing-condition
-   carve-out the board's working dot holds.
+/* An in-flight step says so twice: the metrics carry the accent, and the icon's
+   badge goes **solid** — the pale tint is the resting state, so filling it in is
+   the one mark this card gains while a call is in flight (the same
+   continuing-condition carve-out the board's working dot holds).
 
-   It used to say it a third time with an accent wash **across the head**, which
-   is the same mistake the head's grey was: a full-width band inside a card. The
-   reference marks a running card by edging the card (`.mc-card.running` sets a
-   border colour), so that is what this does — the icon and the metrics carry the
-   accent, the edge says the card is live. The rule order matters: `is-elevated`
-   below overrides this one, so a risky call keeps its warning/destructive edge. */
+   The head's wash is not available as a signal any more: it is pale green in
+   every step now, so a second shade of the same colour there would say nothing.
+   `is-elevated` below overrides the card's edge, so a risky call keeps its
+   warning/destructive border. */
 .e-step.is-running {
   border-color: var(--accent-border);
 }
 
 .e-step.is-running .e-step-icon {
-  color: var(--accent);
+  background: var(--accent-grad);
+  color: #ffffff;
 }
 
 .e-step.is-running .e-step-metrics {
@@ -1366,6 +1383,50 @@
   padding-right: calc(var(--space-2) + 22px + var(--space-1));
 }
 
+/* The current session is the row this rail is for, so it gets the full width and
+   the two per-row actions retract: the card opens rightwards into the space they
+   vacate. Both halves are one motion — the card's `padding-right` gives up the
+   34px band, the buttons slide right and fade.
+
+   **The card re-reserves the band while it is hovered or focused**, and that is
+   not a contradiction of the retraction: the buttons come back to a card that
+   has room for them, so the topic and the timestamp are never covered by a
+   control. It is also what keeps the rail's delete action reachable — these
+   buttons are the row's only pointer path to it (`:focus-within` covers the
+   keyboard, and the same pair is on the board's own card menu).
+
+   **`padding-right` is a layout property and `tokens.css` keeps those off the
+   animatable list.** The deviation is deliberate, argued, and the same one
+   `.collapse` (global.css) already makes: that list exists so animation cannot
+   fight the user's own scrolling, and this is a one-shot, single-element change
+   triggered by a click — nothing is scrolling and no other row moves. The
+   alternative is to leave the card's box at one width and animate only the
+   buttons, which is precisely the "card does not extend" the motion is for. */
+.lb-session-wrap:has(.lb-session.is-current) .lb-session {
+  padding-right: var(--space-2);
+}
+
+.lb-session-wrap:has(.lb-session.is-current) .lb-session-actions {
+  opacity: 0;
+  transform: translate(var(--space-2), -50%);
+  pointer-events: none;
+}
+
+.lb-session-wrap:has(.lb-session.is-current):hover .lb-session-actions,
+.lb-session-wrap:has(.lb-session.is-current):focus-within .lb-session-actions {
+  opacity: 1;
+  transform: translate(0, -50%);
+  pointer-events: auto;
+}
+
+/* And the band comes back with them, so the reveal lands in a card that can hold
+   it. The order matters: this rule and the `:has(.is-current)` one above have
+   the same specificity, so the hovered state wins only by coming later. */
+.lb-session-wrap:has(.lb-session.is-current):hover .lb-session,
+.lb-session-wrap:has(.lb-session.is-current):focus-within .lb-session {
+  padding-right: calc(var(--space-2) + 22px + var(--space-1));
+}
+
 .lb-session-wrap:hover .lb-session:not(.is-current):not(:disabled) {
   background: var(--bg-card);
   border-color: var(--border);
@@ -1392,7 +1453,12 @@
   cursor: pointer;
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    /* The width the current row gives up when its actions retract. See
+       `.lb-session-wrap:has(.lb-session.is-current)` below for why a layout
+       property is animated here and nowhere else. */
+    padding-right var(--motion-base) var(--ease-standard);
 }
 
 .lb-session:disabled {
@@ -1401,16 +1467,21 @@
 
 /* Current session = the design's "Session Card — Active": the white card, the
    soft green edge (`#B4E5CD` in the reference — `--accent-border` is this
-   token set's version of it, and the ring it replaces was `-strong`, which on
-   a white card read as a much harder green than the design's hairline) and the
-   coloured shadow. The edge is a real border now rather than a `0 0 0 1px` ring
-   because the idle card already reserves the pixel, so there is nothing to
-   shift. */
+   token set's version of it) and the coloured shadow.
+
+   **The edge is a border plus a ring, and the second layer is what thickens it
+   without a reflow.** `border-width: 2px` was the obvious way to say "a bit
+   thicker" and it moves every pixel inside the card by one, on a row whose
+   whole point is that its text lines up with its neighbours'. The ring is drawn
+   *outside* the border, so the two abut into one edge that reads about twice as
+   heavy, and nothing inside moves. */
 .lb-session.is-current {
   background: var(--bg-card);
   border-color: var(--accent-border);
   color: var(--fg);
-  box-shadow: var(--shadow-card-active);
+  box-shadow:
+    0 0 0 1px var(--accent-border),
+    var(--shadow-card-active);
 }
 
 .lb-session .lb-session-top {
@@ -1553,7 +1624,12 @@
    `top: 50%`/`translateY(-50%)` centres the pair without `align-self`, which
    only has meaning for a flex item. `right` keeps the 4px the column used to
    carry as `margin-right`, so the buttons land on exactly the pixels they did
-   before this change (209..231) and stay clear of the scrollbar's gutter. */
+   before this change (209..231) and stay clear of the scrollbar's gutter.
+
+   **The transition is what makes the retraction a motion rather than a jump.**
+   `opacity` and `transform` only — the two properties `tokens.css` allows — so
+   the pair slides out along its own axis and fades while the card's padding
+   gives up the band (that half is on `.lb-session`). */
 .lb-session-actions {
   position: absolute;
   top: 50%;
@@ -1563,6 +1639,9 @@
   flex-direction: column;
   align-items: stretch;
   gap: 2px;
+  transition:
+    opacity var(--motion-base) var(--ease-standard),
+    transform var(--motion-base) var(--ease-standard);
 }
 
 .lb-session-actions > .lb-row-action {
@@ -2522,6 +2601,35 @@
   border-radius: 99px;
   padding: 0 8px;
   font-variant-numeric: tabular-nums;
+}
+
+/* **The number wears the dot's own colour**, state for state: the same four
+   tokens the mark at the head's other end is drawn with — `--accent`,
+   `--warning`, `--info`, and the neutral `--fg-faint` Idle's dot uses. The chip
+   is the one place a column announces itself in numbers ("3 waiting" versus "0"),
+   so a coloured dot beside a colourless number read as two facts; the class
+   comes from `statusClass`, the same map the dot takes, so the two cannot drift
+   apart.
+
+   The chip's surface stays the card fill, deliberately: a *filled* chip would
+   paint the amber and blue columns' frequent honest `0` in the loudest colour on
+   the board, which is the opposite of what "nothing needs you" should look like.
+   The board's own total (`board-title-count`) stays neutral grey — it counts the
+   whole board, not a state, and has no dot to agree with. */
+.board-col-count.is-running {
+  color: var(--accent);
+}
+
+.board-col-count.is-asking {
+  color: var(--warning);
+}
+
+.board-col-count.is-unseen {
+  color: var(--info);
+}
+
+.board-col-count.is-idle {
+  color: var(--fg-faint);
 }
 
 .board-card {
