@@ -2068,6 +2068,8 @@ async function main() {
       idle: bg(idleEl),
       current: bg(currentEl),
       row: bg(rowEl),
+      idleBorder: idleEl ? getComputedStyle(idleEl).borderTopColor : null,
+      currentBorder: currentEl ? getComputedStyle(currentEl).borderTopColor : null,
       idleShadow: idleEl ? getComputedStyle(idleEl).boxShadow : null,
       currentShadow: currentEl ? getComputedStyle(currentEl).boxShadow : null,
       gradients: (image.match(/radial-gradient/g) ?? []).length,
@@ -2084,8 +2086,17 @@ async function main() {
   if (sk.idle === sk.rail) {
     throw new Error(`an idle session card is painted the rail's own colour (${sk.idle}), so there are no cards`);
   }
-  if (sk.current === sk.idle) {
-    throw new Error(`the current session card is not lifted above an idle one (both ${sk.idle})`);
+  // Both rails are one shade and both card states are white, so idle and
+  // current are separated by the **edge and the lift**, not by the fill: the
+  // reference gives the active card a green edge and its green shadow, and the
+  // idle card neither. Asserting a fill difference here would be asserting the
+  // arrangement the rails no longer have.
+  const accented = (c) => typeof c === 'string' && /rgba?\(5,\s*150,\s*105/.test(c);
+  if (!accented(sk.currentBorder)) {
+    throw new Error(`the current session card has no accent edge: ${sk.currentBorder}`);
+  }
+  if (accented(sk.idleBorder)) {
+    throw new Error(`an idle session card wears the accent edge too: ${sk.idleBorder}`);
   }
   // The lift itself: only the current card floats. An idle card carrying a
   // shadow is the inverse error — every row competing for the same emphasis.

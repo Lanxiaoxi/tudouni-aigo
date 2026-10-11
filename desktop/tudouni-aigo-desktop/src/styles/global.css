@@ -212,11 +212,15 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
 .app-leftbar {
   width: var(--rail-w);
   min-height: 0;
-  /* Same as `.app-sidebar` above, and the two must stay in step: the rail's
-     surface is the whole column, or half of it is a different colour. */
+  /* **The same shade as the right rail**, which is what this file's own comment
+     above asks for and what the two did not do: this was `--bg-secondary`
+     (#EDEFF3, the reference's `.sidebar`) against the right rail's #F7F8FA, so
+     the window had a lighter frame on one side. The rows on it moved up with
+     it — session and workspace cards are `--bg-card` (white) now, one rung
+     above the rail, which is where the reference puts its session cards. */
   height: 100%;
   border-right: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
+  background: var(--bg-rail);
   display: flex;
   flex-direction: column;
   overflow: hidden;

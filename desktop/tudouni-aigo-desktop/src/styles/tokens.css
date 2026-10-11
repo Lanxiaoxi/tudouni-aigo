@@ -122,14 +122,6 @@
      with a reference to follow, does distinguish them; see below. */
   --bg-bar:        #1A1E25;
   --bg-rail:       #1A1E25;
-  /* The rail's card rung — the surface an **idle** session card sits on. Light
-     takes the reference's `#F7F8FA` (`.session-card.idle`), one step above the
-     sidebar; here it collapses onto the rail, because this theme has no lighter
-     step between `--bg-secondary` and `--bg-card` to give it and inventing one
-     would re-tune every card surface in the app. An idle card in this theme is
-     therefore the rail's own colour plus its hairline edge — which is exactly
-     how the rail's rows already read here. */
-  --bg-card-subtle: #1A1E25;
 
   --fg:            #F2F3F6;
   --fg-secondary:  #B9BFC9;
@@ -147,6 +139,15 @@
   --accent-subtle: rgba(52, 211, 153, 0.14);   /* 选中行 / badge 底 */
   --accent-border: rgba(52, 211, 153, 0.45);
   --accent-border-strong: rgba(52, 211, 153, 0.55);
+
+  /* See the light theme for why these are their own tokens rather than
+     `--accent-subtle`. On a dark surface a solid pale fill is unreadable, so
+     the dark theme keeps the same three-role structure with the accent itself
+     at low alpha for the fill and `--accent-hover`'s bright green for the
+     text — the relationship the light theme has, inverted for the surface. */
+  --accent-tint:        rgba(52, 211, 153, 0.14);
+  --accent-tint-border: rgba(52, 211, 153, 0.40);
+  --accent-tint-text:   #6EE7B7;
 
   --info:          #60A5FA;  --info-subtle:    rgba(96, 165, 250, 0.14);
   --warning:       #F59E0B;  --warning-subtle: rgba(245, 158, 11, 0.15);
@@ -198,12 +199,13 @@
      the side bar's grey — which is what the app did before — is why the bars
      read as part of the rail instead of as the frame around it. */
   --bg-bar:        #FBFBFD;  /* 顶栏 / 状态栏 */
-  --bg-rail:       #F7F8FA;  /* 右栏：比画布亮一档，块面板再浮在它上面 */
-  /* The reference's `.session-card.idle` surface: `#F7F8FA`, one step above the
-     sidebar's `#EDEFF3` and one below the active card's white. Three rungs, and
-     the idle/active distinction is carried by the **card**, not by a row
-     highlight — which is what makes the list read as cards at all. */
-  --bg-card-subtle: #F7F8FA;
+  /* Both rails take this one value, and the cards on them are white. The
+     reference distinguishes its two rails (`--sidebar` #EDEFF3 against
+     `--rail` #F7F8FA); the app asks for them to match, so the left rail moves
+     up to the right rail's shade and the surfaces *on* it move with it — the
+     session and workspace rows are `--bg-card` now. The depth order is still
+     three rungs, one arrangement over: canvas `--bg` < rail < card. */
+  --bg-rail:       #F7F8FA;
 
   --fg:            #1A1D21;
   --fg-secondary:  #5C626B;
@@ -221,6 +223,16 @@
   --accent-subtle: rgba(5, 150, 105, 0.10);
   --accent-border: rgba(5, 150, 105, 0.40);
   --accent-border-strong: rgba(5, 150, 105, 0.55);
+
+  /* The reference's `--green-tint` / `--green-tint-border` / `--green-700`, the
+     pale green the sidebar's primary action wears (`.btn-new`, and the user
+     asked for the app's to match it). Three tokens rather than a reuse of
+     `--accent-subtle`: that one is a *selection wash* — the accent at 10% over
+     whatever surface is behind it, so it changes with the surface — while these
+     are solid colours sampled off the reference and must not move. */
+  --accent-tint:        #E7F6EE;
+  --accent-tint-border: #BFE8D2;
+  --accent-tint-text:   #047857;
 
   --info:          #2563EB;  --info-subtle:    #EAF1FC;
   --warning:       #A66314;  --warning-subtle: #FBF1E1;

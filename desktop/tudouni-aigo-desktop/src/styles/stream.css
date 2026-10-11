@@ -181,15 +181,22 @@
 }
 
 /* The head bar. 面板的第一行：调用名在左、数字在右——数字读在一眼处，
-   名字读在两眼处，和 redesign 卡片头的布局次序一致。 */
+   名字读在两眼处，和 redesign 卡片头的布局次序一致。
+
+   **It is the card's own surface, not a band across it.** The reference's
+   `.mc-head` has no background and no separator: the head sits on the white
+   card and is separated from the rows below by spacing alone. Ours was
+   `--bg-secondary` (#EDEFF3) — the *rail's* grey, inside a white card — and
+   with the same fill on the collapse pill and on every permission row, one
+   card carried three grey slabs. That was the grey-on-white clash: the colour
+   of a rail used as a fill for content. */
 .e-step-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--row-h);
-  padding: 5px var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
+  padding: 5px var(--space-3) 4px;
+  background: transparent;
 }
 
 .e-step-icon {
@@ -240,9 +247,16 @@
 /* An in-flight step says so on its head, twice-coloured: the bar's title and
    the metrics share the "no measurement yet" state, and the accent under the
    icon is the one motion the card gets — the same continuing-condition
-   carve-out the board's working dot holds. */
-.e-step.is-running .e-step-head {
-  background: var(--accent-subtle);
+   carve-out the board's working dot holds.
+
+   It used to say it a third time with an accent wash **across the head**, which
+   is the same mistake the head's grey was: a full-width band inside a card. The
+   reference marks a running card by edging the card (`.mc-card.running` sets a
+   border colour), so that is what this does — the icon and the metrics carry the
+   accent, the edge says the card is live. The rule order matters: `is-elevated`
+   below overrides this one, so a risky call keeps its warning/destructive edge. */
+.e-step.is-running {
+  border-color: var(--accent-border);
 }
 
 .e-step.is-running .e-step-icon {
@@ -368,6 +382,10 @@
   flex: none;
 }
 
+/* The collapsed-tools control. It was a `--bg-secondary` pill — the third grey
+   slab inside the card — and the reference's equivalent (`.mc-row`) is a plain
+   chevron row on the card's own surface. An outline keeps it legible as a
+   control without filling it in: 1px of `--border-subtle` and no colour. */
 .quiet-rollup {
   display: inline-flex;
   align-items: center;
@@ -376,7 +394,7 @@
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  background: transparent;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--fg-muted);
@@ -384,11 +402,13 @@
   align-self: flex-start;
   transition:
     background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out);
 }
 
 .quiet-rollup:hover {
   background: var(--bg-muted);
+  border-color: var(--border);
   color: var(--fg-secondary);
 }
 
@@ -445,13 +465,16 @@
 }
 
 /* ---------------- 8. 权限记录 ---------------- */
+/* No fill, like the reference's `.mc-detail` — a permission row is an icon, a
+   rule pill and two words of text on the card, not a grey block. It carried
+   `--bg-secondary`, which inside a white card was a third grey slab; the
+   shield icon and the amber rule pill are what make it a row. */
 .e-perm {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: 5px var(--space-2);
   border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
   font-size: var(--text-compact);
   color: var(--fg-muted);
 }
@@ -1045,23 +1068,26 @@
   padding: var(--space-3);
 }
 
-/* The rail's primary action takes the design's hero shape: solid emerald
-   gradient, white text, coloured drop shadow — the one loud element in the
-   rail, matching `.btn-primary`'s treatment. */
+/* The rail's primary action, in the shape asked for: the reference's pale green
+   fill (`--green-tint`), its hairline (`--green-tint-border`) and `--green-700`
+   text. It carried the solid gradient before, which made the rail's one control
+   the loudest thing on the screen — and the reference's own rail has no solid
+   fill anywhere in it. The tint is a surface, not a highlight: it reads as a
+   button because of the edge and the weight, not because it shouts. */
 .lb-new .btn-outline {
-  background: var(--accent-grad);
-  border-color: transparent;
-  color: #ffffff;
+  background: var(--accent-tint);
+  border-color: var(--accent-tint-border);
+  color: var(--accent-tint-text);
   font-weight: 600;
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-accent);
+  box-shadow: none;
 }
 
 .lb-new .btn-outline:hover:not(:disabled) {
-  background: var(--accent-grad);
-  border-color: transparent;
-  color: #ffffff;
-  filter: brightness(1.06);
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent-tint-text);
+  filter: none;
 }
 
 /* The one icon-button shape in the rail: a real 24px target, and a visible
@@ -1328,11 +1354,12 @@
 }
 
 /* The design's `.session-card`: **every** row is a card on the rail, not only
-   the one you are looking at. An idle row takes the reference's `#F7F8FA`
-   (`--bg-card-subtle`) — one step lighter than the rail it sits on, so the list
-   reads as cards instead of as text with a highlight on it. The border is
-   present from the start and transparent, so turning it on for hover or for the
-   current state moves nothing by a pixel. */
+   the one you are looking at. An idle row is white — one step above the rail it
+   sits on, which is where the reference puts its idle cards (it gives them
+   `#F7F8FA` over a `#EDEFF3` sidebar; both rails here are `#F7F8FA`, so the
+   rung moves to `--bg-card`). The border is present from the start and
+   transparent, so turning it on for hover or for the current state moves
+   nothing by a pixel. */
 .lb-session {
   display: flex;
   flex-direction: column;
@@ -1341,7 +1368,7 @@
   padding: var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-lg);
-  background: var(--bg-card-subtle);
+  background: var(--bg-card);
   text-align: left;
   color: var(--fg-secondary);
   cursor: pointer;
@@ -1609,6 +1636,17 @@
   border-top: 1px solid var(--border-subtle);
 }
 
+/* Every row here is a named destination, not an ornament, so it wears the
+   reading colour rather than the muted one — the same `--fg` the rail's own
+   brand line takes (`.lb-head .lb-brand`), which is what the eye is already
+   calibrated to at the top of the rail. `--fg-muted` read as a disabled row at
+   rest, and with three of the five rows genuinely disabled that made the foot
+   look like a list of things that do not work. Disabled still says so on its
+   own, through `opacity` below.
+
+   The `color` transition stays even though nothing here changes colour on
+   hover or press: the fold in and out of `:disabled` does, and it would snap
+   without it. */
 .lb-foot-btn {
   display: flex;
   align-items: center;
@@ -1618,7 +1656,7 @@
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   font-size: var(--text-compact);
-  color: var(--fg-muted);
+  color: var(--fg);
   cursor: pointer;
   transition:
     background-color var(--motion-fast) var(--ease-out),
@@ -1626,9 +1664,12 @@
     opacity var(--motion-fast) var(--ease-out);
 }
 
+/* Hover and the board's on state are carried by the background alone. Both used
+   to repeat `color: var(--fg)`, which was the *lift* away from the muted base;
+   with the base already at `--fg` those two declarations would be no-ops that
+   still read as "the colour changes here". */
 .lb-foot-btn:hover:not(:disabled) {
   background: var(--bg-muted);
-  color: var(--fg);
 }
 
 /* The board's own button reads as a toggle while the board is up: the view has
@@ -1637,9 +1678,12 @@
    already on. Same idiom as the other `is-active` toggles in this rail. */
 .lb-foot-btn.is-active {
   background: var(--bg-muted);
-  color: var(--fg);
 }
 
+/* `opacity`, not a second colour token: the difference between a row that works
+   and one that does not has to survive the base being the reading colour, and
+   opacity fades the icon with the label. 0.4 of `--fg` still lands clearly below
+   `--fg` itself in both themes — measured on the rendered rail, not assumed. */
 .lb-foot-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
