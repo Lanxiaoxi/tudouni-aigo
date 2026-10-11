@@ -1408,28 +1408,41 @@ table.table td.mono {
 }
 
 /* ---- the settings row's three-way choice ----
-   A vertical list rather than a segmented control: each option carries a
-   sentence describing what the X button will then do, and three sentences do not
-   fit on one line inside a 233px rail-width panel. */
+   A segmented control on one row: the labels alone name the choice, and each
+   one's sentence lives in its tooltip instead of on screen. The old boxed
+   radios spent most of a 233px rail-width panel describing themselves. */
 .set-choice {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
   margin-top: var(--space-2);
 }
 
 .set-choice-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2);
-  border: 1px solid transparent;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   text-align: left;
   cursor: pointer;
   transition:
     background-color var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out);
+}
+
+/* The screen-reader-only radio stays focusable inside the segment; visually the
+   segment itself is the control, so the native dot is hidden and selection is
+   drawn with the accent border and fill. */
+.set-choice-item input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .set-choice-item:hover {
@@ -1441,17 +1454,14 @@ table.table td.mono {
   background: var(--accent-subtle);
 }
 
-.set-choice-item input {
-  flex: none;
-  margin-top: 2px;
-  accent-color: var(--accent);
+.set-choice-text {
+  font-size: var(--text-compact);
+  line-height: var(--leading-tight);
+  color: var(--fg-secondary);
 }
 
-.set-choice-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
+.set-choice-item[data-state='checked'] .set-choice-text {
+  color: var(--fg);
 }
 
 /* ---------------- §10 终端 / Diff / 日志 ---------------- */

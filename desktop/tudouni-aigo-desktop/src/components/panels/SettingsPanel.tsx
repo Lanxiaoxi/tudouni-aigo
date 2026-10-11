@@ -257,29 +257,29 @@ export function SettingsPanel() {
             </div>
             <div className="set-desc">{t('panel.settings.closeDesc')}</div>
 
-            {/* Three options, in a vertical list because each carries a sentence
-                and three sentences do not fit on one line. A radio group in
-                plain DOM rather than Radix: the only Radix radio in this codebase
-                is the question modal's, and that one is genuinely a question the
-                runtime is blocked on. */}
+            {/* Three options, one compact segmented control: the labels say what
+                each choice means ("Ask" / "Tray" / "Close"), and the tooltip
+                carries the sentence that used to sit under every radio. In a
+                233px rail-width panel three boxed radios with sentences spent
+                most of the panel describing itself. */}
             <div className="set-choice" role="radiogroup" aria-label={t('panel.settings.close')}>
               {CLOSE_POLICIES.map((policy) => (
-                <label
-                  key={policy}
-                  className="set-choice-item"
-                  data-state={closePolicy === policy ? 'checked' : 'unchecked'}
-                >
-                  <input
-                    type="radio"
-                    name="close-policy"
-                    checked={closePolicy === policy}
-                    onChange={() => setClosePolicy(policy)}
-                  />
-                  <span className="set-choice-text">
-                    <span className="strong">{t(CLOSE_POLICY_LABEL[policy])}</span>
-                    <span className="caption muted">{t(CLOSE_POLICY_SUMMARY[policy])}</span>
-                  </span>
-                </label>
+                <Tip key={policy} label={t(CLOSE_POLICY_SUMMARY[policy])} side="top">
+                  <label
+                    className="set-choice-item"
+                    role="radio"
+                    aria-checked={closePolicy === policy}
+                    data-state={closePolicy === policy ? 'checked' : 'unchecked'}
+                  >
+                    <input
+                      type="radio"
+                      name="close-policy"
+                      checked={closePolicy === policy}
+                      onChange={() => setClosePolicy(policy)}
+                    />
+                    <span className="set-choice-text">{t(CLOSE_POLICY_LABEL[policy])}</span>
+                  </label>
+                </Tip>
               ))}
             </div>
           </div>
