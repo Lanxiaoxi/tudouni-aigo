@@ -34,6 +34,7 @@ import {
   isWatched,
   notifyContent,
   notifyDecision,
+  notifyDestination,
   notifyReason,
   readNotifyEnabled,
   type NotifyRow,
@@ -396,4 +397,69 @@ test('notifications are on unless they were switched off', () => {
 test('only an explicit false switches them off', () => {
   assert.equal(readNotifyEnabled(false), false);
   assert.equal(readNotifyEnabled(true), true);
+});
+
+/* ============================================================
+   Where a notification leads
+   ============================================================ */
+
+test('a session that is still open is focused, not reopened', () => {
+  // The ordinary case, and the whole of what the click promised. Focusing is a
+  // **local** act that sends nothing, and it also clears the session's `unseen`
+  // mark — which is the natural end of "it finished and I had not looked".
+  // Reopening instead would spawn a second process on a session id that already
+  // has one, and `openSession` refuses that anyway — so the two paths would
+  // agree by accident rather than by construction.
+  assert.deepEqual(
+    notifyDestination({ key: 'n1', sessionId: 'sess-n1', workspace: 'C:/w' }, ['n1', 'n2']),
+    { kind: 'focus', key: 'n1' },
+  );
+});
+
+test('a session closed in the meantime is reopened by its id', () => {
+  // Why the target travels with the sentence instead of being looked up at click
+  // time: a toast is at least as old as the transition that raised it, and the
+  // person who reads it a minute later may have closed that conversation. The id
+  // and the workspace are what `openSession` needs to bring it back.
+  assert.deepEqual(
+    notifyDestination({ key: 'n1', sessionId: 'sess-n1', workspace: 'C:/w' }, ['n9']),
+    { kind: 'reopen', sessionId: 'sess-n1', workspace: 'C:/w' },
+  );
+});
+
+test('a closed session with no id has nowhere to go', () => {
+  // A session whose `init` never landed has no saved conversation to reopen, and
+  // once closed there is no key left to focus. Doing nothing is the honest
+  // answer — the alternatives are focusing a key that no longer exists (a silent
+  // no-op that reads as a click being ignored) or starting a session the runtime
+  // was never told about.
+  assert.deepEqual(
+    notifyDestination({ key: 'n1', sessionId: '', workspace: 'C:/w' }, []),
+    { kind: 'nothing' },
+  );
+});
+
+test('the live-key check is by identity, not by position', () => {
+  // Keys are the bridge's own handle and are never reused, so a click must land
+  // on the session it names and not on whatever now occupies that slot in the
+  // rail's order. A rule written against an index would focus the wrong
+  // conversation — the one failure worse than not moving at all.
+  assert.deepEqual(
+    notifyDestination({ key: 'n2', sessionId: 'sess-n2', workspace: 'C:/w' }, ['n5', 'n2', 'n1']),
+    { kind: 'focus', key: 'n2' },
+  );
+  // Not present, so the reopen path is taken rather than "the key looks close".
+  assert.deepEqual(
+    notifyDestination({ key: 'n2', sessionId: 'sess-n2', workspace: 'C:/w' }, ['n5', 'n1']),
+    { kind: 'reopen', sessionId: 'sess-n2', workspace: 'C:/w' },
+  );
+});
+
+test('an empty live list still reopens rather than dropping the click', () => {
+  // Every session closed: the app is open on the first screen. The saved
+  // conversation is still exactly what the person asked to see.
+  assert.deepEqual(
+    notifyDestination({ key: 'n1', sessionId: 'sess-n1', workspace: '' }, []),
+    { kind: 'reopen', sessionId: 'sess-n1', workspace: '' },
+  );
 });

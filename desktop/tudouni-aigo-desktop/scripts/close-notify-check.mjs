@@ -20,13 +20,14 @@
  * **registry of event listeners** and can fire into them, which the existing
  * window-controls check has no need of.
  *
- * Delivery is the plugin's, and in a browser there is none: the plugin ends in
- * `new window.Notification(...)` (`@tauri-apps/plugin-notification`), so a stub
- * that records constructions is exactly the boundary being tested — the rule and
- * the sentence, not the OS toast. Replacing the whole global is deliberate: the
- * plugin reads `window.Notification.permission` on every send, so a stub with
- * `permission === 'granted'` is also what keeps the permission round trip out of
- * the way.
+ * Delivery is the **bridge's** now, not the notification plugin's: a toast that
+ * can report a click has to be built where the click arrives, so showing one is
+ * the `notify_send` command (`src-tauri/src/lib.rs`). In a browser there is no OS
+ * toast, so recording that call is exactly the boundary being tested — the rule
+ * and the sentence, not the toast itself. The `window.Notification` stub is kept
+ * but records into a **separate** array, because a send that went back through
+ * the plugin's JS would be a regression rather than an equivalent path: the
+ * plugin reports no desktop click, which is the whole reason delivery moved.
  *
  * Clicks are **CDP's real mouse events**, for the reason the other check
  * documents: a synthetic `.click()` bypasses hit testing, and a dialog button
@@ -112,17 +113,23 @@ async function main() {
       window.__focused = true;
       window.__minimized = false;
       window.__notifications = [];
+      // **A separate array on purpose.** Delivery is the bridge's now, so a send
+      // that reached the plugin's JS would be a regression rather than an
+      // equivalent path — the plugin reports no desktop click, which is the whole
+      // reason delivery moved. Recording it apart is what lets a run assert that
+      // it stayed unused.
+      window.__pluginNotifications = [];
       window.__errors = [];
 
       addEventListener('unhandledrejection', (e) => window.__errors.push(String(e.reason)));
 
-      // The plugin's last hop is \`new window.Notification(title, options)\`, so
-      // recording constructions is the same boundary the OS would see.
+      // Kept as a trap rather than deleted: if anything still sends through the
+      // plugin, this records it instead of throwing into a render.
       window.Notification = class {
         static permission = 'granted';
         static requestPermission() { return Promise.resolve('granted'); }
         constructor(title, options) {
-          window.__notifications.push({ title, body: (options && options.body) || '' });
+          window.__pluginNotifications.push({ title, body: (options && options.body) || '' });
         }
       };
 
@@ -184,6 +191,21 @@ async function main() {
           if (cmd === 'plugin:window|is_focused') return Promise.resolve(window.__focused);
           if (cmd === 'plugin:window|is_minimized') return Promise.resolve(window.__minimized);
           if (cmd === 'plugin:window|is_maximized') return Promise.resolve(false);
+          // The toast itself. Recording the call is exactly the boundary: the
+          // rule and the sentence are what is under test, not the OS toast — and
+          // the target travels with it, which is what the click assertions below
+          // read back.
+          if (cmd === 'notify_send') {
+            const content = (args && args.content) || {};
+            window.__notifications.push({
+              title: content.title || '',
+              body: content.body || '',
+              key: content.key || '',
+              sessionId: content.sessionId || '',
+              workspace: content.workspace || '',
+            });
+            return Promise.resolve(null);
+          }
           return Promise.resolve(null);
         },
       };
@@ -724,6 +746,97 @@ async function main() {
   );
   await evaluate(`window.__aigoStore.getState().setNotifyEnabled(true)`);
   await sleep(200);
+
+  /* ============================================================
+     Part 3 — the click back
+     ============================================================ */
+
+  /**
+   * Fire the event Rust emits when a toast is clicked.
+   *
+   * The payload is exactly what the bridge echoes back — the three fields the
+   * notification was sent *about*. It is fired rather than clicked because a real
+   * toast lives in the OS: the page cannot click it, and what is under test here
+   * is the half that is ours, which is every step after the event arrives.
+   */
+  const clicked = (payload) =>
+    evaluate(`window.__emit('notify://activated', ${JSON.stringify(payload)})`);
+
+  console.log('');
+  console.log('clicking a notification whose session is still open:');
+  await evaluate(reset);
+  await sleep(200);
+  await evaluate(addSession('n1'));
+  await evaluate(addSession('n2'));
+  await sleep(400);
+  await evaluate(`window.__aigoStore.setState({ activeKey: 'n2' })`);
+  await sleep(300);
+  await evaluate(`window.__ipc.length = 0; window.__args.length = 0`);
+  check(
+    await clicked({ key: 'n1', sessionId: 'sess-n1', workspace: 'C:/work/proj' }),
+    'the click reached the front end listener',
+  );
+  await sleep(400);
+  const afterClick = await evaluate(`window.__aigoStore.getState().activeKey`);
+  check(
+    afterClick === 'n1',
+    `the session the toast named is now on screen (got ${JSON.stringify(afterClick)})`,
+  );
+  check(
+    (await evaluate('window.__ipc.slice()')).indexOf('runtime_attach') < 0,
+    'and no second child was started for a session that was already open',
+  );
+  check(
+    (await evaluate(`window.__aigoStore.getState().sessions['n1'].unseen`)) === false,
+    'and the "you have not looked at it yet" mark is cleared — the natural end of the notification',
+  );
+
+  console.log('');
+  console.log('clicking a notification whose session was closed in the meantime:');
+  // The case the toast outlives: a notification is at least as old as the
+  // transition that raised it, and somebody who reads it a minute later may have
+  // closed that conversation. Focusing a key that no longer exists would be a
+  // silent no-op that looks like the click was ignored.
+  await evaluate(reset);
+  await sleep(200);
+  await evaluate(addSession('n1'));
+  await sleep(400);
+  await evaluate(`window.__aigoStore.getState().detachSession('n1')`);
+  await sleep(600);
+  await evaluate(`window.__ipc.length = 0; window.__args.length = 0`);
+  await clicked({ key: 'n1', sessionId: 'sess-n1', workspace: 'C:/work/proj' });
+  await sleep(700);
+  const reopened = await evaluate('window.__ipc.slice()');
+  check(
+    reopened.indexOf('runtime_attach') >= 0,
+    `the saved conversation is reopened rather than ignored (ipc: ${JSON.stringify(reopened)})`,
+  );
+
+  console.log('');
+  console.log('clicking a notification that names nowhere to go:');
+  // A session whose `init` never landed has no id to reopen, and if it is closed
+  // there is no key left to focus either. The click then does nothing — which is
+  // the honest answer, and must not be a crash or a stray child.
+  await evaluate(reset);
+  await sleep(300);
+  await evaluate(`window.__ipc.length = 0; window.__args.length = 0`);
+  await clicked({ key: 'gone', sessionId: '', workspace: '' });
+  await sleep(500);
+  check(
+    (await evaluate('window.__ipc.slice()')).indexOf('runtime_attach') < 0,
+    'nothing is started for a session with no id to reopen',
+  );
+
+  console.log('');
+  console.log('delivery stayed off the plugin:');
+  // Delivery moved to `notify_send` precisely because the plugin cannot report a
+  // click. A send that went back through its JS would look identical on screen
+  // and silently lose the click, which is why it is asserted rather than assumed.
+  const viaPlugin = await evaluate('window.__pluginNotifications.slice()');
+  check(
+    viaPlugin.length === 0,
+    `every notification went through the bridge, not the plugin (got ${JSON.stringify(viaPlugin)})`,
+  );
 
   // Nothing above may have thrown in the background: an unhandled rejection
   // inside the hook looks exactly like a rule that decided to be quiet.
