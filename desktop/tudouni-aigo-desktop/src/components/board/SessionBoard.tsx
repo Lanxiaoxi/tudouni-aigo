@@ -229,7 +229,17 @@ export function SessionBoard() {
     <div className="board">
       <header className="board-head">
         <div>
-          <h2 className="board-title">{t('board.title')}</h2>
+          <h2 className="board-title">
+            {t('board.title')}
+            {/* The board's subject is "the conversations that are open right
+                now", and every one of those is a live child process — this is
+                the one number the title cannot say by itself. `order` is the
+                store's own list of child keys (the same source the cards are
+                built from, so the count can never disagree with the board), and
+                it is already subscribed above, so this costs nothing. Same chip
+                idiom as the column heads' counts. */}
+            <span className="board-title-count">{order.length}</span>
+          </h2>
           <p className="board-sub">{t('board.subtitle')}</p>
         </div>
         {/* Leaving is a first-class control, like `TerminalView`'s — the board

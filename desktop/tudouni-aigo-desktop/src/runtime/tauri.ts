@@ -126,6 +126,36 @@ class RuntimeHost {
   private ready: Promise<void> | null = null;
   private disposed = false;
 
+  /**
+   * Lines a live sink is waiting for, held until the frame they will be drawn in.
+   *
+   * **Why hold them at all.** A streaming turn's deltas arrive as one IPC event
+   * each, and delivering each into the store as it lands gives each delta its
+   * own React render — so a fast stream cost one render per line, and on a long
+   * conversation that is the "the thinking counter falls behind" report. Holding
+   * each line until the next frame and releasing a session's whole queue in one
+   * synchronous pass leaves the reducer's semantics untouched (messages are
+   * still applied in arrival order, one after the other, each seeing the state
+   * the previous one left) while React's automatic batching collapses the
+   * releases into a single render per frame.
+   *
+   * The release is scheduled three ways, and which one runs is load-bearing:
+   *
+   *   - **Visible**: `requestAnimationFrame`, so the work lands with the frame
+   *     that will paint it.
+   *   - **Hidden**: a 16 ms task. A hidden WebView never paints, and rAF never
+   *     fires there — a stream running behind a minimized window would queue
+   *     for as long as it stays hidden if rAF alone carried this.
+   *   - **No window at all** (the Node test harness): a plain task.
+   *     `setTimeout(…, 0)` lands within the first macrotask after the lines
+   *     arrive, which is the await the attach-race test already uses to let a
+   *     delivery settle.
+   */
+  private frameLines = new Map<string, RuntimeMsg[]>();
+  private flushScheduled = false;
+  private frameHandle: number | null = null;
+  private taskHandle: ReturnType<typeof setTimeout> | null = null;
+
   constructor(
     private onDrop: DropReport,
     private onAttachFailure: (problem: string) => void,
@@ -214,11 +244,59 @@ class RuntimeHost {
 
   private deliverLine(key: string, msg: RuntimeMsg): void {
     const sink = this.sinks.get(key);
-    if (sink) {
-      sink.emit(msg);
+    if (!sink) {
+      this.pendingLines.set(key, [...(this.pendingLines.get(key) ?? []), msg]);
       return;
     }
-    this.pendingLines.set(key, [...(this.pendingLines.get(key) ?? []), msg]);
+    // The sink exists, so this line's only question is *when* it is applied —
+    // and the answer is "with its frame", not "now". See `frameLines`.
+    const held = this.frameLines.get(key);
+    if (held) held.push(msg);
+    else this.frameLines.set(key, [msg]);
+    this.scheduleFlush();
+  }
+
+  /**
+   * Arm the release of held lines, once. Idempotent across the lines of one
+   * frame: every delivery during the wait lands in the same queues, and the
+   * single release that was scheduled carries them all.
+   */
+  private scheduleFlush(): void {
+    if (this.flushScheduled) return;
+    this.flushScheduled = true;
+    if (typeof document !== 'undefined' && document.hidden) {
+      this.taskHandle = setTimeout(() => this.flushHeldLines(), 16);
+    } else if (typeof requestAnimationFrame === 'function') {
+      this.frameHandle = requestAnimationFrame(() => this.flushHeldLines());
+    } else {
+      this.taskHandle = setTimeout(() => this.flushHeldLines(), 0);
+    }
+  }
+
+  /**
+   * Release every held line, in arrival order per key.
+   *
+   * The flag goes down **before** the pass: the pass itself cannot schedule a
+   * release (lines only ever arrive from the bridge's events, never from within
+   * `emit`), but the next event after it must be free to arm a new one.
+   *
+   * A key whose sink vanished while its lines waited is dropped, not rerouted:
+   * `detach` clears the pending maps on purpose, and a stale key is never
+   * reused, so the only thing rerouting would do is resurrect a queue for a
+   * session that is gone.
+   */
+  private flushHeldLines(): void {
+    this.flushScheduled = false;
+    this.frameHandle = null;
+    this.taskHandle = null;
+    if (this.frameLines.size === 0) return;
+    const held = this.frameLines;
+    this.frameLines = new Map();
+    for (const [key, msgs] of held) {
+      const sink = this.sinks.get(key);
+      if (!sink) continue;
+      for (const msg of msgs) sink.emit(msg);
+    }
   }
 
   private deliverStderr(key: string, line: string): void {
@@ -250,6 +328,10 @@ class RuntimeHost {
     // key is never reused, so nothing will ever claim it.
     this.pendingLines.delete(key);
     this.pendingStderr.delete(key);
+    // The same for lines held for this frame. The release would skip them (the
+    // sink lookup misses), but deleting here keeps the queue from outliving the
+    // session it was held for.
+    this.frameLines.delete(key);
   }
 
   dispose(): void {
@@ -257,6 +339,12 @@ class RuntimeHost {
     this.sinks.clear();
     this.pendingLines.clear();
     this.pendingStderr.clear();
+    this.frameLines.clear();
+    if (this.frameHandle !== null) cancelAnimationFrame(this.frameHandle);
+    if (this.taskHandle !== null) clearTimeout(this.taskHandle);
+    this.frameHandle = null;
+    this.taskHandle = null;
+    this.flushScheduled = false;
     for (const off of this.unlisten) off();
     this.unlisten.length = 0;
   }

@@ -2276,6 +2276,24 @@
   color: var(--fg);
 }
 
+/* The open-session count, right after the title. Every card on this board is a
+   live child process, and this number says how many of them there are — the one
+   fact the title alone cannot carry. Same chip as the column heads' counts,
+   minus the `margin-left: auto` (it sits beside the title, not at the head's
+   far edge: it counts the whole board, not one column). */
+.board-title-count {
+  margin-left: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-weight: 400;
+  color: var(--fg-muted);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 99px;
+  padding: 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* The subtitle states the board's scope, which is the one thing a person can
    otherwise get wrong about it: it is the **workspace's** sessions, and most of
    them are idle because only open ones have a state at all. */
