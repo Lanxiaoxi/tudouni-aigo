@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Archive, ArchiveRestore, ArrowUp, Bot, Download, Folder, Plus, Search, Upload, X } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { notesByServer } from '@/runtime/adapt';
@@ -24,7 +24,7 @@ import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { useListKeys } from '@/hooks/useListKeys';
 import { Badge, EmptyState, Info, RiskTag, Tip } from '@/components/ui/kit';
-import { InBlock } from '@/components/stream/InBlock';
+import { ContextBlock, InBlock } from '@/components/stream/InBlock';
 import { PanelBody, PanelRow, PanelShell } from './PanelShell';
 import { COMMANDS } from '@/commands';
 import { formatDuration, formatPath, formatRelative, formatTokens, oneLine } from '@/utils/format';
@@ -1247,6 +1247,34 @@ export function AuditPanel() {
             </table>
           </>
         ) : null}
+      </PanelBody>
+    </PanelShell>
+  );
+}
+
+/* ============================================================
+   Context ledger.
+   The status bar's usage chip opens this. It asks the runtime for
+   `ui(context)` on mount and renders the same block the /context
+   command draws in the transcript — one fact, one rendering.
+   ============================================================ */
+export function ContextPanel() {
+  const t = useT();
+  const contextMsg = useSessionField((rt) => rt.contextMsg, null);
+  const refreshContext = useApp((s) => s.refreshContext);
+
+  useEffect(() => {
+    refreshContext();
+  }, [refreshContext]);
+
+  return (
+    <PanelShell title={t('inblock.context.title')} note={t('cmd.context.desc')}>
+      <PanelBody>
+        {contextMsg === null ? (
+          <EmptyState title={t('common.loading')} />
+        ) : (
+          <ContextBlock p={contextMsg} />
+        )}
       </PanelBody>
     </PanelShell>
   );

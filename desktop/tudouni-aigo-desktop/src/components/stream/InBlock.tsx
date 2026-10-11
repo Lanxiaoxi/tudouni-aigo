@@ -256,8 +256,9 @@ function ToolsBlock({ p }: { p: UiToolsMsg }) {
 }
 
 /** `/context`: three numbers travel together — used, limit, and the compaction
- *  line. Reported alone, a token count is neither big nor small. */
-function ContextBlock({ p }: { p: UiContextMsg }) {
+ *  line. Reported alone, a token count is neither big nor small. Exported for
+ *  the context panel, which renders the same payload in a dialog. */
+export function ContextBlock({ p }: { p: UiContextMsg }) {
   const t = useT();
   // Everything the message carries is inside the "context feature" container:
   // the ledger is `context.context`, and `window` / `messages` / `folded` sit

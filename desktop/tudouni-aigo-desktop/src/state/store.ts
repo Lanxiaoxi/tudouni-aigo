@@ -38,6 +38,7 @@ import type {
   RuntimeMsg,
   SkillCatalogRow,
   TerminalRow,
+  UiContextMsg,
   UiFileReadMsg,
 } from '@/protocol/types';
 import {
@@ -150,6 +151,7 @@ export type PanelKind =
   | 'help'
   | 'subagents'
   | 'audit'
+  | 'context'
   | 'settings'
   /* The configuration files themselves. A panel of its own rather than a third
    * group inside Settings, because it is a different kind of decision from
@@ -412,6 +414,9 @@ export interface SessionRuntime {
   uiState: VmState | null;
   status: VmStatus | null;
   context: VmContext | null;
+  /** The raw `ui(context)` payload. The context panel renders this; the
+   *  transcript block is the same message's other home. */
+  contextMsg: UiContextMsg | null;
   compaction: VmCompaction | null;
   tools: VmTool[];
   /**
@@ -698,6 +703,7 @@ export function createSessionBucket(
     uiState: null,
     status: null,
     context: null,
+    contextMsg: null,
     compaction: null,
     tools: [],
     toolRegistry: [],
@@ -1233,6 +1239,8 @@ export interface AppStore {
   chooseEffort(effort: string): void;
   setThinking(on: boolean): void;
   requestBlock(which: BlockKind): void;
+  /** Ask for `ui(context)` **without** leaving the panel that asked. */
+  refreshContext(): void;
   requestMcp(action: 'list' | 'load' | 'unload', servers: string[]): void;
   requestSkills(): void;
   goalAction(action?: 'pause' | 'resume' | 'clear'): void;
@@ -2945,7 +2953,15 @@ export const useApp = create<AppStore>((set, get) => {
               const context = projectContext(msg);
               patchWith(key, (current) => ({
                 context,
-                entries: pushBlock(current.entries, 'context', msg),
+                contextMsg: msg,
+                // When the request came from the context panel, the answer goes
+                // to the panel alone — a block inserted into the transcript
+                // behind the open dialog would be a second copy the reader did
+                // not ask for. The palette's `/context` closes no panel and
+                // keeps the block, exactly as it always did.
+                ...(get().panel === 'context'
+                  ? {}
+                  : { entries: pushBlock(current.entries, 'context', msg) }),
               }));
               break;
             }
@@ -3769,6 +3785,12 @@ export const useApp = create<AppStore>((set, get) => {
       if (which === 'tools') sendTo(key, { v: 1, t: 'tools' });
       if (which === 'context') sendTo(key, { v: 1, t: 'context' });
       if (which === 'compact') sendTo(key, { v: 1, t: 'compact' });
+    },
+
+    refreshContext() {
+      const key = get().activeKey;
+      if (key === null) return;
+      sendTo(key, { v: 1, t: 'context' });
     },
 
     requestMcp(action, servers) {

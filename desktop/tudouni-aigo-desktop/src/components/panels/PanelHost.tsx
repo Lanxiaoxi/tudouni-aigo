@@ -4,6 +4,7 @@ import { useT } from '@/i18n/useT';
 import { CommandPalette } from './CommandPalette';
 import {
   AuditPanel,
+  ContextPanel,
   EffortPanel,
   FilesPanel,
   HelpPanel,
@@ -57,6 +58,7 @@ export function PanelHost() {
           {panel === 'help' ? <HelpPanel /> : null}
           {panel === 'subagents' ? <SubagentsPanel /> : null}
           {panel === 'audit' ? <AuditPanel /> : null}
+          {panel === 'context' ? <ContextPanel /> : null}
           {panel === 'settings' ? <SettingsPanel /> : null}
           {panel === 'config' ? <ConfigPanel /> : null}
           {panel === 'files' ? <FilesPanel /> : null}

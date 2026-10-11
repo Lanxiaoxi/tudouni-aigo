@@ -142,7 +142,6 @@ export function StatusBar() {
   const hasSpoken = useSessionField((rt) => rt.hasSpoken, false);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
   const openPanel = useApp((s) => s.openPanel);
-  const requestBlock = useApp((s) => s.requestBlock);
   const setAutopilot = useApp((s) => s.setAutopilot);
   const toggleQuiet = useApp((s) => s.toggleQuiet);
   const toggleTerminalView = useApp((s) => s.toggleTerminalView);
@@ -311,11 +310,11 @@ export function StatusBar() {
             own chip below; showing it here would label an estimate as a
             measurement.
 
-            A button, not a read-only chip: pressing it asks the runtime for the
-            same `/context` block the palette's command does — one control with
-            two entrances, the same rule as the audit chip at the far end.
-            Disabled while no prompt has been measured, so the click can never
-            be a lie. */}
+            A button, not a read-only chip: pressing it opens the context
+            panel, which asks the runtime for `ui(context)` and shows the same
+            ledger the /context command draws — a dialog, not a block dropped
+            into the transcript behind it. Disabled while no prompt has been
+            measured, so the click can never be a lie. */}
         <Tip
           label={
             usage.used === null
@@ -328,7 +327,7 @@ export function StatusBar() {
           <button
             type="button"
             className="st-toggle hide-b980"
-            onClick={() => requestBlock('context')}
+            onClick={() => openPanel('context')}
             disabled={usage.used === null}
           >
             <Gauge size={11} />
