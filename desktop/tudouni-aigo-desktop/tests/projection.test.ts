@@ -47,7 +47,9 @@ import {
   activeRuntime,
   createSessionBucket,
   selectModalOrigin,
+  selectModalVisible,
   selectQueuedModals,
+  selectRowStatus,
   selectSavedSessions,
   selectTurnMs,
   selectUsage,
@@ -1676,7 +1678,9 @@ test('an answer goes back to the session that asked, not to the one on screen', 
 
   // **The second session asks while the first is the one on screen.** That is
   // the whole case: a prompt with several conversations open belongs to a
-  // session the reader may not be looking at.
+  // session the reader may not be looking at — so it is **held**, not drawn
+  // (see `selectModalVisible`), and the row that names it is the rail's amber
+  // dot.
   useApp.getState().applyRuntimeMessage(other, {
     v: 1,
     t: 'permission_request',
@@ -1692,7 +1696,14 @@ test('an answer goes back to the session that asked, not to the one on screen', 
   } as never);
 
   assert.equal(useApp.getState().activeKey, KEY, 'the display did not move');
-  assert.equal(useApp.getState().modal?.kind, 'permission');
+  assert.equal(useApp.getState().modal, null, 'a background request is held, not drawn');
+  assert.equal(selectModalVisible(useApp.getState()), false, 'so nothing is on screen');
+  assert.equal(selectRowStatus(useApp.getState(), other), 'asking', 'and its row says so');
+
+  // The act that surfaces it: focusing the session that asked.
+  useApp.getState().focusSession(other);
+  assert.equal(useApp.getState().modal?.kind, 'permission', 'switching to the asker draws it');
+  assert.equal(selectModalVisible(useApp.getState()), true);
 
   useApp.getState().answerPermission('allow');
 
@@ -1703,6 +1714,143 @@ test('an answer goes back to the session that asked, not to the one on screen', 
   assert.equal(second.filter((m) => m.t === 'permission_response').length, 1);
   assert.equal(first.filter((m) => m.t === 'permission_response').length, 0);
   assert.equal((second.find((m) => m.t === 'permission_response') as { id: string }).id, 'p-second');
+  assert.equal(useApp.getState().modal, null, 'and answering leaves nothing drawn');
+});
+
+test('a request from the background does not bury the one from the session on screen', () => {
+  // **The ordering half of the hold rule.** A held request must not take the
+  // drawn slot away from the conversation the person is working in: the two
+  // children block on their own ids independently, so promoting the visible one
+  // reorders nothing the runtime could have recognised, while leaving the
+  // background one in the slot would make the foreground question unanswerable —
+  // it would be rendered by nobody and its own child would wait for ever.
+  const first: FrontendMsg[] = [];
+  const second: FrontendMsg[] = [];
+  registerRuntime({ key: KEY, send: (m) => first.push(m), subscribe: () => () => undefined, dispose: () => undefined });
+  registerRuntime({ key: 'k-2', send: (m) => second.push(m), subscribe: () => () => undefined, dispose: () => undefined });
+
+  resetStore();
+  const other = 'k-2';
+  useApp.setState((s) => ({
+    sessions: {
+      ...s.sessions,
+      [other]: createSessionBucket(other, 'C:/work', { ericai: false, maxSteps: null }),
+    },
+    order: [...s.order, other],
+  }));
+  useApp.getState().applyRuntimeMessage(other, { ...INIT_PAYLOAD, session_id: 's-2' } as never);
+
+  const ask = (key: string, id: string) =>
+    useApp.getState().applyRuntimeMessage(key, {
+      v: 1,
+      t: 'permission_request',
+      id,
+      call_id: 'c1',
+      tool: 'shell',
+      risk: 'high',
+      arguments: { command: 'rm -rf /' },
+      remember: null,
+      remember_hint: null,
+      allow_trust_all: false,
+      trust_all_hint: null,
+    } as never);
+
+  // The background session asks first, and stays in the queue.
+  ask(other, 'p-bg');
+  assert.equal(useApp.getState().modal, null, 'a background request is held');
+
+  // Then the session on screen asks. It draws, even though it arrived second.
+  ask(KEY, 'p-fg');
+  assert.equal((useApp.getState().modal as { req: { id: string } })?.req.id, 'p-fg');
+  assert.equal(selectModalVisible(useApp.getState()), true);
+
+  // Answering sends to the foreground child, and the background request is
+  // still queued behind it rather than having been dropped.
+  useApp.getState().answerPermission('allow');
+  assert.equal(first.filter((m) => m.t === 'permission_response').length, 1);
+  assert.equal(second.filter((m) => m.t === 'permission_response').length, 0);
+  assert.equal(useApp.getState().modal, null, 'and nothing else draws for this session');
+  assert.equal(useApp.getState().pendingModals.length, 1, 'the background request is still held');
+});
+
+test('a child that died releases the request it was waiting on', () => {
+  // The other way a request becomes unanswerable. Without this the dot stays
+  // amber for ever on a session whose prompt can no longer exist, and a request
+  // left in the drawn slot would keep the composer and the rail inert around
+  // nothing.
+  captureOutbound();
+  resetStore();
+  applyInit();
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'question_request',
+    id: 'q1',
+    question: 'which one?',
+    header: 'pick',
+    options: [],
+    multi_select: false,
+  } as never);
+  assert.equal(useApp.getState().modal?.kind, 'question');
+  assert.equal(selectRowStatus(useApp.getState(), KEY), 'asking');
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'runtime_exited',
+    code: 1,
+    requested: false,
+  } as never);
+
+  assert.equal(useApp.getState().modal, null, 'the unanswerable request is not drawn');
+  assert.deepEqual(useApp.getState().pendingModals, [], 'nor left in the queue');
+  assert.equal(selectRowStatus(useApp.getState(), KEY), 'broken', 'the dot reports what happened');
+  assert.equal(selectModalVisible(useApp.getState()), false, 'and nothing is covering the window');
+});
+
+test('switching away holds a prompt, and switching back draws it again', () => {
+  // The exit the hold rule depends on: the request is **held, not hidden**. Its
+  // id is intact, so the child that asked is still the one that gets the answer,
+  // and coming back is all it takes to answer it.
+  captureOutbound();
+  resetStore();
+  applyInit();
+  const other = 'k-3';
+  registerRuntime({ key: other, send: () => undefined, subscribe: () => () => undefined, dispose: () => undefined });
+  useApp.setState((s) => ({
+    sessions: {
+      ...s.sessions,
+      [other]: createSessionBucket(other, 'C:/work', { ericai: false, maxSteps: null }),
+    },
+    order: [...s.order, other],
+  }));
+  useApp.getState().applyRuntimeMessage(other, { ...INIT_PAYLOAD, session_id: 's-3' } as never);
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'question_request',
+    id: 'q1',
+    question: 'which one?',
+    header: 'pick',
+    options: [],
+    multi_select: false,
+  } as never);
+  assert.equal(selectModalVisible(useApp.getState()), true);
+
+  // The person goes to read another conversation. The prompt is held, not lost,
+  // and the row they left says so.
+  useApp.getState().focusSession(other);
+  assert.equal(useApp.getState().modal, null, 'nothing covers the conversation being read');
+  assert.equal(selectModalVisible(useApp.getState()), false);
+  assert.equal(selectRowStatus(useApp.getState(), KEY), 'asking', 'the row left behind says why');
+  assert.equal(
+    useApp.getState().pendingModals.length,
+    1,
+    'and the request itself is still there to answer',
+  );
+
+  useApp.getState().focusSession(KEY);
+  assert.equal((useApp.getState().modal as { req: { id: string } })?.req.id, 'q1');
+  assert.equal(selectModalVisible(useApp.getState()), true);
 });
 
 test('an approval labels which conversation it came from', () => {

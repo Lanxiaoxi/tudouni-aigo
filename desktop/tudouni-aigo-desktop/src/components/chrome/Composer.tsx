@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { ArrowUp, Plus, Square } from 'lucide-react';
-import { selectPhase, useApp, useSessionField, type ComposerNotice } from '@/state/store';
+import { selectModalVisible, selectPhase, useApp, useSessionField, type ComposerNotice } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { ImageTray } from '@/components/chrome/ImageTray';
@@ -63,7 +63,11 @@ export function Composer() {
   const submitDraft = useApp((s) => s.submitDraft);
   const historyNav = useApp((s) => s.historyNav);
   const interrupt = useApp((s) => s.interrupt);
-  const modal = useApp((s) => s.modal);
+  // **Asked of visibility, not of the slot.** A request held because its
+  // session is not the one on screen has drawn nothing here, so the composer of
+  // the conversation being typed into stays live — the same rule the rail's
+  // inertness follows, and the reason switching to the asker is allowed at all.
+  const blocked = useApp(selectModalVisible);
   const panel = useApp((s) => s.panel);
   const ready = useSessionField((rt) => rt.ready, false);
   const phase = useApp((s) => selectPhase(s, key));
@@ -72,7 +76,6 @@ export function Composer() {
   const setComposerNotice = useApp((s) => s.setComposerNotice);
   const openPanel = useApp((s) => s.openPanel);
   const onPaste = useClipboardPaste(taRef);
-  const blocked = modal !== null;
   const running = phase === 'running' && !blocked;
 
   /**

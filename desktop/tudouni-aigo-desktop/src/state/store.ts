@@ -806,20 +806,31 @@ export interface AppStore {
   startupNotice: StartupNotice | null;
 
   /* ---------------- modals / panels ---------------- */
-  /** The request being answered right now — the head of `pendingModals`. */
+  /**
+   * The request that is **drawn right now** — the on-screen session's own first
+   * entry in `pendingModals`, or `null`.
+   *
+   * It is a derived answer rather than simply the queue's head, and
+   * `headForActive` is the one place that derivation lives. The reason is in
+   * `selectModalVisible`: with several conversations open, a prompt belongs to
+   * the conversation it came from, so a background session's request is held
+   * for its own row in the rail instead of covering the work in progress.
+   */
   modal: ModalState;
   /**
-   * Requests that arrived while another was already up.
+   * Every request the runtime is blocked on, in arrival order.
    *
    * `modal` used to be the only slot, and both request kinds wrote straight into
    * it. A second blocking request therefore replaced the first, and since the
    * runtime waits forever on the id it asked about, the replaced one was lost
-   * *and* hung. The queue holds them so the head can be answered and the next
-   * one promoted, in arrival order.
+   * *and* hung. The queue holds them so one can be answered and the next one
+   * taken up.
    *
    * With several sessions this is not an edge case any more: two conversations
-   * can both be waiting, and the queue is what keeps the second one visible
-   * instead of silently stacked behind the first.
+   * can both be waiting, and the queue is what keeps the second one alive
+   * instead of silently stacked behind the first. Which one is **drawn** is
+   * `selectModalVisible`'s call: the on-screen session's own first request
+   * renders, and every other session's is held for its own row in the rail.
    */
   pendingModals: ModalEntry[];
   /** One panel at a time, and that is a window fact rather than a session one. */
@@ -1533,33 +1544,82 @@ function loadPrefs(): Prefs {
    ============================================================ */
 
 /**
- * Add a request: the head is shown, the rest wait.
+ * The request to render, as a function of the session on screen.
+ *
+ * Each conversation is its own child process, so there is no cross-session
+ * answer order the runtime could recognise: every child blocks on its own id
+ * independently. What has to be respected is arrival order **within** one
+ * session — its second approval waits behind its first — and the fact that a
+ * person can only judge the request of the conversation they are looking at.
+ * So the rendered slot is the on-screen session's own first request, or
+ * nothing; every other session's waits for its turn, announced by its rail
+ * dot (`selectRowStatus` → `asking`) and a notification.
+ */
+function headForActive(pending: ModalEntry[], activeKey: string | null): ModalState {
+  return pending.find((entry) => entry.key === activeKey) ?? null;
+}
+
+/**
+ * Add a request.
  *
  * The runtime blocks on the id it asked about and has no timeout, so a request
  * that is never rendered is a call that never returns. That is why nothing here
  * discards an entry — the queue only ever loses one by having it answered.
  */
 function enqueueModal(s: AppStore, entry: ModalEntry): Partial<AppStore> {
-  const next = [...s.pendingModals, entry];
+  const pendingModals = [...s.pendingModals, entry];
   return {
-    pendingModals: next,
-    // A blocking request clears any panel, but only when it becomes the head:
-    // a queued one must not close a panel the person opened after answering the
-    // current prompt.
+    pendingModals,
+    // **Recomputed, not "the first that landed".** A request from the session
+    // the person is looking at always draws, even when a request from a
+    // background conversation already sits at the queue's head: the runtime
+    // waits per child, so promoting the visible one reorders nothing it could
+    // answer in, and it is what keeps a background question from burying a
+    // foreground one. Conversely a foreign request lands in the queue and
+    // stays there: nothing draws for it until that session is focused.
+    modal: headForActive(pendingModals, s.activeKey),
+    // A request from the session on screen clears the panel — one drawn over
+    // the panel the person is using really is uppermost. One from a session
+    // they are not looking at must not close a panel for them; `focusSession`
+    // is the act that surfaces the held prompt, and it clears the panel there.
     //
     // **It clears no board.** `boardOpen` is not a panel and is not touched
-    // here; a request that arrives while the board is up is held unrendered by
-    // the modal components (`SessionBoard`'s design: the card in Needs you is
-    // the surface that says who is asking, and the click that focuses it is the
+    // here; the modal components hold a request whose session is on screen
+    // while the board is (`selectModalVisible` — the card in Needs you is the
+    // surface that says who is asking, and the click that focuses it is the
     // click that surfaces the prompt).
-    ...(s.modal === null ? { modal: entry, panel: null } : {}),
+    ...(entry.key === s.activeKey ? { panel: null } : {}),
   };
 }
 
-/** Drop the answered head and promote the next one, if there is one. */
+/** Drop the answered request and re-aim the rendered slot. */
 function drainModal(s: AppStore): Partial<AppStore> {
-  const rest = s.pendingModals.slice(1);
-  return { pendingModals: rest, modal: rest[0] ?? null };
+  if (s.modal === null) return {};
+  const rest = s.pendingModals.filter((entry) => entry !== s.modal);
+  return { pendingModals: rest, modal: headForActive(rest, s.activeKey) };
+}
+
+/**
+ * Drop every request of one session and re-aim the rendered slot.
+ *
+ * Used when its child can never answer again — the session was closed, or the
+ * child died. A request left behind would keep the session's dot amber for
+ * ever with nothing capable of clearing it, and one sitting in the rendered
+ * slot would govern what is drawn, answered and inert long after it became
+ * unanswerable.
+ *
+ * The focus to re-aim at is given, not read off `s`: `detachSession` moves
+ * focus to a neighbour in the same write, and reading it off the state would
+ * aim the slot at the session being closed.
+ */
+function releaseModalsOf(
+  s: AppStore,
+  key: string,
+  activeKey: string | null,
+): Partial<AppStore> {
+  if (!s.pendingModals.some((entry) => entry.key === key)) return {};
+  const rest = s.pendingModals.filter((entry) => entry.key !== key);
+  return { pendingModals: rest, modal: headForActive(rest, activeKey) };
 }
 
 function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): void {
@@ -2418,6 +2478,13 @@ export const useApp = create<AppStore>((set, get) => {
         sessions: { ...state.sessions, [key as string]: bucket },
         order: [...state.order, key as string],
         activeKey: key,
+        // A new conversation is on screen, so the rendered slot is re-aimed at
+        // it — the same act as in `focusSession`, and it matters here because a
+        // request this brand-new session sends while it is booting must draw
+        // over the screen it belongs to rather than queue behind one held from
+        // the session it displaced.
+        modal: headForActive(state.pendingModals, key as string),
+        panel: null,
         // A new session is being shown, so any window-level refusal it was
         // preceded by is no longer what the screen is about.
         startupProblem: null,
@@ -2466,7 +2533,16 @@ export const useApp = create<AppStore>((set, get) => {
       // act; the child keeps running and keeps its transcript. This is the
       // difference between this and `session_switch`, which made the runtime
       // rebuild itself and abandon whatever it was waiting on.
-      set({ activeKey: key, panel: null });
+      //
+      // Second act of the hold rule (`selectModalVisible`): switching is what
+      // surfaces a request this session was holding — the drawn slot is
+      // recomputed against the new focus, so its first prompt is on screen by
+      // the time the row lands. The panel clears here for the same reason.
+      set((state) => ({
+        activeKey: key,
+        panel: null,
+        modal: state.pendingModals.find((entry) => entry.key === key) ?? null,
+      }));
       // The session being looked at is the one this window is working in, so its
       // workspace is what the next launch should open. Without this, "last used"
       // would mean "last opened", and focusing a session in another workspace is
@@ -2501,11 +2577,11 @@ export const useApp = create<AppStore>((set, get) => {
           activeKey,
           // A queued request from the session that is going away can never be
           // answered — its child is the one that was waiting — so it leaves the
-          // queue rather than sitting at the head of it forever.
-          pendingModals: state.pendingModals.filter((entry) => entry.key !== key),
-          ...(state.modal && state.modal.key === key
-            ? { modal: state.pendingModals.find((entry) => entry.key !== key) ?? null }
-            : {}),
+          // queue, and the rendered slot is re-aimed at whatever the focus
+          // moved to. The re-aim gets the **new** focus: inside this one write
+          // the state's `activeKey` still names the session being closed, and
+          // aiming at it would leave the slot empty by construction.
+          ...releaseModalsOf(state, key, activeKey),
         };
       });
 
@@ -3194,6 +3270,15 @@ export const useApp = create<AppStore>((set, get) => {
           // Stop button, Enter and Esc both do nothing, and the "Stop" message
           // goes into a `.catch(() => {})` because there is no child to receive
           // it. The turn is settled with a reason the reader can act on.
+          //
+          // The child is also the only thing that could ever answer a request it
+          // was waiting on, so its own pending requests leave the queue —
+          // `releaseModalsOf` re-aims the rendered slot at the focus, exactly as
+          // `detachSession` does. Without this the dot stays amber for ever on
+          // a session whose prompt can no longer exist, and one sitting in the
+          // rendered slot would keep the composer and rail inert around
+          // nothing.
+          set({ ...releaseModalsOf(get(), key, get().activeKey) });
           patch(key, {
             runtimeExit: { code: msg.code, requested: msg.requested },
             entries: settleAbandonedTurn(bucket.entries),
@@ -3339,8 +3424,11 @@ export const useApp = create<AppStore>((set, get) => {
       const sent = restorePastedPaths(current.draft, current.pastedImages).trim();
       const text = current.draft.trim();
       if (sent === '') return;
-      // A modal is blocking: nothing may be sent over the top of one.
-      if (s.modal !== null) return;
+      // A **visible** modal is blocking: nothing may be sent over the top of
+      // one. Asked of visibility rather than of the slot: a request held by a
+      // background session has drawn nothing here, and sending into this
+      // conversation is exactly what switching away from it permits.
+      if (selectModalVisible(s)) return;
       // The pictures have done their job the moment the sentence goes out: what
       // travels is the **path**, and the runtime reads the file itself. So the
       // stash and its preview URLs are released here rather than held — a chip for
@@ -4643,15 +4731,20 @@ export function selectLiveOnlyKey(s: AppStore, workspace: string): string {
 /**
  * Whether the left rail's actions are inert right now.
  *
- * **It has to be `modal || panel`, and the difference is the whole of one
- * reported bug.** Every panel is a Radix dialog, and Radix puts
- * `pointer-events: none` on `body` while one is open — an **inherited** property,
- * so the rail inherits it and the browser never delivers the click at all. The
- * rail's own check tested `modal` alone, so with `/files` open the "New session"
- * button drew normally, showed hover styling, and swallowed every press: the
- * report exactly, "I press it and nothing happens". Measured with real mouse
- * events, `elementFromPoint` lands on `.overlay-mask` and **zero** IPC calls go
- * out.
+ * **The prompt part of this is asked of *visibility*, not of existence.** Every
+ * panel is a Radix dialog, and Radix puts `pointer-events: none` on `body`
+ * while one is open — an **inherited** property, so the rail inherits it and
+ * the browser never delivers the click at all. A *drawn* prompt is the same
+ * kind of overlay, so the two together are what the rail had to say inert to
+ * stop lying about being clickable.
+ *
+ * A request **held because its session is not on screen**, by contrast, has
+ * drawn nothing — no overlay, no mask, no RADIX — and the rail must stay live
+ * for the opposite reason: switching to that session is now exactly how its
+ * prompt is reached, and `focusSession` sends the runtime nothing a held
+ * request could be disturbed by. Blocking the rail under a held request would
+ * re-create the old "a button that does nothing" and strand the prompt one
+ * layer deeper.
  *
  * The panel is not being made reachable through — clicking outside still
  * dismisses it, which is what a modal means, and the person's next press lands on
@@ -4661,7 +4754,7 @@ export function selectLiveOnlyKey(s: AppStore, workspace: string): string {
  * it reads as a broken button, so it gets pressed repeatedly.
  */
 export function railBlocked(s: AppStore): boolean {
-  return s.modal !== null || s.panel !== null;
+  return selectModalVisible(s) || s.panel !== null;
 }
 
 /**
@@ -4688,49 +4781,70 @@ export function selectModalOrigin(s: AppStore, key: string): string {
 }
 
 /**
- * How many requests are waiting behind the one on screen.
+ * How many of the **session on screen's own** requests are waiting behind the
+ * one drawn.
  *
  * The queue has always held them (a second blocking request used to overwrite
  * the first, losing an id the runtime waits on forever), but until now it was
- * invisible: with one session there was rarely more than one, and with several
- * two conversations can be waiting at once. A count is what says "there is
- * another one after this" instead of leaving it to be discovered.
+ * invisible. A count is what says "there is another one after this" instead of
+ * leaving it to be discovered.
+ *
+ * It counts **this session's** entries and not the whole queue, because only
+ * this session's can be drawn at all (`selectModalVisible`): a background
+ * conversation's requests are not "behind" this prompt, they are waiting for
+ * their own conversation to be on screen, and the rail's amber dot is what says
+ * so. Counting them here would read as a queue nobody can advance.
  */
 export function selectQueuedModals(s: AppStore): number {
-  return Math.max(0, s.pendingModals.length - 1);
+  const mine = s.pendingModals.filter((entry) => entry.key === s.activeKey).length;
+  return Math.max(0, mine - 1);
 }
 
 /**
  * Whether the held blocking request is **rendered**.
  *
  * `modal` says a request is being held; this says whether the person can see
- * it. The session board holds the conversation column while it is open, and the
- * board is the one surface that already names the session that is waiting — its
- * card has moved into Needs you — so a request arriving there stays unrendered
- * instead of covering the overview with the prompt. Nothing answers it and
- * nothing drops it (the queue only loses an entry by having it answered); the
- * click on that card is the click that surfaces it: it focuses the session and
- * closes the board, and a closed board turns this back to `true`.
+ * it. Two states hold a request unrendered, and both have a named surface the
+ * person is expected to reach for:
  *
- * **Held, not hidden.** The card, the queue and the fail-closed answer path all
- * still hold; what is suppressed is only the prompt's own render, and the
- * window can always reach it: Esc closes the board first (the chain in
+ *   - **The request belongs to a session that is not on screen.** With several
+ *     conversations open, a question arriving in the background used to cover
+ *     the conversation the person was typing into. Now the asker's own row
+ *     says what its dot always said (`selectRowStatus` → `asking`), the
+ *     watcher sends the notification (it read this same visibility, so held
+ *     now reads as "not watched"), and **switching to that session surfaces
+ *     the prompt**. Nothing answers it and nothing drops it; the queue only
+ *     loses an entry by having it answered.
+ *
+ *   - **The session board holds the conversation column.** The board is the
+ *     one surface that already names the waiting session — its card has moved
+ *     into Needs you — so a request arriving there stays unrendered instead of
+ *     covering the overview with the prompt; the click on that card focuses
+ *     the session, which also makes the request the visible one.
+ *
+ * **Held, not hidden.** The queue and the fail-closed answer path all still
+ * hold; what is suppressed is only the prompt's own render. A board-held
+ * request is reachable: Esc closes the board first (the chain in
  * `useGlobalKeys` asks about visibility too), and every click on the board's
- * cards closes it.
+ * cards closes it. A session-held request is reached by focusing that
+ * session — Ctrl+1..9, its rail row, or a board card.
  *
- * The condition is **the view, not the flag**: `boardOpen` is true, but when a
- * terminal or a start-up problem outranks the board the prompt would cover
- * neither anything the board is saying nor anything the board needs the
- * person to click — and holding it there *is* a deadlock, because the board
- * that was supposed to carry the nudge is not the thing on screen. Holding the
- * request only in the exact state where the board holds the column is what
- * keeps "unrendered" and "unreachable" from ever coexisting.
+ * The board condition is deliberately **the view, not the flag**: `boardOpen`
+ * true but a terminal or a start-up problem outranking the board would hold a
+ * request with nothing on screen carrying the nudge — and, alone among the
+ * several surfaces, no way to surface it on the spot, because focusing the
+ * session cannot change which view the terminal case draws. That is why the
+ * board's hold is still the exact state where the board holds the column.
  *
- * The same inputs `App` feeds `conversationView`, evaluated against the
- * session the column would draw.
+ * Both conditions are evaluated against the session the request came from and
+ * against what the column would draw — the same inputs `App` feeds
+ * `conversationView`.
  */
 export function selectModalVisible(s: AppStore): boolean {
   if (s.modal === null) return false;
+  // Whose request this is decides the first hold: another session's prompt
+  // waits for its own turn on the screen, however healthy the view is.
+  if (s.activeKey !== s.modal.key) return false;
   const rt = s.sessions[s.activeKey ?? ''];
   const view = conversationView({
     startupProblem: s.startupProblem !== null,

@@ -130,16 +130,21 @@ export interface WatchContext {
  *      `idle` — a status the notifier would read as "somebody is watching this,
  *      be quiet" — and the person would be told nothing.
  *   2. **The session is the one on screen.**
- *   3. **A blocking prompt from this session is rendered.** A request is drawn
- *      over whatever conversation is on screen, so the session asking may not be
- *      `activeKey` while its prompt is perfectly visible — in which case it is
- *      being watched, and a notification would be a second copy of something
- *      already in front of the person.
+ *   3. **A blocking prompt from this session is drawn while another session is
+ *      on screen.** A request is drawn over the conversation column, so the
+ *      session asking need not be `activeKey` while its prompt is perfectly
+ *      visible — the session board is the case: it holds the column, a request
+ *      arriving there is drawn once the card is clicked, and that click focuses
+ *      the asker in the same beat. Whoever is on screen, a prompt in front of
+ *      the person is being watched, and a notification would be a second copy
+ *      of something already there.
  *
  * A background session is **not** watched merely because the window is focused:
  * that is the multi-session case the whole feature exists for. Four
  * conversations running while somebody reads a fifth is exactly when "one of
- * them finished" is worth saying.
+ * them finished" is worth saying — and the same rule is what makes a question
+ * asked in the background announce itself instead of covering the conversation
+ * being typed into (`selectModalVisible`).
  *
  * Pure, and takes a plain object rather than the store, so each of these cases
  * can be asserted without a window.

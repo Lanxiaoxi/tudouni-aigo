@@ -563,11 +563,11 @@ test('a panel makes the rail inert, and that is the second half of the bug', () 
   assert.equal(railBlocked(useApp.getState()), true);
 });
 
-test('a blocking modal still makes it inert', () => {
+test('a drawn blocking prompt still makes it inert', () => {
   // The reason the check existed in the first place, and it must keep working:
-  // switching a session under an approval abandons the request the runtime is
-  // waiting on, and it waits for ever.
-  install({}, [], null, {
+  // switching a session under an approval on screen abandons the request the
+  // runtime is waiting on, and it waits for ever.
+  install({ k1: handshaken('k1', 'C:/work', '20261002-183456') }, ['k1'], 'k1', {
     modal: {
       kind: 'permission',
       key: 'k1',
@@ -584,6 +584,62 @@ test('a blocking modal still makes it inert', () => {
     } as AppStore['modal'],
   });
   assert.equal(railBlocked(useApp.getState()), true);
+});
+
+test('a request held for another session leaves the rail usable', () => {
+  // **The half that is new, and the reason the check is asked of visibility.**
+  // A request from a conversation that is not on screen has drawn nothing — so
+  // the rail must stay live, because clicking that session's row is now the act
+  // that surfaces the prompt (`focusSession` re-aims the drawn slot) and
+  // `focusSession` sends the runtime nothing a held request could be disturbed
+  // by. Disabling the rail here would be the old "a button that does nothing"
+  // with a prompt nobody can reach behind it.
+  install(
+    {
+      k1: handshaken('k1', 'C:/work', '20261002-183456'),
+      k2: handshaken('k2', 'C:/work', '20261002-183131'),
+    },
+    ['k1', 'k2'],
+    'k1',
+    {
+      // Both halves, because that is what `enqueueModal` writes and the two are
+      // read by different things: `pendingModals` is what `selectRowStatus`
+      // counts as `asking`, and `modal` is the slot `selectModalVisible` judges.
+      pendingModals: [
+        {
+          kind: 'permission',
+          key: 'k2',
+          req: {
+            id: 'p1',
+            tool: 'shell',
+            risk: 'high',
+            arguments: {},
+            remember: null,
+            remember_hint: null,
+            allow_trust_all: false,
+            trust_all_hint: null,
+          },
+        },
+      ] as AppStore['pendingModals'],
+      modal: {
+        kind: 'permission',
+        key: 'k2',
+        req: {
+          id: 'p1',
+          tool: 'shell',
+          risk: 'high',
+          arguments: {},
+          remember: null,
+          remember_hint: null,
+          allow_trust_all: false,
+          trust_all_hint: null,
+        },
+      } as AppStore['modal'],
+    },
+  );
+  assert.equal(selectModalVisible(useApp.getState()), false, 'nothing is drawn');
+  assert.equal(railBlocked(useApp.getState()), false, 'so the rail is not inert');
+  assert.equal(selectRowStatus(useApp.getState(), 'k2'), 'asking', 'the row says who is asking');
 });
 
 test('with nothing open the rail is live', () => {

@@ -242,20 +242,35 @@ async function main() {
   // the runtime is waiting for a decision and will wait for ever. `PermissionModal`
   // also prevents outside-pointer events, so the two properties are checked
   // together — the buttons work **and** the prompt is not answered by accident.
+  //
+  // **The request has to belong to the session on screen.** Both halves of the
+  // seeding are the store's own `enqueueModal` shape, and the session is opened
+  // first because `selectModalVisible` draws a request only for the conversation
+  // it came from: a bare `modal` with no matching `activeKey` is a held
+  // background request, which draws nothing on purpose.
   console.log('');
   console.log('with a blocking approval modal:');
-  await evaluate(`window.__aigoStore.setState({
-    modal: {
-      kind: 'permission',
-      key: 'k-check',
-      req: {
-        id: 'p1', tool: 'shell', risk: 'high',
-        arguments: { command: 'rm -rf build' },
-        remember: null, remember_hint: null,
-        allow_trust_all: false, trust_all_hint: null,
-      },
-    },
-  })`);
+  await evaluate(`(() => {
+    const store = window.__aigoStore;
+    const key = 'k-check';
+    const bucket = window.__aigoCreateBucket(key, 'C:/work/check', {
+      ericai: false, maxSteps: null,
+    });
+    const req = {
+      id: 'p1', tool: 'shell', risk: 'high',
+      arguments: { command: 'rm -rf build' },
+      remember: null, remember_hint: null,
+      allow_trust_all: false, trust_all_hint: null,
+    };
+    store.setState((s) => ({
+      sessions: { ...s.sessions, [key]: bucket },
+      order: s.order.includes(key) ? s.order : [...s.order, key],
+      activeKey: key,
+      pendingModals: [{ kind: 'permission', key, req }],
+      modal: { kind: 'permission', key, req },
+    }));
+    return true;
+  })()`);
   await sleep(500);
   check(
     await evaluate(`!!document.querySelector('.overlay-mask')`),
@@ -273,7 +288,7 @@ async function main() {
     'the approval is still waiting after clicking the title bar',
   );
 
-  await evaluate(`window.__aigoStore.setState({ modal: null })`);
+  await evaluate(`window.__aigoStore.setState({ modal: null, pendingModals: [] })`);
   await sleep(300);
 
   // ---- 4. double-clicking the drag region toggles maximize once ----

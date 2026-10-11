@@ -436,18 +436,25 @@ async function main() {
    *
    * Both halves are set, because that is what `enqueueModal` does and the two
    * are read by different things: `pendingModals` is what `selectRowStatus`
-   * counts as `asking`, and `modal` is the head that `selectModalVisible`
-   * judges for whether the prompt is actually drawn.
+   * counts as `asking`, and `modal` is the slot `selectModalVisible` judges for
+   * whether the prompt is actually drawn.
+   *
+   * `modal` only gets the entry when this session is the one on screen, which
+   * is the store's own rule (`headForActive`): a request from a background
+   * conversation is held in the queue and draws nothing, on purpose.
    */
   const openQuestion = (key) => `
-    window.__aigoStore.setState({
-      pendingModals: [{ kind: 'question', key: ${JSON.stringify(key)}, req: {
+    (() => {
+      const store = window.__aigoStore;
+      const req = {
         id: 'q1', question: 'Which one?', header: '', options: [], multi_select: false,
-      } }],
-      modal: { kind: 'question', key: ${JSON.stringify(key)}, req: {
-        id: 'q1', question: 'Which one?', header: '', options: [], multi_select: false,
-      } },
-    });
+      };
+      const entry = { kind: 'question', key: ${JSON.stringify(key)}, req };
+      store.setState((s) => ({
+        pendingModals: [entry],
+        modal: ${JSON.stringify(key)} === s.activeKey ? entry : null,
+      }));
+    })();
   `;
 
   const closeQuestion = () => `
@@ -527,6 +534,48 @@ async function main() {
     (await notes()).length === 0,
     `nothing is said about a prompt already in front of the person (got ${JSON.stringify(await notes())})`,
   );
+
+  console.log('');
+  console.log('a background session asking, with the window in front:');
+  // **The reported case, end to end.** Somebody is working in one conversation
+  // and a second one asks a question: the prompt must not cover the work in
+  // progress. It is held — `selectModalVisible` draws a request only for the
+  // session it came from — so the rail's dot turns amber and this notification
+  // is the surface that says so. The third clause of `isWatched` is what makes
+  // the pair consistent: `modalVisible` is false for a held request, so the
+  // asking session is *not* watched even though the store is holding its id.
+  await evaluate(reset);
+  await sleep(200);
+  await evaluate(addSession('n1'));
+  await evaluate(addSession('n2'));
+  await sleep(400);
+  await evaluate(`window.__focused = true`);
+  await evaluate(`window.__minimized = false`);
+  await evaluate(`window.__emit('tauri://focus', null)`);
+  await sleep(500);
+  await evaluate(`window.__aigoStore.setState({ activeKey: 'n1' })`);
+  await sleep(300);
+  await evaluate(`window.__notifications.length = 0`);
+  await evaluate(openQuestion('n2'));
+  await sleep(500);
+  const held = await notes();
+  check(held.length === 1, `exactly one notification (got ${held.length})`);
+  check(
+    held[0]?.title === 'Waiting for your answer',
+    `and it uses the urgent wording (got ${JSON.stringify(held[0])})`,
+  );
+  check(
+    await evaluate(`!document.querySelector('.overlay-mask')`),
+    'and nothing is drawn over the conversation being worked in',
+  );
+  // The other half: the request is **held, not answered**. Its id is still
+  // queued, so the child that asked is still the one that will be answered.
+  check(
+    (await evaluate(`window.__aigoStore.getState().pendingModals.length`)) === 1,
+    'and the request is still there to be answered',
+  );
+  await evaluate(closeQuestion());
+  await sleep(300);
 
   console.log('');
   console.log('a session that stops with an error, in the background:');

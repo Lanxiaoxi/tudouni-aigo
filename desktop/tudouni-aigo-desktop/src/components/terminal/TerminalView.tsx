@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Plus, X } from 'lucide-react';
-import { useApp, useSessionField, EMPTY_TAIL, NO_STRINGS, NO_TERMINALS } from '@/state/store';
+import { selectModalVisible, useApp, useSessionField, EMPTY_TAIL, NO_STRINGS, NO_TERMINALS } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { encodeKey } from '@/runtime/terminalKeys';
@@ -263,8 +263,12 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ cols: number; rows: number } | null>(null);
   // Whether an overlay is holding the keyboard. Read here because it decides who
-  // owns the keyboard, and the pane is the other claimant.
-  const overlayOpen = useApp((s) => s.panel !== null || s.modal !== null);
+  // owns the keyboard, and the pane is the other claimant. **Asked of
+  // visibility**, like every other gate on a blocking request: one held for a
+  // session that is not on screen has drawn nothing over this pane, and
+  // withholding the keyboard from the shell would make a background question
+  // look like a dead terminal.
+  const overlayOpen = useApp((s) => s.panel !== null || selectModalVisible(s));
 
   /**
    * **The pane takes the keyboard whenever no overlay is holding it.**

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Bell, Pause, Zap } from 'lucide-react';
-import { selectPhase, useApp, useSessionField } from '@/state/store';
+import { selectModalVisible, selectPhase, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { CLOSE_POLICIES, type ClosePolicy } from '@/runtime/windowClose';
@@ -51,7 +51,7 @@ export function SettingsPanel() {
   const key = useApp((s) => s.activeKey);
   const launch = useSessionField((rt) => rt.launch, { ericai: false, maxSteps: null });
   const phase = useApp((s) => selectPhase(s, key));
-  const modal = useApp((s) => s.modal);
+  const promptUp = useApp(selectModalVisible);
   const applyLaunch = useApp((s) => s.applyLaunch);
 
   // The window's own preferences. Read here rather than through
@@ -74,13 +74,16 @@ export function SettingsPanel() {
   const changed =
     ericai !== launch.ericai || parsed.value !== launch.maxSteps;
 
-  // Why the group is inert, in the order that matters: a blocking prompt outranks
-  // everything (it abandons what the runtime is waiting on), then a turn in flight,
-  // then a start that has not finished. `booting` counts because `attachRuntime`
-  // may already be running: a second attach would put two children in one
-  // workspace.
+  // Why the group is inert, in the order that matters: a **drawn** prompt
+  // outranks everything (applying restarts the child the runtime is waiting
+  // on), then a turn in flight, then a start that has not finished. `booting`
+  // counts because `attachRuntime` may already be running: a second attach would
+  // put two children in one workspace.
+  //
+  // The prompt is tested by visibility: a request held for another session has
+  // drawn nothing, and this panel describes the session on screen.
   const blocked: 'modal' | 'turn' | 'booting' | null =
-    modal !== null ? 'modal' : phase === 'running' ? 'turn' : !phase || phase === 'booting' ? 'booting' : null;
+    promptUp ? 'modal' : phase === 'running' ? 'turn' : !phase || phase === 'booting' ? 'booting' : null;
 
   const disabled = blocked !== null || invalid;
 
