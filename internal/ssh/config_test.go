@@ -426,6 +426,54 @@ func TestMissingConfigIsNotAnError(t *testing.T) {
 	}
 }
 
+// TestEmptyConfigPathAndHomeFindTheRealHome is the regression for a bug that made
+// `ssh_connect` unusable on a desktop-launched runtime.
+//
+// An empty `home` used to leave the default config path relative (`.ssh/config`),
+// and `homeDirFor` derives the home from that path — so the relative path
+// short-circuited every fallback and produced `"."`. The configuration was never
+// read and the default keys were looked for in a `.ssh` beside the working
+// directory, which surfaces as "none is named by IdentityFile and none of the
+// usual files exist" on a machine whose `~/.ssh` is perfectly fine.
+func TestEmptyConfigPathAndHomeFindTheRealHome(t *testing.T) {
+	home := t.TempDir()
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o755); err != nil {
+		t.Fatalf("mkdir .ssh: %v", err)
+	}
+	body := "Host prod\n    HostName 10.0.1.5\n    User deploy\n    IdentityFile ~/.ssh/k\n"
+	if err := os.WriteFile(filepath.Join(sshDir, "config"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	key := writeKey(t, home, "k")
+
+	// Both variables, because the operating system is asked via whichever one it
+	// actually honours: USERPROFILE on Windows, HOME elsewhere.
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	config, err := LoadConfig("", "")
+	if err != nil {
+		t.Fatalf("LoadConfig(\"\", \"\"): %v", err)
+	}
+	if config.Missing() {
+		t.Fatal("the real configuration was not found; an empty home still made the path relative")
+	}
+	if filepath.Dir(filepath.Dir(config.Path())) != home {
+		t.Errorf("config.Path() = %q, want it under %s", config.Path(), home)
+	}
+	host, err := config.Lookup("prod")
+	if err != nil {
+		t.Fatalf("Lookup: %v", err)
+	}
+	if host.HostName != "10.0.1.5" {
+		t.Errorf("HostName = %q, want 10.0.1.5", host.HostName)
+	}
+	if len(host.IdentityFiles) != 1 || host.IdentityFiles[0] != key {
+		t.Errorf("IdentityFiles = %v, want [%s]", host.IdentityFiles, key)
+	}
+}
+
 // TestNoPrivateKeyIsExplainedBeforeConnecting: the failure has to name the
 // candidate files, or the person has no idea what to create.
 func TestNoPrivateKeyIsExplainedBeforeConnecting(t *testing.T) {

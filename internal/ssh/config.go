@@ -204,6 +204,15 @@ type Config struct {
 // at a directory it made. `path` may be empty, meaning the default location.
 func LoadConfig(path, home string) (*Config, error) {
 	if path == "" {
+		if home == "" {
+			// Resolve the home directory *before* building the path. An empty
+			// home would make the default path relative, and `homeDirFor` derives
+			// the home from a path's grandparent — so a relative `.ssh/config`
+			// short-circuits every fallback it has and yields ".", sending the
+			// default-key lookup to a `.ssh` beside the working directory while
+			// the real configuration is never read.
+			home = homeDirFor("")
+		}
 		path = DefaultConfigPath(home)
 	}
 	config := &Config{path: path}
