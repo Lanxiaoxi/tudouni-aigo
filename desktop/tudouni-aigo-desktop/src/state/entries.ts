@@ -403,6 +403,27 @@ export function reduceEvent(
 ): ReduceResult {
   const { activeRunId, lastRunId, lookup, maxSteps } = options;
 
+  // A delegated agent's turn boundary is not this session's.
+  //
+  // The runtime forwards the child's own `run_started` and `run_finished`
+  // with a `child` marker (`internal/protocol/server.go` `forwardChild`),
+  // because the subagents panel wants them. They used to be reduced here like
+  // the parent's own: the child's `run_started` took over `activeRunId`, its
+  // `run_finished` retired the turn, and from then on **every** one of the
+  // parent's own turn-scoped events — model call, tool call, tool result,
+  // permission, delta — was attributed to a run that no longer matched and
+  // dropped as "late". The transcript went silent for the rest of the turn
+  // while the `ui(state)` snapshots (which carry no such guard) kept the
+  // sidebar moving: a conversation that visibly did nothing while its task
+  // list kept checking boxes.
+  //
+  // The other child-marked kinds (`model_call`, `tool_call`, …) have no
+  // rendering path here and fall into the default below; guarding at the top
+  // makes that explicit instead of accidental.
+  if (ev.child === true) {
+    return { entries };
+  }
+
   // `run_started` is always accepted and becomes the current turn. It carries no
   // turn number and no `max_steps`, so the ordinal is local and the cap comes
   // from the handshake.

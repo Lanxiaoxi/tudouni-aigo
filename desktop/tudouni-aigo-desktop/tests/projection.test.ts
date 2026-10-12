@@ -819,6 +819,73 @@ test('session-level events survive the second turn, where turn-scoped ones do no
   assert.equal(late.stale, true);
 });
 
+/**
+ * The regression for the frozen transcript after a delegation.
+ *
+ * The runtime forwards the child's own `run_started`/`run_finished` with a
+ * `child` marker, and reducing them like the parent's rewrote `activeRunId`
+ * to the child's run: from then on every one of the parent's own turn-scoped
+ * events failed the stale guard and the transcript went silent for the rest
+ * of the turn (the sidebar kept moving, because `ui(state)` has no such
+ * guard). The child's records must not touch the turn ledger at all.
+ */
+test('child-marked events never touch the parent turn, and are not counted late', () => {
+  let entries: Entry[] = [];
+
+  const opened = reduceEvent(
+    entries,
+    ev('run_started', { model: 'm', provider: 'p' }),
+    freshOptions({ activeRunId: null }),
+  );
+  entries = opened.entries;
+  assert.equal(opened.startedRunId, 'r1');
+  assert.equal(entries.length, 1);
+
+  // The child announces its own turn. It must add nothing and start nothing:
+  // `startedRunId` here would be what the store files as `activeRunId`.
+  const childStart = reduceEvent(
+    entries,
+    ev('run_started', { run_id: 'r-child-1', child: true, model: 'm' }),
+    freshOptions(),
+  );
+  assert.equal(childStart.startedRunId, undefined);
+  assert.equal(childStart.stale, undefined);
+  assert.equal(childStart.entries.length, 1);
+
+  // While the child runs, the parent's own step keeps reducing normally.
+  const parentStep = reduceEvent(
+    childStart.entries,
+    ev('model_call', { status: 'ok', step: 8, duration_ms: 100 }),
+    freshOptions(),
+  );
+  assert.equal(parentStep.stale, undefined);
+  assert.equal(parentStep.entries.length, 2);
+
+  // The child finishes: this is the event that used to end the parent's turn.
+  const childEnd = reduceEvent(
+    parentStep.entries,
+    ev('run_finished', { run_id: 'r-child-1', child: true, stop_reason: 'answered' }),
+    freshOptions(),
+  );
+  assert.equal(childEnd.runEnded, undefined);
+  assert.equal(childEnd.stale, undefined);
+  assert.equal(childEnd.entries.length, 2);
+
+  // And the parent's next step still lands, not as a late drop.
+  const nextStep = reduceEvent(
+    childEnd.entries,
+    ev('tool_call', { tool: 'read_file', call_id: 'c1', tool_index: 0, step: 9 }),
+    freshOptions(),
+  );
+  assert.equal(nextStep.stale, undefined);
+  assert.equal(nextStep.entries.length, 3);
+  assert.equal((nextStep.entries[0] as Extract<Entry, { kind: 'turn' }>).runId, 'r1');
+
+  // No row was ever added for the child's own turn-scoped record either:
+  // the transcript stays the parent's.
+  assert.equal(nextStep.entries.filter((entry) => entry.kind === 'model').length, 1);
+});
+
 test('tool_call and tool_result pair by run_id + step + tool_index', () => {
   let entries: Entry[] = [];
   entries = reduceEvent(
