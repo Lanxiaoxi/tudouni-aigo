@@ -7,6 +7,7 @@ import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
 import { useKeepAwake } from '@/hooks/useKeepAwake';
 import { useNotifications } from '@/hooks/useNotifications';
+import { useTrayCommands } from '@/hooks/useTrayCommands';
 import { useWindowClose } from '@/hooks/useWindowClose';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useInputModality } from '@/hooks/useInputModality';
@@ -54,6 +55,9 @@ export function App() {
   // level because it is about every session at once, and it is the one place
   // that can see a background session change status.
   useNotifications();
+  // The tray menu's two session acts ("New session", "Session board"): the
+  // window half is the Rust side's, the act itself lands here.
+  useTrayCommands();
 
   // Everything the transcript draws comes from **the session being shown**, and
   // with several open that is a bucket rather than the store. `activeRuntime` is

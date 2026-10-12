@@ -1515,6 +1515,25 @@ fn window_destroy(window: tauri::Window) -> Result<(), String> {
    The tray icon
    ============================================================ */
 
+/// The event the front end listens for when somebody acts on the tray menu.
+///
+/// Paired with `onTrayCommand` in `src/runtime/tauri.ts`, which is where the
+/// listener lives. A `tray://` name rather than `window://` because the window
+/// is only half of it: showing the window happens here, and what the front end
+/// is told is *which act* was asked for — one the store, not this layer, is
+/// positioned to perform (the board's gate and the modal guard are its
+/// selectors, and "a new session" is its `openSession`).
+const TRAY_COMMAND: &str = "tray://command";
+
+/// The one field the front end needs: which tray item was clicked.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TrayCommandPayload {
+    /// `"new-session"` or `"open-board"`, matching the `TrayAction` union the
+    /// front end narrows on.
+    action: &'static str,
+}
+
 /// Create the system tray icon and its menu.
 ///
 /// It exists for one promise: "minimize" in the close prompt hides the window
@@ -1525,12 +1544,21 @@ fn window_destroy(window: tauri::Window) -> Result<(), String> {
 /// policy with no dialog at all (`useWindowClose`), and a lazily-created icon
 /// would then first appear exactly one click too late.
 ///
-/// The menu is the three things the icon has to offer and no more: show, a
-/// separator, and quit. Quit goes through `runtime_shutdown` on a thread and
-/// then `destroy` — the same path as the `/exit` command — because the tray
-/// must not raise a close request (the prompt handler would refuse it and
-/// leave the application "quitting" forever), and must not kill running turns
-/// without the graceful wait `runtime_shutdown` provides.
+/// The menu is what the icon has to offer: show, a separator, the two session
+/// acts the window can be summoned for, another separator, and quit. Quit goes
+/// through `runtime_shutdown` on a thread and then `destroy` — the same path as
+/// the `/exit` command — because the tray must not raise a close request (the
+/// prompt handler would refuse it and leave the application "quitting"
+/// forever), and must not kill running turns without the graceful wait
+/// `runtime_shutdown` provides.
+///
+/// The two session acts do their window half here and their session half in the
+/// front end: `tray_show_inner` runs synchronously, because a menu click that
+/// leaves the window hidden has visibly done nothing, and the act itself is
+/// then handed over as `tray://command`. The front end keeps the guards (a
+/// pending approval must not be abandoned by a session switch; the board needs
+/// a workspace with a child), which this layer deliberately does not restate —
+/// it has no read on either condition, and a second copy would drift.
 ///
 /// Left click shows the window (the near-universal Windows convention);
 /// double click is deliberately left to bubble through as its own event and
@@ -1538,10 +1566,20 @@ fn window_destroy(window: tauri::Window) -> Result<(), String> {
 /// opens on **right** click, because `show_menu_on_left_click` stays off.
 fn make_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "tray-show", "Show tudouni-aigo", true, None::<&str>)?;
+    let new_session_item =
+        MenuItem::with_id(app, "tray-new-session", "New session", true, None::<&str>)?;
+    let board_item = MenuItem::with_id(app, "tray-board", "Session board", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "tray-quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&show_item, &PredefinedMenuItem::separator(app)?, &quit_item],
+        &[
+            &show_item,
+            &PredefinedMenuItem::separator(app)?,
+            &new_session_item,
+            &board_item,
+            &PredefinedMenuItem::separator(app)?,
+            &quit_item,
+        ],
     )?;
 
     let mut tray = TrayIconBuilder::with_id("main")
@@ -1551,6 +1589,14 @@ fn make_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "tray-show" => {
                 if let Ok(()) = tray_show_inner(app) {}
+            }
+            "tray-new-session" => {
+                if let Ok(()) = tray_show_inner(app) {}
+                let _ = app.emit(TRAY_COMMAND, TrayCommandPayload { action: "new-session" });
+            }
+            "tray-board" => {
+                if let Ok(()) = tray_show_inner(app) {}
+                let _ = app.emit(TRAY_COMMAND, TrayCommandPayload { action: "open-board" });
             }
             "tray-quit" => {
                 let app = app.clone();

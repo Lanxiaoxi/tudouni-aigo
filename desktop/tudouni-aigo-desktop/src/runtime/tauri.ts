@@ -832,6 +832,58 @@ export function onNotifyActivated(cb: (activated: NotifyActivated) => void): () 
   };
 }
 
+/* ============================================================
+   The tray menu's session commands
+   ============================================================ */
+
+/** What the tray menu can ask the front end to do. */
+export type TrayAction = 'new-session' | 'open-board';
+
+/**
+ * What the bridge says when somebody clicks a session act in the tray menu.
+ *
+ * Paired with `tray://command` in `src-tauri/src/lib.rs`, which shows the
+ * window first and then emits this — so by the time the front end reads it the
+ * window is already back, and the only thing left to decide is the act itself.
+ * That decision is deliberately not the bridge's: the board's gate and the
+ * modal guard are the store's selectors, and repeating them here would be a
+ * second copy that could drift.
+ */
+export interface TrayCommand {
+  action: TrayAction;
+}
+
+/**
+ * Listen for a session act clicked in the tray menu.
+ *
+ * Returns the unsubscribe function, with the same promise race handled the
+ * same way as `onNotifyActivated`: `listen` is async, so the caller may
+ * unmount while the subscription is in flight, and dropping the handle there
+ * would leak a listener. In a plain browser the tray does not exist, so this
+ * simply never fires.
+ */
+export function onTrayCommand(cb: (command: TrayCommand) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  let stopped = false;
+  void (async () => {
+    if (!isHosted()) return;
+    try {
+      const mod = await import('@tauri-apps/api/event');
+      const off = await mod.listen<TrayCommand>('tray://command', (event) => cb(event.payload));
+      if (stopped) off();
+      else unlisten = off;
+    } catch {
+      // Not hosted, or the capability is missing. Nothing to fall back to: the
+      // tray menu was never the only way to reach either act.
+    }
+  })();
+  return () => {
+    stopped = true;
+    unlisten?.();
+    unlisten = null;
+  };
+}
+
 /** The kill switch, for when the graceful wait is not enough. `key` omitted
  *  means every session.
  *

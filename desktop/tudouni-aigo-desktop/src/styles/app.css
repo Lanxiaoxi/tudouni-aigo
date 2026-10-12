@@ -188,7 +188,12 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 34px;
+  /* 42px, the window topbar's and both rail heads' height: the four
+     border-bottoms then land on one line across the window. At 34px this bar
+     was the only top edge that broke the alignment, and the 8px it gains go
+     to the chips' air (24px cards, 9px either side), which is also what keeps
+     their -1px hover lift clear of the bar's own clip. */
+  height: 42px;
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
   /* Transparent, not a bar: in the reference the session chips sit directly on
