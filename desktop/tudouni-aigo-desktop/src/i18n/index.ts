@@ -906,6 +906,9 @@ export const en = {
   /** The scroll region's accessible name. It is also the `aria-live` region, so
    *  new answers and notices are announced rather than silently appearing. */
   'stream.label': 'Session transcript',
+  /** Copy button on a fenced code block (`Markdown.tsx`). */
+  'md.codeCopy': 'Copy code',
+  'md.codeCopied': 'Copied',
   /** The turn rail down the transcript's right edge (`TurnRail.tsx`). */
   'rail.label': 'Turn navigation',
   /** One mark's accessible name. It has to say what the press does **and** which

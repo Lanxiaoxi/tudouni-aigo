@@ -683,12 +683,124 @@
   border-radius: var(--radius-md);
   padding: 10px 12px;
   overflow-x: auto;
+  /* every other mono surface (terminal, diff, paths) uses this; a code block
+     left on the default line-height reads noticeably tighter than them */
+  line-height: var(--leading-code);
 }
 
 .md pre code {
   background: none;
   padding: 0;
   color: var(--terminal-fg);
+}
+
+/* Fenced blocks are wrapped in `.md-codeblock` so the copy button (`Markdown.tsx`)
+   can pin to the block's corner. `position: relative` on the wrapper, a
+   reserved strip on top of `pre`, and a small square button over it. */
+.md-codeblock {
+  position: relative;
+}
+
+.md-codeblock pre {
+  padding-top: 34px;
+}
+
+.md-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  height: 24px;
+  width: 24px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  background: transparent;
+}
+
+.md-copy-btn:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* The check swap after a successful copy. */
+.md-copy-btn.is-copied {
+  color: var(--success);
+}
+
+/* Syntax highlighting (rehype-highlight, `Markdown.tsx`). One Dark hues —
+   the same family the terminal ANSI palette above already uses, so a
+   highlighted block reads like code in the terminal. Code blocks keep their
+   dark `--terminal-bg` in *both* themes (that is the established pairing, see
+   `tokens.css`), so one set of colours serves both. Each selector lands in
+   exactly one group; unknown languages fall back to `--terminal-fg` via the
+   rule above. */
+.md pre code.hljs {
+  padding: 0;
+  background: none;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #6b7484;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-template-tag,
+.hljs-doctag,
+.hljs-directive {
+  color: #c678dd;
+}
+
+.hljs-literal,
+.hljs-name,
+.hljs-tag,
+.hljs-meta,
+.hljs-selector-id,
+.hljs-type,
+.hljs-deletion,
+.hljs-subst {
+  color: #e06c75;
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-section,
+.hljs-title,
+.hljs-title.class_,
+.hljs-built_in,
+.hljs-meta .hljs-keyword {
+  color: #e5c07b;
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition,
+.hljs-selector-pseudo {
+  color: #98c379;
+}
+
+.hljs-number,
+.hljs-variable,
+.hljs-template-variable {
+  color: #d19a66;
+}
+
+.hljs-title.function_ {
+  color: #61afef;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
 }
 
 .md blockquote {
@@ -701,6 +813,8 @@
   color: var(--info);
   text-decoration: underline;
   text-underline-offset: 2px;
+  /* a long URL must wrap, not stretch the whole column wider */
+  overflow-wrap: anywhere;
 }
 
 .md hr {
@@ -709,7 +823,14 @@
 }
 
 /* GFM: tables, task lists, strikethrough (remark-gfm output) */
+/* A wide table scrolls inside the block instead of stretching the column:
+   `display: block` is what lets `overflow-x` work on the table element itself
+   — react-markdown emits no wrapper div to own the scroll. Narrow tables pay
+   the standard price: they fill the width rather than hugging their content. */
 .md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   font-size: var(--text-code);
 }
