@@ -260,6 +260,18 @@
   background: none;
 }
 
+/* The id and the step cap match the mono values inside the two buttons (model,
+   effort): one colour, size and weight is what makes the four *values* read as
+   a set. Bare `.fact` would render them 11px/400 `--fg-muted`, while those
+   buttons sit in `.btn` — 12.5px/500 `--fg-secondary` — a visibly lighter pair.
+   The qualifiers (`new`, `on`) keep the lighter fact look. */
+.sessionbar .sb-id,
+.sessionbar .sb-cap {
+  color: var(--fg-secondary);
+  font-size: var(--text-code);
+  font-weight: 500;
+}
+
 /* The two *clickable* facts inside a card (model, effort) are `.btn-ghost`s.
    The ghost's own hover fills `--bg-muted` — a grey blob sitting inside an
    already-bordered card, one rectangle drawn inside another. Overridden here
@@ -287,6 +299,33 @@
 
 .sessionbar .sb-group .btn-ghost:active:not(:disabled) {
   filter: brightness(0.96);
+}
+
+/* The model and effort cards lift under the pointer. **`:has(.btn-ghost)` is
+   the whole of the targeting** — of the bar's four groups exactly two hold a
+   button (model, effort), and those are the two that open something; the id
+   and step-cap cards are bare facts and stay still, so "this card floats"
+   keeps meaning "this card opens a panel".
+
+   The transition lives on the resting selector, not the `:hover` one: a
+   transition declared only on the hover state has nothing to transition *back*
+   with, and the card would snap down the moment the pointer left. The card is
+   24px tall in a bar that gives it 5px of air either side (`overflow-y:
+   hidden` on `.sb-scroll`), so `-1px` — the reference pill's own lift — clears
+   the clip with 4px to spare, and the shadow is the chip's own token rather
+   than `--shadow-card-hover`, whose 12px drop reads as a smudge under a
+   surface half that tall. */
+.sessionbar .sb-group:has(.btn-ghost) {
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.sessionbar .sb-group:has(.btn-ghost):hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-chip-hover);
 }
 
 /* ---------------- 会话栏的响应式降级 ----------------
@@ -1059,11 +1098,34 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   color: var(--fg-on-accent);
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
-.composer .cp-send:hover:not(:disabled) {
+/* The lift + the accent shadow (`--shadow-accent`, the primary button's own
+   drop): this is the one control that *advances* the conversation, and the
+   reference gives its send button exactly this pairing. **`.is-stop` is
+   excluded, not forgotten** — a running turn's button is an "interrupt", and
+   rewarding its hover with a lift and a green glow would paint a destructive
+   control in the accent's voice (before this rule, the plain `:hover`
+   background already won over `.is-stop` on specificity and turned it green;
+   the exclusion fixes that too). */
+.composer .cp-send:hover:not(:disabled):not(.is-stop) {
   background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-accent);
+}
+
+/* And the arrow leans into the send: the reference's send button moves its
+   glyph a further 1.5px on hover, so the icon and the circle read as one
+   gesture rather than a button that happens to contain a picture. */
+.composer .cp-send svg {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.composer .cp-send:hover:not(:disabled):not(.is-stop) svg {
+  transform: translateY(-1.5px);
 }
 
 .composer .cp-send:active:not(:disabled) {
@@ -1076,7 +1138,8 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
 }
 
 /* While a turn runs the same button stops it, and it is stated by shape and
-   colour, never by colour alone. */
+   colour, never by colour alone. Its hover stays a dim, not a lift: an
+   interrupt gets no invitation. */
 .composer .cp-send.is-stop {
   background: var(--destructive);
   color: #ffffff;
@@ -1209,14 +1272,27 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
      meaning something when it does appear. */
   text-align: left;
   cursor: pointer;
+  /* `--motion-base`, not the row-height `fast`: this is the first screen's
+     half-pane card, and a 120ms lift reads as a twitch where 180ms reads as
+     the card coming up to meet the pointer. */
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
 }
 
+/* The reference's `.session-card:hover`: border up one step, the card up two
+   pixels, the shadow carrying the depth — **and the background untouched**.
+   The grey wash this rule used to paint (`--bg-muted`) is the pressed/dimmed
+   metaphor, the opposite of what a lift says; card on wash-on-lift would have
+   the card darkening while it rises. The shadow is the idle card's exact
+   answer to "which surfaces float" above: it only ever appears *here*, which
+   is what kept the resting card flat. */
 .recent-slot:hover {
-  background: var(--bg-muted);
   border-color: var(--border);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .recent-slot.is-empty {
@@ -1230,6 +1306,11 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
 .recent-slot.is-empty:hover {
   background: transparent;
   border-color: var(--border-subtle);
+  /* The lift above matches on `:hover` alone, and this rule's higher
+     specificity only overrides what it declares — without these the empty
+     slot (not clickable, not a session) would rise and cast a shadow too. */
+  transform: none;
+  box-shadow: none;
 }
 
 /* The card's **last** line: the runtime's own name for the conversation and when

@@ -200,6 +200,10 @@
   --shadow-card-hover:  0 12px 26px -6px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.32);
   --shadow-composer:    0 12px 32px -8px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.30);
   --shadow-card-active: 0 4px 14px -2px rgba(52, 211, 153, 0.16), 0 2px 6px rgba(0, 0, 0, 0.28);
+  /* The session bar's fact cards are 24px chips, not cards: `--shadow-card-hover`
+     puts a 12px-offset / 26px-blur drop under a surface half that tall, and the
+     chip reads as smudged rather than lifted. Same geometry, quartered. */
+  --shadow-chip-hover:  0 3px 10px -2px rgba(0, 0, 0, 0.40), 0 1px 2px rgba(0, 0, 0, 0.30);
 }
 
 /* ============================================================
@@ -290,4 +294,8 @@
   --shadow-card-hover:  0 12px 26px -6px rgba(23, 26, 31, 0.10), 0 2px 6px rgba(23, 26, 31, 0.04);
   --shadow-composer:    0 12px 32px -8px rgba(23, 26, 31, 0.08), 0 2px 6px rgba(23, 26, 31, 0.03);
   --shadow-card-active: 0 6px 16px -4px rgba(5, 150, 105, 0.14), 0 2px 6px rgba(23, 26, 31, 0.05);
+  /* The chip's hover shadow, light-theme weight. The reference's own toolbar
+     pill lifts on `0 2px 6px` at ~6% ink — the same "just enough to detach"
+     reading at this scale, sampled here against the theme's ink. */
+  --shadow-chip-hover:  0 3px 10px -2px rgba(23, 26, 31, 0.10), 0 1px 2px rgba(23, 26, 31, 0.05);
 }

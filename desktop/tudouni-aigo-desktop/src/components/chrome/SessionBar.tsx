@@ -232,7 +232,7 @@ export function SessionBar() {
 
         <div className="sb-group">
           <span className="sb-label">{t('session.maxSteps')}</span>
-          <Fact mono>{session.maxSteps}</Fact>
+          <Fact mono className="sb-cap">{session.maxSteps}</Fact>
         </div>
       </div>
 

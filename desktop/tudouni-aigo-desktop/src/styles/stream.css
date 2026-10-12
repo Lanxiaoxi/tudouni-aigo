@@ -1029,7 +1029,7 @@
 .sb-block-head .sbh-title {
   font-size: var(--text-h2);
   font-weight: 600;
-  color: var(--fg-secondary);
+  color: var(--fg);
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1227,13 +1227,28 @@
   font-weight: 600;
   border-radius: var(--radius-lg);
   box-shadow: none;
+  /* The base `.btn` transition, kept whole, plus the two the lift needs —
+     replacing it outright would drop the `color` fade the hover relies on. */
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
 }
 
+/* The rail's primary action lifts to meet the pointer, and the shadow is the
+   accent's own (`--shadow-accent`) — the same pairing the send button wears.
+   It is the rail's one tinted control, and it is also the button a first-run
+   screen points at, so its hover is allowed the loudest lift in the window. */
 .lb-new .btn-outline:hover:not(:disabled) {
   background: var(--accent-tint);
   border-color: var(--accent);
   color: var(--accent-tint-text);
   filter: none;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-accent);
 }
 
 /* The one icon-button shape in the rail: a real 24px target, and a visible
@@ -1585,10 +1600,22 @@
    says "you could open this" would be a lie on it. It answers the pointer its
    own way instead (the band comes back and the actions appear, above).
    Keyboard focus is deliberately not given this fill: it has the focus ring,
-   which is a different fact and a different mark (`global.css`). */
+   which is a different fact and a different mark (`global.css`).
+
+   **The lift rides on the same hover, and `-1px` is the whole of it.** The
+   card is ~50px tall in a rail whose rows sit a few pixels apart, so the
+   reference card's `-3px` would have it colliding with the row above before
+   the shadow could say "floating". One pixel is what moves the card's top
+   edge without eating the neighbouring row's breathing room, and the shadow
+   (`--shadow-card-hover`) carries the depth the translation can't. The side
+   clipping the shadow already accepts on the current card applies here too —
+   the rail's clipping body is exactly the row's width — and it costs the same
+   nothing it cost there. */
 .lb-session-wrap:hover .lb-session:not(.is-current):not(:disabled) {
   background: var(--accent-subtle);
   border-color: var(--accent-tint-border);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card-hover);
 }
 
 /* The design's `.session-card`: **every** row is a card on the rail, not only
@@ -1614,6 +1641,7 @@
     background-color var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
     box-shadow var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
     /* The width the current row gives up when its actions retract. See
        `.lb-session-wrap:has(.lb-session.is-current)` below for why a layout
        property is animated here and nowhere else. */
