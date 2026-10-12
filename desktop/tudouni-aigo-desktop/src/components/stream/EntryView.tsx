@@ -20,7 +20,7 @@ import { Badge, RiskTag } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
 import { InBlock } from './InBlock';
 import { charCount, type Entry, type FrontMessage } from '@/state/entries';
-import { formatDuration, formatTokens, oneLine } from '@/utils/format';
+import { formatDuration, formatTokens, oneLine, tokPerSecond } from '@/utils/format';
 import type { TKey } from '@/i18n';
 
 /* ============================================================
@@ -182,6 +182,10 @@ function ModelEntry({ entry }: { entry: Extract<Entry, { kind: 'model' }> }) {
   }
 
   const hasMetrics = entry.durationMs !== null || entry.inputTokens !== null;
+  // The rate rides only where there is a measurement: no completion tokens (a
+  // tool-only call) and no duration are the same statement — omit the figure
+  // rather than print 0.0.
+  const rate = tokPerSecond(entry.completionTokens, entry.durationMs);
   return (
     <div className="e-model">
       <span className="em-rail" />
@@ -194,7 +198,7 @@ function ModelEntry({ entry }: { entry: Extract<Entry, { kind: 'model' }> }) {
               ms: formatDuration(entry.durationMs),
               input: formatTokens(entry.inputTokens),
               cached: formatTokens(entry.cachedTokens),
-            })
+            }) + (rate !== null ? ` · ${t('entry.modelOut', { n: rate })}` : '')
           : t('entry.modelNoMetrics')}
       </span>
     </div>

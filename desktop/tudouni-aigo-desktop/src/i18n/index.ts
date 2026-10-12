@@ -194,6 +194,12 @@ export const en = {
   'entry.model': 'model call',
   'entry.modelRetry': 'retry · waiting {ms}ms',
   'entry.modelMetrics': '{ms} · in {input} · cached {cached}',
+  /** The call's own output rate, appended where a measurement exists. It is
+   *  the average over the whole call (prompt processing included), the same
+   *  figure the reference front end draws — labelled "out" next to "in" so the
+   *  pair reads as one ledger, and "out" rather than a bare number because an
+   *  unexplained rate next to token counts does not survive the glance. */
+  'entry.modelOut': 'out {n} tok/s',
   /** The step card's head metrics, as two labelled figures: what the call sent
    *  and what a cache served of it. Same numbers as `modelMetrics` drew as one
    *  line before; the labels move onto the head bar because a card's head is
@@ -899,6 +905,10 @@ export const en = {
      no longer announces the fold or offers to undo it. Both jobs are now done by
      the two toggles at the ends of the session bar, which are on screen in *both*
      states — see `CollapsedSummary`. */
+  /** The status bar's rate chip. The average over the last successful call,
+   *  the same figure the model row draws — the bar is where "how fast is this
+   *  endpoint right now" gets read without hunting through the transcript. */
+  'status.outputRate': 'avg {rate} tok/s',
   'common.jumpLatest': 'Jump to latest',
   'common.andMore': 'and {n} more',
 

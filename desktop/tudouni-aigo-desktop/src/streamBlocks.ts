@@ -65,9 +65,17 @@ export interface StepMetrics {
   durationMs: number | null;
   inputTokens: number | null;
   cachedTokens: number | null;
+  /** The call's own completion count: with `durationMs` it is the output rate
+   *  the head bar draws. Null when the audit reported no usage. */
+  completionTokens: number | null;
 }
 
-const NO_METRICS: StepMetrics = { durationMs: null, inputTokens: null, cachedTokens: null };
+const NO_METRICS: StepMetrics = {
+  durationMs: null,
+  inputTokens: null,
+  cachedTokens: null,
+  completionTokens: null,
+};
 
 /** Kinds drawn inside a step panel when one is open.
  *
@@ -122,6 +130,7 @@ export function streamBlocks(rows: StreamRow[]): StreamBlock[] {
           durationMs: row.entry.durationMs,
           inputTokens: row.entry.inputTokens,
           cachedTokens: row.entry.cachedTokens,
+          completionTokens: row.entry.completionTokens,
         };
         break;
       }

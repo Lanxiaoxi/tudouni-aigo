@@ -150,6 +150,9 @@ export type Entry =
       durationMs: number | null;
       inputTokens: number | null;
       cachedTokens: number | null;
+      /** The call's own completion count — the other half of the output rate.
+       *  Null when the audit reported no usage: "no measurement", never 0. */
+      completionTokens: number | null;
       /** Set when this call is being retried: the audit's `backoff_ms`. */
       retry: { attempt: number; waitMs: number } | null;
     }
@@ -482,6 +485,8 @@ export function reduceEvent(
           durationMs: typeof ev.duration_ms === 'number' ? ev.duration_ms : null,
           inputTokens: typeof ev.prompt_tokens === 'number' ? ev.prompt_tokens : null,
           cachedTokens: typeof ev.cached_tokens === 'number' ? ev.cached_tokens : null,
+          completionTokens:
+            typeof ev.completion_tokens === 'number' ? ev.completion_tokens : null,
           retry:
             failed && typeof ev.backoff_ms === 'number'
               ? { attempt: 0, waitMs: ev.backoff_ms }

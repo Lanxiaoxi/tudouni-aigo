@@ -69,6 +69,13 @@ const SUITES = [
   // session that never exercises the case — which is why the pure function is
   // asserted here, over events shaped like the real audit stream.
   'stream-blocks.test.ts',
+  // The output rate: the average over one call (completion tokens divided by
+  // its duration), and the rule that no measurement is never zero — a
+  // tool-only call reports no completion tokens, and printing `0.0 tok/s`
+  // would claim a measurement the ledger does not have. The figure is
+  // computed in one place and drawn in three (the model row, the step card's
+  // head, the status bar), so the shared half is asserted here.
+  'output-rate.test.ts',
   // Whether the start-up arguments the settings panel owns actually reach the
   // child. `--ericai` is the one that matters most: the runtime decides at open
   // whether it manages the session's token, so a flag that never arrives is a

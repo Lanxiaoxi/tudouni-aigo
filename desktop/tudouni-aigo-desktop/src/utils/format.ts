@@ -26,6 +26,27 @@ export function formatTokens(n: number | null | undefined): string {
   return n.toLocaleString('en-US');
 }
 
+/**
+ * The average output rate of one model call, tokens per second.
+ *
+ * The same rule the reference front end follows
+ * (`internal/state/status.go`, `OutputRateText`): with either half missing or
+ * zero there is **no measurement**, so the caller omits the figure entirely —
+ * `0.0 tok/s` would read as a measurement of zero, and a tool-only call
+ * reports no completion tokens at all. Above 100 the decimal is noise: the
+ * endpoint is not stable to that precision, and one more digit costs a column
+ * on a line every number fights over.
+ */
+export function tokPerSecond(
+  completionTokens: number | null,
+  durationMs: number | null,
+): string | null {
+  if (completionTokens === null || durationMs === null) return null;
+  if (completionTokens <= 0 || durationMs <= 0) return null;
+  const rate = completionTokens / (durationMs / 1000);
+  return rate >= 100 ? rate.toFixed(0) : rate.toFixed(1);
+}
+
 /** A 0..1 ratio as a percentage. Null stays an em dash: "no measurement" and
  *  "zero" are different statements. */
 export function formatPercent(r: number | null | undefined, digits = 0): string {

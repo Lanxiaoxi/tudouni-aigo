@@ -112,7 +112,7 @@ import {
   initialTerminalState,
   type TerminalState,
 } from '@/runtime/terminalOutput';
-import { baseName, normPath, samePath } from '@/utils/format';
+import { baseName, normPath, samePath, tokPerSecond } from '@/utils/format';
 import { readClosePolicy, type ClosePolicy } from '@/runtime/windowClose';
 import {
   encodeNotifySnapshot,
@@ -4519,6 +4519,15 @@ export interface UsageView {
   estimated: number | null;
   /** The estimate's own percentage, against the same window. */
   estimatedPercent: number | null;
+  /**
+   * The last successful call's average output rate (tokens per second), or
+   * null. Computed from that call's own completion count and duration — the
+   * same two halves `liveCall` holds — so a step that produced no output (a
+   * tool-only call) reports no rate rather than claiming one. The bar has no
+   * session-total rate to fall back to: `ui(status)` carries totals, and an
+   * average built from them here would be a figure the ledger does not state.
+   */
+  outputRate: string | null;
 }
 
 /**
@@ -4575,6 +4584,7 @@ export function selectUsage(s: AppStore, key: string | null): UsageView {
     cacheScope,
     estimated,
     estimatedPercent,
+    outputRate: live ? tokPerSecond(live.completionTokens, live.durationMs) : null,
   };
 }
 

@@ -72,6 +72,7 @@ function noise(runId = 'r'): Entry[] {
       durationMs: 900,
       inputTokens: 1000,
       cachedTokens: 700,
+      completionTokens: 190,
       retry: null,
     },
     {

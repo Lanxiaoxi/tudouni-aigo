@@ -8,7 +8,7 @@ import { QuietGroup } from './QuietGroup';
 import { TurnRail } from './TurnRail';
 import { MIN_RAIL_TURNS, turnRail, LANDING_PX } from '@/turnRail';
 import { streamBlocks, type StreamBlock, type StreamRow } from '@/streamBlocks';
-import { formatDuration, formatTokens } from '@/utils/format';
+import { formatDuration, formatTokens, tokPerSecond } from '@/utils/format';
 import type { Entry } from '@/state/entries';
 
 /**
@@ -250,6 +250,12 @@ function StepBlock({ block }: { block: Extract<StreamBlock, { kind: 'step' }> })
           {m.durationMs !== null ? formatDuration(m.durationMs) : t('entry.modelNoMetrics')}
           {m.inputTokens !== null ? ` · ${t('entry.modelIn', { n: formatTokens(m.inputTokens) })}` : ''}
           {m.cachedTokens !== null ? ` · ${t('entry.modelCached', { n: formatTokens(m.cachedTokens) })}` : ''}
+          {(() => {
+            // No completion count and no duration are "no measurement", not a
+            // slow call: the rate is omitted rather than printed as 0.0.
+            const rate = tokPerSecond(m.completionTokens, m.durationMs);
+            return rate !== null ? ` · ${t('entry.modelOut', { n: rate })}` : '';
+          })()}
         </span>
       </header>
       <div className="e-step-rows">

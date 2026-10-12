@@ -357,6 +357,19 @@ export function StatusBar() {
           </Tip>
         ) : null}
 
+        {/* The last successful call's average output rate, moving per step with
+            the live record. Null — a tool-only call, or a call that reported no
+            usage — omits the chip: `0.0 tok/s` would read as a measurement of
+            zero, and the model rows tell the same story per step. */}
+        {usage.outputRate !== null ? (
+          <Tip label={t('status.outputRate', { rate: usage.outputRate })}>
+            <span className="st-chip hide-b1120">
+              <Zap size={11} />
+              <span className="st-metric">{t('status.outputRate', { rate: usage.outputRate })}</span>
+            </span>
+          </Tip>
+        ) : null}
+
         <Tip
           label={t(
             usage.cacheScope === 'session'
