@@ -655,6 +655,14 @@ table.table td.mono {
   color: var(--warning);
 }
 
+/* 该块有内容、值得留意（如 goal 已设置的轮次计数）：从 muted 灰升到 accent。
+   与 .count-attention 是两种语义——attention 是「需要你处理」，active 只是
+   「这里有东西在跑」，所以各占一个状态色，不共用 warning。 */
+.count-active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
 /* Panel tab strip — the library's two views. A tab is a view switch, not an
    action, so it wears `outline`-style chrome (border + label) rather than the
    primary button's fill; the on state is the accent underline alone, which is

@@ -64,11 +64,15 @@ export function Sidebar() {
     <aside className="app-sidebar">
       <RailHead />
       <div className="sidebar-inner scroll">
-        {/* 1 · Goal */}
+        {/* 1 · Goal. The count badge stays muted grey while the block is empty
+            ("0" beside "No goal" would just say the same thing twice in a
+            louder voice), and takes the accent as soon as a goal is set — a
+            set goal is live state, not furniture. */}
         <Block
           blockKey="goal"
           title={t('block.goal')}
           count={snap.goal.roundsText || (snap.goal.present ? '—' : '0')}
+          countActive={snap.goal.present}
           isEmpty={!snap.goal.present}
           emptyTitle={t('empty.goal.title')}
           emptyHint={t('empty.goal.hint')}
@@ -208,6 +212,7 @@ function Block({
   title,
   count,
   countAttention,
+  countActive,
   isEmpty,
   emptyTitle,
   emptyHint,
@@ -217,6 +222,7 @@ function Block({
   title: string;
   count: number | string;
   countAttention?: boolean;
+  countActive?: boolean;
   isEmpty: boolean;
   emptyTitle: string;
   emptyHint: string;
@@ -243,7 +249,7 @@ function Block({
       >
         <ChevronRight size={13} className={`caret${collapsed ? '' : ' caret-open'}`} />
         <span className="sbh-title">{title}</span>
-        <Count value={count} attention={countAttention} />
+        <Count value={count} attention={countAttention} active={countActive} />
         <span className="sr-only">{collapsed ? t('block.expand') : t('block.collapse')}</span>
       </div>
 

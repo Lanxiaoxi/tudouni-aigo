@@ -29,10 +29,25 @@ export function Badge({
   );
 }
 
-/** 计数角标。attention = 有需要一眼看到的项目（未收结果等） */
-export function Count({ value, attention }: { value: number | string; attention?: boolean }) {
+/**
+ * 计数角标。
+ * attention = 有需要一眼看到的项目（未收结果等），warning 色。
+ * active = 该块有内容且值得留意（如 goal 已设置的轮次计数），accent 色；
+ * 两者都未设时保持 muted 灰——「空的 list 显示灰色 0」是这个默认状态。
+ */
+export function Count({
+  value,
+  attention,
+  active,
+}: {
+  value: number | string;
+  attention?: boolean;
+  active?: boolean;
+}) {
   return (
-    <span className={`count${attention ? ' count-attention' : ''}`}>{value}</span>
+    <span className={`count${attention ? ' count-attention' : active ? ' count-active' : ''}`}>
+      {value}
+    </span>
   );
 }
 
