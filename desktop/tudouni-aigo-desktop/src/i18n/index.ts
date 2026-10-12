@@ -165,6 +165,14 @@ export const en = {
   'status.cacheSession': 'cache · session total',
   'status.elapsed': 'turn',
   'status.span': 'span',
+  /** The status bar's resource chip: the whole application's CPU and memory,
+   *  sampled by the host. `{cpu}` is a share of the whole machine (all cores),
+   *  `{mem}` the bytes the shell and its runtimes hold. The chip shows the sum;
+   *  the three lines below are the tooltip, one fact per line. */
+  'status.resources': 'CPU {cpu} · {mem}',
+  'status.resourcesCpu': 'CPU: shell {shellCpu} · runtimes {runtimesCpu} of the machine',
+  'status.resourcesMem': 'Memory: shell {shellMem} · runtimes {runtimesMem}',
+  'status.resourcesSystem': 'System memory in use: {systemUsed} of {systemTotal}',
   'status.audit': 'audit log',
   'status.runtimeGone': 'Runtime exited (code {code})',
   'status.runtimeEnded': 'Runtime ended',

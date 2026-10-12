@@ -54,6 +54,30 @@ export function formatPercent(r: number | null | undefined, digits = 0): string 
   return `${(r * 100).toFixed(digits)}%`;
 }
 
+/** A percentage of the whole machine (0..100 from the resource sample).
+ *  One decimal below 10, whole above — the same rule `tokPerSecond` applies
+ *  to rates: the extra digit is noise at that scale. */
+export function formatCpu(pct: number | null | undefined): string {
+  if (pct === null || pct === undefined) return '—';
+  return `${pct >= 10 ? pct.toFixed(0) : pct.toFixed(1)}%`;
+}
+
+/** Bytes to B/KB/MB/GB, one decimal below 100 — presentation only, like
+ *  `formatDuration`. Null stays an em dash: a sample that never arrived is
+ *  not a reading of zero. */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${units[i]}`;
+}
+
 /** Relative time from an epoch-**millisecond** value. Callers converting from
  *  `modified_at` must multiply by 1000 first: that field is in seconds. */
 export function formatRelative(atMs: number, now: number = Date.now()): string {

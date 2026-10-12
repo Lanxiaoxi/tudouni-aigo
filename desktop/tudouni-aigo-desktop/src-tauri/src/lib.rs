@@ -35,11 +35,12 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use sysinfo::{Pid, System};
 use tauri::ipc::{InvokeBody, Request};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -1786,6 +1787,105 @@ fn deliver_notification(app: &AppHandle, content: &NotifyRequest) -> Result<(), 
 }
 
 /* ============================================================
+   Resource usage
+   ============================================================ */
+
+/// The one `System` handle the whole process shares for resource sampling.
+///
+/// `cpu_usage()` is a **delta**: it is the difference between two samples of
+/// the process's CPU time, and the first sample for a pid has no predecessor,
+/// which sysinfo reports as 0.0. A `System` minted per call would therefore
+/// report 0.0% CPU **forever** for every process — the numbers would look
+/// plausible and be wrong. Keeping one handle for the life of the app is what
+/// gives every sample a predecessor, and the first poll after start simply
+/// reads 0.0, which is true: no interval has elapsed yet.
+///
+/// The first sample is taken here, at start-up, and takes roughly a second on
+/// Windows: it scans every process on the machine. The app is still in its
+/// boot phase at that moment, so the cost lands where it is least visible.
+static SYSTEM: OnceLock<Mutex<System>> = OnceLock::new();
+
+/// What the whole application — this shell and every runtime it has started —
+/// is using right now.
+///
+/// **Process-scoped, not session-scoped.** The question the chip answers is
+/// "is this application heavy", and the answer has nothing per session to do
+/// with it: one number, with a per-piece breakdown for the tooltip.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceUsage {
+    /// This shell process's CPU as a percentage of **the machine**, 0..100.
+    shell_cpu: f64,
+    /// Its memory, in bytes.
+    shell_mem: u64,
+    /// All running runtimes' CPU summed, same scale as `shell_cpu`.
+    runtimes_cpu: f64,
+    /// Their memory summed.
+    runtimes_mem: u64,
+    /// Memory in use by the whole system, in bytes.
+    system_mem_used: u64,
+    /// Total physical memory, in bytes.
+    system_mem_total: u64,
+}
+
+/// Sample the shell and every running runtime in one refresh.
+///
+/// **The sum is divided by the core count.** sysinfo's per-process `cpu_usage`
+/// is relative to one core, so a process saturating two cores reads 200.0 —
+/// the same convention the task manager's per-process column uses, but the
+/// chip here is one small number in a status bar, and a figure that can read
+/// "240%" over the whole application is noise. On the machine's scale the
+/// answer is the one a person means when they ask "how busy is it".
+#[tauri::command]
+fn resource_usage(app: AppHandle) -> Result<ResourceUsage, String> {
+    let mut system = SYSTEM
+        .get_or_init(|| {
+            let mut system = System::new();
+            // The first sample is taken here, at the first poll, and takes
+            // roughly a second on Windows: it scans every process on the
+            // machine. The app is still in its boot phase at that moment, so
+            // the cost lands where it is least visible.
+            system.refresh_all();
+            Mutex::new(system)
+        })
+        .lock()
+        .map_err(|_| "the resource lock is poisoned")?;
+    system.refresh_all();
+
+    let cores = system.cpus().len().max(1) as f64;
+
+    // `std::process::id` is `u32` on Windows and `usize` elsewhere, and sysinfo
+    // asks for a `usize`; the widening is lossless on every platform that is
+    // built for.
+    let own = system
+        .process(Pid::from(std::process::id() as usize))
+        .map(|current| (current.cpu_usage() as f64 / cores, current.memory()))
+        .unwrap_or((0.0, 0));
+
+    let mut runtimes_cpu = 0.0;
+    let mut runtimes_mem: u64 = 0;
+    {
+        let state: State<Bridge> = app.state();
+        let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+        for current in guard.children.values() {
+            if let Some(process) = system.process(Pid::from(current.child.id() as usize)) {
+                runtimes_cpu += process.cpu_usage() as f64 / cores;
+                runtimes_mem += process.memory();
+            }
+        }
+    }
+
+    Ok(ResourceUsage {
+        shell_cpu: own.0,
+        shell_mem: own.1,
+        runtimes_cpu,
+        runtimes_mem,
+        system_mem_used: system.used_memory(),
+        system_mem_total: system.total_memory(),
+    })
+}
+
+/* ============================================================
    Entry point
    ============================================================ */
 
@@ -1853,6 +1953,7 @@ pub fn run() {
             runtime_kill,
             runtime_version,
             runtime_stderr,
+            resource_usage,
             set_prevent_sleep,
             os_user_name,
             workspace_check,

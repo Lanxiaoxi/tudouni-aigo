@@ -2,6 +2,7 @@ import {
   Boxes,
   Bot,
   CircleSlash,
+  Cpu,
   FolderOpen,
   Gauge,
   HardDrive,
@@ -23,10 +24,11 @@ import {
   type UsageView,
 } from '@/state/store';
 import { useTurnClock } from '@/hooks/useTurnClock';
+import { useResourceUsage } from '@/hooks/useResourceUsage';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { Tip } from '@/components/ui/kit';
-import { formatDuration, formatPercent, formatTokens } from '@/utils/format';
+import { formatBytes, formatCpu, formatDuration, formatPercent, formatTokens } from '@/utils/format';
 import type { Phase } from '@/runtime/adapt';
 
 /**
@@ -162,6 +164,12 @@ export function StatusBar() {
   // that need it (`CollapsedSummary`, `EffortPanel`) already follow it.
   const usage: UsageView = useApp(useShallow((s) => selectUsage(s, key)));
 
+  // The whole application's CPU and memory, sampled by the host every two
+  // seconds. **Process-scoped, deliberately not session-scoped**: the question
+  // it answers — "is this application heavy" — has no per-session reading, so
+  // the chip keeps one number while the transcript changes under it.
+  const resources = useResourceUsage();
+
   // "Never spoken" and "idle" are two different labels.
   const phaseLabel =
     phase === 'idle' && !hasSpoken ? t('phase.idleNever') : t(PHASE_KEY[phase]);
@@ -209,6 +217,46 @@ export function StatusBar() {
             is on the turn head, where both numbers come from the same entry. */}
         {step > 0 ? (
           <span className="st-step">{t('status.steps', { n: step })}</span>
+        ) : null}
+
+        {/* The whole application's CPU and memory (this shell plus every
+            runtime it has started), on the **left** because that is where it
+            was asked for: next to the phase it describes the application
+            rather than this conversation, the way the phase does.
+            A `null` sample draws nothing: before the first reading exists a
+            chip reading "0.0%" would be a measurement of zero, and "no
+            measurement" and "zero" are different statements. */}
+        {resources !== null ? (
+          <Tip
+            label={
+              <>
+                {t('status.resourcesCpu', {
+                  shellCpu: formatCpu(resources.shellCpu),
+                  runtimesCpu: formatCpu(resources.runtimesCpu),
+                })}
+                <br />
+                {t('status.resourcesMem', {
+                  shellMem: formatBytes(resources.shellMem),
+                  runtimesMem: formatBytes(resources.runtimesMem),
+                })}
+                <br />
+                {t('status.resourcesSystem', {
+                  systemUsed: formatBytes(resources.systemMemUsed),
+                  systemTotal: formatBytes(resources.systemMemTotal),
+                })}
+              </>
+            }
+          >
+            <span className="st-chip">
+              <Cpu size={11} />
+              <span className="st-metric">
+                {t('status.resources', {
+                  cpu: formatCpu(resources.shellCpu + resources.runtimesCpu),
+                  mem: formatBytes(resources.shellMem + resources.runtimesMem),
+                })}
+              </span>
+            </span>
+          </Tip>
         ) : null}
       </div>
 
@@ -389,11 +437,21 @@ export function StatusBar() {
           </span>
         </Tip>
 
-        <Tip label={t('status.elapsed')}>
-          <span className="st-chip hide-b1120">
+        {/* The turn's wall time, and the door into its breakdown. A button
+            rather than a chip: the number is a total, and what a person wants
+            from a total is the split beneath it (model / tools / approval /
+            human / backoff), which is more than one hover can carry. It is
+            never disabled — the panel answers even for a new session, with
+            "no turn has run yet" as the true answer. */}
+        <Tip label={`${t('status.elapsed')} · ${t('panel.timing.desc')}`}>
+          <button
+            type="button"
+            className="st-toggle hide-b1120"
+            onClick={() => openPanel('timing')}
+          >
             <Layers size={11} />
             <span className="st-metric">{formatDuration(turnMs)}</span>
-          </span>
+          </button>
         </Tip>
 
         {/* Audit log: the file name only; the full path is in the tooltip and

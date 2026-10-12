@@ -1,6 +1,6 @@
 [package]
 name = "tudouni-aigo-desktop"
-version = "2.15.0"
+version = "2.16.0"
 description = "tudouni-aigo desktop client"
 authors = ["tudouni-aigo"]
 edition = "2021"
@@ -32,6 +32,12 @@ tauri-plugin-single-instance = "2"
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.8"
 
+# The OS's own view of what this application is using: the front end polls
+# `resource_usage` on a slow tick and draws one chip in the status bar. The
+# percentage is a *delta*, so the single `System` handle lives for the whole
+# process (see `SYSTEM` in lib.rs) — minting one per call would read 0.0
+# forever.
+sysinfo = "0.33"
 serde = { version = "1", features = ["derive"] }
 # `preserve_order` is **load-bearing, not a preference**. `config.json`'s
 # `providers` object is read in file order, and the first route with a key is the
