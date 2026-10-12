@@ -1296,3 +1296,92 @@ export function ContextPanel() {
     </PanelShell>
   );
 }
+
+/* ============================================================
+   Turn time.
+   The status bar's turn chip opens this: the chip is a total, and
+   this is the split beneath it — where that turn's wall time went.
+   The numbers come from `ui(status).status.timing` (protocol 5),
+   which the runtime sums from the audit log over that turn's own
+   run_id — the same buckets the `--audit` line states.
+   ============================================================ */
+export function TimingPanel() {
+  const t = useT();
+  const timing = useSessionField((rt) => rt.status?.timing ?? null, null);
+
+  const rows =
+    timing === null
+      ? []
+      : [
+          { key: 'model', label: t('panel.timing.model'), ms: timing.modelMs },
+          { key: 'tool', label: t('panel.timing.tool'), ms: timing.toolMs },
+          { key: 'waited', label: t('panel.timing.waited'), ms: timing.waitedMs },
+          { key: 'human', label: t('panel.timing.human'), ms: timing.humanMs },
+          { key: 'backoff', label: t('panel.timing.backoff'), ms: timing.backoffMs },
+          { key: 'unattributed', label: t('panel.timing.unattributed'), ms: timing.unattributed },
+        ];
+
+  return (
+    <PanelShell title={t('panel.timing.title')} note={t('panel.timing.desc')}>
+      <PanelBody>
+        {timing === null ? (
+          // `null`, not a zero row: before a turn has run there is no total to
+          // split, and "0ms model + 0ms tools" would claim one.
+          <EmptyState title={t('panel.timing.empty')} />
+        ) : (
+          <div className="timing-panel">
+            <div className="timing-total">
+              <span>{t('panel.timing.run')}</span>
+              <span className="mono">{formatDuration(timing.runMs)}</span>
+            </div>
+
+            {timing.runMs > 0 ? (
+              // One bar per bucket, against the turn's own total. A bucket is a
+              // slice of the total, so the bar is the split made visible — and a
+              // bar that did not fit (unattributed floored at zero) is not
+              // drawn as a negative width.
+              rows
+                .filter((row) => row.ms > 0)
+                .map((row) => (
+                  <div className="timing-row" key={row.key}>
+                    <span className="timing-label">{row.label}</span>
+                    <span className="timing-bar">
+                      <span
+                        className="timing-fill"
+                        style={{ width: `${Math.min(100, (row.ms / timing.runMs) * 100)}%` }}
+                      />
+                    </span>
+                    <span className="mono timing-value">
+                      {formatDuration(row.ms)}
+                      {timing.runMs > 0 ? ` · ${Math.round((row.ms / timing.runMs) * 100)}%` : ''}
+                    </span>
+                  </div>
+                ))
+            ) : (
+              // The turn has no total of its own (it ended before finishing, so
+              // no `run_finished` landed): the buckets are still real — the work
+              // ran — but there is no denominator, so no percentages.
+              rows
+                .filter((row) => row.ms > 0)
+                .map((row) => (
+                  <div className="timing-row" key={row.key}>
+                    <span className="timing-label">{row.label}</span>
+                    <span className="mono timing-value">{formatDuration(row.ms)}</span>
+                  </div>
+                ))
+            )}
+
+            {timing.savedMs > 0 ? (
+              // The saving is not a bucket of the total: it is time that was
+              // saved and therefore never happened. Stated beside the bar, as
+              // the `--audit` line states it, never subtracted from it.
+              <div className="timing-note">
+                {t('panel.timing.saved')} {formatDuration(timing.savedMs)}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </PanelBody>
+    </PanelShell>
+  );
+}

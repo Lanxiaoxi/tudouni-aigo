@@ -287,6 +287,26 @@ export interface VmPermissionScope {
   riskScope: VmRiskScope[];
 }
 
+/**
+ * The last turn's wall-time breakdown, projected from `ui(status).status.timing`.
+ *
+ * Per turn, not cumulative: the panel that reads it is opened from the status
+ * bar's turn chip, and its total (`runMs`) is that chip's own number. All
+ * fields are milliseconds; `unattributed` is what nothing measured of the
+ * turn. Null when the runtime sent `null` — no turn has run yet — which the
+ * panel renders as an empty state, never as a row of zeroes.
+ */
+export interface VmTiming {
+  runMs: number;
+  modelMs: number;
+  toolMs: number;
+  waitedMs: number;
+  humanMs: number;
+  backoffMs: number;
+  savedMs: number;
+  unattributed: number;
+}
+
 export interface VmStatus {
   counters: Record<string, number>;
   usage: Record<string, number>;
@@ -294,6 +314,8 @@ export interface VmStatus {
   lastPromptTokens: number | null;
   /** The window `status` reports. It travels with the usage numbers. */
   window: number | null;
+  /** Protocol 5. Null before a turn has run. */
+  timing: VmTiming | null;
 }
 
 /** One `ui(state)` snapshot, projected. */
@@ -739,6 +761,22 @@ export function projectInit(msg: InitMsg): VmInit {
   };
 }
 
+export function projectTiming(raw: StatusGroup['timing'] | undefined | null): VmTiming | null {
+  // The runtime sends `null` before a turn has run, and an old runtime sends
+  // nothing at all — both read the same way here: no breakdown to draw.
+  if (raw === null || raw === undefined) return null;
+  return {
+    runMs: num(raw.run_ms) ?? 0,
+    modelMs: num(raw.model_ms) ?? 0,
+    toolMs: num(raw.tool_ms) ?? 0,
+    waitedMs: num(raw.waited_ms) ?? 0,
+    humanMs: num(raw.human_ms) ?? 0,
+    backoffMs: num(raw.backoff_ms) ?? 0,
+    savedMs: num(raw.saved_ms) ?? 0,
+    unattributed: num(raw.unattributed) ?? 0,
+  };
+}
+
 export function projectStatus(msg: UiStatusMsg): VmStatus {
   return {
     counters: (msg.status?.counters ?? {}) as Record<string, number>,
@@ -746,6 +784,7 @@ export function projectStatus(msg: UiStatusMsg): VmStatus {
     meta: msg.status?.meta ?? null,
     lastPromptTokens: num(msg.last_prompt_tokens),
     window: num(msg.context_tokens),
+    timing: projectTiming(msg.status?.timing),
   };
 }
 

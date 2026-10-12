@@ -154,6 +154,11 @@ export type PanelKind =
   | 'subagents'
   | 'audit'
   | 'context'
+  /* The last turn's wall-time breakdown, reached from the status bar's turn
+   *  chip. A panel rather than a tooltip: the chip's number is a total, and
+   *  what a person wants from it is the split beneath it (model / tools /
+   *  approval / human / backoff), which is more than one hover can carry. */
+  | 'timing'
   | 'settings'
   /* The configuration files themselves. A panel of its own rather than a third
    * group inside Settings, because it is a different kind of decision from
@@ -3594,6 +3599,13 @@ export const useApp = create<AppStore>((set, get) => {
         // refresh rather than the only source of it — a front end that never
         // sent this would still show terminals, one snapshot later.
         sendTo(key, { v: 1, t: 'terminal_list' });
+      }
+      if (p === 'timing') {
+        // The breakdown is one turn's, and the turn that just ended is the one
+        // a person clicks the chip about — so the panel asks for a fresh
+        // status rather than trusting the cached copy, which may predate the
+        // last turn's `run_finished`.
+        sendTo(key, { v: 1, t: 'status' });
       }
     },
 

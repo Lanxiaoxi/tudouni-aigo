@@ -29,6 +29,7 @@ import {
   projectSessionList,
   projectState,
   projectStatus,
+  projectTiming,
   projectTools,
 } from '@/runtime/adapt';
 import {
@@ -166,12 +167,11 @@ test('an inserted path stays a separate word', () => {
 
 test('the envelope version is the one hard failure point', () => {
   assert.equal(ENVELOPE_VERSION, 1);
-  // 4 adds the workspace's two capabilities (Files and Terminal) to 3. It is a
-  // **semantic** version and not the hard one: a front end that does not know
-  // the new kinds ignores them and still gets the whole answer from
-  // `ui(run_finished).answer`, which is exactly why `protocol` is separate from
-  // `v` in the first place.
-  assert.equal(PROTOCOL_VERSION, 4);
+  // 5 adds the last turn's wall-time breakdown (`timing`) to `ui(status)`. It
+  // is a **semantic** version and not the hard one: a front end that does not
+  // know the key ignores it and still reads every other group, which is
+  // exactly why `protocol` is separate from `v` in the first place.
+  assert.equal(PROTOCOL_VERSION, 5);
 
   // Decoding an `init` from a **3** runtime still works: the field is documented
   // as survivable, and the capture in `tests/fixtures/opening.jsonl` is one, so
@@ -593,6 +593,119 @@ test('status is grouped, and usage lives there rather than in the snapshot', () 
   // sent: "no lookup yet" and "the cache is broken" are different statements.
   assert.equal(cacheHitRate(status.usage), 0.75);
   assert.equal(cacheHitRate({ prompt: 0, cached: 0 }), null);
+});
+
+/* The turn's breakdown: `null` (no turn has run) and an object are two
+ * different statements, and a projection that collapsed the two would draw a
+ * zero row over a new session — "the turn took 0ms of model time" is a claim
+ * the panel must not make. */
+test('timing is null before a turn has run, and one turn\'s split after', () => {
+  assert.equal(projectTiming(null), null);
+  assert.equal(projectTiming(undefined), null);
+
+  const timing = projectTiming({
+    run_ms: 9000,
+    model_ms: 700,
+    tool_ms: 1100,
+    waited_ms: 120,
+    human_ms: 4900,
+    backoff_ms: 200,
+    saved_ms: 300,
+    unattributed: 1780,
+  });
+  assert.ok(timing !== null);
+  assert.equal(timing.runMs, 9000);
+  assert.equal(timing.modelMs, 700);
+  assert.equal(timing.toolMs, 1100);
+  assert.equal(timing.waitedMs, 120);
+  assert.equal(timing.humanMs, 4900);
+  assert.equal(timing.backoffMs, 200);
+  assert.equal(timing.savedMs, 300);
+  assert.equal(timing.unattributed, 1780);
+
+  // The group rides on `projectStatus` where the panel reads it from.
+  const status = projectStatus({
+    v: 1,
+    t: 'ui',
+    kind: 'status',
+    status: {
+      session: { id: 's-1', resumed: false, workspace: 'C:/w', messages: 1, steps: 1 },
+      model: {
+        provider: 'p',
+        current: 'm',
+        selected: 'm',
+        last_used: 'm',
+        since: 0,
+        window: null,
+        base_url: 'https://api',
+        reasoning: { thinking: true, effort: 'high' },
+      },
+      counters: {},
+      usage: {},
+      timing: {
+        run_ms: 1200,
+        model_ms: 700,
+        tool_ms: 300,
+        waited_ms: 120,
+        human_ms: 0,
+        backoff_ms: 0,
+        saved_ms: 0,
+        unattributed: 80,
+      },
+      context: null,
+      meta: {
+        max_steps: 120,
+        stream: true,
+        autopilot: false,
+        tool_count: 1,
+        audit_path: 'a.jsonl',
+        permissions: {},
+        started: 'started: new',
+        catalog: 'c.json',
+      },
+    },
+    last_prompt_tokens: null,
+    context_tokens: null,
+  } as never);
+  assert.equal(status.timing?.runMs, 1200);
+  assert.equal(status.timing?.unattributed, 80);
+
+  // An older runtime that predates the key: absent, and the projection reads
+  // it the same way as null rather than crashing on the missing field.
+  const legacy = projectStatus({
+    v: 1,
+    t: 'ui',
+    kind: 'status',
+    status: {
+      session: { id: 's-1', resumed: false, workspace: 'C:/w', messages: 1, steps: 1 },
+      model: {
+        provider: 'p',
+        current: 'm',
+        selected: 'm',
+        last_used: 'm',
+        since: 0,
+        window: null,
+        base_url: 'https://api',
+        reasoning: { thinking: true, effort: 'high' },
+      },
+      counters: {},
+      usage: {},
+      context: null,
+      meta: {
+        max_steps: 120,
+        stream: true,
+        autopilot: false,
+        tool_count: 1,
+        audit_path: 'a.jsonl',
+        permissions: {},
+        started: 'started: new',
+        catalog: 'c.json',
+      },
+    },
+    last_prompt_tokens: null,
+    context_tokens: null,
+  } as never);
+  assert.equal(legacy.timing, null);
 });
 
 test('the whole context payload is nested, ledger and window alike', () => {

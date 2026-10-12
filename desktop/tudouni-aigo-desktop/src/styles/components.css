@@ -950,6 +950,70 @@ table.table td.mono {
   padding: 0 var(--space-4) var(--space-4);
 }
 
+/* Turn-time panel: the split beneath the status bar's turn total.
+   The total on top, then one bar per bucket — the bar is the split made
+   visible, its width the bucket's share of the turn. */
+.timing-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+
+.timing-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--text-body);
+  font-weight: 600;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.timing-total .mono {
+  font-size: var(--text-body);
+  color: var(--fg-primary);
+}
+
+.timing-row {
+  display: grid;
+  grid-template-columns: max-content 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-compact);
+}
+
+.timing-label {
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.timing-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.timing-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent-grad);
+}
+
+.timing-value {
+  color: var(--fg-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.timing-note {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  padding-top: var(--space-1);
+}
+
 .dialog-foot {
   flex: none;
   display: flex;

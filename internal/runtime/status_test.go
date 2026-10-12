@@ -195,6 +195,111 @@ func TestTheStatsLineReportsTheAverageOutputRate(t *testing.T) {
 	}
 }
 
+// TestTheStatusPayloadCarriesTheTimingBreakdown pins the `timing` group a
+// front end reads (`ui(status)`).
+//
+// The desktop has no audit file to read of its own, so the status screen is
+// where its "where did the turn's seconds go" panel gets its numbers. The
+// panel is reached from the status bar's **turn** chip, so the group is one
+// turn's breakdown, not the session's: the log below carries **two** turns,
+// and only the last one's events may reach the group. A front end that
+// re-derived the buckets from whatever it had seen would have summed both.
+func TestTheStatusPayloadCarriesTheTimingBreakdown(t *testing.T) {
+	logs := tempSink(t)
+	writeAll(t, logs, "s", []map[string]any{
+		// The previous turn: its figures must not leak into the group.
+		audit.Event(audit.KindRunStarted, "s", "r1", 0, nil),
+		audit.Event(audit.KindModelCall, "s", "r1", 0, map[string]any{"duration_ms": 1000, "status": "ok"}),
+		audit.Event(audit.KindRunFinished, "s", "r1", 0, map[string]any{"duration_ms": 2000}),
+		// The turn the panel is about.
+		audit.Event(audit.KindRunStarted, "s", "r2", 0, nil),
+		audit.Event(audit.KindModelCall, "s", "r2", 0, map[string]any{"duration_ms": 500, "status": "ok"}),
+		audit.Event(audit.KindModelCall, "s", "r2", 0, map[string]any{"duration_ms": 200, "status": "error", "backoff_ms": 200}),
+		audit.Event(audit.KindToolResult, "s", "r2", 0, map[string]any{"duration_ms": 300}),
+		audit.Event(audit.KindToolResult, "s", "r2", 0, map[string]any{"duration_ms": 400, "parallel": true}),
+		audit.Event(audit.KindToolResult, "s", "r2", 0, map[string]any{"duration_ms": 600, "parallel": true}),
+		audit.Event(audit.KindToolBatch, "s", "r2", 0, map[string]any{"wall_ms": 700}),
+		audit.Event(audit.KindToolResult, "s", "r2", 0, map[string]any{"duration_ms": 5000, "human_wait_ms": 4900}),
+		audit.Event(audit.KindPermission, "s", "r2", 0, map[string]any{"waited_ms": 120}),
+		audit.Event(audit.KindRunFinished, "s", "r2", 0, map[string]any{"duration_ms": 9000}),
+	})
+
+	payload := statsRuntime(logs).StatusMessage()
+	status, _ := payload["status"].(map[string]any)
+	timing, ok := status["timing"].(map[string]any)
+	if !ok {
+		t.Fatalf("the status payload has no timing group: %#v", status)
+	}
+
+	want := map[string]int{
+		"run_ms":       9000,
+		"model_ms":     700, // 500 ok + 200 the failed attempt: the bucket is the turn's, not the successes'
+		"tool_ms":      1100,
+		"waited_ms":    120,
+		"human_ms":     4900,
+		"backoff_ms":   200,
+		"saved_ms":     300,
+		"unattributed": 9000 - (700 + 1100 + 120 + 4900 + 200),
+	}
+	for field, value := range want {
+		if got, _ := timing[field].(int); got != value {
+			t.Errorf("timing.%s = %d, want %d", field, got, value)
+		}
+	}
+}
+
+// TestTheStatusTimingIsAbsentBeforeATurnHasRun: the group is one turn's
+// breakdown, and a new session has no such turn. A zero row there would read
+// "the turn took 0ms of model time and 0ms of tools" — a false statement about
+// a turn that does not exist; the absent group is the true one. (The session
+// totals above it answer with zeroes for a different reason: there, a zero row
+// reads "new session", which is the truth.)
+func TestTheStatusTimingIsAbsentBeforeATurnHasRun(t *testing.T) {
+	logs := tempSink(t)
+
+	payload := statsRuntime(logs).StatusMessage()
+	status, _ := payload["status"].(map[string]any)
+	// The key is present and the value a nil map: that is what `"timing": null`
+	// serialises to, and a front end reads it as "no turn to break down". A
+	// zero row would instead claim a turn took 0ms of each thing.
+	timing, ok := status["timing"].(map[string]any)
+	if !ok {
+		t.Fatalf("the timing key is missing or not a map: %#v", status["timing"])
+	}
+	if timing != nil {
+		t.Errorf("timing before a turn has run = %#v, want null (a nil map)", timing)
+	}
+}
+
+// TestTheStatusTimingIsAbsentWhenTheTurnDiedBeforeFinishing: a run_started
+// with no run_finished is still a turn the panel is about — its buckets exist
+// (the calls and tools ran), and the total is what `run_finished` would have
+// said had it arrived. The group must not fall back to the previous turn.
+func TestTheStatusTimingCoversATurnThatDiedBeforeFinishing(t *testing.T) {
+	logs := tempSink(t)
+	writeAll(t, logs, "s", []map[string]any{
+		audit.Event(audit.KindRunStarted, "s", "r1", 0, nil),
+		audit.Event(audit.KindModelCall, "s", "r1", 0, map[string]any{"duration_ms": 1000, "status": "ok"}),
+		audit.Event(audit.KindRunFinished, "s", "r1", 0, map[string]any{"duration_ms": 2000}),
+		// Turn two started and died: no finished line for it.
+		audit.Event(audit.KindRunStarted, "s", "r2", 0, nil),
+		audit.Event(audit.KindModelCall, "s", "r2", 0, map[string]any{"duration_ms": 300, "status": "ok"}),
+	})
+
+	payload := statsRuntime(logs).StatusMessage()
+	status, _ := payload["status"].(map[string]any)
+	timing, ok := status["timing"].(map[string]any)
+	if !ok {
+		t.Fatalf("the status payload has no timing group: %#v", status)
+	}
+	if got, _ := timing["model_ms"].(int); got != 300 {
+		t.Errorf("timing.model_ms = %d, want 300 (the dead turn's, not the finished one's 1000)", got)
+	}
+	if got, _ := timing["run_ms"].(int); got != 0 {
+		t.Errorf("timing.run_ms = %d, want 0 (no finished line, and the previous turn's 2000 is not this turn's)", got)
+	}
+}
+
 // TestTheStatsLineOmitsAnUnmeasurableRate is the rule that keeps this line from
 // carrying a permanent claim about nothing.
 //

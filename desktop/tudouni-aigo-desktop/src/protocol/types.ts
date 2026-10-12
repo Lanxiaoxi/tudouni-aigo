@@ -27,8 +27,12 @@ export const ENVELOPE_VERSION = 1;
  * does not recognise `terminal_output` ignores a kind it cannot draw — which is
  * why the state snapshot also carries the terminal list, and why a terminal's
  * whole life stays observable from `ui(state)` alone.
+ *
+ * **5** adds the last turn's wall-time breakdown to `ui(status)`: a `timing`
+ * group beside `counters` and `usage`. Additive again — a front end that does
+ * not know the key simply never reads it.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 /* ============================================================
    Shared vocabulary
@@ -670,6 +674,29 @@ export interface StatusGroup {
   };
   counters: Record<string, number>;
   usage: Record<string, number>;
+  /**
+   * The wall-time breakdown of the **last turn** (protocol 5), in
+   * milliseconds. `run_ms` is the turn's own total — the same figure
+   * `run_finished.duration_ms` puts on `lastTurnMs` — and `unattributed` is
+   * what nothing measured of it; the buckets between them are `SummarizeTime`'s,
+   * the same sums the `--audit` line states.
+   *
+   * **Per turn, not cumulative.** `counters` and `usage` above are session
+   * totals and this group is one turn's, because the reader is the status bar's
+   * turn chip, and a cumulative bucket beside a single turn's total would not
+   * add up to it. `null` when no turn has run yet — the absence, not a zero
+   * row claiming a turn took 0ms.
+   */
+  timing: {
+    run_ms: number;
+    model_ms: number;
+    tool_ms: number;
+    waited_ms: number;
+    human_ms: number;
+    backoff_ms: number;
+    saved_ms: number;
+    unattributed: number;
+  } | null;
   /** Null when this runtime has no context layer — a different statement from
    *  a row of zeroes. */
   context: Record<string, unknown> | null;

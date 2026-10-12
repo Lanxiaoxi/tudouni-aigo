@@ -14,6 +14,7 @@ import {
   SkillsPanel,
   SubagentsPanel,
   TerminalPanel,
+  TimingPanel,
 } from './panels';
 import { SettingsPanel } from './SettingsPanel';
 import { ConfigPanel } from './ConfigPanel';
@@ -59,6 +60,7 @@ export function PanelHost() {
           {panel === 'subagents' ? <SubagentsPanel /> : null}
           {panel === 'audit' ? <AuditPanel /> : null}
           {panel === 'context' ? <ContextPanel /> : null}
+          {panel === 'timing' ? <TimingPanel /> : null}
           {panel === 'settings' ? <SettingsPanel /> : null}
           {panel === 'config' ? <ConfigPanel /> : null}
           {panel === 'files' ? <FilesPanel /> : null}

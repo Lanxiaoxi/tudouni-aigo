@@ -49,6 +49,56 @@ func (t Timing) UnattributedMs() int {
 	return 0
 }
 
+// LastRunID is the id of the most recent `run_started`, and whether there is
+// one.
+//
+// The most recent start, not the last `run_finished`: a turn that dies before
+// it finishes (a kill, a cancelled run) leaves no finished line at all, and
+// pairing by its own start is what keeps "the turn this is about" from reaching
+// backwards into the previous one.
+func LastRunID(events []map[string]any) (string, bool) {
+	id := ""
+	found := false
+	for _, event := range events {
+		if stringOf(event["kind"]) != KindRunStarted {
+			continue
+		}
+		if value := stringOf(event["run_id"]); value != "" {
+			id = value
+			found = true
+		}
+	}
+	return id, found
+}
+
+// LastTurnTime is the wall-time breakdown of the most recent **turn**: the
+// same buckets `SummarizeTime` sums, but over the events of that turn's own
+// `run_id` only.
+//
+// It exists for the status screen, and it is a different question from
+// `SummarizeTime`, not a slice of it. The `--audit` report answers "where did
+// this session's seconds go", and its buckets are cumulative; the panel that
+// reaches for this one is reached from the turn's own chip and answers "where
+// did *this turn's* seconds go". Cumulative model time under a single turn's
+// total would not add up, and a turn's total inside a set of session buckets
+// would be a second reading of `run_finished` — so the two stay separate
+// functions over the same events. They still cannot disagree about what a
+// bucket *is*: this one is `SummarizeTime` over the turn's slice, and the
+// buckets keep their definitions in one place.
+func LastTurnTime(events []map[string]any) (Timing, bool) {
+	runID, ok := LastRunID(events)
+	if !ok {
+		return Timing{}, false
+	}
+	filtered := make([]map[string]any, 0, len(events))
+	for _, event := range events {
+		if stringOf(event["run_id"]) == runID {
+			filtered = append(filtered, event)
+		}
+	}
+	return SummarizeTime(filtered), true
+}
+
 // SummarizeTime adds the durations up out of the events.
 //
 // It is deliberately the same shape as `state.Summarize`: no separate timer state

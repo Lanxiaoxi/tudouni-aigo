@@ -243,7 +243,7 @@
       },
       "status": {
         "type": "object",
-        "doc": "**只有 kind=status 有**。分组的状态快照：`session`（id/resumed/workspace/messages/steps）、`model`（provider/current/selected/last_used/since/window/base_url/route/reasoning）、`counters`（runs/model_calls/model_ok/tool_calls/permission_waits/asks）、`usage`（prompt/cached/miss/completion）、`meta`（max_steps/stream/autopilot/tool_count/audit_path/permissions/catalog）。**分组是有意的**：这一屏跨四个层次，平铺之后字段名早晚撞车。"
+        "doc": "**只有 kind=status 有**。分组的状态快照：`session`（id/resumed/workspace/messages/steps）、`model`（provider/current/selected/last_used/since/window/base_url/route/reasoning）、`counters`（runs/model_calls/model_ok/tool_calls/permission_waits/asks）、`usage`（prompt/cached/miss/completion/model_ms）、`timing`（protocol 5 起，**最近一轮 turn 的墙钟分解**：`run_ms` 总时长 + model_ms/tool_ms/waited_ms/human_ms/backoff_ms/saved_ms 各桶 + unattributed 未归因，**没有跑过 turn 时为 null**）、`meta`（max_steps/stream/autopilot/tool_count/audit_path/permissions/catalog）。**分组是有意的**：这一屏跨四个层次，平铺之后字段名早晚撞车。**`timing` 与 `usage` 不是一个口径**：`usage`/`counters` 是会话累计，`timing` 是*最近一轮*的——因为问它的是底栏 turn 时长芯片（\"这一轮的 5.4s 花在哪\"），累计值塞在单轮总时长旁边凑不成账。各桶是 `--audit` 时长账本同一次求和（只是按该轮 `run_id` 过滤），所以两个报告不会漂；`run_ms` 就是前端自己 `run_finished.duration_ms` 的那个数，放在这里是让 unattributed 有分母。"
       },
       "tools": {
         "type": "array",

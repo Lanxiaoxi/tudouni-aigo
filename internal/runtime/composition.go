@@ -1777,6 +1777,41 @@ func (r *Runtime) StatusMessage() map[string]any {
 		toolCount = r.Tools.Len()
 	}
 
+	// The wall time the **last turn** spent, one field per bucket, plus the
+	// turn's own total and whatever nothing measured of it. It is
+	// `audit.LastTurnTime` — `SummarizeTime` over that turn's `run_id` — not a
+	// re-derivation: the `--audit` line and this group must agree about what a
+	// bucket *is*, and a second division of the same events is a second source
+	// for the same fact.
+	//
+	// **Per turn, not cumulative.** The panel that reaches for this is reached
+	// from the status bar's turn chip, and the chip's number is one turn's
+	// total — a session-cumulative bucket beside it would not add up to it,
+	// which is the mixture `stats.turn` refuses. `run_ms` and
+	// `unattributed` ride here rather than in the session group: they are
+	// defined against a turn's total, and the total is the turn's own
+	// `run_finished.duration_ms`, the very field `lastTurnMs` carries.
+	//
+	// **null, not a zero row, when no turn has run.** The session totals above
+	// answer before anything has run because a zero row there reads "new
+	// session". A zero row *here* would read "the turn you clicked on took
+	// 0ms of model time and 0ms of tools", which is a false statement about a
+	// turn that does not exist yet; the absent group is the true one, and a
+	// front end that predates protocol 5 ignores it either way.
+	var timing map[string]any
+	if lastTurn, ok := audit.LastTurnTime(events); ok {
+		timing = map[string]any{
+			"run_ms":       lastTurn.RunMs,
+			"model_ms":     lastTurn.ModelMs,
+			"tool_ms":      lastTurn.ToolMs,
+			"waited_ms":    lastTurn.WaitedMs,
+			"human_ms":     lastTurn.HumanMs,
+			"backoff_ms":   lastTurn.BackoffMs,
+			"saved_ms":     lastTurn.SavedMs,
+			"unattributed": lastTurn.UnattributedMs(),
+		}
+	}
+
 	status := map[string]any{
 		"session": map[string]any{
 			"id":        r.SessionIDValue,
@@ -1807,6 +1842,7 @@ func (r *Runtime) StatusMessage() map[string]any {
 		},
 		"counters": counters,
 		"usage":    usage,
+		"timing":   timing,
 		// The context ledger travels with the status screen rather than only with
 		// `/context`: "how much can it see, and how much did the budget drop" is
 		// part of the question `/status` exists to answer. Nil means this runtime

@@ -64,6 +64,84 @@ func TestTheTimingAddsUpOutOfTheEvents(t *testing.T) {
 	}
 }
 
+// TestLastTurnTimeMeasuresTheLastTurnOnly pins the split the status screen
+// relies on: `SummarizeTime` answers "the session", `LastTurnTime` answers
+// "this turn", and the two must not share a number. The log below carries two
+// runs, and only the second's events may reach the breakdown.
+func TestLastTurnTimeMeasuresTheLastTurnOnly(t *testing.T) {
+	events := []map[string]any{
+		{"kind": "run_started", "run_id": "r1"},
+		{"kind": "model_call", "run_id": "r1", "status": "ok", "duration_ms": 1000},
+		{"kind": "run_finished", "run_id": "r1", "duration_ms": 2000},
+
+		{"kind": "run_started", "run_id": "r2"},
+		{"kind": "model_call", "run_id": "r2", "status": "ok", "duration_ms": 700},
+		{"kind": "tool_result", "run_id": "r2", "duration_ms": 300},
+		{"kind": "permission", "run_id": "r2", "waited_ms": 120},
+		{"kind": "run_finished", "run_id": "r2", "duration_ms": 1200},
+	}
+
+	// The session's own figure, for contrast: it sums both runs.
+	session := SummarizeTime(events)
+	if session.ModelMs != 1700 || session.RunMs != 3200 {
+		t.Fatalf("the session timing moved: %+v", session)
+	}
+
+	timing, ok := LastTurnTime(events)
+	if !ok {
+		t.Fatal("LastTurnTime reported no turn")
+	}
+	if timing.ModelMs != 700 {
+		t.Errorf("model ms = %d, want 700 (the last turn's, not the session's 1700)", timing.ModelMs)
+	}
+	if timing.ToolMs != 300 || timing.WaitedMs != 120 {
+		t.Errorf("tool ms = %d, waited ms = %d, want 300 and 120", timing.ToolMs, timing.WaitedMs)
+	}
+	if timing.RunMs != 1200 {
+		t.Errorf("run ms = %d, want 1200 (the last turn's total)", timing.RunMs)
+	}
+	if got := timing.UnattributedMs(); got != 1200-(700+300+120) {
+		t.Errorf("unattributed = %d, want %d", got, 1200-(700+300+120))
+	}
+}
+
+// TestLastTurnTimeReportsNothingBeforeATurnHasRun: no run_started is no turn,
+// and the absent answer is what the status screen renders as "no group" rather
+// than a zero row that claims a turn took 0ms.
+func TestLastTurnTimeReportsNothingBeforeATurnHasRun(t *testing.T) {
+	if _, ok := LastTurnTime([]map[string]any{{"kind": "model_call", "run_id": "r1", "duration_ms": 5}}); ok {
+		t.Error("a log with no run_started reported a turn")
+	}
+	if _, ok := LastTurnTime(nil); ok {
+		t.Error("an empty log reported a turn")
+	}
+}
+
+// TestLastTurnTimeCoversATurnThatNeverFinished: the run that started and died
+// is still the last turn. Its buckets exist (the work ran), its total is zero
+// (no finished line), and it does not fall back to the run before it.
+func TestLastTurnTimeCoversATurnThatNeverFinished(t *testing.T) {
+	events := []map[string]any{
+		{"kind": "run_started", "run_id": "r1"},
+		{"kind": "model_call", "run_id": "r1", "status": "ok", "duration_ms": 1000},
+		{"kind": "run_finished", "run_id": "r1", "duration_ms": 2000},
+
+		{"kind": "run_started", "run_id": "r2"},
+		{"kind": "model_call", "run_id": "r2", "status": "ok", "duration_ms": 300},
+	}
+
+	timing, ok := LastTurnTime(events)
+	if !ok {
+		t.Fatal("LastTurnTime reported no turn for one that started")
+	}
+	if timing.ModelMs != 300 {
+		t.Errorf("model ms = %d, want 300 (the dead turn's, not the finished one's 1000)", timing.ModelMs)
+	}
+	if timing.RunMs != 0 {
+		t.Errorf("run ms = %d, want 0 (no finished line, and r1's 2000 is not this turn's)", timing.RunMs)
+	}
+}
+
 // TestUnattributedIsNeverNegative: millisecond rounding and a log copied from
 // somewhere else can both push it below zero, and a negative number there has no
 // explanation worth reading.

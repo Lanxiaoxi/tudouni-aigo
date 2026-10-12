@@ -44,7 +44,15 @@ const VERSION = 1
 // never asks, and one that does not know `terminal_output` ignores a kind it cannot
 // draw — which is why the state snapshot also carries the terminal list, and why a
 // terminal's whole life is still observable from `ui(state)` alone.
-const PROTOCOL = 4
+//
+// 5 adds the wall-time breakdown to `ui(status)`: a `timing` group beside
+// `counters` and `usage`, summed by the runtime from the audit log the same way
+// the two above are. It is the `--audit` report's own timing line as fields
+// rather than prose, and it exists for the front ends: the TUI reads the audit
+// file itself, and the desktop has no such file, so the status screen is where
+// its "where did the turn's seconds go" panel gets its numbers. Additive again —
+// a front end that does not know the key simply never reads it.
+const PROTOCOL = 5
 
 // Message keys used by every envelope.
 const (
