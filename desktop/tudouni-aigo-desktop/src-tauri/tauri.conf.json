@@ -34,6 +34,6 @@
     "active": true,
     "targets": ["nsis", "deb", "appimage"],
     "icon": ["icons/icon.ico", "icons/icon.png"],
-    "resources": ["runtime/*", "runtime/**/*"]
+    "resources": ["runtime/*", "runtime/**/*", "remote-packages/*.zip", "remote-packages/*.sha256"]
   }
 }

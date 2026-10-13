@@ -15,6 +15,7 @@
     "check:close-notify": "node scripts/close-notify-check.mjs",
     "audit:css": "node scripts/class-audit.mjs",
     "runtime:stage": "node scripts/stage-runtime.mjs",
+    "runtime:stage-remote": "node scripts/stage-remote-packages.mjs",
     "version:bump": "node scripts/bump-version.mjs",
     "version:check": "node scripts/bump-version.mjs --check",
     "installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1",

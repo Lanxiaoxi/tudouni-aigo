@@ -602,6 +602,244 @@ export async function attachRuntime(
   return String(key);
 }
 
+/** What `attachRuntimeRemote` sends across — the camelCase mirror of the
+ *  Rust side's `RemoteAttachOptions`, one field at a time rather than a
+ *  passthrough object, for the same reason `attachRuntime` above spells
+ *  each one out: a field silently dropped from an object literal is a typo
+ *  nothing catches, while a missing argument to a typed function is one
+ *  tsc catches on every build. */
+export interface RemoteAttachOptions {
+  host: string;
+  port: number;
+  user: string;
+  identityFiles: string[];
+  password: string | null;
+  remoteBinary: string;
+  remoteWorkspace: string;
+  sessionId?: string;
+  maxSteps?: number;
+  stream?: boolean;
+  autopilot?: boolean;
+  ericai?: boolean;
+  /** Milliseconds for the TCP connect + SSH handshake + authentication,
+   *  together. `undefined` means the Rust side's own default (15s). */
+  connectTimeoutMs?: number;
+}
+
+/**
+ * Starts the runtime on a remote host over SSH (`runtime_attach_remote`),
+ * the Remote Backend's one entry point from this front end — see
+ * `ssh_backend.rs`'s module doc on the Rust side for everything downstream
+ * of the key this returns: it is the same bridge, the same
+ * `runtime://line` / `runtime://stderr` / `runtime://exited` events, and the
+ * same `createTauriRuntime` handle `attachRuntime` already uses.
+ *
+ * Outside a Tauri host there is no bridge to start anything, and `null` is
+ * returned so a caller can tell "no runtime" from "a runtime with a key" —
+ * same convention as `attachRuntime`.
+ */
+export async function attachRuntimeRemote(
+  options: RemoteAttachOptions,
+): Promise<string | null> {
+  if (!isHosted()) return null;
+  const key = await tauriInvoke<number>('runtime_attach_remote', {
+    options: {
+      host: options.host,
+      port: options.port,
+      user: options.user,
+      identityFiles: options.identityFiles,
+      password: options.password,
+      remoteBinary: options.remoteBinary,
+      remoteWorkspace: options.remoteWorkspace,
+      sessionId: options.sessionId ?? null,
+      maxSteps: options.maxSteps ?? null,
+      stream: options.stream ?? true,
+      autopilot: options.autopilot ?? null,
+      ericai: options.ericai ?? null,
+      connectTimeoutMs: options.connectTimeoutMs ?? null,
+    },
+  });
+  return String(key);
+}
+
+/** What `installRemoteRuntime` sends across — the camelCase mirror of the
+ *  Rust side's `InstallRemoteOptions`. */
+export interface InstallRemoteOptions {
+  host: string;
+  port: number;
+  user: string;
+  identityFiles: string[];
+  password: string | null;
+  connectTimeoutMs?: number;
+  /** The version this install should be recorded under — the desktop
+   *  app's own build version (`getVersion()` from `@tauri-apps/api/app`,
+   *  read by the caller), not resolved on the Rust side: that side has no
+   *  more direct a way to know its own version string than this one does. */
+  version: string;
+}
+
+/** One step of a remote install's progress, carried by
+ *  `remote-install://progress` — see `ssh_backend::InstallStage` on the
+ *  Rust side for what each stage name means. */
+export type InstallStage =
+  | 'detecting_platform'
+  | 'checking_existing_install'
+  | 'preparing_staging'
+  | 'uploading'
+  | 'verifying_and_switching'
+  | 'done';
+
+export interface InstallProgressEvent {
+  requestId: string;
+  stage: InstallStage;
+  uploadedEntries: number;
+  totalEntries: number;
+}
+
+/**
+ * Installs or upgrades the Runtime on a remote host over SSH
+ * (`install_remote_runtime`) — the Remote Bootstrapper's one entry point
+ * from this front end (§3.5, §8 of the design).
+ *
+ * Progress is reported through `onInstallProgress`, keyed by `requestId`
+ * (a caller-chosen correlation id, not a session key — an install can
+ * happen before any session exists for the workspace it is about to make
+ * usable). Subscribe to that **before** calling this, or the earliest
+ * progress events may be missed; `attachRuntime`'s own queueing exists for
+ * exactly this ordering problem, but an install is a plain Tauri event
+ * rather than a queued child line, so there is no equivalent buffer here.
+ *
+ * Resolves to the absolute path of the installed binary on success — what
+ * a subsequent `attachRuntimeRemote` call should pass as `remoteBinary`.
+ * Outside a Tauri host there is nothing to install, and this rejects
+ * rather than silently resolving: unlike `attachRuntime`'s "no bridge, no
+ * key" convention, an install that appears to succeed while doing nothing
+ * would leave a caller believing a remote host now has a working Runtime
+ * when it does not.
+ */
+export async function installRemoteRuntime(
+  requestId: string,
+  options: InstallRemoteOptions,
+): Promise<string> {
+  if (!isHosted()) {
+    throw new Error('cannot install a remote runtime outside the desktop app');
+  }
+  return await tauriInvoke<string>('install_remote_runtime', {
+    requestId,
+    options: {
+      host: options.host,
+      port: options.port,
+      user: options.user,
+      identityFiles: options.identityFiles,
+      password: options.password,
+      connectTimeoutMs: options.connectTimeoutMs ?? null,
+      version: options.version,
+    },
+  });
+}
+
+/** Subscribes to every remote install's progress events. Returns the
+ *  unsubscribe function. A caller that only cares about one `requestId`
+ *  filters inside `cb` — events are not split per-request on this side,
+ *  the same way `onCloseRequested` and the runtime's own line events are
+ *  one shared stream rather than one subscription per session. */
+export function onInstallProgress(cb: (event: InstallProgressEvent) => void): () => void {
+  let unlisten: (() => void) | null = null;
+  let stopped = false;
+  void (async () => {
+    if (!isHosted()) return;
+    try {
+      const off = await tauriListen<InstallProgressEvent>('remote-install://progress', cb);
+      if (stopped) off();
+      else unlisten = off;
+    } catch {
+      /* Not hosted, or the capability is missing; nothing to listen to. */
+    }
+  })();
+  return () => {
+    stopped = true;
+    unlisten?.();
+  };
+}
+
+/**
+ * This desktop app's own build version, for `installRemoteRuntime`'s
+ * `version` field — the string a remote install is recorded under
+ * (`~/.tudouni/runtime/<version>/`).
+ *
+ * `'0.0.0'` outside a Tauri host: there is no app to ask, and no install to
+ * attempt either, so the fallback value is never actually sent anywhere —
+ * `installRemoteRuntime` itself refuses outside a host before this would
+ * matter.
+ */
+export async function getAppVersion(): Promise<string> {
+  if (!isHosted()) return '0.0.0';
+  const mod = await import('@tauri-apps/api/app');
+  return mod.getVersion();
+}
+
+/* ============================================================
+   Config sync (Phase 4, §9)
+   ============================================================ */
+
+/** The SSH destination `check_remote_config`/`writeRemoteConfig` connect
+ *  to — the same shape `RemoteAttachOptions` carries, minus the
+ *  runtime-specific fields that call has no use for. */
+export interface RemoteConfigTarget {
+  host: string;
+  port: number;
+  user: string;
+  identityFiles: string[];
+  password: string | null;
+  connectTimeoutMs?: number;
+}
+
+/** The remote account's `~/.tudouni/config.json` state, per §9.3. */
+export type RemoteConfigStatus = 'missing' | 'empty_template' | 'no_usable_route' | 'valid' | 'corrupt';
+
+export interface RemoteConfigInspection {
+  status: RemoteConfigStatus;
+  /** Hex SHA256 of the file's bytes; empty when `status === 'missing'`. */
+  fingerprint: string;
+  /** Set only when `status === 'corrupt'`. */
+  error: string | null;
+}
+
+/** Reads and classifies the remote account's config.json, without writing
+ *  anything — the one call a `configPolicy` of `'ask'` needs before it can
+ *  draw a choice. */
+export async function checkRemoteConfig(target: RemoteConfigTarget): Promise<RemoteConfigInspection> {
+  return await tauriInvoke<RemoteConfigInspection>('check_remote_config', { target });
+}
+
+/** Writes `contents` (the whole file, as text) to the remote account's
+ *  config.json — a temp file, a backup of whatever was there, then an
+ *  atomic rename into place (§9.6). Returns the new fingerprint, which the
+ *  caller should record as the sync baseline. */
+export async function writeRemoteConfig(target: RemoteConfigTarget, contents: string): Promise<string> {
+  return await tauriInvoke<string>('write_remote_config', { target, contents });
+}
+
+/** The local config.json's raw text and its fingerprint, or `null` when the
+ *  file does not exist yet. */
+export interface LocalConfigText {
+  text: string;
+  fingerprint: string;
+}
+
+/** Reads the local config.json as plain text, alongside its fingerprint —
+ *  the one piece `checkConfigSync` (in the store) needs that the structured
+ *  `readUserConfig`/`ConfigDocument` shape cannot give exactly: the literal
+ *  bytes a sync comparison and a `'sync-local'` upload both need. */
+export async function readLocalConfigText(): Promise<LocalConfigText | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<LocalConfigText | null>('read_local_config_text');
+  } catch {
+    return null;
+  }
+}
+
 /** Tell the bridge the front end is listening, so it flushes everything every
  *  child queued before that was true. Returns how many lines were released. */
 export async function attachRuntimeListener(): Promise<number> {

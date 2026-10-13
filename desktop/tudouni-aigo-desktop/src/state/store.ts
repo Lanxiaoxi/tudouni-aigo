@@ -121,13 +121,22 @@ import {
 } from '@/runtime/notify';
 import {
   attachRuntime,
+  attachRuntimeRemote,
+  checkRemoteConfig,
   chooseWorkspaceDirectory,
   createTauriRuntime,
+  getAppVersion,
+  installRemoteRuntime,
+  onInstallProgress,
   quitApp,
+  readLocalConfigText,
   readRuntimeStderr,
   shutdownRuntime,
   stashImage,
+  writeRemoteConfig,
   type BridgeOptions,
+  type InstallStage,
+  type RemoteConfigStatus,
 } from '@/runtime/tauri';
 
 /* ============================================================
@@ -279,6 +288,175 @@ export interface FileView {
  * It is what the settings panel shows. A remembered preference is *not*: a value
  * remembered for next time must never read as "this is on now".
  */
+/* ============================================================
+   Workspace Manager (§6, §3.4 of the remote-runtime design)
+   ============================================================ */
+
+/**
+ * One saved SSH destination, shared by every remote workspace that points at
+ * it.
+ *
+ * Per §6.4/§6.5 of the design, a host configuration is **not** itself a
+ * workspace and is not "a connection" either: `b-prod` and two different
+ * project directories on it are two different `RemoteWorkspaceEntry` rows
+ * that both carry `hostId` pointing at this one record. Editing the host here
+ * (a changed port, a rotated key) is therefore one edit that reaches every
+ * workspace built on it, rather than one edit per workspace that can drift
+ * apart from the others.
+ */
+export interface SshHostConfig {
+  /** Opaque local id. Never sent to the runtime or the remote host; it exists
+   *  only so a `RemoteWorkspaceEntry` can reference this record without
+   *  copying it. */
+  id: string;
+  /** A name for this host, chosen by the person — shown in the sidebar and in
+   *  the host picker when adding a new remote workspace. */
+  label: string;
+  host: string;
+  port: number;
+  user: string;
+  /** Paths to private key files, tried in order. Empty means key auth is not
+   *  configured for this host, which is only a valid state when `password`
+   *  is set. */
+  identityFiles: string[];
+  /**
+   * A password for this host, if one is configured.
+   *
+   * **Stored locally, in the same place `aigo.prefs` already lives**, and
+   * that is a real property to be honest about rather than a detail: this is
+   * `localStorage`, not an OS keychain. It is accepted here, in Phase 2,
+   * because the design's own Phase 1/2 scope is "assume an already-configured
+   * remote runtime" — a proper secret store is not yet part of this layer.
+   * `undefined` means no password is configured, which is the ordinary case
+   * for a host using key auth.
+   */
+  password?: string;
+  /**
+   * How a conflict between the local and remote `config.json` is resolved
+   * (§9.4) — `'ask'` (the default for a newly-saved host, per the design),
+   * `'sync-local'` (the local file always wins), or `'use-remote'` (a
+   * one-way lock: the remote file is trusted and never overwritten from
+   * here without an explicit later action — see the design's own "use-remote
+   * is a one-way lock" rule).
+   */
+  configPolicy?: 'ask' | 'sync-local' | 'use-remote';
+  /**
+   * The content fingerprint (SHA256) recorded the last time this host's
+   * config.json was successfully synced — the baseline §9.5's conflict
+   * detection compares the current local and remote fingerprints against.
+   * `undefined` means no sync has happened yet, which `DetectConflict`
+   * treats as an unconditional conflict rather than a reason to guess.
+   */
+  configBaselineFingerprint?: string;
+}
+
+/**
+ * One saved workspace that lives on a remote host, reached through an
+ * `SshHostConfig`.
+ *
+ * This is the remote half of what §6.3 calls the unified Workspace model —
+ * `WorkspaceSidebar`'s existing `workspaces: string[]` is kept exactly as it
+ * is for the local half, and this is its sibling rather than its replacement:
+ * merging the two into one shape would have meant touching
+ * `resolveAttachWorkspace`/`attachSession`'s local-only assumptions (a bare
+ * directory string) throughout, for a benefit Phase 2 does not need yet. The
+ * two lists are drawn as one in the sidebar instead (`combinedWorkspaceRows`),
+ * which is where the unification actually matters to a person using it.
+ */
+export interface RemoteWorkspaceEntry {
+  /** Opaque local id. Stable across renames of `label` or `remotePath`, so a
+   *  running session's `remoteWorkspaceId` reference never goes stale while
+   *  the entry it points at is merely edited. */
+  id: string;
+  hostId: string;
+  /** The directory on the remote host this workspace is rooted at. */
+  remotePath: string;
+  /** Absolute path to the runtime binary on the remote host. Phase 1/2 both
+   *  assume this is already installed and verified — see
+   *  `RemoteAttachOptions.remote_binary` on the Rust side, and §8 for the
+   *  automatic-install phase this will eventually be filled in by. */
+  remoteBinary: string;
+  /** A name for this workspace, chosen by the person. Falls back to
+   *  `remotePath` in the sidebar when left blank. */
+  label: string;
+}
+
+/**
+ * The connection's own state machine (§5.1), independent of the session's
+ * turn/approval state.
+ *
+ * `phase` is a closed set rather than a free-form string so a component that
+ * switches on it is exhaustive-checked by the compiler — the same reason
+ * `TurnOrigin`-shaped unions are used elsewhere in this file. Every phase
+ * beyond `'local'` and `'ready'` is Phase 1/2 territory; `'installing'` is
+ * listed for Phase 3 and is not yet reachable from this code (there is no
+ * remote-install path to put it on).
+ */
+export type ConnectionPhase =
+  | 'local'
+  | 'disconnected'
+  | 'connecting'
+  | 'installing'
+  | 'starting'
+  | 'handshaking'
+  | 'ready'
+  | 'interrupted'
+  | 'closing'
+  | 'closed'
+  | 'failed';
+
+export interface ConnectionState {
+  phase: ConnectionPhase;
+  /** Why `phase` is `'failed'` or `'interrupted'`, as a sentence. `null`
+   *  otherwise — this is not a log, it is the one reason the badge's tooltip
+   *  shows. */
+  problem: string | null;
+}
+
+/** The connection state every local session carries. A constant rather than a
+ *  literal written at each call site, so every local bucket points at the
+ *  same frozen object instead of allocating one that can never actually
+ *  change. */
+export const LOCAL_CONNECTION_STATE: ConnectionState = { phase: 'local', problem: null };
+
+/**
+ * The state of one remote workspace's install attempt (§8 of the design),
+ * tracked separately from `ConnectionState` because an install happens
+ * **before** there is a connection to have a state at all — see
+ * `AppStore.installStatus`'s own doc.
+ */
+export interface InstallStatus {
+  stage: InstallStage;
+  /** Set only while `stage === 'uploading'`. Both `0` otherwise. */
+  uploadedEntries: number;
+  totalEntries: number;
+  /** Set only once the attempt has settled, one way or the other. */
+  error: string | null;
+  /** The installed binary's absolute path, once `stage === 'done'` with no
+   *  error. */
+  installedBinary: string | null;
+}
+
+/**
+ * One config-sync decision point for a saved SSH host (§9.4/§9.5 of the
+ * design) — what `checkConfigSync` found, and what a person still needs to
+ * decide when the host's `configPolicy` is `'ask'` and both sides have
+ * actually changed.
+ */
+export interface ConfigSyncPrompt {
+  hostId: string;
+  conflict: 'none' | 'remote_changed' | 'local_changed' | 'both_changed';
+  remoteStatus: RemoteConfigStatus;
+  /** `null` when there is no local config.json yet. */
+  localText: string | null;
+  /** `null` when the remote status is `'missing'`. */
+  remoteFingerprint: string | null;
+}
+
+/* ============================================================
+   Launch arguments and session info
+   ============================================================ */
+
 export interface LaunchArgs {
   /** `--ericai` was on the command line. */
   ericai: boolean;
@@ -336,6 +514,29 @@ export interface SessionRuntime {
   sessionId: string | null;
   /** The workspace this child was started in. A property of the process. */
   workspace: string;
+  /**
+   * Which remote workspace this session belongs to, when it is one — `null`
+   * for a local session. This is a reference into `remoteWorkspaces`, kept as
+   * an id rather than a copy so renaming or editing the saved entry does not
+   * leave a stale duplicate sitting in a running session's bucket.
+   *
+   * It exists so `connection` below can be rendered without the UI having to
+   * guess "is this workspace remote" from the shape of `workspace` itself —
+   * see §6 of the design: SSH is a transport property of the workspace, not
+   * a separate concept the UI re-derives per screen.
+   */
+  remoteWorkspaceId: string | null;
+  /**
+   * The connection's own state machine, independent of `ready`/`problem`.
+   *
+   * Per §5.1 of the design, connection state and task state are tracked
+   * separately on purpose: an SSH disconnect does not mean a tool failed, and
+   * a tool failing does not mean the connection is down. For a local session
+   * this is always `{ phase: 'local' }` — there is no connection to report on,
+   * and giving it its own phase (rather than reusing `'ready'`) keeps the UI
+   * from having to ask "is this remote" before it can read this field.
+   */
+  connection: ConnectionState;
   /** The handshake has landed. */
   ready: boolean;
   /**
@@ -691,16 +892,23 @@ export interface SavedSessions {
  * better answer than a test-only back door into the store. It is exactly the
  * shape `attachSession` installs once the bridge accepts a child — no field is
  * filled in differently for a test.
+ *
+ * `remoteWorkspaceId` defaults to `null` (an ordinary local session); callers
+ * opening a remote one pass it explicitly, which is also what selects the
+ * initial `connection` phase — `'connecting'` rather than `'local'`.
  */
 export function createSessionBucket(
   key: string,
   workspace: string,
   launch: LaunchArgs,
+  remoteWorkspaceId: string | null = null,
 ): SessionRuntime {
   return {
     key,
     sessionId: null,
     workspace,
+    remoteWorkspaceId,
+    connection: remoteWorkspaceId === null ? LOCAL_CONNECTION_STATE : { phase: 'connecting', problem: null },
     ready: false,
     problem: null,
     stderrTail: [],
@@ -969,6 +1177,37 @@ export interface AppStore {
    * active session is in it) but they are never conflated.
    */
   workspaces: string[];
+  /**
+   * Saved SSH hosts, the shared resource remote workspaces are built on
+   * (§6.5 of the design: "SSH host configuration becomes a shared resource
+   * that can be referenced by multiple workspaces").
+   */
+  sshHosts: SshHostConfig[];
+  /**
+   * Saved remote workspaces — the remote sibling of `workspaces` above. Kept
+   * as a parallel list rather than merged into it; see `RemoteWorkspaceEntry`'s
+   * own doc for why.
+   */
+  remoteWorkspaces: RemoteWorkspaceEntry[];
+  /**
+   * In-progress or finished install attempts, keyed by `RemoteWorkspaceEntry.id`.
+   *
+   * **Not persisted.** An install's progress is a fact about this run of
+   * the application, not a preference — restoring a stale "verifying and
+   * switching" status after a restart would describe a Rust command that
+   * is not actually running any more. Window-level rather than a session
+   * field because an install, unlike a connection, has no session to
+   * belong to: it can run (and fail, and be retried) before any
+   * `enterRemoteWorkspace` call for that workspace ever succeeds.
+   */
+  installStatus: Record<string, InstallStatus>;
+  /**
+   * The config-sync question currently on screen (§9.4), or `null` when
+   * there is none. At most one at a time — like the close prompt, this is
+   * a local decision the window asks, not a queued runtime request, so it
+   * does not go through `pendingModals`.
+   */
+  configSyncPrompt: ConfigSyncPrompt | null;
   /**
    * The workspace the **next** launch should open: the one last worked in.
    *
@@ -1375,6 +1614,90 @@ export interface AppStore {
    *  any session running in it — a workspace being *listed* and being *in use*
    *  are two different things. */
   removeWorkspace(path: string): void;
+  /**
+   * Save an SSH host configuration for later remote workspaces to reference.
+   * A local act: nothing connects. Returns the new host's id.
+   */
+  addSshHost(host: Omit<SshHostConfig, 'id'>): string;
+  /**
+   * Update a saved SSH host's fields in place. Every remote workspace that
+   * references it (by `hostId`) picks up the change on its next connection —
+   * there is nothing to migrate, since they only ever hold the id.
+   */
+  updateSshHost(id: string, patch: Partial<Omit<SshHostConfig, 'id'>>): void;
+  /**
+   * Forget a saved SSH host. Refused (returns `false`) while any saved remote
+   * workspace still references it — removing the host out from under a
+   * workspace that still names it would leave that workspace unable to say
+   * what `connect` should reach, and silently deleting the workspace along
+   * with it is a bigger act than the person asked for. Remove the dependent
+   * workspaces first.
+   */
+  removeSshHost(id: string): boolean;
+  /**
+   * Save a remote workspace. A local act, like `addWorkspace`: nothing
+   * connects, nothing is validated against the live host. Returns the new
+   * entry's id.
+   */
+  addRemoteWorkspace(entry: Omit<RemoteWorkspaceEntry, 'id'>): string;
+  updateRemoteWorkspace(id: string, patch: Partial<Omit<RemoteWorkspaceEntry, 'id'>>): void;
+  /** Forget a saved remote workspace. Does not touch any session already
+   *  running against it — being *listed* and being *in use* are different
+   *  things here too, same as `removeWorkspace`. */
+  removeRemoteWorkspace(id: string): void;
+  /**
+   * Go to a saved remote workspace: focus a live session there, or connect
+   * and start one.
+   *
+   * This is `enterWorkspace`'s remote sibling. It is a separate method
+   * rather than a second branch inside `enterWorkspace` because the two take
+   * different arguments (a path vs. an entry id) and connect through
+   * different Tauri commands (`runtime_attach` vs. `runtime_attach_remote`);
+   * folding them into one signature would need a discriminated argument that
+   * every existing local call site would have to be updated to pass.
+   */
+  enterRemoteWorkspace(remoteWorkspaceId: string): Promise<void>;
+  /**
+   * Installs or upgrades the Runtime on a remote workspace's host (§8 of
+   * the design), without connecting afterwards. A separate act from
+   * `enterRemoteWorkspace` on purpose: the design's own install flow is
+   * "detect, upload, verify, switch" as one self-contained operation that
+   * a person explicitly asks for (typically because a connection attempt
+   * reported no Runtime at the configured path), not a step folded
+   * silently into every connect — see §8.4's requirement that an install
+   * failure must not look like a connection failure, which conflating the
+   * two methods would risk.
+   *
+   * On success, the workspace's own `remoteBinary` is updated to the
+   * installed path (through `CurrentLink`) so the very next
+   * `enterRemoteWorkspace` call uses it. Progress is tracked in
+   * `installStatus`, keyed by `remoteWorkspaceId`.
+   */
+  installRemoteWorkspace(remoteWorkspaceId: string): Promise<void>;
+  /**
+   * Checks a saved SSH host's config.json against the local one (§9.3–9.5)
+   * and, depending on the host's `configPolicy`, either resolves it
+   * automatically (`'sync-local'` uploads the local file; `'use-remote'`
+   * only ever records the remote's own fingerprint as the baseline and
+   * never uploads) or — for `'ask'`, when both sides have actually
+   * changed since the last synced baseline — sets `configSyncPrompt` for
+   * the UI to draw a choice from.
+   *
+   * Call before `enterRemoteWorkspace`/`installRemoteWorkspace` for a
+   * host whose config might matter to what runs there; this method does
+   * not call either of them itself, since config sync and connecting are
+   * two separate acts.
+   */
+  checkConfigSync(hostId: string): Promise<void>;
+  /**
+   * Answers an `ask` prompt (`configSyncPrompt`): `'use-local'` uploads the
+   * local file (backing up the remote one first, server-side);
+   * `'use-remote'` only records the remote's fingerprint as the new
+   * baseline. Clears `configSyncPrompt` either way.
+   */
+  resolveConfigSync(choice: 'use-local' | 'use-remote'): Promise<void>;
+  /** Dismisses `configSyncPrompt` without changing either file. */
+  dismissConfigSync(): void;
   /** Look up a tool's facts for the active session's stream rows. */
   toolFacts(name: string): ToolFacts | null;
 
@@ -1449,6 +1772,8 @@ type Prefs = {
    *  it stays — "where am I" must survive folding the conversation list. */
   sessionsCollapsed: boolean;
   workspaces: string[];
+  sshHosts: SshHostConfig[];
+  remoteWorkspaces: RemoteWorkspaceEntry[];
   /**
    * The workspace the **next** start should open, i.e. the one last worked in.
    *
@@ -1499,6 +1824,38 @@ type Prefs = {
   closePolicy: ClosePolicy;
 };
 
+/** Guards one parsed `sshHosts` entry before it is trusted. localStorage
+ *  outlives every build, so a record missing a field a newer version added
+ *  (or corrupted by hand) is dropped whole rather than let through with a
+ *  field silently `undefined` where a string was expected. */
+function isValidSshHost(value: unknown): value is SshHostConfig {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === 'string' &&
+    typeof v.label === 'string' &&
+    typeof v.host === 'string' &&
+    typeof v.port === 'number' &&
+    typeof v.user === 'string' &&
+    Array.isArray(v.identityFiles) &&
+    v.identityFiles.every((item) => typeof item === 'string') &&
+    (v.password === undefined || typeof v.password === 'string')
+  );
+}
+
+/** Same defensive shape as `isValidSshHost`, for `remoteWorkspaces`. */
+function isValidRemoteWorkspace(value: unknown): value is RemoteWorkspaceEntry {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === 'string' &&
+    typeof v.hostId === 'string' &&
+    typeof v.remotePath === 'string' &&
+    typeof v.remoteBinary === 'string' &&
+    typeof v.label === 'string'
+  );
+}
+
 function loadPrefs(): Prefs {
   const fallback: Prefs = {
     quiet: false,
@@ -1509,6 +1866,8 @@ function loadPrefs(): Prefs {
     blockTouched: {},
     sessionsCollapsed: false,
     workspaces: [],
+    sshHosts: [],
+    remoteWorkspaces: [],
     // A first launch has nowhere to go back to, and inventing a directory for
     // it would be worse than opening nothing: the honest answer is the first
     // screen, where a person picks a place.
@@ -1554,6 +1913,16 @@ function loadPrefs(): Prefs {
       workspaces: (parsed.workspaces ?? []).filter(
         (entry): entry is string => typeof entry === 'string' && entry.trim() !== '',
       ),
+      // Validated the same defensive way: localStorage outlives every build,
+      // and a malformed record here must not take the sidebar down with it —
+      // a host or workspace missing a required string field is dropped
+      // whole rather than kept half-formed.
+      sshHosts: Array.isArray(parsed.sshHosts)
+        ? parsed.sshHosts.filter(isValidSshHost)
+        : fallback.sshHosts,
+      remoteWorkspaces: Array.isArray(parsed.remoteWorkspaces)
+        ? parsed.remoteWorkspaces.filter(isValidRemoteWorkspace)
+        : fallback.remoteWorkspaces,
       // Same filter, same reason, and one more: this value decides which child
       // gets started at launch, so a non-string here is not a cosmetic problem.
       // **Not checked against the filesystem**, though — that is `workspace_check`
@@ -1689,6 +2058,8 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
         blockTouched: s.blockTouched,
         sessionsCollapsed: s.sessionsCollapsed,
         workspaces: s.workspaces,
+        sshHosts: s.sshHosts,
+        remoteWorkspaces: s.remoteWorkspaces,
         lastWorkspace: s.lastWorkspace,
         ericaiDefault: s.ericaiDefault,
         maxStepsDefault: s.maxStepsDefault,
@@ -2355,6 +2726,10 @@ export const useApp = create<AppStore>((set, get) => {
     toolOpen: {},
     sessionsCollapsed: prefs.sessionsCollapsed,
     workspaces: prefs.workspaces,
+    sshHosts: prefs.sshHosts,
+    remoteWorkspaces: prefs.remoteWorkspaces,
+    installStatus: {},
+    configSyncPrompt: null,
     lastWorkspace: prefs.lastWorkspace,
 
     ericaiDefault: prefs.ericaiDefault,
@@ -2799,6 +3174,12 @@ export const useApp = create<AppStore>((set, get) => {
             // S" able to find this child later.
             sessionId: init.sessionId,
             workspace: init.workspace,
+            // The protocol handshake landing is what actually means "ready",
+            // for a remote session — see §4.3 of the design: a successful SSH
+            // login or a successful remote process start is not sufficient by
+            // itself, only this moment is. A local bucket's `connection` is
+            // already `{ phase: 'local' }` and this leaves it alone.
+            connection: bucket.remoteWorkspaceId === null ? bucket.connection : { phase: 'ready' as const, problem: null },
             session: {
               id: init.sessionId,
               resumed: init.resumed,
@@ -3350,6 +3731,22 @@ export const useApp = create<AppStore>((set, get) => {
             // button left disabled by a reply that can never arrive is worse than
             // one that lets the person press again after the runtime is back.
             mcpPending: [],
+            // §5.1/§5.3 of the design: a connection ending is reported through
+            // its own state, independent of the turn it leaves unsettled above.
+            // `requested` is what the Rust/Go bridges already use to separate
+            // "the front end asked to close" from "the SSH session dropped or
+            // the remote process died" — the same distinction `RuntimeExited`
+            // makes on the Go side, carried through unchanged rather than
+            // re-derived here from an exit code alone.
+            connection:
+              bucket.remoteWorkspaceId === null
+                ? bucket.connection
+                : msg.requested
+                  ? { phase: 'closed' as const, problem: null }
+                  : {
+                      phase: 'interrupted' as const,
+                      problem: `the connection ended unexpectedly (exit code ${msg.code})`,
+                    },
           });
           break;
         }
@@ -4198,6 +4595,353 @@ export const useApp = create<AppStore>((set, get) => {
       if (list.length === get().workspaces.length) return;
       set({ workspaces: list });
       persistPrefs(get());
+    },
+
+    addSshHost(host) {
+      const id = `ssh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      set((state) => ({ sshHosts: [...state.sshHosts, { ...host, id }] }));
+      persistPrefs(get());
+      return id;
+    },
+
+    updateSshHost(id, patch) {
+      const list = get().sshHosts;
+      const index = list.findIndex((entry) => entry.id === id);
+      if (index === -1) return;
+      const updated = [...list];
+      updated[index] = { ...updated[index], ...patch, id };
+      set({ sshHosts: updated });
+      persistPrefs(get());
+    },
+
+    removeSshHost(id) {
+      // Refused while a saved remote workspace still references this host —
+      // see the method's own doc on the interface for why this is a refusal
+      // rather than a cascading delete.
+      const inUse = get().remoteWorkspaces.some((entry) => entry.hostId === id);
+      if (inUse) return false;
+      const list = get().sshHosts.filter((entry) => entry.id !== id);
+      if (list.length === get().sshHosts.length) return false;
+      set({ sshHosts: list });
+      persistPrefs(get());
+      return true;
+    },
+
+    addRemoteWorkspace(entry) {
+      const id = `rw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      set((state) => ({ remoteWorkspaces: [...state.remoteWorkspaces, { ...entry, id }] }));
+      persistPrefs(get());
+      return id;
+    },
+
+    updateRemoteWorkspace(id, patch) {
+      const list = get().remoteWorkspaces;
+      const index = list.findIndex((entry) => entry.id === id);
+      if (index === -1) return;
+      const updated = [...list];
+      updated[index] = { ...updated[index], ...patch, id };
+      set({ remoteWorkspaces: updated });
+      persistPrefs(get());
+    },
+
+    removeRemoteWorkspace(id) {
+      const list = get().remoteWorkspaces.filter((entry) => entry.id !== id);
+      if (list.length === get().remoteWorkspaces.length) return;
+      set({ remoteWorkspaces: list });
+      persistPrefs(get());
+    },
+
+    async enterRemoteWorkspace(remoteWorkspaceId) {
+      const s = get();
+      const entry = s.remoteWorkspaces.find((item) => item.id === remoteWorkspaceId);
+      if (!entry) return;
+
+      // Already there: a live session against this remote workspace is
+      // focused rather than duplicated — the same rule `enterWorkspace`
+      // applies for a local directory, kept here so switching between a
+      // local and a remote row in the sidebar behaves identically.
+      const existing = s.order.find((key) => s.sessions[key]?.remoteWorkspaceId === remoteWorkspaceId);
+      if (existing) {
+        get().focusSession(existing);
+        return;
+      }
+
+      const host = s.sshHosts.find((item) => item.id === entry.hostId);
+      if (!host) {
+        set({
+          startupNotice: { code: 'no-workspace' },
+        });
+        return;
+      }
+
+      // §9.4 of the design: config sync is checked before connecting, not
+      // folded silently into the connection attempt itself — a policy of
+      // 'ask' may need to put a prompt on screen, and that has to happen
+      // before (or at worst alongside) the SSH connection, never after a
+      // session is already open and running turns against whichever
+      // config the remote runtime happened to read at its own start-up.
+      await get().checkConfigSync(host.id);
+
+      const ericai = s.ericaiDefault;
+      const maxSteps = s.maxStepsDefault;
+      const launch: LaunchArgs = { ericai, maxSteps };
+
+      let key: string | null;
+      try {
+        key = await attachRuntimeRemote({
+          host: host.host,
+          port: host.port,
+          user: host.user,
+          identityFiles: host.identityFiles,
+          password: host.password ?? null,
+          remoteBinary: entry.remoteBinary,
+          remoteWorkspace: entry.remotePath,
+          ericai,
+          ...(maxSteps === null ? {} : { maxSteps }),
+        });
+      } catch (err) {
+        // Same shape as attachSession's own catch: the refusal belongs to the
+        // session being opened, not to the window, so it gets its own
+        // short-lived row rather than taking over the screen.
+        const failed = `failed-${Date.now().toString(36)}`;
+        const bucket = createSessionBucket(failed, entry.remotePath, launch, remoteWorkspaceId);
+        bucket.problem = describeFailure(err);
+        bucket.connection = { phase: 'failed', problem: describeFailure(err) };
+        set((state) => ({
+          sessions: { ...state.sessions, [failed]: bucket },
+          order: [...state.order, failed],
+          activeKey: failed,
+        }));
+        return;
+      }
+
+      if (key === null) return;
+
+      const bucket = createSessionBucket(key, entry.remotePath, launch, remoteWorkspaceId);
+      const runtime = createTauriRuntime(key, (line) => {
+        get().pushStderr(key as string, line);
+      });
+      registerRuntime(runtime);
+
+      const leaving = get().activeKey;
+      set((state) => ({
+        sessions: { ...state.sessions, [key as string]: bucket },
+        order: [...state.order, key as string],
+        activeKey: key,
+        modal: headForActive(state.pendingModals, key as string),
+        panel: null,
+        startupProblem: null,
+        startupNotice: null,
+      }));
+
+      runtime.subscribe((msg) => {
+        get().applyRuntimeMessage(key as string, msg);
+      });
+
+      void readRuntimeStderr(key).then((early) => {
+        for (const line of early) get().pushStderr(key as string, line);
+      });
+
+      // The SSH session opened and the remote command started; the protocol
+      // handshake (init) is what actually moves `connection.phase` to
+      // `'ready'`, through `applyRuntimeMessage` — see its own handling of
+      // `init` for a remote bucket. This only records that the process side
+      // of starting has happened.
+      set((state) => {
+        const current = state.sessions[key as string];
+        if (!current) return state;
+        return {
+          sessions: {
+            ...state.sessions,
+            [key as string]: { ...current, connection: { phase: 'handshaking', problem: null } },
+          },
+        };
+      });
+
+      sendTo(key, { v: 1, t: 'session_list', filter: get().sessionFilter });
+
+      abandonIfUntouched(leaving);
+    },
+
+    async installRemoteWorkspace(remoteWorkspaceId) {
+      const s = get();
+      const entry = s.remoteWorkspaces.find((item) => item.id === remoteWorkspaceId);
+      if (!entry) return;
+      const host = s.sshHosts.find((item) => item.id === entry.hostId);
+      if (!host) return;
+
+      // One request per call, so a progress event arriving late from a
+      // superseded attempt (the person pressed install twice) cannot be
+      // mistaken for this one's.
+      const requestId = `install-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+      function patchInstall(patch: Partial<InstallStatus>) {
+        set((state) => {
+          const current: InstallStatus = state.installStatus[remoteWorkspaceId] ?? {
+            stage: 'detecting_platform',
+            uploadedEntries: 0,
+            totalEntries: 0,
+            error: null,
+            installedBinary: null,
+          };
+          return {
+            installStatus: {
+              ...state.installStatus,
+              [remoteWorkspaceId]: { ...current, ...patch },
+            },
+          };
+        });
+      }
+
+      patchInstall({
+        stage: 'detecting_platform',
+        uploadedEntries: 0,
+        totalEntries: 0,
+        error: null,
+        installedBinary: null,
+      });
+
+      // Subscribed before the call so the earliest progress events (the
+      // platform-detection step can finish before this function's own
+      // `await` below yields back here) are not missed — the same ordering
+      // concern `installRemoteRuntime`'s own doc calls out.
+      const unsubscribe = onInstallProgress((event) => {
+        if (event.requestId !== requestId) return;
+        patchInstall({
+          stage: event.stage,
+          uploadedEntries: event.uploadedEntries,
+          totalEntries: event.totalEntries,
+        });
+      });
+
+      try {
+        const version = await getAppVersion();
+        const installedBinary = await installRemoteRuntime(requestId, {
+          host: host.host,
+          port: host.port,
+          user: host.user,
+          identityFiles: host.identityFiles,
+          password: host.password ?? null,
+          version,
+        });
+        patchInstall({ stage: 'done', error: null, installedBinary });
+        // The whole point of recording the installed path: the next
+        // enterRemoteWorkspace call for this entry uses it without anybody
+        // having to type it in by hand.
+        get().updateRemoteWorkspace(remoteWorkspaceId, { remoteBinary: installedBinary });
+      } catch (err) {
+        patchInstall({ error: describeFailure(err) });
+      } finally {
+        unsubscribe();
+      }
+    },
+
+    async checkConfigSync(hostId) {
+      const host = get().sshHosts.find((item) => item.id === hostId);
+      if (!host) return;
+
+      const target = {
+        host: host.host,
+        port: host.port,
+        user: host.user,
+        identityFiles: host.identityFiles,
+        password: host.password ?? null,
+      };
+
+      const [remote, local] = await Promise.all([checkRemoteConfig(target), readLocalConfigText()]);
+
+      const baseline = host.configBaselineFingerprint ?? '';
+      const localFingerprint = local?.fingerprint ?? '';
+      const remoteFingerprint = remote.fingerprint;
+      // Mirrors bootstrap.DetectConflict exactly (§9.5): no baseline is
+      // always a conflict, never a silent "take whichever side exists."
+      const conflict: ConfigSyncPrompt['conflict'] =
+        baseline === ''
+          ? 'both_changed'
+          : localFingerprint === baseline && remoteFingerprint === baseline
+            ? 'none'
+            : remoteFingerprint !== baseline && localFingerprint !== baseline
+              ? 'both_changed'
+              : remoteFingerprint !== baseline
+                ? 'remote_changed'
+                : 'local_changed';
+
+      const policy = host.configPolicy ?? 'ask';
+
+      // No real conflict (or the remote has not changed since the last
+      // sync at all): nothing to decide, and nothing to do either — the
+      // baseline already describes what is there.
+      if (conflict === 'none') return;
+
+      if (policy === 'use-remote') {
+        // A one-way lock (§9.4): the remote file is trusted, and a local
+        // change is never pushed up without an explicit later action. Only
+        // the baseline moves, so the next check compares against today's
+        // remote content rather than re-flagging the same "conflict" on
+        // every connection.
+        get().updateSshHost(hostId, { configBaselineFingerprint: remoteFingerprint });
+        return;
+      }
+
+      if (policy === 'sync-local') {
+        if (local === null) return;
+        const newFingerprint = await writeRemoteConfig(target, local.text);
+        get().updateSshHost(hostId, { configBaselineFingerprint: newFingerprint });
+        return;
+      }
+
+      // 'ask': only genuinely new information is worth interrupting for.
+      // A remote config that was never synced but is still just an empty
+      // template, for instance, is not a decision — it is the first screen
+      // a fresh account always starts from (§9.3's "a confirmed empty
+      // template may be initialised by the default policy without asking").
+      if (remote.status === 'empty_template' && local === null) {
+        get().updateSshHost(hostId, { configBaselineFingerprint: remoteFingerprint });
+        return;
+      }
+
+      set({
+        configSyncPrompt: {
+          hostId,
+          conflict,
+          remoteStatus: remote.status,
+          localText: local?.text ?? null,
+          remoteFingerprint: remote.status === 'missing' ? null : remoteFingerprint,
+        },
+      });
+    },
+
+    async resolveConfigSync(choice) {
+      const prompt = get().configSyncPrompt;
+      if (!prompt) return;
+      const host = get().sshHosts.find((item) => item.id === prompt.hostId);
+      if (!host) {
+        set({ configSyncPrompt: null });
+        return;
+      }
+
+      const target = {
+        host: host.host,
+        port: host.port,
+        user: host.user,
+        identityFiles: host.identityFiles,
+        password: host.password ?? null,
+      };
+
+      if (choice === 'use-local') {
+        if (prompt.localText !== null) {
+          const newFingerprint = await writeRemoteConfig(target, prompt.localText);
+          get().updateSshHost(prompt.hostId, { configBaselineFingerprint: newFingerprint });
+        }
+      } else if (prompt.remoteFingerprint !== null) {
+        get().updateSshHost(prompt.hostId, { configBaselineFingerprint: prompt.remoteFingerprint });
+      }
+
+      set({ configSyncPrompt: null });
+    },
+
+    dismissConfigSync() {
+      set({ configSyncPrompt: null });
     },
 
     async applyLaunch(next) {

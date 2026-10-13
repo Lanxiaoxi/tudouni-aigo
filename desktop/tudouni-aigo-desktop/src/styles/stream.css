@@ -1941,6 +1941,37 @@
   text-align: center;
 }
 
+/* ---------------- remote workspace connection badges (§5.1) ---------------- */
+
+.lb-connection {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-caption);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.lb-connection-success {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.lb-connection-warning {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.lb-connection-destructive {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.lb-connection-neutral {
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+}
+
 /* ---------------- the rail's foot ---------------- */
 
 /* Outside `.lb-scroll` on purpose: this is a fixed row, so it cannot be pushed

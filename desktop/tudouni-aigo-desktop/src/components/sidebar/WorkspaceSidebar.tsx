@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Archive, ArchiveRestore, ChevronRight, FileJson, FileText, FolderPlus, Folder, LayoutGrid, Plus, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, LayoutGrid, Plus, Server, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -11,6 +11,8 @@ import {
   selectSavedSessions,
   selectWorkspaceAttentionKey,
   useApp,
+  type ConnectionPhase,
+  type InstallStatus,
   type RowStatus,
 } from '@/state/store';
 import { SessionDot } from '@/components/sidebar/SessionDot';
@@ -19,6 +21,7 @@ import { checkWorkspace, chooseWorkspaceDirectory } from '@/runtime/tauri';
 import { Logo } from '@/components/ui/Logo';
 import { EmptyState, Tip } from '@/components/ui/kit';
 import { baseName, formatRelative, samePath } from '@/utils/format';
+import { AddRemoteWorkspaceModal } from '@/components/modals/AddRemoteWorkspaceModal';
 
 /**
  * The left sidebar: **workspace management and session management**.
@@ -196,6 +199,21 @@ export function WorkspaceSidebar() {
    *  press within the row confirms; anything else disarms. Delete is
    *  irreversible, so a single misclick must not be enough. */
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
+
+  // ---- remote workspaces (Workspace Manager, Phase 2) ----
+  const remoteWorkspaces = useApp((s) => s.remoteWorkspaces);
+  const sshHosts = useApp((s) => s.sshHosts);
+  const enterRemoteWorkspace = useApp((s) => s.enterRemoteWorkspace);
+  const removeRemoteWorkspace = useApp((s) => s.removeRemoteWorkspace);
+  // ---- remote install (Phase 3) ----
+  const installStatus = useApp((s) => s.installStatus);
+  const installRemoteWorkspace = useApp((s) => s.installRemoteWorkspace);
+  const [addRemoteOpen, setAddRemoteOpen] = useState(false);
+  // Which saved remote workspace, if any, the active session belongs to —
+  // the same "where am I" question `currentWorkspace` answers for the local
+  // half, read from the session's own `remoteWorkspaceId` rather than
+  // compared by path (a remote path is not unique across hosts).
+  const currentRemoteWorkspaceId = rt?.remoteWorkspaceId ?? null;
 
   // A blocking modal is blocking. Switching a session abandons every pending
   // request the runtime is holding (`server.go: switchSession` →
@@ -412,6 +430,111 @@ export function WorkspaceSidebar() {
             </div>
           )}
         </section>
+
+        {/* ---------------- remote workspaces (Workspace Manager, Phase 2) ---------------- */}
+        <section className="lb-section">
+          <div className="lb-section-head">
+            <span className="lb-title">{t('lb.remoteWorkspaces')}</span>
+            <Tip label={t('lb.addRemoteWorkspace')}>
+              <button
+                type="button"
+                className="lb-icon"
+                aria-label={t('lb.addRemoteWorkspace')}
+                disabled={blocked}
+                onClick={() => setAddRemoteOpen(true)}
+              >
+                <Server size={14} />
+              </button>
+            </Tip>
+          </div>
+
+          {remoteWorkspaces.length === 0 ? (
+            <>
+              <EmptyState
+                compact
+                title={t('lb.remoteWorkspaces')}
+                hint={t('lb.emptyRemoteWorkspaces.hint')}
+              />
+              <button
+                type="button"
+                className="btn btn-outline btn-block lb-empty-add"
+                disabled={blocked}
+                onClick={() => setAddRemoteOpen(true)}
+              >
+                <Server size={13} />
+                {t('lb.addRemoteWorkspace')}
+              </button>
+            </>
+          ) : (
+            <div className="lb-rows">
+              {remoteWorkspaces.map((entry) => {
+                const host = sshHosts.find((h) => h.id === entry.hostId);
+                const isCurrent = currentRemoteWorkspaceId === entry.id;
+                // The live session's own connection state, when this is the row
+                // on screen — §5.1 of the design: connection state belongs to
+                // the session, not to the saved entry, so a *bookmark* that is
+                // not currently open has no phase to show at all.
+                const connection = isCurrent ? rt?.connection ?? null : null;
+                const install = installStatus[entry.id] ?? null;
+                const installing = install !== null && install.stage !== 'done';
+                return (
+                  <div
+                    key={entry.id}
+                    className={`lb-row${isCurrent ? ' is-current' : ''}`}
+                    title={host ? `${host.user}@${host.host}:${host.port} — ${entry.remotePath}` : entry.remotePath}
+                  >
+                    <Server size={13} className="lb-row-icon" />
+                    <button
+                      type="button"
+                      className="lb-row-main"
+                      disabled={blocked || isCurrent}
+                      aria-current={isCurrent ? 'true' : undefined}
+                      onClick={() => void enterRemoteWorkspace(entry.id)}
+                    >
+                      <span className="lb-row-name">{entry.label}</span>
+                      {connection !== null && connection.phase !== 'local' ? (
+                        <ConnectionBadge phase={connection.phase} problem={connection.problem} />
+                      ) : install !== null ? (
+                        <InstallBadge status={install} />
+                      ) : null}
+                      {isCurrent ? (
+                        <span className="lb-current" title={t('lb.currentHint')}>
+                          {t('lb.current')}
+                        </span>
+                      ) : null}
+                    </button>
+                    <Tip label={t('lb.remote.install')}>
+                      <button
+                        type="button"
+                        className="lb-icon lb-row-action"
+                        aria-label={t('lb.remote.install')}
+                        disabled={blocked || isCurrent || installing}
+                        onClick={() => void installRemoteWorkspace(entry.id)}
+                      >
+                        <Download size={12} />
+                      </button>
+                    </Tip>
+                    {!isCurrent ? (
+                      <Tip label={t('lb.forgetHint')}>
+                        <button
+                          type="button"
+                          className="lb-icon lb-row-action"
+                          aria-label={t('lb.forget')}
+                          disabled={blocked}
+                          onClick={() => removeRemoteWorkspace(entry.id)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </Tip>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <AddRemoteWorkspaceModal open={addRemoteOpen} onOpenChange={setAddRemoteOpen} />
 
         {/* ---------------- sessions ---------------- */}
         <section className="lb-section">
@@ -757,5 +880,95 @@ export function WorkspaceSidebar() {
         </Tip>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The connection state badge drawn next to a remote workspace row (§5.1 of
+ * the design).
+ *
+ * A small, closed set of short words rather than a free-form status line,
+ * because this sits inside a sidebar row that is already crowded with the
+ * workspace name, the "current" tag and the attention count — there is room
+ * for one word, not a sentence. The sentence, when `problem` carries one,
+ * is the tooltip instead.
+ *
+ * `'local'` is excluded on purpose: this component is only ever reached for
+ * a `remoteWorkspaces` row, which never has that phase (see
+ * `createSessionBucket`), so there is one fewer case to render pointlessly.
+ */
+function ConnectionBadge({
+  phase,
+  problem,
+}: {
+  phase: Exclude<ConnectionPhase, 'local'>;
+  problem: string | null;
+}) {
+  const t = useT();
+  const tone: 'success' | 'warning' | 'destructive' | 'neutral' =
+    phase === 'ready'
+      ? 'success'
+      : phase === 'failed' || phase === 'interrupted'
+        ? 'destructive'
+        : phase === 'disconnected' || phase === 'closed'
+          ? 'neutral'
+          : 'warning';
+  // A lookup rather than a template literal for the class name — unlike the
+  // i18n key below, a dynamically-built class name is exactly what the
+  // project's own `class-audit.mjs` cannot verify against the stylesheet
+  // (see its `DYNAMIC_PREFIX` allowlist, which `lb-connection-` is not in),
+  // so this spells out all four so the audit can actually check them.
+  const toneClass =
+    tone === 'success'
+      ? 'lb-connection-success'
+      : tone === 'warning'
+        ? 'lb-connection-warning'
+        : tone === 'destructive'
+          ? 'lb-connection-destructive'
+          : 'lb-connection-neutral';
+  const label = t(`conn.${phase}` as const);
+  return (
+    <span className={`lb-connection ${toneClass}`} role="status" title={problem ?? label}>
+      {label}
+    </span>
+  );
+}
+
+/**
+ * The install progress badge drawn next to a remote workspace row while
+ * `installRemoteWorkspace` is running or has just settled (§8 of the
+ * design — "install progress" is its own thing, separate from §5.1's
+ * connection states, since an install can run before any connection
+ * attempt exists at all).
+ *
+ * Shown only when there is no live connection badge for the row to draw
+ * instead (see the call site): a workspace being both installed and
+ * connected at once does not happen, since `enterRemoteWorkspace` is a
+ * separate, later action from `installRemoteWorkspace`.
+ */
+function InstallBadge({ status }: { status: InstallStatus }) {
+  const t = useT();
+  if (status.error !== null) {
+    return (
+      <span className="lb-connection lb-connection-destructive" role="status" title={status.error}>
+        {t('lb.remote.installFailed')}
+      </span>
+    );
+  }
+  if (status.stage === 'done') {
+    return (
+      <span className="lb-connection lb-connection-success" role="status">
+        {t('lb.remote.installDone')}
+      </span>
+    );
+  }
+  const label =
+    status.stage === 'uploading' && status.totalEntries > 0
+      ? t('lb.remote.installUploading', { done: status.uploadedEntries, total: status.totalEntries })
+      : t(`install.${status.stage}` as const);
+  return (
+    <span className="lb-connection lb-connection-warning" role="status">
+      {label}
+    </span>
   );
 }

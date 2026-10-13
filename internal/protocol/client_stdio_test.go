@@ -3,18 +3,65 @@ package protocol
 import (
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // captureHooks collects what a client forwards.
-type captureHooks struct{ messages []map[string]any }
+//
+// messages is guarded by mu because OnMessage is called from the client's own
+// read loop and exit goroutine, while a test typically inspects messages from
+// the test goroutine after Wait or WaitReady returns — two different
+// goroutines touching the same slice, which is exactly what -race is for.
+type captureHooks struct {
+	mu       sync.Mutex
+	messages []map[string]any
+}
 
-func (h *captureHooks) OnMessage(message map[string]any) { h.messages = append(h.messages, message) }
+func (h *captureHooks) OnMessage(message map[string]any) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.messages = append(h.messages, message)
+}
+
+// snapshot returns a copy of messages so far, safe to range over without
+// holding the lock.
+func (h *captureHooks) snapshot() []map[string]any {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]map[string]any, len(h.messages))
+	copy(out, h.messages)
+	return out
+}
+
 func (h *captureHooks) OnPermission(map[string]any) (string, bool) {
 	return "", false
 }
 func (h *captureHooks) OnQuestion(map[string]any) (string, string, bool) { return "", "", false }
+
+// waitForExitNotice polls snapshot for an OutRuntimeExited message, up to a
+// short timeout, and returns the snapshot it found it in (nil if it never
+// arrived). The exit goroutine in StartWithBackend calls OnMessage after
+// closing c.done, so a caller that just returned from Wait cannot assume the
+// notice has already been appended — this closes that gap without the test
+// itself needing to know the exit goroutine's internal ordering.
+func waitForExitNotice(t *testing.T, hooks *captureHooks) []map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		messages := hooks.snapshot()
+		for _, message := range messages {
+			if TypeOf(message) == OutRuntimeExited {
+				return messages
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 // TestTheRuntimeChildCannotWriteToTheFrontEndsTerminal is the regression for the
 // root cause behind every "line of prose in the middle of a full-screen interface"
@@ -52,15 +99,14 @@ func TestTheRuntimeChildCannotWriteToTheFrontEndsTerminal(t *testing.T) {
 	//
 	// And the death is reported to the interface, which is what keeps a start-up
 	// failure from being silent once the stray line is gone.
-	var exitReported bool
-	for _, message := range hooks.messages {
-		if TypeOf(message) == OutRuntimeExited {
-			exitReported = true
-		}
-	}
-	if !exitReported {
-		t.Errorf("the runtime died with %d and the client said nothing about it; messages: %v",
-			code, hooks.messages)
+	//
+	// Wait returning only means the backend's process has exited and c.done has
+	// closed; the exit goroutine calls OnMessage after that point (see
+	// StartWithBackend), so this polls briefly rather than assuming the message
+	// has already arrived the instant Wait returns.
+	messages := waitForExitNotice(t, hooks)
+	if messages == nil {
+		t.Fatalf("the runtime died with %d and the client said nothing about it", code)
 	}
 	if exitCode, stopped, ok := client.RuntimeExited(); !ok || exitCode != code || stopped {
 		t.Errorf("RuntimeExited() = (%d, stopped=%v, ok=%v), want (%d, false, true)",
@@ -87,7 +133,12 @@ func TestAnAskedForExitIsNotReportedAsADeath(t *testing.T) {
 	if _, stopped, ok := client.RuntimeExited(); !ok || !stopped {
 		t.Errorf("RuntimeExited() reports stopped=%v, ok=%v; the exit was asked for", stopped, ok)
 	}
-	for _, message := range hooks.messages {
+	// A brief grace period for the exit goroutine's OnMessage call to have run,
+	// if it were going to: there is no event to poll for in the negative case,
+	// so this gives the same window waitForExitNotice would spend polling
+	// before concluding "never arrived".
+	time.Sleep(50 * time.Millisecond)
+	for _, message := range hooks.snapshot() {
 		if TypeOf(message) == OutRuntimeExited {
 			t.Errorf("an asked-for exit was reported as a death: %v", message)
 		}

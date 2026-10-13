@@ -31,7 +31,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -57,6 +57,23 @@ use tauri_winrt_notification::Toast;
 /// its own. See its comment for why the desktop is the writer, and for the three
 /// rules that keep a save from destroying what the form does not draw.
 mod config_file;
+
+/// The Remote Backend: starting the runtime over SSH instead of as a local
+/// child process. See its own module doc for why this is a trait
+/// ([`ssh_backend::RuntimeProcess`]) rather than a parallel copy of `spawn`.
+mod ssh_backend;
+
+/// The Remote Bootstrapper's transport half: platform detection, SFTP
+/// upload, and the verify-and-switch sequence for installing or upgrading
+/// the Runtime on a remote host. See its own module doc for the division of
+/// labour with `internal/bootstrap` (Go), which specifies every rule this
+/// module only mirrors.
+mod remote_install;
+
+/// Phase 4: remote config.json detection and safe writes (§9). See its own
+/// module doc for the division of labour with
+/// `internal/bootstrap/configsync.go`.
+mod remote_config;
 
 /// How long a graceful shutdown is given before the child is killed.
 ///
@@ -279,12 +296,12 @@ struct BridgeState {
 }
 
 struct Child_ {
-    child: Child,
-    /// `None` once the shutdown has taken it. Closing this pipe is the second
-    /// half of the shutdown contract — EOF on stdin takes the same path through
-    /// the server loop as the `shutdown` message does — and it is only possible
-    /// by moving the handle out, so it is an `Option` rather than a bare value.
-    stdin: Option<ChildStdin>,
+    /// The running runtime, local or remote. See `ssh_backend::RuntimeProcess`
+    /// for why this is a trait object rather than a bare `Child`: a remote
+    /// runtime has no PID, no separate stdin handle, and a stdin "close" that
+    /// means something different (`send_eof` on the SSH channel rather than
+    /// dropping a pipe).
+    process: Box<dyn ssh_backend::RuntimeProcess>,
     /// True once we have asked for the shutdown ourselves.
     requested: bool,
     /// Lines read before the front end attached, flushed in order on attach.
@@ -302,16 +319,17 @@ struct Child_ {
     /// It is per child and not per bridge because with several sessions open the
     /// two are no longer the same thing: a paste made while looking at session B
     /// has to land in B's workspace, which is not necessarily A's.
-    workspace: PathBuf,
-    /// This child's slice of the paste staging area, cleared when it exits.
     ///
-    /// **Per child, and that is a data-loss fix rather than tidiness.** The
-    /// staging directory used to be wiped on every start, which with one session
-    /// was the only moment nothing was in flight. With several, starting B would
-    /// delete a picture pasted into A that A's runtime had not read yet — and
-    /// nothing would say so: the path in A's sentence would simply resolve to no
-    /// file, which the runtime treats as an ordinary word.
-    staging: PathBuf,
+    /// For a remote child this is still the **local** app's own concept of a
+    /// workspace path and is not meaningful — image pasting into a remote
+    /// workspace is Phase 2 (remote file access) territory, not this phase's.
+    /// It is kept as `None` for a remote child rather than given a fabricated
+    /// local path, so `image_stash` can refuse cleanly instead of writing
+    /// somewhere wrong.
+    workspace: Option<PathBuf>,
+    /// This child's slice of the paste staging area, cleared when it exits.
+    /// `None` for a remote child, for the same reason `workspace` is.
+    staging: Option<PathBuf>,
 }
 
 /// Options the front end passes to `runtime_attach`.
@@ -346,6 +364,62 @@ pub struct AttachOptions {
     /// store a refresh token under `~/.tudouni/`, which is not a thing to do on
     /// somebody's behalf without their asking.
     ericai: Option<bool>,
+}
+
+/// Options the front end passes to `runtime_attach_remote`.
+///
+/// This is deliberately a separate type from [`AttachOptions`] rather than
+/// one struct with optional SSH fields: `binary`/`workspace` mean something
+/// different here (a path and a working directory **on the remote host**,
+/// never resolved or validated on this machine), and conflating the two
+/// shapes would let a caller accidentally mix a local workspace with a
+/// remote connection.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAttachOptions {
+    /// The SSH host or address to connect to. Never an alias resolved from
+    /// `~/.ssh/config` — that resolution is a Workspace Manager concern
+    /// (a later phase) and happens before this struct is built; by the time
+    /// it reaches this command, `host`/`port`/`user` are the destination
+    /// `ssh` itself would have dialled.
+    host: String,
+    port: u16,
+    user: String,
+    /// Paths to private key files on **this** machine, tried in order. See
+    /// `ssh_backend::authenticate` for the fallback to `password`.
+    #[serde(default)]
+    identity_files: Vec<String>,
+    /// A password, if one is configured for this host. Never logged; see
+    /// `ssh_backend::SshTarget`'s own field doc.
+    password: Option<String>,
+    /// Absolute path to the runtime binary **on the remote host**. Required
+    /// — there is no PATH lookup, for the same reason `LocalBackend` never
+    /// does one on this side: a different build under the same name is a
+    /// different program, and the symptom is a session that exits
+    /// immediately with nothing to explain why.
+    remote_binary: String,
+    /// The workspace **on the remote host** — the directory the runtime
+    /// should treat as its working directory and, through it, the root the
+    /// file tools may touch.
+    ///
+    /// Not yet used to start the process: Phase 1 has no equivalent of
+    /// `Command::current_dir` over a plain SSH exec, and acting on this
+    /// field (for instance by prefixing the command with `cd`) is Phase 2
+    /// work ("远端文件浏览与连接管理"), done together with the rest of
+    /// remote workspace handling rather than piecemeal here. It is still
+    /// accepted and stored now so the Workspace Manager has somewhere to
+    /// keep it once it exists.
+    #[allow(dead_code)]
+    remote_workspace: String,
+    session_id: Option<String>,
+    max_steps: Option<i64>,
+    stream: Option<bool>,
+    autopilot: Option<bool>,
+    ericai: Option<bool>,
+    /// Milliseconds to allow for the TCP connection, the SSH handshake and
+    /// authentication together. `None` or `0` means `ssh_backend`'s own
+    /// default.
+    connect_timeout_ms: Option<u64>,
 }
 
 /// Where the runtime binary lives.
@@ -399,6 +473,72 @@ fn resolve_binary(explicit: Option<&str>) -> Result<PathBuf, String> {
          Set TUDOUNI_RUNTIME to its absolute path."
     ))
 }
+
+/// Finds the bundled release archive for one remote platform, the
+/// `remote-packages/` equivalent of `resolve_binary`'s own search —
+/// `remote-packages/*.zip` is a `tauri.conf.json` resource, so a packaged
+/// build puts it in the same `resources/` directory `resolve_binary` already
+/// walks up to find.
+///
+/// `triple` is the release triple (`x86_64-unknown-linux-musl` or
+/// `x86_64-pc-windows-msvc`) — the same string `stage-remote-packages.mjs`
+/// names the archive with, so the two never need a separate lookup table to
+/// agree on a file name.
+fn resolve_remote_package(triple: &str) -> Result<PathBuf, String> {
+    if let Ok(from_env) = std::env::var("TUDOUNI_REMOTE_PACKAGES") {
+        let dir = PathBuf::from(&from_env);
+        if let Some(found) = find_package_in_dir(&dir, triple) {
+            return Ok(found);
+        }
+        return Err(format!(
+            "TUDOUNI_REMOTE_PACKAGES points at {from_env}, which has no archive for {triple}"
+        ));
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(Path::to_path_buf);
+        for _ in 0..3 {
+            let Some(current) = dir else { break };
+            for candidate_dir in [
+                current.join("remote-packages"),
+                current.join("resources").join("remote-packages"),
+            ] {
+                if let Some(found) = find_package_in_dir(&candidate_dir, triple) {
+                    return Ok(found);
+                }
+            }
+            dir = current.parent().map(Path::to_path_buf);
+        }
+    }
+
+    Err(format!(
+        "no bundled release archive was found for {triple}. \
+         Run `npm run runtime:stage-remote` after `make release`, \
+         or set TUDOUNI_REMOTE_PACKAGES to the directory that holds it."
+    ))
+}
+
+/// Picks the archive in `dir` whose name ends with `-<triple>.zip` — not an
+/// exact name match, because the archive's own name carries the version
+/// (`tudouni-aigo-<version>-<triple>.zip`) and this function has no reason
+/// to know what version was staged; it takes whichever one is there. A
+/// directory holding more than one archive for the same triple (an old
+/// staging left behind by a previous version) is not disambiguated here —
+/// `stage-remote-packages.mjs` always overwrites rather than accumulates,
+/// so this situation does not arise from the normal build path.
+fn find_package_in_dir(dir: &Path, triple: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let suffix = format!("-{triple}.zip");
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.ends_with(&suffix) {
+            return Some(entry.path());
+        }
+    }
+    None
+}
+
 
 /// Start one child and return the key that names it.
 ///
@@ -487,6 +627,8 @@ fn spawn(
     let stdin = child.stdin.take().ok_or("the child has no stdin")?;
     let stdout = child.stdout.take().ok_or("the child has no stdout")?;
     let stderr = child.stderr.take().ok_or("the child has no stderr")?;
+    let process: Box<dyn ssh_backend::RuntimeProcess> =
+        Box::new(ssh_backend::LocalRuntimeProcess::new(child, stdin));
 
     // The key is minted and the child registered under the bridge lock, so
     // `image_stash` can never observe a child whose workspace has not been
@@ -508,23 +650,24 @@ fn spawn(
         guard.children.insert(
             key,
             Child_ {
-                child,
-                stdin: Some(stdin),
+                process,
                 requested: false,
                 queue: VecDeque::new(),
                 stderr: VecDeque::new(),
-                workspace: workspace.clone(),
-                staging: staging.clone(),
+                workspace: Some(workspace.clone()),
+                staging: Some(staging.clone()),
             },
         );
 
         // Which staging directories belong to somebody: every live child's, plus
         // the one just registered. Collected under the same lock so a concurrent
-        // start cannot have its directory removed by this sweep.
+        // start cannot have its directory removed by this sweep. A remote
+        // child contributes nothing here — its `staging` is `None` — since it
+        // has no local staging directory to protect.
         let live: HashSet<PathBuf> = guard
             .children
             .values()
-            .map(|current| current.staging.clone())
+            .filter_map(|current| current.staging.clone())
             .collect();
         (key, live)
     };
@@ -635,11 +778,11 @@ fn spawn(
                         Err(_) => break None,
                     };
                     match guard.children.get_mut(&key) {
-                        Some(current) => match current.child.try_wait() {
-                            Ok(Some(status)) => {
+                        Some(current) => match current.process.try_wait() {
+                            Ok(Some(code)) => {
                                 let requested = current.requested;
                                 guard.children.remove(&key);
-                                break Some((status.code().unwrap_or(-1), requested));
+                                break Some((code, requested));
                             }
                             Ok(None) => {}
                             Err(_) => {
@@ -666,6 +809,241 @@ fn spawn(
     }
 
     Ok(key)
+}
+
+/// The remote twin of [`spawn`]: starts the runtime over SSH instead of as a
+/// local child, then reuses the exact same registration and
+/// stdout/stderr/wait-thread shape — only how the three streams are obtained
+/// differs, and that difference is already isolated behind
+/// `ssh_backend::connect` and `Box<dyn ssh_backend::RuntimeProcess>`.
+///
+/// What this function deliberately does **not** do, because it belongs to a
+/// later phase:
+///
+///   - resolve an `~/.ssh/config` alias — `options` already carries the
+///     resolved host/port/user;
+///   - verify the remote host key — see `ssh_backend::connect`'s own doc for
+///     why that check belongs on the Go side of this project, not duplicated
+///     here;
+///   - detect, install or upgrade the remote runtime binary — `remote_binary`
+///     must already be a verified, absolute path when this is called;
+///   - check protocol readiness beyond "the SSH session opened and the
+///     command started" — the init-message handshake is a protocol-layer
+///     concern the WebView's own client performs once lines start arriving,
+///     the same way it already does for a local runtime.
+fn spawn_remote(app: &AppHandle, options: &RemoteAttachOptions) -> Result<ChildKey, String> {
+    if options.remote_binary.trim().is_empty() {
+        return Err("no remote runtime binary path was given".to_string());
+    }
+
+    let command = build_remote_command(options);
+
+    let target = ssh_backend::SshTarget {
+        host: options.host.clone(),
+        port: options.port,
+        user: options.user.clone(),
+        identity_files: options.identity_files.clone(),
+        password: options.password.clone(),
+        connect_timeout: Duration::from_millis(options.connect_timeout_ms.filter(|&ms| ms > 0).unwrap_or(15_000)),
+    };
+
+    let (process, stdout, stderr) = ssh_backend::connect(&target, &command)
+        .map_err(|e| format!("could not start the remote runtime: {e}"))?;
+    let process: Box<dyn ssh_backend::RuntimeProcess> = Box::new(process);
+
+    // The key is minted and the child registered under the bridge lock, same
+    // as the local path — but with no staging directory, since pasting a
+    // picture into a remote workspace is Phase 2 territory (see `Child_`'s
+    // own doc for `workspace`/`staging` being `None` here).
+    let key = {
+        let state: State<Bridge> = app.state();
+        let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+        guard.next_key += 1;
+        let key = guard.next_key;
+        guard.children.insert(
+            key,
+            Child_ {
+                process,
+                requested: false,
+                queue: VecDeque::new(),
+                stderr: VecDeque::new(),
+                workspace: None,
+                staging: None,
+            },
+        );
+        key
+    };
+
+    // ---- stdout: one JSON line at a time, queued until attach ----
+    //
+    // Identical to spawn()'s own loop, against a `Read` that happens to be
+    // backed by the SSH channel's ordinary stream rather than a pipe.
+    {
+        let app = app.clone();
+        thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut buffer: Vec<u8> = Vec::new();
+            loop {
+                buffer.clear();
+                match reader.read_until(b'\n', &mut buffer) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let line = String::from_utf8_lossy(&buffer)
+                            .trim_end_matches(['\n', '\r'])
+                            .to_string();
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        forward_line(&app, key, line);
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    // ---- stderr: drained and kept in a small ring, for diagnostics only ----
+    //
+    // Identical to spawn()'s own loop; see its comment for why a ring and not
+    // a bare drop.
+    {
+        let app = app.clone();
+        thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut buffer: Vec<u8> = Vec::new();
+            loop {
+                buffer.clear();
+                match reader.read_until(b'\n', &mut buffer) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        let line = String::from_utf8_lossy(&buffer)
+                            .trim_end_matches(['\n', '\r'])
+                            .to_string();
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        let state: State<Bridge> = app.state();
+                        if let Ok(mut guard) = state.inner.lock() {
+                            if let Some(current) = guard.children.get_mut(&key) {
+                                if current.stderr.len() >= STDERR_RING {
+                                    current.stderr.pop_front();
+                                }
+                                current.stderr.push_back(line.clone());
+                            }
+                        }
+                        let _ = app.emit("runtime://stderr", StderrPayload { key, line });
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    // ---- wait: report the exit code and whether we asked for it ----
+    //
+    // Identical in shape to spawn()'s own wait loop; `try_wait` is what hides
+    // "poll an SSH channel for EOF and an exit-status exchange" behind the
+    // same interface "poll a local process" already has.
+    {
+        let app = app.clone();
+        thread::spawn(move || {
+            let outcome = loop {
+                {
+                    let state: State<Bridge> = app.state();
+                    let mut guard = match state.inner.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => break None,
+                    };
+                    match guard.children.get_mut(&key) {
+                        Some(current) => match current.process.try_wait() {
+                            Ok(Some(code)) => {
+                                let requested = current.requested;
+                                guard.children.remove(&key);
+                                break Some((code, requested));
+                            }
+                            Ok(None) => {}
+                            Err(_) => {
+                                guard.children.remove(&key);
+                                break Some((-1, false));
+                            }
+                        },
+                        None => break None,
+                    }
+                }
+                thread::sleep(Duration::from_millis(100));
+            };
+
+            if let Some((code, requested)) = outcome {
+                let _ = app.emit("runtime://exited", ExitPayload { key, code, requested });
+            }
+        });
+    }
+
+    Ok(key)
+}
+
+/// Builds the one command line `spawn_remote` asks the SSH session to run:
+/// the absolute remote binary path, `--runtime-stdio`, and the same flags
+/// `spawn`'s local `Command` builds — each shell-quoted so a session id or
+/// any other value cannot change what the remote shell runs.
+///
+/// This mirrors `protocol.buildRuntimeCommand` on the Go side exactly,
+/// including what it deliberately does not do: there is no `cd` into a
+/// remote workspace here, because Phase 1 — which this function belongs to
+/// — assumes an already-installed, already-configured remote runtime and
+/// defers remote workspace handling to Phase 2 ("远端文件浏览与连接管理").
+/// Until then, the remote command runs wherever a non-interactive SSH exec
+/// starts a command for this account, same as the Go reference backend.
+fn build_remote_command(options: &RemoteAttachOptions) -> String {
+    let mut tokens: Vec<String> = vec![
+        quote_shell_argument(&options.remote_binary),
+        "--runtime-stdio".to_string(),
+    ];
+    if let Some(id) = options.session_id.as_deref() {
+        if !id.is_empty() {
+            tokens.push("--session".to_string());
+            tokens.push(quote_shell_argument(id));
+        }
+    }
+    if let Some(steps) = options.max_steps {
+        if steps > 0 {
+            tokens.push("--max-steps".to_string());
+            tokens.push(quote_shell_argument(&steps.to_string()));
+        }
+    }
+    if options.stream == Some(true) {
+        tokens.push("--stream".to_string());
+    }
+    if options.autopilot == Some(true) {
+        tokens.push("--autopilot".to_string());
+    }
+    if options.ericai == Some(true) {
+        tokens.push("--ericai".to_string());
+    }
+    tokens.join(" ")
+}
+
+/// Quotes one argument for safe inclusion in the command line
+/// `ssh_backend::connect` passes to the remote shell.
+///
+/// Single-quoting is POSIX shells' one truly inert quoting form — nothing
+/// inside single quotes is special except a single quote itself — so the
+/// only character that needs escaping is the quote character, closed,
+/// escaped, and reopened. This mirrors `ssh.QuoteShellArgument` on the Go
+/// side exactly, so a workspace path or session id behaves the same way
+/// whichever side built the command.
+fn quote_shell_argument(argument: &str) -> String {
+    let mut out = String::with_capacity(argument.len() + 2);
+    out.push('\'');
+    for ch in argument.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// Remove staging directories that belong to no live child.
@@ -796,6 +1174,231 @@ fn runtime_attach(app: AppHandle, options: AttachOptions) -> Result<ChildKey, St
     spawn(&app, &options)
 }
 
+/// Start one session's runtime on a remote host over SSH, and begin
+/// forwarding it exactly like a local one.
+///
+/// This is the Remote Backend's one entry point from the front end: everything
+/// downstream of the returned key — `runtime_send`, `runtime_shutdown`,
+/// `runtime_kill`, the `runtime://line` / `runtime://stderr` / `runtime://exited`
+/// events — is already backend-agnostic, because `Child_` holds a
+/// `Box<dyn ssh_backend::RuntimeProcess>` rather than a concrete local type.
+/// This command's whole job is building that one `RuntimeProcess` and handing
+/// it to the same registration, staging-sweep-skipping, and stdout/stderr/wait
+/// thread setup `spawn` already does for a local child.
+///
+/// Host key verification, Workspace Manager configuration, and automatic
+/// installation of the runtime binary are later-phase concerns; see
+/// `ssh_backend::connect`'s own doc for why host key checking in particular is
+/// deliberately not this function's job.
+#[tauri::command]
+fn runtime_attach_remote(app: AppHandle, options: RemoteAttachOptions) -> Result<ChildKey, String> {
+    spawn_remote(&app, &options)
+}
+
+/// Options for `install_remote_runtime`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallRemoteOptions {
+    host: String,
+    port: u16,
+    user: String,
+    #[serde(default)]
+    identity_files: Vec<String>,
+    password: Option<String>,
+    connect_timeout_ms: Option<u64>,
+    /// The version string this install should be recorded under
+    /// (`~/.tudouni/runtime/<version>/`) — the desktop app's own build
+    /// version, read from `app.package_info()` by the caller in the
+    /// WebView, not resolved here: this module has no reason to know its
+    /// own version string any more directly than that.
+    version: String,
+}
+
+/// One progress event the install flow emits as it runs each step, carried
+/// to the WebView as `remote-install://progress` — what
+/// `connection.phase = 'installing'` (§5.1 of the design) is drawn from.
+#[derive(Clone, Serialize)]
+struct InstallProgressPayload {
+    /// A caller-supplied id correlating a sequence of progress events with
+    /// the one `install_remote_runtime` call that produced them — a plain
+    /// counter rather than a `ChildKey`, since an install can happen before
+    /// any runtime process exists for the workspace it is about to make
+    /// usable.
+    request_id: String,
+    stage: String,
+    /// Set only during the `uploading` stage; `(0, 0)` otherwise.
+    uploaded_entries: usize,
+    total_entries: usize,
+}
+
+/// Installs or upgrades the Runtime on a remote host over SSH — the Remote
+/// Bootstrapper's one entry point from the front end (§3.5, §8).
+///
+/// This single command performs the whole sequence: detect the remote
+/// platform, pick the matching bundled archive, check whether this exact
+/// version is already current (skip entirely if so), upload into a fresh
+/// staging directory, then verify and atomically switch. Every step is
+/// reported through `remote-install://progress` as it starts, keyed by
+/// `request_id` so a front end tracking more than one install (unlikely,
+/// but not prevented) can tell them apart.
+///
+/// Returns the absolute path to the installed binary — through
+/// `CurrentLink`, exactly what a subsequent `runtime_attach_remote` should
+/// pass as `remote_binary` once this call succeeds. This command does not
+/// start the runtime itself: installing and connecting are two separate
+/// acts here, the same way `runtime_attach`/`resolve_binary` never install
+/// anything locally either.
+#[tauri::command]
+fn install_remote_runtime(
+    app: AppHandle,
+    request_id: String,
+    options: InstallRemoteOptions,
+) -> Result<String, String> {
+    let target = ssh_backend::SshTarget {
+        host: options.host,
+        port: options.port,
+        user: options.user,
+        identity_files: options.identity_files,
+        password: options.password,
+        connect_timeout: Duration::from_millis(options.connect_timeout_ms.filter(|&ms| ms > 0).unwrap_or(15_000)),
+    };
+
+    let session = remote_install::open_install_session(&target)
+        .map_err(|e| format!("could not connect to install the remote runtime: {e}"))?;
+
+    // Platform is detected once here (rather than inside install_or_upgrade
+    // alone) so the archive to upload can be chosen before staging begins —
+    // install_or_upgrade still re-detects internally for its own layout, but
+    // that second exec is cheap (two `uname` calls) next to a wrong binary
+    // discovered only after an upload.
+    let remote_target = remote_install::detect_remote_target(&session)
+        .map_err(|e| format!("could not identify the remote platform: {e}"))?;
+    let archive_path = resolve_remote_package(remote_target.triple)
+        .map_err(|e| format!("could not find the install package for this platform: {e}"))?;
+
+    let emit_stage = {
+        let app = app.clone();
+        let request_id = request_id.clone();
+        move |stage: remote_install::InstallStage| {
+            let stage_name = match stage {
+                remote_install::InstallStage::DetectingPlatform => "detecting_platform",
+                remote_install::InstallStage::CheckingExistingInstall => "checking_existing_install",
+                remote_install::InstallStage::PreparingStaging => "preparing_staging",
+                remote_install::InstallStage::Uploading => "uploading",
+                remote_install::InstallStage::VerifyingAndSwitching => "verifying_and_switching",
+                remote_install::InstallStage::Done => "done",
+            };
+            let _ = app.emit(
+                "remote-install://progress",
+                InstallProgressPayload {
+                    request_id: request_id.clone(),
+                    stage: stage_name.to_string(),
+                    uploaded_entries: 0,
+                    total_entries: 0,
+                },
+            );
+        }
+    };
+
+    let emit_progress = {
+        let app = app.clone();
+        let request_id = request_id.clone();
+        move |done: usize, total: usize| {
+            let _ = app.emit(
+                "remote-install://progress",
+                InstallProgressPayload {
+                    request_id: request_id.clone(),
+                    stage: "uploading".to_string(),
+                    uploaded_entries: done,
+                    total_entries: total,
+                },
+            );
+        }
+    };
+
+    remote_install::install_or_upgrade(&session, &archive_path, &options.version, emit_stage, emit_progress)
+        .map_err(|e| format!("could not install the remote runtime: {e}"))
+}
+
+/// Options shared by `check_remote_config` and `write_remote_config` — the
+/// SSH destination, nothing else. A separate, smaller struct from
+/// `InstallRemoteOptions` because a config-sync call carries no version and
+/// no runtime-specific fields.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteConfigTarget {
+    host: String,
+    port: u16,
+    user: String,
+    #[serde(default)]
+    identity_files: Vec<String>,
+    password: Option<String>,
+    connect_timeout_ms: Option<u64>,
+}
+
+impl RemoteConfigTarget {
+    fn into_ssh_target(self) -> ssh_backend::SshTarget {
+        ssh_backend::SshTarget {
+            host: self.host,
+            port: self.port,
+            user: self.user,
+            identity_files: self.identity_files,
+            password: self.password,
+            connect_timeout: Duration::from_millis(self.connect_timeout_ms.filter(|&ms| ms > 0).unwrap_or(15_000)),
+        }
+    }
+}
+
+/// What `check_remote_config` reports — the camelCase wire shape of
+/// `remote_config::RemoteConfigInspection`.
+#[derive(Serialize)]
+struct RemoteConfigStatusPayload {
+    status: String,
+    fingerprint: String,
+    error: Option<String>,
+}
+
+/// Reads and classifies the remote account's `~/.tudouni/config.json`
+/// (§9.3 of the design) — the Workspace Manager's one entry point for
+/// deciding what a `configPolicy` of `ask` should actually ask about.
+///
+/// Never writes anything. The returned fingerprint is what the front end
+/// compares against a stored baseline (§9.5) to decide whether this is a
+/// first sync, an ordinary continuation, or a conflict.
+#[tauri::command]
+fn check_remote_config(target: RemoteConfigTarget) -> Result<RemoteConfigStatusPayload, String> {
+    let ssh_target = target.into_ssh_target();
+    let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
+        .map_err(|e| format!("could not connect to check the remote configuration: {e}"))?;
+    let inspection = remote_config::check_remote_config(&session, &home)
+        .map_err(|e| format!("could not read the remote configuration: {e}"))?;
+    Ok(RemoteConfigStatusPayload {
+        status: inspection.status.as_str().to_string(),
+        fingerprint: inspection.fingerprint,
+        error: inspection.error,
+    })
+}
+
+/// Writes `contents` to the remote account's `~/.tudouni/config.json`
+/// safely (§9.6): a temp file, the existing file backed up, then an atomic
+/// SFTP rename into place. `contents` must already be the complete file —
+/// this command does not merge or validate it beyond what
+/// `remote_config::write_remote_config` itself does.
+///
+/// Returns the fingerprint of what was just written, so the caller can
+/// record it as the new sync baseline without a second round trip to read
+/// it back.
+#[tauri::command]
+fn write_remote_config(target: RemoteConfigTarget, contents: String) -> Result<String, String> {
+    let ssh_target = target.into_ssh_target();
+    let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
+        .map_err(|e| format!("could not connect to write the remote configuration: {e}"))?;
+    let bytes = contents.into_bytes();
+    remote_config::write_remote_config(&session, &home, &bytes)
+        .map_err(|e| format!("could not write the remote configuration: {e}"))?;
+    Ok(remote_config::fingerprint_hex(&bytes))
+}
+
 /// Write one protocol line to **one** session's stdin.
 ///
 /// The key is required. Without it the write would go to whichever session
@@ -812,11 +1415,9 @@ fn runtime_send(app: AppHandle, key: ChildKey, line: String) -> Result<(), Strin
         .children
         .get_mut(&key)
         .ok_or("that session's runtime is not running")?;
-    let stdin = current.stdin.as_mut().ok_or("that session's runtime is shutting down")?;
-    stdin
-        .write_all(line.as_bytes())
-        .and_then(|_| stdin.write_all(b"\n"))
-        .and_then(|_| stdin.flush())
+    current
+        .process
+        .write_line(&line)
         .map_err(|e| format!("could not write to the runtime: {e}"))
 }
 
@@ -876,11 +1477,15 @@ fn runtime_attach_listener(app: AppHandle) -> Result<usize, String> {
 fn runtime_shutdown(app: AppHandle, key: Option<ChildKey>) -> Result<(), String> {
     let state: State<Bridge> = app.state();
 
-    // Take the handles out rather than cloning them: `ChildStdin` is not
-    // cloneable, and moving it out is what makes closing the pipe possible —
-    // which is the second half of the shutdown contract, since EOF on stdin takes
-    // the same path through the server loop as the message does.
-    let pipes: Vec<ChildStdin> = {
+    // `shutdown()` is called while holding the lock, one child at a time —
+    // unlike the old `ChildStdin`-only version, `RuntimeProcess::shutdown`
+    // cannot be moved out and called after releasing it, because a remote
+    // channel's "close" (`send_eof`) is a method on the object itself, not an
+    // owned handle whose `Drop` does the closing. The write and flush this
+    // performs are fast (one small line, no network round trip waited on
+    // here), so holding the lock for it is the same cost `runtime_send`
+    // already pays for an ordinary message.
+    {
         let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
         let targets: Vec<ChildKey> = match key {
             Some(key) => {
@@ -892,27 +1497,16 @@ fn runtime_shutdown(app: AppHandle, key: Option<ChildKey>) -> Result<(), String>
             }
             None => guard.children.keys().copied().collect(),
         };
-        let mut pipes = Vec::with_capacity(targets.len());
+        // One `shutdown` line per session: the sessions are independent, so
+        // asking them in the same pass costs nothing and lets them finish
+        // their turns concurrently. Doing this session by session would
+        // serialise N times the time a turn takes.
         for target in targets {
             if let Some(current) = guard.children.get_mut(&target) {
                 current.requested = true;
-                if let Some(pipe) = current.stdin.take() {
-                    pipes.push(pipe);
-                }
+                let _ = current.process.shutdown();
             }
         }
-        pipes
-    };
-
-    // One `shutdown` line per session, written before any of them is dropped: the
-    // sessions are independent, so asking them in the same pass costs nothing and
-    // lets them finish their turns concurrently. Doing this session by session
-    // would serialise N times the time a turn takes.
-    for mut pipe in pipes {
-        let _ = pipe.write_all(b"{\"v\":1,\"t\":\"shutdown\"}\n");
-        let _ = pipe.flush();
-        // Dropping the handle closes the pipe.
-        drop(pipe);
     }
 
     // Then wait for all of them at once, with one deadline for the whole set.
@@ -940,12 +1534,12 @@ fn runtime_shutdown(app: AppHandle, key: Option<ChildKey>) -> Result<(), String>
             match key {
                 Some(key) => {
                     if let Some(current) = guard.children.get_mut(&key) {
-                        let _ = current.child.kill();
+                        let _ = current.process.kill();
                     }
                 }
                 None => {
                     for current in guard.children.values_mut() {
-                        let _ = current.child.kill();
+                        let _ = current.process.kill();
                     }
                 }
             }
@@ -973,8 +1567,8 @@ fn runtime_kill(app: AppHandle, key: Option<ChildKey>) -> Result<(), String> {
     for target in targets {
         if let Some(mut current) = guard.children.remove(&target) {
             current.requested = true;
-            let _ = current.child.kill();
-            let _ = current.child.wait();
+            let _ = current.process.kill();
+            current.process.wait_after_kill();
         }
     }
     Ok(())
@@ -1171,6 +1765,31 @@ fn config_read() -> Result<config_file::ConfigDocument, String> {
     config_file::read_document()
 }
 
+/// Reads the local config.json as plain text — Phase 4's one addition to
+/// this command set, for config sync (§9). See
+/// `config_file::read_local_config_text` for why this is a separate,
+/// un-parsed read rather than reusing `config_read`'s structured document.
+///
+/// Returns the text alongside its fingerprint (SHA256, hex) so the caller
+/// never needs a second hashing dependency on the JS side just to compare
+/// it against a remote one — `remote_config::fingerprint_hex` is the exact
+/// same function `check_remote_config`/`write_remote_config` already use,
+/// so a local and a remote fingerprint are always computed the same way.
+#[tauri::command]
+fn read_local_config_text() -> Result<Option<LocalConfigTextPayload>, String> {
+    let text = config_file::read_local_config_text()?;
+    Ok(text.map(|text| {
+        let fingerprint = remote_config::fingerprint_hex(text.as_bytes());
+        LocalConfigTextPayload { text, fingerprint }
+    }))
+}
+
+#[derive(Serialize)]
+struct LocalConfigTextPayload {
+    text: String,
+    fingerprint: String,
+}
+
 /// Apply one save and return the files as they are **afterwards**.
 ///
 /// The reply is a fresh read, not the patch echoed back: what the panel draws
@@ -1316,7 +1935,15 @@ fn image_stash(app: AppHandle, request: Request<'_>) -> Result<StashedImage, Str
             .children
             .get(&key)
             .ok_or("that session's runtime is not running, so there is nowhere to put the picture")?;
-        (current.workspace.clone(), current.staging.clone())
+        let workspace = current
+            .workspace
+            .clone()
+            .ok_or("that session's workspace is remote; pasting a picture into a remote workspace is not supported yet")?;
+        let staging = current
+            .staging
+            .clone()
+            .ok_or("that session's workspace is remote; pasting a picture into a remote workspace is not supported yet")?;
+        (workspace, staging)
     };
 
     fs::create_dir_all(&directory)
@@ -1993,6 +2620,11 @@ pub fn run() {
         .manage(Bridge::default())
         .invoke_handler(tauri::generate_handler![
             runtime_attach,
+            runtime_attach_remote,
+            install_remote_runtime,
+            check_remote_config,
+            write_remote_config,
+            read_local_config_text,
             runtime_attach_listener,
             runtime_send,
             runtime_shutdown,

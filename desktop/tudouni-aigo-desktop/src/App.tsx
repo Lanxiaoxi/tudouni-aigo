@@ -35,6 +35,7 @@ import { PanelHost } from '@/components/panels/PanelHost';
 import { PermissionModal } from '@/components/modals/PermissionModal';
 import { QuestionModal } from '@/components/modals/QuestionModal';
 import { CloseConfirm } from '@/components/modals/CloseConfirm';
+import { ConfigSyncPromptModal } from '@/components/modals/ConfigSyncPromptModal';
 
 export function App() {
   useRuntimeBridge();
@@ -287,6 +288,7 @@ export function App() {
           up, but a close request does not disturb a pending approval (minimize
           leaves it, and close ends the session it belongs to). */}
       <CloseConfirm />
+      <ConfigSyncPromptModal />
       </ErrorBoundary>
     </TooltipPrimitive.Provider>
   );

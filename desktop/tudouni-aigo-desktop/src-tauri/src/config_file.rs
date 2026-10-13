@@ -235,6 +235,24 @@ fn config_path() -> Result<PathBuf, String> {
     Ok(home.join(RUNTIME_DIR).join(CONFIG_FILE_NAME))
 }
 
+/// Reads the local `config.json` as plain text, for Phase 4's config sync
+/// (§9) — the structured `read_document`/`ConfigDocument` the rest of this
+/// module uses is the right shape for the settings panel, but a sync
+/// comparison needs the exact bytes a fingerprint is taken over and the
+/// exact bytes a `'sync-local'` policy uploads, not a re-serialised copy
+/// that could legally differ in key order or whitespace from what is
+/// actually on disk. `None` means the file does not exist, which is a
+/// normal, expected state (not yet configured) rather than an error.
+pub fn read_local_config_text() -> Result<Option<String>, String> {
+    let path = config_path()?;
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not read {}: {e}", path.display())),
+    }
+}
+
+
 /// `mcp.json` is always the user-level file; there is no variable for it.
 fn mcp_path() -> Result<PathBuf, String> {
     let home = home_dir().ok_or("the home directory could not be read")?;

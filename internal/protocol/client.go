@@ -2,8 +2,6 @@ package protocol
 
 import (
 	"io"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -28,7 +26,7 @@ type Hooks interface {
 // Client is a front end's connection to a runtime.
 type Client struct {
 	hooks   Hooks
-	command *exec.Cmd
+	backend Backend
 	stdin   io.WriteCloser
 
 	writeMu sync.Mutex
@@ -40,6 +38,17 @@ type Client struct {
 	exitMu  sync.Mutex
 	stopped bool
 	codeSet bool
+
+	// diagMu guards diagnostics, the capped tail of the backend's stderr. It
+	// exists for backends where stderr is not simply dropped — see
+	// StartWithBackend's drain — and is nil-safe to read before any Start.
+	diagMu      sync.Mutex
+	diagnostics []string
+
+	// readyMu guards the WaitReady bookkeeping below. See ready.go.
+	readyMu    sync.Mutex
+	readyDone  bool
+	readySinks []chan map[string]any
 }
 
 // NewClient prepares a client. Call Start to launch the runtime.
@@ -47,76 +56,51 @@ func NewClient(hooks Hooks) *Client {
 	return &Client{hooks: hooks, done: make(chan struct{})}
 }
 
-// Start launches the runtime as a child process and begins reading.
+// Start launches the runtime as a child process on this machine and begins
+// reading.
 //
-// Three details in the launch are not decoration:
+// This is the Local Backend path, and it is unchanged from what this method
+// has always done — see LocalBackend's doc for the three details in the launch
+// that are not decoration. Start is now a thin call onto StartWithBackend; the
+// three details themselves live in LocalBackend so that a RemoteBackend
+// (ssh.DialRuntimeSession and --runtime-stdio run on the far end) can share the
+// rest of this type: readLoop, the protocol dispatch, every Client method
+// below.
 //
-//  1. the **absolute path to this same executable**, not "tudouni" off PATH. A
-//     different build on PATH would be a different program, and the symptom is
-//     "the child exits immediately and I read EOF";
-//  2. `--runtime-stdio`, which is the mode that speaks this protocol;
-//  3. the working directory is inherited, which is what makes the workspace the
-//     directory the user started in.
-//
-// The child's **stderr is drained and dropped**, and that is the fourth detail
-// rather than an oversight. This client is used by full-screen front ends that own
-// the terminal: `command.Stderr = os.Stderr` handed the child the same file
-// descriptor the interface draws on, so every diagnostic it wrote landed inside the
-// alternate screen and was erased by the next redraw — visible as corrupt frames,
-// useless as a diagnostic. What a person must see travels as a notice instead (the
-// runtime turns its own records into one), and the child's exit code still reaches
-// them through runtimeExited: a runtime that dies at startup no longer does so
-// silently.
+// The child's **stderr is drained and dropped**, same as always, and for the
+// same reason recorded there: a full-screen front end owns the terminal, and a
+// diagnostic written to it would land inside the alternate screen and vanish on
+// the next redraw. What a person must see still travels as a notice instead.
 func (c *Client) Start(arguments []string) error {
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	argv := append([]string{executable, "--runtime-stdio"}, arguments...)
-	command := exec.Command(argv[0], argv[1:]...)
-	command.Env = os.Environ()
+	return c.StartWithBackend(NewLocalBackend(arguments))
+}
 
-	stdin, err := command.StdinPipe()
+// StartWithBackend launches the runtime through the given Backend and begins
+// reading its protocol stream.
+//
+// Everything from here down is backend-agnostic, which is the point of the
+// seam: whether stdin/stdout/stderr came from a local exec.Cmd or from a plain
+// SSH session makes no difference to the JSONL loop, the permission/question
+// routing, or any method on Client. A Backend's only two obligations are
+// stated on the interface itself — stdout carries the protocol exclusively,
+// and stderr is diagnostics only — and this method trusts both.
+func (c *Client) StartWithBackend(backend Backend) error {
+	stdin, stdout, stderr, err := backend.Start()
 	if err != nil {
 		return err
 	}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	// A pipe rather than io.Discard, and that distinction is the point: io.Discard
-	// gives the child a closed descriptor, and a process that writes to a closed
-	// stderr can fail in ways that have nothing to do with its own work. A pipe
-	// keeps stderr usable and gives this side somewhere to read from, so the child
-	// can never block on a full diagnostic buffer either.
-	diagnostics, sink, err := os.Pipe()
-	if err != nil {
-		return err
-	}
-	command.Stderr = sink
-	if err := command.Start(); err != nil {
-		_ = diagnostics.Close()
-		_ = sink.Close()
-		return err
-	}
-	// The parent's copy of the write end has to go, or the read end below sees no
-	// end of stream: the drain would sit there for the life of the process holding a
-	// descriptor per runtime.
-	_ = sink.Close()
-	go drain(diagnostics)
 
-	c.command = command
+	c.backend = backend
 	c.stdin = stdin
 
+	go c.drainDiagnostics(stderr)
 	go c.readLoop(stdout)
 	go func() {
-		_ = command.Wait()
+		code, ok, _ := backend.Wait()
 		c.writeMu.Lock()
-		code := 0
-		if command.ProcessState != nil {
-			code = command.ProcessState.ExitCode()
+		if ok {
+			c.code = code
 		}
-		c.code = code
 		c.writeMu.Unlock()
 
 		c.exitMu.Lock()
@@ -139,12 +123,53 @@ func (c *Client) Start(arguments []string) error {
 	return nil
 }
 
-// drain reads a child's diagnostics to the end, discarding them.
+// drainDiagnostics reads a backend's stderr to the end, discarding the bytes
+// but keeping a bounded tail for Diagnostics.
 //
-// Discarding is deliberate and so is reading them at all: the bytes are what the
-// child would otherwise block on, and what they say has already been re-routed
-// through the places a person can actually see it — the audit log, and the notice
-// channel. See Start.
+// Discarding is deliberate and so is reading them at all: the bytes are what
+// the far end would otherwise block on, and what they say has already been
+// re-routed through the places a person can actually see it — the audit log
+// and the notice channel, for a local runtime; for a remote one, Diagnostics is
+// that place, since there is no audit log on this side of the connection yet.
+func (c *Client) drainDiagnostics(reader io.Reader) {
+	lineReader := newDiagnosticLineReader(reader)
+	for {
+		line, ok := lineReader.next()
+		if !ok {
+			return
+		}
+		c.diagMu.Lock()
+		c.diagnostics = append(c.diagnostics, line)
+		if len(c.diagnostics) > maxDiagnosticLines {
+			c.diagnostics = c.diagnostics[len(c.diagnostics)-maxDiagnosticLines:]
+		}
+		c.diagMu.Unlock()
+	}
+}
+
+// maxDiagnosticLines bounds how much of a backend's stderr Diagnostics keeps.
+// It exists for the remote case the design calls for — "save limited-length
+// diagnostic logs" — and the cap is lines, not bytes, because a single
+// pathological line (a stack trace with no newlines) should not be allowed to
+// exhaust it on its own; see diagnosticLineReader for how a too-long line is
+// still bounded in bytes.
+const maxDiagnosticLines = 200
+
+// Diagnostics returns the backend's most recent stderr lines, oldest first,
+// up to maxDiagnosticLines. It is empty for a runtime that has written nothing
+// to stderr, which is the ordinary case for a healthy local runtime.
+func (c *Client) Diagnostics() []string {
+	c.diagMu.Lock()
+	defer c.diagMu.Unlock()
+	out := make([]string, len(c.diagnostics))
+	copy(out, c.diagnostics)
+	return out
+}
+
+// drain reads a reader to the end, discarding the bytes. It is kept for its
+// existing test (TestTheDiagnosticsDrainEmptiesAndCloses in
+// client_stdio_test.go), which pins the same "read to the end, then close"
+// contract that drainDiagnostics now applies per line rather than in bulk.
 func drain(reader io.Reader) {
 	_, _ = io.Copy(io.Discard, reader)
 	if closer, ok := reader.(io.Closer); ok {
@@ -177,6 +202,7 @@ func (c *Client) readLoop(stdout io.Reader) {
 }
 
 func (c *Client) dispatch(message map[string]any) {
+	c.deliverFirstMessage(message)
 	switch TypeOf(message) {
 	case OutPermissionRequest:
 		decision, ok := c.hooks.OnPermission(message)
@@ -396,7 +422,15 @@ func (c *Client) Close() int {
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}
-	return c.Wait(30 * time.Second)
+	code := c.Wait(30 * time.Second)
+	// Backend.Close releases whatever the backend holds beyond the process
+	// itself. For LocalBackend this is a no-op; for RemoteBackend it is the
+	// step that actually ends the SSH session and the connection beneath it —
+	// the "release SSH resources" the design calls for on normal shutdown.
+	if c.backend != nil {
+		_ = c.backend.Close()
+	}
+	return code
 }
 
 // Kill ends the process without waiting for it.
@@ -405,9 +439,13 @@ func (c *Client) Close() int {
 // consistent between steps, so a kill mid-step can leave a session file with an
 // assistant message whose tool results never arrived — and that session can never
 // be sent again.
+//
+// For a RemoteBackend this ends the SSH session (and attempts a remote
+// signal first; see RuntimeSession.Kill) rather than a local process, which is
+// why Kill is a Backend method and Client only forwards to it.
 func (c *Client) Kill() {
-	if c.command != nil && c.command.Process != nil {
-		_ = c.command.Process.Kill()
+	if c.backend != nil {
+		_ = c.backend.Kill()
 	}
 }
 

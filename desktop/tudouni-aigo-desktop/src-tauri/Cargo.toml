@@ -19,6 +19,40 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+# The Remote Backend's transport: a non-interactive SSH session carrying the
+# runtime's stdin/stdout/stderr, the same way `std::process::Command` carries
+# a local child's. `vendored-openssl` builds its own copy of OpenSSL rather
+# than linking the system one, which is what keeps this from becoming a new
+# system-library requirement on every build host — the same reasoning that
+# keeps ripgrep vendored under `tools/vendor/rg/` rather than assumed to be on
+# PATH. Pinned to an exact version rather than a range, matching this file's
+# existing pins.
+ssh2 = { version = "=0.9.6", features = ["vendored-openssl"] }
+# Reads the release archives bundled under `remote-packages/` so their
+# contents can be uploaded over SFTP one file at a time — `remote_install.rs`
+# never writes a zip, only reads the ones `make release` already built with
+# the `Deflate` method (see `release.Layout.Zip` on the Go side). `deflate`
+# is the feature that actually wires up a decompressor: the crate's
+# narrower `deflate-flate2` only sets an internal capability marker and does
+# nothing by itself unless something else also activates its optional
+# `flate2` dependency, which only `deflate` (and the zlib/zlib-ng variants,
+# which would add a system library requirement this project avoids
+# elsewhere) does. The cost of using it is `zopfli`, a write-side
+# compression optimiser this read-only use never calls — accepted rather
+# than patched around, since this crate version has no feature that
+# separates "a deflate decoder" from "the whole deflate feature set."
+# Pinned to an exact version, matching this file's existing pins.
+zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
+# The config-sync content fingerprint (§9.5): a plain SHA256 of
+# config.json's bytes, compared against a stored baseline rather than a
+# modification time. A pure-Rust implementation rather than reaching for
+# OpenSSL (already linked in for `ssh2`): that build only exposes the C
+# library's build artifacts to `ssh2` itself, not a Rust API this crate can
+# call, and pulling in the `openssl` wrapper crate on top of
+# `vendored-openssl` for one hash of a few-KB file is a larger dependency
+# than this one small crate. Pinned to an exact version, matching this
+# file's existing pins.
+sha2 = "=0.10.9"
 # The WinRT toast API, **for the click**. `tauri-plugin-notification` shows a
 # toast on every platform, but on desktop that is all it does: its `notify`
 # command drops the notification handle inside `show()` and reports nothing about

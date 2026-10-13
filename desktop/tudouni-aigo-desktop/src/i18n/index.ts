@@ -282,6 +282,67 @@ export const en = {
   'lb.workspaceBad': 'Cannot be used',
   'lb.openWorkspace': 'Open this workspace',
 
+  /* ---------------- remote workspaces (Workspace Manager, Phase 2) ---------------- */
+  'lb.remoteWorkspaces': 'Remote',
+  'lb.addRemoteWorkspace': 'Add a remote workspace…',
+  'lb.addRemoteWorkspaceHint':
+    'Connect over SSH to an already-installed runtime. The host and this workspace are saved together.',
+  'lb.emptyRemoteWorkspaces.hint': 'Add a host and a directory on it.',
+  'lb.remote.save': 'Save',
+  'lb.remote.hostLabel': 'Host name (for your own reference)',
+  'lb.remote.hostLabelPlaceholder': 'e.g. prod-server',
+  'lb.remote.host': 'Host or address',
+  'lb.remote.port': 'Port',
+  'lb.remote.user': 'User',
+  'lb.remote.identityFiles': 'Private key paths (one per line)',
+  'lb.remote.password': 'Password (optional)',
+  'lb.remote.passwordWarning':
+    'Stored on this machine in plain preferences, not an OS keychain. Prefer a key file when possible.',
+  'lb.remote.remoteBinary': 'Runtime binary path on the remote host',
+  'lb.remote.remotePath': 'Workspace directory on the remote host',
+  'lb.remote.workspaceLabel': 'Workspace name (for your own reference)',
+  'lb.remote.forgetHostInUse':
+    'This host is used by at least one saved remote workspace. Remove those first.',
+  /* Connection state badges — §5.1 of the design. Each is a short word for the
+     sidebar row; the sentence (when there is one) lives in the badge's own
+     tooltip, built from `ConnectionState.problem` rather than translated here,
+     since that text already comes from the Rust/Go side as a sentence. */
+  'conn.local': 'Local',
+  'conn.disconnected': 'Disconnected',
+  'conn.connecting': 'Connecting…',
+  'conn.installing': 'Installing…',
+  'conn.starting': 'Starting…',
+  'conn.handshaking': 'Handshaking…',
+  'conn.ready': 'Connected',
+  'conn.interrupted': 'Interrupted',
+  'conn.closing': 'Closing…',
+  'conn.closed': 'Closed',
+  'conn.failed': 'Failed',
+
+  /* ---------------- remote install (Phase 3, §8 of the design) ---------------- */
+  'lb.remote.install': 'Install or upgrade the Runtime on this host',
+  'lb.remote.installFailed': 'Install failed',
+  'lb.remote.installDone': 'Installed',
+  'lb.remote.installUploading': 'Uploading {done}/{total}',
+  'install.detecting_platform': 'Detecting platform…',
+  'install.checking_existing_install': 'Checking…',
+  'install.preparing_staging': 'Preparing…',
+  'install.uploading': 'Uploading…',
+  'install.verifying_and_switching': 'Verifying…',
+  'install.done': 'Installed',
+
+  /* ---------------- config sync (Phase 4, §9 of the design) ---------------- */
+  'cfgsync.title': 'Configuration conflict',
+  'cfgsync.subtitle':
+    'The local and remote model configuration have both changed since the last sync. Choose which one to keep.',
+  'cfgsync.noLocal': 'No local configuration file yet.',
+  'cfgsync.hasLocal': 'A local configuration file exists.',
+  'cfgsync.remoteMissing': 'The remote host has no configuration file yet.',
+  'cfgsync.remoteValid': 'The remote host has a usable configuration.',
+  'cfgsync.remoteOther': 'The remote host has a configuration file.',
+  'cfgsync.useLocal': 'Use local (overwrite remote)',
+  'cfgsync.useRemote': 'Use remote (keep as is)',
+
   /* The sessions that are open but have no file yet.
      They need their own words because they are a different fact from a saved
      row: there is nothing on disk, so there is no message count, no preview and
