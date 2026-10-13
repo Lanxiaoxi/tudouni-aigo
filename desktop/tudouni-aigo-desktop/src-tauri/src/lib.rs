@@ -63,6 +63,12 @@ mod config_file;
 /// ([`ssh_backend::RuntimeProcess`]) rather than a parallel copy of `spawn`.
 mod ssh_backend;
 
+/// Reads the user's `~/.ssh/config` so the Add Remote Workspace form can
+/// prefill from hosts OpenSSH is already configured with. See its own module
+/// doc for why this is a deliberately weaker second copy of the Go parser
+/// rather than a link to it.
+mod ssh_config;
+
 /// The Remote Bootstrapper's transport half: platform detection, SFTP
 /// upload, and the verify-and-switch sequence for installing or upgrading
 /// the Runtime on a remote host. See its own module doc for the division of
@@ -1746,6 +1752,25 @@ fn workspace_check(path: String) -> Option<String> {
    The configuration files
    ============================================================ */
 
+/// Read `~/.ssh/config` and hand back its concrete `Host` blocks, for the
+/// Add Remote Workspace form's host picker.
+///
+/// A local read of one file the user already maintains: no connection is
+/// attempted, and nothing here is a request the runtime is waiting on. The
+/// front end treats the answer as **prefill suggestions only** — every field
+/// the form fills from it is still editable and still validated at Save.
+///
+/// The refusal rules the Go side applies when it dials (`ProxyJump` and
+/// friends in `internal/ssh/config.go`'s `rejectedFields`) are applied here
+/// too, as a per-host `refused` flag: a block that names one of them is
+/// listed but marked unselectable, because the dial would fail the same way
+/// the Go side's own refusal describes. See `ssh_config`'s module doc for
+/// why that second copy of the rules exists at all.
+#[tauri::command]
+fn read_ssh_config() -> ssh_config::SshConfigDocument {
+    ssh_config::read_config()
+}
+
 /// Read `~/.tudouni/config.json` and `mcp.json` for the config panel.
 ///
 /// The front end draws this, so it is the panel's own shape rather than the
@@ -2637,6 +2662,7 @@ pub fn run() {
             set_prevent_sleep,
             os_user_name,
             workspace_check,
+            read_ssh_config,
             config_read,
             config_write,
             image_stash,

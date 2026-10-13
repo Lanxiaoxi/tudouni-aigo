@@ -1189,6 +1189,11 @@ export interface AppStore {
    */
   workspacesCollapsed: boolean;
   /**
+   * The left rail's foot (the six workbench buttons), folded on its own —
+   * the same independent, persisted preference as `sessionsCollapsed`.
+   */
+  footCollapsed: boolean;
+  /**
    * Bookmarked workspaces.
    *
    * **A front-end preference, and it has to be.** The protocol carries no
@@ -1534,6 +1539,8 @@ export interface AppStore {
   toggleSessionsCollapsed(): void;
   /** Fold or unfold the left rail's workspace list. Persisted like the rails. */
   toggleWorkspacesCollapsed(): void;
+  /** Fold or unfold the left rail's foot (the workbench buttons). Persisted. */
+  toggleFootCollapsed(): void;
   toggleReasoning(id: string): void;
   toggleTool(id: string): void;
   /** Remove one in-stream block from the active session. No data involved. */
@@ -1829,6 +1836,8 @@ type Prefs = {
   sessionsCollapsed: boolean;
   /** The left rail's workspace list (local + remote), folded on its own. */
   workspacesCollapsed: boolean;
+  /** The left rail's foot (the six workbench buttons), folded on its own. */
+  footCollapsed: boolean;
   workspaces: string[];
   sshHosts: SshHostConfig[];
   remoteWorkspaces: RemoteWorkspaceEntry[];
@@ -1924,6 +1933,7 @@ function loadPrefs(): Prefs {
     blockTouched: {},
     sessionsCollapsed: false,
     workspacesCollapsed: false,
+    footCollapsed: false,
     workspaces: [],
     sshHosts: [],
     remoteWorkspaces: [],
@@ -1970,6 +1980,7 @@ function loadPrefs(): Prefs {
         parsed.workspacesCollapsed === true || parsed.workspacesCollapsed === false
           ? parsed.workspacesCollapsed
           : fallback.workspacesCollapsed,
+      footCollapsed: parsed.footCollapsed === true,
       // Filtered rather than trusted: this is localStorage, it outlives every
       // build, and a stray non-string in it would reach `path.split` and take
       // the sidebar down with it.
@@ -2121,6 +2132,7 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
         blockTouched: s.blockTouched,
         sessionsCollapsed: s.sessionsCollapsed,
         workspacesCollapsed: s.workspacesCollapsed,
+        footCollapsed: s.footCollapsed,
         workspaces: s.workspaces,
         sshHosts: s.sshHosts,
         remoteWorkspaces: s.remoteWorkspaces,
@@ -2790,6 +2802,7 @@ export const useApp = create<AppStore>((set, get) => {
     toolOpen: {},
     sessionsCollapsed: prefs.sessionsCollapsed,
     workspacesCollapsed: prefs.workspacesCollapsed,
+    footCollapsed: prefs.footCollapsed,
     workspaces: prefs.workspaces,
     sshHosts: prefs.sshHosts,
     remoteWorkspaces: prefs.remoteWorkspaces,
@@ -4274,6 +4287,11 @@ export const useApp = create<AppStore>((set, get) => {
 
     toggleWorkspacesCollapsed() {
       set({ workspacesCollapsed: !get().workspacesCollapsed });
+      persistPrefs(get());
+    },
+
+    toggleFootCollapsed() {
+      set({ footCollapsed: !get().footCollapsed });
       persistPrefs(get());
     },
 

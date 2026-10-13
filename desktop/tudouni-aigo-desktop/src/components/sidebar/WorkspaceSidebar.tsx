@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Archive, ArchiveRestore, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, Plus, Server, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, Plus, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -20,7 +20,7 @@ import { SessionDot } from '@/components/sidebar/SessionDot';
 import { useT } from '@/i18n/useT';
 import { checkWorkspace, chooseWorkspaceDirectory } from '@/runtime/tauri';
 import { Logo } from '@/components/ui/Logo';
-import { EmptyState, Tip } from '@/components/ui/kit';
+import { Count, EmptyState, Tip } from '@/components/ui/kit';
 import { baseName, formatRelative, samePath } from '@/utils/format';
 import { AddRemoteWorkspaceModal } from '@/components/modals/AddRemoteWorkspaceModal';
 
@@ -121,6 +121,11 @@ export function WorkspaceSidebar() {
   const toggleSessionsCollapsed = useApp((s) => s.toggleSessionsCollapsed);
   const workspacesCollapsed = useApp((s) => s.workspacesCollapsed);
   const toggleWorkspacesCollapsed = useApp((s) => s.toggleWorkspacesCollapsed);
+  // The foot's own fold. The six workbench buttons live in the fold and the
+  // head below them is the toggle, so a folded foot is one icon row tall —
+  // the same independent, persisted preference the two list sections keep.
+  const footCollapsed = useApp((s) => s.footCollapsed);
+  const toggleFootCollapsed = useApp((s) => s.toggleFootCollapsed);
   // The settings panel. It lives at the foot of this rail because what it holds
   // is the same kind of decision as the workspace above it — what the runtime
   // process *is* — rather than a per-turn control like the status bar's.
@@ -835,13 +840,30 @@ export function WorkspaceSidebar() {
         </section>
       </div>
 
-      {/* The foot of the rail: a way out of the transcript, then the two
-          settings-shaped entries, in the order Files · Terminal · Board ·
-          Config · Settings. They are here rather than in the command palette
-          because they sit next to the workspace list and hold the same kind of
-          decision — where the runtime works, what it may do there, and what the
-          process itself is. */}
+      {/* The foot of the rail: the workbench — a way out of the transcript,
+          then the two settings-shaped entries, in the order Files · Terminal ·
+          Learn · Board · Config · Settings. They are here rather than in the
+          command palette because they sit next to the workspace list and hold
+          the same kind of decision — where the runtime works, what it may do
+          there, and what the process itself is.
+
+          The six buttons fold on their own; the head at the very bottom is the
+          toggle. The fold sits **above** the pinned head, so it closes
+          bottom-up: the fold cell shrinks from its top edge toward the head,
+          and the buttons ride `justify-content: flex-end` inside it
+          (`.lb-foot-inner`), which pushes the overflow above the clip —
+          Files goes first, Settings stays longest, and the toggle never
+          moves. The mechanism is written down where the CSS lives
+          (`.lb-foot-inner` in stream.css). */}
       <div className="lb-foot">
+        {/* Folded rather than conditionally rendered, like the list sections:
+            the buttons stay mounted, only the height changes, and `inert`
+            keeps Tab out of six buttons nobody can see. */}
+        <div
+          className={`collapse${footCollapsed ? ' is-collapsed' : ''}`}
+          inert={footCollapsed}
+        >
+          <div className="lb-foot-inner">
         {/* Files and Terminal. The design's left rail lists exactly these three
             (§20: Chat / Files / Terminal), and this build's "Chat" is the
             transcript that is already the main view — so these two rows are the
@@ -939,6 +961,49 @@ export function WorkspaceSidebar() {
           >
             <Settings size={14} />
             <span>{t('lb.settings')}</span>
+          </button>
+        </Tip>
+          </div>
+        </div>
+
+        {/* The fold's head, pinned to the very bottom: the toggle. When the
+            foot is folded it is the **only** thing left of the six buttons —
+            one icon row, the wrench standing in for the workbench, the count
+            saying how many rows are tucked away (the count is folded-state
+            only: with the rows on screen it would just say the same thing
+            six times over). When the person hovers it folded, the six icons
+            run a quick staggered pass just above the row
+            (`.lb-foot-tease`, CSS) and the wrench gives a quarter turn: a
+            hint that the row hides things, which a bare chevron would never
+            say. */}
+        <Tip label={footCollapsed ? t('lb.workbenchHint') : t('lb.foldFoot')}>
+          <button
+            type="button"
+            className={`lb-foot-head${footCollapsed ? ' is-collapsed' : ''}`}
+            aria-expanded={!footCollapsed}
+            onClick={toggleFootCollapsed}
+          >
+            {footCollapsed ? (
+              <Wrench size={14} className="lb-foot-wrench" />
+            ) : (
+              <ChevronRight size={13} className="caret caret-open" />
+            )}
+            <span className="lb-foot-head-label">{t('lb.workbench')}</span>
+            {footCollapsed ? <Count value={6} /> : null}
+            {/* The tease strip: the six foot icons, one size smaller, rising
+                into view above the row on hover. `aria-hidden` — it repeats
+                the buttons' own accessible names with nothing new to say. */}
+            <span className="lb-foot-tease" aria-hidden>
+              <FileText size={11} />
+              <SquareTerminal size={11} />
+              <GraduationCap size={11} />
+              <LayoutGrid size={11} />
+              <FileJson size={11} />
+              <Settings size={11} />
+            </span>
+            <span className="sr-only">
+              {footCollapsed ? t('lb.unfoldFoot') : t('lb.foldFoot')}
+            </span>
           </button>
         </Tip>
       </div>

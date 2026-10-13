@@ -303,6 +303,14 @@ export const en = {
   'lb.unfoldSessions': 'Unfold the session list',
   'lb.foldWorkspaces': 'Fold the workspace list',
   'lb.unfoldWorkspaces': 'Unfold the workspace list',
+  /* The rail's foot, folded on its own. The six buttons under it — files,
+     terminal, learning, board, config, settings — are the workbench: the
+     things the runtime works *with*, beside the workspaces it works *in*. */
+  'lb.workbench': 'Workbench',
+  'lb.workbenchHint':
+    'Files, terminal, learning, board, config, and settings — the tools the runtime works with.',
+  'lb.foldFoot': 'Fold the workbench',
+  'lb.unfoldFoot': 'Unfold the workbench',
   'lb.deleteSession': 'Delete this session',
   'lb.deleteConfirm': 'Delete? Click again to confirm',
   'lb.current': 'current',
@@ -329,6 +337,18 @@ export const en = {
     'Connect over SSH to an already-installed runtime. The host and this workspace are saved together.',
   'lb.emptyRemoteWorkspaces.hint': 'Add a host and a directory on it.',
   'lb.remote.save': 'Save',
+  /* The host picker in the Add Remote Workspace form: it lists the
+     `~/.ssh/config`'s concrete Host blocks so the form can prefill from
+     what OpenSSH is already configured with. Each caption states the
+     *state of the file* — it never claims a host is reachable, and a
+     refused block's marker names the file's own field rather than
+     rewording the parser's refusal. */
+  'lb.remote.picker.title': 'From your ~/.ssh/config',
+  'lb.remote.picker.manual': 'Enter manually…',
+  'lb.remote.picker.caption':
+    'Picking one fills in the fields below; you can still edit them before saving.',
+  'lb.remote.picker.noHosts': 'The file names no concrete Host block — enter the details below.',
+  'lb.remote.picker.unsupported': 'not supported',
   'lb.remote.hostLabel': 'Host name (for your own reference)',
   'lb.remote.hostLabelPlaceholder': 'e.g. prod-server',
   'lb.remote.host': 'Host or address',

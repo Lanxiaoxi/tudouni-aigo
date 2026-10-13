@@ -1162,6 +1162,55 @@ export async function readUserName(): Promise<string | null> {
   }
 }
 
+/**
+ * The user's `~/.ssh/config`, as the Add Remote Workspace form's host
+ * picker needs it.
+ *
+ * **Prefill data, not a claim about reachability.** Reading the file makes
+ * no connection and checks nothing: a listed host may be down, may need a
+ * password, and may even be unselectable (a `refused` reason) because the
+ * Go side's own dial rules reject a field it names. The form treats every
+ * filled field as an editable suggestion — Save validates, and the actual
+ * connection answers when the row is opened.
+ *
+ * `null` when not hosted (a plain browser): the form then simply has
+ * nothing to offer and its manual fields work as before, which is the same
+ * "no bridge, no list" convention as the other reads here.
+ */
+export interface SshConfigHost {
+  /** The pattern the `Host` block wrote, verbatim. */
+  alias: string;
+  /** The resolved destination the form's Host field is filled with. */
+  hostname: string;
+  port: number;
+  user: string;
+  identityFiles: string[];
+  /** The block sets a `Password` directive; the value is not returned. */
+  hasPassword: boolean;
+  /** Why this block is listed but not selectable, when it is. */
+  refused: string | null;
+}
+
+export interface SshConfigDocument {
+  /** The file this was read from, for the picker's caption. */
+  path: string;
+  /** `false` when there was no file at all — an ordinary state, not an error. */
+  exists: boolean;
+  hosts: SshConfigHost[];
+  /** Why the file was read but its hosts cannot be trusted (a `Match`
+   *  block, an unreadable file). `null` in every other case. */
+  problem: string | null;
+}
+
+export async function readSshConfig(): Promise<SshConfigDocument | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<SshConfigDocument>('read_ssh_config');
+  } catch {
+    return null;
+  }
+}
+
 /** A directory picker. Null when the person cancels. */
 export async function chooseWorkspaceDirectory(): Promise<string | null> {
   if (!isHosted()) return null;

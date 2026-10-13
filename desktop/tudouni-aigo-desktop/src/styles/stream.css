@@ -61,7 +61,12 @@
 }
 
 /* 折叠箭头：旋转走 `--motion-base`，与被它控制的收起/展开同步。
-   `--motion-fast` 会明显快于高度过渡，看起来像箭头先动、内容后到。 */
+   `--motion-fast` 会明显快于高度过渡，看起来像箭头先动、内容后到。
+
+   方向约定：chevron 默认朝右、`caret-open` 朝下，即「朝被折叠内容的一侧」。
+   唯一例外是工作台的折叠头（`.lb-foot-head`）：它的内容在**上方**，展开时
+   用 `caret-open` 但翻转 180° 让它朝上，收起时才恢复默认朝右 —— 见下方
+   `.lb-foot-head` 的规则。 */
 .caret {
   display: inline-flex;
   align-items: center;
@@ -2078,17 +2083,184 @@
   color: var(--fg-muted);
 }
 
-/* ---------------- the rail's foot ---------------- */
+/* ---------------- the rail's foot (the workbench) ---------------- */
 
 /* Outside `.lb-scroll` on purpose: this is a fixed row, so it cannot be pushed
    off the bottom by a long workspace or session list — the same reason the head
    is `flex: none`. It carries the settings affordance, which holds the arguments
    the runtime process was started with, and that belongs beside the workspace
-   list rather than in the command palette (see WorkspaceSidebar's comment). */
+   list rather than in the command palette (see WorkspaceSidebar's comment).
+
+   The foot is a two-part flex column: the six buttons in a `.collapse`, and
+   below them the fold's own head (`.lb-foot-head`), pinned to the very bottom.
+   A folded foot is therefore one icon row tall — the head, with the wrench
+   standing in for the workbench and the count saying how many rows are tucked
+   away. The border-top moved here to the head, because the head is now the
+   bottommost element of the foot: with the buttons above it the fold cell
+   contributes zero height when folded, so a border on the cell would float
+   mid-gap. */
 .lb-foot {
   flex: none;
-  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+}
+
+/* The fold cell's content. `overflow: hidden` comes from `.collapse > *`
+   (global.css); this rule adds the direction. The cell is a grid track that
+   shrinks from **its top edge** toward the pinned head, so the clip line
+   travels down the list. `justify-content: flex-end` keeps the buttons
+   bottom-anchored *inside* the clip: as the cell shrinks, the overflow
+   spills above the clip line rather than below it, which means the top row
+   (Files) is the first to leave and the bottom row (Settings) the last —
+   the fold sweeps the list bottom-up. Without the anchor the overflow would
+   spill downward and the direction would be the opposite of what was asked.
+   `min-height: 0` is load-bearing for the same reason as on `.collapse > *`:
+   without it the flex column's own min-content height would keep the cell
+   from ever reaching 0fr. */
+.lb-foot-inner {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: var(--space-2) var(--space-2) 0;
+  min-height: 0;
+}
+
+/* The fold's own head: the toggle, pinned to the very bottom of the foot.
+   One icon row tall (`--control-h-compact`, 24px) so a folded foot is
+   exactly one icon, plus its padding. It is `flex: none` — the element that
+   does **not** move while the fold above it sweeps.
+
+   `overflow: visible` is deliberate: `.lb-foot-tease` is an `absolute`
+   child that rises **above** the button on hover, and the button would
+   clip it otherwise. `position: relative` anchors that child. */
+.lb-foot-head {
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  background: none;
+  border: none;
   border-top: 1px solid var(--border-subtle);
+  border-radius: 0;
+  cursor: pointer;
+  overflow: visible;
+}
+
+.lb-foot-head:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The label: the same treatment as the list section titles (`.lb-section-head
+   .lb-title`) — the foot's head is the third head in the rail, and three
+   heads in three styles is a fourth design. */
+.lb-foot-head-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+/* The wrench, drawn only in the folded state where it stands in for the
+   six buttons. The hover quarter-turn is the play: it says "tools" without
+   a word, and it is a one-shot transform the way the caret's is. `--motion-base`
+   matches the fold transition so opening does not look like the icon raced
+   ahead of the list. */
+.lb-foot-wrench {
+  flex: none;
+  color: var(--fg-muted);
+  transform: none;
+  transition: transform var(--motion-base) var(--ease-standard);
+}
+
+.lb-foot-head.is-collapsed:hover .lb-foot-wrench {
+  transform: rotate(-45deg);
+}
+
+/* The tease strip: the six foot icons, one size smaller, that rise into
+   view just above the folded row when the person hovers the toggle.
+   `aria-hidden` in the markup — it repeats the buttons' accessible names
+   with nothing new to say.
+
+   The reveal is a mask, not a move: the strip's own box is clipped by
+   `overflow: hidden` with a top inset, and each icon rises the full height
+   out of it. Clipping is what makes the row read as "things emerging from
+   behind the rail" rather than six icons pasted above a button; and because
+   the motion is one property (`transform`) on one class the
+   `prefers-reduced-motion` rule in global.css zeroes it for free — the
+   strip simply appears, which is still a hint.
+
+   The per-icon delay is the **stagger**: a flat fade of six identical
+   glyphs reads as one blob; six of them one behind the other reads as a
+   hand passing over a shelf. `0.5s` total for six icons at 50ms apart is
+   fast enough that it never feels like waiting, long enough to be read. */
+.lb-foot-tease {
+  display: none;
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: 100%;
+  height: 16px;
+  align-items: center;
+  gap: var(--space-3);
+  overflow: hidden;
+  color: var(--fg-faint);
+  pointer-events: none;
+}
+
+.lb-foot-head.is-collapsed:hover .lb-foot-tease,
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease {
+  display: flex;
+}
+
+.lb-foot-tease > * {
+  opacity: 0;
+  transform: translateY(14px);
+}
+
+.lb-foot-head.is-collapsed:hover .lb-foot-tease > *,
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > * {
+  animation: lb-foot-tease-rise 0.45s var(--ease-out) forwards;
+}
+
+.lb-foot-head.is-collapsed:hover .lb-foot-tease > :nth-child(1),
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > :nth-child(1) {
+  animation-delay: 0s;
+}
+.lb-foot-head.is-collapsed:hover .lb-foot-tease > :nth-child(2),
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > :nth-child(2) {
+  animation-delay: 50ms;
+}
+.lb-foot-head.is-collapsed:hover .lb-foot-tease > :nth-child(3),
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > :nth-child(3) {
+  animation-delay: 100ms;
+}
+.lb-foot-head.is-collapsed:hover .lb-foot-tease > :nth-child(4),
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > :nth-child(4) {
+  animation-delay: 150ms;
+}
+.lb-foot-head.is-collapsed:hover .lb-foot-tease > :nth-child(5),
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > :nth-child(5) {
+  animation-delay: 200ms;
+}
+.lb-foot-head.is-collapsed:hover .lb-foot-tease > :nth-child(6),
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > :nth-child(6) {
+  animation-delay: 250ms;
+}
+
+@keyframes lb-foot-tease-rise {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Every row here is a named destination, not an ornament, so it wears the

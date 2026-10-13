@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import { readSshConfig, type SshConfigDocument } from '@/runtime/tauri';
 
 /**
  * The form for saving a new remote workspace: a host and the directory on it.
@@ -24,6 +25,19 @@ import { useT } from '@/i18n/useT';
  * the row is actually opened — asking them here would make saving a
  * workspace description depend on being connected to the network right now,
  * which is not a requirement "bookmark this place" should carry.
+ *
+ * **The host picker reads `~/.ssh/config` for prefill only.** OpenSSH is
+ * where a person has already written down exactly what this form asks for —
+ * the destination, the port, the user, the keys — so re-typing it is asking
+ * for the same fact twice. The picker therefore lists the file's concrete
+ * `Host` blocks and filling the form from one is still an *editable*
+ * suggestion: every field it writes can be changed, Save validates nothing
+ * about reachability, and a block the Go side's own dial rules refuse
+ * (`ProxyJump` and friends) is listed but marked, not silently dropped —
+ * dropping it would be the form answering a question only the person can
+ * answer ("do you still want this host?"). The file is read when the dialog
+ * opens; a missing file is an ordinary state and the manual fields simply
+ * work as before.
  *
  * Identity files are entered as one path per line rather than a repeating
  * field group, because the ordinary case is one key and the design (§ dial.go
@@ -52,6 +66,51 @@ export function AddRemoteWorkspaceModal({
   const [remotePath, setRemotePath] = useState('');
   const [remoteBinary, setRemoteBinary] = useState('');
   const [workspaceLabel, setWorkspaceLabel] = useState('');
+  // The picker: the file's own hosts, read once when the dialog opens.
+  // `null` = not read yet (or not hosted, where it stays null and the
+  // manual fields are the whole form).
+  const [sshConfig, setSshConfig] = useState<SshConfigDocument | null>(null);
+  // Which host the fields are currently filled from: an alias, or `''`
+  // for "the person typed these" (manual). Re-synced back to `''` the
+  // moment any host field is edited by hand, so the select never claims
+  // a prefill the fields have since moved away from.
+  const [selectedAlias, setSelectedAlias] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void readSshConfig().then((doc) => {
+      if (!cancelled) setSshConfig(doc);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  /** Fill the host fields from one listed block. An *editable* prefill:
+   *  every value lands in the form's own state and Save validates it, so
+   *  this writes nothing the person cannot correct before saving. */
+  function applyPicked(alias: string): void {
+    const picked = sshConfig?.hosts.find((entry) => entry.alias === alias);
+    if (!picked) return;
+    setSelectedAlias(alias);
+    setHost(picked.hostname);
+    setPort(String(picked.port));
+    setUser(picked.user);
+    setIdentityFilesText(picked.identityFiles.join('\n'));
+    // A block the file gives a name to gets that name, and nothing is
+    // written over a label the person has already chosen themselves.
+    setHostLabel((current) => (current.trim() !== '' ? current : alias));
+  }
+
+  /** Any hand edit of a host field ends the prefill's claim on it. */
+  function manualHostEdit(field: 'host' | 'port' | 'user' | 'identityFiles', next: string): void {
+    if (field === 'host') setHost(next);
+    else if (field === 'port') setPort(next);
+    else if (field === 'user') setUser(next);
+    else setIdentityFilesText(next);
+    setSelectedAlias('');
+  }
 
   function reset() {
     setHostLabel('');
@@ -63,6 +122,8 @@ export function AddRemoteWorkspaceModal({
     setRemotePath('');
     setRemoteBinary('');
     setWorkspaceLabel('');
+    setSshConfig(null);
+    setSelectedAlias('');
   }
 
   const portNumber = Number.parseInt(port, 10);
@@ -99,6 +160,16 @@ export function AddRemoteWorkspaceModal({
     onOpenChange(false);
   }
 
+  /** The picker's caption, for the states a list does not cover: the file
+   *  exists but names no concrete host, a `Match` block refuses the whole
+   *  file, or the file could not be read. Each is a fact about the file,
+   *  not a form error — the manual fields stay fully usable. */
+  const pickerCaption: string | null =
+    sshConfig?.problem ??
+    (sshConfig !== null && sshConfig.exists && sshConfig.hosts.length === 0
+      ? t('lb.remote.picker.noHosts', { path: sshConfig.path })
+      : null);
+
   return (
     <DialogPrimitive.Root
       open={open}
@@ -122,6 +193,41 @@ export function AddRemoteWorkspaceModal({
           </div>
 
           <div className="dialog-body scroll">
+            {/* The host picker: the file's own Host blocks, as a prefill.
+                Shown only when there is at least one concrete host to
+                offer — an empty list is the manual form, and a caption for
+                the "file read, nothing usable" states below it. */}
+            {sshConfig !== null && (sshConfig.hosts.length > 0 || pickerCaption !== null) && (
+              <div style={{ marginBottom: 'var(--space-3)' }}>
+                {sshConfig.hosts.length > 0 && (
+                  <>
+                    <div className="etb-label">{t('lb.remote.picker.title')}</div>
+                    <select
+                      className="input"
+                      style={{ display: 'block', width: '100%', marginTop: 4 }}
+                      value={selectedAlias}
+                      onChange={(e) => {
+                        const alias = e.target.value;
+                        setSelectedAlias(alias);
+                        if (alias !== '') applyPicked(alias);
+                      }}
+                    >
+                      <option value="">{t('lb.remote.picker.manual')}</option>
+                      {sshConfig.hosts.map((entry) => (
+                        <option key={entry.alias} value={entry.alias} disabled={entry.refused !== null}>
+                          {entry.alias}
+                          {entry.refused !== null ? ` — ${t('lb.remote.picker.unsupported')}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                <p className="caption muted" style={{ marginTop: 4 }}>
+                  {pickerCaption ?? t('lb.remote.picker.caption', { path: sshConfig.path })}
+                </p>
+              </div>
+            )}
+
             <div className="etb-label">{t('lb.remote.hostLabel')}</div>
             <input
               className="input"
@@ -138,7 +244,7 @@ export function AddRemoteWorkspaceModal({
                   className="input"
                   style={{ display: 'block', width: '100%', marginTop: 4 }}
                   value={host}
-                  onChange={(e) => setHost(e.target.value)}
+                  onChange={(e) => manualHostEdit('host', e.target.value)}
                   placeholder="example.com"
                 />
               </div>
@@ -148,7 +254,7 @@ export function AddRemoteWorkspaceModal({
                   className="input"
                   style={{ display: 'block', width: '100%', marginTop: 4 }}
                   value={port}
-                  onChange={(e) => setPort(e.target.value)}
+                  onChange={(e) => manualHostEdit('port', e.target.value)}
                   inputMode="numeric"
                 />
               </div>
@@ -161,7 +267,7 @@ export function AddRemoteWorkspaceModal({
               className="input"
               style={{ display: 'block', width: '100%', marginTop: 4 }}
               value={user}
-              onChange={(e) => setUser(e.target.value)}
+              onChange={(e) => manualHostEdit('user', e.target.value)}
             />
 
             <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
@@ -172,7 +278,7 @@ export function AddRemoteWorkspaceModal({
               style={{ display: 'block', width: '100%', marginTop: 4, minHeight: 48, resize: 'vertical' }}
               rows={2}
               value={identityFilesText}
-              onChange={(e) => setIdentityFilesText(e.target.value)}
+              onChange={(e) => manualHostEdit('identityFiles', e.target.value)}
               placeholder="/home/me/.ssh/id_ed25519"
             />
 
