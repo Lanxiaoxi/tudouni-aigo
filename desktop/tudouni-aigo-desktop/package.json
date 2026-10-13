@@ -29,7 +29,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
-    "@tauri-apps/plugin-notification": "^2.5.1",
+    "@tauri-apps/plugin-notification": "2.6.0",
     "@tauri-apps/plugin-opener": "^2.7.0",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
