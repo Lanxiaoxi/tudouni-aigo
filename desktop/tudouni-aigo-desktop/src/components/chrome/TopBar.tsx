@@ -2,7 +2,6 @@ import { FolderOpen, Search } from 'lucide-react';
 import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
-import { formatPath } from '@/utils/format';
 
 /**
  * §1·1 Top bar: program name + workspace path + the command palette entry.
@@ -40,7 +39,7 @@ export function TopBar() {
           aria-label={t('topbar.workspaceTip')}
         >
           <FolderOpen size={11} />
-          <span className="truncate">{workspace ? formatPath(workspace, 48) : '—'}</span>
+          <span className="truncate">{workspace || '—'}</span>
         </button>
       </Tip>
 

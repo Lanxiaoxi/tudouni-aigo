@@ -1157,11 +1157,16 @@ export interface AppStore {
   toolOpen: Record<string, boolean>;
   /**
    * The left rail's session list, folded on its own. A front-end preference:
-   * the protocol has no opinion on how a rail is arranged. The workspace list
-   * above it never folds with it — the two answer different questions, and
-   * "where am I" has to survive folding the conversation list.
+   * the protocol has no opinion on how a rail is arranged. It folds
+   * independently of the workspace list — the two answer different questions,
+   * and folding one must not hide the other's head.
    */
   sessionsCollapsed: boolean;
+  /**
+   * The left rail's workspace list (local + remote), folded on its own —
+   * the same independent, persisted preference as `sessionsCollapsed`.
+   */
+  workspacesCollapsed: boolean;
   /**
    * Bookmarked workspaces.
    *
@@ -1483,8 +1488,17 @@ export interface AppStore {
   toggleLeftbar(): void;
   setLeftbarVisible(v: boolean): void;
   toggleBlock(k: SidebarBlockKey): void;
+  /**
+   * Bring the right rail back and unfold one of its blocks — the entry point
+   * for the collapsed-summary chips, which stand in for a folded rail. Unlike
+   * `toggleBlock` this is one-directional: a press always opens, never folds,
+   * and it persists like the rail preferences do.
+   */
+  openSidebarBlock(k: SidebarBlockKey): void;
   /** Fold or unfold the left rail's session list. Persisted like the rails. */
   toggleSessionsCollapsed(): void;
+  /** Fold or unfold the left rail's workspace list. Persisted like the rails. */
+  toggleWorkspacesCollapsed(): void;
   toggleReasoning(id: string): void;
   toggleTool(id: string): void;
   /** Remove one in-stream block from the active session. No data involved. */
@@ -1523,6 +1537,14 @@ export interface AppStore {
   requestBlock(which: BlockKind): void;
   /** Ask for `ui(context)` **without** leaving the panel that asked. */
   refreshContext(): void;
+  /**
+   * Ask the active session's child for a fresh `ui(status)`. The breakdown
+   * is one turn's, and the turn that just ended is the one a person opens the
+   * timing panel about — so `TimingPanel` asks for it on mount rather than
+   * trusting the cached copy, the same pattern `ContextPanel` uses for its
+   * ledger (`refreshContext`).
+   */
+  refreshStatus(): void;
   requestMcp(action: 'list' | 'load' | 'unload', servers: string[]): void;
   requestSkills(): void;
   goalAction(action?: 'pause' | 'resume' | 'clear'): void;
@@ -1768,9 +1790,10 @@ type Prefs = {
   sidebarWidth: number | null;
   blockCollapsed: Record<SidebarBlockKey, boolean>;
   blockTouched: Partial<Record<SidebarBlockKey, boolean>>;
-  /** The left rail's session list, folded on its own. The workspace list above
-   *  it stays — "where am I" must survive folding the conversation list. */
+  /** The left rail's session list, folded on its own. */
   sessionsCollapsed: boolean;
+  /** The left rail's workspace list (local + remote), folded on its own. */
+  workspacesCollapsed: boolean;
   workspaces: string[];
   sshHosts: SshHostConfig[];
   remoteWorkspaces: RemoteWorkspaceEntry[];
@@ -1865,6 +1888,7 @@ function loadPrefs(): Prefs {
     blockCollapsed: { ...EMPTY_BLOCKS },
     blockTouched: {},
     sessionsCollapsed: false,
+    workspacesCollapsed: false,
     workspaces: [],
     sshHosts: [],
     remoteWorkspaces: [],
@@ -1907,6 +1931,10 @@ function loadPrefs(): Prefs {
       blockCollapsed: { ...EMPTY_BLOCKS, ...(parsed.blockCollapsed ?? {}) },
       blockTouched: parsed.blockTouched ?? {},
       sessionsCollapsed: parsed.sessionsCollapsed ?? fallback.sessionsCollapsed,
+      workspacesCollapsed:
+        parsed.workspacesCollapsed === true || parsed.workspacesCollapsed === false
+          ? parsed.workspacesCollapsed
+          : fallback.workspacesCollapsed,
       // Filtered rather than trusted: this is localStorage, it outlives every
       // build, and a stray non-string in it would reach `path.split` and take
       // the sidebar down with it.
@@ -2057,6 +2085,7 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
         blockCollapsed: s.blockCollapsed,
         blockTouched: s.blockTouched,
         sessionsCollapsed: s.sessionsCollapsed,
+        workspacesCollapsed: s.workspacesCollapsed,
         workspaces: s.workspaces,
         sshHosts: s.sshHosts,
         remoteWorkspaces: s.remoteWorkspaces,
@@ -2725,6 +2754,7 @@ export const useApp = create<AppStore>((set, get) => {
     reasoningOpen: {},
     toolOpen: {},
     sessionsCollapsed: prefs.sessionsCollapsed,
+    workspacesCollapsed: prefs.workspacesCollapsed,
     workspaces: prefs.workspaces,
     sshHosts: prefs.sshHosts,
     remoteWorkspaces: prefs.remoteWorkspaces,
@@ -3997,13 +4027,6 @@ export const useApp = create<AppStore>((set, get) => {
         // sent this would still show terminals, one snapshot later.
         sendTo(key, { v: 1, t: 'terminal_list' });
       }
-      if (p === 'timing') {
-        // The breakdown is one turn's, and the turn that just ended is the one
-        // a person clicks the chip about — so the panel asks for a fresh
-        // status rather than trusting the cached copy, which may predate the
-        // last turn's `run_finished`.
-        sendTo(key, { v: 1, t: 'status' });
-      }
     },
 
     closePanel() {
@@ -4123,8 +4146,25 @@ export const useApp = create<AppStore>((set, get) => {
       persistPrefs(get());
     },
 
+    openSidebarBlock(k) {
+      // One-directional: the chip is a door back into a folded rail, so the
+      // press always opens rather than toggling. Marking the block touched keeps
+      // the one-time auto-expand rule from ever rewriting this choice.
+      set({
+        sidebarVisible: true,
+        blockCollapsed: { ...get().blockCollapsed, [k]: false },
+        blockTouched: { ...get().blockTouched, [k]: true },
+      });
+      persistPrefs(get());
+    },
+
     toggleSessionsCollapsed() {
       set({ sessionsCollapsed: !get().sessionsCollapsed });
+      persistPrefs(get());
+    },
+
+    toggleWorkspacesCollapsed() {
+      set({ workspacesCollapsed: !get().workspacesCollapsed });
       persistPrefs(get());
     },
 
@@ -4290,6 +4330,12 @@ export const useApp = create<AppStore>((set, get) => {
       const key = get().activeKey;
       if (key === null) return;
       sendTo(key, { v: 1, t: 'context' });
+    },
+
+    refreshStatus() {
+      const key = get().activeKey;
+      if (key === null) return;
+      sendTo(key, { v: 1, t: 'status' });
     },
 
     requestMcp(action, servers) {

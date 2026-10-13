@@ -198,6 +198,9 @@ export const en = {
   'entry.turnStepLimit': 'ended · step limit',
   'entry.turnEmpty': 'ended · empty response',
   'entry.you': 'you',
+  /** Copy button on the user's own bubble (`EntryView.tsx`, `UserEntry`). */
+  'entry.userCopy': 'Copy message',
+  'entry.userCopied': 'Copied',
   'entry.assistant': 'model',
   'entry.model': 'model call',
   'entry.modelRetry': 'retry · waiting {ms}ms',
@@ -268,6 +271,8 @@ export const en = {
   'rail.drag': 'Drag to resize the sidebar. Double-click to reset it.',
   'lb.foldSessions': 'Fold the session list',
   'lb.unfoldSessions': 'Unfold the session list',
+  'lb.foldWorkspaces': 'Fold the workspace list',
+  'lb.unfoldWorkspaces': 'Unfold the workspace list',
   'lb.deleteSession': 'Delete this session',
   'lb.deleteConfirm': 'Delete? Click again to confirm',
   'lb.current': 'current',

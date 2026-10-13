@@ -113,10 +113,13 @@ export function WorkspaceSidebar() {
     () => new Set(liveIdsKey === '' ? [] : liveIdsKey.split('\u0001')),
     [liveIdsKey],
   );
-  // The session list folds on its own; the workspace list above it does not
-  // follow, because "where am I" must survive folding the conversation list.
+  // Each list folds on its own, the other never follows: "where am I" must
+  // survive folding the conversation list, and the conversation list must
+  // survive folding the place list.
   const sessionsCollapsed = useApp((s) => s.sessionsCollapsed);
   const toggleSessionsCollapsed = useApp((s) => s.toggleSessionsCollapsed);
+  const workspacesCollapsed = useApp((s) => s.workspacesCollapsed);
+  const toggleWorkspacesCollapsed = useApp((s) => s.toggleWorkspacesCollapsed);
   // The settings panel. It lives at the foot of this rail because what it holds
   // is the same kind of decision as the workspace above it — what the runtime
   // process *is* — rather than a per-turn control like the status bar's.
@@ -299,8 +302,23 @@ export function WorkspaceSidebar() {
       <div className="lb-scroll scroll">
         {/* ---------------- workspaces ---------------- */}
         <section className="lb-section">
+          {/* The session list's fold, applied to the workspace list: the head
+              is the toggle, the add button stays in the head so it survives
+              the fold — a folded list that loses its only way to grow is a
+              dead end. */}
           <div className="lb-section-head">
-            <span className="lb-title">{t('lb.workspaces')}</span>
+            <button
+              type="button"
+              className="lb-section-toggle"
+              aria-expanded={!workspacesCollapsed}
+              onClick={toggleWorkspacesCollapsed}
+            >
+              <ChevronRight size={13} className={`caret${workspacesCollapsed ? '' : ' caret-open'}`} />
+              <span className="lb-title">{t('lb.workspaces')}</span>
+              <span className="sr-only">
+                {workspacesCollapsed ? t('lb.unfoldWorkspaces') : t('lb.foldWorkspaces')}
+              </span>
+            </button>
             <Tip label={t('lb.addWorkspace')}>
               <button
                 type="button"
@@ -314,6 +332,14 @@ export function WorkspaceSidebar() {
             </Tip>
           </div>
 
+          {/* The fold. Its content is wrapped in one element (`.lb-fold-inner`)
+              so the directional drift below can animate a single child — a
+              grid cell animates as a whole, its direct children do not. */}
+          <div
+            className={`collapse${workspacesCollapsed ? ' is-collapsed' : ''}`}
+            inert={workspacesCollapsed}
+          >
+          <div className="lb-fold-inner">
           {refusal !== null ? (
             <div className="lb-refusal" role="alert">
               <span className="lb-refusal-text">{refusal}</span>
@@ -429,9 +455,14 @@ export function WorkspaceSidebar() {
               })}
             </div>
           )}
+          </div>
+        </div>
         </section>
 
-        {/* ---------------- remote workspaces (Workspace Manager, Phase 2) ---------------- */}
+        {/* ---------------- remote workspaces (Phase 2) ----------------
+            A sibling of the local list's fold, with its own head: its add
+            button must stay reachable while the local list is folded, for the
+            same reason the local head stays in the fold's section head. */}
         <section className="lb-section">
           <div className="lb-section-head">
             <span className="lb-title">{t('lb.remoteWorkspaces')}</span>
@@ -534,6 +565,8 @@ export function WorkspaceSidebar() {
           )}
         </section>
 
+        {/* Outside the fold on purpose: a dialog mounted conditionally inside a
+            folded region would be unmounted while it is open. */}
         <AddRemoteWorkspaceModal open={addRemoteOpen} onOpenChange={setAddRemoteOpen} />
 
         {/* ---------------- sessions ---------------- */}
@@ -571,7 +604,7 @@ export function WorkspaceSidebar() {
             className={`collapse${sessionsCollapsed ? ' is-collapsed' : ''}`}
             inert={sessionsCollapsed}
           >
-            <div>
+            <div className="lb-fold-inner">
               {/* **The group that made "New session" look dead.**
                   A conversation that has been opened but has not run a turn has
                   no file on disk, and the runtime's `sessions.items` is built by

@@ -116,15 +116,19 @@
 
 /* ---------------- 2. 用户输入 ---------------- */
 .e-user {
+  position: relative;
   align-self: flex-end;
   max-width: 78%;
-  padding: 8px 12px;
+  padding: 8px 34px 14px 12px;
   border: 1px solid var(--accent-border);
   border-radius: var(--radius-lg);
   background: var(--accent-subtle);
   font-size: var(--text-body);
   white-space: pre-wrap;
   word-break: break-word;
+  /* Same entrance as the step card: the bubble mounts once per prompt, so the
+     stable key runs the animation a single time instead of on re-renders. */
+  animation: step-slide-in var(--motion-base) var(--ease-out) 1;
 }
 
 .e-user .eu-tag {
@@ -133,6 +137,36 @@
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--fg-faint);
+}
+
+/* Copy affordance on the bubble's own corner (`EntryView.tsx`, `UserEntry`).
+   The right/bottom padding on `.e-user` reserves the strip the button sits
+   in, so text never runs under it. */
+.eu-copy {
+  position: absolute;
+  bottom: 5px;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.eu-copy:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* The check swap after a successful copy. */
+.eu-copy.is-copied {
+  color: var(--success);
 }
 
 /* ---------------- 3. 模型步 ---------------- */
@@ -178,6 +212,21 @@
      meaning "this is a step you can open" rather than "this is a box". */
   box-shadow: var(--shadow-card);
   overflow: hidden;
+  /* Slide up from below on first appearance instead of popping in. The card's
+     stable React key means the animation runs once — when the step block is
+     first mounted — not on every streamed chunk that re-renders it. */
+  animation: step-slide-in var(--motion-base) var(--ease-out) 1;
+}
+
+@keyframes step-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* The head bar. 面板的第一行：调用名在左、数字在右——数字读在一眼处，
@@ -1289,6 +1338,36 @@
   gap: var(--space-3);
 }
 
+/* The fold content of the two left-rail lists (workspaces, sessions).
+   `.collapse` (global.css) already transitions the **height** —
+   grid-template-rows 1fr -> 0fr — but the rows inside merely get clipped,
+   which reads as a block popping in and out. This gives the content itself
+   direction:
+     - expanding: it starts shifted **up** behind the section head and slides
+       down into place as the box opens from the top — the block arrives
+       from top to bottom;
+     - collapsing: it drifts **down** while the box closes from the bottom —
+       the bottom stays visible the longest and the top is the first to go,
+       so the block leaves bottom-up.
+   Both halves ride `transform` + `opacity`, the allowed properties, timed on
+   the same `--motion-base` / `--ease-standard` the height uses, so the drift
+   and the clip arrive together — a faster fade would look like the content
+   ghosting ahead of its own box. `transform: none` (not `translateY(0)`) in
+   the open state so it stops creating a stacking context once the motion is
+   over. */
+.lb-fold-inner {
+  opacity: 1;
+  transform: none;
+  transition:
+    transform var(--motion-base) var(--ease-standard),
+    opacity var(--motion-base) var(--ease-standard);
+}
+
+.collapse.is-collapsed > .lb-fold-inner {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
 .lb-section {
   display: flex;
   flex-direction: column;
@@ -1330,7 +1409,10 @@
   min-width: 0;
   font-size: var(--text-caption);
   font-weight: 600;
-  color: var(--fg-faint);
+  /* `--fg-muted` rather than `--fg-faint`: the two list names (workspaces,
+     sessions) are the rail's own headings and the faint placeholder shade read
+     as if they were disabled. */
+  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: var(--tracking-label);
 }
@@ -2671,6 +2753,29 @@
   height: 100%;
   min-height: 0;
   background: var(--bg);
+  /**
+   * The board is conditionally mounted, so without this it would appear in a
+   * single frame — while the right rail is *still sliding away* next to it
+   * (its `width` transition runs on), and two unrelated events read as one
+   * jump. The slide from the left is timed to the rail's own
+   * `--motion-base` / `--ease-standard` (global.css, `.app-rail`), so the
+   * board's arrival finishes where the rail's departure ends. It only ever
+   * plays on open — `boardOpen` is never persisted, the component is unmounted
+   * on close, and there is no exit animation: the old view simply returns.
+   * `prefers-reduced-motion` zeroes the duration globally (global.css).
+   */
+  animation: board-in var(--motion-base) var(--ease-standard) 1;
+}
+
+@keyframes board-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .board-head {
@@ -3057,9 +3162,19 @@
   text-overflow: ellipsis;
 }
 
+/* The model chip and the context ring share one row: the chip sits left (it can
+   grow and truncate) and the ring pins to the row's right edge. Before the ring
+   the chip was the foot's only child and kept its own line. */
+.board-card-modelrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .board-card .board-card-model {
-  align-self: flex-start;
   max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3069,6 +3184,43 @@
   background: var(--bg-muted);
   border-radius: var(--radius-xs);
   padding: 1px 6px;
+}
+
+/* The context-usage ring + percentage, at the model row's right edge. The arc
+   inherits `currentColor` from this wrapper, so the one class (`is-danger`) is
+   what flips the whole mark from muted to the destructive red when the window
+   is nearly full. A neutral track reads "measuring", never a second accent. */
+.board-card .board-card-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-muted);
+}
+
+.board-card .board-card-ctx.is-danger {
+  color: var(--destructive);
+}
+
+.board-card .board-card-ctx-ring {
+  display: block;
+  flex: none;
+}
+
+.board-card .board-card-ctx-track {
+  stroke: var(--bg-muted);
+}
+
+.board-card .board-card-ctx-arc {
+  stroke: currentColor;
+  transition: stroke-dashoffset var(--motion-base) var(--ease-out);
+}
+
+.board-card .board-card-ctx-pct {
+  font-size: 10px;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
 }
 
 .board-card .board-card-time {

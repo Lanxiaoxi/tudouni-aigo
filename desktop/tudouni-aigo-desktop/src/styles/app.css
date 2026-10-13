@@ -118,8 +118,14 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  /* The path is shown in **full**, not truncated to a character budget: this is
+     the one place a person confirms *which* directory the runtime is in, and a
+     `…` in the middle is the thing they are here to read. `min-width: 0` plus
+     the span's `.truncate` still let flexbox shrink it with an ellipsis when a
+     very long path genuinely cannot fit the bar — the cap that used to sit here
+     (`max-width: 42ch`) fired *before* a long-enough path had any room, so it
+     truncated paths that would have fit. */
   min-width: 0;
-  max-width: 42ch;
   padding: 3px 8px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -174,9 +180,10 @@
   .palette-trigger {
     width: 140px;
   }
-  .topbar .workspace {
-    max-width: 22ch;
-  }
+  /* No `max-width` on `.workspace` here: the path is shown in full, and a
+     narrow bar is where the span's own `.truncate` may step in — letting
+     flexbox shrink it by the space that is actually left, rather than a fixed
+     character budget that cut a fitting path short. */
 }
 
 /* ---------------- §1·2 会话栏 ---------------- */
@@ -526,11 +533,42 @@
   flex: none;
 }
 
+/* A chip is a button — the door back into the block it counts. Reset the
+   browser's button chrome (border, fill, font) so it still reads as a fact in
+   the row, and let hover carry the "this opens something" affordance the same
+   way the status bar's toggles do: a pale fill and a step up in text colour. */
 .collapsed-summary .cs-item {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   flex: none;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.collapsed-summary .cs-item:hover {
+  background: var(--bg-muted);
+  color: var(--fg-secondary);
+}
+
+.collapsed-summary .cs-item:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The uncollected-result state the rail's badge and the status bar's jobs
+   button emphasise: the figure takes the warning colour, label and rest stay
+   as they were — colour, not a second word. */
+.collapsed-summary .cs-item.is-attention b {
+  color: var(--warning);
 }
 
 .collapsed-summary .cs-item b {
@@ -747,6 +785,61 @@
 
 .st-attention {
   color: var(--warning);
+}
+
+/* ---------------- 状态栏 chip 的浮窗 ----------------
+   `StatusPopover` 的容器：锚在发起它的 chip 上方，内容就是 `PanelShell`
+   那一套面板组件（见 `StatusPopover`）。它是 Radix popper 的 Content ——
+   定位靠内联 `transform` —— 所以进出场动画只动 `opacity` 和独立的
+   `translate` 属性（合成在 popper 的 transform 之上），绝不写
+   `transform`，否则每帧都在覆盖 popper 的定位。
+   动画挂在 `[data-state]` 上：Radix 的 Presence 靠节点上的
+   animation-name 判定要播不播退场（`.dialog` 同一套机制），挂在内层
+   元素上退场动画不会播。
+   尺寸比居中的 `.dialog` 小一档：它是「看一眼就走」的菜单，不是
+   工作的地方；内容超高时由 `dialog-body` 自己滚。 */
+.st-popover {
+  z-index: var(--z-dialog);
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  max-height: min(420px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.st-popover[data-state='open'] {
+  animation: st-popover-in var(--motion-base) var(--ease-out) 1;
+}
+
+.st-popover[data-state='closed'] {
+  animation: st-popover-out var(--motion-fast) var(--ease-in) 1;
+}
+
+@keyframes st-popover-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes st-popover-out {
+  from {
+    opacity: 1;
+    translate: 0 0;
+  }
+  to {
+    opacity: 0;
+    translate: 0 8px;
+  }
 }
 
 /* 状态栏右半「从右往左砍」：越靠右的元素挂越严的断点。
@@ -1027,7 +1120,10 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   min-height: 28px;
 }
 
+/* `--cp-press` holds the press scale; the trigger's own `transform` and the
+   icon's rotation both build on it, so the two never overwrite each other. */
 .composer .cp-add {
+  --cp-press: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1039,7 +1135,10 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   background: var(--bg-muted);
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
+    color var(--motion-fast) var(--ease-out),
+    /* In the base state too, so the turn-back on close is eased — otherwise
+       only the open-state rule carries `transform` and the close snapshuts. */
+    transform var(--motion-base) var(--ease-out);
 }
 
 .composer .cp-add:hover:not(:disabled) {
@@ -1047,11 +1146,28 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   color: var(--fg);
 }
 
+/* Open state: Radix marks the trigger `data-state="open"` — a 45° turn of a
+   `+` *is* an `×`, so the glyph doubles as the close affordance instead of
+   swapping in a second icon. `--motion-base` (not fast): the turn is the
+   whole animation, too quick and it reads as a flicker. */
+.composer .cp-add[data-state='open'] {
+  transform: rotate(45deg) scale(var(--cp-press));
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+
 /* Press feedback: `transform` is on the allowed list, so the button dips rather
    than merely darkening. `--motion-fast` for the press and the release alike —
-   a slow release reads as lag, not as weight. */
+   a slow release reads as lag, not as weight. The scale rides in `--cp-press`
+   so it composes with whatever else the transform stack holds. Declared *after*
+   the open-state rule on purpose: while the menu is up, a pressed button
+   settles flat (the turn-out would outscore the dip at equal timing, and a
+   rotating press reads as jitter), then eases back to the `×` on release. */
 .composer .cp-add:active:not(:disabled) {
-  transform: scale(0.94);
+  --cp-press: 0.94;
+  transform: scale(var(--cp-press));
 }
 
 .composer .cp-add:disabled {

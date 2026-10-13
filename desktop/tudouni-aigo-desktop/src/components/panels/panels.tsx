@@ -34,7 +34,10 @@ import type { FileEntry } from '@/protocol/types';
 // Through the store's action rather than `setState({ panel: null })`: the
 // library borrows the connection's session filter while it is open, and this is
 // what gives it back. Every panel close in this file goes through here, so none
-// of them has to remember. See `AppStore.closePanel`.
+// of them has to remember. See `AppStore.closePanel`. The four panels that also
+// draw in the status bar's anchored popover (`SubagentsPanel`, `ContextPanel`,
+// `TimingPanel`, `AuditPanel`) have no pick-that-closes path, and Esc there is
+// the popover's own — so closing the store's panel from them is a no-op.
 const closePanel = () => useApp.getState().closePanel();
 
 /* ============================================================
@@ -1308,6 +1311,13 @@ export function ContextPanel() {
 export function TimingPanel() {
   const t = useT();
   const timing = useSessionField((rt) => rt.status?.timing ?? null, null);
+  // The split is one turn's, and the turn that just ended is the one a person
+  // opens this about — so the panel asks for a fresh status rather than
+  // trusting the cached copy, the way `ContextPanel` does for its ledger.
+  const refreshStatus = useApp((s) => s.refreshStatus);
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
 
   const rows =
     timing === null

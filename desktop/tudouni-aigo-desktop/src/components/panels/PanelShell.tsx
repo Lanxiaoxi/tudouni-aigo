@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { useT } from '@/i18n/useT';
@@ -9,7 +9,39 @@ import { useT } from '@/i18n/useT';
  * §5：每块需要「标识 + 条数 + 空状态文案」；
  * component-states.md §9：容器 radius-xl + shadow-modal，Esc / 遮罩点击关闭。
  * Radix Dialog 负责 Esc、焦点陷阱与 aria 关系，视觉全部来自设计系统。
+ *
+ * **The surface context.** The shell is drawn in two places: inside the
+ * Radix dialog (`PanelHost`), where the primitives below belong, and inside
+ * the status bar's anchored popover (`StatusPopover`), where the same
+ * primitives would throw "Missing Dialog.Root" — and where the Esc, the
+ * outside-click and the focus return are already the popover's. The default
+ * surface is `dialog`, so `PanelHost` needs no wrapper; the popover side
+ * provides `PopoverSurface`.
  */
+type PanelSurface =
+  | { kind: 'dialog' }
+  | { kind: 'popover'; close: () => void };
+
+const DIALOG_SURFACE: PanelSurface = { kind: 'dialog' };
+const PanelSurfaceContext = createContext<PanelSurface>(DIALOG_SURFACE);
+
+/**
+ * Marks the shell as drawn inside a popover: the header's close button is a
+ * plain button (no Dialog primitives), and `close` is the popover's own
+ * open-state setter — the same state the popover's Esc and outside-click go
+ * through, so the three ways out cannot disagree about what is open.
+ */
+export const PopoverSurface = ({
+  close,
+  children,
+}: {
+  close: () => void;
+  children: ReactNode;
+}) => (
+  <PanelSurfaceContext.Provider value={{ kind: 'popover', close }}>
+    {children}
+  </PanelSurfaceContext.Provider>
+);
 export function PanelShell({
   title,
   count,
@@ -24,29 +56,51 @@ export function PanelShell({
   footer?: ReactNode;
 }) {
   const t = useT();
+  const surface = useContext(PanelSurfaceContext);
+  // The header's close button: the dialog's own `Close` primitive in the
+  // modal case, the popover's `setOpen(false)` when the popover is the surface.
+  const onSurfaceClose = surface.kind === 'popover' ? surface.close : undefined;
+
+  const titleNode =
+    surface.kind === 'dialog' ? (
+      <DialogPrimitive.Title className="dialog-title">{title}</DialogPrimitive.Title>
+    ) : (
+      <span className="dialog-title">{title}</span>
+    );
+  const descNode =
+    surface.kind === 'dialog' ? (
+      note ? (
+        <DialogPrimitive.Description className="dialog-desc">{note}</DialogPrimitive.Description>
+      ) : (
+        <DialogPrimitive.Description className="sr-only">{title}</DialogPrimitive.Description>
+      )
+    ) : note ? (
+      <span className="dialog-desc">{note}</span>
+    ) : (
+      <span className="sr-only">{title}</span>
+    );
+
   return (
     <>
       <div className="dialog-head">
         <div className="grow">
-          <DialogPrimitive.Title className="dialog-title">{title}</DialogPrimitive.Title>
-          {note ? (
-            <DialogPrimitive.Description className="dialog-desc">
-              {note}
-            </DialogPrimitive.Description>
-          ) : (
-            <DialogPrimitive.Description className="sr-only">
-              {title}
-            </DialogPrimitive.Description>
-          )}
+          {titleNode}
+          {descNode}
         </div>
 
         {count !== undefined ? <span className="count">{count}</span> : null}
 
-        <DialogPrimitive.Close asChild>
-          <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')}>
+        {surface.kind === 'dialog' ? (
+          <DialogPrimitive.Close asChild>
+            <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')}>
+              <X size={14} />
+            </button>
+          </DialogPrimitive.Close>
+        ) : (
+          <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')} onClick={onSurfaceClose}>
             <X size={14} />
           </button>
-        </DialogPrimitive.Close>
+        )}
       </div>
 
       {children}

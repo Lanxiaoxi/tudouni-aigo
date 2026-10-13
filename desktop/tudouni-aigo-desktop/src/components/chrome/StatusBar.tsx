@@ -1,3 +1,5 @@
+import { useEffect, useState, type ReactNode } from 'react';
+import * as PopoverPrimitive from '@radix-ui/react-popover';
 import {
   Boxes,
   Bot,
@@ -30,6 +32,13 @@ import type { TKey } from '@/i18n';
 import { Tip } from '@/components/ui/kit';
 import { formatBytes, formatCpu, formatDuration, formatPercent, formatTokens } from '@/utils/format';
 import type { Phase } from '@/runtime/adapt';
+import {
+  AuditPanel,
+  ContextPanel,
+  SubagentsPanel,
+  TimingPanel,
+} from '@/components/panels/panels';
+import { PopoverSurface } from '@/components/panels/PanelShell';
 
 /**
  * §1·6 The status bar.
@@ -143,7 +152,6 @@ export function StatusBar() {
   const attachedTerminalId = useSessionField((rt) => rt.activeTerminalId, null);
   const hasSpoken = useSessionField((rt) => rt.hasSpoken, false);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
-  const openPanel = useApp((s) => s.openPanel);
   const setAutopilot = useApp((s) => s.setAutopilot);
   const toggleQuiet = useApp((s) => s.toggleQuiet);
   const toggleTerminalView = useApp((s) => s.toggleTerminalView);
@@ -327,11 +335,13 @@ export function StatusBar() {
         </Tip>
 
         {/* Jobs: emphasised when a result is still uncollected. */}
-        <Tip label={`${t('block.jobs')} · ${t('status.jobsUncollected')} ${uncollected}`}>
+        <StatusPopover
+          label={`${t('block.jobs')} · ${t('status.jobsUncollected')} ${uncollected}`}
+          content={<SubagentsPanel />}
+        >
           <button
             type="button"
             className={`st-toggle hide-b900${uncollected > 0 ? ' st-attention' : ''}`}
-            onClick={() => openPanel('subagents')}
           >
             <Boxes size={11} />
             <span className="st-metric">
@@ -339,18 +349,20 @@ export function StatusBar() {
               {jobs.length}
             </span>
           </button>
-        </Tip>
+        </StatusPopover>
 
-        <Tip label={`${t('status.subagents')} ${subagents.length}`}>
+        <StatusPopover
+          label={`${t('status.subagents')} ${subagents.length}`}
+          content={<SubagentsPanel />}
+        >
           <button
             type="button"
             className={`st-toggle hide-b940${subagents.length > 0 ? ' is-on' : ''}`}
-            onClick={() => openPanel('subagents')}
           >
             <Bot size={11} />
             <span className="st-metric">{subagents.length}</span>
           </button>
-        </Tip>
+        </StatusPopover>
 
         {/* What the last request actually sent. With an unknown window, the
             amount only — a wrong percentage is worse than no percentage. The
@@ -363,7 +375,7 @@ export function StatusBar() {
             ledger the /context command draws — a dialog, not a block dropped
             into the transcript behind it. Disabled while no prompt has been
             measured, so the click can never be a lie. */}
-        <Tip
+        <StatusPopover
           label={
             usage.used === null
               ? t('status.contextNoPrompt')
@@ -371,11 +383,11 @@ export function StatusBar() {
                 ? t('status.contextUnknown', { used: formatTokens(usage.used) })
                 : `${formatTokens(usage.used)} / ${formatTokens(usage.window)} tok · ${t('cmd.context.desc')}`
           }
+          content={<ContextPanel />}
         >
           <button
             type="button"
             className="st-toggle hide-b980"
-            onClick={() => openPanel('context')}
             disabled={usage.used === null}
           >
             <Gauge size={11} />
@@ -387,7 +399,7 @@ export function StatusBar() {
                   : `${formatPercent(usage.percent)} · ${formatTokens(usage.used)}`}
             </span>
           </button>
-        </Tip>
+        </StatusPopover>
 
         {/* The context ledger's own estimate. Labelled as an estimate and never
             merged into the chip above. */}
@@ -443,31 +455,113 @@ export function StatusBar() {
             human / backoff), which is more than one hover can carry. It is
             never disabled — the panel answers even for a new session, with
             "no turn has run yet" as the true answer. */}
-        <Tip label={`${t('status.elapsed')} · ${t('panel.timing.desc')}`}>
+        <StatusPopover
+          label={`${t('status.elapsed')} · ${t('panel.timing.desc')}`}
+          content={<TimingPanel />}
+        >
           <button
             type="button"
             className="st-toggle hide-b1120"
-            onClick={() => openPanel('timing')}
           >
             <Layers size={11} />
             <span className="st-metric">{formatDuration(turnMs)}</span>
           </button>
-        </Tip>
+        </StatusPopover>
 
         {/* Audit log: the file name only; the full path is in the tooltip and
             in the /audit panel. */}
-        <Tip label={audit || undefined}>
+        <StatusPopover
+          label={audit || undefined}
+          content={<AuditPanel />}
+        >
           <button
             type="button"
             className="st-toggle hide-b1200"
-            onClick={() => openPanel('audit')}
             disabled={!audit}
           >
             <FolderOpen size={11} />
             <span className="st-path">{audit ? audit.split(/[\\/]/).pop() : '—'}</span>
           </button>
-        </Tip>
+        </StatusPopover>
       </div>
     </footer>
+  );
+}
+
+/**
+ * The status bar's floating panels.
+ *
+ * The chips that used to raise a centered dialog (`openPanel('audit')` and
+ * friends) now raise the same panel content anchored **above their own
+ * button**: a click lifts it, and the same click — or Esc, or a click
+ * anywhere else — puts it back. The open state is local to this component,
+ * not the store's `panel`: the dialog is the window's one panel, and this is
+ * one chip's own menu, so the two never share a state field. They stay
+ * mutually exclusive in both directions — lifting a popover closes a dialog
+ * that is open (the `onOpenChange` below), and a dialog opening from a
+ * command drops every popover (the effect that watches `s.panel`).
+ *
+ * The content is the **same panel components** the dialog draws, wrapped in
+ * `PopoverSurface` so `PanelShell` renders plain elements instead of the
+ * Radix dialog primitives (which would throw outside a `Dialog.Root`) and so
+ * the header's close button goes to this popover's open state.
+ */
+function StatusPopover({
+  label,
+  content,
+  children,
+}: {
+  label: ReactNode;
+  content: ReactNode;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const storePanel = useApp((s) => s.panel);
+
+  // A dialog opening drops this popover: the two are two ways of showing a
+  // panel, and only one can be up. In practice a modal dialog blocks the
+  // click that would lift this (Radix takes `pointer-events` off the body),
+  // so this mostly covers the keyboard paths — `Ctrl+K`, a command.
+  useEffect(() => {
+    if (storePanel !== null) setOpen(false);
+  }, [storePanel]);
+
+  return (
+    <PopoverPrimitive.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (next) useApp.getState().closePanel();
+        setOpen(next);
+      }}
+    >
+      {/* The chip's own button is the trigger **and** the anchor (no custom
+          Anchor, so Radix wraps the trigger as one). `Tip` wraps the
+          *outside*, not the inside: a plain function component in the
+          `asChild` chain would swallow the ref and the click the trigger
+          needs to merge into the button. The press toggles on purpose —
+          the second press is the "close it", and Esc / a click elsewhere
+          go through the popover's own dismissal. */}
+      {/* The tooltip stays a constant label, even while the panel is up:
+          dropping it to `undefined` would change `Tip`'s own tree and
+          remount the chip mid-session. Sides never collide either — the
+          tooltip sits below the chip, the panel above it. */}
+      <Tip label={label}>
+        <PopoverPrimitive.Trigger asChild>{children}</PopoverPrimitive.Trigger>
+      </Tip>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          className="st-popover"
+          side="top"
+          align="end"
+          sideOffset={6}
+          aria-label={typeof label === 'string' ? label : undefined}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          <PopoverSurface close={() => setOpen(false)}>
+            {content}
+          </PopoverSurface>
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   );
 }

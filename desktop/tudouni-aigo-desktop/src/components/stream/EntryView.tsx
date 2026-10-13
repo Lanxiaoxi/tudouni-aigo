@@ -1,12 +1,14 @@
-import { memo } from 'react';
+import { memo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Ban,
   Boxes,
   Brain,
   Camera,
+  Check,
   ChevronRight,
   CircleAlert,
+  Copy,
   Info,
   Layers,
   Minus,
@@ -16,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import { copyText } from '@/utils/clipboard';
 import { Badge, RiskTag } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
 import { InBlock } from './InBlock';
@@ -156,6 +159,20 @@ function TurnHead({ entry }: { entry: Extract<Entry, { kind: 'turn' }> }) {
 
 function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
   const t = useT();
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+
+  // Copies the prompt exactly as typed — `entry.text`, not the rendered
+  // bubble, whose `eu-tag` line is chrome, not part of the message.
+  const onCopy = async () => {
+    const ok = await copyText(entry.text);
+    if (ok) {
+      setCopied(true);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setCopied(false), 1500);
+    }
+  };
+
   return (
     // The second kind of rail anchor. A turn restored by `session_load` has no
     // `turn` head — the stored message list carries no turn boundary — so those
@@ -163,6 +180,15 @@ function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
     <div className="e-user" data-anchor={entry.id}>
       <span className="eu-tag">{t('entry.you')}</span>
       {entry.text}
+      <button
+        type="button"
+        className={`eu-copy${copied ? ' is-copied' : ''}`}
+        aria-label={copied ? t('entry.userCopied') : t('entry.userCopy')}
+        title={copied ? t('entry.userCopied') : t('entry.userCopy')}
+        onClick={() => void onCopy()}
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </button>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useT } from '@/i18n/useT';
+import { copyText } from '@/utils/clipboard';
 
 /**
  * Markdown rendering.
@@ -46,28 +47,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
   const copy = async () => {
     const text = preRef.current?.innerText ?? '';
-    let ok = false;
-    try {
-      await navigator.clipboard.writeText(text);
-      ok = true;
-    } catch {
-      // The webview can still refuse (no focus, permission denied). The
-      // fallback writes through a throwaway selection: `execCommand('copy')`
-      // copies the *selection*, so a bare call would copy whatever the user
-      // happened to have selected — or nothing at all.
-      try {
-        const area = document.createElement('textarea');
-        area.value = text;
-        area.style.position = 'fixed';
-        area.style.opacity = '0';
-        document.body.appendChild(area);
-        area.select();
-        ok = document.execCommand('copy');
-        document.body.removeChild(area);
-      } catch {
-        ok = false;
-      }
-    }
+    const ok = await copyText(text);
     if (ok) {
       setCopied(true);
       window.clearTimeout(timer.current);

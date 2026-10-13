@@ -10,8 +10,9 @@ import {
 } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
+import { useTurnClock } from '@/hooks/useTurnClock';
 import { EmptyState, Progress, Tip } from '@/components/ui/kit';
-import { formatRelative } from '@/utils/format';
+import { formatDuration, formatPercent, formatRelative, formatTokens } from '@/utils/format';
 
 /**
  * The session board: what every session in this workspace is doing, on one
@@ -183,6 +184,27 @@ export function SessionBoard() {
         const todoDone = live.filter((task) => task.status === 'completed').length;
         const todoTotal = live.length;
         const todoSentence = row?.todos ?? '';
+        // Context usage, read the same way the status bar reads it (`selectUsage`):
+        // the last successful call's prompt tokens against the window, off the same
+        // three fields. One source keeps the card's ring and the bar from ever
+        // disagreeing. Null is "no measurement", never 0.
+        const liveCall = bucket.liveCall;
+        const ctxUsed = liveCall ? liveCall.promptTokens : (bucket.status?.lastPromptTokens ?? null);
+        const ctxWindow = bucket.status?.window ?? bucket.uiState?.modelWindow ?? null;
+        const ctxPercent =
+          ctxUsed !== null && ctxWindow !== null && ctxWindow > 0 ? ctxUsed / ctxWindow : null;
+        // For a running card, the in-flight turn's own start stamp, so the card's
+        // foot can time the turn the way the status bar does (`now - startedAt`).
+        let turnStartedAt: number | null = null;
+        if (status === 'running') {
+          for (let i = bucket.entries.length - 1; i >= 0; i -= 1) {
+            const e = bucket.entries[i];
+            if (e.kind === 'turn' && e.status === 'running') {
+              turnStartedAt = e.startedAt;
+              break;
+            }
+          }
+        }
         return [
           {
             key,
@@ -197,6 +219,10 @@ export function SessionBoard() {
             model: bucket.session?.model ?? '',
             provider: bucket.session?.provider ?? '',
             modifiedAt: row?.modifiedAt ?? null,
+            ctxPercent,
+            ctxUsed,
+            ctxWindow,
+            turnStartedAt,
             // The handshake's own "this conversation was started fresh" fact,
             // shown as the card's one flag — the same word the session bar
             // uses (`session.fresh`), never a second vocabulary for it.
@@ -219,6 +245,14 @@ export function SessionBoard() {
       })),
     [cards],
   );
+
+  // A running card times its in-flight turn like the status bar does (`now -
+  // startedAt`), and the runtime sends no duration until the turn ends — so the
+  // board needs the same ticking clock, active only while some card is running.
+  // An idle board has nothing to recount, and a clock left on would repaint the
+  // whole board every second for a figure that cannot change.
+  const anyRunning = cards.some((card) => card.status === 'running');
+  const now = useTurnClock(anyRunning);
 
   // `listed` false means no runtime has answered for this workspace yet, which is
   // a different statement from "no sessions are open" — so the two are drawn
@@ -407,11 +441,32 @@ export function SessionBoard() {
                       </span>
                     ) : null}
                     <span className="board-card-foot">
-                      {card.model !== '' ? (
-                        <span className="board-card-model">
-                          {card.provider !== '' ? `${card.provider}/${card.model}` : card.model}
-                        </span>
-                      ) : null}
+                      <span className="board-card-modelrow">
+                        {card.model !== '' ? (
+                          <span className="board-card-model">
+                            {card.provider !== '' ? `${card.provider}/${card.model}` : card.model}
+                          </span>
+                        ) : null}
+                        {/* Context usage, the status bar's own numbers read off
+                            this card's own session (`ctxPercent` is built from the
+                            same three fields `selectUsage` reads), drawn as a
+                            small ring plus percentage at the model chip's right
+                            edge. Null is "no measurement" — nothing drawn, never
+                            a fake 0%. */}
+                        {card.ctxPercent !== null ? (
+                          <span
+                            className={`board-card-ctx${card.ctxPercent >= 0.9 ? ' is-danger' : ''}`}
+                            title={
+                              card.ctxWindow !== null
+                                ? `${formatTokens(card.ctxUsed)} / ${formatTokens(card.ctxWindow)} tok`
+                                : formatTokens(card.ctxUsed)
+                            }
+                          >
+                            <ContextRing value={card.ctxPercent} />
+                            <span className="board-card-ctx-pct mono">{formatPercent(card.ctxPercent)}</span>
+                          </span>
+                        ) : null}
+                      </span>
                       <span className="board-card-meta">
                         <span className="board-card-meta-counts">
                           {card.messages !== null
@@ -421,7 +476,14 @@ export function SessionBoard() {
                             ? ` · ${t('panel.resume.steps', { n: card.steps })}`
                             : ''}
                         </span>
-                        {card.modifiedAt !== null ? (
+                        {card.status === 'running' && card.turnStartedAt !== null ? (
+                          // A running card replaces the relative "xx ago" with the
+                          // turn's elapsed time — the same number the status bar
+                          // draws (`now - startedAt`, ticked by the board's own
+                          // `useTurnClock`). No stamp (a turn in flight whose head
+                          // is missing) falls back to the ordinary time.
+                          <span className="board-card-time is-turn">{formatDuration(now - card.turnStartedAt)}</span>
+                        ) : card.modifiedAt !== null ? (
                           <span className="board-card-time">
                             {formatRelative(card.modifiedAt * 1000)}
                           </span>
@@ -541,4 +603,40 @@ function BoardColDot({ status }: { status: RowStatus }) {
   // and an explicit class beats an absence-based CSS selector (see
   // `statusClass`), which is also what keeps the dot and the count in step.
   return <span className={`board-col-dot ${statusClass(status)}`} aria-hidden />;
+}
+
+/**
+ * A tiny circular gauge for a card's context usage.
+ *
+ * **A ring, deliberately not the kit's linear `Progress`**, because the card's
+ * foot has one short horizontal row and a bar would fight the model chip for the
+ * same width; a 14px ring sits at the row's right edge and the percentage reads
+ * beside it. The geometry is one circle's circumference: the fill is
+ * `strokeDasharray = C` and `strokeDashoffset = C * (1 - value)`, so the drawn
+ * arc is exactly `value` of the loop. The colour comes from the parent's
+ * `currentColor` — neutral up to 90% of the window, then the card's own
+ * `is-danger` class turns it `--destructive` — because "the window is nearly
+ * full" is the one reading a bare green would lie about.
+ */
+function ContextRing({ value }: { value: number }) {
+  const R = 5.5;
+  const C = 2 * Math.PI * R;
+  const pct = Math.min(1, Math.max(0, value));
+  return (
+    <svg className="board-card-ctx-ring" width="14" height="14" viewBox="0 0 14 14" aria-hidden>
+      <circle className="board-card-ctx-track" cx="7" cy="7" r={R} fill="none" strokeWidth="2.5" />
+      <circle
+        className="board-card-ctx-arc"
+        cx="7"
+        cy="7"
+        r={R}
+        fill="none"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+        strokeDasharray={C}
+        strokeDashoffset={C * (1 - pct)}
+        transform="rotate(-90 7 7)"
+      />
+    </svg>
+  );
 }
