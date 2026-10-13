@@ -77,6 +77,11 @@ use std::time::Duration;
 /// is" so `runtime_shutdown` does not need to know which of those two shapes
 /// it is holding.
 pub trait RuntimeProcess: Send {
+    /// The OS process id if this runtime runs locally, or `None` for a
+    /// remote runtime (whose process lives on the far end of an SSH
+    /// connection and has no PID visible from this machine).
+    fn pid(&self) -> Option<u32>;
+
     /// Polls for exit without blocking. `Ok(Some(code))` means it has
     /// already ended; `Ok(None)` means it is still running.
     ///
@@ -315,6 +320,10 @@ fn authenticate(session: &mut Session, target: &SshTarget) -> Result<(), String>
 }
 
 impl RuntimeProcess for SshRuntimeProcess {
+    fn pid(&self) -> Option<u32> {
+        None
+    }
+
     fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
         if let Some(code) = self.exit_status {
             return Ok(Some(code));
@@ -404,6 +413,10 @@ impl LocalRuntimeProcess {
 }
 
 impl RuntimeProcess for LocalRuntimeProcess {
+    fn pid(&self) -> Option<u32> {
+        Some(self.child.id())
+    }
+
     fn try_wait(&mut self) -> std::io::Result<Option<i32>> {
         Ok(self.child.try_wait()?.map(|status| status.code().unwrap_or(-1)))
     }

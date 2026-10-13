@@ -2541,9 +2541,11 @@ fn resource_usage(app: AppHandle) -> Result<ResourceUsage, String> {
         let state: State<Bridge> = app.state();
         let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
         for current in guard.children.values() {
-            if let Some(process) = system.process(Pid::from(current.child.id() as usize)) {
-                runtimes_cpu += process.cpu_usage() as f64 / cores;
-                runtimes_mem += process.memory();
+            if let Some(pid) = current.process.pid() {
+                if let Some(process) = system.process(Pid::from(pid as usize)) {
+                    runtimes_cpu += process.cpu_usage() as f64 / cores;
+                    runtimes_mem += process.memory();
+                }
             }
         }
     }

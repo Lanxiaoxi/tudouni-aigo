@@ -13,7 +13,8 @@
  * time (§8.2), not the platform doing the staging.
  */
 
-import { copyFileSync, createHash, createReadStream, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, createReadStream, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
