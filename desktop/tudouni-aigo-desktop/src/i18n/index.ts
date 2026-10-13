@@ -337,6 +337,69 @@ export const en = {
     'Connect over SSH to an already-installed runtime. The host and this workspace are saved together.',
   'lb.emptyRemoteWorkspaces.hint': 'Add a host and a directory on it.',
   'lb.remote.save': 'Save',
+
+  /* ---------------- the add-remote-workspace wizard ----------------
+   * Three steps, one question each: which host, connect, which directory.
+   * The copy states what each step actually knows — a host list is the
+   * *file's* contents (never a claim that a host is reachable), a failed
+   * connection is its own sentence, and a directory is chosen from what the
+   * far end reported rather than typed from memory. */
+  'rw.title': 'Add a remote workspace',
+  'rw.steps': 'Steps',
+  'rw.step.host.name': 'Host',
+  'rw.step.connect.name': 'Connect',
+  'rw.step.workspace.name': 'Workspace',
+  'rw.step.host.desc': 'Choose a host from your SSH configuration, or add a new one.',
+  'rw.step.connect.desc': 'Connect and see what is on the other end before choosing anything.',
+  'rw.step.workspace.desc': 'Pick the directory the agent should work in.',
+  'rw.host.reading': 'Reading ~/.ssh/config…',
+  'rw.host.list': 'Hosts from your SSH configuration',
+  'rw.host.file': 'Read from {path}',
+  'rw.host.noHosts': 'No named Host block in {path} — add one below.',
+  'rw.host.noFile': 'No {path} yet — add your first host below.',
+  'rw.host.unsupported': 'not usable',
+  'rw.host.addNew': 'Add a new host',
+  'rw.host.addNewHint':
+    'Saved into your own ~/.ssh/config, so ssh and this application both see it. A password is never written there.',
+  'rw.host.saveToConfig': 'Save and continue',
+  /* The preview of the block about to be appended. This is the person's own
+     ~/.ssh/config, so the exact lines are shown before the write rather than
+     described — a summary of a config change is not the change. */
+  'rw.host.preview': 'This block will be added:',
+  'rw.host.previewWhere': 'Appended to {path} — nothing above it is changed.',
+  'rw.newHost.incomplete': 'A name, an address and a user are all required.',
+  'rw.newHost.badPort': 'The port must be a number between 1 and 65535.',
+  'rw.newHost.badName':
+    'That name cannot be used: it may not contain spaces, or any of * ? ! #.',
+  'rw.field.alias': 'Name',
+  'rw.field.hostname': 'Address',
+  'rw.field.port': 'Port',
+  'rw.field.user': 'User',
+  'rw.field.identity': 'Private key paths (one per line, optional)',
+  'rw.field.identityHint':
+    'Leave blank to use the usual keys (~/.ssh/id_ed25519 and friends) if they exist.',
+  'rw.password': 'Password (only if this host needs one)',
+  'rw.passwordPlaceholder': 'leave blank for key authentication',
+  'rw.passwordHint':
+    'Kept in this application’s own preferences, never written to ~/.ssh/config — OpenSSH does not know that keyword and would refuse to start.',
+  'rw.connect': 'Connect',
+  'rw.connecting': 'Connecting…',
+  'rw.up': 'Parent directory',
+  'rw.noSubdirs': 'No subdirectories here.',
+  'rw.newFolder': 'New folder',
+  'rw.newFolderPlaceholder': 'folder name',
+  'rw.pathLabel': 'Or type a directory path',
+  'rw.pathHint': 'Absolute, or starting with ~ for the account’s home directory.',
+  'rw.notAWorkspace': 'This directory cannot be the workspace:',
+  'rw.willUse': 'The agent will work in',
+  'rw.fact.home': 'home',
+  'rw.fact.runtime': 'Runtime',
+  'rw.fact.runtimeUnknown': 'installed (version unknown)',
+  'rw.fact.noRuntime': 'no Runtime installed yet',
+  'rw.fact.noConfig': 'no model configured yet',
+  'rw.open': 'Open workspace',
+  'rw.installAndOpen': 'Install Runtime and open',
+
   /* The host picker in the Add Remote Workspace form: it lists the
      `~/.ssh/config`'s concrete Host blocks so the form can prefill from
      what OpenSSH is already configured with. Each caption states the
@@ -1046,6 +1109,7 @@ export const en = {
   /* ---------------- misc ---------------- */
   'common.close': 'Close',
   'common.cancel': 'Cancel',
+  'common.back': 'Back',
   'common.confirm': 'Confirm',
   'common.none': 'none',
   'common.unknown': 'unknown',

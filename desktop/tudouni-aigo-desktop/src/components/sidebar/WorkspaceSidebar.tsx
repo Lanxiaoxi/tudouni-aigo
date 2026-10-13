@@ -72,7 +72,28 @@ export function WorkspaceSidebar() {
   // session there is nothing to ask, so the two affordances are disabled rather
   // than offered and then refused.
   const hasSession = rt !== null && rt.ready;
-  const currentWorkspace = rt?.session?.workspace ?? rt?.workspace ?? '';
+  /**
+   * The workspace the active session is actually in — but **only when it is a
+   * local one**.
+   *
+   * A remote session's `init.workspace` is a path on the *remote* host
+   * (`/home/tudouni/actions-runner`), and it is not a directory on this machine.
+   * This value feeds the **local** workspace list below — the row that means
+   * "open this directory on this computer" — so letting a remote path through
+   * put a row in the local list that could only ever fail: pressing it called
+   * `enterWorkspace('/home/tudouni/actions-runner')`, which asks the local
+   * bridge for a directory that does not exist here. It also read as the current
+   * workspace, so the rail showed the same place twice at once — once as a local
+   * row marked current and once as the remote row it really was.
+   *
+   * The remote half of "where am I" is answered by `currentRemoteWorkspaceId`
+   * below, which keys off the session's own entry rather than off a path — a
+   * remote path is not unique across hosts.
+   */
+  const currentWorkspace =
+    rt !== null && rt.remoteWorkspaceId !== null
+      ? ''
+      : rt?.session?.workspace ?? rt?.workspace ?? '';
   const currentSessionId = rt?.session?.id ?? null;
   /**
    * Whether any session in this workspace has a live child — the board's gate,
@@ -1081,11 +1102,35 @@ function AddWorkspaceMenu({
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <div className="plus-menu-list">
-            <button type="button" className="plus-item" onClick={onLocal}>
+            {/* **Each item closes the menu, and that is not cosmetic.** The
+                composer's own plus menu does the same (see `PlusMenu`'s
+                `close()`), for a reason that shows up here worse than there:
+                choosing "Remote" opens a **dialog**, and a popover left mounted
+                floats over the sidebar at `--z-dialog`-adjacent stacking —
+                on screen it reads as the workspace list being covered by a menu
+                that is still waiting for an answer it has already been given.
+                Local already closed by accident of opening a native picker;
+                relying on that difference would make the two items behave
+                differently for no reason a person could see. */}
+            <button
+              type="button"
+              className="plus-item"
+              onClick={() => {
+                onMenuOpenChange(false);
+                onLocal();
+              }}
+            >
               <Folder size={15} />
               <span className="plus-item-label">{t('lb.workspaceKind.local')}</span>
             </button>
-            <button type="button" className="plus-item" onClick={onRemote}>
+            <button
+              type="button"
+              className="plus-item"
+              onClick={() => {
+                onMenuOpenChange(false);
+                onRemote();
+              }}
+            >
               <Server size={15} />
               <span className="plus-item-label">{t('lb.workspaceKind.remote')}</span>
             </button>

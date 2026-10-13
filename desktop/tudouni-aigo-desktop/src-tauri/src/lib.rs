@@ -81,6 +81,12 @@ mod remote_install;
 /// `internal/bootstrap/configsync.go`.
 mod remote_config;
 
+/// The connect step of the "add a remote workspace" flow: one dial, then the
+/// facts only the far end can answer — its home, its platform, whether the
+/// Runtime is installed, and what directories it has. See its own module doc
+/// for why the flow connects *before* it asks a person anything.
+mod remote_probe;
+
 /// How long a graceful shutdown is given before the child is killed.
 ///
 /// The Go client hard-codes the same 30 seconds inside `Close()`, and for the
@@ -405,17 +411,14 @@ pub struct RemoteAttachOptions {
     /// immediately with nothing to explain why.
     remote_binary: String,
     /// The workspace **on the remote host** — the directory the runtime
-    /// should treat as its working directory and, through it, the root the
-    /// file tools may touch.
+    /// treats as its working directory and, through it, the root the file
+    /// tools may touch.
     ///
-    /// Not yet used to start the process: Phase 1 has no equivalent of
-    /// `Command::current_dir` over a plain SSH exec, and acting on this
-    /// field (for instance by prefixing the command with `cd`) is Phase 2
-    /// work ("远端文件浏览与连接管理"), done together with the rest of
-    /// remote workspace handling rather than piecemeal here. It is still
-    /// accepted and stored now so the Workspace Manager has somewhere to
-    /// keep it once it exists.
-    #[allow(dead_code)]
+    /// **Required, and it is what the remote command `cd`s into.**
+    /// A non-PTY SSH exec starts in the account's home directory, and the
+    /// runtime refuses the home directory as a workspace — so without this the
+    /// session died on start-up before it could say anything, whichever
+    /// directory the person had chosen. See `build_remote_command`.
     remote_workspace: String,
     session_id: Option<String>,
     max_steps: Option<i64>,
@@ -841,6 +844,14 @@ fn spawn_remote(app: &AppHandle, options: &RemoteAttachOptions) -> Result<ChildK
     if options.remote_binary.trim().is_empty() {
         return Err("no remote runtime binary path was given".to_string());
     }
+    // Refused rather than defaulted, for the same reason the local path refuses
+    // a missing workspace: the workspace **is** the file tools' boundary, and
+    // there is no honest value to substitute for one the caller did not give.
+    // Note this is the remote directory, not a local one — nothing here touches
+    // the filesystem of this machine.
+    if options.remote_workspace.trim().is_empty() {
+        return Err("no remote workspace directory was given".to_string());
+    }
 
     let command = build_remote_command(options);
 
@@ -988,23 +999,42 @@ fn spawn_remote(app: &AppHandle, options: &RemoteAttachOptions) -> Result<ChildK
     Ok(key)
 }
 
-/// Builds the one command line `spawn_remote` asks the SSH session to run:
-/// the absolute remote binary path, `--runtime-stdio`, and the same flags
-/// `spawn`'s local `Command` builds — each shell-quoted so a session id or
-/// any other value cannot change what the remote shell runs.
+/// Builds the one command line `spawn_remote` asks the SSH session to run.
 ///
-/// This mirrors `protocol.buildRuntimeCommand` on the Go side exactly,
-/// including what it deliberately does not do: there is no `cd` into a
-/// remote workspace here, because Phase 1 — which this function belongs to
-/// — assumes an already-installed, already-configured remote runtime and
-/// defers remote workspace handling to Phase 2 ("远端文件浏览与连接管理").
-/// Until then, the remote command runs wherever a non-interactive SSH exec
-/// starts a command for this account, same as the Go reference backend.
+/// # Why this begins with `cd`
+///
+/// A non-PTY SSH exec starts in the account's **home directory**, and the
+/// runtime takes its working directory as the workspace — then refuses the home
+/// directory outright (`paths.UnsafeWorkspace`), because `read_file` needs no
+/// approval and starting there would hand over `.ssh`, other projects' `.env`
+/// files and browser data without anybody being asked twice.
+///
+/// So without the `cd` below, **every** remote session died on start-up with
+/// "this cannot be the workspace: /home/<user> is your home directory", no
+/// matter which directory the person had chosen — the one field this command
+/// was given, `remote_workspace`, was accepted and then never used. The local
+/// path has always set this explicitly (`Command::current_dir`); this is its
+/// remote equivalent, and it is the whole reason the remote backend can open
+/// anything at all.
+///
+/// `&&` rather than a plain sequence: if the directory does not exist, `cd`
+/// fails, the runtime must not run, and the far end's shell reports the failure
+/// as a non-zero exit — which is a session that says why it did not start,
+/// rather than one that quietly opened in the home directory. `exec` after the
+/// `cd` keeps the channel's process the runtime itself, so `kill` and the exit
+/// status still mean what they mean (no extra shell survives underneath).
 fn build_remote_command(options: &RemoteAttachOptions) -> String {
-    let mut tokens: Vec<String> = vec![
-        quote_shell_argument(&options.remote_binary),
-        "--runtime-stdio".to_string(),
-    ];
+    let mut tokens: Vec<String> = Vec::new();
+
+    // The workspace, first and unconditionally. `spawn_remote` refuses an empty
+    // one before reaching here, so this is the person's own choice or nothing.
+    tokens.push("cd".to_string());
+    tokens.push(quote_shell_argument(&options.remote_workspace));
+    tokens.push("&&".to_string());
+    tokens.push("exec".to_string());
+
+    tokens.push(quote_shell_argument(&options.remote_binary));
+    tokens.push("--runtime-stdio".to_string());
     if let Some(id) = options.session_id.as_deref() {
         if !id.is_empty() {
             tokens.push("--session".to_string());
@@ -1769,6 +1799,111 @@ fn workspace_check(path: String) -> Option<String> {
 #[tauri::command]
 fn read_ssh_config() -> ssh_config::SshConfigDocument {
     ssh_config::read_config()
+}
+
+/// What `append_ssh_host` is given: the alias to write and the block's fields.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendSshHostOptions {
+    alias: String,
+    hostname: String,
+    port: u16,
+    user: String,
+    #[serde(default)]
+    identity_files: Vec<String>,
+}
+
+/// Add one `Host` block to the user's own `~/.ssh/config` and return the file's
+/// path.
+///
+/// This is what "configure a host here, since there is none" means in this
+/// application: `~/.ssh/config` is the one place a host is configured (the Go
+/// side reads the same file), so a host added through the wizard is written
+/// **there** rather than into a private list only this program can see — a
+/// private list would be a host the person cannot reach with `ssh` either.
+///
+/// **A password is never written.** `Password` is this project's own extension,
+/// not an OpenSSH keyword; writing it would break the person's own `ssh` with
+/// `Bad configuration option: password` on every connection. See
+/// `ssh_config::append_host`.
+#[tauri::command]
+fn append_ssh_host(options: AppendSshHostOptions) -> Result<String, String> {
+    ssh_config::append_host(
+        &options.alias,
+        &ssh_config::SshConfigHost {
+            alias: options.alias.clone(),
+            hostname: options.hostname,
+            port: options.port,
+            user: options.user,
+            identity_files: options.identity_files,
+            has_password: false,
+            refused: None,
+        },
+    )
+}
+
+/// Options for the three `remote_probe`-backed commands: the SSH destination
+/// and nothing else.
+///
+/// The same shape as [`RemoteConfigTarget`] and deliberately a distinct type
+/// rather than a reuse of it: the two are different questions asked of the same
+/// server, and one gaining a field the other has no business carrying is
+/// exactly the kind of drift a shared struct invites.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteProbeTarget {
+    host: String,
+    port: u16,
+    user: String,
+    #[serde(default)]
+    identity_files: Vec<String>,
+    password: Option<String>,
+    connect_timeout_ms: Option<u64>,
+}
+
+impl RemoteProbeTarget {
+    fn into_ssh_target(self) -> ssh_backend::SshTarget {
+        ssh_backend::SshTarget {
+            host: self.host,
+            port: self.port,
+            user: self.user,
+            identity_files: self.identity_files,
+            password: self.password,
+            connect_timeout: Duration::from_millis(
+                self.connect_timeout_ms.filter(|&ms| ms > 0).unwrap_or(15_000),
+            ),
+        }
+    }
+}
+
+/// Connect to a host and report what is on the other end: the account's home,
+/// its platform, whether the Runtime is installed (and at which version),
+/// whether it has a usable `config.json`, and the directories inside `path`.
+///
+/// This is the **first** step of adding a remote workspace — see
+/// `remote_probe`'s module doc for why the flow connects before asking the
+/// person anything. It writes nothing, installs nothing, and starts no session:
+/// the workspace it is asked about is read, never entered.
+///
+/// `path` omitted or empty means the account's home directory.
+#[tauri::command]
+fn probe_remote_host(
+    target: RemoteProbeTarget,
+    path: Option<String>,
+) -> Result<remote_probe::RemoteProbe, String> {
+    remote_probe::probe(&target.into_ssh_target(), path.as_deref())
+}
+
+/// Create one directory on a remote host, for the wizard's "new folder".
+///
+/// A separate command from `probe_remote_host` on purpose: browsing a host must
+/// not be able to create anything on it, and the only way to guarantee that is
+/// for the two to be different calls.
+///
+/// Returns the directory's absolute path, which is what the caller then lists.
+#[tauri::command]
+fn create_remote_directory(target: RemoteProbeTarget, path: String) -> Result<String, String> {
+    remote_probe::create_directory(&target.into_ssh_target(), &path)
 }
 
 /// Read `~/.tudouni/config.json` and `mcp.json` for the config panel.
@@ -2663,6 +2798,9 @@ pub fn run() {
             os_user_name,
             workspace_check,
             read_ssh_config,
+            append_ssh_host,
+            probe_remote_host,
+            create_remote_directory,
             config_read,
             config_write,
             image_stash,

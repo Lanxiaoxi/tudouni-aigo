@@ -182,9 +182,162 @@ pub fn read_config() -> SshConfigDocument {
     }
 }
 
+/// Adds one `Host` block to the user's own `~/.ssh/config`.
+///
+/// # Why this writes the user's file rather than a private one
+///
+/// This program reads `~/.ssh/config` and nothing else — there is no second
+/// place a host can be configured (`internal/ssh`'s package doc says so, and
+/// `ssh_backend` resolves aliases through the same file). So a host the person
+/// adds through this wizard has to land **there** to be usable, and the
+/// alternative — a private list only this application can see — would be a host
+/// they cannot reach with `ssh` either, which is the opposite of the point.
+///
+/// # What it refuses to write
+///
+/// **No `Password` line.** `Password` is not an OpenSSH keyword: it is this
+/// project's own extension, which the Go parser understands. Writing it into
+/// `~/.ssh/config` would make the person's own `ssh` fail with
+/// `Bad configuration option: password` on **every** connection, not just this
+/// one — so a password can never be stored here, and the wizard keeps it in
+/// `aigo.prefs` for hosts that need one. A block that would otherwise be
+/// written with a password is written without it, and the caller is told.
+///
+/// # The append is checked, not blind
+///
+/// The file is someone's own configuration, often hand-edited and often
+/// decades old. It is appended to rather than rewritten (nothing above the new
+/// block is touched, and no key is re-serialised), a newline is inserted first
+/// if the file does not end in one (otherwise the new `Host` line would be
+/// joined to the last directive of the previous block and silently change it),
+/// and re-adding an alias that already exists is refused rather than
+/// duplicated — two blocks with one name is a file whose meaning depends on
+/// OpenSSH's "first obtained wins" rule, which is not a thing to create by
+/// accident.
+pub fn append_host(alias: &str, host: &SshConfigHost) -> Result<String, String> {
+    let name = alias.trim();
+    if name.is_empty() {
+        return Err("the host needs a name".to_string());
+    }
+    if name.contains(char::is_whitespace) || name.contains(['*', '?', '!', '#']) {
+        return Err(
+            "the name may not contain whitespace, or any of * ? ! # — a pattern like * would \
+             apply the block to every host in the file"
+                .to_string(),
+        );
+    }
+    if host.hostname.trim().is_empty() {
+        return Err("the host needs a HostName".to_string());
+    }
+
+    let path = default_config_path();
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+
+    // Refuse a duplicate rather than appending a second block with one name.
+    let parsed = parse(&existing);
+    if let Some(reason) = parsed.match_refused {
+        return Err(format!(
+            "{}: {reason}, so adding a host here could not be done safely — edit the file by hand",
+            path.display()
+        ));
+    }
+    for block in &parsed.blocks {
+        if block.patterns.iter().any(|pattern| pattern == name) {
+            return Err(format!("{name} is already a Host block in {}", path.display()));
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+
+    // The block is built by `host_block_lines`, the same function the preview
+    // command returns — so what the wizard shows the person and what lands in
+    // their file cannot be two different things.
+    let block: String = host_block_lines(name, host)
+        .into_iter()
+        .map(|line| format!("{line}\n"))
+        .collect();
+
+    let mut next = existing.clone();
+    if !next.is_empty() && !next.ends_with('\n') {
+        next.push('\n');
+    }
+    if !next.is_empty() {
+        next.push('\n');
+    }
+    next.push_str(&block);
+
+    // Written through a temporary file and renamed, so an interrupted write
+    // cannot leave somebody's own ssh configuration truncated. The permission
+    // bits are set to 0600 for the same reason the file usually already is:
+    // it names private keys.
+    let temp = path.with_extension("aigo-tmp");
+    std::fs::write(&temp, &next)
+        .map_err(|e| format!("could not write {}: {e}", temp.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600));
+    }
+    std::fs::rename(&temp, &path)
+        .map_err(|e| format!("could not put the new config in place at {}: {e}", path.display()))?;
+
+    Ok(path.display().to_string())
+}
+
+/// The lines of one `Host` block, **without** trailing newlines.
+///
+/// The one definition of the block's format on this side: `append_host` writes
+/// these lines, and the wizard's live preview (`buildHostBlock` in
+/// `src/components/modals/remoteWorkspace.ts`) mirrors them so the block a
+/// person is shown before saving is the block that is written.
+///
+/// That mirror is a deliberate duplication, on the same terms
+/// `internal/bootstrap/commands.go` states for `quoteShellArgument`: a TS file
+/// cannot call a Rust function, so the alternative is a round trip to Rust on
+/// every keystroke in the preview. **This side is the authority** — the preview
+/// is a display, and `append_host` below is what actually writes — and the
+/// format is pinned on this side by its own unit test.
+///
+/// Four rules, each of which is a way their `ssh` configuration could be made
+/// worse:
+///
+///   1. **No `Password` line, ever.** `Password` is this project's own
+///      extension, not an OpenSSH keyword: writing it makes `ssh` refuse to
+///      start at all — on every connection to every host in the file, not only
+///      this one — with `Bad configuration option: password`.
+///   2. **`Port` only when it is not 22.** The default is what OpenSSH already
+///      assumes, and a line that restates a default is a line somebody has to
+///      read in order to discover it says nothing.
+///   3. **One `IdentityFile` per line.** OpenSSH accumulates them across lines;
+///      several values on one line is not a form it reads the same way.
+///   4. **Nothing for an empty field.** A blank `User` that emitted `User `
+///      would be a block whose meaning depends on a parser's whitespace rules.
+pub fn host_block_lines(name: &str, host: &SshConfigHost) -> Vec<String> {
+    let mut lines = vec![
+        format!("Host {}", name.trim()),
+        format!("    HostName {}", host.hostname.trim()),
+    ];
+    if host.port != 22 {
+        lines.push(format!("    Port {}", host.port));
+    }
+    let user = host.user.trim();
+    if !user.is_empty() {
+        lines.push(format!("    User {user}"));
+    }
+    for key in &host.identity_files {
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            lines.push(format!("    IdentityFile {trimmed}"));
+        }
+    }
+    lines
+}
+
 /// The hosts of a specific file — the seam the unit tests point at fixtures.
-pub fn list_hosts_from(path: &Path) -> Result<Vec<SshConfigHost>, String> {
-    let raw = match std::fs::read_to_string(path) {
+pub fn list_hosts_from(path: &Path) -> Result<Vec<SshConfigHost>, String> {    let raw = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
@@ -438,13 +591,28 @@ fn glob_fold(pattern: &str, name: &str) -> bool {
 /// Splits a `Key value` line, accepting `Key value` and `Key=value`, leaving
 /// a `#` inside quotes alone, and reporting `None` for blank and comment-only
 /// lines — the same rules `parseLine` in `config.go` uses.
+///
+/// **The key is lower-cased here, and that is load-bearing rather than tidy.**
+/// OpenSSH keywords are case-insensitive, so `Host`, `host` and `HOST` are one
+/// directive and every real-world file uses the conventional capitalised
+/// spelling. Every comparison downstream — `parse` looking for `"host"` and
+/// `"match"`, `resolve_block` matching `"hostname"`/`"user"`/`"identityfile"`,
+/// `REJECTED_FIELDS` — is written against the lower-case form, so returning the
+/// key verbatim meant a file written the way OpenSSH documents it parsed as
+/// **having no hosts at all**: the picker showed nothing, `Match` was never
+/// noticed, and `ProxyJump` was never refused. Folded once, here, at the single
+/// point every line passes through — which is why the rest of this file may
+/// compare against literals.
+///
+/// The **value** is never folded: a `HostName`, a path and a user name are all
+/// case-sensitive, and `user` in particular must survive exactly as written.
 fn parse_line(line: &str) -> Option<(String, String)> {
     let text = strip_comment(line).trim();
     if text.is_empty() {
         return None;
     }
     let index = text.find(|ch: char| ch.is_whitespace() || ch == '=')?;
-    let key = text[..index].to_string();
+    let key = text[..index].to_lowercase();
     if key.is_empty() {
         return None;
     }
@@ -518,7 +686,7 @@ fn parse(raw: &str) -> ParsedConfig {
     // Fields under a `Match` land here and nowhere else: they must not leak
     // into the `Host` block that preceded the Match line. The whole parse is
     // refused when a Match exists, but the split is what makes that refusal
-    /// honest rather than lucky.
+    // honest rather than lucky.
     let mut match_sink: Vec<Directive> = Vec::new();
     let mut current: &mut Vec<Directive> = &mut global;
     let mut match_refused: Option<String> = None;
@@ -637,6 +805,69 @@ mod tests {
         let tmp = tmp_empty();
         let hosts = list_hosts_from(&tmp.path).expect("no file is not an error");
         assert!(hosts.is_empty());
+    }
+
+    /// OpenSSH keywords are case-insensitive, and every real `~/.ssh/config` uses
+    /// the conventional capitalised spelling. Every comparison in this module is
+    /// written against the lower-case form, so a parser that returned the key
+    /// verbatim read a perfectly ordinary file as **having no hosts at all** —
+    /// the picker was empty, `Match` was never noticed, and `ProxyJump` was
+    /// never refused. Nothing threw; the list was just silently blank.
+    ///
+    /// This asserts the three spellings of one directive resolve identically, so
+    /// the case-folding cannot regress without a failure naming it.
+    #[test]
+    fn ssh_keywords_are_case_insensitive() {
+        let tmp = tmp_config(
+            "HOST prod\n    HOSTNAME 10.0.1.5\n    USER deploy\n    PORT 2222\n",
+        );
+        let hosts = list_hosts_from(&tmp.path).expect("parse");
+        assert_eq!(hosts.len(), 1, "an upper-case Host block is still a Host block");
+        assert_eq!(hosts[0].alias, "prod");
+        assert_eq!(hosts[0].hostname, "10.0.1.5");
+        assert_eq!(hosts[0].user, "deploy");
+        assert_eq!(hosts[0].port, 2222);
+
+        // Mixed case, which is what a hand-edited file often holds.
+        let mixed = tmp_config("hOsT other\n    HostName 10.0.2.6\n");
+        let hosts = list_hosts_from(&mixed.path).expect("parse");
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].hostname, "10.0.2.6");
+    }
+
+    /// The refusal rules are keyed on the same lower-case form, so they have to
+    /// survive the same spelling. `ProxyJump` written the way OpenSSH documents
+    /// it must still make a block unselectable — otherwise the prefill would
+    /// offer a destination this program cannot reach.
+    #[test]
+    fn an_uppercase_rejected_field_is_still_refused() {
+        let tmp = tmp_config("Host jump\n    HostName 10.0.0.1\n    ProxyJump bastion\n");
+        let hosts = list_hosts_from(&tmp.path).expect("parse");
+        assert!(
+            hosts[0].refused.is_some(),
+            "a capitalised ProxyJump is the same directive and must still be refused"
+        );
+    }
+
+    /// And `Match`, whose refusal is about the whole file rather than one block.
+    #[test]
+    fn an_uppercase_match_still_refuses_the_file() {
+        let tmp = tmp_config("Host prod\n    HostName 10.0.1.5\nMatch host internal\n    User x\n");
+        assert!(
+            list_hosts_from(&tmp.path).is_err(),
+            "a capitalised Match is the same directive and must still refuse the file"
+        );
+    }
+
+    /// The value is **not** folded: a hostname, a path and a user name are all
+    /// case-sensitive, and a `User` that came back lower-cased would be a
+    /// different account on the far end.
+    #[test]
+    fn a_value_keeps_its_case() {
+        let tmp = tmp_config("Host prod\n    HostName Example.COM\n    User DeployUser\n");
+        let hosts = list_hosts_from(&tmp.path).expect("parse");
+        assert_eq!(hosts[0].hostname, "Example.COM");
+        assert_eq!(hosts[0].user, "DeployUser");
     }
 
     #[test]
@@ -782,15 +1013,46 @@ mod tests {
         assert_eq!(hosts[0].hostname, "10.0.1.5", "Key=value is accepted, like the Go parser");
     }
 
+    /// The `~` in an `IdentityFile` expands against the config's own home
+    /// directory — and the assertion is about **which file is named**, not about
+    /// the exact bytes of the string.
+    ///
+    /// It used to compare `display()` output for equality, which is wrong in a
+    /// way that made this test fail on Windows while the behaviour was fine:
+    /// `Path::new(home).join(".ssh/id_ed25519")` keeps the forward slash the
+    /// config file wrote, so the result is `home\.ssh/id_ed25519` while the
+    /// fixture's own path displays with a backslash. Windows accepts either
+    /// separator in every file API, so both name the same key — and comparing
+    /// strings asserted the separator rather than the file.
     #[test]
     fn identity_files_are_expanded_against_the_config_home() {
-        let mut tmp = tmp_config("Host prod\n    IdentityFile ~/.ssh/id_ed25519\n");
+        let tmp = tmp_config("Host prod\n    IdentityFile ~/.ssh/id_ed25519\n");
         // A key the file points at, in the fixture's own home.
         fs::write(tmp.dir.join(".ssh").join("id_ed25519"), "key").expect("write key");
         let hosts = list_hosts_from(&tmp.path).expect("parse");
         assert_eq!(hosts[0].identity_files.len(), 1);
+
+        let named = Path::new(&hosts[0].identity_files[0]);
         let expected = tmp.dir.join(".ssh").join("id_ed25519");
-        assert_eq!(hosts[0].identity_files[0], expected.display().to_string());
+        // The real claim: the expansion names the key that is actually there, in
+        // the config's own home rather than in this process's.
+        assert!(
+            named.is_file(),
+            "the expanded IdentityFile must be a file that exists: {}",
+            named.display()
+        );
+        assert_eq!(
+            named.file_name(),
+            expected.file_name(),
+            "the expansion names a different file"
+        );
+        assert_eq!(
+            fs::canonicalize(named).ok(),
+            fs::canonicalize(&expected).ok(),
+            "the expansion names a file outside the config's home: {} vs {}",
+            named.display(),
+            expected.display()
+        );
     }
 
     #[test]
@@ -820,5 +1082,116 @@ mod tests {
         let expected = local_username();
         assert_eq!(hosts[0].user, expected);
         assert!(!expected.is_empty(), "the test host has a login name");
+    }
+
+    /* ============================================================
+       The block written into the user's own ~/.ssh/config
+       ============================================================ */
+
+    fn sample_host() -> SshConfigHost {
+        SshConfigHost {
+            alias: "bg-prod".to_string(),
+            hostname: "10.0.1.5".to_string(),
+            port: 2222,
+            user: "deploy".to_string(),
+            identity_files: vec!["/home/me/.ssh/id_ed25519".to_string()],
+            has_password: false,
+            refused: None,
+        }
+    }
+
+    /// The rule this whole path exists for: `Password` is this project's own
+    /// extension, not an OpenSSH keyword. A block carrying one makes the
+    /// person's own `ssh` refuse to start **for the entire file** — every host,
+    /// not merely this one — with `Bad configuration option: password`.
+    ///
+    /// Asserted on the written text rather than on the struct, because the
+    /// struct is not what lands in their file.
+    #[test]
+    fn the_written_block_never_carries_a_password() {
+        let host = sample_host();
+        let text = host_block_lines("bg-prod", &host).join("\n");
+        assert!(
+            !text.to_lowercase().contains("password"),
+            "a Password directive reached the user's ssh config: {text}"
+        );
+    }
+
+    #[test]
+    fn the_block_is_the_expected_directives_in_order() {
+        let host = sample_host();
+        assert_eq!(
+            host_block_lines("bg-prod", &host),
+            vec![
+                "Host bg-prod",
+                "    HostName 10.0.1.5",
+                "    Port 2222",
+                "    User deploy",
+                "    IdentityFile /home/me/.ssh/id_ed25519",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_default_port_is_not_restated() {
+        let host = SshConfigHost { port: 22, ..sample_host() };
+        let lines = host_block_lines("p", &host);
+        assert!(
+            !lines.iter().any(|line| line.trim_start().starts_with("Port")),
+            "a line restating OpenSSH's own default is a line nobody needed: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn each_identity_file_gets_its_own_line() {
+        let host = SshConfigHost {
+            identity_files: vec![
+                "/k/one".to_string(),
+                "/k/two".to_string(),
+                // A blank entry, and one that is only whitespace, must both be
+                // dropped rather than emitted as a dangling `IdentityFile`.
+                String::new(),
+                "   ".to_string(),
+            ],
+            ..sample_host()
+        };
+        let lines = host_block_lines("p", &host);
+        let keys: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.trim_start().starts_with("IdentityFile"))
+            .collect();
+        assert_eq!(keys.len(), 2, "one line per key, blanks dropped: {keys:?}");
+    }
+
+    #[test]
+    fn an_empty_user_emits_no_user_line() {
+        let host = SshConfigHost { user: "   ".to_string(), ..sample_host() };
+        let lines = host_block_lines("p", &host);
+        assert!(
+            !lines.iter().any(|line| line.trim_start().starts_with("User")),
+            "a blank User would be a directive whose meaning depends on whitespace: {lines:?}"
+        );
+    }
+
+    /// The block this module writes must be one this module can read back — the
+    /// two halves of the same file format, asserted together so a change to one
+    /// that breaks the other cannot pass.
+    #[test]
+    fn a_written_block_round_trips_through_the_parser() {
+        let host = sample_host();
+        let text: String = host_block_lines("bg-prod", &host)
+            .into_iter()
+            .map(|line| format!("{line}\n"))
+            .collect();
+
+        let tmp = tmp_config(&text);
+        let parsed = list_hosts_from(&tmp.path).expect("the block we write must parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].alias, "bg-prod");
+        assert_eq!(parsed[0].hostname, "10.0.1.5");
+        assert_eq!(parsed[0].port, 2222);
+        assert_eq!(parsed[0].user, "deploy");
+        assert_eq!(parsed[0].identity_files, vec!["/home/me/.ssh/id_ed25519"]);
+        assert!(!parsed[0].has_password, "we never write one, so it must not read one");
     }
 }

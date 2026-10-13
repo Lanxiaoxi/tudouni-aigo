@@ -3375,6 +3375,19 @@
   white-space: nowrap;
 }
 
+/* A **running** card's time is the turn's elapsed time rather than "xx ago" —
+   the same number the status bar draws. It is marked so because the two readings
+   look identical while meaning different things: a live stopwatch counting up,
+   versus a fixed stamp of when the file last changed. Without a mark, a card
+   being watched would appear to be "modified 4m ago" and growing, which reads as
+   a bug rather than as work in progress.
+
+   The accent, and nothing else: no colour change on the value itself, because a
+   number that is both counting and coloured reads as an alarm. */
+.board-card .board-card-time.is-turn {
+  color: var(--accent-tint-text);
+}
+
 .board-card .board-card-meta > .board-card-meta-counts {
   min-width: 0;
   overflow: hidden;

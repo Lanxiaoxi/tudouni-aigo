@@ -1,51 +1,92 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { X } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  ChevronUp,
+  Folder,
+  FolderPlus,
+  Server,
+  Terminal,
+  X,
+} from 'lucide-react';
 import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
-import { readSshConfig, type SshConfigDocument } from '@/runtime/tauri';
+import { BusyDots, Tip } from '@/components/ui/kit';
+import {
+  appendSshHost,
+  createRemoteDirectory,
+  probeRemoteHost,
+  readSshConfig,
+  type RemoteProbe,
+  type RemoteProbeTarget,
+  type SshConfigDocument,
+} from '@/runtime/tauri';
+import {
+  buildHostBlock,
+  findReusableHost,
+  newHostProblem,
+  workspaceLabel,
+  type PendingHost,
+} from './remoteWorkspace';
 
 /**
- * The form for saving a new remote workspace: a host and the directory on it.
+ * Adding a remote workspace, as three steps that each answer one question.
  *
- * This is a **local** decision, like `CloseConfirm` — nothing here is a
- * request the runtime is waiting on, so it is a plain `DialogPrimitive`
- * rather than one of the two blocking modals in `modal/`. Saving a host and a
- * workspace is also two separate acts in the store (`addSshHost`,
- * `addRemoteWorkspace`), kept as one form here because a person adding their
- * first remote workspace has no host to pick yet — a two-step flow (go add a
- * host, then come back and add a workspace) would ask them to context-switch
- * for information they already have in front of them.
+ * # Why this replaced a single form
  *
- * **No connection is attempted here.** Saving an entry is exactly as local an
- * act as `addWorkspace` for a local directory (see that method's own doc):
- * the form validates that the fields are not empty and nothing more.
- * Whether the host is reachable, the key authenticates, and the binary
- * exists at that path are all questions `enterRemoteWorkspace` answers when
- * the row is actually opened — asking them here would make saving a
- * workspace description depend on being connected to the network right now,
- * which is not a requirement "bookmark this place" should carry.
+ * The first version asked for a host, a port, a user, key paths, a password, a
+ * workspace directory and a runtime binary path — nine fields, all at once —
+ * and saved them **without connecting**. Everything wrong with that is visible
+ * from what the form could not tell the person filling it in:
  *
- * **The host picker reads `~/.ssh/config` for prefill only.** OpenSSH is
- * where a person has already written down exactly what this form asks for —
- * the destination, the port, the user, the keys — so re-typing it is asking
- * for the same fact twice. The picker therefore lists the file's concrete
- * `Host` blocks and filling the form from one is still an *editable*
- * suggestion: every field it writes can be changed, Save validates nothing
- * about reachability, and a block the Go side's own dial rules refuse
- * (`ProxyJump` and friends) is listed but marked, not silently dropped —
- * dropping it would be the form answering a question only the person can
- * answer ("do you still want this host?"). The file is read when the dialog
- * opens; a missing file is an ordinary state and the manual fields simply
- * work as before.
+ *   - it could not say whether the credentials work, so a typo was discovered
+ *     later, as a dead session;
+ *   - it asked for a workspace directory as **free text**, which meant guessing
+ *     an absolute path on a machine you are not sitting at — and finding out it
+ *     was wrong only after connecting;
+ *   - it asked where the runtime binary was, a question with no sensible answer
+ *     before connecting, because whether one is installed is a fact about the
+ *     far end;
+ *   - it asked for a host's address and key paths by hand even though OpenSSH
+ *     already knows them.
  *
- * Identity files are entered as one path per line rather than a repeating
- * field group, because the ordinary case is one key and the design (§ dial.go
- * `loadIdentityFiles`) already tries several in order when there is more than
- * one — a text area is the simplest control that still expresses "a list,
- * tried in order" without inventing add/remove row chrome for the uncommon
- * case.
+ * All of that is answerable **by the remote host**, so the flow now asks in the
+ * order the answers arrive:
+ *
+ *   1. **Which host** — a dropdown of the hosts in `~/.ssh/config`, which is
+ *      where a host is already configured, plus "add a new one" for the case
+ *      where there is none: that writes a `Host` block into the same file, so
+ *      the person's own `ssh` gets it too (`appendSshHost`).
+ *   2. **Connect** — one dial, and the far end reports its home, its platform,
+ *      whether the Runtime is installed and at which version, and whether it has
+ *      a usable `config.json`. A failure is a sentence here, while the form is
+ *      still in front of the person, rather than a session that dies later.
+ *   3. **Which directory** — a browser over the real directories on that host,
+ *      starting at its home, with "new folder" for one that does not exist yet.
+ *      Only then is anything saved or opened.
+ *
+ * # Why nothing is saved before step 3
+ *
+ * Saving a workspace is what makes a row in the sidebar, and a row that was
+ * created from a host that turned out not to accept the key would be a bookmark
+ * for a place that cannot be reached. So the host and the workspace are written
+ * **together**, at the end, once both are known to be real. The consequence is
+ * that abandoning the wizard leaves nothing behind — which is the ordinary
+ * expectation of a Cancel button.
+ *
+ * # The password, and why it is not in `~/.ssh/config`
+ *
+ * `Password` is this project's own extension, not an OpenSSH keyword: writing it
+ * into `~/.ssh/config` would break the person's own `ssh` with
+ * `Bad configuration option: password` on every connection (see
+ * `ssh_config::append_host`). It is therefore asked for at connect time and kept
+ * in this application's own preferences, which is the existing, documented
+ * trade-off (plain `localStorage`, not an OS keychain) rather than a new one.
  */
+type WizardStep = 'host' | 'connect' | 'workspace';
+
 export function AddRemoteWorkspaceModal({
   open,
   onOpenChange,
@@ -56,25 +97,68 @@ export function AddRemoteWorkspaceModal({
   const t = useT();
   const addSshHost = useApp((s) => s.addSshHost);
   const addRemoteWorkspace = useApp((s) => s.addRemoteWorkspace);
+  const enterRemoteWorkspace = useApp((s) => s.enterRemoteWorkspace);
 
-  const [hostLabel, setHostLabel] = useState('');
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState('22');
-  const [user, setUser] = useState('');
-  const [identityFilesText, setIdentityFilesText] = useState('');
-  const [password, setPassword] = useState('');
-  const [remotePath, setRemotePath] = useState('');
-  const [remoteBinary, setRemoteBinary] = useState('');
-  const [workspaceLabel, setWorkspaceLabel] = useState('');
-  // The picker: the file's own hosts, read once when the dialog opens.
-  // `null` = not read yet (or not hosted, where it stays null and the
-  // manual fields are the whole form).
+  const [step, setStep] = useState<WizardStep>('host');
+
+  // ---- ~/.ssh/config ----
   const [sshConfig, setSshConfig] = useState<SshConfigDocument | null>(null);
-  // Which host the fields are currently filled from: an alias, or `''`
-  // for "the person typed these" (manual). Re-synced back to `''` the
-  // moment any host field is edited by hand, so the select never claims
-  // a prefill the fields have since moved away from.
-  const [selectedAlias, setSelectedAlias] = useState('');
+  /** Which listed host is chosen: an alias, or `NEW` for the manual form. */
+  const [selected, setSelected] = useState('');
+  /** The manual form's fields, used only when `selected === NEW`. */
+  const [draft, setDraft] = useState({
+    alias: '',
+    hostname: '',
+    port: '22',
+    user: '',
+    identityFiles: '',
+  });
+  const [writingHost, setWritingHost] = useState(false);
+  const [hostProblem, setHostProblem] = useState<string | null>(null);
+
+  // ---- the connect step ----
+  const [pending, setPending] = useState<PendingHost | null>(null);
+  const [password, setPassword] = useState('');
+  const [connecting, setConnecting] = useState(false);
+  const [connectProblem, setConnectProblem] = useState<string | null>(null);
+
+  // ---- the workspace step ----
+  const [probe, setProbe] = useState<RemoteProbe | null>(null);
+  const [browsing, setBrowsing] = useState(false);
+  const [browseProblem, setBrowseProblem] = useState<string | null>(null);
+  /** A path typed rather than clicked, and the "new folder" field. */
+  const [typedPath, setTypedPath] = useState('');
+  const [newFolder, setNewFolder] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const reset = useCallback(() => {
+    setStep('host');
+    setSshConfig(null);
+    setSelected('');
+    setDraft({ alias: '', hostname: '', port: '22', user: '', identityFiles: '' });
+    setWritingHost(false);
+    setHostProblem(null);
+    setPending(null);
+    setPassword('');
+    setConnecting(false);
+    setConnectProblem(null);
+    setProbe(null);
+    setBrowsing(false);
+    setBrowseProblem(null);
+    setTypedPath('');
+    setNewFolder('');
+    setCreating(false);
+    setSaving(false);
+  }, []);
+
+  // The file is read when the dialog opens, and re-read after a host is added —
+  // the list is the file, so once the file changes the list has to follow.
+  const loadConfig = useCallback(async () => {
+    const doc = await readSshConfig();
+    setSshConfig(doc);
+    return doc;
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -87,93 +171,232 @@ export function AddRemoteWorkspaceModal({
     };
   }, [open]);
 
-  /** Fill the host fields from one listed block. An *editable* prefill:
-   *  every value lands in the form's own state and Save validates it, so
-   *  this writes nothing the person cannot correct before saving. */
-  function applyPicked(alias: string): void {
-    const picked = sshConfig?.hosts.find((entry) => entry.alias === alias);
-    if (!picked) return;
-    setSelectedAlias(alias);
-    setHost(picked.hostname);
-    setPort(String(picked.port));
-    setUser(picked.user);
-    setIdentityFilesText(picked.identityFiles.join('\n'));
-    // A block the file gives a name to gets that name, and nothing is
-    // written over a label the person has already chosen themselves.
-    setHostLabel((current) => (current.trim() !== '' ? current : alias));
+  /**
+   * Go to the connect step with a host in hand.
+   *
+   * Skipping a host the file marks unselectable, and saying so rather than
+   * silently doing nothing: the block names a field this program refuses to
+   * ignore, so the connection would fail for a reason the person can act on.
+   */
+  function chooseHost(alias: string): void {
+    const entry = sshConfig?.hosts.find((item) => item.alias === alias);
+    if (!entry) return;
+    if (entry.refused !== null) {
+      setHostProblem(entry.refused);
+      return;
+    }
+    setHostProblem(null);
+    setPending({
+      alias: entry.alias,
+      host: entry.hostname,
+      port: entry.port,
+      user: entry.user,
+      identityFiles: entry.identityFiles,
+    });
+    setConnectProblem(null);
+    setStep('connect');
   }
 
-  /** Any hand edit of a host field ends the prefill's claim on it. */
-  function manualHostEdit(field: 'host' | 'port' | 'user' | 'identityFiles', next: string): void {
-    if (field === 'host') setHost(next);
-    else if (field === 'port') setPort(next);
-    else if (field === 'user') setUser(next);
-    else setIdentityFilesText(next);
-    setSelectedAlias('');
-  }
+  /** Write the manual form into `~/.ssh/config`, then carry on with it. */
+  async function saveNewHost(): Promise<void> {
+    const alias = draft.alias.trim();
+    const hostname = draft.hostname.trim();
+    const user = draft.user.trim();
+    const port = Number.parseInt(draft.port, 10);
 
-  function reset() {
-    setHostLabel('');
-    setHost('');
-    setPort('22');
-    setUser('');
-    setIdentityFilesText('');
-    setPassword('');
-    setRemotePath('');
-    setRemoteBinary('');
-    setWorkspaceLabel('');
-    setSshConfig(null);
-    setSelectedAlias('');
-  }
+    // Validated by the shared rule the tests cover, so the button's disabled
+    // state and this refusal cannot disagree about what "complete" means. The
+    // rule answers with a **code**; the words come from the catalogue.
+    const problem = newHostProblem(draft);
+    if (problem !== null) {
+      setHostProblem(t(`rw.newHost.${problem}` as const));
+      return;
+    }
 
-  const portNumber = Number.parseInt(port, 10);
-  // `remoteBinary` is deliberately **not** in the required set: a host that
-  // does not have the Runtime yet is a valid bookmark — installing it is the
-  // download button's job (and connecting now installs it automatically).
-  // Requiring the path would force a person to invent one before the
-  // install that fills it in for them exists, which is the exact failure
-  // the automatic-install feature is supposed to remove.
-  const canSave =
-    host.trim() !== '' &&
-    user.trim() !== '' &&
-    Number.isInteger(portNumber) &&
-    portNumber > 0 &&
-    portNumber <= 65535 &&
-    remotePath.trim() !== '';
-
-  function save() {
-    if (!canSave) return;
-    const identityFiles = identityFilesText
+    const identityFiles = draft.identityFiles
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line !== '');
-    const hostId = addSshHost({
-      label: hostLabel.trim() !== '' ? hostLabel.trim() : `${user.trim()}@${host.trim()}`,
-      host: host.trim(),
-      port: portNumber,
-      user: user.trim(),
-      identityFiles,
-      ...(password.trim() !== '' ? { password: password.trim() } : {}),
-    });
-    addRemoteWorkspace({
-      hostId,
-      remotePath: remotePath.trim(),
-      remoteBinary: remoteBinary.trim(),
-      label: workspaceLabel.trim() !== '' ? workspaceLabel.trim() : remotePath.trim(),
-    });
-    reset();
-    onOpenChange(false);
+
+    setWritingHost(true);
+    setHostProblem(null);
+    try {
+      // The block is built by the same function the tests assert on, so what
+      // lands in the person's config is what was reviewed — and it carries no
+      // password, which `appendSshHost` itself also enforces.
+      await appendSshHost({ alias, hostname, port, user, identityFiles });
+      // Re-read rather than trusting what was just written: the list on screen
+      // is the file, and this is what keeps the two from being different.
+      await loadConfig();
+      setSelected(alias);
+      setPending({ alias, host: hostname, port, user, identityFiles });
+      setConnectProblem(null);
+      setStep('connect');
+    } catch (err) {
+      setHostProblem(describe(err));
+    } finally {
+      setWritingHost(false);
+    }
   }
 
-  /** The picker's caption, for the states a list does not cover: the file
-   *  exists but names no concrete host, a `Match` block refuses the whole
-   *  file, or the file could not be read. Each is a fact about the file,
-   *  not a form error — the manual fields stay fully usable. */
-  const pickerCaption: string | null =
-    sshConfig?.problem ??
-    (sshConfig !== null && sshConfig.exists && sshConfig.hosts.length === 0
-      ? t('lb.remote.picker.noHosts', { path: sshConfig.path })
-      : null);
+  /** Step 2's one act: connect and learn what is on the far end. */
+  async function connect(): Promise<void> {
+    if (!pending) return;
+    setConnecting(true);
+    setConnectProblem(null);
+    try {
+      const target: RemoteProbeTarget = {
+        host: pending.host,
+        port: pending.port,
+        user: pending.user,
+        identityFiles: pending.identityFiles,
+        password: password.trim() === '' ? null : password,
+      };
+      const result = await probeRemoteHost(target);
+      setProbe(result);
+      setTypedPath('');
+      setBrowseProblem(null);
+      setNewFolder('');
+      setStep('workspace');
+    } catch (err) {
+      setConnectProblem(describe(err));
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  /** List another directory on the same host, reusing this connection's target. */
+  const targetFor = useCallback((): RemoteProbeTarget | null => {
+    if (!pending) return null;
+    return {
+      host: pending.host,
+      port: pending.port,
+      user: pending.user,
+      identityFiles: pending.identityFiles,
+      password: password.trim() === '' ? null : password,
+    };
+  }, [pending, password]);
+
+  const browse = useCallback(
+    async (path: string) => {
+      const target = targetFor();
+      if (!target) return;
+      setBrowsing(true);
+      setBrowseProblem(null);
+      try {
+        const result = await probeRemoteHost(target, path);
+        setProbe(result);
+        setTypedPath('');
+      } catch (err) {
+        setBrowseProblem(describe(err));
+      } finally {
+        setBrowsing(false);
+      }
+    },
+    [targetFor],
+  );
+
+  async function makeFolder(): Promise<void> {
+    const target = targetFor();
+    if (!target || !probe || newFolder.trim() === '') return;
+    setCreating(true);
+    setBrowseProblem(null);
+    try {
+      // The name is a single segment under the directory on screen; a path with
+      // a separator in it is still fine (mkdir is recursive), so this only
+      // refuses the one thing that cannot be meant.
+      const name = newFolder.trim();
+      const full = name.startsWith('/') ? name : `${probe.path.replace(/\/$/, '')}/${name}`;
+      const created = await createRemoteDirectory(target, full);
+      setNewFolder('');
+      await browse(created);
+    } catch (err) {
+      setBrowseProblem(describe(err));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  /**
+   * Step 3's one act: remember the host and the workspace, then open it.
+   *
+   * The host is written first and the workspace second, because the workspace
+   * references the host by id — and both together at the end is what keeps a
+   * cancelled wizard from leaving a row behind.
+   *
+   * **An already-saved host is reused, not duplicated.** Matching on
+   * `user@host:port` rather than on the alias means a host that was picked from
+   * `~/.ssh/config` under the same name twice is one record, so editing it later
+   * is one edit rather than two that can drift.
+   */
+  async function openWorkspace(): Promise<void> {
+    if (!probe || !pending) return;
+    const remotePath = probe.path;
+    if (probe.workspaceProblem !== null) return;
+
+    setSaving(true);
+    try {
+      const existing = findReusableHost(useApp.getState().sshHosts, pending);
+      const hostId =
+        existing?.id ??
+        addSshHost({
+          label: pending.alias,
+          host: pending.host,
+          port: pending.port,
+          user: pending.user,
+          identityFiles: pending.identityFiles,
+          ...(password.trim() === '' ? {} : { password: password.trim() }),
+        });
+      // A host that was reused keeps its stored fields, but a password typed in
+      // this session is how the connection actually worked — recording it is
+      // what saves the person from typing it again next time.
+      if (existing && password.trim() !== '' && useApp.getState().sshHosts.find((h) => h.id === existing.id)?.password !== password.trim()) {
+        useApp.getState().updateSshHost(existing.id, { password: password.trim() });
+      }
+
+      const workspaceId = addRemoteWorkspace({
+        hostId,
+        remotePath,
+        // Empty means "not installed", which is a valid bookmark: opening it
+        // installs the runtime and connects, and the path is written back. See
+        // `enterRemoteWorkspace`.
+        remoteBinary: probe.runtimeBinary ?? '',
+        label: workspaceLabel(pending.alias, remotePath),
+      });
+
+      reset();
+      onOpenChange(false);
+      // Not awaited: the modal is gone, and the session reports its own failure
+      // in its own row (`enterRemoteWorkspace` builds a `failed-…` bucket) —
+      // waiting here would hold a closed dialog open over a download that can
+      // take a minute.
+      void enterRemoteWorkspace(workspaceId);
+    } catch (err) {
+      setBrowseProblem(describe(err));
+      setSaving(false);
+    }
+  }
+
+  /**
+   * The exact `Host` block the manual form would append, for the preview above
+   * the button. Empty until the form names something, so the preview never shows
+   * a half-typed block that could not be written.
+   */
+  const previewLines = (() => {
+    if (draft.alias.trim() === '' || draft.hostname.trim() === '') return [] as string[];
+    return buildHostBlock({
+      alias: draft.alias,
+      host: draft.hostname,
+      port: Number.parseInt(draft.port, 10) || 22,
+      user: draft.user,
+      identityFiles: draft.identityFiles
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== ''),
+    });
+  })();
+
+  const canCreate = probe !== null && newFolder.trim() !== '' && !creating && !browsing;
 
   return (
     <DialogPrimitive.Root
@@ -185,178 +408,441 @@ export function AddRemoteWorkspaceModal({
     >
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="overlay-mask" />
-        <DialogPrimitive.Content className="dialog">
+        <DialogPrimitive.Content className="dialog rw-dialog" data-step={step}>
           <div className="dialog-head">
             <div className="grow">
               <DialogPrimitive.Title className="dialog-title">
-                {t('lb.addRemoteWorkspace')}
+                {t('rw.title')}
               </DialogPrimitive.Title>
               <DialogPrimitive.Description className="dialog-desc">
-                {t('lb.addRemoteWorkspaceHint')}
+                {t(`rw.step.${step}.desc` as const)}
               </DialogPrimitive.Description>
             </div>
+            <DialogPrimitive.Close asChild>
+              <button type="button" className="lb-icon" aria-label={t('common.cancel')}>
+                <X size={13} />
+              </button>
+            </DialogPrimitive.Close>
           </div>
 
+          {/* The three steps, named. A wizard that does not say how much is left
+              reads as a form that keeps growing. */}
+          <ol className="rw-steps" aria-label={t('rw.steps')}>
+            {(['host', 'connect', 'workspace'] as const).map((name, index) => {
+              const order: WizardStep[] = ['host', 'connect', 'workspace'];
+              const current = order.indexOf(step);
+              const state = index < current ? 'done' : index === current ? 'current' : 'next';
+              return (
+                <li key={name} className={`rw-step is-${state}`}>
+                  <span className="rw-step-no">{state === 'done' ? <Check size={11} /> : index + 1}</span>
+                  <span className="rw-step-name">{t(`rw.step.${name}.name` as const)}</span>
+                </li>
+              );
+            })}
+          </ol>
+
           <div className="dialog-body scroll">
-            {/* The host picker: the file's own Host blocks, as a prefill.
-                Shown only when there is at least one concrete host to
-                offer — an empty list is the manual form, and a caption for
-                the "file read, nothing usable" states below it. */}
-            {sshConfig !== null && (sshConfig.hosts.length > 0 || pickerCaption !== null) && (
-              <div style={{ marginBottom: 'var(--space-3)' }}>
-                {sshConfig.hosts.length > 0 && (
+            {/* ---------------- 1. the host ---------------- */}
+            {step === 'host' && (
+              <>
+                {sshConfig === null ? (
+                  <p className="rw-note muted">
+                    <BusyDots /> {t('rw.host.reading')}
+                  </p>
+                ) : (
                   <>
-                    <div className="etb-label">{t('lb.remote.picker.title')}</div>
-                    <select
-                      className="input"
-                      style={{ display: 'block', width: '100%', marginTop: 4 }}
-                      value={selectedAlias}
-                      onChange={(e) => {
-                        const alias = e.target.value;
-                        setSelectedAlias(alias);
-                        if (alias !== '') applyPicked(alias);
-                      }}
-                    >
-                      <option value="">{t('lb.remote.picker.manual')}</option>
-                      {sshConfig.hosts.map((entry) => (
-                        <option key={entry.alias} value={entry.alias} disabled={entry.refused !== null}>
-                          {entry.alias}
-                          {entry.refused !== null ? ` — ${t('lb.remote.picker.unsupported')}` : ''}
-                        </option>
-                      ))}
-                    </select>
+                    {/* The file's own hosts first, because that is where a host
+                        is already configured — picking one is the whole point
+                        of reading the file. */}
+                    {sshConfig.hosts.length > 0 ? (
+                      <div className="rw-hosts" role="radiogroup" aria-label={t('rw.host.list')}>
+                        {sshConfig.hosts.map((entry) => {
+                          const refused = entry.refused !== null;
+                          return (
+                            <button
+                              key={entry.alias}
+                              type="button"
+                              role="radio"
+                              aria-checked={selected === entry.alias}
+                              className={`rw-host${selected === entry.alias ? ' is-selected' : ''}${refused ? ' is-refused' : ''}`}
+                              onClick={() => {
+                                setSelected(entry.alias);
+                                setHostProblem(null);
+                                chooseHost(entry.alias);
+                              }}
+                            >
+                              <Server size={14} className="rw-host-icon" />
+                              <span className="rw-host-body">
+                                <span className="rw-host-name mono">{entry.alias}</span>
+                                <span className="rw-host-addr caption muted">
+                                  {entry.user}@{entry.hostname}
+                                  {entry.port !== 22 ? `:${entry.port}` : ''}
+                                </span>
+                              </span>
+                              {refused ? (
+                                <Tip label={entry.refused ?? ''}>
+                                  <span className="rw-host-tag is-warn">
+                                    {t('rw.host.unsupported')}
+                                  </span>
+                                </Tip>
+                              ) : (
+                                <Check size={13} className="rw-host-check" />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="rw-note muted">
+                        {sshConfig.exists
+                          ? t('rw.host.noHosts', { path: sshConfig.path })
+                          : t('rw.host.noFile', { path: sshConfig.path })}
+                      </p>
+                    )}
+
+                    {/* The file's own state, as a fact about the file — never a
+                        claim that a host is reachable. */}
+                    {sshConfig.problem !== null ? (
+                      <p className="rw-note is-warn">
+                        <AlertTriangle size={12} /> {sshConfig.problem}
+                      </p>
+                    ) : null}
+                    <p className="rw-caption caption muted">
+                      {t('rw.host.file', { path: sshConfig.path })}
+                    </p>
                   </>
                 )}
-                <p className="caption muted" style={{ marginTop: 4 }}>
-                  {pickerCaption ?? t('lb.remote.picker.caption', { path: sshConfig.path })}
-                </p>
-              </div>
+
+                {hostProblem !== null ? (
+                  <p className="rw-note is-bad" role="alert">
+                    <AlertTriangle size={12} /> {hostProblem}
+                  </p>
+                ) : null}
+
+                {/* Adding a host writes to `~/.ssh/config` rather than to a
+                    private list, so the person's own `ssh` gets it too. */}
+                <details className="rw-new" open={sshConfig !== null && sshConfig.hosts.length === 0}>
+                  <summary>{t('rw.host.addNew')}</summary>
+                  <p className="rw-caption caption muted">{t('rw.host.addNewHint')}</p>
+                  <div className="rw-grid">
+                    <label className="rw-field">
+                      <span className="etb-label">{t('rw.field.alias')}</span>
+                      <input
+                        className="input"
+                        value={draft.alias}
+                        placeholder="myserver"
+                        onChange={(e) => setDraft({ ...draft, alias: e.target.value })}
+                      />
+                    </label>
+                    <label className="rw-field">
+                      <span className="etb-label">{t('rw.field.hostname')}</span>
+                      <input
+                        className="input"
+                        value={draft.hostname}
+                        placeholder="192.168.1.10"
+                        onChange={(e) => setDraft({ ...draft, hostname: e.target.value })}
+                      />
+                    </label>
+                    <label className="rw-field is-narrow">
+                      <span className="etb-label">{t('rw.field.port')}</span>
+                      <input
+                        className="input"
+                        inputMode="numeric"
+                        value={draft.port}
+                        onChange={(e) => setDraft({ ...draft, port: e.target.value })}
+                      />
+                    </label>
+                    <label className="rw-field">
+                      <span className="etb-label">{t('rw.field.user')}</span>
+                      <input
+                        className="input"
+                        value={draft.user}
+                        placeholder="root"
+                        onChange={(e) => setDraft({ ...draft, user: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                  <label className="rw-field">
+                    <span className="etb-label">{t('rw.field.identity')}</span>
+                    <textarea
+                      className="input"
+                      rows={2}
+                      value={draft.identityFiles}
+                      placeholder="/home/me/.ssh/id_ed25519"
+                      onChange={(e) => setDraft({ ...draft, identityFiles: e.target.value })}
+                    />
+                  </label>
+                  <p className="rw-caption caption muted">{t('rw.field.identityHint')}</p>
+
+                  {/* **What will actually be written**, shown before it is. This
+                      is somebody's own `~/.ssh/config`, often hand-edited and
+                      often old, and a wizard that appends to it without showing
+                      the block is asking for trust it has not earned. The preview
+                      is the same function the test asserts on, so this is the
+                      block — not a description of one. */}
+                  {previewLines.length > 0 ? (
+                    <div className="rw-preview">
+                      <div className="rw-preview-label">{t('rw.host.preview')}</div>
+                      <pre className="rw-preview-body mono">{previewLines.join('\n')}</pre>
+                      <div className="rw-preview-path caption muted">
+                        {t('rw.host.previewWhere', { path: sshConfig?.path ?? '~/.ssh/config' })}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="rw-actions">
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      disabled={writingHost}
+                      onClick={() => void saveNewHost()}
+                    >
+                      {writingHost ? <BusyDots /> : null}
+                      {t('rw.host.saveToConfig')}
+                    </button>
+                  </div>
+                </details>
+              </>
             )}
 
-            <div className="etb-label">{t('lb.remote.hostLabel')}</div>
-            <input
-              className="input"
-              style={{ display: 'block', width: '100%', marginTop: 4, marginBottom: 'var(--space-3)' }}
-              value={hostLabel}
-              onChange={(e) => setHostLabel(e.target.value)}
-              placeholder={t('lb.remote.hostLabelPlaceholder')}
-            />
+            {/* ---------------- 2. connect ---------------- */}
+            {step === 'connect' && pending !== null && (
+              <>
+                <div className="rw-target">
+                  <Server size={15} className="rw-host-icon" />
+                  <span className="rw-host-body">
+                    <span className="rw-host-name mono">{pending.alias}</span>
+                    <span className="rw-host-addr caption muted">
+                      {pending.user}@{pending.host}
+                      {pending.port !== 22 ? `:${pending.port}` : ''}
+                    </span>
+                  </span>
+                </div>
 
-            <div className="row" style={{ gap: 'var(--space-2)', alignItems: 'flex-start' }}>
-              <div className="grow">
-                <div className="etb-label">{t('lb.remote.host')}</div>
-                <input
-                  className="input"
-                  style={{ display: 'block', width: '100%', marginTop: 4 }}
-                  value={host}
-                  onChange={(e) => manualHostEdit('host', e.target.value)}
-                  placeholder="example.com"
-                />
-              </div>
-              <div style={{ width: 80 }}>
-                <div className="etb-label">{t('lb.remote.port')}</div>
-                <input
-                  className="input"
-                  style={{ display: 'block', width: '100%', marginTop: 4 }}
-                  value={port}
-                  onChange={(e) => manualHostEdit('port', e.target.value)}
-                  inputMode="numeric"
-                />
-              </div>
-            </div>
+                <label className="rw-field">
+                  <span className="etb-label">{t('rw.password')}</span>
+                  <input
+                    className="input"
+                    type="password"
+                    value={password}
+                    autoComplete="off"
+                    placeholder={t('rw.passwordPlaceholder')}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !connecting) void connect();
+                    }}
+                  />
+                </label>
+                <p className="rw-caption caption muted">{t('rw.passwordHint')}</p>
 
-            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
-              {t('lb.remote.user')}
-            </div>
-            <input
-              className="input"
-              style={{ display: 'block', width: '100%', marginTop: 4 }}
-              value={user}
-              onChange={(e) => manualHostEdit('user', e.target.value)}
-            />
+                {connectProblem !== null ? (
+                  <p className="rw-note is-bad" role="alert">
+                    <AlertTriangle size={12} /> {connectProblem}
+                  </p>
+                ) : null}
 
-            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
-              {t('lb.remote.identityFiles')}
-            </div>
-            <textarea
-              className="input"
-              style={{ display: 'block', width: '100%', marginTop: 4, minHeight: 48, resize: 'vertical' }}
-              rows={2}
-              value={identityFilesText}
-              onChange={(e) => manualHostEdit('identityFiles', e.target.value)}
-              placeholder="/home/me/.ssh/id_ed25519"
-            />
+                {connecting ? (
+                  <p className="rw-note muted">
+                    <BusyDots /> {t('rw.connecting')}
+                  </p>
+                ) : null}
+              </>
+            )}
 
-            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
-              {t('lb.remote.password')}
-            </div>
-            <input
-              className="input"
-              style={{ display: 'block', width: '100%', marginTop: 4 }}
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <p className="caption muted" style={{ marginTop: 4 }}>
-              {t('lb.remote.passwordWarning')}
-            </p>
+            {/* ---------------- 3. the workspace ---------------- */}
+            {step === 'workspace' && probe !== null && (
+              <>
+                {/* What the far end said, as facts. The Runtime's own version is
+                    shown because "is it installed, and which one" is exactly what
+                    decides whether opening this workspace has to download
+                    something first. */}
+                <div className="rw-facts">
+                  <span className="fact">
+                    <Terminal size={11} /> {probe.os}/{probe.arch}
+                  </span>
+                  <span className="fact">{t('rw.fact.home')} {probe.home}</span>
+                  {probe.runtimeBinary !== null ? (
+                    <span className="fact">
+                      {t('rw.fact.runtime')} {probe.runtimeVersion ?? t('rw.fact.runtimeUnknown')}
+                    </span>
+                  ) : probe.supported ? (
+                    <span className="fact is-warn">{t('rw.fact.noRuntime')}</span>
+                  ) : null}
+                  {probe.configStatus === 'missing' || probe.configStatus === 'empty_template' ? (
+                    <span className="fact is-warn">{t('rw.fact.noConfig')}</span>
+                  ) : null}
+                </div>
 
-            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
-              {t('lb.remote.remotePath')}
-            </div>
-            <input
-              className="input"
-              style={{ display: 'block', width: '100%', marginTop: 4 }}
-              value={remotePath}
-              onChange={(e) => setRemotePath(e.target.value)}
-              placeholder="/srv/app"
-            />
+                {!probe.supported && probe.platformProblem !== null ? (
+                  <p className="rw-note is-bad" role="alert">
+                    <AlertTriangle size={12} /> {probe.platformProblem}
+                  </p>
+                ) : null}
 
-            {/* After the path, not before: the binary's conventional install
-                location lives **inside** this host's home directory, so a
-                person who has not installed yet has nothing sensible to put
-                here — the blank default and its caption are the honest
-                answer, and the download button on the row is the follow-up. */}
-            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
-              {t('lb.remote.remoteBinary')}
-            </div>
-            <input
-              className="input"
-              style={{ display: 'block', width: '100%', marginTop: 4 }}
-              value={remoteBinary}
-              onChange={(e) => setRemoteBinary(e.target.value)}
-              placeholder={t('lb.remote.remoteBinaryPlaceholder')}
-            />
-            <p className="caption muted" style={{ marginTop: 4 }}>
-              {t('lb.remote.remoteBinaryHint')}
-            </p>
+                {/* The browser. The breadcrumb row is the path, the up row is
+                    the way out, and the list is what is actually there. */}
+                <div className="rw-browse">
+                  <div className="rw-browse-head">
+                    <Tip label={t('rw.up')}>
+                      <button
+                        type="button"
+                        className="lb-icon"
+                        aria-label={t('rw.up')}
+                        disabled={probe.parent === null || browsing}
+                        onClick={() => {
+                          if (probe.parent !== null) void browse(probe.parent);
+                        }}
+                      >
+                        <ChevronUp size={13} />
+                      </button>
+                    </Tip>
+                    <span className="rw-path mono" title={probe.path}>
+                      {probe.path}
+                    </span>
+                    {browsing ? <BusyDots /> : null}
+                  </div>
 
-            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
-              {t('lb.remote.workspaceLabel')}
-            </div>
-            <input
-              className="input"
-              style={{ display: 'block', width: '100%', marginTop: 4 }}
-              value={workspaceLabel}
-              onChange={(e) => setWorkspaceLabel(e.target.value)}
-              placeholder={remotePath.trim() !== '' ? remotePath : undefined}
-            />
+                  <div className="rw-dirs scroll">
+                    {probe.entries.length === 0 ? (
+                      <p className="rw-caption caption muted">{t('rw.noSubdirs')}</p>
+                    ) : (
+                      probe.entries.map((entry) => (
+                        <button
+                          key={entry.path}
+                          type="button"
+                          className="rw-dir"
+                          disabled={browsing}
+                          onClick={() => void browse(entry.path)}
+                        >
+                          <Folder size={13} className="rw-dir-icon" />
+                          <span className="rw-dir-name">{entry.name}</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Creating is a separate command from browsing, so looking
+                      around a host cannot leave anything on it. */}
+                  <div className="rw-newdir">
+                    <FolderPlus size={13} className="muted" />
+                    <input
+                      className="input"
+                      value={newFolder}
+                      placeholder={t('rw.newFolderPlaceholder')}
+                      onChange={(e) => setNewFolder(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && canCreate) void makeFolder();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-compact"
+                      disabled={!canCreate}
+                      onClick={() => void makeFolder()}
+                    >
+                      {t('rw.newFolder')}
+                    </button>
+                  </div>
+                </div>
+
+                {/* A path typed rather than clicked — for a directory the list
+                    cannot show (a dot-directory, or one that does not exist
+                    yet), which is also how a missing directory gets created
+                    deliberately rather than by a failed browse. */}
+                <label className="rw-field">
+                  <span className="etb-label">{t('rw.pathLabel')}</span>
+                  <input
+                    className="input"
+                    value={typedPath}
+                    placeholder={probe.path}
+                    onChange={(e) => setTypedPath(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && typedPath.trim() !== '') void browse(typedPath.trim());
+                    }}
+                  />
+                </label>
+                <p className="rw-caption caption muted">{t('rw.pathHint')}</p>
+
+                {browseProblem !== null ? (
+                  <p className="rw-note is-bad" role="alert">
+                    <AlertTriangle size={12} /> {browseProblem}
+                  </p>
+                ) : null}
+
+                {/* The runtime refuses the home directory and the filesystem
+                    root as workspaces. Saying so here, next to the directory the
+                    person is looking at, is the difference between a disabled
+                    button with a reason and a session that dies on start-up. */}
+                {probe.workspaceProblem !== null ? (
+                  <p className="rw-note is-warn" role="status">
+                    <AlertTriangle size={12} /> {t('rw.notAWorkspace')} {probe.workspaceProblem}.
+                  </p>
+                ) : (
+                  <p className="rw-note is-ok" role="status">
+                    <Check size={12} /> {t('rw.willUse')} <span className="mono">{probe.path}</span>
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
           <div className="dialog-foot">
+            {step !== 'host' ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={connecting || saving}
+                onClick={() => {
+                  setConnectProblem(null);
+                  setBrowseProblem(null);
+                  setStep(step === 'workspace' ? 'connect' : 'host');
+                }}
+              >
+                <ArrowLeft size={13} />
+                {t('common.back')}
+              </button>
+            ) : null}
             <span className="grow" />
             <DialogPrimitive.Close asChild>
               <button type="button" className="btn btn-outline">
-                <X size={13} />
                 {t('common.cancel')}
               </button>
             </DialogPrimitive.Close>
-            <button type="button" className="btn btn-primary" disabled={!canSave} onClick={save}>
-              {t('lb.remote.save')}
-            </button>
+
+            {step === 'connect' ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={connecting}
+                onClick={() => void connect()}
+              >
+                {connecting ? <BusyDots /> : null}
+                {t('rw.connect')}
+              </button>
+            ) : null}
+
+            {step === 'workspace' ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={saving || browsing || probe?.workspaceProblem !== null}
+                onClick={() => void openWorkspace()}
+              >
+                {saving ? <BusyDots /> : null}
+                {probe?.runtimeBinary === null ? t('rw.installAndOpen') : t('rw.open')}
+              </button>
+            ) : null}
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
   );
+}
+
+/** An error as a sentence. `Error` already carries one from the Rust side; a
+ *  non-`Error` throw is described rather than dropped. */
+function describe(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  return String(err);
 }

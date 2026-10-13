@@ -1240,6 +1240,19 @@ export interface AppStore {
    */
   configSyncPrompt: ConfigSyncPrompt | null;
   /**
+   * The remote workspace a config-sync answer is currently blocking, or `null`
+   * when none is.
+   *
+   * `enterRemoteWorkspace` parks the id here when it raises `configSyncPrompt`,
+   * and `resolveConfigSync`/`dismissConfigSync` resume through
+   * `connectRemoteWorkspace` with it. It is a *parking slot* rather than a
+   * queue: the prompt is a local decision the window asks about one host at a
+   * time, so a second open arriving while one is pending replaces the first —
+   * which is right, because the second is the row the person actually just
+   * pressed.
+   */
+  pendingRemoteOpen: string | null;
+  /**
    * The workspace the **next** launch should open: the one last worked in.
    *
    * Also a front-end preference, and also kept apart from `workspaces` — this
@@ -1719,8 +1732,34 @@ export interface AppStore {
    * different Tauri commands (`runtime_attach` vs. `runtime_attach_remote`);
    * folding them into one signature would need a discriminated argument that
    * every existing local call site would have to be updated to pass.
+   *
+   * **It waits for a config-sync decision rather than racing it.** When the
+   * saved host's `configPolicy` is `'ask'` and both sides have changed, this
+   * raises `configSyncPrompt` and returns *without connecting* — the workspace
+   * id is parked in `pendingRemoteOpen` and `connectRemoteWorkspace` is called
+   * once the answer arrives. Connecting first and asking afterwards meant the
+   * session ran against the remote file the person had not decided about, and
+   * on a fresh remote account (no usable route in its `config.json`, which is
+   * the ordinary first case) it died with exit code 2 while the question was
+   * still on screen.
    */
   enterRemoteWorkspace(remoteWorkspaceId: string): Promise<void>;
+  /**
+   * Connect to a saved remote workspace and open a session there — the half of
+   * `enterRemoteWorkspace` that runs once no config decision is outstanding.
+   *
+   * Separate and public because the config-sync prompt's own answer is what
+   * calls it: `resolveConfigSync` finishes by resuming whatever
+   * `enterRemoteWorkspace` parked in `pendingRemoteOpen`, and that resume has to
+   * go through a method rather than through the prompt-handling path it came
+   * from (which would re-check the sync it has just resolved, forever).
+   *
+   * Calling it directly for a workspace whose config has not been checked skips
+   * §9.4's check — so the sidebar row and the wizard both go through
+   * `enterRemoteWorkspace`, and this is the continuation rather than a second
+   * entrance.
+   */
+  connectRemoteWorkspace(remoteWorkspaceId: string): Promise<void>;
   /**
    * Installs or upgrades the Runtime on a remote workspace's host (§8 of
    * the design), without connecting afterwards. A separate act from
@@ -2808,6 +2847,7 @@ export const useApp = create<AppStore>((set, get) => {
     remoteWorkspaces: prefs.remoteWorkspaces,
     installStatus: {},
     configSyncPrompt: null,
+    pendingRemoteOpen: null,
     lastWorkspace: prefs.lastWorkspace,
 
     ericaiDefault: prefs.ericaiDefault,
@@ -3053,8 +3093,18 @@ export const useApp = create<AppStore>((set, get) => {
       // workspace is what the next launch should open. Without this, "last used"
       // would mean "last opened", and focusing a session in another workspace is
       // precisely how somebody changes which one that is.
-      const workspace = s.sessions[key]?.workspace ?? '';
-      if (workspace !== '') get().rememberWorkspace(workspace);
+      //
+      // **A remote session is skipped**, for the same reason `init` skips one: its
+      // `workspace` is a directory on the remote host, and `lastWorkspace` is
+      // opened **on this machine** by `openFirstSession`. Remembering it would
+      // make the next start-up offer a directory that is not here. Which remote
+      // workspace was last used is already a row in `remoteWorkspaces`; nothing
+      // needs this field for it.
+      const focused = s.sessions[key];
+      const workspace = focused?.workspace ?? '';
+      if (workspace !== '' && focused?.remoteWorkspaceId === null) {
+        get().rememberWorkspace(workspace);
+      }
       // Last, with the new focus already in place: what is being looked at now
       // is the one that stays, whatever it is.
       abandonIfUntouched(leaving);
@@ -3367,7 +3417,21 @@ export const useApp = create<AppStore>((set, get) => {
           // out from under the person, who is working in the one they can see.
           // Compared with `samePath` so that the ordinary case (the bridge's
           // string, echoed back) is not a write at all.
-          if (get().activeKey === key && init.workspace.trim() !== '') {
+          //
+          // **A remote session's workspace is not remembered, and that is the
+          // whole of this condition's second half.** `init.workspace` on a remote
+          // child is a path on the *remote* host, and `lastWorkspace` is what the
+          // next launch opens **on this machine** (`openFirstSession` asks
+          // `workspace_check` for it) — so remembering it would make the next
+          // start-up refuse a directory that was never here, and say so on the
+          // first screen, because of a session that worked. Where a remote
+          // workspace is remembered is `remoteWorkspaces`, which is exactly what
+          // the sidebar row is.
+          if (
+            get().activeKey === key &&
+            bucket.remoteWorkspaceId === null &&
+            init.workspace.trim() !== ''
+          ) {
             get().rememberWorkspace(init.workspace);
           }
           // The first screen shows the four most recent sessions, and only this
@@ -4801,6 +4865,29 @@ export const useApp = create<AppStore>((set, get) => {
     },
 
     addRemoteWorkspace(entry) {
+      // **A workspace already saved is returned, not saved twice.** The same
+      // rule `addWorkspace` applies to a local directory, and it matters more
+      // here: the wizard can legitimately be walked to the same directory twice
+      // (pick the host, browse there, open it; later do it again), and the two
+      // rows are indistinguishable in the sidebar — same label, same host, same
+      // path — while `enterRemoteWorkspace` can only ever focus one of them. The
+      // second row would be permanently un-openable, which reads as a broken
+      // button rather than as a duplicate.
+      //
+      // Identity is the (host, path) pair and not the path alone: two different
+      // hosts can each have a `/srv/app`, and those are genuinely two places.
+      const existing = get().remoteWorkspaces.find(
+        (item) => item.hostId === entry.hostId && item.remotePath === entry.remotePath,
+      );
+      if (existing) {
+        // A path that was blank (no Runtime installed yet) and is now known is
+        // worth recording — that is the wizard having learned something since.
+        if (existing.remoteBinary.trim() === '' && entry.remoteBinary.trim() !== '') {
+          get().updateRemoteWorkspace(existing.id, { remoteBinary: entry.remoteBinary });
+        }
+        return existing.id;
+      }
+
       const id = `rw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       set((state) => ({ remoteWorkspaces: [...state.remoteWorkspaces, { ...entry, id }] }));
       persistPrefs(get());
@@ -4850,10 +4937,49 @@ export const useApp = create<AppStore>((set, get) => {
       // §9.4 of the design: config sync is checked before connecting, not
       // folded silently into the connection attempt itself — a policy of
       // 'ask' may need to put a prompt on screen, and that has to happen
-      // before (or at worst alongside) the SSH connection, never after a
-      // session is already open and running turns against whichever
-      // config the remote runtime happened to read at its own start-up.
+      // before the SSH connection, never after a session is already open and
+      // running turns against whichever config the remote runtime happened to
+      // read at its own start-up.
+      //
+      // **And the connection then actually waits.** This used to call
+      // `checkConfigSync` and carry straight on, which meant the prompt was
+      // raised *and* the session was opened against the remote file the person
+      // had not yet decided about — so the decision arrived after the thing it
+      // was supposed to decide. On a host whose remote `config.json` has no
+      // usable route (a fresh account, which is the ordinary first case) the
+      // session then died with exit code 2 while the question was still on
+      // screen, and answering it changed nothing.
       await get().checkConfigSync(host.id);
+      if (get().configSyncPrompt !== null) {
+        // Remember what was being opened, so the answer can resume it. The rest
+        // of this function is `connectRemoteWorkspace`, which the prompt's own
+        // answer calls once there is a decision to act on.
+        set({ pendingRemoteOpen: remoteWorkspaceId });
+        return;
+      }
+
+      await get().connectRemoteWorkspace(remoteWorkspaceId);
+    },
+
+    async connectRemoteWorkspace(remoteWorkspaceId) {
+      const s = get();
+      const entry = s.remoteWorkspaces.find((item) => item.id === remoteWorkspaceId);
+      if (!entry) return;
+
+      // A second call for a workspace that already has a live session is a
+      // no-op: the prompt's answer can arrive twice (a double press), and
+      // opening two children against one row is not what either press meant.
+      const already = s.order.find((key) => s.sessions[key]?.remoteWorkspaceId === remoteWorkspaceId);
+      if (already) {
+        get().focusSession(already);
+        return;
+      }
+
+      const host = s.sshHosts.find((item) => item.id === entry.hostId);
+      if (!host) {
+        set({ startupNotice: { code: 'no-workspace' } });
+        return;
+      }
 
       const ericai = s.ericaiDefault;
       const maxSteps = s.maxStepsDefault;
@@ -5147,8 +5273,15 @@ export const useApp = create<AppStore>((set, get) => {
         password: host.password ?? null,
       };
 
+      // The parked open is taken **before** the write, so a failure below
+      // cannot leave it to be resumed a second time by the next answer.
+      const resume = get().pendingRemoteOpen;
+
       if (choice === 'use-local') {
         if (prompt.localText !== null) {
+          // A failed upload is the answer the person needs: connecting anyway
+          // would run the session against the remote file they just chose to
+          // replace, which is the opposite of the choice they made.
           const newFingerprint = await writeRemoteConfig(target, prompt.localText);
           get().updateSshHost(prompt.hostId, { configBaselineFingerprint: newFingerprint });
         }
@@ -5156,11 +5289,23 @@ export const useApp = create<AppStore>((set, get) => {
         get().updateSshHost(prompt.hostId, { configBaselineFingerprint: prompt.remoteFingerprint });
       }
 
-      set({ configSyncPrompt: null });
+      set({ configSyncPrompt: null, pendingRemoteOpen: null });
+      // §9.4's whole point, kept: the decision is made **before** the
+      // connection, and this is what finally opens the workspace it was
+      // blocking. Skipped when this prompt came from the row's own install
+      // button rather than from an open attempt (`pendingRemoteOpen` is null).
+      if (resume !== null) {
+        await get().connectRemoteWorkspace(resume);
+      }
     },
 
     dismissConfigSync() {
-      set({ configSyncPrompt: null });
+      // A dismissed prompt abandons the open it was blocking, deliberately:
+      // Cancel means "not now", and a session silently started against
+      // whichever file happened to be there is exactly the outcome the
+      // question existed to prevent. The row stays in the sidebar, so the
+      // person can press it again and get the question again.
+      set({ configSyncPrompt: null, pendingRemoteOpen: null });
     },
 
     async applyLaunch(next) {

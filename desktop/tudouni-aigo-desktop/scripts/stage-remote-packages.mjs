@@ -14,7 +14,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, createReadStream, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,6 +39,14 @@ if (!existsSync(distDir)) {
   console.error('build the archives first:  make release');
   process.exit(1);
 }
+
+// The destination is not in the repository (the archives are build output, like
+// `runtime/`), so on a clean checkout it does not exist yet — and `copyFileSync`
+// does not create it. Without this the very first `npm run runtime:stage-remote`
+// on a fresh clone failed with ENOENT naming a path it was about to write, which
+// reads as "the build produced nothing" rather than "the destination was
+// missing". `recursive` so a partially-created tree is fine too.
+mkdirSync(destDir, { recursive: true });
 
 function sha256File(path) {
   const hash = createHash('sha256');

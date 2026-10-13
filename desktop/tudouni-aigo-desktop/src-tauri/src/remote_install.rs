@@ -129,11 +129,48 @@ pub fn remote_home_dir(session: &Session) -> Result<String, String> {
     Ok(home)
 }
 
+/// The absolute path to the installed runtime for an account, given its home
+/// and the platform that was detected for it.
+///
+/// Exposed so the connection probe (`remote_probe.rs`) cannot disagree with
+/// the installer about where an install lands: both go through
+/// `RemoteLayout`, so the "is the Runtime already installed?" question is
+/// answered by reading the same `CurrentLink` this module writes.
+/// `install_or_upgrade` returns exactly this string on success.
+pub fn current_binary_for(home_dir: &str, target: RemoteTarget) -> String {
+    let layout = RemoteLayout::new(home_dir, "", target);
+    format!("{}/{}", layout.current_link(), target.binary_name())
+}
+
+/// Which version `CurrentLink` points at, or `None` when there is no link, or
+/// it points nowhere this call can resolve.
+///
+/// The version is the **name of the directory the link resolves to**, by
+/// construction (`CurrentLink -> .../runtime/<version>`), so `readlink` plus a
+/// basename is the whole answer. Public because the connection probe reports
+/// the installed version as a fact about the host, and it must read it the same
+/// way `install_or_upgrade` decides whether an install is needed.
+pub fn installed_version(session: &Session, home_dir: &str) -> Option<String> {
+    let layout = RemoteLayout::new(home_dir, "", LINUX_AMD64);
+    let command = format!("readlink {}", q(&layout.current_link()));
+    exec_capture(session, &command)
+        .ok()
+        .map(|out| out.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .and_then(|target| {
+            // Trim a trailing slash first: `readlink` may print either form,
+            // and `file_name` on ".../1.2.3/" answers only by luck.
+            std::path::Path::new(target.trim_end_matches('/'))
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
+}
+
 /// Runs one non-interactive command to completion and returns its stdout,
 /// refusing a non-zero exit — the shape every detection probe and every
 /// verify-and-switch step in this module needs, written once rather than
 /// at each call site.
-fn exec_capture(session: &Session, command: &str) -> Result<String, String> {
+pub fn exec_capture(session: &Session, command: &str) -> Result<String, String> {
     let mut channel = session
         .channel_session()
         .map_err(|e| format!("could not open a channel: {e}"))?;

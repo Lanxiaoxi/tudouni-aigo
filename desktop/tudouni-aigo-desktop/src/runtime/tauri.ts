@@ -1211,6 +1211,148 @@ export async function readSshConfig(): Promise<SshConfigDocument | null> {
   }
 }
 
+/** What `appendSshHost` writes: one `Host` block's fields. */
+export interface AppendSshHostOptions {
+  alias: string;
+  hostname: string;
+  port: number;
+  user: string;
+  identityFiles: string[];
+}
+
+/**
+ * Add one `Host` block to the user's own `~/.ssh/config`, returning the file's
+ * path.
+ *
+ * This is what "configure a host here" means in this application:
+ * `~/.ssh/config` is the **one** place a host is configured — the Go side reads
+ * the same file, and so does the person's own `ssh` — so a host added here is
+ * written there rather than into a private list only this program can see.
+ *
+ * Never writes a password: `Password` is this project's own extension rather
+ * than an OpenSSH keyword, and writing it would break the person's `ssh` with
+ * `Bad configuration option: password` on every connection. Use
+ * `attachRuntimeRemote`'s own `password` field for a host that needs one.
+ *
+ * Rejects with a sentence when the alias already exists, when the file carries
+ * a `Match` block, or when the write fails.
+ */
+export async function appendSshHost(options: AppendSshHostOptions): Promise<string> {
+  if (!isHosted()) {
+    throw new Error('adding a host to ~/.ssh/config needs the desktop app');
+  }
+  return await tauriInvoke<string>('append_ssh_host', { options });
+}
+
+/* ============================================================
+   The connection step of "add a remote workspace"
+   ============================================================ */
+
+/** One directory a remote host offers as a possible workspace. */
+export interface RemoteDirEntry {
+  /** The directory's own name, for the row. */
+  name: string;
+  /** Its absolute path — what choosing it actually means. */
+  path: string;
+}
+
+/** Everything `probeRemoteHost` reports about a host it just connected to.
+ *  Every field is an answer from the far end; none of it is inferred here. */
+export interface RemoteProbe {
+  /** The remote account's `$HOME`, the root the browser starts at. */
+  home: string;
+  /** The directory this reply describes, after resolving symlinks. */
+  path: string;
+  /** The parent directory, or `null` at the filesystem root. */
+  parent: string | null;
+  /** `"linux"`, `"windows"`, or `"unknown"`. */
+  os: string;
+  arch: string;
+  /** Whether this program publishes a Runtime for that platform. */
+  supported: boolean;
+  /** Why not, when it does not — the Rust side's own sentence, shown as given. */
+  platformProblem: string | null;
+  /** The installed Runtime's absolute path, when one is already there. */
+  runtimeBinary: string | null;
+  /** The version `CurrentLink` points at, when it points at one. */
+  runtimeVersion: string | null;
+  /** `~/.tudouni/config.json`'s state on the remote account. */
+  configStatus: RemoteConfigStatus;
+  /** Why the listed directory cannot itself be a workspace, when it cannot. */
+  workspaceProblem: string | null;
+  /** The directories inside `path`, sorted, dot-directories omitted. */
+  entries: RemoteDirEntry[];
+}
+
+/** The SSH destination these three calls connect to — the same shape
+ *  `RemoteConfigTarget` carries, since they are all the same question asked of
+ *  the same server. */
+export interface RemoteProbeTarget {
+  host: string;
+  port: number;
+  user: string;
+  identityFiles: string[];
+  password: string | null;
+  connectTimeoutMs?: number;
+}
+
+function probeTargetWire(target: RemoteProbeTarget) {
+  return {
+    host: target.host,
+    port: target.port,
+    user: target.user,
+    identityFiles: target.identityFiles,
+    password: target.password,
+    connectTimeoutMs: target.connectTimeoutMs ?? null,
+  };
+}
+
+/**
+ * Connect to a host and report what is on the other end — the **first** step of
+ * adding a remote workspace, and the reason the flow no longer begins with a
+ * long form: everything this answers is something only the far end knows, so
+ * asking a person to type it would be asking them to guess.
+ *
+ * It writes nothing and installs nothing. `path` omitted or empty means the
+ * account's home directory, which is where the browser starts.
+ *
+ * Rejects (rather than resolving a null) when the connection fails: a probe
+ * that could not connect is the subject of the step, not a background detail,
+ * and the caller has a sentence to show for it.
+ */
+export async function probeRemoteHost(
+  target: RemoteProbeTarget,
+  path?: string,
+): Promise<RemoteProbe> {
+  if (!isHosted()) {
+    throw new Error('connecting to a remote host needs the desktop app');
+  }
+  return await tauriInvoke<RemoteProbe>('probe_remote_host', {
+    target: probeTargetWire(target),
+    path: path ?? null,
+  });
+}
+
+/**
+ * Create one directory on a remote host — the wizard's "new folder".
+ *
+ * A separate call from `probeRemoteHost` on purpose: looking around a host must
+ * not be able to leave anything behind on it. Resolves to the directory's
+ * absolute path, which is what the caller then lists.
+ */
+export async function createRemoteDirectory(
+  target: RemoteProbeTarget,
+  path: string,
+): Promise<string> {
+  if (!isHosted()) {
+    throw new Error('creating a remote directory needs the desktop app');
+  }
+  return await tauriInvoke<string>('create_remote_directory', {
+    target: probeTargetWire(target),
+    path,
+  });
+}
+
 /** A directory picker. Null when the person cancels. */
 export async function chooseWorkspaceDirectory(): Promise<string | null> {
   if (!isHosted()) return null;

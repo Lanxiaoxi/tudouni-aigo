@@ -504,7 +504,6 @@ its existence, because "right of the collapse button" is the whole request and a
 button appended after the facts would render, work, and be in the wrong place.
 
 ### 5 · Why the status bar's numbers no longer wait for a turn to end
-
 Decision 5 said the usage, cache and elapsed figures come from `ui(status)`,
 requested when a turn ends. That is still where the *session totals* come from —
 but it made the bar report the **previous turn's** figures for the whole of the
@@ -608,6 +607,127 @@ does not overflow, and pressing "Load" reaches `mcpPending` without touching
 both failures are invisible otherwise — a clipped control still renders, and an
 unfilled `{name}` is still a non-empty string.
 
+### 25 · Why connecting to a remote workspace begins with a connection
+
+The first version of the remote-workspace form asked for nine fields at once — a
+host, a port, a user, key paths, a password, a workspace directory and a runtime
+binary path — and saved them **without connecting**. Every one of those is a
+question only the far end can answer, so filling that form in was guessing:
+
+- it could not say whether the credentials work, so a typo arrived later as a
+  dead session;
+- it asked for a workspace directory as **free text**, which on a machine you are
+  not sitting at means inventing an absolute path and only finding out on connect;
+- it asked where the runtime binary was — a question with no sensible answer
+  before connecting, because whether one is installed is a fact about the host;
+- it asked for a host, a port and key paths that `~/.ssh/config` already holds.
+
+So the flow is now three steps, in the order the answers arrive. **1. Which
+host** — a list read from `~/.ssh/config`, which is the one place a host is
+configured, plus "add a new one" that appends a `Host` block **to that same
+file** so the person's own `ssh` gets it too. **2. Connect** — one dial, after
+which the far end reports its home, its platform, whether the Runtime is
+installed and at which version, and whether it has a usable `config.json`. A
+failure is a sentence here, while the form is still on screen. **3. Which
+directory** — a browser over the real directories on that host, starting at its
+home, with "new folder" for one that does not exist yet. Only then is anything
+saved.
+
+Three things about it are decisions rather than layout:
+
+- **Nothing is saved before step 3.** The host and the workspace are written
+  together, at the end, once both are known to be real — so abandoning the
+  wizard leaves nothing behind, which is what a Cancel button is for.
+- **The password is never written to `~/.ssh/config`.** `Password` is this
+  project's own extension rather than an OpenSSH keyword: writing it would make
+  `ssh` refuse to start for the **whole file**, on every connection to every host
+  in it, with `Bad configuration option: password`. It lives in this
+  application's own preferences, the existing documented trade-off.
+- **The exact block is shown before it is appended.** This is somebody's own
+  configuration, often hand-edited and often old, and a wizard that appends to it
+  without showing the block is asking for trust it has not earned. The preview and
+  the write go through one definition of the format on the Rust side
+  (`ssh_config::host_block_lines`); the TypeScript mirror is pinned by its own
+  test, and the duplicate rule is asserted there because a `Password` line is
+  invisible on screen until somebody's `ssh` stops working.
+
+### 26 · Why the remote runtime runs non-blocking, and why that is not a detail
+
+Every remote session used to hang at "handshaking" with a perfectly healthy
+runtime on the far end, and the window froze with it. The cause was a three-way
+deadlock built out of one shared lock and libssh2's **blocking** mode:
+
+1. the stderr reader took the channel lock and blocked in `read()`. A remote
+   runtime writes nothing to stderr, so on an idle session this never returned;
+2. the wait loop took the bridge lock and called `try_wait`, which needs the
+   channel lock — blocked, still holding the bridge lock;
+3. `runtime_stderr` is a **synchronous** Tauri command reached from the WebView,
+   so it needed the bridge lock too — and the renderer's main thread stopped,
+   which is why the window froze completely;
+4. the stdout reader needed the channel lock — blocked. The runtime's own opening
+   `init` was therefore never read, and the session sat in `handshaking` forever.
+
+The repair is a discipline rather than a lock: the session is put in
+**non-blocking** mode once the command has started, and every read and write
+loops on `WouldBlock`, **releasing the lock between attempts**. No call waits on
+the network while holding the lock, so no thread can starve another.
+
+Two consequences worth knowing before touching `ssh_backend.rs`:
+
+- **The channel is not thread-safe and the lock is the only thing making it so.**
+  `ssh2::Stream` locks an *internal* mutex per call, which does not serialise one
+  `Channel` used as stdin, stdout and the exit control plane at once. Removing the
+  outer lock reintroduces the deadlock in a form that looks like a hang.
+- **A connect timeout is not a read timeout.** Bounding reads would mistake an
+  idle conversation for a dead one; `POLL_INTERVAL` is a yield, and nothing in
+  that loop ever gives up on a live channel.
+
+The visible symptom of the original bug is worth recognising, because it looks
+like a network problem and is not: window frozen, remote process running fine,
+session stuck at `handshaking`, no stderr.
+
+### 27 · Three more faults the remote path was hiding
+
+Each of these was invisible until a window was driven against a real server, and
+each is the kind of thing a type check cannot see.
+
+- **The remote command never entered the workspace.** A non-PTY SSH exec starts
+  in the account's home directory, and the runtime refuses the home directory as
+  a workspace (`paths.UnsafeWorkspace`) — so **every** remote session died on
+  start-up with "this cannot be the workspace: /home/<user>", whichever directory
+  had been chosen. `RemoteAttachOptions.remote_workspace` was accepted and then
+  never used; the local path has always set its working directory explicitly
+  (`Command::current_dir`) and this is its remote equivalent. The command is now
+  `cd <workspace> && exec <binary> …`, with `&&` so a directory that does not
+  exist fails as a refusal to start rather than as a session quietly opening in
+  the home directory.
+
+- **Every `Host` block in `~/.ssh/config` was silently dropped.**
+  `ssh_config::parse_line` returned the keyword verbatim while every comparison
+  downstream tested the lower-case form, and OpenSSH keywords are
+  case-insensitive — so a file written the way OpenSSH documents it
+  (`Host`, `HostName`) parsed as having **no hosts at all**. The picker was
+  empty, `Match` was never noticed and `ProxyJump` was never refused. Nothing
+  threw; the list was just blank. The fold now happens once, in `parse_line`,
+  which is the single point every line passes through; the value is never folded,
+  because a hostname, a path and a user name are all case-sensitive.
+
+- **The config-sync question was asked and then ignored.** `enterRemoteWorkspace`
+  called `checkConfigSync` and carried straight on, so the prompt was raised
+  **and** the session opened against the remote file the person had not yet
+  decided about — the decision arrived after the thing it was meant to decide. On
+  a fresh remote account (no usable route in its `config.json`, the ordinary
+  first case) the session died with exit code 2 while the question was still on
+  screen, and answering it changed nothing. The open is now parked in
+  `pendingRemoteOpen` and resumed by the answer.
+
+Two smaller ones, both about a remote path being treated as a local one:
+`lastWorkspace` was written from a remote session's `init.workspace`, so the next
+launch would try to open a directory that only exists on the server; and the
+left rail's `currentWorkspace` fed a remote path into the **local** workspace
+list, adding a row that could only ever fail and marking the same place current
+twice.
+
 ---
 
 ## Verification
@@ -644,6 +764,15 @@ npm run check:window -- http://127.0.0.1:5178/ 9333
 
 # 4. Does X ask, and does a session behind the window say so?  Same prerequisites.
 npm run check:close-notify -- http://127.0.0.1:5178/ 9333
+
+# 5. The add-remote-workspace wizard, over real SSH to a real host, in the real
+#    window.  <port> <host> <user> <password> [directory] — the app must be
+#    running with remote debugging on <port> (see "Known boundaries" below).
+node scripts/remote-workspace-e2e.mjs 9333 192.168.1.200 tudouni <password> [dir]
+
+# 6. Is that remote session a *working agent*, or merely connected?  Sends one
+#    real turn and lists the remote workspace's own files.  Same prerequisites.
+node scripts/remote-agent-smoke.mjs 9333 "Reply with exactly: REMOTE OK"
 ```
 
 **Against the real binary.** Starts `tudouni-aigo --runtime-stdio` the way the

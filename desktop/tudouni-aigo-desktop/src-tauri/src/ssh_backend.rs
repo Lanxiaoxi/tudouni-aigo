@@ -42,17 +42,109 @@
 //! So the channel lives behind one `Arc<Mutex<Channel>>`, shared by every
 //! piece that touches it: [`SshRuntimeProcess`] (for `write_line`, `kill`,
 //! `try_wait`), [`ChannelStdout`] (the stdout reader thread), and
-//! [`ChannelStderr`] (the stderr reader thread). Each `read()`/`write()` call
-//! takes the lock only for that one call — a blocking read while holding the
-//! lock would starve `runtime_send` for however long the far end stays quiet,
-//! which on an idle session is most of the time — so the lock is reacquired
-//! on every call rather than held across one.
+//! [`ChannelStderr`] (the stderr reader thread).
+//!
+//! # Why every call into the channel is non-blocking, and this is not a detail
+//!
+//! **This is the fix for a deadlock that made every remote session hang at
+//! "handshaking" with a healthy runtime on the far end.**
+//!
+//! The previous version put the whole session in libssh2's *blocking* mode and
+//! let each reader sit inside `read()` for as long as the far end stayed quiet.
+//! That holds the shared lock for the entire wait, and it composes into a
+//! three-way deadlock — the exact hazard the paragraph above used to describe as
+//! avoided, while doing it:
+//!
+//!   1. the **stderr** reader takes the lock and blocks in `read()`. A remote
+//!      runtime writes nothing to stderr, so on an idle session this never
+//!      returns;
+//!   2. the **wait loop** takes the bridge lock and calls `try_wait`, which
+//!      needs the channel lock → blocked, still holding the bridge lock;
+//!   3. `runtime_stderr` (reached from the WebView, and a **synchronous** Tauri
+//!      command) needs the bridge lock → blocked. The renderer's main thread is
+//!      now stuck, which is why the window froze completely;
+//!   4. the **stdout** reader needs the channel lock → blocked. So the runtime's
+//!      own opening `init` was never read, and the session sat in
+//!      `handshaking` forever while the remote process ran perfectly.
+//!
+//! The repair is a discipline rather than a lock: the session is put in
+//! **non-blocking** mode once the command is started, and every read and write
+//! in this module loops on `WouldBlock`, **releasing the lock between
+//! attempts**. No call ever waits on the network while holding the lock, so no
+//! thread can starve another and every one of them makes progress.
+//!
+//! The cost is a poll (see [`POLL_INTERVAL`]): an idle channel is checked a few
+//! hundred times a second instead of sleeping on the socket. That is the right
+//! trade for three threads sharing one non-thread-safe session, and it is the
+//! same shape `spawn`'s own wait loop already uses locally (`try_wait` plus a
+//! sleep).
 
 use ssh2::{Channel, Session};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
+
+/// How long a `WouldBlock` attempt waits before trying the channel again.
+///
+/// Short enough that a session's first `init` is delivered without a person
+/// perceiving a delay (a few milliseconds against a handshake measured in
+/// hundreds), and long enough that three threads polling one channel do not
+/// spin a core. It is not a timeout: nothing here ever gives up on a live
+/// channel, it only ever yields the lock.
+const POLL_INTERVAL: Duration = Duration::from_millis(4);
+
+/// The error every poisoned-lock path reports. One spelling, so a caller
+/// matching on the message (a test, or a person reading a log) sees one string.
+fn poisoned() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::Other, "the channel lock is poisoned")
+}
+
+/// Writes all of `data`, yielding the lock while the channel reports `WouldBlock`.
+///
+/// Loop-and-yield rather than one blocking `write_all`: the channel is shared
+/// with two reader threads, and holding the lock across a wait for the send
+/// window is how the deadlock described in the module doc came back.
+fn write_all_yielding(channel: &Arc<Mutex<Channel>>, mut data: &[u8]) -> std::io::Result<()> {
+    while !data.is_empty() {
+        let result = {
+            let mut guard = channel.lock().map_err(|_| poisoned())?;
+            guard.write(data)
+        };
+        match result {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "the channel accepted no bytes",
+                ))
+            }
+            Ok(written) => data = &data[written..],
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(POLL_INTERVAL)
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// Flushes the channel, yielding the lock while it reports `WouldBlock`.
+fn flush_yielding(channel: &Arc<Mutex<Channel>>) -> std::io::Result<()> {
+    loop {
+        let result = {
+            let mut guard = channel.lock().map_err(|_| poisoned())?;
+            guard.flush()
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(POLL_INTERVAL)
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 /// What `spawn`'s wait/kill/send plumbing needs from a running runtime, local
 /// or remote.
@@ -129,34 +221,64 @@ const SHUTDOWN_LINE: &str = "{\"v\":1,\"t\":\"shutdown\"}\n";
 /// stdout-reading thread is built against — the same `BufReader<R>` /
 /// `read_until(b'\n', ..)` loop the local path already uses, unchanged,
 /// because both sides of that loop only need a `Read`.
+///
+/// `WouldBlock` is **retried after releasing the lock**, never propagated: in
+/// non-blocking mode "nothing has arrived yet" is the ordinary state of an idle
+/// channel, and returning it as `Err` would make `read_until` treat a quiet
+/// session as a broken one. The sleep is what keeps the retry from spinning —
+/// see the module doc for why this loop is the repair for the hang.
 pub struct ChannelStdout {
     channel: Arc<Mutex<Channel>>,
 }
 
 impl Read for ChannelStdout {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut channel = self
-            .channel
-            .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "the channel lock is poisoned"))?;
-        channel.read(buf)
+        loop {
+            let result = {
+                let mut channel = self.channel.lock().map_err(|_| poisoned())?;
+                channel.read(buf)
+            };
+            match result {
+                // A zero-length read is EOF, and `read_until` turns it into a
+                // clean stop. It must not be retried.
+                Ok(read) => return Ok(read),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(POLL_INTERVAL)
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 }
 
 /// A plain `Read` onto `Channel::stderr()`, the same way [`ChannelStdout`] is
 /// onto the ordinary stream — so the stderr-draining thread `spawn_remote`
 /// starts can be exactly the local path's loop, against a plain `Read`.
+///
+/// The same `WouldBlock` retry as `ChannelStdout`, and it matters most here: a
+/// remote runtime normally writes **nothing** to stderr, so this reader is
+/// parked in this loop for the entire life of the session. Holding the lock
+/// across that wait is precisely what used to freeze the window — see the
+/// module doc.
 pub struct ChannelStderr {
     channel: Arc<Mutex<Channel>>,
 }
 
 impl Read for ChannelStderr {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let channel = self
-            .channel
-            .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "the channel lock is poisoned"))?;
-        channel.stderr().read(buf)
+        loop {
+            let result = {
+                let channel = self.channel.lock().map_err(|_| poisoned())?;
+                channel.stderr().read(buf)
+            };
+            match result {
+                Ok(read) => return Ok(read),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(POLL_INTERVAL)
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 }
 
@@ -239,11 +361,19 @@ pub fn connect(
         .exec(command)
         .map_err(|e| format!("{}:{} accepted the connection but could not start the command: {e}", target.host, target.port))?;
 
-    // The connect timeout bounded the handshake and authentication; it must
-    // not also bound ordinary reads once the runtime is running, or an idle
-    // conversation would be mistaken for a dead one. Reads block instead,
-    // the same way a local pipe read does.
-    session.set_timeout(0);
+    // **Non-blocking from here on, and this is load-bearing.** The command is
+    // started (which is the last thing that must wait on the network), and every
+    // read/write below yields the shared lock on `WouldBlock` instead of sitting
+    // inside libssh2 waiting. In blocking mode, an idle stderr reader held the
+    // lock for the life of the session and froze both the stdout reader and the
+    // synchronous `runtime_stderr` command — the deadlock the module doc
+    // describes in full.
+    //
+    // The connect timeout bounded the handshake and authentication and must not
+    // bound ordinary reads once the runtime is running, which is exactly why
+    // this is non-blocking-and-retry rather than a read timeout: a timeout would
+    // mistake an idle conversation for a dead one after a fixed interval.
+    session.set_blocking(false);
 
     let shared = Arc::new(Mutex::new(channel));
 
@@ -328,10 +458,7 @@ impl RuntimeProcess for SshRuntimeProcess {
         if let Some(code) = self.exit_status {
             return Ok(Some(code));
         }
-        let mut channel = self
-            .channel
-            .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "the channel lock is poisoned"))?;
+        let mut channel = self.channel.lock().map_err(|_| poisoned())?;
         if !channel.eof() {
             return Ok(None);
         }
@@ -354,10 +481,7 @@ impl RuntimeProcess for SshRuntimeProcess {
         // side and in the local Rust path. The stdout/stderr reader threads
         // see this as an ordinary read error or EOF and end on their own —
         // nothing here needs to join them.
-        let mut channel = self
-            .channel
-            .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "the channel lock is poisoned"))?;
+        let mut channel = self.channel.lock().map_err(|_| poisoned())?;
         let _ = channel.close();
         let _ = channel.wait_close();
         Ok(())
@@ -369,28 +493,37 @@ impl RuntimeProcess for SshRuntimeProcess {
     }
 
     fn write_line(&mut self, line: &str) -> std::io::Result<()> {
-        let mut channel = self
-            .channel
-            .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "the channel lock is poisoned"))?;
-        channel.write_all(line.as_bytes())?;
-        channel.write_all(b"\n")?;
-        channel.flush()
+        write_all_yielding(&self.channel, line.as_bytes())?;
+        write_all_yielding(&self.channel, b"\n")?;
+        flush_yielding(&self.channel)
     }
 
     fn shutdown(&mut self) -> std::io::Result<()> {
-        let mut channel = self
-            .channel
-            .lock()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "the channel lock is poisoned"))?;
-        channel.write_all(SHUTDOWN_LINE.as_bytes())?;
-        channel.flush()?;
+        write_all_yielding(&self.channel, SHUTDOWN_LINE.as_bytes())?;
+        flush_yielding(&self.channel)?;
         // send_eof is the channel's actual "no more input is coming" signal
         // — the remote equivalent of dropping a ChildStdin, without tearing
         // down the channel's ability to still be read from or waited on.
-        channel
-            .send_eof()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        //
+        // Retried on `WouldBlock` for the same reason as every write above:
+        // one transient window must not turn a clean shutdown into an error.
+        //
+        // The error is converted through `io::Error` before its kind is read:
+        // `ssh2::Error` has no `kind()` of its own, and `would_block` is what
+        // says "the send window is not open yet" rather than "this failed".
+        loop {
+            let result = {
+                let mut channel = self.channel.lock().map_err(|_| poisoned())?;
+                channel.send_eof().map_err(std::io::Error::from)
+            };
+            match result {
+                Ok(()) => return Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(POLL_INTERVAL)
+                }
+                Err(error) => return Err(std::io::Error::new(std::io::ErrorKind::Other, error)),
+            }
+        }
     }
 }
 
