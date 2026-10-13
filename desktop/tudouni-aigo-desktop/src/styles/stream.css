@@ -1867,14 +1867,24 @@
   color: var(--fg-muted);
 }
 
+/* The learning-run tag. **The same tag shape as `.lb-remote-tag`** — that
+   class's rule, copied rather than shared, sits ~200 lines up this file for
+   the merged remote rows and is the one small-badge dialect the rail has.
+   The first version of this badge drew its own: accent text on no fill with
+   a stronger border and a different padding, so one row could carry two
+   tags that disagreed about what a tag looks like. Only the colour differs,
+   and deliberately: a learning run is a fact about *this* workspace, so it
+   takes the accent-family text token, which reads on the muted fill in both
+   themes without making the badge the loudest thing in the list. */
 .lb-session .lb-session-learning {
   flex: none;
-  font-size: var(--text-caption);
-  color: var(--accent);
-  border: 1px solid var(--border-strong);
+  padding: 1px 6px;
   border-radius: var(--radius-xs);
-  padding: 0 4px;
-  line-height: 1.5;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-muted);
+  color: var(--accent-tint-text);
+  font-size: var(--text-caption);
+  line-height: 1.4;
 }
 
 .lb-session .lb-session-time {
@@ -2128,18 +2138,37 @@
   flex-direction: column;
 }
 
-/* The fold cell's content. `overflow: hidden` comes from `.collapse > *`
-   (global.css); this rule adds the direction. The cell is a grid track that
-   shrinks from **its top edge** toward the pinned head, so the clip line
-   travels down the list. `justify-content: flex-end` keeps the buttons
-   bottom-anchored *inside* the clip: as the cell shrinks, the overflow
-   spills above the clip line rather than below it, which means the top row
-   (Files) is the first to leave and the bottom row (Settings) the last —
-   the fold sweeps the list bottom-up. Without the anchor the overflow would
-   spill downward and the direction would be the opposite of what was asked.
-   `min-height: 0` is load-bearing for the same reason as on `.collapse > *`:
-   without it the flex column's own min-content height would keep the cell
-   from ever reaching 0fr. */
+/* The fold cell's direct child, and the reason there are **two** levels here.
+   `.collapse > *` (global.css) gives this element `min-height: 0` so the track
+   can reach `0fr`, and `overflow: hidden` — but `overflow` clips *content*, not
+   padding, and `.lb-foot-inner` carries 8px of top padding. With the padded box
+   as the grid item, a "folded" foot therefore still stood 8px tall: the padding
+   box was the only thing left of the cell, and the bottom-anchored Settings row
+   bled into it, so a half-clipped "Settings" label peeked out above the
+   WORKBENCH head. `.lb-foot-fold` carries no padding, so the cell really does
+   reach zero (the same reason the config panel's body sits behind a plain
+   `<div>`); it also owns the bottom anchor that gives the fold its direction:
+   `justify-content: flex-end` keeps `.lb-foot-inner`'s bottom edge against the
+   shrinking track's bottom edge, so the overflow spills above the clip line
+   rather than below it — the top row (Files) is the first to leave and the
+   bottom row (Settings) the last, the fold sweeping the list bottom-up.
+   Without the anchor the overflow would spill downward and the direction
+   would be the opposite of what was asked. */
+.lb-foot-fold {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+/* The fold cell's content. `min-height: 0` is load-bearing for the same reason
+   as on `.collapse > *`: without it the flex column's own min-content height
+   would keep the cell from ever reaching 0fr. It carries its own
+   `justify-content: flex-end` as well, and deliberately: the wrapper above
+   anchors *this box* against the track, while this one anchors the buttons
+   inside the box — the buttons' own min-content height (a row of text cannot
+   shrink to nothing) makes the inner the box that gives way once the track is
+   narrower than the rows, and without the anchor here the spill would turn
+   downward and the sweep would read top-down. */
 .lb-foot-inner {
   display: flex;
   flex-direction: column;

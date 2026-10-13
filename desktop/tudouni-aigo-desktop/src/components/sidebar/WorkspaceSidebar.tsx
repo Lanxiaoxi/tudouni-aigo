@@ -252,35 +252,42 @@ export function WorkspaceSidebar() {
   const currentRemoteWorkspaceId = rt?.remoteWorkspaceId ?? null;
 
   /**
-   * The open sessions that were started as workspace-learning runs.
+   * The sessions that were started as workspace-learning runs.
    *
-   * A compact `key\u0000id` string, the same escape hatch the status and
-   * live-id selectors use: the flag lives on the bucket (a local fact, not
-   * protocol data), and the rail's rows are keyed two different ways —
-   * by child key for the "open now" group and by session id for the saved
-   * list — so the map below answers both. A learning run is otherwise an
-   * ordinary session, and this badge is the one thing that tells it apart
-   * in the list (the design's "which of these is studying the workspace").
+   * **Two lookups, because the rail asks the question two ways.** A learning
+   * run is keyed by the bridge's child key in the "open now" group and by the
+   * runtime's session id in the saved list below it, and the two are not the
+   * same string — the child key is a small integer (`1`, `2`, …) and the
+   * session id is a `YYYYMMDD-HHMMSS` timestamp. A single map keyed by the
+   * child key therefore answered the live rows and **never** the saved ones:
+   * the badge existed in the markup, its rule existed in the stylesheet, and
+   * it could not appear on the row a person actually looks at, because the
+   * branch tested `sessionId` against a map whose keys are child keys.
+   * `null` session ids are still excluded — a child that has not handshaked
+   * has no saved row to mark yet.
+   *
+   * Kept as one compact subscription so the two sets are computed from a
+   * single pass and cannot disagree about which sessions are learning runs.
    */
-  const learningKey = useApp((s) => {
-    const parts: string[] = [];
+  const learningMarks = useApp((s) => {
+    const keys: string[] = [];
+    const ids: string[] = [];
     for (const key of s.order) {
       const bucket = s.sessions[key];
       if (bucket?.learning && bucket.sessionId !== null && bucket.sessionId !== '') {
-        parts.push(`${key}\u0000${bucket.sessionId}`);
+        keys.push(key);
+        ids.push(bucket.sessionId);
       }
     }
-    return parts.join('\u0001');
+    return `${keys.join('\u0001')}\u0002${ids.join('\u0001')}`;
   });
-  const learningByKeyId = useMemo(() => {
-    const out = new Map<string, string>();
-    if (learningKey === '') return out;
-    for (const part of learningKey.split('\u0001')) {
-      const at = part.lastIndexOf('\u0000');
-      out.set(part.slice(0, at), part.slice(at + 1));
-    }
-    return out;
-  }, [learningKey]);
+  const { keys: learningKeys, ids: learningIds } = useMemo(() => {
+    const [keyPart = '', idPart = ''] = learningMarks.split('\u0002');
+    return {
+      keys: new Set(keyPart === '' ? [] : keyPart.split('\u0001')),
+      ids: new Set(idPart === '' ? [] : idPart.split('\u0001')),
+    };
+  }, [learningMarks]);
 
   // A blocking modal is blocking. Switching a session abandons every pending
   // request the runtime is holding (`server.go: switchSession` →
@@ -694,7 +701,7 @@ export function WorkspaceSidebar() {
                             <span className="lb-session-id">
                               {row.id !== '' ? row.id : t('lb.sessionPending')}
                             </span>
-                            {learningByKeyId.has(row.key) ? (
+                            {learningKeys.has(row.key) ? (
                               <span className="lb-session-learning" title={t('lb.sessionLearningHint')}>
                                 {t('lb.sessionLearning')}
                               </span>
@@ -783,7 +790,7 @@ export function WorkspaceSidebar() {
                               could not be read, and then there is no time to show. */}
                           <span className="lb-session-foot">
                             <span className="lb-session-id">{item.id}</span>
-                            {learningByKeyId.has(item.id) ? (
+                            {learningIds.has(item.id) ? (
                               <span className="lb-session-learning" title={t('lb.sessionLearningHint')}>
                                 {t('lb.sessionLearning')}
                               </span>
@@ -887,11 +894,12 @@ export function WorkspaceSidebar() {
           The six buttons fold on their own; the head at the very bottom is the
           toggle. The fold sits **above** the pinned head, so it closes
           bottom-up: the fold cell shrinks from its top edge toward the head,
-          and the buttons ride `justify-content: flex-end` inside it
-          (`.lb-foot-inner`), which pushes the overflow above the clip —
-          Files goes first, Settings stays longest, and the toggle never
-          moves. The mechanism is written down where the CSS lives
-          (`.lb-foot-inner` in stream.css). */}
+          and the buttons ride `justify-content: flex-end` in `.lb-foot-fold`,
+          which pushes the overflow above the clip — Files goes first, Settings
+          stays longest, and the toggle never moves. `.lb-foot-inner` needs that
+          wrapper between it and the fold (its own top padding cannot be
+          squeezed past), and the sweep keeps its direction; both are written
+          down where the CSS lives (stream.css). */}
       <div className="lb-foot">
         {/* Folded rather than conditionally rendered, like the list sections:
             the buttons stay mounted, only the height changes, and `inert`
@@ -900,106 +908,108 @@ export function WorkspaceSidebar() {
           className={`collapse${footCollapsed ? ' is-collapsed' : ''}`}
           inert={footCollapsed}
         >
-          <div className="lb-foot-inner">
-        {/* Files and Terminal. The design's left rail lists exactly these three
-            (§20: Chat / Files / Terminal), and this build's "Chat" is the
-            transcript that is already the main view — so these two rows are the
-            two ways **out** of it. Both are disabled with no session: a terminal
-            belongs to a workspace the runtime is in, so with no child there is
-            no workspace to open one in, and a button that could only produce a
-            refusal would be worse than one that is plainly unavailable. */}
-        <Tip label={t('cmd.files.desc')}>
-          <button
-            type="button"
-            className="lb-foot-btn"
-            disabled={blocked || !hasSession}
-            onClick={() => openPanel('files')}
-          >
-            <FileText size={14} />
-            <span>{t('panel.files.title')}</span>
-          </button>
-        </Tip>
-        <Tip label={t('cmd.terminal.desc')}>
-          <button
-            type="button"
-            className="lb-foot-btn"
-            disabled={blocked || !hasSession}
-            onClick={() => openPanel('terminal')}
-          >
-            <SquareTerminal size={14} />
-            <span>{t('panel.term.title')}</span>
-          </button>
-        </Tip>
-        {/* Workspace learning. It studies the workspace on screen, so its
-            gate is the workspace rather than a ready session: the
-            configuration is assembled from the saved-session list, which a
-            child of this workspace answers for even before the session on
-            screen has finished its handshake. `hasSession` (Files/Terminal's
-            gate) would hide it during exactly that window. */}
-        <Tip label={t('lb.learnHint')}>
-          <button
-            type="button"
-            className="lb-foot-btn"
-            disabled={blocked || !hasLiveChild}
-            onClick={() => openPanel('learn')}
-          >
-            <GraduationCap size={14} />
-            <span>{t('lb.learn')}</span>
-          </button>
-        </Tip>
-        {/* The session board. It sits with the other two because it is the same
-            kind of thing — a way *out* of the transcript — but its gate is
-            deliberately **not** `hasSession`, which is what Files and Terminal
-            use. Those two key off "the session on screen is ready"; the board is
-            about the whole workspace, so it must open in exactly the case they
-            cannot: when the session on screen was the one that failed to start
-            and the others are running fine. What it needs instead is **some live
-            child in this workspace** to answer for the list. */}
-        <Tip label={t('board.openHint')}>
-          <button
-            type="button"
-            className={`lb-foot-btn${boardOpen ? ' is-active' : ''}`}
-            disabled={blocked || (!hasLiveChild && !boardOpen)}
-            aria-pressed={boardOpen}
-            onClick={() => setBoardOpen(!boardOpen)}
-          >
-            <LayoutGrid size={14} />
-            <span>{t('board.title')}</span>
-          </button>
-        </Tip>
-        {/* The configuration files, above Settings and deliberately **not**
-            inside it. Settings holds this session's start-up arguments, and
-            changing one restarts a child; this edits the files that are read
-            *when* a child starts, and what it writes outlives every session.
+          <div className="lb-foot-fold">
+            <div className="lb-foot-inner">
+              {/* Files and Terminal. The design's left rail lists exactly these three
+                  (§20: Chat / Files / Terminal), and this build's "Chat" is the
+                  transcript that is already the main view — so these two rows are the
+                  two ways **out** of it. Both are disabled with no session: a terminal
+                  belongs to a workspace the runtime is in, so with no child there is
+                  no workspace to open one in, and a button that could only produce a
+                  refusal would be worse than one that is plainly unavailable. */}
+              <Tip label={t('cmd.files.desc')}>
+                <button
+                  type="button"
+                  className="lb-foot-btn"
+                  disabled={blocked || !hasSession}
+                  onClick={() => openPanel('files')}
+                >
+                  <FileText size={14} />
+                  <span>{t('panel.files.title')}</span>
+                </button>
+              </Tip>
+              <Tip label={t('cmd.terminal.desc')}>
+                <button
+                  type="button"
+                  className="lb-foot-btn"
+                  disabled={blocked || !hasSession}
+                  onClick={() => openPanel('terminal')}
+                >
+                  <SquareTerminal size={14} />
+                  <span>{t('panel.term.title')}</span>
+                </button>
+              </Tip>
+              {/* Workspace learning. It studies the workspace on screen, so its
+                  gate is the workspace rather than a ready session: the
+                  configuration is assembled from the saved-session list, which a
+                  child of this workspace answers for even before the session on
+                  screen has finished its handshake. `hasSession` (Files/Terminal's
+                  gate) would hide it during exactly that window. */}
+              <Tip label={t('lb.learnHint')}>
+                <button
+                  type="button"
+                  className="lb-foot-btn"
+                  disabled={blocked || !hasLiveChild}
+                  onClick={() => openPanel('learn')}
+                >
+                  <GraduationCap size={14} />
+                  <span>{t('lb.learn')}</span>
+                </button>
+              </Tip>
+              {/* The session board. It sits with the other two because it is the same
+                  kind of thing — a way *out* of the transcript — but its gate is
+                  deliberately **not** `hasSession`, which is what Files and Terminal
+                  use. Those two key off "the session on screen is ready"; the board is
+                  about the whole workspace, so it must open in exactly the case they
+                  cannot: when the session on screen was the one that failed to start
+                  and the others are running fine. What it needs instead is **some live
+                  child in this workspace** to answer for the list. */}
+              <Tip label={t('board.openHint')}>
+                <button
+                  type="button"
+                  className={`lb-foot-btn${boardOpen ? ' is-active' : ''}`}
+                  disabled={blocked || (!hasLiveChild && !boardOpen)}
+                  aria-pressed={boardOpen}
+                  onClick={() => setBoardOpen(!boardOpen)}
+                >
+                  <LayoutGrid size={14} />
+                  <span>{t('board.title')}</span>
+                </button>
+              </Tip>
+              {/* The configuration files, above Settings and deliberately **not**
+                  inside it. Settings holds this session's start-up arguments, and
+                  changing one restarts a child; this edits the files that are read
+                  *when* a child starts, and what it writes outlives every session.
 
-            Its gate is `blocked` alone — **not** `hasSession`, which is what
-            Files and Terminal require. That difference is the whole point of
-            putting it here: configuration is what a child reads at open, so the
-            person who needs this panel most is the one with no session at all,
-            because no route is configured yet. Requiring a session would hide the
-            key editor behind the very failure it exists to fix. */}
-        <Tip label={t('lb.configHint')}>
-          <button
-            type="button"
-            className="lb-foot-btn"
-            disabled={blocked}
-            onClick={() => openPanel('config')}
-          >
-            <FileJson size={14} />
-            <span>{t('lb.config')}</span>
-          </button>
-        </Tip>
-        <Tip label={t('lb.settings')}>
-          <button
-            type="button"
-            className="lb-foot-btn"
-            disabled={blocked}
-            onClick={() => openPanel('settings')}
-          >
-            <Settings size={14} />
-            <span>{t('lb.settings')}</span>
-          </button>
-        </Tip>
+                  Its gate is `blocked` alone — **not** `hasSession`, which is what
+                  Files and Terminal require. That difference is the whole point of
+                  putting it here: configuration is what a child reads at open, so the
+                  person who needs this panel most is the one with no session at all,
+                  because no route is configured yet. Requiring a session would hide the
+                  key editor behind the very failure it exists to fix. */}
+              <Tip label={t('lb.configHint')}>
+                <button
+                  type="button"
+                  className="lb-foot-btn"
+                  disabled={blocked}
+                  onClick={() => openPanel('config')}
+                >
+                  <FileJson size={14} />
+                  <span>{t('lb.config')}</span>
+                </button>
+              </Tip>
+              <Tip label={t('lb.settings')}>
+                <button
+                  type="button"
+                  className="lb-foot-btn"
+                  disabled={blocked}
+                  onClick={() => openPanel('settings')}
+                >
+                  <Settings size={14} />
+                  <span>{t('lb.settings')}</span>
+                </button>
+              </Tip>
+            </div>
           </div>
         </div>
 

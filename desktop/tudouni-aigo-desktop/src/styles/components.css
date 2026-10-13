@@ -1635,86 +1635,56 @@ table.table td.mono {
 
 /* ---------------- §12 学习面板（Learn workspace） ----------------
 
-   The learning run's configuration form. It is a preview of the session's
-   first message, so its shape says *decision*, not *dump of fields*: each
-   section is a bordered card on the elevated dialog surface, the workspace is
-   a read-only fact chip, and the two choices (scope, deliverables) are drawn
-   as the app's accent-tinted selection language — the same tokens the
-   sidebar's primary action wears — rather than unstyled native controls. */
+   The learning run's configuration form.
 
-/* The workspace the run will take: a fact, not a field. The base name is what
-   a person reads; the full path stays in the tooltip. One chip keeps the long
-   `name — C:\Users\…` line from running the width of the panel. */
-.learn-workspace {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-muted);
-  font-size: var(--text-compact);
-}
+   **It is built from the configuration panel's parts, on purpose.** A
+   section is an `.etb-label` head plus a `.set-hint`; a path is a
+   `.cfg-path-row`; something wrong is a `.cfg-problem`; a tick box is a
+   `.cfg-check`; the textarea is a `.cfg-textarea`; the sentence that
+   explains the footer is a `.cfg-status`. Those classes are the vocabulary
+   this dialog already has for exactly those jobs, and the first version of
+   this panel invented a parallel one for every single one of them
+   (`.learn-section`, `.learn-workspace`, `.learn-warn`, `.learn-focus` and
+   a bespoke checkbox chip) — which is how a panel in the same dialog as
+   Settings and Config came to look like it belonged to another app.
 
-.learn-workspace-base {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--text-code);
-  color: var(--fg);
-}
+   What is left here is the one shape nothing else in the app has: three
+   exclusive options that each carry their own number. */
 
-.learn-workspace-path {
-  min-width: 0;
-  margin-left: auto;
-  font-size: var(--text-caption);
-  color: var(--fg-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The warning line, drawn once per place it fires rather than as three
-   identical inline `p`s: one surface (warning-subtle), one icon, one colour.
-   Margin-top is left to the caller — the lines sit at different distances
-   from their sections. */
-.learn-warn {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-1);
-  padding: 6px 10px;
-  margin-top: var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--warning-subtle);
-  font-size: var(--text-caption);
-  line-height: var(--leading-tight);
-  color: var(--warning);
-}
-
-.learn-warn svg {
-  flex: none;
-  margin-top: 2px;
-}
-
-/* Section head inside the form: the tool-block label with a little more
-   breathing room than the transcript's `etb-label`. */
-.learn-section {
+/* The vertical rhythm between sections. A single rule rather than a margin
+   per section, so the spacing cannot drift as sections are added — the
+   `.etb-label` heads then need no margin of their own, and the `.cfg-path-row`
+   and `.cfg-problems` below each keep the top margin they use in Config,
+   which is the same gap. */
+.learn-block {
   margin-top: var(--space-4);
-  font-size: var(--text-caption);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--fg-faint);
+}
+
+.learn-block:first-child {
+  margin-top: 0;
+}
+
+/* The folder glyph on the workspace row. A flex item inside
+   `.cfg-path-row`, so it must not shrink and must not be pushed onto its
+   own line by a long path — the ellipsis on `.cfg-path` is what yields. */
+.learn-workspace-ic {
+  flex: none;
+  color: var(--fg-muted);
 }
 
 /* ---- session scope ----
    One row per option, full width: the label names the choice, the number
-   input is the option's own parameter, and the count on the right is the
-   preview the form promises ("this scope studies N sessions"). The checked
-   row is the accent tint — the same pair the segmented control uses. */
+   input is that option's own parameter, and the count on the right is the
+   preview the form promises ("this scope studies N sessions").
+
+   The rows are a bordered list rather than three separate cards: they are
+   one choice, and three detached boxes read as three unrelated settings.
+   The chosen row wears the accent tint — the same pair the sidebar's
+   primary action and the settings panel's segmented control wear — and the
+   rows are joined by a negative margin so the group reads as one control. */
 .learn-scope {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
   margin-top: var(--space-2);
 }
 
@@ -1724,7 +1694,9 @@ table.table td.mono {
   gap: var(--space-2);
   padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  /* Overlapped by the next row's top edge: a shared 1px line instead of two
+     stacked ones, which is what makes the group read as one control. */
+  margin-top: -1px;
   font-size: var(--text-compact);
   color: var(--fg-secondary);
   cursor: pointer;
@@ -1733,11 +1705,26 @@ table.table td.mono {
     border-color var(--motion-fast) var(--ease-out);
 }
 
+.learn-scope-row:first-child {
+  margin-top: 0;
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+}
+
+.learn-scope-row:last-child {
+  border-bottom-left-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+}
+
 .learn-scope-row:hover {
   background: var(--bg-muted);
 }
 
+/* The chosen row is raised over its neighbours, so the accent hairline is
+   not clipped in half by the next row's top border. */
 .learn-scope-row:has(input:checked) {
+  position: relative;
+  z-index: 1;
   border-color: var(--accent-tint-border);
   background: var(--accent-tint);
 }
@@ -1751,13 +1738,16 @@ table.table td.mono {
   min-width: 0;
 }
 
+/* The option's own number. **Disabled until its option is the chosen one** —
+   an input that accepts a value the form is not using is a control that
+   lies about having an effect. */
 .learn-scope-num {
   width: 64px;
   height: var(--control-h-compact);
   padding: 0 var(--space-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg-card);
+  background: var(--bg);
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
@@ -1765,19 +1755,32 @@ table.table td.mono {
   text-align: center;
   transition:
     border-color var(--motion-fast) var(--ease-out),
-    background-color var(--motion-fast) var(--ease-out);
+    background-color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
 }
 
 .learn-scope-num::placeholder {
   color: var(--fg-faint);
 }
 
-.learn-scope-num:focus {
+.learn-scope-num:disabled {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--fg-faint);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Focus is the ring every other control in the app draws, and the ring is
+   the *only* focus mark: the two rules it replaces painted a green border
+   on click, which is the mistake `global.css` documents. */
+.learn-scope-num:focus-visible {
   outline: none;
-  border-color: var(--accent-tint-border);
   box-shadow: var(--focus-ring);
 }
 
+/* The preview count. Fixed width so the three rows' numbers line up in a
+   column — they are the same kind of fact in the same place three times. */
 .learn-scope-count {
   flex: none;
   width: 28px;
@@ -1793,132 +1796,42 @@ table.table td.mono {
 }
 
 /* ---- deliverables ----
-   Four chips in two rows instead of a stack of four checkbox rows: these are
-   four names a person ticks off, not four sentences. The checkbox is kept
-   for the keyboard and the screen reader; the chip itself draws the state. */
-.learn-deliverables-hint {
-  margin-top: 2px;
-  font-size: var(--text-caption);
-  line-height: var(--leading-tight);
-  color: var(--fg-faint);
-}
-
+   Four short type names on one wrapped row. `.cfg-check` draws each one, so
+   a ticked box in this panel is the same mark as a ticked box in Config —
+   and the checkbox is a real, focusable, screen-readable one rather than a
+   hidden input behind a painted chip. The chip shape was prettier and it
+   was not a checkbox: it hid a 1px input under a label, so the keyboard
+   could reach it but nothing ever showed that it had. */
 .learn-deliverables {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin-top: var(--space-3);
 }
 
-.learn-deliverable {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+/* The type names are file names, so they are mono — the same treatment the
+   configuration panel gives a path or a model id. `min-width: 0` with the
+   ellipsis covers a narrow dialog; the names are short today. */
+.learn-deliverables .cfg-check span {
   font-family: var(--font-mono);
   font-size: var(--text-code);
-  color: var(--fg-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
-}
-
-.learn-deliverable:hover {
-  background: var(--bg-muted);
-}
-
-.learn-deliverable:has(input:checked) {
-  border-color: var(--accent-tint-border);
-  background: var(--accent-tint);
-}
-
-.learn-deliverable:has(input:checked) .learn-deliverable-text {
-  color: var(--fg);
-}
-
-/* The input is the real control: it keeps the focus ring and the screen-
-   reader checkbox role, and it is the one the `:has()` above watches. */
-.learn-deliverable input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.learn-deliverable input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.learn-deliverable-icon {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xs);
-  color: var(--fg-faint);
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.learn-deliverable:has(input:checked) .learn-deliverable-icon {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--fg-on-accent);
-}
-
-.learn-deliverable-text {
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ---- focus (optional) ----
-   The `.input` class is a flex row 28px tall, built for single-line fields;
-   a bare textarea wearing it would render its placeholder off-baseline. It
-   gets a single rule of its own. */
-.learn-focus {
-  display: block;
-  width: 100%;
-  margin-top: var(--space-2);
-  min-height: 56px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: transparent;
-  font-size: var(--text-body);
-  line-height: var(--leading-body);
-  color: var(--fg);
-  resize: vertical;
-  transition:
-    border-color var(--motion-fast) var(--ease-out),
-    background-color var(--motion-fast) var(--ease-out);
+/* The optional focus box. `.cfg-textarea` is the same control the
+   configuration panel's multi-line fields wear; the only thing added is the
+   top margin, so it sits under its label like every other field here. */
+.learn-block .cfg-textarea {
+  margin-top: var(--space-3);
 }
 
-:root[data-theme='light'] .learn-focus {
-  background: var(--bg-secondary);
-}
-
-.learn-focus::placeholder {
-  color: var(--fg-faint);
-}
-
-.learn-focus:focus {
-  outline: none;
-  border-color: var(--accent-border);
-  box-shadow: var(--focus-ring);
+/* The footer's calm sentence: what the run will study. Muted, and **not** the
+   warning colour `cfg-status-pending` uses — that one means "something here
+   still needs you", and this line is the form saying it is ready. */
+.learn-fact {
+  color: var(--fg-muted);
 }
 
 /* ---------------- §10 终端 / Diff / 日志 ---------------- */

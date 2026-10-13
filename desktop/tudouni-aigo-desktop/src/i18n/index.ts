@@ -72,6 +72,11 @@ export const en = {
   'topbar.workspaceTip': 'Workspace path',
   'topbar.palettePlaceholder': 'Type a command or search…',
   'topbar.commands': 'Command palette',
+  /** The `?` button left of the palette box. The label is the panel's own title
+   *  ("Help"), not "Keybindings": the panel holds the command table too, and now
+   *  that it is the only place either list is reachable from, naming it after
+   *  half its contents would understate what the click opens. */
+  'topbar.help': 'Help',
   'topbar.pickWorkspace': 'Choose workspace…',
   'topbar.menu': 'Menu',
 
@@ -186,7 +191,6 @@ export const en = {
   'welcome.recent': 'Recent sessions',
   'welcome.recentEmpty': 'No past sessions',
   'welcome.recentEmptyHint': 'Sessions are written under .tudouni/ in this workspace.',
-  'welcome.keys': 'Keybindings',
   'welcome.slotEmpty': 'empty',
 
   /* ---------------- stream entries ---------------- */
@@ -280,17 +284,33 @@ export const en = {
   'panel.learn.workspace': 'Workspace',
   'panel.learn.scope': 'Session scope',
   'panel.learn.scope.all': 'All sessions',
-  'panel.learn.scope.days': 'Last {n} days',
-  'panel.learn.scope.last': 'Last {n} sessions',
+  /* The two parameterised options are labelled by their **dimension**, with
+     the number living in the field beside them. `Last {n} days` was the
+     obvious phrasing and it is wrong for `n = 1` ("Last 1 days") — this
+     catalogue has no plural machinery to fall back on, so the label is
+     worded so that no value can make it ungrammatical. */
+  'panel.learn.scope.days': 'Days to look back',
+  'panel.learn.scope.last': 'Most recent sessions to use',
+  'panel.learn.scope.hint':
+    'The run reads only the sessions this range selects. Archived sessions are never included.',
   'panel.learn.scope.daysPlaceholder': 'Days',
   'panel.learn.scope.countPlaceholder': 'Sessions',
   'panel.learn.scope.none': 'The workspace has no saved sessions yet — nothing to learn from.',
+  /* The empty *range* case, which is not the same fact as an empty workspace:
+     the workspace has sessions, and the chosen window misses all of them. */
+  'panel.learn.scope.empty': 'No session falls in this range — widen it, or pick another one.',
   'panel.learn.deliverables': 'Deliverable types',
   'panel.learn.deliverables.hint': 'Only these types may be produced as candidates.',
   'panel.learn.objectives': 'Focus (optional)',
   'panel.learn.objectives.placeholder':
     'e.g. recurring build errors, repeated user corrections, operations worth scripting…',
   'panel.learn.start': 'Start learning',
+  /* The footer's calm state: what the run will study, said where the blocked
+     sentence appears so the two read as the same slot. Deliberately a
+     `label: value` line rather than `Will study {n} sessions` — this
+     catalogue has no plural machinery (`'{n} steps'` renders "1 steps"), and
+     a count that can legitimately be 1 should not read as broken English. */
+  'panel.learn.footScope': 'Sessions in scope: {n}',
   'panel.learn.noneSelected': 'Pick at least one deliverable type',
   'panel.learn.invalidRange': 'Give a number of 1 or more',
   'panel.learn.noWorkspace': 'Open a workspace to start learning.',

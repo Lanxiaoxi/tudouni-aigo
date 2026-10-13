@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Clock, Terminal } from 'lucide-react';
+import { Clock } from 'lucide-react';
 import {
   activeWorkspaceOf,
   selectSavedSessions,
@@ -8,25 +8,30 @@ import {
 } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { StartupNoticeLine, ChooseWorkspaceButton } from '@/components/StartupNotice';
-import { Kbd } from '@/components/ui/kit';
 import { Logo } from '@/components/ui/Logo';
 import { NoteRow } from '@/components/stream/EntryView';
 import type { Entry } from '@/state/entries';
 import { formatPath, formatRelative } from '@/utils/format';
 
 /**
- * §7 The first screen. Three blocks, not three pages:
+ * §7 The first screen. Two blocks, not two pages:
  *   1. identity: mark, greeting (with the OS user name), version, model +
  *      workspace, and one line on where to start
  *   2. recent sessions: by last modified, at most 4, with empty slots
- *   3. keybindings card
  *
- * Content priority when the window is short: the keybinding card goes first,
- * then spare rows, then all but the identity block's first lines. Runtime
- * notices are handed in and rendered **below** all of it — they belong to the
- * session, and the design is explicit that they are not squeezed out by this
- * screen. A workspace whose runtime failed to start would otherwise show a
- * friendly greeting and no reason why.
+ * The keybinding card that used to be the third block is **gone**. Eight
+ * keycaps on the first screen is a manual nobody reads twice, and the same
+ * table — longer, and with the command list beside it — is one click away in
+ * the help panel. That entry point moved to the top bar's help icon, which is
+ * where a person looks for it *after* the first screen, when the question
+ * ("what was the key for this?") actually comes up. See `TopBar`.
+ *
+ * Content priority when the window is short: spare recent rows go first, then
+ * all but the identity block's first lines. Runtime notices are handed in and
+ * rendered **below** all of it — they belong to the session, and the design is
+ * explicit that they are not squeezed out by this screen. A workspace whose
+ * runtime failed to start would otherwise show a friendly greeting and no
+ * reason why.
  *
  * Decision 1: the identity block shows **both** versions — the desktop's own,
  * and the runtime's, read back from `--version` at start-up. Decision 3: the
@@ -180,39 +185,7 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
           </div>
         </section>
 
-        {/* 3 · keybindings */}
-        <section className="welcome-block welcome-keys-block">
-          <div className="wb-head">
-            <Terminal size={13} className="muted" />
-            <h2>{t('welcome.keys')}</h2>
-            <button
-              type="button"
-              className="btn btn-ghost btn-compact"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => openPanel('help')}
-            >
-              /help
-            </button>
-          </div>
-
-          {/* The same key names the help panel writes: "Enter" and "Shift
-              Enter", not the `⏎`/`⇧` glyphs. Two spellings for one key in one
-              application is a small thing that still costs the reader a moment
-              of "is this the same key?" — and this card is the first thing a
-              new person reads. */}
-          <div className="keycaps">
-            <KeyCap keys={['Ctrl', 'K']} label={t('key.palette')} />
-            <KeyCap keys={['Enter']} label={t('key.send')} />
-            <KeyCap keys={['Shift', 'Enter']} label={t('key.newline')} />
-            <KeyCap keys={['Ctrl', 'B']} label={t('key.sidebar')} />
-            <KeyCap keys={['Ctrl', 'T']} label={t('key.thinking')} />
-            <KeyCap keys={['Ctrl', 'S']} label={t('key.skills')} />
-            <KeyCap keys={['Esc']} label={t('key.esc')} />
-            <KeyCap keys={['1', '…', '9']} label={t('key.pick')} />
-          </div>
-        </section>
-
-        {/* Runtime notices. Session content, so they sit below the three blocks
+        {/* Runtime notices. Session content, so they sit below the two blocks
             and are never dropped — the words are the runtime's own, verbatim. */}
         {notices.length > 0 ? (
           <section className="welcome-notices">
@@ -222,19 +195,6 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
           </section>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function KeyCap({ keys, label }: { keys: string[]; label: string }) {
-  return (
-    <div className="keycap">
-      <span className="kc-keys">
-        {keys.map((key) => (
-          <Kbd key={key}>{key}</Kbd>
-        ))}
-      </span>
-      <span>{label}</span>
     </div>
   );
 }

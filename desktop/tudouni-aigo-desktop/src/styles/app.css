@@ -144,9 +144,21 @@
   color: var(--fg-secondary);
 }
 
+/* The help entry: the `?` immediately left of the palette box.
+ *
+ * It takes the `margin-left: auto` the palette trigger used to hold, because it
+ * is now the first element of the bar's right-hand group — the palette box is
+ * its neighbour, not the start of the group. The pair then sits flush: `.topbar`
+ * already spaces its children by `--space-3`, and an icon button carries the
+ * same 28px control height as the box beside it, so the two line up on their
+ * top and bottom edges without a nudge. */
+.topbar-help {
+  margin-left: auto;
+  flex: none;
+}
+
 /* 命令面板入口：视觉上是输入框，点击打开面板 */
 .palette-trigger {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -1480,29 +1492,11 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   font-variant-numeric: tabular-nums;
 }
 
-.keycaps {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: var(--space-2);
-}
-
-.keycap {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 7px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  font-size: var(--text-compact);
-  color: var(--fg-muted);
-}
-
-.keycap .kc-keys {
-  display: flex;
-  gap: 3px;
-  flex: none;
-}
+/* The keycap grid and its cards are gone with the first screen's keybinding
+   block — the table lives in the help panel now, which draws it as the same
+   `<kbd>` rows the rest of the app uses (`.kbd` in components.css). Two visual
+   languages for one fact was the smaller cost of that block; the rules that
+   only it used are removed rather than left to rot. */
 
 @media (max-width: 760px) {
   .welcome-recent {
@@ -1510,11 +1504,11 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   }
 }
 
-/* 窗口变矮：从下往上丢内容（§7 内容优先级） */
+/* 窗口变矮：从下往上丢内容（§7 内容优先级）。
+   The first tier used to hide the keybinding card, which was the lowest block
+   on the screen; that block is gone, so what is left for a short window is the
+   spacing — the recent grid's rows are the next thing to go, at 480px. */
 @media (max-height: 620px) {
-  .welcome-keys-block {
-    display: none;
-  }
   .welcome-inner {
     gap: var(--space-6);
     padding-top: var(--space-6);
