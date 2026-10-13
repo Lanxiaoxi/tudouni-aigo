@@ -63,7 +63,11 @@ npm run installer       # = scripts/build-installer.ps1
 
 已知坑（脚本里已经处理，改脚本时别丢）：Windows PowerShell 5.1 下 `$ErrorActionPreference='Stop'`
 会把 native 命令写到 stderr 的普通进度行当成终止错误，所以 npm 调用都包在 `cmd /c` 里；
-同样 5.1 没有 `$IsWindows` 变量和 `Join-Path` 多子路径形式，判定要用 `$env:OS`。
+同样 5.1 没有 `$IsWindows` 变量和 `Join-Path` 多子路径形式，判定要用 `$env:OS`
+
+还有，Strawberry Perl portable 解包在 %LOCALAPPDATA%\Strawberry\perl\bin（OpenSSL 源码编译需要）
+CARGO_TARGET_DIR=C:\t（绕开 OneDrive 深层路径超 MAX_PATH 260 字符）
+跑 installer 前记得 export 这两个环境变量
 
 Makefile 的每条 recipe 都走 `go run ./tools/release`，因为本仓库在 Windows 上开发，
 `mkdir -p`／`$(shell cat ...)` 这类 POSIX 写法在 cmd 里会挂。别把 recipe 改回 shell 工具。

@@ -99,6 +99,11 @@ const SUITES = [
   // two files by accident, which is the drift this pins: a field with the wrong
   // marker still works and still refuses correctly, and only its label is a lie.
   'config-required.test.ts',
+  // The workspace-learning task prompt: the scope arithmetic the
+  // configuration form previews and the template it splices into the
+  // learning session's first message. Both are pure, and both sit on the
+  // claim the form shows the person before anything starts.
+  'learn.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

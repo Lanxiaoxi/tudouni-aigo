@@ -341,7 +341,7 @@ export function SessionBoard() {
                   <button
                     key={card.key}
                     type="button"
-                    className={`board-card${isCurrent ? ' is-current' : ''}${isAsking ? ' is-asking' : ''}`}
+                    className={`board-card${isCurrent ? ' is-current' : ''}${isAsking ? ' is-asking' : ''}${card.status === 'running' ? ' is-running' : ''}`}
                     aria-current={isCurrent ? 'true' : undefined}
                     // Clicking a card is the board's second exit and the more
                     // useful one: it focuses that conversation's chat and closes

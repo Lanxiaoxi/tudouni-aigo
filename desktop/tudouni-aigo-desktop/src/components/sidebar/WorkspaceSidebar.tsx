@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Archive, ArchiveRestore, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, LayoutGrid, Plus, Server, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
+import * as PopoverPrimitive from '@radix-ui/react-popover';
+import { Archive, ArchiveRestore, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, Plus, Server, RefreshCw, Settings, SquareTerminal, Trash2, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -212,11 +213,48 @@ export function WorkspaceSidebar() {
   const installStatus = useApp((s) => s.installStatus);
   const installRemoteWorkspace = useApp((s) => s.installRemoteWorkspace);
   const [addRemoteOpen, setAddRemoteOpen] = useState(false);
+  // The "add workspace" menu, the section head's Plus popover: local or
+  // remote. One menu rather than two buttons, because the two are the same
+  // decision ("where should the next workspace come from") — and because the
+  // remote list no longer has its own section, so its add button would have
+  // had to live somewhere a person would not look.
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
   // Which saved remote workspace, if any, the active session belongs to —
   // the same "where am I" question `currentWorkspace` answers for the local
   // half, read from the session's own `remoteWorkspaceId` rather than
   // compared by path (a remote path is not unique across hosts).
   const currentRemoteWorkspaceId = rt?.remoteWorkspaceId ?? null;
+
+  /**
+   * The open sessions that were started as workspace-learning runs.
+   *
+   * A compact `key\u0000id` string, the same escape hatch the status and
+   * live-id selectors use: the flag lives on the bucket (a local fact, not
+   * protocol data), and the rail's rows are keyed two different ways —
+   * by child key for the "open now" group and by session id for the saved
+   * list — so the map below answers both. A learning run is otherwise an
+   * ordinary session, and this badge is the one thing that tells it apart
+   * in the list (the design's "which of these is studying the workspace").
+   */
+  const learningKey = useApp((s) => {
+    const parts: string[] = [];
+    for (const key of s.order) {
+      const bucket = s.sessions[key];
+      if (bucket?.learning && bucket.sessionId !== null && bucket.sessionId !== '') {
+        parts.push(`${key}\u0000${bucket.sessionId}`);
+      }
+    }
+    return parts.join('\u0001');
+  });
+  const learningByKeyId = useMemo(() => {
+    const out = new Map<string, string>();
+    if (learningKey === '') return out;
+    for (const part of learningKey.split('\u0001')) {
+      const at = part.lastIndexOf('\u0000');
+      out.set(part.slice(0, at), part.slice(at + 1));
+    }
+    return out;
+  }, [learningKey]);
 
   // A blocking modal is blocking. Switching a session abandons every pending
   // request the runtime is holding (`server.go: switchSession` →
@@ -253,7 +291,7 @@ export function WorkspaceSidebar() {
    */
   const blockedByBoard = blocked || boardOpen;
 
-  async function onAdd() {
+  async function onAddLocal() {
     if (blocked) return;
     const picked = await chooseWorkspaceDirectory();
     if (picked === null) return;
@@ -319,17 +357,13 @@ export function WorkspaceSidebar() {
                 {workspacesCollapsed ? t('lb.unfoldWorkspaces') : t('lb.foldWorkspaces')}
               </span>
             </button>
-            <Tip label={t('lb.addWorkspace')}>
-              <button
-                type="button"
-                className="lb-icon"
-                aria-label={t('lb.addWorkspace')}
-                disabled={blocked}
-                onClick={() => void onAdd()}
-              >
-                <FolderPlus size={14} />
-              </button>
-            </Tip>
+            <AddWorkspaceMenu
+              menuOpen={addMenuOpen}
+              onMenuOpenChange={setAddMenuOpen}
+              disabled={blocked}
+              onLocal={() => void onAddLocal()}
+              onRemote={() => setAddRemoteOpen(true)}
+            />
           </div>
 
           {/* The fold. Its content is wrapped in one element (`.lb-fold-inner`)
@@ -354,7 +388,7 @@ export function WorkspaceSidebar() {
             </div>
           ) : null}
 
-          {rows.length === 0 ? (
+          {rows.length === 0 && remoteWorkspaces.length === 0 ? (
             <>
               <EmptyState
                 compact
@@ -367,12 +401,13 @@ export function WorkspaceSidebar() {
                   label — while the first screen's notice said "choose one below,
                   or add a directory" over a list that was empty. That is a screen
                   whose only way forward is a small icon nobody was told to look
-                  for. */}
+                  for. It opens the same local/remote menu as the head's Plus:
+                  an empty list has no reason to presume a local directory. */}
               <button
                 type="button"
                 className="btn btn-outline btn-block lb-empty-add"
                 disabled={blocked}
-                onClick={() => void onAdd()}
+                onClick={() => setAddMenuOpen(true)}
               >
                 <FolderPlus size={13} />
                 {t('lb.addWorkspace')}
@@ -453,51 +488,11 @@ export function WorkspaceSidebar() {
                   </div>
                 );
               })}
-            </div>
-          )}
-          </div>
-        </div>
-        </section>
-
-        {/* ---------------- remote workspaces (Phase 2) ----------------
-            A sibling of the local list's fold, with its own head: its add
-            button must stay reachable while the local list is folded, for the
-            same reason the local head stays in the fold's section head. */}
-        <section className="lb-section">
-          <div className="lb-section-head">
-            <span className="lb-title">{t('lb.remoteWorkspaces')}</span>
-            <Tip label={t('lb.addRemoteWorkspace')}>
-              <button
-                type="button"
-                className="lb-icon"
-                aria-label={t('lb.addRemoteWorkspace')}
-                disabled={blocked}
-                onClick={() => setAddRemoteOpen(true)}
-              >
-                <Server size={14} />
-              </button>
-            </Tip>
-          </div>
-
-          {remoteWorkspaces.length === 0 ? (
-            <>
-              <EmptyState
-                compact
-                title={t('lb.remoteWorkspaces')}
-                hint={t('lb.emptyRemoteWorkspaces.hint')}
-              />
-              <button
-                type="button"
-                className="btn btn-outline btn-block lb-empty-add"
-                disabled={blocked}
-                onClick={() => setAddRemoteOpen(true)}
-              >
-                <Server size={13} />
-                {t('lb.addRemoteWorkspace')}
-              </button>
-            </>
-          ) : (
-            <div className="lb-rows">
+              {/* Remote rows, merged into the same list: a remote workspace is
+                  the same kind of "where to work" entry as a local one, so it
+                  belongs here rather than in a separate section. The `Server`
+                  icon and a "Remote" tag on the row are the only visual
+                  differences. */}
               {remoteWorkspaces.map((entry) => {
                 const host = sshHosts.find((h) => h.id === entry.hostId);
                 const isCurrent = currentRemoteWorkspaceId === entry.id;
@@ -523,6 +518,12 @@ export function WorkspaceSidebar() {
                       onClick={() => void enterRemoteWorkspace(entry.id)}
                     >
                       <span className="lb-row-name">{entry.label}</span>
+                      {/* The "Remote" tag: the small, quiet marker that tells
+                          a remote row apart from a local one without taking
+                          the row off the card surface — the row already has a
+                          `Server` icon for the same purpose, the tag is the
+                          *readable* half of that signal. */}
+                      <span className="lb-remote-tag">{t('lb.workspaceKind.remote')}</span>
                       {connection !== null && connection.phase !== 'local' ? (
                         <ConnectionBadge phase={connection.phase} problem={connection.problem} />
                       ) : install !== null ? (
@@ -563,6 +564,8 @@ export function WorkspaceSidebar() {
               })}
             </div>
           )}
+          </div>
+        </div>
         </section>
 
         {/* Outside the fold on purpose: a dialog mounted conditionally inside a
@@ -649,6 +652,11 @@ export function WorkspaceSidebar() {
                             <span className="lb-session-id">
                               {row.id !== '' ? row.id : t('lb.sessionPending')}
                             </span>
+                            {learningByKeyId.has(row.key) ? (
+                              <span className="lb-session-learning" title={t('lb.sessionLearningHint')}>
+                                {t('lb.sessionLearning')}
+                              </span>
+                            ) : null}
                             <span className="lb-session-time">{t('lb.unsaved')}</span>
                           </span>
                           <span className="lb-session-meta">{t('lb.sessionOpen')}</span>
@@ -733,6 +741,11 @@ export function WorkspaceSidebar() {
                               could not be read, and then there is no time to show. */}
                           <span className="lb-session-foot">
                             <span className="lb-session-id">{item.id}</span>
+                            {learningByKeyId.has(item.id) ? (
+                              <span className="lb-session-learning" title={t('lb.sessionLearningHint')}>
+                                {t('lb.sessionLearning')}
+                              </span>
+                            ) : null}
                             <span className="lb-session-time">
                               {item.modifiedAt === null
                                 ? t('common.unknown')
@@ -858,6 +871,23 @@ export function WorkspaceSidebar() {
             <span>{t('panel.term.title')}</span>
           </button>
         </Tip>
+        {/* Workspace learning. It studies the workspace on screen, so its
+            gate is the workspace rather than a ready session: the
+            configuration is assembled from the saved-session list, which a
+            child of this workspace answers for even before the session on
+            screen has finished its handshake. `hasSession` (Files/Terminal's
+            gate) would hide it during exactly that window. */}
+        <Tip label={t('lb.learnHint')}>
+          <button
+            type="button"
+            className="lb-foot-btn"
+            disabled={blocked || !hasLiveChild}
+            onClick={() => openPanel('learn')}
+          >
+            <GraduationCap size={14} />
+            <span>{t('lb.learn')}</span>
+          </button>
+        </Tip>
         {/* The session board. It sits with the other two because it is the same
             kind of thing — a way *out* of the transcript — but its gate is
             deliberately **not** `hasSession`, which is what Files and Terminal
@@ -913,6 +943,75 @@ export function WorkspaceSidebar() {
         </Tip>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The workspace list's "add" button: a Plus that opens a small menu with the
+ * two ways a workspace can be added — a local directory or a remote (SSH)
+ * one. One entry point, two choices, mirroring the composer's plus menu: the
+ * remote list used to have its own section and its own add button, which
+ * read as two different features rather than two flavours of the same one.
+ *
+ * A Radix popover with the menu's existing `.plus-menu` / `.plus-item`
+ * styles — the same surface as the composer's plus, so the two read as the
+ * same kind of control. The popover is owned by the parent (`menuOpen` is
+ * lifted out) so nothing here survives a section fold on its own; closing
+ * is simply "stop being open" and the parent's state follows.
+ */
+function AddWorkspaceMenu({
+  menuOpen,
+  onMenuOpenChange,
+  disabled,
+  onLocal,
+  onRemote,
+}: {
+  menuOpen: boolean;
+  onMenuOpenChange: (open: boolean) => void;
+  disabled: boolean;
+  onLocal: () => void;
+  onRemote: () => void;
+}) {
+  const t = useT();
+  return (
+    <PopoverPrimitive.Root open={menuOpen} onOpenChange={onMenuOpenChange}>
+      {/* No `Tip` here: the trigger is a Radix popover trigger (`asChild`
+          composes onto the button), and wrapping it in a tooltip would put a
+          second composed child in between. The `aria-label` is enough — the
+          menu, once open, shows both choices with their names anyway. */}
+      <PopoverPrimitive.Trigger asChild>
+        <button
+          type="button"
+          className="lb-icon"
+          aria-label={t('lb.addWorkspace')}
+          aria-haspopup="menu"
+          disabled={disabled}
+        >
+          <FolderPlus size={14} />
+        </button>
+      </PopoverPrimitive.Trigger>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          className="plus-menu"
+          align="end"
+          side="bottom"
+          sideOffset={4}
+          aria-label={t('lb.addWorkspace')}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          <div className="plus-menu-list">
+            <button type="button" className="plus-item" onClick={onLocal}>
+              <Folder size={15} />
+              <span className="plus-item-label">{t('lb.workspaceKind.local')}</span>
+            </button>
+            <button type="button" className="plus-item" onClick={onRemote}>
+              <Server size={15} />
+              <span className="plus-item-label">{t('lb.workspaceKind.remote')}</span>
+            </button>
+          </div>
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   );
 }
 

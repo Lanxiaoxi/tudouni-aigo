@@ -1534,6 +1534,20 @@
   font-weight: 600;
 }
 
+/* The "Remote" tag on a merged remote-workspace row: the quiet, readable
+   marker that tells the row apart from a local one. Same small-badge shape as
+   the plus menu's "loaded" tag — muted, non-interactive, caption-sized. */
+.lb-remote-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
 /* Revealed on hover, like `.list-row .list-actions` — but never hidden from the
    keyboard, and never the only way to reach the action. */
 .lb-row .lb-row-action {
@@ -1823,6 +1837,16 @@
 
 .lb-session.is-current .lb-session-foot .lb-session-id {
   color: var(--fg-muted);
+}
+
+.lb-session .lb-session-learning {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--accent);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+  line-height: 1.5;
 }
 
 .lb-session .lb-session-time {
@@ -3201,6 +3225,17 @@
 
 .board-card .board-card-ctx.is-danger {
   color: var(--destructive);
+}
+
+/* A card in flight wears the theme's pale green on the arc: the working state
+   already owns the accent family (the column head's dot, the progress bar),
+   and the muted grey read as "measuring" — the one colour that says nothing
+   about a card doing something. `--accent-tint-text` is the bright-green
+   text token both themes keep for the accent family, so the ring follows the
+   theme switch. `is-danger` keeps winning: a nearly full window is not
+   working-green. */
+.board-card.is-running .board-card-ctx:not(.is-danger) .board-card-ctx-arc {
+  stroke: var(--accent-tint-text);
 }
 
 .board-card .board-card-ctx-ring {

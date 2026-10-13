@@ -91,6 +91,12 @@ import {
 } from '@/runtime/adapt';
 import type { SshRow } from '@/protocol/types';
 import {
+  buildLearningMessage,
+  learningSessionRefs,
+  type Deliverable,
+  type LearnScope,
+} from '@/learn/template';
+import {
   registerRuntime,
   sendTo,
   unregisterRuntime,
@@ -179,7 +185,11 @@ export type PanelKind =
    * because they share the app's one interaction model (§5), and because
    * neither is a destination: a person opens one, looks, and goes back. */
   | 'files'
-  | 'terminal';
+  | 'terminal'
+  /* The workspace-learning configuration. It is a form whose submit becomes
+   * a new session's first message — the panel holds no runtime state of its
+   * own, and nothing is sent until the person presses Start. */
+  | 'learn';
 
 /* `ssh` sits with the workspace-capability blocks (jobs, mcp): it is about
  * things running in the workspace, not about this turn's conversation. */
@@ -556,6 +566,16 @@ export interface SessionRuntime {
   launch: LaunchArgs;
 
   session: SessionInfo | null;
+  /**
+   * This session was started as a workspace-learning run.
+   *
+   * A local fact, like `hasSpoken`: a learning run is an ordinary session,
+   * and the only thing that tells it apart from a conversation is what its
+   * first message was. The flag exists so the UI can say which of the open
+   * sessions is the one that is studying the workspace, not to change how
+   * the session is treated.
+   */
+  learning: boolean;
   /** A local fact: has this session been spoken to. "Never spoken" and "idle"
    *  are two different labels in the status bar. */
   hasSpoken: boolean;
@@ -915,6 +935,7 @@ export function createSessionBucket(
     runtimeExit: null,
     launch,
     session: null,
+    learning: false,
     hasSpoken: false,
     lastTurnMs: null,
     liveCall: null,
@@ -1329,6 +1350,20 @@ export interface AppStore {
 
   /** Send one message to the active session. */
   send(msg: FrontendMsg): void;
+  /**
+   * Start a workspace-learning run.
+   *
+   * A learning run is an **ordinary new session whose first message is the
+   * configured task prompt** (see `src/learn/template.ts`) — no new protocol,
+   * no special session type. This action assembles the message from the
+   * workspace's saved-session list (the runtime's own answer to
+   * `session_list`, already in the store), opens the session in the workspace
+   * on screen, and sends the message once the child's handshake has landed.
+   *
+   * `scope` empty is the form's own gate; a run with no sessions in scope is
+   * not started here — the panel says so instead.
+   */
+  startLearning(scope: LearnScope, deliverables: Deliverable[], objectives: string): Promise<void>;
   /**
    * Take one runtime message, tagged with the session whose child sent it.
    *
@@ -3069,6 +3104,80 @@ export const useApp = create<AppStore>((set, get) => {
         ...(workspace === undefined ? {} : { workspace }),
         ...(sessionId === null ? {} : { sessionId }),
       });
+    },
+
+    async startLearning(scope, deliverables, objectives) {
+      // The panel already closed itself before this runs: the form's submit
+      // button is the only door into here, and a form left open over the
+      // screen that is about to change is a form that hides the change.
+      const s = get();
+      const workspace = activeWorkspaceOf(s);
+      if (workspace === '') return;
+      const saved = selectSavedSessions(s, workspace);
+      const refs = learningSessionRefs(saved.items, scope);
+      const text = buildLearningMessage({
+        workspace,
+        scope,
+        sessions: refs,
+        deliverables,
+        objectives,
+      });
+
+      // A new child, in the workspace on screen — the same act the rail's
+      // "new session" takes. `attachSession` is what moves the screen there,
+      // so the learning run and its transcript are what the person sees next.
+      const key = await get().attachSession({});
+      if (key === null) return;
+      patchWith(key, () => ({ learning: true }));
+
+      // The task prompt goes out as the session's first `user_message`.
+      //
+      // The handshake's order is `init` then `session_load` then the first
+      // `ui(state)`, all flushed in order through the same queue the listener
+      // reads, so by the time `ready` is set the empty `session_load` of a
+      // fresh session has already been applied and cannot wipe what this
+      // writes into `entries`. Waiting for `ready` is therefore the whole of
+      // the timing problem, and the wait is bounded: a child that never
+      // answers has a problem row of its own, and a prompt that never went
+      // out is stated rather than swallowed.
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        const current = get().sessions[key];
+        if (current?.ready) break;
+        if (current === undefined) {
+          // The session went away (a failure row replaced it, or it was
+          // closed while waiting). The failure is already on screen.
+          return;
+        }
+        if (Date.now() >= deadline) {
+          // A child that never answers has a problem row of its own; a prompt
+          // that never went out is the same fact and is not re-stated on the
+          // composer.
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      const active = get().activeKey;
+      if (active !== key) {
+        // The person moved on before the child was ready. The message still
+        // goes to the session it was configured for — that is the one that
+        // is the learning run — and its transcript carries it.
+        patchWith(key, (bucket) => ({
+          entries: [...bucket.entries, { kind: 'user', id: nextId('user'), text, atMs: Date.now() }],
+          draft: '',
+          history: [...bucket.history, text].slice(-100),
+          historyCursor: null,
+          hasSpoken: true,
+        }));
+        sendTo(key, { v: 1, t: 'user_message', text });
+        return;
+      }
+
+      // On screen: go through the composer's own submit so the transcript,
+      // the history and the send all take the single existing path.
+      get().setDraft(text);
+      get().submitDraft();
     },
 
     /* ==========================================================

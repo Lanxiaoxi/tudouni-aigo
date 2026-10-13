@@ -267,6 +267,36 @@ export const en = {
   'lb.config': 'Config',
   'lb.configHint':
     'The configuration files: routes, keys, and MCP servers. Read when a session starts.',
+  /* Workspace learning: the rail's entry, the configuration panel, and its
+     fields. The panel's text is the person's half of what becomes the
+     learning session's first message, so it says what will happen — a new
+     session is created and the agent studies the workspace's history. */
+  'lb.learn': 'Learn workspace',
+  'lb.learnHint':
+    'Study this workspace\u2019s past sessions and draft candidate knowledge assets for review.',
+  'panel.learn.title': 'Learn this workspace',
+  'panel.learn.note':
+    'Starts a new session that studies the workspace\u2019s history. Its answer is a set of candidates you review and apply in a normal conversation.',
+  'panel.learn.workspace': 'Workspace',
+  'panel.learn.scope': 'Session scope',
+  'panel.learn.scope.all': 'All sessions',
+  'panel.learn.scope.days': 'Last {n} days',
+  'panel.learn.scope.last': 'Last {n} sessions',
+  'panel.learn.scope.daysPlaceholder': 'Days',
+  'panel.learn.scope.countPlaceholder': 'Sessions',
+  'panel.learn.scope.none': 'The workspace has no saved sessions yet — nothing to learn from.',
+  'panel.learn.deliverables': 'Deliverable types',
+  'panel.learn.deliverables.hint': 'Only these types may be produced as candidates.',
+  'panel.learn.objectives': 'Focus (optional)',
+  'panel.learn.objectives.placeholder':
+    'e.g. recurring build errors, repeated user corrections, operations worth scripting…',
+  'panel.learn.start': 'Start learning',
+  'panel.learn.noneSelected': 'Pick at least one deliverable type',
+  'panel.learn.invalidRange': 'Give a number of 1 or more',
+  'panel.learn.noWorkspace': 'Open a workspace to start learning.',
+  'panel.learn.modelNote': 'The run uses this workspace\u2019s current model and settings.',
+  'lb.sessionLearning': 'learning run',
+  'lb.sessionLearningHint': 'This session was started from Learn workspace: it is studying the workspace\u2019s history.',
   'lb.show': 'Show the workspace sidebar',
   'rail.drag': 'Drag to resize the sidebar. Double-click to reset it.',
   'lb.foldSessions': 'Fold the session list',
@@ -281,6 +311,11 @@ export const en = {
   'lb.forgetHint': 'Remove from this list. The directory itself is not touched.',
   'lb.emptyWorkspaces.title': 'No workspace listed',
   'lb.emptyWorkspaces.hint': 'Add the directory the runtime should work in.',
+  /* The two flavours the add-workspace menu offers, and the tag a remote row
+     carries in the merged list. Same two words in both places, so the tag on a
+     row reads as the menu entry that created it. */
+  'lb.workspaceKind.local': 'Local',
+  'lb.workspaceKind.remote': 'Remote',
   'lb.emptySessions.title': 'No past session',
   'lb.emptySessions.hint': 'Sessions are written under .tudouni/ in this workspace.',
   'lb.sessionsUnread': 'Could not read the session list',
