@@ -529,6 +529,16 @@ export function WorkspaceSidebar() {
                           `Server` icon for the same purpose, the tag is the
                           *readable* half of that signal. */}
                       <span className="lb-remote-tag">{t('lb.workspaceKind.remote')}</span>
+                      {/* The readable half of "not installed yet", said where
+                          the name is read — the always-visible install button
+                          at the row's end is the action for it. Gone the
+                          moment an install has succeeded and written the path
+                          back to the entry. */}
+                      {entry.remoteBinary.trim() === '' ? (
+                        <span className="lb-not-installed-tag" title={t('lb.remote.notInstalledHint')}>
+                          {t('lb.remote.notInstalled')}
+                        </span>
+                      ) : null}
                       {connection !== null && connection.phase !== 'local' ? (
                         <ConnectionBadge phase={connection.phase} problem={connection.problem} />
                       ) : install !== null ? (
@@ -540,10 +550,16 @@ export function WorkspaceSidebar() {
                         </span>
                       ) : null}
                     </button>
+                    {/* Always visible while the row has no binary path: a
+                        hover-only affordance is how the install feature got
+                        lost — a merged list row that looks like every other
+                        row does not advertise a hidden button. Once an install
+                        has written a path back, it returns to the hover-only
+                        rule the rest of the list uses. */}
                     <Tip label={t('lb.remote.install')}>
                       <button
                         type="button"
-                        className="lb-icon lb-row-action"
+                        className={`lb-icon lb-row-action${entry.remoteBinary.trim() === '' ? ' is-always-visible' : ''}`}
                         aria-label={t('lb.remote.install')}
                         disabled={blocked || isCurrent || installing}
                         onClick={() => void installRemoteWorkspace(entry.id)}

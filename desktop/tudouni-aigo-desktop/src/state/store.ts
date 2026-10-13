@@ -4859,6 +4859,52 @@ export const useApp = create<AppStore>((set, get) => {
       const maxSteps = s.maxStepsDefault;
       const launch: LaunchArgs = { ericai, maxSteps };
 
+      // A workspace saved without a binary path is not a broken bookmark —
+      // it is "this host has not had the Runtime installed yet", and the
+      // answer is the automatic install, not a form asking for an address.
+      // The install is attempted here (and its progress drawn on the row's
+      // own install badge) rather than folded into `attachRuntimeRemote`, so
+      // §8.4 holds even on this path: a failure that names *what was
+      // installed and where* is distinguishable from one that names a
+      // connection that refused, and the entry's `remoteBinary` is written
+      // by the same act the row's download button uses.
+      let binary = entry.remoteBinary.trim();
+      if (binary === '') {
+        set((state) => ({
+          installStatus: {
+            ...state.installStatus,
+            [remoteWorkspaceId]: {
+              stage: 'detecting_platform',
+              uploadedEntries: 0,
+              totalEntries: 0,
+              error: null,
+              installedBinary: null,
+            },
+          },
+        }));
+        await get().installRemoteWorkspace(remoteWorkspaceId);
+        const settled = get().installStatus[remoteWorkspaceId];
+        const after = get().remoteWorkspaces.find((item) => item.id === remoteWorkspaceId);
+        binary = after?.remoteBinary.trim() ?? '';
+        if (settled?.error !== null || binary === '') {
+          // The refusal belongs to the session being opened, same shape as
+          // the catch below — except the sentence says the install failed
+          // (with the install's own reason), not that a connection was
+          // attempted and refused.
+          const failed = `failed-${Date.now().toString(36)}`;
+          const bucket = createSessionBucket(failed, entry.remotePath, launch, remoteWorkspaceId);
+          const reason = settled?.error !== null ? settled.error : 'the runtime was not installed on the remote host';
+          bucket.problem = reason;
+          bucket.connection = { phase: 'failed', problem: reason };
+          set((state) => ({
+            sessions: { ...state.sessions, [failed]: bucket },
+            order: [...state.order, failed],
+            activeKey: failed,
+          }));
+          return;
+        }
+      }
+
       let key: string | null;
       try {
         key = await attachRuntimeRemote({
@@ -4867,7 +4913,7 @@ export const useApp = create<AppStore>((set, get) => {
           user: host.user,
           identityFiles: host.identityFiles,
           password: host.password ?? null,
-          remoteBinary: entry.remoteBinary,
+          remoteBinary: binary,
           remoteWorkspace: entry.remotePath,
           ericai,
           ...(maxSteps === null ? {} : { maxSteps }),

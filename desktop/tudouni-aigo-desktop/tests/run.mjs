@@ -104,6 +104,11 @@ const SUITES = [
   // learning session's first message. Both are pure, and both sit on the
   // claim the form shows the person before anything starts.
   'learn.test.ts',
+  // Opening a saved remote workspace: a blank binary path means "install it
+  // first, then connect", and a failed install must report the install's own
+  // reason — §8.4's "an install failure must not look like a connection
+  // failure", wired into `enterRemoteWorkspace`.
+  'remote-workspace.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

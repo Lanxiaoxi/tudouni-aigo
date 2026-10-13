@@ -1553,6 +1553,20 @@
   line-height: 1.4;
 }
 
+/* The "not installed" marker: the same badge shape as `.lb-remote-tag`, in
+   the warning tone, because this is a state that asks for an action (the
+   always-visible download button at the row's end), not a neutral label. */
+.lb-not-installed-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--warning-border);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
 /* Revealed on hover, like `.list-row .list-actions` — but never hidden from the
    keyboard, and never the only way to reach the action. */
 .lb-row .lb-row-action {
@@ -1561,6 +1575,15 @@
 
 .lb-row:hover .lb-row-action,
 .lb-row:focus-within .lb-row-action {
+  opacity: 1;
+}
+
+/* The install action on a row that has no binary path yet: always visible,
+   because a hover-only affordance is how the install feature went unnoticed
+   — a merged list row that looks like every other row does not advertise a
+   button nobody knows is there. The marker is on the remote row's button
+   itself, so it cannot leak onto local rows' actions. */
+.lb-row .lb-row-action.is-always-visible {
   opacity: 1;
 }
 

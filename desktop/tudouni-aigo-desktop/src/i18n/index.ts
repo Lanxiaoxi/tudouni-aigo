@@ -358,8 +358,20 @@ export const en = {
   'lb.remote.password': 'Password (optional)',
   'lb.remote.passwordWarning':
     'Stored on this machine in plain preferences, not an OS keychain. Prefer a key file when possible.',
-  'lb.remote.remoteBinary': 'Runtime binary path on the remote host',
+  /** The binary field is optional on purpose: a host without the Runtime
+   *  yet is a valid bookmark, and the install (the row's download button,
+   *  or the automatic one on connect) fills this in for the person. */
+  'lb.remote.remoteBinary': 'Runtime binary path on the remote host (optional)',
+  'lb.remote.remoteBinaryPlaceholder': 'e.g. /opt/tudouni-aigo/bin/tudouni-aigo',
+  'lb.remote.remoteBinaryHint':
+    'Leave it blank if the Runtime is not installed on this host yet. You can install it later from the row\'s download button, or it is installed automatically when you open the workspace.',
   'lb.remote.remotePath': 'Workspace directory on the remote host',
+  /** The row's own marker for "no binary path saved yet". It is a state, not
+   *  a failure — the install that removes it may already be running (which
+   *  the install badge then takes over the slot from). */
+  'lb.remote.notInstalled': 'not installed',
+  'lb.remote.notInstalledHint':
+    'No Runtime on this host yet. Press the download button to install it, or open the workspace to install and connect in one go.',
   'lb.remote.workspaceLabel': 'Workspace name (for your own reference)',
   'lb.remote.forgetHostInUse':
     'This host is used by at least one saved remote workspace. Remove those first.',

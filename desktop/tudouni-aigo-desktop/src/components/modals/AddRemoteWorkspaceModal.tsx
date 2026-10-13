@@ -127,14 +127,19 @@ export function AddRemoteWorkspaceModal({
   }
 
   const portNumber = Number.parseInt(port, 10);
+  // `remoteBinary` is deliberately **not** in the required set: a host that
+  // does not have the Runtime yet is a valid bookmark — installing it is the
+  // download button's job (and connecting now installs it automatically).
+  // Requiring the path would force a person to invent one before the
+  // install that fills it in for them exists, which is the exact failure
+  // the automatic-install feature is supposed to remove.
   const canSave =
     host.trim() !== '' &&
     user.trim() !== '' &&
     Number.isInteger(portNumber) &&
     portNumber > 0 &&
     portNumber <= 65535 &&
-    remotePath.trim() !== '' &&
-    remoteBinary.trim() !== '';
+    remotePath.trim() !== '';
 
   function save() {
     if (!canSave) return;
@@ -297,17 +302,6 @@ export function AddRemoteWorkspaceModal({
             </p>
 
             <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
-              {t('lb.remote.remoteBinary')}
-            </div>
-            <input
-              className="input"
-              style={{ display: 'block', width: '100%', marginTop: 4 }}
-              value={remoteBinary}
-              onChange={(e) => setRemoteBinary(e.target.value)}
-              placeholder="/opt/tudouni-aigo/bin/tudouni-aigo"
-            />
-
-            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
               {t('lb.remote.remotePath')}
             </div>
             <input
@@ -317,6 +311,25 @@ export function AddRemoteWorkspaceModal({
               onChange={(e) => setRemotePath(e.target.value)}
               placeholder="/srv/app"
             />
+
+            {/* After the path, not before: the binary's conventional install
+                location lives **inside** this host's home directory, so a
+                person who has not installed yet has nothing sensible to put
+                here — the blank default and its caption are the honest
+                answer, and the download button on the row is the follow-up. */}
+            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
+              {t('lb.remote.remoteBinary')}
+            </div>
+            <input
+              className="input"
+              style={{ display: 'block', width: '100%', marginTop: 4 }}
+              value={remoteBinary}
+              onChange={(e) => setRemoteBinary(e.target.value)}
+              placeholder={t('lb.remote.remoteBinaryPlaceholder')}
+            />
+            <p className="caption muted" style={{ marginTop: 4 }}>
+              {t('lb.remote.remoteBinaryHint')}
+            </p>
 
             <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
               {t('lb.remote.workspaceLabel')}
