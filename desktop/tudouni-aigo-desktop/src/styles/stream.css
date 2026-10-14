@@ -342,6 +342,14 @@
   color: #ffffff;
 }
 
+/* 进行中的头部图标：换成 Loader 并旋转，复用 global.css 的 `spin`——
+   和侧栏 todo 列表 in_progress 行（`.sb-spinner`）同一个动效，「正在执行」
+   这一个持续条件用旋转表达；调用结束后图标换回 Sparkles，动画随之消失。 */
+.e-step-spinner {
+  animation: spin 1.4s linear infinite;
+  transform-origin: center;
+}
+
 .e-step.is-running .e-step-metrics {
   color: var(--accent);
 }
