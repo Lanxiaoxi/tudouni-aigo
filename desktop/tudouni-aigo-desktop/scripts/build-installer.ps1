@@ -84,10 +84,19 @@ if (-not $needStage) {
     }
 }
 if (-not $needStage -and (Test-Path $dist)) {
+    # Compared **binary to binary**. The directory `make release` writes also
+    # holds the generated README and install scripts, which land a moment after
+    # the binary and are not part of what staging copies — measuring them made
+    # every build look stale. The binary is the file whose age matters: the
+    # prompts and the vendored ripgrep ride along with the release that wrote it,
+    # and a platform that names its binary something else simply never matches.
     $stagedTime = (Get-Item $stagedBinary).LastWriteTimeUtc
     $newerDist = Get-ChildItem $dist -Directory |
-        Where-Object { $_.Name -like "tudouni-aigo-*-$version-*" } |
-        Where-Object { (Get-ChildItem $_.FullName -Recurse -File | Measure-Object LastWriteTimeUtc -Maximum).Maximum -gt $stagedTime }
+        Where-Object { $_.Name -like "tudouni-aigo-$version-*" } |
+        Where-Object {
+            (Get-ChildItem $_.FullName -Recurse -File -Filter $binary |
+                Measure-Object LastWriteTimeUtc -Maximum).Maximum -gt $stagedTime
+        }
     if ($newerDist) {
         Write-Host "dist/ has a build newer than the staged runtime - restaging"
         $needStage = $true
