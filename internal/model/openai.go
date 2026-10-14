@@ -2,8 +2,45 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
+
+// upstreamError is the shape a gateway uses to report a failure **inside** a
+// stream that it still answers 200: one data line that is an error object
+// (`{"message": "…", "code": 503}`) or an OpenAI error envelope
+// (`{"error": {…}}`), with no `choices` and no `usage`.
+//
+// It is a different failure from an HTTP error status: the transport saw a
+// successful response, so nothing upstream of the stream parser will ever learn
+// that the model never answered. A chat-completions data line that is not a
+// completion chunk is either one of these two or nothing the stream needs
+// (the usage-only trailer), so an error shape is the only reading of a chunk
+// that says "it failed" in its own words.
+//
+// The code is classified as transient: a 503 upstream is a condition the
+// endpoint may well stop having, and the retry loop is the existing answer to
+// exactly that. A fatal classification would turn one flaky upstream into a
+// dead turn after a single request.
+func upstreamError(chunk map[string]any) error {
+	nested, _ := chunk["error"].(map[string]any)
+	if nested == nil && firstString(chunk, "message") == "" {
+		// The bare shape only counts when it names a message: an OpenAI error
+		// envelope is a failure in every state, but a `message` field on some
+		// other kind of vendor chunk is not this program's to read as one.
+		return nil
+	}
+	message := failureText(chunk)
+	// The message shape of this shape's errors carries a numeric `code` beside
+	// the text, and failureText only folds in string codes — the number is the
+	// part that tells a 503 from a 400, so it is named.
+	if nested == nil {
+		if raw, present := chunk["code"]; present {
+			message = message + " (code " + fmt.Sprint(raw) + ")"
+		}
+	}
+	return AsTransient("the endpoint reported an error mid-stream: %s", message)
+}
 
 // openaiDialect speaks the chat completions shape: POST /chat/completions, a
 // `choices` array, `reasoning_content` for thinking, `role: "tool"` for results.
@@ -172,6 +209,14 @@ func (openaiDialect) parseStream(body reader, sink DeltaSink, shouldStop func() 
 
 		choices, _ := chunk["choices"].([]any)
 		if len(choices) == 0 {
+			// The usage-only trailer is the one chunk without choices this program
+			// expects. Anything else that says it failed in its own words must not
+			// be read as "the model chose to stop": letting it through is how an
+			// upstream 503 delivered inside the stream came to look like a normal,
+			// empty answer.
+			if err := upstreamError(chunk); err != nil {
+				return err
+			}
 			return nil
 		}
 		choice, _ := choices[0].(map[string]any)
