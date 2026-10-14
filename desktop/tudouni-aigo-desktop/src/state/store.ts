@@ -1168,6 +1168,17 @@ export interface AppStore {
    */
   sidebarWidth: number | null;
   /**
+   * The **left** rail's width in px, dragged by its own handle.
+   *
+   * The same contract as `sidebarWidth` on the other side: `null` means "no
+   * width of the person's choosing", which lets the stylesheet keep owning the
+   * default — including its narrow-window fallback — and a number is clamped
+   * into the shared `RAIL_MIN`–`RAIL_MAX` range. Kept apart from the right
+   * rail's because the two are dragged independently: folding or resizing one
+   * is not a statement about the other.
+   */
+  leftbarWidth: number | null;
+  /**
    * Which reasoning blocks and tool rows are open, by entry id.
    *
    * Window-level, and it does not need to be otherwise: `nextId` in `entries.ts`
@@ -1300,11 +1311,13 @@ export interface AppStore {
   /** An OS drag is currently over the window. Purely local, purely visual. */
   dragging: boolean;
   /**
-   * A rail-width drag is live. Purely local, purely visual: the rail drops its
-   * width transition while the pointer moves, so the rail tracks the pointer
-   * instead of easing behind it.
+   * A rail-width drag is live, and **which rail** it is on. Purely local,
+   * purely visual: the dragged rail drops its width transition while the
+   * pointer moves, so it tracks the pointer instead of easing behind it — and
+   * naming the rail is what keeps the class off the *other* one, whose handle
+   * would otherwise light up for a gesture it is not part of.
    */
-  resizing: boolean;
+  resizing: 'left' | 'right' | null;
 
   /* ---------------- actions ---------------- */
 
@@ -1538,6 +1551,12 @@ export interface AppStore {
    * back to the stylesheet. Persisted like the other window-level preferences.
    */
   setSidebarWidth(px: number | null): void;
+  /**
+   * The left rail's own dragged width, under the same contract as
+   * `setSidebarWidth`: clamped through `clampRailWidth`, `null` hands the width
+   * back to the stylesheet, persisted with the other window-level preferences.
+   */
+  setLeftbarWidth(px: number | null): void;
   toggleLeftbar(): void;
   setLeftbarVisible(v: boolean): void;
   toggleBlock(k: SidebarBlockKey): void;
@@ -1842,14 +1861,18 @@ const EMPTY_BLOCKS: Record<SidebarBlockKey, boolean> = {
 };
 
 /**
- * The range a dragged rail width is allowed to land in.
+ * The range a dragged rail width is allowed to land in — **one range for both
+ * rails**, so the two cannot disagree about what "reset" and "as wide as it
+ * goes" mean, and so a future change has one place to land.
  *
- * The floor keeps every row's own minimum readable (the MCP row was measured to
- * overflow below 201px — see `McpRow`), and the ceiling keeps a maximally wide
- * rail from eating the transcript: the composer's comfortable floor is around
- * 700px, minus the left rail and a dragged one at the ceiling still leaves that.
- * Both ends are read back through this function on load, so a range change
- * re-clamps what an older build persisted rather than trusting it.
+ * The floor keeps every row's own minimum readable (the right rail's MCP row
+ * was measured to overflow below 201px — see `McpRow`; the left rail's own
+ * narrow-window fallback is 216px, just above it), and the ceiling keeps a
+ * maximally wide rail from eating the transcript: the composer's comfortable
+ * floor is around 700px, and even both rails dragged to the ceiling together
+ * still leave it on a window of the size this app is meant to run in. Both ends
+ * are read back through this function on load, so a range change re-clamps what
+ * an older build persisted rather than trusting it.
  */
 export const RAIL_MIN = 208;
 export const RAIL_MAX = 420;
@@ -1869,6 +1892,8 @@ type Prefs = {
   leftbarVisible: boolean;
   /** The right rail's dragged width; `null` = the stylesheet's own default. */
   sidebarWidth: number | null;
+  /** The left rail's dragged width; `null` = the stylesheet's own default. */
+  leftbarWidth: number | null;
   blockCollapsed: Record<SidebarBlockKey, boolean>;
   blockTouched: Partial<Record<SidebarBlockKey, boolean>>;
   /** The left rail's session list, folded on its own. */
@@ -1968,6 +1993,7 @@ function loadPrefs(): Prefs {
     sidebarVisible: true,
     leftbarVisible: true,
     sidebarWidth: null,
+    leftbarWidth: null,
     blockCollapsed: { ...EMPTY_BLOCKS },
     blockTouched: {},
     sessionsCollapsed: false,
@@ -2012,6 +2038,13 @@ function loadPrefs(): Prefs {
         typeof parsed.sidebarWidth === 'number' && Number.isFinite(parsed.sidebarWidth)
           ? clampRailWidth(parsed.sidebarWidth)
           : fallback.sidebarWidth,
+      // The left rail's, read back under exactly the same boundary — an older
+      // build has no `leftbarWidth` at all, which is the `fallback` branch and
+      // therefore the stylesheet's own default.
+      leftbarWidth:
+        typeof parsed.leftbarWidth === 'number' && Number.isFinite(parsed.leftbarWidth)
+          ? clampRailWidth(parsed.leftbarWidth)
+          : fallback.leftbarWidth,
       blockCollapsed: { ...EMPTY_BLOCKS, ...(parsed.blockCollapsed ?? {}) },
       blockTouched: parsed.blockTouched ?? {},
       sessionsCollapsed: parsed.sessionsCollapsed ?? fallback.sessionsCollapsed,
@@ -2167,6 +2200,7 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
         sidebarVisible: s.sidebarVisible,
         leftbarVisible: s.leftbarVisible,
         sidebarWidth: s.sidebarWidth,
+        leftbarWidth: s.leftbarWidth,
         blockCollapsed: s.blockCollapsed,
         blockTouched: s.blockTouched,
         sessionsCollapsed: s.sessionsCollapsed,
@@ -2834,6 +2868,7 @@ export const useApp = create<AppStore>((set, get) => {
     sidebarVisible: prefs.sidebarVisible,
     leftbarVisible: prefs.leftbarVisible,
     sidebarWidth: prefs.sidebarWidth,
+    leftbarWidth: prefs.leftbarWidth,
     blockCollapsed: prefs.blockCollapsed,
     blockTouched: prefs.blockTouched,
     blockAutoExpanded: {},
@@ -2856,7 +2891,7 @@ export const useApp = create<AppStore>((set, get) => {
     closePolicy: prefs.closePolicy,
 
     dragging: false,
-    resizing: false,
+    resizing: null,
 
     /* ==========================================================
        Sessions: the lifecycle
@@ -4310,6 +4345,18 @@ export const useApp = create<AppStore>((set, get) => {
      */
     setSidebarWidth(px) {
       set({ sidebarWidth: px === null ? null : clampRailWidth(px) });
+      persistPrefs(get());
+    },
+
+    /**
+     * The left rail's dragged width — the same clamp, the same persistence and
+     * the same `null`-hands-it-back-to-the-stylesheet contract as the right
+     * rail's above, so a person who has learned one rail already knows the
+     * other. Kept a separate action rather than one taking a side, because the
+     * two fields are separate: writing one must not touch the other.
+     */
+    setLeftbarWidth(px) {
+      set({ leftbarWidth: px === null ? null : clampRailWidth(px) });
       persistPrefs(get());
     },
 

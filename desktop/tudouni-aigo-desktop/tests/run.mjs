@@ -56,6 +56,13 @@ const SUITES = [
   // was in no list at all, and a panel made the rail unclickable while it still
   // looked available. Both are pure functions, so both are assertable here.
   'rail-groups.test.ts',
+  // The two rails' dragged widths: the drag geometry (outward must widen, and
+  // the left rail is the right rail's mirror image rather than the same
+  // expression), the clamp the store applies, and the stylesheet wiring that
+  // carries a dragged value. The sign is the one thing here that is invisible
+  // when wrong — it shipped backwards on the right rail once — so both
+  // directions are asserted rather than checked by eye in a window.
+  'rail-drag.test.ts',
   // The turn rail down the transcript's right edge: which marks exist, what they
   // are called, and where each turn begins and ends. Its two rules — a live turn's
   // prompt sits *above* its head, and a restored transcript has no heads at all —

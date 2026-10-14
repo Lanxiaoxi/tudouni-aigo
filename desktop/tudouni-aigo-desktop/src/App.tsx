@@ -2,6 +2,7 @@ import { useEffect, type CSSProperties, type PointerEvent as ReactPointerEvent }
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
 import { activeRuntime, NO_ENTRIES, NO_NOTES, useApp } from '@/state/store';
+import { draggedRailWidth, type RailSide } from '@/railWidth';
 import { conversationView, showsComposer } from '@/conversationView';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
@@ -79,8 +80,10 @@ export function App() {
   const leftbarVisible = useApp((s) => s.leftbarVisible);
   const boardOpen = useApp((s) => s.boardOpen);
   const sidebarWidth = useApp((s) => s.sidebarWidth);
-  // Live while a rail-width drag is in flight: the rail drops its width
-  // transition so it tracks the pointer instead of easing behind it.
+  const leftbarWidth = useApp((s) => s.leftbarWidth);
+  // Live while a rail-width drag is in flight, and naming **which** rail: only
+  // that rail drops its width transition (so it tracks the pointer instead of
+  // easing behind it) and only its handle paints the drag colour.
   const resizing = useApp((s) => s.resizing);
   const startupProblem = useApp((s) => s.startupProblem);
   const dragging = useApp((s) => s.dragging);
@@ -179,9 +182,20 @@ export function App() {
               `inert` when collapsed is not decoration: the controls are still in
               the DOM, so without it Tab would walk into a rail nobody can see. */}
           <div
-            className={`app-rail app-rail-left${showLeftbar ? '' : ' is-collapsed'}`}
+            className={`app-rail app-rail-left${showLeftbar ? '' : ' is-collapsed'}${resizing === 'left' ? ' is-resizing' : ''}`}
             inert={!showLeftbar}
+            // The same custom property the right rail reads, written on **this**
+            // element: each rail resolves it on itself, so one name shared by
+            // two rails is not a collision. The cast is React's usual bridge for
+            // a custom property, and the name is asserted by the stylesheet it
+            // feeds (`--rail-w-dragged` in global.css).
+            style={
+              leftbarWidth !== null
+                ? ({ '--rail-w-dragged': `${leftbarWidth}px` } as CSSProperties)
+                : undefined
+            }
           >
+            {showLeftbar ? <RailDragHandle rail="left" /> : null}
             <WorkspaceSidebar />
           </div>
 
@@ -259,7 +273,7 @@ export function App() {
           </div>
 
           <div
-            className={`app-rail app-rail-right${showSidebar ? '' : ' is-collapsed'}${resizing ? ' is-resizing' : ''}`}
+            className={`app-rail app-rail-right${showSidebar ? '' : ' is-collapsed'}${resizing === 'right' ? ' is-resizing' : ''}`}
             inert={!showSidebar}
             // React's CSSProperties does not declare custom properties; the
             // cast is the usual bridge, and the variable name is asserted by
@@ -270,7 +284,7 @@ export function App() {
                 : undefined
             }
           >
-            {showSidebar ? <RailDragHandle /> : null}
+            {showSidebar ? <RailDragHandle rail="right" /> : null}
             <Sidebar />
           </div>
         </div>
@@ -295,20 +309,22 @@ export function App() {
 }
 
 /**
- * The right rail's drag handle: a narrow strip on its inner edge that resizes
- * the rail with pointer events.
+ * A rail's drag handle: a narrow strip on the rail's **inner** edge — the edge
+ * that faces the conversation — which resizes the rail with pointer events.
+ * Both rails wear one; `rail` says which, and the two differ in exactly two
+ * places: which store field the width lands in, and the sign of the drag delta.
  *
  * A live drag goes to `document`, not to the strip: crossing the strip's own
  * edge mid-sweep would otherwise drop the pointermove stream. The listeners
  * are removed on `pointerup`, which for a captured pointer is the gesture's
  * own end — a drag that ends outside the window still releases there.
  *
- * The width is clamped through `setSidebarWidth`, so the same range governs the
- * drag, the persisted value read back on load, and any future caller. A
+ * The width is clamped through the rail's own setter, so the same range governs
+ * the drag, the persisted value read back on load, and any future caller. A
  * double-click hands the width back to the stylesheet (`null`), the same way
  * other rails' toggles restore rather than merely hide.
  */
-function RailDragHandle() {
+function RailDragHandle({ rail }: { rail: RailSide }) {
   const t = useT();
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -326,22 +342,25 @@ function RailDragHandle() {
       ? (e.currentTarget.offsetParent as HTMLElement).getBoundingClientRect().width
       : 0;
     const move = (ev: PointerEvent) => {
-      // The strip sits on the rail's **left** edge, and dragging that edge
-      // outward (to the left) must widen the rail — so the delta enters the
-      // width negated. `startW + dx` is the geometry for a right-edge handle
-      // and read as "drag left = narrower", which is how this was shipped.
-      useApp.getState().setSidebarWidth(startW - (ev.clientX - startX));
+      // Dragging the inner edge **outward** — away from the rail, into the
+      // conversation — must widen it. Which way that is differs per rail, and
+      // the geometry (with the sign's history) is written down in
+      // `railWidth.ts` rather than inlined here, so both rails' directions are
+      // asserted by a test instead of by eye.
+      const width = draggedRailWidth(rail, startW, ev.clientX - startX);
+      if (rail === 'right') useApp.getState().setSidebarWidth(width);
+      else useApp.getState().setLeftbarWidth(width);
     };
     const stop = () => {
       document.removeEventListener('pointermove', move);
       document.removeEventListener('pointerup', stop);
       document.body.classList.remove('is-resizing');
-      useApp.setState({ resizing: false });
+      useApp.setState({ resizing: null });
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', stop);
     document.body.classList.add('is-resizing');
-    useApp.setState({ resizing: true });
+    useApp.setState({ resizing: rail });
   };
 
   return (
@@ -351,7 +370,11 @@ function RailDragHandle() {
       aria-orientation="vertical"
       aria-label={t('rail.drag')}
       onPointerDown={onPointerDown}
-      onDoubleClick={() => useApp.getState().setSidebarWidth(null)}
+      onDoubleClick={() =>
+        rail === 'right'
+          ? useApp.getState().setSidebarWidth(null)
+          : useApp.getState().setLeftbarWidth(null)
+      }
     />
   );
 }

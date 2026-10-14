@@ -256,8 +256,15 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
   transition: width var(--motion-base) var(--ease-standard);
 }
 
+/**
+ * The left rail's width is draggable too, through the same mechanism as the
+ * right rail's below: `App.tsx` writes `--rail-w-dragged` on this element when
+ * the person has dragged a width of their own (persisted as `leftbarWidth`),
+ * and the `var(..., fallback)` form keeps the stylesheet owning the default —
+ * including the narrow-window override further down, which carries its own.
+ */
 .app-rail-left {
-  --rail-w: 244px;
+  --rail-w: var(--rail-w-dragged, 244px);
 }
 
 /**
@@ -276,12 +283,12 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
   width: 0;
 }
 
-/* ---------- 右侧栏的拖宽手柄 ---------- */
+/* ---------- 侧栏的拖宽手柄 ---------- */
 /**
- * A 6px strip on the rail's inner edge (the divider a person would aim at),
+ * A 6px strip on a rail's inner edge (the divider a person would aim at),
  * produced by `App.tsx`'s `RailDragHandle`. `touch-action: none` lets pointer
  * events own the gesture on touch screens; a double-click hands the width back
- * to the stylesheet (`setSidebarWidth(null)`).
+ * to the stylesheet (`setSidebarWidth(null)` / `setLeftbarWidth(null)`).
  *
  * The hover affordance paints the strip rather than moving it: a width change
  * on hover would move the strip under the pointer, which is how jitter is made.
@@ -290,11 +297,22 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
   position: absolute;
   top: 0;
   bottom: 0;
+  /* The right rail's inner edge is its **left** one; the left rail's is its
+     right one, flipped below. */
   left: 0;
   width: 6px;
   cursor: col-resize;
   touch-action: none;
   z-index: 5;
+}
+
+/* The left rail's handle, mirrored onto *its* inner edge. Scoped to the rail
+   rather than a modifier class on the strip: the strip stays one element with
+   one behaviour, and each rail's own rule says where it sits — the same
+   division of labour the two `--rail-w` rules above use. */
+.app-rail-left .rail-drag {
+  left: auto;
+  right: 0;
 }
 
 .rail-drag:hover,
@@ -536,7 +554,10 @@ body.is-resizing {
     --rail-w: var(--rail-w-dragged, 236px);
   }
   .app-rail-left {
-    --rail-w: 216px;
+    /* Same shape as its base rule and the right rail's: a dragged width wins
+       here too — a width the person chose is not suspended by the window
+       getting narrower — and the fallback is the narrow-window default. */
+    --rail-w: var(--rail-w-dragged, 216px);
   }
 }
 
