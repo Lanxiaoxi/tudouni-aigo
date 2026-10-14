@@ -162,7 +162,8 @@ func newSSHWrite(manager *sshlib.Manager) tools.Tool {
 	return tools.Tool{
 		Name: "ssh_write",
 		Description: "往一个 SSH 会话里写入原始字节：命令、换行、控制字符都直接发过去，**不做任何解析**。" +
-			"换行自己带（命令末尾写 `\\n`）；`\\u0003` 是 Ctrl+C，`\\u0004` 是 Ctrl+D。\n" +
+			"换行自己带（命令末尾写 `\\n`）；`\\u0003` 是 Ctrl+C，`\\u0004` 是 Ctrl+D。" +
+			"PTY 要求换行才执行：命令必须以 `\\n` 结尾，否则它只停在输入行、不会执行，runtime 不会替你补。\n" +
 			"它返回「已写入」，**不是「命令成功了」** —— 结果要靠 ssh_read 读出来判断。\n" +
 			"写完立刻读：`ssh_read` 会等到有输出或超时，所以标准写法是 write 一条命令、read 到 `__DONE_$?__`、" +
 			"再决定下一步。交互式提示（密码、确认 y/n）也能这样回答。",
@@ -184,9 +185,17 @@ func newSSHWrite(manager *sshlib.Manager) tools.Tool {
 					},
 				}, nil
 			}
+			text := fmt.Sprintf("已写入会话 %s %d 字节。这**不代表命令执行成功** —— 用 ssh_read(%s) 读输出再判断。",
+				id, len([]rune(data)), id)
+			if data != "" && !endsWithNewline(data) {
+				// The command sits on the input line unexecuted until a newline
+				// arrives, and no later read tells the model why its read timed
+				// out. Say it now, at the moment the omission happens.
+				text += "\n⚠ 这条 data 没有以换行结尾 —— 命令会停在输入行**不会执行**。" +
+					"如果这是一条完整命令，请补发一次 `\\n`（或 `\\r`）再 ssh_read。"
+			}
 			return tools.Result{
-				Text: fmt.Sprintf("已写入会话 %s %d 字节。这**不代表命令执行成功** —— 用 ssh_read(%s) 读输出再判断。",
-					id, len([]rune(data)), id),
+				Text: text,
 				Audit: map[string]any{
 					"session_action": "write",
 					"session_id":     id,
@@ -320,6 +329,18 @@ func newSSHSessions(manager *sshlib.Manager) tools.Tool {
 	}
 }
 
+// endsWithNewline reports whether the data carries the byte a PTY needs before a
+// command executes. An empty write is a legitimate "send just this much" (the
+// other half of an interactive exchange), so it is not a missing newline.
+func endsWithNewline(data string) bool {
+	if data == "" {
+		return true
+	}
+	r := []rune(data)
+	last := r[len(r)-1]
+	return last == '\n' || last == '\r'
+}
+
 // findSession looks one session up in the list without failing when it is absent.
 func findSession(manager *sshlib.Manager, id string) (*sshlib.Info, bool) {
 	for _, info := range manager.List() {
@@ -373,6 +394,7 @@ func renderSSHRead(id string, result sshlib.ReadResult) string {
 	switch {
 	case result.TimedOut:
 		lines = append(lines, fmt.Sprintf("会话 %s：这段时间没有输出（会话仍在运行）。", id))
+		lines = append(lines, "如果刚写入的命令没有以换行结尾，它正停在输入行不会执行 —— 补发一次 `\\n`（或 `\\r`），或先读一下提示符后面挂着什么。")
 	case result.EOF:
 		lines = append(lines, fmt.Sprintf("会话 %s 已结束，输出已经读完。", id))
 	case result.Exited:

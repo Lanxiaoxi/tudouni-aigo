@@ -379,6 +379,57 @@ func TestWriteSaysItIsNotAConfirmation(t *testing.T) {
 	}
 }
 
+// TestWriteWarnsWhenTheDataHasNoTrailingNewline: a command without its newline
+// sits on the input line unexecuted, and no later read explains why it timed out.
+// The warning must land at the moment the omission happens, and only when it
+// happens — a write that already carries \n or an empty write (half of an
+// interactive exchange) gets no false alarm.
+func TestWriteWarnsWhenTheDataHasNoTrailingNewline(t *testing.T) {
+	manager := sshManagerForTests(t, newFakeRemote())
+	connect := toolNamed(t, manager, "ssh_connect")
+	write := toolNamed(t, manager, "ssh_write")
+
+	text, _ := callTool(t, connect, nil, map[string]any{"host": "prod"})
+	id := sessionIdFromText(t, text)
+
+	noNewline, _ := callTool(t, write, nil, map[string]any{"session_id": id, "data": "ls -la"})
+	if !strings.Contains(noNewline, "没有以换行结尾") || !strings.Contains(noNewline, "不会执行") {
+		t.Errorf("a write without a trailing newline does not warn:\n%s", noNewline)
+	}
+
+	carriage, _ := callTool(t, write, nil, map[string]any{"session_id": id, "data": "ls -la\r"})
+	if strings.Contains(carriage, "没有以换行结尾") {
+		t.Errorf("a \\r-terminated write was warned about:\n%s", carriage)
+	}
+
+	withNewline, _ := callTool(t, write, nil, map[string]any{"session_id": id, "data": "ls -la\n"})
+	if strings.Contains(withNewline, "没有以换行结尾") {
+		t.Errorf("a \\n-terminated write was warned about:\n%s", withNewline)
+	}
+
+	empty, _ := callTool(t, write, nil, map[string]any{"session_id": id, "data": ""})
+	if strings.Contains(empty, "没有以换行结尾") {
+		t.Errorf("an empty write was warned about:\n%s", empty)
+	}
+}
+
+// TestReadTimeoutSuggestsTheMissingNewline: the timeout answer has to carry the
+// most likely cause, or a model that forgot its newline spends ten round trips
+// guessing that the tool ate it.
+func TestReadTimeoutSuggestsTheMissingNewline(t *testing.T) {
+	manager := sshManagerForTests(t, newFakeRemote())
+	connect := toolNamed(t, manager, "ssh_connect")
+	read := toolNamed(t, manager, "ssh_read")
+
+	text, _ := callTool(t, connect, nil, map[string]any{"host": "prod"})
+	id := sessionIdFromText(t, text)
+
+	readText, _ := callTool(t, read, nil, map[string]any{"session_id": id, "timeout_seconds": 1})
+	if !strings.Contains(readText, "没有以换行结尾") {
+		t.Errorf("a timed-out read does not suggest the missing-newline cause:\n%s", readText)
+	}
+}
+
 // TestReadReportsATimeoutAsAnOrdinaryAnswer: a quiet command is normal, and a
 // result that read as a failure would send the model debugging a working shell.
 func TestReadReportsATimeoutAsAnOrdinaryAnswer(t *testing.T) {
