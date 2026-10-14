@@ -46,8 +46,8 @@ import { PopoverSurface } from '@/components/panels/PanelShell';
  * Left: phase + what is happening (or how the last turn settled) + the
  * conversation's cumulative steps.
  * Right, in order: autopilot → quiet → **terminals badge** → jobs badge →
- * subagent badge → context usage → cache hit rate → turn elapsed → audit log
- * path. Narrow windows cut from the right, so the rightmost elements carry the
+ * subagent badge → context usage → token rate → cache hit rate → turn elapsed
+ * → audit log path. Narrow windows cut from the right, so the rightmost elements carry the
  * tightest breakpoints — including the terminals badge, which is the fourth from
  * the right and therefore the fourth to go.
  *
@@ -417,19 +417,6 @@ export function StatusBar() {
           </Tip>
         ) : null}
 
-        {/* The last successful call's average output rate, moving per step with
-            the live record. Null — a tool-only call, or a call that reported no
-            usage — omits the chip: `0.0 tok/s` would read as a measurement of
-            zero, and the model rows tell the same story per step. */}
-        {usage.outputRate !== null ? (
-          <Tip label={t('status.outputRate', { rate: usage.outputRate })}>
-            <span className="st-chip hide-b1120">
-              <Zap size={11} />
-              <span className="st-metric">{t('status.outputRate', { rate: usage.outputRate })}</span>
-            </span>
-          </Tip>
-        ) : null}
-
         <Tip
           label={t(
             usage.cacheScope === 'session'
@@ -448,6 +435,19 @@ export function StatusBar() {
             <span className="st-metric">{formatPercent(usage.cacheHitRate)}</span>
           </span>
         </Tip>
+
+        {/* The last successful call's average output rate, moving per step with
+            the live record. Null — a tool-only call, or a call that reported no
+            usage — omits the chip: `0.0 tok/s` would read as a measurement of
+            zero, and the model rows tell the same story per step. */}
+        {usage.outputRate !== null ? (
+          <Tip label={t('status.outputRate', { rate: usage.outputRate })}>
+            <span className="st-chip hide-b1120">
+              <Zap size={11} />
+              <span className="st-metric">{t('status.outputRate', { rate: usage.outputRate })}</span>
+            </span>
+          </Tip>
+        ) : null}
 
         {/* The turn's wall time, and the door into its breakdown. A button
             rather than a chip: the number is a total, and what a person wants
