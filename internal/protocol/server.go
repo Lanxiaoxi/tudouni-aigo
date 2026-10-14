@@ -509,6 +509,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 	case InTerminalClose:
 		s.handleTerminalClose(message)
 
+	case InSubagentStop:
+		s.handleSubagentStop(message)
+
 	case InUserMessage:
 		text, _ := String(message, "text")
 		s.startTurn(text)

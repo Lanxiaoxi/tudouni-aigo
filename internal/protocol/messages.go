@@ -102,6 +102,14 @@ const (
 	InTerminalResize = "terminal_resize"
 	InTerminalKill   = "terminal_kill"
 	InTerminalClose  = "terminal_close"
+
+	// Subagent. One verb, and it stops one background delegation: a foreground
+	// delegation ends with the turn (the interrupt message already reaches it
+	// through the parent's turn cancellation), and everything else about a
+	// delegation is a tool the model calls, not a message the person sends.
+	// The id is the child's session id, the same string every panel row and
+	// audit record carries.
+	InSubagentStop = "subagent_stop"
 )
 
 // Message kinds travelling runtime -> front end.
@@ -284,6 +292,8 @@ var RequiredKeys = map[string][]string{
 	InTerminalResize: {"v", "t", "terminal_id", "cols", "rows"},
 	InTerminalKill:   {"v", "t", "terminal_id"},
 	InTerminalClose:  {"v", "t", "terminal_id"},
+
+	InSubagentStop: {"v", "t", "subagent_id"},
 }
 
 // TerminalDefaults are the size a terminal is created with when the client does

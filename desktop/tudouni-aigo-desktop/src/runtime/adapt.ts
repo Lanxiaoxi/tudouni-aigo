@@ -33,6 +33,7 @@ import type {
   SkillCatalogRow,
   SkillPointer,
   StatusGroup,
+  SubagentDoneRow,
   SubagentRow,
   TerminalRow,
   TodoRow,
@@ -153,6 +154,24 @@ export interface VmSubagent {
   steps: number;
   toolCalls: number;
   activity: string;
+  /** True when the delegation outlives the turn that started it. */
+  background: boolean;
+}
+
+export interface VmSubagentDone {
+  id: string;
+  label: string;
+  model: string;
+  provider: string;
+  depth: number;
+  seconds: number;
+  steps: number;
+  toolCalls: number;
+  activity: string;
+  /** `uncollected` = the answer is waiting for the parent's collect tool. */
+  state: 'running' | 'uncollected';
+  /** How the child ended; empty while still running. */
+  stopReason: string;
 }
 
 export interface VmMcp {
@@ -326,6 +345,7 @@ export interface VmState {
   skillCatalog: SkillCatalogRow[];
   jobs: VmJob[];
   subagents: VmSubagent[];
+  subagentsDone: VmSubagentDone[];
   mcp: VmMcp[];
   goal: VmGoal;
   riskScope: VmRiskScope[];
@@ -469,6 +489,29 @@ export function projectSubagents(rows: SubagentRow[] | undefined): VmSubagent[] 
     steps: num(row.steps) ?? 0,
     toolCalls: num(row.tool_calls) ?? 0,
     activity: str(row.activity),
+    background: bool(row.background),
+  }));
+}
+
+/**
+ * Background delegations, newest first. The `running` half of this list is the
+ * same rows the running panel already shows (one delegation, one place); the
+ * `uncollected` half is the new fact — a finished child whose answer the
+ * parent has not read yet.
+ */
+export function projectSubagentsDone(rows: SubagentDoneRow[] | undefined): VmSubagentDone[] {
+  return (rows ?? []).map((row) => ({
+    id: str(row.id),
+    label: str(row.label),
+    model: str(row.model),
+    provider: str(row.provider),
+    depth: num(row.depth) ?? 0,
+    seconds: num(row.seconds) ?? 0,
+    steps: num(row.steps) ?? 0,
+    toolCalls: num(row.tool_calls) ?? 0,
+    activity: str(row.activity),
+    state: row.state === 'uncollected' ? 'uncollected' : 'running',
+    stopReason: str(row.stop_reason),
   }));
 }
 
@@ -663,6 +706,7 @@ export function projectState(msg: UiStateMsg): VmState {
     skillCatalog: msg.skill_catalog ?? [],
     jobs: projectJobs(msg.jobs),
     subagents: projectSubagents(msg.subagents),
+    subagentsDone: projectSubagentsDone(msg.subagents_done),
     mcp: projectMcp(msg.mcp),
     goal: projectGoal(msg.goal),
     riskScope: projectRiskScope(msg.risk_scope),

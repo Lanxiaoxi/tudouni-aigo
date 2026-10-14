@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
@@ -143,6 +144,11 @@ type Config struct {
 	// MaxDepth caps how deep delegation may go. Zero means no delegation at all,
 	// which is also how a caller disables the feature: Build then returns no tool.
 	MaxDepth int
+	// MaxBackground caps the background delegations that may run at once. Zero
+	// means DefaultMaxBackground; a negative value disables background
+	// delegation — the argument is refused rather than ignored, so a model that
+	// was taught the parameter is told why it never works.
+	MaxBackground int
 	// MaxSteps is the child's own step budget. Zero means the agent default.
 	MaxSteps int
 	// Name is the tool's name. Empty means DefaultToolName.
@@ -172,18 +178,32 @@ type Config struct {
 // DefaultToolName is what the model sees when the runtime does not rename it.
 const DefaultToolName = "subagent"
 
+// DefaultMaxBackground caps the background delegations that may run at once.
+//
+// Depth caps nesting; this caps **width**. Each live background delegation is a
+// whole agent loop burning tokens with nobody watching it, so a fan-out needs a
+// bound of its own — and it is deliberately smaller than what a person watching
+// the screen might allow, because the whole point of a background delegation is
+// that nobody is watching.
+const DefaultMaxBackground = 3
+
 // ToolArgs is what the model may pass.
 //
-// One argument is required and there is no second one, and that is the whole
-// design of the interface: `prompt` has to be self-contained. A `context`
-// parameter would be an invitation to paste half of the parent's history into it,
-// which is the cost this feature exists to avoid — the subagent is a way to spend
-// less context, not a way to move it around.
+// `prompt` is required and there is no second required one, and that is the
+// whole design of the interface: `prompt` has to be self-contained. A `context`
+// parameter would be an invitation to paste half of the parent's history into
+// it, which is the cost this feature exists to avoid — the subagent is a way to
+// spend less context, not a way to move it around.
 type ToolArgs struct {
 	// Description is a short display label for the interfaces.
 	Description string
 	// Prompt is the complete, standalone task.
 	Prompt string
+	// Background asks for a delegation that outlives the turn: the call returns
+	// immediately with the child's id, and the answer is collected later through
+	// the collect tool. False — the default — keeps the foreground call, whose
+	// result is the answer itself.
+	Background bool
 }
 
 // Tool is the delegation tool.
@@ -200,6 +220,14 @@ type Tool struct {
 	// number. The store's existence check is a different defence for a
 	// different collision: see mintChildID.
 	childSeq atomic.Int64
+
+	// cancels holds one cancel function per running **background** delegation,
+	// written before the goroutine starts and deleted when it settles. It is
+	// what a per-child stop is built on: cancelling the child's own context
+	// reaches its model calls and its shell commands through the same path a
+	// foreground turn's Esc uses, but only the one child named.
+	cancelsMu sync.Mutex
+	cancels   map[string]context.CancelFunc
 }
 
 // callLabel is the description the interfaces show for this call.
@@ -221,11 +249,24 @@ func (t *Tool) callLabel(label string) string {
 // else in this program: a tool the model can see but never use costs a round trip
 // every time it is tried, and teaches it that tools lie.
 func Build(config Config) (tools.Tool, bool) {
+	_, built, ok := BuildWithHandle(config)
+	return built, ok
+}
+
+// BuildWithHandle is Build with the concrete tool handed back alongside the
+// registry-shaped value.
+//
+// The runtime keeps the concrete tool for exactly one thing: SubagentStop, the
+// user's per-child stop, which is a runtime-level operation on the tool's cancel
+// table rather than a model call. The generic tools.Tool value cannot carry that
+// method, and a second construction path would be two tools to keep in sync — so
+// one Build returns both shapes instead.
+func BuildWithHandle(config Config) (*Tool, tools.Tool, bool) {
 	if config.MaxDepth <= 0 {
-		return tools.Tool{}, false
+		return nil, tools.Tool{}, false
 	}
 	if config.Resolver == nil {
-		return tools.Tool{}, false
+		return nil, tools.Tool{}, false
 	}
 	if config.Name == "" {
 		config.Name = DefaultToolName
@@ -233,11 +274,16 @@ func Build(config Config) (tools.Tool, bool) {
 	if config.Clock == nil {
 		config.Clock = security.PerfClock
 	}
-	tool := &Tool{Config: config}
+	tool := &Tool{Config: config, cancels: map[string]context.CancelFunc{}}
 
-	return tools.Tool{
+	maxBG := tool.maxBackground()
+	if tool.backgroundDisabled() {
+		maxBG = 0
+	}
+
+	built := tools.Tool{
 		Name:        config.Name,
-		Description: description(config.MaxDepth),
+		Description: description(config.MaxDepth, maxBG),
 		// High risk, and it is not a formality. This tool runs a whole agent,
 		// which means it can run any other tool as many times as it likes; a
 		// permission system that rated it low would be granting that entire
@@ -251,6 +297,10 @@ func Build(config Config) (tools.Tool, bool) {
 					"所以要说清背景、目标、约束、验收标准，以及你已知的、它自己查不到的结论。"+
 					"只写你真正需要的那一件事，不要写成一个大纲。",
 				tools.MinLength(1)),
+			"background": tools.BoolSchema(
+				"true = 后台委派：调用立即返回子 agent 的 id，它跑它的，你继续你的回合；"+
+					"完成后用收取工具取结果。只在你接下来的步骤**不依赖**这个结果时用；"+
+					"默认 false（前台等待答复）。"),
 		}, "prompt"),
 		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			return tool.execute(ctx, arguments)
@@ -270,7 +320,8 @@ func Build(config Config) (tools.Tool, bool) {
 		// not what Interactive means (the field's contract is "blocks on a
 		// person"), and claiming it made the batch demote to serial.
 		Interactive: false,
-	}, true
+	}
+	return tool, built, true
 }
 
 // execute is the handler.
@@ -291,11 +342,19 @@ func (t *Tool) execute(ctx context.Context, arguments map[string]any) (tools.Res
 	if raw := strings.TrimSpace(stringArg(arguments, "description")); raw != "" {
 		label = clip(raw, 60)
 	}
+	// Background is opt-in per call. A non-bool never reaches here (the schema
+	// validates it), so the zero value is genuinely "the argument was left out".
+	background, _ := arguments["background"].(bool)
 
 	if refusal := t.depthRefusal(); refusal != "" {
 		return tools.TextResult(refusal), nil
 	}
-	return t.spawn(ctx, prompt, label)
+	if background {
+		if refusal := t.backgroundRefusal(); refusal != "" {
+			return tools.TextResult(refusal), nil
+		}
+	}
+	return t.spawn(ctx, prompt, label, background)
 }
 
 // depthRefusal reports why this delegation is not allowed, or "" when it is.
@@ -313,6 +372,74 @@ func (t *Tool) depthRefusal() string {
 			t.MaxDepth, depth)
 	}
 	return ""
+}
+
+// maxBackground is the configured width cap, with the default applied.
+func (t *Tool) maxBackground() int {
+	if t.Config.MaxBackground == 0 {
+		return DefaultMaxBackground
+	}
+	return t.Config.MaxBackground
+}
+
+// backgroundDisabled reports whether the negative MaxBackground marker is set.
+func (t *Tool) backgroundDisabled() bool { return t.Config.MaxBackground < 0 }
+
+// backgroundRefusal reports why a background delegation is not allowed, or ""
+// when it is. The two refusals say different things on purpose: "off" is a
+// configuration fact the model cannot work around, "at the cap" is a scheduling
+// fact that changes when one of the running children settles.
+func (t *Tool) backgroundRefusal() string {
+	if t.backgroundDisabled() {
+		return "后台委派没有启用（background 已被配置关闭）。请用前台委派等结果，或自己做这一步。"
+	}
+	if t.Board != nil && t.Board.BackgroundRunning() >= t.maxBackground() {
+		return fmt.Sprintf(
+			"后台委派已经到上限（%d 个在跑）。等其中一个完成并收取后再派，"+
+				"或改用前台委派等结果。", t.maxBackground())
+	}
+	return ""
+}
+
+// storeCancel remembers one background delegation's cancel function, before the
+// goroutine that will observe the cancellation starts. A stop that arrives in
+// that window is exactly the one this ordering exists for.
+func (t *Tool) storeCancel(childID string, cancel context.CancelFunc) {
+	t.cancelsMu.Lock()
+	defer t.cancelsMu.Unlock()
+	t.cancels[childID] = cancel
+}
+
+// dropCancel forgets the entry once the delegation has settled: after that a
+// Stop is answered "nothing running by that id", which is true.
+func (t *Tool) dropCancel(childID string) {
+	t.cancelsMu.Lock()
+	defer t.cancelsMu.Unlock()
+	delete(t.cancels, childID)
+}
+
+// Stop cancels one running background delegation by its child id.
+//
+// It is the runtime-facing seam for the user's per-child stop: the protocol's
+// stop request lands here, and the cancellation reaches the child through its
+// own context — the same path a foreground delegation's Esc takes, aimed at one
+// child instead of the whole turn. It reports whether the id named a background
+// delegation that was still running; anything else (foreground id, unknown id,
+// already settled) is reported as not stopped rather than guessed at.
+//
+// A stopped child returns RunCancelled from its Run, so it settles with the
+// ordinary "cancelled" stop reason and its partial output — the same shape a
+// foreground interruption produces, and the same wording the parent already
+// reads for one.
+func (t *Tool) Stop(childID string) bool {
+	t.cancelsMu.Lock()
+	cancel, ok := t.cancels[childID]
+	t.cancelsMu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
 }
 
 // Result renders the child's answer for the parent's tool result.
@@ -399,17 +526,25 @@ func errorLine(err error) string {
 // finds nothing), and **it cannot ask questions** (otherwise the model waits for
 // an answer that will never come). Both are facts about the child that the parent
 // cannot discover by trying.
-func description(maxDepth int) string {
+func description(maxDepth, maxBackground int) string {
+	// The background paragraph is conditional because a tool description is a
+	// promise: telling the model about a parameter the configuration disabled
+	// is teaching it to make calls that always refuse.
+	background := ""
+	if maxBackground > 0 {
+		background = fmt.Sprintf(`
+前台与后台（background 参数，默认前台）：你的下一步**依赖**结果时，用前台——答复直接回到工具结果里，不需要第二次调用。你的下一步**不依赖**结果、而回合里还有别的事要做时，用 background=true：调用立即返回子 agent 的 id，它跑它的，你继续你的回合；它完成后，结果会出现在 payload 的「已完成待收取」段里，用收取工具带上 id 取回。后台委派同时最多 %d 个，到上限会拒绝并告诉你等哪一个。`, maxBackground)
+	}
 	return fmt.Sprintf(`把一个自足的任务交给子 agent 去做。它开在一个全新的会话里，**看不到这次对话**，所以 prompt 必须自带全部背景；它做完之后只把最终答复返回给你，中间过程留在它自己的上下文里 —— 这才是用它省钱的地方：翻找、试错、读大文件的开销不进你的上下文。
 
 什么时候用：一段可以独立描述、结论比过程重要的活 —— 调研、定位、受范围限制的实现、对一份东西的审阅。什么时候不用：你自己一两次工具调用就能做完的事，或者还没想清楚要什么的事（那就先自己查清楚再决定要不要委派）。多个互相独立的子任务可以在同一轮里一起派：同一轮里的多个 subagent 调用会**并行**执行。有依赖关系的步骤要等上一轮的结果回来再派，不要在 prompt 里塞一串前后依赖的活儿。
-
+%s
 三条必须知道的限制：
 1. **它看不到这次对话。** 凡是它自己查不到的信息（你的判断、已经确定的结论、刚读到的内容），都要写进 prompt。
 2. **它没有审批通道，需要审批的操作会被直接拒绝。** 也不要指望它去问用户；它被拒绝后会自己换一种做法，或者把限制写进答复里交还给你 —— 所以别把需要用户点头的步骤委派出去。
 3. **它不能再往下委派，也碰不到父会话的待办、目标和技能。** 当前深度上限是 %d 层，子 agent 到顶之后只能自己做完；它有自己的会话，父会话的 todo、goal 和已加载技能对它既不显示也不可改。
 
-它返回的是它的最终文本，不是它的中间步骤；失败、被中断或步数用尽时会明确标出来，并附上它已经产出的部分。`, maxDepth)
+它返回的是它的最终文本，不是它的中间步骤；失败、被中断或步数用尽时会明确标出来，并附上它已经产出的部分。`, background, maxDepth)
 }
 
 // delegationScopeMessage is the declaration the child gets in its own history.

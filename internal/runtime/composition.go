@@ -138,6 +138,13 @@ const SessionListLimit = 50
 // setting nobody asked for is a setting nobody will find.
 const subagentMaxDepth = subagent.DefaultMaxDepth
 
+// subagentMaxBackground is how many background delegations may run at once. It
+// is a constant for the same reason the depth cap is: a budget on the session's
+// own account. Smaller than the depth cap on purpose — depth bounds nesting,
+// this bounds width, and each live background delegation is a whole agent loop
+// with nobody watching it.
+const subagentMaxBackground = subagent.DefaultMaxBackground
+
 // SessionSummaries lists saved sessions, newest first.
 //
 // The order is by **creation time**, not by id. `--session demo` is not a
@@ -311,7 +318,13 @@ type Runtime struct {
 	Jobs           *builtin.JobBoard
 	// Subagents is the tally of delegations in flight. Nil when delegation is
 	// unavailable, which is also the panel's "there are none".
-	Subagents   *subagent.Board
+	Subagents *subagent.Board
+	// subagentStopper is the delegating tool, kept for the one operation that
+	// belongs to the runtime rather than to a turn: stopping one background
+	// delegation on the user's behalf. Nil when delegation is unavailable.
+	subagentStopper interface {
+		Stop(id string) bool
+	}
 	Chat        model.ChatModel
 	WebCfg      WebConfig
 	McpCfg      []McpServerSpec
@@ -675,32 +688,47 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// The board is created before the tool because the tool announces itself to it.
 	// A tool built without one still delegates; nothing on screen would say so.
 	runtimeValue.Subagents = subagent.NewBoard(security.PerfClock)
-	if subagentTool, ok := subagent.Build(subagent.Config{
-		Chat:       runtimeValue.Chat,
-		Store:      options.Booted.Store,
-		Logs:       options.Booted.Logs,
-		Catalog:    catalog,
-		Resolver:   runtimeValue,
-		Parent:     session,
-		Tools:      registry.Tools,
-		Policy:     runtimeValue.Policy,
-		Memory:     memory,
-		Notes:      notesFrom(runtimeValue.Skills),
-		OnEvent:    runtimeValue.onEvent,
-		Board:      runtimeValue.Subagents,
-		ShouldStop: options.ShouldStop,
-		Warn:       func(text string) { warn("%s", text) },
-		MaxDepth:   subagentMaxDepth,
-		MaxSteps:   runtimeValue.MaxSteps,
-		Thinking:   modelState.Thinking(),
-		Effort:     modelState.Effort(),
-		Debug:      options.Debug,
-		Clock:      security.PerfClock,
+	// The collect tool is registered **before** the delegating tool builds its
+	// child view: a child's tool set is a clone of the parent's registry made at
+	// delegation time, and the exclusion by name (sessionScopedToolNames) needs
+	// the name present in the parent's registry to mean anything.
+	if collectTool, ok := subagent.BuildCollect(runtimeValue.Subagents); ok {
+		if err := registry.Tools.Register(collectTool); err != nil {
+			jobs.Close()
+			return nil, err
+		}
+	}
+	if handle, subagentTool, ok := subagent.BuildWithHandle(subagent.Config{
+		Chat:          runtimeValue.Chat,
+		Store:         options.Booted.Store,
+		Logs:          options.Booted.Logs,
+		Catalog:       catalog,
+		Resolver:      runtimeValue,
+		Parent:        session,
+		Tools:         registry.Tools,
+		Policy:        runtimeValue.Policy,
+		Memory:        memory,
+		Notes:         notesFrom(runtimeValue.Skills),
+		OnEvent:       runtimeValue.onEvent,
+		Board:         runtimeValue.Subagents,
+		ShouldStop:    options.ShouldStop,
+		Warn:          func(text string) { warn("%s", text) },
+		MaxDepth:      subagentMaxDepth,
+		MaxBackground: subagentMaxBackground,
+		MaxSteps:      runtimeValue.MaxSteps,
+		Thinking:      modelState.Thinking(),
+		Effort:        modelState.Effort(),
+		Debug:         options.Debug,
+		Clock:         security.PerfClock,
 	}); ok {
 		if err := registry.Tools.Register(subagentTool); err != nil {
 			jobs.Close()
 			return nil, err
 		}
+		// Kept for SubagentStop: the runtime's own handle on the delegating
+		// tool, so a stop request from the front end reaches the one child it
+		// names without the runtime knowing how cancellation is stored.
+		runtimeValue.subagentStopper = handle
 		runtimeValue.notices = append(runtimeValue.notices, notice("info", "subagent",
 			i18n.T("notice.subagent.enabled", "tool", subagentTool.Name, "depth", subagentMaxDepth)))
 	} else {
@@ -1337,6 +1365,40 @@ func (r *Runtime) subagentPanel() []any {
 	return out
 }
 
+// subagentsDonePanel renders the background delegations that have finished and
+// are waiting to be collected.
+//
+// It is a separate list rather than extra rows on `subagents` because the two
+// answer different questions: the running list is "is something working", the
+// done list is "is there paid-for work nobody has read". A front end that wants
+// both draws both; one that ignores the new key keeps working unchanged.
+func (r *Runtime) subagentsDonePanel() []any {
+	rows := r.Subagents.DonePanel()
+	out := make([]any, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row)
+	}
+	return out
+}
+
+// SubagentStop answers the protocol's `subagent_stop` request: the user's
+// per-child stop for background delegations.
+//
+// It reports whether a running background delegation was stopped. That
+// distinction is the whole answer a front end needs — "already finished" and
+// "no such id" are not the same failure, and the notice each deserves is worded
+// differently.
+func (r *Runtime) SubagentStop(id string) (bool, error) {
+	if r.subagentStopper == nil {
+		return false, fmt.Errorf("子 agent 委派在此会话中不可用")
+	}
+	stopped := r.subagentStopper.Stop(id)
+	if !stopped {
+		return false, fmt.Errorf("没有在跑的后台子 agent 叫 %s（可能已完成、被停过，或 id 写错了）", id)
+	}
+	return true, nil
+}
+
 // openContext assembles the context system for one session.
 //
 // Three things happen here that are individually easy to get wrong:
@@ -1650,6 +1712,7 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		"skills":           r.skillPointers(),
 		"jobs":             panelOf(r.Jobs),
 		"subagents":        r.subagentPanel(),
+		"subagents_done":   r.subagentsDonePanel(),
 		"messages":         len(r.Messages()),
 		"steps":            r.SessionValue.StepCount(),
 		"model":            r.Chat.ModelName(),

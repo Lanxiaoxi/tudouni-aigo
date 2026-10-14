@@ -11,6 +11,7 @@ import {
   NO_SKILLS,
   NO_STRINGS,
   NO_SUBAGENTS,
+  NO_SUBAGENTS_DONE,
   NO_TERMINALS,
   activeWorkspaceOf,
   selectAskOn,
@@ -694,13 +695,34 @@ export function SubagentsPanel() {
   const t = useT();
   // Delegations and background jobs belong to one session's turn.
   const agents = useSessionField((rt) => rt.uiState?.subagents ?? NO_SUBAGENTS, NO_SUBAGENTS);
+  // Background delegations, newest first: the running half duplicates the list
+  // above by design (one delegation, one row per panel), the uncollected half
+  // is the panel's reason to grow — an answer is sitting in memory waiting.
+  const done = useSessionField((rt) => rt.uiState?.subagentsDone ?? NO_SUBAGENTS_DONE, NO_SUBAGENTS_DONE);
   const jobs = useSessionField((rt) => rt.uiState?.jobs ?? NO_JOBS, NO_JOBS);
+  const stopSubagent = useApp((s) => s.stopSubagent);
+
+  const uncollected = done.filter((row) => row.state === 'uncollected');
+  const runningBg = done.filter((row) => row.state === 'running');
 
   const { active, setActive } = useListKeys({
     count: agents.length,
     onClose: closePanel,
     onPick: () => undefined,
   });
+
+  const stopButton = (id: string) => (
+    <button
+      type="button"
+      className="caption faint"
+      style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer' }}
+      onClick={() => stopSubagent(id)}
+    >
+      <Tip label={t('panel.subagents.stop')}>
+        <X size={12} />
+      </Tip>
+    </button>
+  );
 
   return (
     <PanelShell title={t('panel.subagents.title')} count={`${agents.length} / ${jobs.length}`}>
@@ -715,7 +737,12 @@ export function SubagentsPanel() {
               index={i + 1}
               active={active === i}
               onHover={() => setActive(i)}
-              aside={formatDuration(agent.seconds * 1000)}
+              aside={
+                <>
+                  {agent.background ? <Badge tone="info" dot={false}>{t('panel.subagents.background')}</Badge> : null}
+                  {formatDuration(agent.seconds * 1000)}
+                </>
+              }
             >
               <div className="row" style={{ gap: 'var(--space-2)' }}>
                 <Bot size={12} className="muted" />
@@ -726,11 +753,54 @@ export function SubagentsPanel() {
                   {agent.provider}/{agent.model} · depth {agent.depth} · {agent.steps} steps ·{' '}
                   {agent.toolCalls} calls
                 </span>
+                {/* The stop is offered only where it can work: a background
+                    delegation has a context of its own, so one child can end
+                    without touching the turn. A foreground one is the turn's
+                    business, and the turn's interrupt is its stop. */}
+                {agent.background ? stopButton(agent.id) : null}
               </div>
               <div className="caption muted">{agent.activity}</div>
             </PanelRow>
           ))
         )}
+
+        {uncollected.length > 0 ? (
+          <>
+            <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
+              {t('panel.subagents.done')}
+            </div>
+            {uncollected.map((row) => (
+              <PanelRow
+                key={row.id}
+                aside={
+                  <>
+                    {row.stopReason !== '' && row.stopReason !== 'answered' ? (
+                      <Badge tone={row.stopReason === 'cancelled' ? 'warning' : 'destructive'} dot={false}>
+                        {row.stopReason}
+                      </Badge>
+                    ) : null}
+                    {formatDuration(row.seconds * 1000)}
+                  </>
+                }
+              >
+                <div className="row" style={{ gap: 'var(--space-2)' }}>
+                  <Bot size={12} className="muted" />
+                  <span className="strong">{row.label}</span>
+                  <span className="mono caption faint">
+                    {row.provider}/{row.model} · {row.steps} steps
+                  </span>
+                </div>
+                <div className="caption muted">{t('panel.subagents.uncollected')}</div>
+              </PanelRow>
+            ))}
+          </>
+        ) : null}
+
+        {runningBg.length > 0 && agents.length === 0 ? (
+          <div className="caption muted" style={{ marginTop: 'var(--space-2)' }}>
+            {t('panel.subagents.bgRunning', { n: runningBg.length })}
+          </div>
+        ) : null}
 
         <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
           {t('block.jobs')}

@@ -564,6 +564,30 @@ export interface SubagentRow {
   steps: number;
   tool_calls: number;
   activity: string;
+  /** Present since background delegations: true when the row outlives its turn. */
+  background?: boolean;
+}
+
+/**
+ * `ui(state).subagents_done[]` — `internal/subagent/board.go` `Board.DonePanel()`.
+ * Background delegations, newer first. A row is `running` until its child
+ * settles; `uncollected` means the answer is in memory waiting for the parent's
+ * collect tool, and `stop_reason` names how it ended once it has.
+ */
+export interface SubagentDoneRow {
+  id: string;
+  label: string;
+  model: string;
+  provider: string;
+  depth: number;
+  /** Total run seconds once finished; elapsed while still running. */
+  seconds: number;
+  steps: number;
+  tool_calls: number;
+  activity: string;
+  state: 'running' | 'uncollected';
+  /** Empty while still running. */
+  stop_reason: string;
 }
 
 /** `ui(state).mcp[]`. The `error` key only appears on `ui(mcp)`. */
@@ -623,6 +647,9 @@ export interface UiStateMsg {
   skill_catalog?: SkillCatalogRow[];
   jobs: JobRow[];
   subagents: SubagentRow[];
+  /** Background delegations, newer first. Present since background delegation
+   *  support; a runtime without it simply omits the key. */
+  subagents_done?: SubagentDoneRow[];
   messages: number;
   steps: number;
   model: string;
@@ -1084,6 +1111,11 @@ export type FrontendMsg =
    *  answers with a notice *and* that list, so a tab dropped too early is
    *  restored from the same reply. */
   | { v: number; t: 'terminal_close'; terminal_id: string }
+  /** Stop one background subagent. `subagent_id` is the child's session id,
+   *  the same string every subagent row carries. There is no result payload:
+   *  the child settles with the ordinary `cancelled` reason, and the next
+   *  `ui(state)` re-draws the panels. A refused stop arrives as a notice. */
+  | { v: number; t: 'subagent_stop'; subagent_id: string }
   | { v: number; t: 'shutdown' };
 
 /* ============================================================

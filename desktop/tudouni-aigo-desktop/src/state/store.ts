@@ -87,6 +87,7 @@ import {
   type VmState,
   type VmStatus,
   type VmSubagent,
+  type VmSubagentDone,
   type VmTool,
 } from '@/runtime/adapt';
 import type { SshRow } from '@/protocol/types';
@@ -1666,6 +1667,16 @@ export interface AppStore {
   /** End a terminal and everything it started. The transcript's line comes from
    *  the runtime's exit event, never from this request. */
   killTerminal(id: string): void;
+  /**
+   * Stop one running **background** subagent.
+   *
+   * Like `killTerminal` there is no reply payload: the child settles with the
+   * ordinary `cancelled` reason, the board moves the row to the done panel, and
+   * the next `ui(state)` re-draws everything — the runtime stays the only source
+   * of truth for what is running. A refused stop arrives as a notice naming why
+   * (unknown id, already finished), which the transcript shows.
+   */
+  stopSubagent(id: string): void;
   /**
    * Forget a terminal that has **already ended**, so its tab goes away.
    *
@@ -4733,6 +4744,15 @@ export const useApp = create<AppStore>((set, get) => {
       sendTo(key, { v: 1, t: 'terminal_kill', terminal_id: id });
     },
 
+    stopSubagent(id) {
+      const key = get().activeKey;
+      if (key === null) return;
+      // Same discipline as killTerminal: no optimistic removal. The row stays
+      // whatever the last snapshot said until the settlement comes back through
+      // the board and the next `ui(state)` carries it.
+      sendTo(key, { v: 1, t: 'subagent_stop', subagent_id: id });
+    },
+
     closeTerminal(id) {
       const key = get().activeKey;
       if (key === null) return;
@@ -5623,6 +5643,7 @@ export function selectAskOn(s: AppStore, key: string | null): string[] {
 export const NO_RISK_SCOPE: VmRiskScope[] = [];
 export const NO_EFFORT_LEVELS: string[] = [];
 export const NO_SUBAGENTS: VmSubagent[] = [];
+export const NO_SUBAGENTS_DONE: VmSubagentDone[] = [];
 export const NO_JOBS: VmJob[] = [];
 export const NO_TOOLS: VmTool[] = [];
 export const NO_MODELS: VmModel[] = [];

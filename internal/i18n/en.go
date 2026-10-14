@@ -962,6 +962,11 @@ var catalog = map[string]string{
 	"channels.terminal.kill_failed":    "[terminal] could not end {id}: {problem}",
 	"channels.terminal.close_failed":   "[terminal] could not close {id}: {problem}",
 
+	"channels.subagent.no_session":  "[subagent] no session yet.",
+	"channels.subagent.unsupported": "[subagent] this runtime cannot stop subagents.",
+	"channels.subagent.needs_id":    "[subagent] {action} needs a subagent id.",
+	"channels.subagent.stop_failed": "[subagent] could not stop {id}: {problem}",
+
 	// --- the /context screen ------------------------------------------------
 	"context.title":        "Context and compaction",
 	"context.kv.window":    "Window",

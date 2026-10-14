@@ -184,6 +184,10 @@ type harness struct {
 	logs     *audit.JsonlSink
 	resolver *fakeResolver
 	child    *fakeModel
+	// handle is the concrete delegating tool, as BuildWithHandle returns it. It
+	// is kept so the background tests can drive Stop — the per-child stop is a
+	// method on the concrete tool, not on the registry-shaped value.
+	handle *Tool
 	// board is the tally of in-flight delegations the tool was built with. It is
 	// always non-nil so a test can ask "were two delegations on it at once"; the
 	// Board's own methods are safe on a nil receiver, so tests that do not care
@@ -260,7 +264,7 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 	// describe it.
 	h.board = NewBoard(security.PerfClock)
 
-	built, ok := Build(Config{
+	handle, built, ok := BuildWithHandle(Config{
 		Chat:     child,
 		Store:    store,
 		Logs:     logs,
@@ -294,6 +298,7 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 	if !ok {
 		t.Fatal("Build returned no tool for a depth of three")
 	}
+	h.handle = handle
 	h.tool = built
 	if err := registry.Register(built); err != nil {
 		t.Fatal(err)

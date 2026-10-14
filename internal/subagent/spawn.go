@@ -15,19 +15,31 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
-// spawn runs one delegated task to completion and returns the child's answer.
+// spawn runs one delegated task and hands the parent the outcome.
 //
 // Everything the child needs is built here rather than borrowed from the parent,
 // and the reason for each separation is the same: a child that shared anything
 // mutable with its parent would make the parent's behaviour depend on how the
 // delegation went.
 //
-// The one thing that *is* inherited on purpose is the stop flag. Pressing Esc is
-// a statement about this whole piece of work, and a subagent that kept going
-// after the user interrupted would be the feature overriding the user.
+// The foreground path (background == false) is the original one: the parent's
+// model stays blocked inside this tool call until the child is done, and the
+// return value is the child's answer.
+//
+// The background path returns immediately and the child runs on a context of
+// its own — detached from the turn's cancellation, cancellable per child through
+// Stop. Its result has no caller waiting for it, so at the end it is settled
+// into the board (answer, usage, stop reason) where the collect tool and the
+// payload tail find it.
+//
+// The one thing that *is* inherited on purpose — on the foreground path only —
+// is the stop flag. Pressing Esc is a statement about this whole piece of work,
+// and a subagent that kept going after the user interrupted would be the feature
+// overriding the user. A background delegation is by construction not part of
+// the work Esc interrupts: its lifetime is the board's, not the turn's.
 // label is this call's own, passed in by execute: the tool holds no per-call
 // state, because two invocations may be in flight at once.
-func (t *Tool) spawn(ctx context.Context, task, label string) (tools.Result, error) {
+func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (tools.Result, error) {
 	started := time.Now()
 	childID, err := t.mintChildID()
 	if err != nil {
@@ -61,6 +73,7 @@ func (t *Tool) spawn(ctx context.Context, task, label string) (tools.Result, err
 		"depth":       childDepth,
 		"model":       chosen,
 		"provider":    route.Name,
+		"background":  background,
 	}))
 
 	session := t.newChildSession(childID, childDepth, label)
@@ -81,11 +94,12 @@ func (t *Tool) spawn(ctx context.Context, task, label string) (tools.Result, err
 	// over.
 	if t.Board != nil {
 		t.Board.Start(Delegation{
-			ID:       childID,
-			Label:    t.callLabel(label),
-			Model:    chosen,
-			Provider: route.Name,
-			Depth:    childDepth,
+			ID:         childID,
+			Label:      t.callLabel(label),
+			Model:      chosen,
+			Provider:   route.Name,
+			Depth:      childDepth,
+			Background: background,
 		})
 	}
 
@@ -98,6 +112,23 @@ func (t *Tool) spawn(ctx context.Context, task, label string) (tools.Result, err
 	// the message list would name nothing.
 	session.Context = manager.State
 	childTools := t.toolsForChild()
+
+	// The run context. Foreground: the parent's, which is what makes a stop
+	// reach a delegation — its model calls and its shell commands are all
+	// cancellable through it, and without it a stop would have to wait out the
+	// whole child loop, minutes for a delegation. Background: a fresh
+	// cancellable context cut from `context.WithoutCancel`, so the turn's end
+	// and the turn's stop flag never reach it, while Stop(id) still can.
+	runCtx := ctx
+	shouldStop := t.ShouldStop
+	if background {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithCancel(context.WithoutCancel(ctx))
+		t.storeCancel(childID, cancel)
+		// Nil on purpose: the flag is the turn's, and this child is not the
+		// turn's. Its stop is the per-child context above.
+		shouldStop = nil
+	}
 
 	sub := agent.New(agent.Config{
 		Chat:   chat,
@@ -128,8 +159,9 @@ func (t *Tool) spawn(ctx context.Context, task, label string) (tools.Result, err
 		MaxSteps:  t.MaxSteps,
 		Debug:     t.Debug,
 		Clock:     t.Clock,
-		// The parent's flag, not the child's own: an interrupt is about the turn.
-		ShouldStop: t.ShouldStop,
+		// Foreground: the parent's flag, because an interrupt is about the turn.
+		// Background: nil (see above) — the child's own context is its stop.
+		ShouldStop: shouldStop,
 		// Never the parent's delta sink. One sink belongs to the interface, and
 		// two agents writing into it would interleave two answers into one.
 		OnDelta:      nil,
@@ -148,36 +180,33 @@ func (t *Tool) spawn(ctx context.Context, task, label string) (tools.Result, err
 		"model":        chosen,
 		"provider":     route.Name,
 		"prompt_chars": len([]rune(task)),
+		"background":   background,
 	}))
 
-	// The child runs on the **parent's context**, which is what makes a stop reach a
-	// delegation: its own model call and its own shell commands are all cancellable
-	// through it, and without it a stop would have to wait out the whole child loop —
-	// minutes, for a delegation, which is the longest single step there is.
-	answer, runErr := sub.Run(ctx, task)
-
-	// The child is written down before the outcome is decided, so a session that
-	// ended in a step limit or a model error is still there to be read.
-	t.checkpointChild(session)
-	usage := t.childUsage(childID)
-
-	if t.Board != nil {
-		t.Board.Finish(childID)
+	if background {
+		// The tool result is the fact of having started, not the answer: the
+		// parent's turn goes on, and the child runs in this goroutine. Everything
+		// after Run — checkpoint, usage, audit, settlement — happens there, which
+		// is why settle touches nothing the parent's turn holds a lock on.
+		go func() {
+			answer, runErr := sub.Run(runCtx, task)
+			t.settle(session, childID, started, answer, runErr, true)
+			t.dropCancel(childID)
+		}()
+		return tools.Result{
+			Text: fmt.Sprintf(
+				"已在后台启动子 agent %s（%s）。它跑它的，你继续你的回合；它完成后结果会出现在 payload 的「已完成待收取的子 agent」段，用收取工具带上 id 取回。在此之前不要凭猜测替它下结论。",
+				childID, t.callLabel(label)),
+			Audit: map[string]any{"subagent_id": childID},
+		}, nil
 	}
 
-	t.emit(audit.Event(KindDelegationFinished, t.parentID(), childID, 0, map[string]any{
-		"subagent_id":  childID,
-		"depth":        childDepth,
-		"duration_ms":  int(time.Since(started).Milliseconds()),
-		"stop_reason":  stopReasonOf(runErr, answer),
-		"answer_chars": len([]rune(answer)),
-		"steps":        session.StepCount(),
-		"messages":     len(session.Messages),
-		"usage":        usage,
-	}))
-
+	// Foreground: the parent's model is blocked here for the whole delegation,
+	// which is why the answer can simply be the tool result. runCtx is the
+	// parent's context here — the background branch returned already.
+	answer, runErr := sub.Run(runCtx, task)
 	return tools.Result{
-		Text: renderResult(t, childID, answer, runErr, usage),
+		Text: t.settle(session, childID, started, answer, runErr, false),
 		// The child's id rides out on the tool result, which is how the parent's
 		// own `tool_result` event comes to name the delegation it belongs to. That
 		// is the whole correlation an interface needs: the parent's `tool_call`
@@ -186,6 +215,61 @@ func (t *Tool) spawn(ctx context.Context, task, label string) (tools.Result, err
 		// through the agent to make it work.
 		Audit: map[string]any{"subagent_id": childID},
 	}, nil
+}
+
+// settle is everything that happens once a child's Run has returned, both kinds.
+//
+// It writes the child down (so a delegation that ended in a step limit or a
+// model error is still there to be read), reads its usage back from the audit
+// log, retires the board row and reports the ending. The background flag picks
+// where the outcome goes: false returns it as the tool result text, true stores
+// it as the settlement the collect tool hands over later.
+func (t *Tool) settle(session *state.Session, childID string, started time.Time, answer string, runErr error, background bool) string {
+	// The child is written down before the outcome is decided, so a session that
+	// ended in a step limit or a model error is still there to be read.
+	t.checkpointChild(session)
+	usage := t.childUsage(childID)
+	stopReason := stopReasonOf(runErr, answer)
+
+	if t.Board != nil {
+		if background {
+			// Render at settle time, with the facts in hand: the collected text
+			// must not depend on state that has changed by the time the parent
+			// reads it.
+			t.Board.Settle(childID, Settlement{
+				Text:       renderResult(t, childID, answer, runErr, usage),
+				StopReason: stopReason,
+				Usage:      usage,
+			}, 0)
+			// A background delegation ends with no tool result to carry the
+			// news, so the terminal sink says it — the one user-visible cue
+			// that paid-for work is waiting to be read. "Stopped" rather than
+			// "interrupted": nothing the user was watching was cut short, the
+			// child itself was asked to end.
+			t.warn(fmt.Sprintf("子 agent %s 已完成（%s），结果待收取", childID, stopReason))
+		} else {
+			t.Board.Finish(childID)
+		}
+	}
+
+	t.emit(audit.Event(KindDelegationFinished, t.parentID(), childID, 0, map[string]any{
+		"subagent_id":  childID,
+		"depth":        DepthOf(session) - 1,
+		"duration_ms":  int(time.Since(started).Milliseconds()),
+		"stop_reason":  stopReason,
+		"answer_chars": len([]rune(answer)),
+		"steps":        session.StepCount(),
+		"messages":     len(session.Messages),
+		"usage":        usage,
+	}))
+
+	// The foreground tool result is the rendered answer; the background path has
+	// already stored its rendered text in the settlement and returns nothing
+	// here (its caller is a goroutine nobody is reading).
+	if background {
+		return ""
+	}
+	return renderResult(t, childID, answer, runErr, usage)
 }
 
 // modelVisionFor is the vision gate handed to one child.
@@ -308,6 +392,11 @@ var sessionScopedToolNames = []string{
 	"update_goal",
 	"load_skill",
 	"ask_user",
+	// The collect tool reads the delegating session's board, so it belongs to
+	// the parent only: a child collecting another child's answer would be
+	// acting on a session it was never handed, and the answer it would take is
+	// the parent's to read first.
+	DefaultCollectName,
 	// The SSH tools are withheld for a reason of their own, and it is not the map
 	// race above: a session is a **process-scoped resource**, not the parent's
 	// memory. Two agents reading one session is silent data loss rather than a

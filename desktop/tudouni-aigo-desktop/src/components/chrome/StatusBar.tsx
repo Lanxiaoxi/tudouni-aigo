@@ -191,6 +191,13 @@ export function StatusBar() {
   const outstanding = jobs.filter((job) => job.outstanding).length;
   const uncollected = jobs.filter((job) => job.uncollected).length;
   const subagents = snap?.subagents ?? NO_SUBAGENTS;
+  // Finished background delegations nobody has read. They badge the same cell
+  // as the running count because they are the same subject — work the session
+  // is owed — and the distinction the cell has to carry is "how many are still
+  // working" vs "how many are done and waiting".
+  const subagentUncollected = (snap?.subagentsDone ?? []).filter(
+    (row) => row.state === 'uncollected',
+  ).length;
   const audit = session?.auditPath ?? '';
 
   return (
@@ -357,10 +364,15 @@ export function StatusBar() {
         >
           <button
             type="button"
-            className={`st-toggle hide-b940${subagents.length > 0 ? ' is-on' : ''}`}
+            className={`st-toggle hide-b940${subagents.length > 0 ? ' is-on' : ''}${
+              subagentUncollected > 0 ? ' st-attention' : ''
+            }`}
           >
             <Bot size={11} />
-            <span className="st-metric">{subagents.length}</span>
+            <span className="st-metric">
+              {subagentUncollected > 0 ? `${subagentUncollected}✓ / ` : ''}
+              {subagents.length}
+            </span>
           </button>
         </StatusPopover>
 

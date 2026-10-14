@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// Board is the runtime's tally of delegations that are in flight.
+// Board is the runtime's tally of delegations.
 //
 // It exists because a subagent is invisible otherwise. The child's own audit
 // records go to its own log under its own session id, which is right for reading
@@ -21,10 +21,34 @@ import (
 // bookkeeping, and the two would disagree the first time one was missed — at
 // which point the badge shows a subagent that finished ten minutes ago, which is
 // worse than showing nothing.
+//
+// A background delegation (see ToolArgs.Background) ends in a state the
+// foreground path never had: finished, with its answer in hand, but
+// **uncollected** — the parent's turn has moved on and the answer is still
+// sitting in memory. Those rows move to the done table, listed by DonePanel and
+// named by Note, until Collect removes them. A process restart loses them; the
+// child's own session file is the durable copy, which is what Note already
+// points at.
 type Board struct {
 	mu      sync.Mutex
 	running map[string]*Delegation
+	done    map[string]*Settlement
 	clock   func() float64
+}
+
+// Settlement is a finished background delegation waiting to be collected.
+type Settlement struct {
+	// Text is the rendered result the parent would have read as the tool result
+	// of a foreground delegation: the same header, the child's answer and the
+	// usage line. Rendering at settle time rather than collect time freezes the
+	// wording together with the facts it describes.
+	Text string
+	// StopReason is the parent-readable ending: answered / max_steps / cancelled
+	// / model_fatal / error / no_output. The foreground result renders it inline;
+	// here it is a field so a front end can colour the row.
+	StopReason string
+	// Usage is the child's token accounting, as childUsage built it.
+	Usage map[string]any
 }
 
 // Delegation is one delegation as the interfaces report it.
@@ -49,6 +73,13 @@ type Delegation struct {
 	ToolCalls int
 	// Activity is the child's own last reported action, in the runtime's words.
 	Activity string
+	// Background marks a delegation that outlives the turn that started it. It is
+	// display-only: the runtime's own bookkeeping distinguishes the two by where
+	// the result goes, not by this flag.
+	Background bool
+	// Ended is when the delegation finished, on the same clock. Zero while
+	// running; set by Settle. It is display-only for the done panel.
+	Ended float64
 }
 
 // Duration is how long the delegation has been running, in seconds.
@@ -66,7 +97,7 @@ func NewBoard(clock func() float64) *Board {
 	if clock == nil {
 		clock = func() float64 { return 0 }
 	}
-	return &Board{running: map[string]*Delegation{}, clock: clock}
+	return &Board{running: map[string]*Delegation{}, done: map[string]*Settlement{}, clock: clock}
 }
 
 // Start records a delegation that has begun.
@@ -83,13 +114,18 @@ func (b *Board) Start(d Delegation) {
 	b.running[d.ID] = &entry
 }
 
-// Finish records that a delegation is over, whatever its outcome.
+// Finish records that a foreground delegation is over, whatever its outcome.
 //
 // The row is **removed** rather than kept and marked done. Every other panel in
 // this program keeps finished work visible because somebody still has to collect
-// it; a delegation has nobody to collect it — its whole answer went back to the
-// parent as a tool result, which is already in the transcript. A row that stayed
-// would be a second, worse copy of something the transcript says better.
+// it; a foreground delegation has nobody to collect it — its whole answer went
+// back to the parent as a tool result, which is already in the transcript. A row
+// that stayed would be a second, worse copy of something the transcript says
+// better.
+//
+// A **background** delegation is the exception, and it does not come through
+// here: its result has nowhere to go yet, so Settle keeps the answer for the
+// collect tool to hand over and remove.
 func (b *Board) Finish(id string) {
 	if b == nil {
 		return
@@ -97,6 +133,111 @@ func (b *Board) Finish(id string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	delete(b.running, id)
+}
+
+// Settle records that a background delegation is over and keeps its answer.
+//
+// The row stays in the running table (a front end's snapshot is still
+// consistent) and the settlement goes into the done table, where Collect and
+// DonePanel find it. An id this board never saw start is dropped, for the same
+// reason Observe drops unknown records — inventing a row from a fragment would
+// show a subagent whose start time is a guess.
+func (b *Board) Settle(id string, settlement Settlement, ended float64) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	entry, ok := b.running[id]
+	if !ok {
+		return
+	}
+	if ended == 0 {
+		ended = b.clock()
+	}
+	entry.Ended = ended
+	b.done[id] = &settlement
+}
+
+// Collect hands over a finished background delegation's result and forgets it.
+//
+// The bool distinguishes the two cases a collect tool must not confuse: "not
+// there" (unknown id, or already collected) and a real result. "Still running"
+// never reaches this method — the caller checks the running table first, because
+// the difference in wording ("wait for it" vs "nothing by that id") matters to
+// the model reading the answer.
+func (b *Board) Collect(id string) (Settlement, bool) {
+	if b == nil {
+		return Settlement{}, false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	settlement, ok := b.done[id]
+	if !ok {
+		return Settlement{}, false
+	}
+	delete(b.done, id)
+	return *settlement, true
+}
+
+// Uncollected is how many finished background delegations nobody has read yet.
+//
+// This is the number the payload tail needs: a settled delegation is paid-for
+// work whose answer exists only in memory until the parent reads it, so it is
+// the one state that has to nag.
+func (b *Board) Uncollected() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.done)
+}
+
+// BackgroundRunning is how many background delegations are in flight.
+//
+// It is the cap counter: each live background delegation is a whole agent loop
+// burning tokens with nobody watching it, so the width of a fan-out is bounded
+// independently of the depth bound (which limits nesting, not width).
+func (b *Board) BackgroundRunning() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	count := 0
+	for _, entry := range b.running {
+		if entry.Background {
+			count++
+		}
+	}
+	return count
+}
+
+// IsRunning reports whether the id names a delegation still doing work.
+//
+// A settled background row is **not** running — it is finished and waiting to
+// be collected, which is a different answer with a different next move. The
+// settled check is part of this predicate for exactly that reason: the collect
+// tool reads it to distinguish "not yet" (running) from "ready" (settled), and
+// a row that counted as both would always answer the first one.
+func (b *Board) IsRunning(id string) bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, settled := b.done[id]; settled {
+		return false
+	}
+	entry, ok := b.running[id]
+	if !ok {
+		return false
+	}
+	// Ended != 0 with no settlement is the already-collected case: Settle kept
+	// the row for display, the settlement was handed over and deleted. The row
+	// is history now, not work in flight.
+	return entry.Ended == 0
 }
 
 // Progress records what one child is doing, so the badge can say more than "busy".
@@ -118,7 +259,7 @@ func (b *Board) Progress(id string, update func(*Delegation)) {
 // asking the child to report itself. A second reporting channel would be a second
 // answer to "what is it doing", and the two would disagree.
 //
-// The record's `session_id` is the child's id, which is also the board's key. It
+// The record's `subagent_id` is the child's id, which is also the board's key. It
 // is read rather than passed because this runs on the same path as every other
 // audit record and the caller does not unpack them.
 func (b *Board) Observe(record map[string]any) {
@@ -163,7 +304,7 @@ func (b *Board) Observe(record map[string]any) {
 	}
 }
 
-// Count is how many delegations are in flight.
+// Count is how many delegations are in flight, both kinds.
 func (b *Board) Count() int {
 	if b == nil {
 		return 0
@@ -178,6 +319,9 @@ func (b *Board) Count() int {
 // Sorted by start time so two snapshots of the same state describe the rows in
 // the same order: a list that reordered itself between two draws would make the
 // screen flicker for no reason a reader could name.
+//
+// Background delegations are ordinary rows here — a subagent running while no
+// turn is active is exactly what the badge is for.
 func (b *Board) Panel() []map[string]any {
 	if b == nil {
 		return nil
@@ -204,40 +348,162 @@ func (b *Board) Panel() []map[string]any {
 			"steps":      entry.Steps,
 			"tool_calls": entry.ToolCalls,
 			"activity":   entry.Activity,
+			"background": entry.Background,
 		})
 	}
 	return rows
 }
 
-// Note is the payload-tail block that tells the model a delegation is in flight.
+// DonePanel renders the finished background delegations for a front end.
+//
+// A background delegation that is still running appears here too, as `running` —
+// so a front end that draws the done panel shows one delegation in exactly one
+// place. Newer first, because the row a person wants to act on is the one that
+// just finished; the running panel is oldest first for order stability.
+//
+// Collected rows are gone by the time this is read (Collect deletes them), so
+// `state` is only ever `running` or `uncollected` — the two answers to "does
+// somebody still have to act".
+func (b *Board) DonePanel() []map[string]any {
+	if b == nil {
+		return nil
+	}
+	now := b.clock()
+	b.mu.Lock()
+	// One lock over the whole read: the rows mix the running and done tables,
+	// and two snapshots taken under separate locks could disagree with each
+	// other — a row settled between them would show as running with a finished
+	// duration.
+	type rowPair struct {
+		entry      Delegation
+		settlement *Settlement
+	}
+	pairs := make([]rowPair, 0, len(b.running))
+	for _, entry := range b.running {
+		if !entry.Background {
+			continue
+		}
+		pairs = append(pairs, rowPair{entry: *entry, settlement: b.done[entry.ID]})
+	}
+	b.mu.Unlock()
+
+	sort.SliceStable(pairs, func(i, j int) bool { return pairs[i].entry.Started > pairs[j].entry.Started })
+
+	rows := make([]map[string]any, 0, len(pairs))
+	for _, pair := range pairs {
+		entry, settlement := pair.entry, pair.settlement
+		state := "running"
+		elapsed := entry.Duration(now)
+		stopReason := ""
+		if settlement != nil {
+			state = "uncollected"
+			elapsed = entry.Ended - entry.Started
+			stopReason = settlement.StopReason
+		}
+		rows = append(rows, map[string]any{
+			"id":          entry.ID,
+			"label":       entry.Label,
+			"model":       entry.Model,
+			"provider":    entry.Provider,
+			"depth":       entry.Depth,
+			"seconds":     int(elapsed),
+			"steps":       entry.Steps,
+			"tool_calls":  entry.ToolCalls,
+			"activity":    entry.Activity,
+			"state":       state,
+			"stop_reason": stopReason,
+		})
+	}
+	return rows
+}
+
+// noteRow is one board row as the note names it. A value type rather than the
+// Delegation pointer: the note is read after the lock is dropped, so it works
+// from a copy.
+type noteRow struct {
+	id, label, activity string
+	seconds             int
+}
+
+// Note is the payload-tail block that tells the model about the board.
 //
 // It rides in `Notes` rather than in the history because of where a delegation
-// happens: the parent's model is **blocked** inside the subagent tool call for
-// the whole time, so it cannot act on this note and will not read it. What the
-// note is for is the other direction — a child that is interrupted, or a session
-// restored while one was running, leaves the parent's next request with no
-// evidence of the work that was already paid for, and this is that evidence.
+// happens: the parent's model is **blocked** inside a foreground subagent tool
+// call for the whole time, so it cannot act on this note and will not read it.
+// What the note is for is the other direction — a child that was interrupted, a
+// session restored while one was running, and now a **background delegation**
+// that finished after the turn ended all leave the parent's next request with no
+// evidence of work that was already paid for, and this is that evidence.
 //
-// It is worded as a fact rather than an instruction, because for a live
-// delegation there is no instruction the parent could follow.
+// It is worded as facts rather than instructions where a live delegation is
+// concerned — there is no instruction the parent could follow for one — but the
+// uncollected section is an instruction, because collecting is exactly the move
+// the parent can make.
 func (b *Board) Note() string {
-	rows := b.Panel()
-	if len(rows) == 0 {
+	if b == nil {
 		return ""
 	}
-	parts := make([]string, 0, len(rows))
-	for _, row := range rows {
-		id, _ := row["id"].(string)
-		label, _ := row["label"].(string)
-		seconds, _ := row["seconds"].(int)
-		entry := id
-		if label != "" {
-			entry += "（" + label + "）"
+	now := b.clock()
+	b.mu.Lock()
+	asRow := func(id string, entry *Delegation) noteRow {
+		return noteRow{
+			id:       id,
+			label:    entry.Label,
+			activity: entry.Activity,
+			seconds:  int(entry.Duration(now)),
 		}
-		entry += "，已跑 " + strconv.Itoa(seconds) + " 秒"
-		parts = append(parts, entry)
 	}
-	return "## 子 agent\n" +
-		strings.Join(parts, "；") + "。\n" +
-		"它的完整过程在它自己的会话文件里（用上面的 id 可以查），不要凭猜测替它下结论。"
+	runningRows := make([]noteRow, 0, len(b.running))
+	uncollectedRows := make([]noteRow, 0, len(b.done))
+	for id, entry := range b.running {
+		row := asRow(id, entry)
+		if _, settled := b.done[id]; settled {
+			uncollectedRows = append(uncollectedRows, row)
+			continue
+		}
+		runningRows = append(runningRows, row)
+	}
+	b.mu.Unlock()
+
+	sort.SliceStable(runningRows, func(i, j int) bool { return runningRows[i].id < runningRows[j].id })
+	sort.SliceStable(uncollectedRows, func(i, j int) bool { return uncollectedRows[i].id < uncollectedRows[j].id })
+
+	var parts []string
+	for _, row := range runningRows {
+		parts = append(parts, noteEntry(row))
+	}
+	var out strings.Builder
+	if len(parts) > 0 {
+		out.WriteString("## 子 agent\n")
+		out.WriteString(strings.Join(parts, "；") + "。\n")
+		out.WriteString("它的完整过程在它自己的会话文件里（用上面的 id 可以查），不要凭猜测替它下结论。")
+	}
+	if len(uncollectedRows) > 0 {
+		if len(parts) > 0 {
+			out.WriteString("\n\n")
+		}
+		out.WriteString("## 已完成待收取的子 agent\n")
+		list := make([]string, 0, len(uncollectedRows))
+		for _, row := range uncollectedRows {
+			list = append(list, noteEntry(row))
+		}
+		out.WriteString(strings.Join(list, "；") + "。\n")
+		out.WriteString("它们的结果还在等收取：用 subagent_output 带上 id 逐个收取，再决定是否影响你接下来的回答。")
+	}
+	return out.String()
+}
+
+// noteEntry is one board row as the note names it: id first (it is the handle
+// every other tool takes), label in brackets (it is what the row means), then
+// the fact that varies.
+func noteEntry(row noteRow) string {
+	entry := row.id
+	if row.label != "" {
+		entry += "（" + row.label + "）"
+	}
+	entry += "，" + strconv.Itoa(row.seconds) + " 秒"
+	if row.activity != "" {
+		entry += "，正在 " + row.activity
+	}
+	return entry
 }

@@ -289,6 +289,46 @@ func intOr(message map[string]any, key string, fallback int) int {
 	return fallback
 }
 
+// SubagentStopper is the runtime's per-child stop surface, as `subagent_stop`
+// reaches it. It is an optional capability, checked by type the same way
+// TerminalService is: a runtime assembled without delegation has nothing to
+// stop, and the protocol's answer to that is a warning, not a crash.
+type SubagentStopper interface {
+	// SubagentStop stops one background delegation by its child id. It reports
+	// whether a running delegation was stopped, and an error explaining why not
+	// when it was not.
+	SubagentStop(id string) (bool, error)
+}
+
+// handleSubagentStop answers `subagent_stop`.
+//
+// Like `terminal_kill` it does not answer with a result payload: the stop's own
+// consequences travel on their existing paths — the child settles with the
+// ordinary `cancelled` stop reason, the board row moves to the done panel, the
+// terminal sink says the delegation ended, and the next state snapshot re-draws
+// everything. A "stopped" reply here would be a second truth about a state the
+// settlement has not reported yet.
+func (s *Server) handleSubagentStop(message map[string]any) {
+	runtime := s.current()
+	if runtime == nil {
+		s.notice("warn", "subagent", i18n.T("channels.subagent.no_session"))
+		return
+	}
+	stopper, ok := runtime.(SubagentStopper)
+	if !ok {
+		s.notice("warn", "subagent", i18n.T("channels.subagent.unsupported"))
+		return
+	}
+	id, ok := String(message, "subagent_id")
+	if !ok || id == "" {
+		s.notice("warn", "subagent", i18n.T("channels.subagent.needs_id", "action", InSubagentStop))
+		return
+	}
+	if _, err := stopper.SubagentStop(id); err != nil {
+		s.notice("warn", "subagent", i18n.T("channels.subagent.stop_failed", "id", id, "problem", err.Error()))
+	}
+}
+
 // stringField reads one string out of a payload the runtime built, for the
 // convenience key that repeats the id beside a row.
 func stringField(row map[string]any, key string) string {
