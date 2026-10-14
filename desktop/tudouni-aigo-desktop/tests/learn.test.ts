@@ -95,6 +95,26 @@ test('the message carries the configured scope, types and sessions', () => {
   assert.ok(!text.includes('.tudouni/sessions/archived-recent.jsonl'));
 });
 
+test('the final step asks the person which candidates to apply', () => {
+  const text = buildLearningMessage({
+    workspace: '/srv/app',
+    scope: { kind: 'all' },
+    sessions: [],
+    deliverables: ['Skill'],
+    objectives: '',
+  });
+
+  // The report is not the end: the task tells the agent to ask, with one
+  // option per candidate and a "none" escape hatch, and to apply only what
+  // is selected — in the same session, through the ordinary file tools.
+  assert.ok(text.includes('use the ask_user tool'));
+  assert.ok(text.includes('"none of them"'));
+  assert.ok(text.includes('apply exactly that selection in this session'));
+  // And the boundary flips only after the choice is made: nothing is
+  // written before it, and an unselected candidate is never applied.
+  assert.ok(text.includes('Do not apply a candidate the person did not select'));
+});
+
 test('no objectives and no deliverables are stated as such, not left blank', () => {
   const text = buildLearningMessage({
     workspace: '/srv/app',
