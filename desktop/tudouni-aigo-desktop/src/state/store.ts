@@ -1817,8 +1817,14 @@ export interface AppStore {
    * session is remote. Pressing the row again is a duplicate, pressing the
    * button is a request for **another** conversation there — a second child,
    * beside the first.
+   *
+   * `sessionId` is how a *saved* session gets reopened on the remote host: the
+   * child is started in the remote workspace **with that session id**
+   * (`--session <id>`), the same id the local path passes on. Without it the
+   * remote child would start a *new* session rather than resume the one the
+   * person clicked.
    */
-  connectRemoteWorkspace(remoteWorkspaceId: string, options?: { forceNew?: boolean }): Promise<void>;
+  connectRemoteWorkspace(remoteWorkspaceId: string, options?: { forceNew?: boolean; sessionId?: string }): Promise<void>;
   /**
    * Installs or upgrades the Runtime on a remote workspace's host (§8 of
    * the design), without connecting afterwards. A separate act from
@@ -3308,27 +3314,43 @@ export const useApp = create<AppStore>((set, get) => {
           return;
         }
       }
-      // **A *new* conversation over a remote session goes remote, not local.**
-      // The session on screen carries `remoteWorkspaceId`, and its `workspace`
-      // is a directory on the *remote* host — `resolveAttachWorkspace` would
-      // hand that path to the local spawn, which checks it against this
-      // machine's filesystem and refuses with "the workspace … is not a
-      // directory". "New conversation" on a remote screen means "here", and
-      // here is there: a second child in the same remote workspace, which is
-      // `connectRemoteWorkspace` with `forceNew` (the guard that focuses an
-      // existing session is precisely what would swallow the request).
-      // An explicit `workspace` argument still wins: it is a local directory
-      // the caller named, so the local path is what was asked for.
-      if (sessionId === null && workspace === undefined) {
-        const active = s.activeKey === null ? null : (s.sessions[s.activeKey] ?? null);
-        // `?? null` folds the "no active session" case (`undefined`) and the
-        // "local session" case (`remoteWorkspaceId: null`) into one `null`, so
-        // a non-null result is exactly "the session on screen is remote".
-        const remoteId = active?.remoteWorkspaceId ?? null;
-        if (remoteId !== null) {
-          await get().connectRemoteWorkspace(remoteId, { forceNew: true });
-          return;
-        }
+      // **A remote screen owns both open paths: a *new* conversation and a
+      // *saved* session from the rail's list.** The session on screen carries
+      // `remoteWorkspaceId`, and its `workspace` is a directory on the
+      // *remote* host — `resolveAttachWorkspace` would hand that path to the
+      // local spawn, which checks it against this machine's filesystem and
+      // refuses with "the workspace … is not a directory". "Here" on a remote
+      // screen means there: a second child in the same remote workspace,
+      // which is `connectRemoteWorkspace` with `forceNew` (the guard that
+      // focuses an existing session is precisely what would swallow the
+      // request).
+      //
+      // When the request names a *saved* session, its id rides along as
+      // `sessionId`: the remote child is started with `--session <id>` and
+      // resumes the conversation the person clicked, the same id the local
+      // path passes on. Without it the remote child would start a new
+      // conversation and the clicked row would stay closed.
+      // An explicit `workspace` argument still wins when it names a *local*
+      // directory the caller chose (`/resume` in another directory): that is
+      // a statement about this machine. The one name that is not a new
+      // statement is the screen's own — a notification's reopen carries the
+      // session's own workspace, which on a remote screen **is** the remote
+      // path — and passing that through the local spawn is exactly the
+      // refusal this rule exists to avoid.
+      const active = s.activeKey === null ? null : (s.sessions[s.activeKey] ?? null);
+      // `?? null` folds the "no active session" case (`undefined`) and the
+      // "local session" case (`remoteWorkspaceId: null`) into one `null`, so
+      // a non-null result is exactly "the session on screen is remote".
+      const remoteId = active?.remoteWorkspaceId ?? null;
+      const namesTheScreen =
+        workspace === undefined ||
+        (workspace ?? '') === (active?.session?.workspace ?? active?.workspace ?? '');
+      if (remoteId !== null && namesTheScreen) {
+        await get().connectRemoteWorkspace(remoteId, {
+          forceNew: true,
+          ...(sessionId === null ? {} : { sessionId }),
+        });
+        return;
       }
       await get().attachSession({
         ...(workspace === undefined ? {} : { workspace }),
@@ -5287,6 +5309,7 @@ export const useApp = create<AppStore>((set, get) => {
           remoteWorkspace: entry.remotePath,
           ericai,
           ...(maxSteps === null ? {} : { maxSteps }),
+          ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         });
       } catch (err) {
         // Same shape as attachSession's own catch: the refusal belongs to the

@@ -372,6 +372,10 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 
 	fields := map[string]string{}
 	inMetadata := false
+	// inListKey is the key whose value is being built from YAML list items on
+	// the following indented lines (e.g. `allowed-tools:` followed by
+	// `  - shell`). Empty means no list is in progress.
+	inListKey := ""
 
 	for index := 1; index < end; index++ {
 		raw := lines[index]
@@ -380,14 +384,25 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 		}
 		trimmed := strings.TrimSpace(raw)
 
-		// Indentation is only allowed under `metadata`, and that whole block is
-		// skipped without being interpreted.
+		// Indentation is allowed under `metadata` (skipped without being
+		// interpreted) and as YAML list items under a key that had an empty
+		// value (e.g. `allowed-tools:` followed by `  - shell`).
 		if raw != trimmed {
 			if inMetadata {
 				continue
 			}
+			if inListKey != "" && strings.HasPrefix(trimmed, "- ") {
+				item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
+				if fields[inListKey] == "" {
+					fields[inListKey] = item
+				} else {
+					fields[inListKey] += " " + item
+				}
+				continue
+			}
 			return nil, "", &Problem{Code: "indented", Params: [][2]any{{"line", trimmed}}}
 		}
+		inListKey = ""
 		inMetadata = false
 
 		if strings.HasPrefix(trimmed, "- ") {
@@ -417,6 +432,7 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 			// The one nested structure the specification defines. Recognised, then
 			// stepped over.
 			inMetadata = true
+			inListKey = ""
 			continue
 		}
 
@@ -434,7 +450,14 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 				}}
 			}
 		}
-		fields[key] = value
+		if value == "" {
+			// An empty value may introduce a YAML list on the following indented
+			// lines (the standard multi-line form of `allowed-tools`). The items
+			// are collected and joined into this field when they arrive.
+			inListKey = key
+		} else {
+			fields[key] = value
+		}
 	}
 
 	body := strings.Join(lines[end+1:], "\n")

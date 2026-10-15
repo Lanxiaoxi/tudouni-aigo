@@ -203,3 +203,51 @@ test('retrying a failed remote session dials the remote row again, not a local c
   assert.equal(s.activeKey, remoteCalls.length === 1 ? s.sessions[s.activeKey ?? ''].key : null);
   assert.equal(s.sessions[s.activeKey ?? '']?.remoteWorkspaceId, ENTRY.id);
 });
+
+/* ============================================================
+   Reopening a *saved* session over a remote screen
+   ============================================================ */
+
+test('opening a saved session over a remote screen dials remote with the session id', async () => {
+  remoteScreen();
+
+  // The reported bug: clicking a saved-session row in the rail called
+  // `openSession(id)` while the screen was a remote one. The id was passed on,
+  // but the *workspace* came from `resolveAttachWorkspace` — the active
+  // session's own `init.workspace`, a directory on the **remote** host — and
+  // the local spawn checked it against this machine's filesystem, refusing
+  // with "the workspace … is not a directory". The same routing rule that
+  // "new session" over a remote screen needs applies here: the row was
+  // clicked on a remote screen, so the conversation it names lives there.
+  await useApp.getState().openSession('20261015-082946');
+
+  // The regression, verbatim: before the fix this call dialed `runtime_attach`
+  // with the remote path as the workspace. The remote path is never a directory
+  // here, and no amount of pressing the row again will make it one.
+  assert.equal(localCalls.length, 0, 'no local child may be asked for');
+  assert.equal(remoteCalls.length, 1, 'the same SSH row was dialed');
+  const call = remoteCalls[0];
+  assert.equal(call.host, HOST.host);
+  assert.equal(call.remoteWorkspace, ENTRY.remotePath);
+  // And it is a **resume**, not a new conversation: the clicked row's id rides
+  // along as `--session <id>`, the same id the local path passes on.
+  assert.equal(call.sessionId, '20261015-082946', 'the saved session is resumed on the remote host');
+
+  const s = useApp.getState();
+  assert.ok(s.sessions[s.activeKey ?? ''], 'a session landed on screen');
+  assert.equal(s.sessions[s.activeKey ?? '']?.remoteWorkspaceId, ENTRY.id, 'it is a remote session, like the one it came from');
+});
+
+test('a saved session with an explicit local workspace still goes local over a remote screen', async () => {
+  remoteScreen();
+
+  // `/resume` on a saved session in a *named* local directory is a statement
+  // about this machine, even with a remote screen on display: the explicit
+  // workspace outranks the screen, so the local path is what was asked for.
+  await useApp.getState().openSession('20261015-082946', 'C:/other');
+
+  assert.equal(remoteCalls.length, 0, 'a named local workspace is not remote');
+  assert.equal(localCalls.length, 1);
+  assert.equal(localCalls[0].workspace, 'C:/other');
+  assert.equal(localCalls[0].sessionId, '20261015-082946');
+});

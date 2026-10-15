@@ -56,6 +56,33 @@ func TestAWellFormedSkillParses(t *testing.T) {
 	}
 }
 
+func TestMultiLineAllowedToolsParses(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "deploy", "---\nname: deploy\ndescription: Deploy the service.\nallowed-tools:\n  - shell\n  - read_file\n  - list_files\n---\n## Steps\n1. Build\n2. Push\n")
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+
+	if len(catalog.Problems) != 0 {
+		t.Fatalf("a good skill with multi-line allowed-tools produced problems: %+v", catalog.Problems)
+	}
+	if len(catalog.Skills) != 1 {
+		t.Fatalf("found %d skills, want 1", len(catalog.Skills))
+	}
+	skill := catalog.Skills[0]
+	if skill.Name != "deploy" || skill.Description != "Deploy the service." {
+		t.Fatalf("fields are wrong: %+v", skill)
+	}
+	want := []string{"shell", "read_file", "list_files"}
+	if len(skill.AllowedTools) != len(want) {
+		t.Fatalf("allowed-tools is %v, want %v", skill.AllowedTools, want)
+	}
+	for i, w := range want {
+		if skill.AllowedTools[i] != w {
+			t.Fatalf("allowed-tools[%d] = %q, want %q", i, skill.AllowedTools[i], w)
+		}
+	}
+}
+
 // TestABrokenSkillIsDataNotAnError ...
 //
 // One malformed file must not stop the scan and must not be silent either. The
