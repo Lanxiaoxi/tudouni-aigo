@@ -995,6 +995,9 @@ table.table td.mono {
    The total on top, then one bar per bucket — the bar is the split made
    visible, its width the bucket's share of the turn. */
 .timing-panel {
+  /* Wide enough for the longest bucket label (at --text-compact); shared by
+     every row so the bars all start at the same x position. */
+  --timing-label-w: 5em;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -1017,8 +1020,11 @@ table.table td.mono {
 }
 
 .timing-row {
+  /* The label column is sized by the panel, not by each row: `max-content`
+     here would let every row pick its own width, and the bars would start at
+     different x positions (short "tools" label, long "model" label). */
   display: grid;
-  grid-template-columns: max-content 1fr auto;
+  grid-template-columns: var(--timing-label-w) 1fr auto;
   align-items: center;
   gap: var(--space-3);
   font-size: var(--text-compact);
