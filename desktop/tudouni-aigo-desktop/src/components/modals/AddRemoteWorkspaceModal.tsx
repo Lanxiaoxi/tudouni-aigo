@@ -16,6 +16,7 @@ import { useT } from '@/i18n/useT';
 import { BusyDots, Tip } from '@/components/ui/kit';
 import {
   appendSshHost,
+  browseRemoteDirectory,
   createRemoteDirectory,
   probeRemoteHost,
   readSshConfig,
@@ -280,12 +281,21 @@ export function AddRemoteWorkspaceModal({
   const browse = useCallback(
     async (path: string) => {
       const target = targetFor();
-      if (!target) return;
+      // The listing must not re-pay the probe: a click in the browser is a
+      // directory question, and the host's facts (platform, runtime, config)
+      // were answered by `connect` and do not change while the person moves.
+      if (!target || probe === null) return;
       setBrowsing(true);
       setBrowseProblem(null);
       try {
-        const result = await probeRemoteHost(target, path);
-        setProbe(result);
+        const listing = await browseRemoteDirectory(target, path);
+        setProbe({
+          ...probe,
+          path: listing.path,
+          parent: listing.parent,
+          workspaceProblem: listing.workspaceProblem,
+          entries: listing.entries,
+        });
         setTypedPath('');
       } catch (err) {
         setBrowseProblem(describe(err));
@@ -293,7 +303,7 @@ export function AddRemoteWorkspaceModal({
         setBrowsing(false);
       }
     },
-    [targetFor],
+    [targetFor, probe],
   );
 
   async function makeFolder(): Promise<void> {

@@ -1894,6 +1894,22 @@ fn probe_remote_host(
     remote_probe::probe(&target.into_ssh_target(), path.as_deref())
 }
 
+/// List one directory on a host the wizard has already probed — the browser's
+/// "open a folder" and "up" clicks.
+///
+/// Unlike `probe_remote_host` it does not re-ask the host what it is: the
+/// platform, the runtime's state and the config's state were reported by the
+/// first probe and do not change while the person is choosing a directory.
+/// It makes only the calls a listing needs (over the cached connection when
+/// one exists), which is what makes a click in the browser feel like a listing
+/// rather than a reconnect. See `remote_probe`'s module doc.
+///
+/// `path` omitted or empty means the account's home directory.
+#[tauri::command]
+fn browse_remote_dir(target: RemoteProbeTarget, path: Option<String>) -> Result<remote_probe::RemoteBrowse, String> {
+    remote_probe::browse(&target.into_ssh_target(), path.as_deref())
+}
+
 /// Create one directory on a remote host, for the wizard's "new folder".
 ///
 /// A separate command from `probe_remote_host` on purpose: browsing a host must
@@ -2800,6 +2816,7 @@ pub fn run() {
             read_ssh_config,
             append_ssh_host,
             probe_remote_host,
+            browse_remote_dir,
             create_remote_directory,
             config_read,
             config_write,

@@ -1,6 +1,6 @@
 [package]
 name = "tudouni-aigo-desktop"
-version = "3.7.0"
+version = "3.8.0"
 description = "tudouni-aigo desktop client"
 authors = ["tudouni-aigo"]
 edition = "2021"
@@ -27,7 +27,17 @@ tauri-plugin-single-instance = "2"
 # keeps ripgrep vendored under `tools/vendor/rg/` rather than assumed to be on
 # PATH. Pinned to an exact version rather than a range, matching this file's
 # existing pins.
-ssh2 = { version = "=0.9.6", features = ["vendored-openssl"] }
+#
+# `openssl-on-win32` is not optional. On Windows, `libssh2-sys` only compiles
+# libssh2 with a crypto backend when that feature is set (`build.rs` defines
+# `LIBSSH2_OPENSSL` only under `CARGO_FEATURE_OPENSSL_ON_WIN32`); without it,
+# public-key authentication cannot parse or sign with any key and fails as an
+# opaque `Session(-1) unknown error` (rust-lang/ssh2-rs#221), while password
+# auth — which never touches the crypto backend — keeps working. That is
+# exactly the failure this feature removes, and it is what makes a key the
+# wizard prefill offers actually work. It links the same vendored OpenSSL the
+# `vendored-openssl` feature already builds, so it adds no new dependency.
+ssh2 = { version = "=0.9.6", features = ["vendored-openssl", "openssl-on-win32"] }
 # Reads the release archives bundled under `remote-packages/` so their
 # contents can be uploaded over SFTP one file at a time — `remote_install.rs`
 # never writes a zip, only reads the ones `make release` already built with

@@ -310,6 +310,10 @@ pub struct SshRuntimeProcess {
 /// What `spawn_remote` needs to reach a host: resolved connection details,
 /// not an alias — alias resolution (`~/.ssh/config`) is a Workspace Manager
 /// concern from a later phase, not this transport's.
+///
+/// `Clone` so the probe's session cache can keep the parameters that produced
+/// a connection and answer "is this the same connection?" on the next click.
+#[derive(Clone)]
 pub struct SshTarget {
     pub host: String,
     pub port: u16,

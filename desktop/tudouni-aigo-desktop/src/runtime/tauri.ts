@@ -1333,6 +1333,42 @@ export async function probeRemoteHost(
   });
 }
 
+/** One directory the person just navigated to over the probe's connection.
+ *  Only the listing changed by the click — the host's facts (platform,
+ *  runtime, config) are the first probe's and do not repeat here. */
+export interface RemoteBrowse {
+  /** The directory this reply describes, after resolving symlinks. */
+  path: string;
+  /** The parent directory, or `null` at the filesystem root. */
+  parent: string | null;
+  /** Why the listed directory cannot itself be a workspace, when it cannot. */
+  workspaceProblem: string | null;
+  /** The directories inside `path`, sorted, dot-directories omitted. */
+  entries: RemoteDirEntry[];
+}
+
+/**
+ * List one directory on a host the wizard has already probed — the browser's
+ * "open a folder" and "up" clicks.
+ *
+ * It answers only the listing: re-asking the host what it is (platform,
+ * runtime, config) is what used to make every click cost a full reconnect,
+ * and none of those facts change while a person is choosing a directory.
+ * The caller keeps its `RemoteProbe` for those and swaps this listing in.
+ */
+export async function browseRemoteDirectory(
+  target: RemoteProbeTarget,
+  path?: string,
+): Promise<RemoteBrowse> {
+  if (!isHosted()) {
+    throw new Error('listing a remote directory needs the desktop app');
+  }
+  return await tauriInvoke<RemoteBrowse>('browse_remote_dir', {
+    target: probeTargetWire(target),
+    path: path ?? null,
+  });
+}
+
 /**
  * Create one directory on a remote host — the wizard's "new folder".
  *

@@ -36,11 +36,31 @@
 //!     version it reads, both come from `remote_install::RemoteLayout` —
 //!     `current_binary_for` and `installed_version` — so a change to the layout
 //!     cannot leave this probe looking somewhere else than the installer wrote.
+//!
+//! # One dial per visit, not one per click
+//!
+//! `probe` pays the whole cost of "what is this host" — the TCP connect, the
+//! SSH handshake, authentication, and every platform/config question — once
+//! per visit, and files its authenticated session into a small in-process
+//! cache keyed by the connection parameters. Every later click in the
+//! directory browser goes through [`browse`], which reuses a cached session
+//! and makes only the three SFTP calls a listing actually needs. A cached
+//! session is an `ssh2::Session` clone — one `Arc` over the live connection —
+//! so "reuse" here is cheap by construction, not a protocol trick.
 
 use crate::remote_install;
 use crate::ssh_backend::SshTarget;
 use ssh2::Session;
 use std::path::Path;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
+/// How long an authenticated session stays in the cache before a browse
+/// dials again. The wizard's browse session is meant to live "one visit",
+/// and an idle SSH session can be dropped by either end's keepalive long
+/// before this does; 15 minutes is long enough for the wizard, short enough
+/// that a cached connection is never the only path to a host.
+const SESSION_TTL: Duration = Duration::from_secs(15 * 60);
 
 /// One directory the person could choose as a workspace.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -92,6 +112,30 @@ pub struct RemoteProbe {
     pub entries: Vec<RemoteDirEntry>,
 }
 
+/// One directory the person just navigated to, over a session the host
+/// already introduced itself on.
+///
+/// Deliberately smaller than [`RemoteProbe`]: home, platform, the installed
+/// runtime and the config's state do not change while the person is clicking
+/// through directories, so re-reporting them would mean re-reading them — and
+/// the cost of reading them is what made a directory click feel like a
+/// reconnect. The front end keeps the first `RemoteProbe` for those facts and
+/// swaps only this listing in as the browser moves.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteBrowse {
+    /// The directory this reply actually describes (after `realpath`).
+    pub path: String,
+    /// The parent directory, or `null` at the filesystem root.
+    pub parent: Option<String>,
+    /// Why this listed directory cannot itself be the workspace, when it
+    /// cannot — the same answer `RemoteProbe` carries, recomputed for the
+    /// directory the person just moved to.
+    pub workspace_problem: Option<String>,
+    /// The directories inside `path`, sorted, with dot-directories omitted.
+    pub entries: Vec<RemoteDirEntry>,
+}
+
 /// Connects, probes, and lists one directory.
 ///
 /// `path` empty or `None` means the account's home directory, which is where a
@@ -99,8 +143,11 @@ pub struct RemoteProbe {
 /// far end can name without being told.
 pub fn probe(target: &SshTarget, path: Option<&str>) -> Result<RemoteProbe, String> {
     let session = crate::ssh_backend::dial_session(target)?;
-
     let home = remote_install::remote_home_dir(&session)?;
+
+    // Every later click in the directory browser must not pay for this dial
+    // again — see the module doc for why one visit is one connection.
+    store_session(target, session, home.clone());
 
     // The detected target is what the install path and the archive name are
     // derived from, so it is resolved once here and reused for every question
@@ -109,7 +156,15 @@ pub fn probe(target: &SshTarget, path: Option<&str>) -> Result<RemoteProbe, Stri
     // home directory and the listing — exactly what a person needs in order to
     // understand that this host is out of scope.
     let detected = remote_install::detect_remote_target(&session);
-    let (os, arch) = describe_platform(&session);
+    // `uname` answers are what the UI's os/arch line shows, and the detection
+    // call above is the one that asks for them — the labels are derived from
+    // its result rather than running a second pair of execs for the same
+    // answer. Only a refused platform (no `uname`, no `ver`) gets its own
+    // probes, and even then they are reported as `unknown` either way.
+    let (os, arch) = match &detected {
+        Ok(remote_target) => platform_labels_known(*remote_target),
+        Err(_) => describe_platform(&session),
+    };
     let (supported, platform_problem) = match &detected {
         Ok(_) => (true, None),
         Err(reason) => (false, Some(reason.clone())),
@@ -134,12 +189,7 @@ pub fn probe(target: &SshTarget, path: Option<&str>) -> Result<RemoteProbe, Stri
         .map(|inspection| inspection.status.as_str().to_string())
         .unwrap_or_else(|_| "missing".to_string());
 
-    let requested = match path.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(value) => value.to_string(),
-        None => home.clone(),
-    };
-
-    let resolved = resolve_dir(&session, &requested)?;
+    let resolved = resolve_requested_dir(&session, path, &home)?;
     let entries = list_directories(&session, &resolved)?;
     let parent = parent_of(&resolved);
     let workspace_problem = workspace_problem_for(&resolved, &home);
@@ -178,8 +228,11 @@ pub fn create_directory(target: &SshTarget, path: &str) -> Result<String, String
         ));
     }
 
-    let session = crate::ssh_backend::dial_session(target)?;
-    let home = remote_install::remote_home_dir(&session)?;
+    // The "new folder" button is pressed in the middle of a browse session,
+    // so this reuses the cached connection when one exists — and the browse
+    // that follows it will then find this session's dial if it was the one
+    // that had to make a fresh one.
+    let (session, home) = cached_or_dial(target)?;
     let expanded = expand_home(trimmed, &home);
 
     remote_install::mkdir_remote_recursive(&session, &expanded)?;
@@ -190,8 +243,116 @@ pub fn create_directory(target: &SshTarget, path: &str) -> Result<String, String
 }
 
 /* ============================================================
+   The browser's fast path: one dial per visit
+   ============================================================ */
+
+/// Lists one directory over the session `probe` already established for this
+/// target — the directory browser's "open a folder" and "up" clicks.
+///
+/// Returns only what changed by the click ([`RemoteBrowse`]); the facts about
+/// the host itself were answered once by `probe` and are not re-read. When no
+/// cached session answers (first click after the app started, a password
+/// retyped in the wizard, the entry expired), a fresh dial is made — the old
+/// behaviour, kept as the fallback rather than the common case.
+pub fn browse(target: &SshTarget, path: Option<&str>) -> Result<RemoteBrowse, String> {
+    let (session, home) = cached_or_dial(target)?;
+
+    let resolved = resolve_requested_dir(&session, path, &home)?;
+    let entries = list_directories(&session, &resolved)?;
+    let parent = parent_of(&resolved);
+    let workspace_problem = workspace_problem_for(&resolved, &home);
+
+    Ok(RemoteBrowse {
+        path: resolved,
+        parent,
+        workspace_problem,
+        entries,
+    })
+}
+
+/* ============================================================
+   The session cache
+   ============================================================ */
+
+struct CachedSession {
+    target: SshTarget,
+    session: Session,
+    home: String,
+    stored: Instant,
+}
+
+struct Cache {
+    sessions: Vec<CachedSession>,
+}
+
+static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(|| Mutex::new(Cache { sessions: Vec::new() }));
+
+/// A cached clone of the session, or a fresh dial — and the home directory
+/// either one implies. A clone is an `Arc` bump over the same live
+/// connection; the cache holds one clone for its own lifetime.
+fn cached_or_dial(target: &SshTarget) -> Result<(Session, String), String> {
+    {
+        let mut cache = CACHE.lock().expect("session cache poisoned");
+        cache.sessions.retain(|entry| entry.stored.elapsed() < SESSION_TTL);
+        if let Some(entry) = cache
+            .sessions
+            .iter()
+            .find(|entry| target_matches(&entry.target, target))
+        {
+            // The cached connection may have died idle: confirm with the
+            // cheapest call available (reading the home directory), and fall
+            // back to a dial rather than failing the click.
+            if remote_install::exec_capture(&entry.session, "true").is_ok() {
+                return Ok((entry.session.clone(), entry.home.clone()));
+            }
+            cache.sessions.retain(|entry| !target_matches(&entry.target, target));
+        }
+    }
+
+    let session = crate::ssh_backend::dial_session(target)?;
+    let home = remote_install::remote_home_dir(&session)?;
+    store_session(target, session.clone(), home.clone());
+    Ok((session, home))
+}
+
+/// Files the just-validated session in the cache, replacing any stale entry
+/// for the same connection parameters.
+fn store_session(target: &SshTarget, session: Session, home: String) {
+    let mut cache = CACHE.lock().expect("session cache poisoned");
+    cache.sessions.retain(|entry| !target_matches(&entry.target, target));
+    cache.sessions.push(CachedSession {
+        target: target.clone(),
+        session,
+        home,
+        stored: Instant::now(),
+    });
+}
+
+/// Two targets that must speak to the same endpoint the same way.
+fn target_matches(a: &SshTarget, b: &SshTarget) -> bool {
+    a.host == b.host
+        && a.port == b.port
+        && a.user == b.user
+        && a.identity_files == b.identity_files
+        && a.password == b.password
+}
+
+/* ============================================================
    Probes over one session
    ============================================================ */
+
+/// The os/arch labels when the platform is already known: the very reason the
+/// platform is known is that `uname -s`/`uname -m` answered those two values,
+/// so they are derived from the detection result rather than re-executed.
+fn platform_labels_known(target: remote_install::RemoteTarget) -> (String, String) {
+    match target.goos {
+        remote_install::Goos::Linux => ("linux".to_string(), "x86_64".to_string()),
+        // `ver` does not report the architecture; the only Windows build this
+        // program ships is amd64, and the detection would have refused any
+        // other one.
+        remote_install::Goos::Windows => ("windows".to_string(), "x86_64".to_string()),
+    }
+}
 
 /// The platform, reduced to what the UI says out loud.
 ///
@@ -221,6 +382,18 @@ fn remote_file_exists(session: &Session, path: &str) -> bool {
         .and_then(|sftp| sftp.stat(Path::new(path)).ok())
         .map(|stat| !stat.is_dir())
         .unwrap_or(false)
+}
+
+/// Which directory `path` asks for: `None`/empty means the account's home
+/// (the only directory whose location the far end can name without being
+/// told), and a leading `~` is expanded against that home.
+fn resolve_requested_dir(session: &Session, path: Option<&str>, home: &str) -> Result<String, String> {
+    let requested = match path.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => value.to_string(),
+        None => home.to_string(),
+    };
+    let expanded = expand_home(&requested, home);
+    resolve_dir(session, &expanded)
 }
 
 /// The absolute form of a directory, following symlinks — so the listing and
