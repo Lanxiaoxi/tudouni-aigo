@@ -131,7 +131,17 @@ Get-Content $log -Tail 6 | Write-Host
 
 # ---------------- 3. the result ----------------
 $step = 'report'
-$nsis = Join-Path (Join-Path (Join-Path (Join-Path $app 'src-tauri') 'target') 'release') 'bundle'
+# tauri writes its bundles under the cargo target directory, and `CARGO_TARGET_DIR`
+# moves it away from `src-tauri/target` — the same variable `tauri build` above
+# inherited, so the bundle the run just produced sits there, not in the default
+# place. Looking only at the default found a stale installer from an older run
+# and reported a FAIL for a build that had succeeded.
+$targetRoot = if ($env:CARGO_TARGET_DIR) {
+    $env:CARGO_TARGET_DIR
+} else {
+    Join-Path (Join-Path $app 'src-tauri') 'target'
+}
+$nsis = Join-Path (Join-Path $targetRoot 'release') 'bundle'
 $nsis = Join-Path $nsis 'nsis'
 $installers = Get-ChildItem $nsis -Filter '*.exe' -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending

@@ -147,7 +147,7 @@ pub fn probe(target: &SshTarget, path: Option<&str>) -> Result<RemoteProbe, Stri
 
     // Every later click in the directory browser must not pay for this dial
     // again — see the module doc for why one visit is one connection.
-    store_session(target, session, home.clone());
+    store_session(target, session.clone(), home.clone());
 
     // The detected target is what the install path and the archive name are
     // derived from, so it is resolved once here and reused for every question
