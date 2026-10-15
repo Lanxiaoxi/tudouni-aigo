@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArchiveRestore, MessageCircleQuestion, Trash2, X } from 'lucide-react';
 import {
   activeWorkspaceOf,
@@ -254,6 +254,82 @@ export function SessionBoard() {
   const anyRunning = cards.some((card) => card.status === 'running');
   const now = useTurnClock(anyRunning);
 
+  /**
+   * The FLIP slide for a card that changes column.
+   *
+   * A card is a child of whichever column its status names, so a status
+   * change re-parents it: React unmounts the button from the old column and
+   * mounts a fresh one in the new column, and a fresh mount has nothing to
+   * animate from — which is why a move currently reads as a blink. FLIP
+   * supplies the missing half. Every layout pass each card reports where it
+   * is; a card that sat somewhere else on the previous pass is first placed
+   * back at its old spot for one frame (inverted) and then released onto its
+   * real position under a transform transition (played), so the travel is
+   * composited instead of the card blinking into its new column.
+   *
+   * The rectangles are compensated for the two scroll containers a card
+   * lives in (its own lane's `overflow-y` and the board's row scroll), so a
+   * scroll between the two frames reads as "the card did not move" rather
+   * than a spurious vertical slide. A card with no previous frame — the
+   * board just opened, or a session that appeared — has nothing to travel
+   * from and is left to its plain mount.
+   *
+   * Only `transform` is played. The card's own height can change with the
+   * move (the progress row appears or disappears), and that jump is a line
+   * or two; animating it would mean measuring every card's box, not worth
+   * one line. `prefers-reduced-motion` needs no special case: the global
+   * rule (global.css) zeroes the transition's duration, so the slide lands
+   * in one frame, and `transitionend` still fires to release the inline
+   * style.
+   */
+  const cardEls = useRef(new Map<string, HTMLButtonElement>());
+  const cardPos = useRef(new Map<string, { x: number; y: number; col: string }>());
+
+  useLayoutEffect(() => {
+    const prev = cardPos.current;
+    const next = new Map<string, { x: number; y: number; col: string }>();
+    for (const [key, el] of cardEls.current) {
+      const rect = el.getBoundingClientRect();
+      // The card's position in its own layout, not the viewport: add the
+      // scroll offsets of both containers back in, so scrolling alone does
+      // not register as the card moving.
+      const x = rect.left + (el.closest<HTMLElement>('.board-cols')?.scrollLeft ?? 0);
+      const y = rect.top + (el.closest<HTMLElement>('.board-col')?.scrollTop ?? 0);
+      const col = el.closest<HTMLElement>('.board-col')?.getAttribute('aria-label') ?? '';
+      next.set(key, { x, y, col });
+      const old = prev.get(key);
+      if (!old) continue;
+      // **A column change, not a lane shift.** The slide is for the state
+      // move itself. Inside a column a card can also be displaced vertically
+      // when a neighbour's progress row appears or disappears (the lane
+      // reflows) — playing that would make an unrelated card drift every
+      // time some other card ticks over.
+      if (old.col === col) continue;
+      const dx = old.x - x;
+      const dy = old.y - y;
+      if (dx === 0 && dy === 0) continue;
+      el.style.transition = 'none';
+      el.style.transform = `translate(${dx}px, ${dy}px)`;
+      // Commit the inverted position before the play, or the browser
+      // coalesces the two writes and slides nothing.
+      void el.getBoundingClientRect();
+      el.style.transition = 'transform var(--motion-base) var(--ease-standard)';
+      el.style.transform = '';
+      // Release the inline transition once the slide is done, so the card's
+      // stylesheet rules (the hover lift) own `transform` again. The target
+      // check matters: the card's context ring runs its own
+      // `stroke-dashoffset` transition, and a `transitionend` from a child
+      // bubbles up and would release this one early.
+      const release = (ev: TransitionEvent) => {
+        if (ev.target !== el) return;
+        el.style.transition = '';
+        el.removeEventListener('transitionend', release);
+      };
+      el.addEventListener('transitionend', release);
+    }
+    cardPos.current = next;
+  });
+
   // `listed` false means no runtime has answered for this workspace yet, which is
   // a different statement from "no sessions are open" — so the two are drawn
   // differently rather than both as an empty board.
@@ -341,6 +417,14 @@ export function SessionBoard() {
                   <button
                     key={card.key}
                     type="button"
+                    ref={(el) => {
+                      // The FLIP effect above reads these. A re-parented card
+                      // is a *new* DOM node, so the callback runs with the old
+                      // node (clear it) and the new one (register it) in the
+                      // same commit — the map never holds a dead reference.
+                      if (el === null) cardEls.current.delete(card.key);
+                      else cardEls.current.set(card.key, el);
+                    }}
                     className={`board-card${isCurrent ? ' is-current' : ''}${isAsking ? ' is-asking' : ''}${card.status === 'running' ? ' is-running' : ''}`}
                     aria-current={isCurrent ? 'true' : undefined}
                     // Clicking a card is the board's second exit and the more
