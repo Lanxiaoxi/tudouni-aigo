@@ -14,7 +14,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -89,6 +89,26 @@ async function main() {
 
     staged += 1;
     console.log(`staged ${triple}: ${destName}  (sha256 ${digest.slice(0, 12)}…)`);
+  }
+
+  // **Remove archives for other versions.** Without this the directory
+  // accumulates one pair per release, and `resolve_remote_package` picks the
+  // archive for a triple by suffix match over `readdir` order — so with a 6.5.0
+  // and a 6.6.1 both present, which one an install uploads is whatever the
+  // filesystem returns first. A remote machine would then get a runtime that
+  // disagrees with the one the app was built against, and nothing would say so.
+  //
+  // Only the exact version staged above survives, so the directory always holds
+  // exactly one archive per triple. The `.sha256` sidecars go with them, and
+  // `README.md` is left alone (it explains how to populate this directory).
+  if (version) {
+    const keep = new Set(TRIPLES.map((triple) => `tudouni-aigo-${version}-${triple}.zip`));
+    const stale = readdirSync(destDir).filter((name) => name.endsWith('.zip') && !keep.has(name));
+    for (const name of stale) {
+      rmSync(join(destDir, name), { force: true });
+      rmSync(join(destDir, `${name}.sha256`), { force: true });
+      console.log(`removed stale ${name}`);
+    }
   }
 
   if (missing.length > 0) {
