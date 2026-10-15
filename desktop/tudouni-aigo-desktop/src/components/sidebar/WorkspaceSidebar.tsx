@@ -209,8 +209,20 @@ export function WorkspaceSidebar() {
    * two are different facts: the runtime is the authority on what is *saved*,
    * and this end is the authority on what is *open*. A conversation in both is
    * drawn once, from the saved list, which carries its message count and preview.
+   *
+   * Scoped by the **session's own workspace**, not `currentWorkspace` above.
+   * `currentWorkspace` is the local list's value: it blanks a remote path so a
+   * directory on another host cannot enter the local workspace rows. The live
+   * group has no such need — it only ever compares paths as strings (dedup
+   * against the saved list, same-workspace filtering) — and under the blanked
+   * value every guard in `selectLiveOnlyKey` switched off: the saved set read
+   * back empty and the workspace filter never applied, so a remote workspace
+   * drew every open conversation twice, once as "open now" and once with its
+   * preview. A remote session is a member of its own (remote) workspace just as
+   * a local one is of its.
    */
-  const liveKey = useApp((s) => selectLiveOnlyKey(s, currentWorkspace));
+  const liveWorkspace = rt?.session?.workspace ?? rt?.workspace ?? '';
+  const liveKey = useApp((s) => selectLiveOnlyKey(s, liveWorkspace));
   const liveOnly = useMemo(() => {
     const out: { key: string; id: string; status: RowStatus }[] = [];
     if (liveKey === '') return out;

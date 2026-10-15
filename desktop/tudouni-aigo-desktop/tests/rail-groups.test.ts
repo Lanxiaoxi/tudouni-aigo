@@ -215,6 +215,46 @@ test('a session the saved list already holds is not drawn twice', () => {
   assert.equal(selectLiveOnlyKey(useApp.getState(), 'C:/work'), '');
 });
 
+test('a remote conversation the saved list holds is not drawn twice either', () => {
+  // **The reported shape.** A remote workspace's rail showed every open
+  // conversation twice: once as "open now / Nothing has run in it yet" and once
+  // with its preview. The sidebar scopes the live group by `currentWorkspace`,
+  // which is **blanked** for a remote session — a remote path must not enter the
+  // *local* workspace rows below, which is what that value also feeds. Under the
+  // blank every guard in `selectLiveOnlyKey` switched off: the saved set read
+  // back empty and the workspace filter never applied, so the dedup that works
+  // locally never ran remotely.
+  //
+  // The same-path guards in `selectLiveOnlyKey` are string comparisons; a remote
+  // path is as safe to compare as a local one. The fix scopes the group by the
+  // session's own workspace — which this asserts by calling the selector the way
+  // the fixed sidebar does. A `resumed` bucket, so the conversation is one with
+  // a file behind it, and `remoteWorkspaceId` set, since that is what made the
+  // sidebar blank the value.
+  const bucket = resumed('k1', '/home/deploy/repo', '20261015-180810');
+  bucket.remoteWorkspaceId = 'rw-1';
+  install({ k1: bucket }, ['k1'], 'k1');
+  savedFor('/home/deploy/repo', [
+    { id: '20261015-180810', messages: 80, steps: 38, preview: 'hi 你有些什么技能和工具' },
+  ]);
+
+  const rows = parse(selectLiveOnlyKey(useApp.getState(), '/home/deploy/repo'));
+  assert.deepEqual(rows, [], 'the saved row is the only one drawn for this conversation');
+});
+
+test('a remote conversation with no file yet is still listed', () => {
+  // The pair, so the fix does not over-correct. The live group exists because a
+  // conversation that has not run a turn has no file — and that is as true on a
+  // remote host as here. A remote path reaching this selector is a string being
+  // compared, not a directory being touched, so the remote row must survive.
+  const bucket = handshaken('k1', '/home/deploy/repo', '20261015-190009');
+  bucket.remoteWorkspaceId = 'rw-1';
+  install({ k1: bucket }, ['k1'], 'k1');
+
+  const rows = parse(selectLiveOnlyKey(useApp.getState(), '/home/deploy/repo'));
+  assert.deepEqual(rows, [{ key: 'k1', id: '20261015-190009', status: 'idle' }]);
+});
+
 /* ============================================================
    Group 1b: the list is the workspace's, not the focused child's
    ============================================================ */
