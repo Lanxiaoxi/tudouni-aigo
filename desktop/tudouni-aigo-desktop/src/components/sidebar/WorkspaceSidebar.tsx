@@ -1023,36 +1023,34 @@ export function WorkspaceSidebar() {
             (`.lb-foot-tease`, CSS) and the wrench gives a quarter turn: a
             hint that the row hides things, which a bare chevron would never
             say. */}
-        <Tip label={footCollapsed ? t('lb.workbenchHint') : t('lb.foldFoot')}>
-          <button
-            type="button"
-            className={`lb-foot-head${footCollapsed ? ' is-collapsed' : ''}`}
-            aria-expanded={!footCollapsed}
-            onClick={toggleFootCollapsed}
-          >
-            {footCollapsed ? (
-              <Wrench size={14} className="lb-foot-wrench" />
-            ) : (
-              <ChevronRight size={13} className="caret caret-open" />
-            )}
-            <span className="lb-foot-head-label">{t('lb.workbench')}</span>
-            {footCollapsed ? <Count value={6} /> : null}
-            {/* The tease strip: the six foot icons, one size smaller, rising
-                into view above the row on hover. `aria-hidden` — it repeats
-                the buttons' own accessible names with nothing new to say. */}
-            <span className="lb-foot-tease" aria-hidden>
-              <FileText size={11} />
-              <SquareTerminal size={11} />
-              <GraduationCap size={11} />
-              <LayoutGrid size={11} />
-              <FileJson size={11} />
-              <Settings size={11} />
-            </span>
-            <span className="sr-only">
-              {footCollapsed ? t('lb.unfoldFoot') : t('lb.foldFoot')}
-            </span>
-          </button>
-        </Tip>
+        <button
+          type="button"
+          className={`lb-foot-head${footCollapsed ? ' is-collapsed' : ''}`}
+          aria-expanded={!footCollapsed}
+          onClick={toggleFootCollapsed}
+        >
+          {footCollapsed ? (
+            <Wrench size={14} className="lb-foot-wrench" />
+          ) : (
+            <ChevronRight size={13} className="caret caret-open" />
+          )}
+          <span className="lb-foot-head-label">{t('lb.workbench')}</span>
+          {footCollapsed ? <Count value={6} /> : null}
+          {/* The tease strip: the six foot icons, one size smaller, rising
+              into view above the row on hover. `aria-hidden` — it repeats
+              the buttons' own accessible names with nothing new to say. */}
+          <span className="lb-foot-tease" aria-hidden>
+            <FileText size={11} />
+            <SquareTerminal size={11} />
+            <GraduationCap size={11} />
+            <LayoutGrid size={11} />
+            <FileJson size={11} />
+            <Settings size={11} />
+          </span>
+          <span className="sr-only">
+            {footCollapsed ? t('lb.unfoldFoot') : t('lb.foldFoot')}
+          </span>
+        </button>
       </div>
     </aside>
   );

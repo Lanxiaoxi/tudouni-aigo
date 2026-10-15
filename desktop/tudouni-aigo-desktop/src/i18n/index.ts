@@ -327,8 +327,6 @@ export const en = {
      terminal, learning, board, config, settings — are the workbench: the
      things the runtime works *with*, beside the workspaces it works *in*. */
   'lb.workbench': 'Workbench',
-  'lb.workbenchHint':
-    'Files, terminal, learning, board, config, and settings — the tools the runtime works with.',
   'lb.foldFoot': 'Fold the workbench',
   'lb.unfoldFoot': 'Unfold the workbench',
   'lb.deleteSession': 'Delete this session',
