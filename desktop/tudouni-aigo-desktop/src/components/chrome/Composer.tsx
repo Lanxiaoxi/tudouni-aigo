@@ -276,7 +276,12 @@ export function Composer() {
                   type="button"
                   className="cp-send"
                   onClick={submitDraft}
-                  disabled={blocked || draft.trim() === ''}
+                  // While the child is still starting there is no process for a
+                  // message to reach — the send stays available-looking is a
+                  // lie, so it is disabled with everything else the store
+                  // refuses (`submitDraft` guards the same condition for the
+                  // Enter key).
+                  disabled={blocked || !ready || draft.trim() === ''}
                   aria-label={t('composer.send')}
                 >
                   <ArrowUp size={16} />

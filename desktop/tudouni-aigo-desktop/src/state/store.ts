@@ -98,10 +98,10 @@ import {
   type LearnScope,
 } from '@/learn/template';
 import {
-  getRuntime,
   registerRuntime,
   sendTo,
   unregisterRuntime,
+  type Runtime,
 } from '@/runtime/bus';
 import {
   insertAtCaret,
@@ -560,20 +560,6 @@ export interface SessionRuntime {
    * running, which is what the single window-wide field used to do.
    */
   problem: string | null;
-  /**
-   * A Send pressed while this session's child could not yet carry it.
-   *
-   * The starting placeholder is on screen — and its input is usable — before
-   * the bridge's spawn has returned, so a Send in that window has no process
-   * to reach. Holding the **two** forms the composer's own submit produces
-   * (the wire's `sent` with restored paths, the transcript's `text` with its
-   * placeholders) means the flush sends exactly what a Send would have sent.
-   *
-   * The transcript entry is appended **by the flush**, in `session_load`
-   * handling rather than here: that rebuild is the last word on the
-   * transcript at handshake, and an entry written before it would be wiped.
-   */
-  pendingSend: { text: string; sent: string } | null;
   /** This child's stderr, verbatim, bounded. Diagnostics, never protocol data. */
   stderrTail: string[];
   /** Set when this child ends without being asked to. */
@@ -947,7 +933,6 @@ export function createSessionBucket(
     connection: remoteWorkspaceId === null ? LOCAL_CONNECTION_STATE : { phase: 'connecting', problem: null },
     ready: false,
     problem: null,
-    pendingSend: null,
     stderrTail: [],
     runtimeExit: null,
     launch,
@@ -1294,19 +1279,6 @@ export interface AppStore {
    * the same reason `pendingRemoteOpen` is not persisted.
    */
   openingRemote: string | null;
-  /**
-   * The bucket a start-up is in flight into, or `null` when none is.
-   *
-   * A **local** start-up's child can take a moment to exist — the bridge's
-   * spawn and its staging sweep run while the screen still shows the session
-   * it was showing — and `attachSession` covers that window with a starting
-   * placeholder bucket whose key is this one. The "New session" button and
-   * the `/new`-family commands read it to say a start-up is already on its
-   * way, so a second press does not queue a second child against the same
-   * workspace. Cleared on every exit of `attachSession`, like
-   * `openingRemote`; never persisted.
-   */
-  openingSession: string | null;
   /**
    * The workspace the **next** launch should open: the one last worked in.
    *
@@ -2277,6 +2249,16 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
 
 const prefs = loadPrefs();
 
+/**
+ * One counter for every starting placeholder, rather than a timestamp.
+ *
+ * Two placeholders can exist at once (a start-up in flight while the person
+ * opens another workspace), and a bucket is only replaced by an explicit
+ * rekey — so two `starting-<now>` keys minted in the same millisecond would
+ * collide. A monotonic counter cannot.
+ */
+let startingSeq = 0;
+
 /* ============================================================
    Polling throttle — per session
    ============================================================ */
@@ -2938,7 +2920,6 @@ export const useApp = create<AppStore>((set, get) => {
     configSyncPrompt: null,
     pendingRemoteOpen: null,
     openingRemote: null,
-    openingSession: null,
     lastWorkspace: prefs.lastWorkspace,
 
     ericaiDefault: prefs.ericaiDefault,
@@ -3043,6 +3024,43 @@ export const useApp = create<AppStore>((set, get) => {
         ...(maxSteps === null ? {} : { maxSteps }),
       };
 
+      // **The placeholder is installed before the child exists.** The bridge's
+      // spawn is synchronous work that can take a while (it sweeps the
+      // workspace's staging directories), and until it returns there is no
+      // bucket to draw: the screen kept showing the *previous* conversation,
+      // perfectly healthy, so a slow start read as a frozen window rather
+      // than as a start-up. The placeholder — a real bucket with a
+      // non-numeric key the bridge will never mint — is what makes the
+      // conversation column show its booting state from the click itself.
+      //
+      // The key is `starting-<n>` rather than a fixed name because a bucket
+      // is only replaced by an explicit rekey, and two placeholders at once
+      // (a start-up in flight while the person presses the button in another
+      // workspace) must not overwrite each other.
+      startingSeq += 1;
+      const placeholderKey = `starting-${startingSeq}`;
+      const placeholder = createSessionBucket(placeholderKey, workspace, launch);
+      // A no-op handle: the placeholder cannot receive protocol data (the
+      // child's key is not minted yet), but registering it is what keeps a
+      // send aimed at it from throwing and gives the rekey something to retire.
+      const placeholderRuntime: Runtime = {
+        key: placeholderKey,
+        send: () => undefined,
+        subscribe: () => () => undefined,
+        dispose: () => undefined,
+      };
+      registerRuntime(placeholderRuntime);
+      set((state) => ({
+        sessions: { ...state.sessions, [placeholderKey]: placeholder },
+        order: [...state.order, placeholderKey],
+        activeKey: placeholderKey,
+        panel: null,
+        // A new conversation is about to be shown, so a window-level refusal
+        // or a "nothing opened" note is no longer what the screen is about.
+        startupProblem: null,
+        startupNotice: null,
+      }));
+
       let key: string | null;
       try {
         key = await attachRuntime(attach);
@@ -3052,16 +3070,12 @@ export const useApp = create<AppStore>((set, get) => {
         // would hide a perfectly healthy conversation behind a message about a
         // process that does not exist.
         //
-        // There is no key yet, so a short-lived bucket is made for the sentence
-        // to live in — it is the row the person just asked for.
-        const failed = `failed-${Date.now().toString(36)}`;
-        const bucket = createSessionBucket(failed, workspace, launch);
-        bucket.problem = describeFailure(err);
-        set((state) => ({
-          sessions: { ...state.sessions, [failed]: bucket },
-          order: [...state.order, failed],
-          activeKey: failed,
-        }));
+        // The sentence lands on the placeholder — it is the row the person
+        // just asked for, and it is already the one on screen — rather than in
+        // a second, duplicate bucket. `problem` moving from null to set is
+        // what turns the column from "starting…" to the failure panel, so a
+        // refusal is now visible for the whole time it took to arrive.
+        patch(placeholderKey, { problem: describeFailure(err) });
         // **No abandonment here, deliberately.** The screen moved, but to a
         // session that is not a conversation — so the one it displaced is
         // whatever the person was working in, and closing that because an
@@ -3072,26 +3086,41 @@ export const useApp = create<AppStore>((set, get) => {
 
       if (key === null) {
         // No bridge at all (a plain browser). Nothing to record: there is no
-        // process, so there is no session to show a problem for.
+        // process, so there is no session to show a problem for. The
+        // placeholder goes with it — kept, it would say "starting" forever
+        // over a start that will never finish.
+        set((state) => {
+          const { [placeholderKey]: _gone, ...rest } = state.sessions;
+          return {
+            sessions: rest,
+            order: state.order.filter((entry) => entry !== placeholderKey),
+            activeKey: state.activeKey === placeholderKey ? s.activeKey : state.activeKey,
+          };
+        });
         return null;
       }
-
-      const bucket = createSessionBucket(key, workspace, launch);
 
       // The handle is built before the first line can be routed to it, and it
       // holds anything that arrives before a subscriber exists.
       const runtime = createTauriRuntime(key, (line) => {
         get().pushStderr(key, line);
       });
+      // The placeholder's no-op handle is retired before the real one is
+      // registered: the registry is keyed, and the placeholder key would
+      // shadow nothing — but leaving it would keep a handle to a bucket that
+      // no longer exists, and `detachSession` on the real key would never find
+      // it.
+      unregisterRuntime(placeholderKey);
       registerRuntime(runtime);
 
-      // **The bucket is installed before anything is subscribed, and that order
-      // is load-bearing.** A line the child sent before the handle existed is
-      // held — by the host's `pendingLines`, and then by the handle's own queue
-      // — and `subscribe` is what flushes it, straight into
-      // `applyRuntimeMessage`. That function drops a message for a key with no
-      // bucket, and it has to: from a key alone, "this session is gone" and
-      // "this session has not been installed yet" are the same statement.
+      // **The bucket is re-keyed, not replaced, and it is installed before
+      // anything is subscribed — that order is load-bearing.** A line the
+      // child sent before the handle existed is held — by the host's
+      // `pendingLines`, and then by the handle's own queue — and `subscribe`
+      // is what flushes it, straight into `applyRuntimeMessage`. That function
+      // drops a message for a key with no bucket, and it has to: from a key
+      // alone, "this session is gone" and "this session has not been installed
+      // yet" are the same statement.
       //
       // So subscribing first and installing the bucket afterwards threw away
       // exactly the lines the queue exists to protect: the opening
@@ -3104,30 +3133,41 @@ export const useApp = create<AppStore>((set, get) => {
       // true the screen shows "Starting the runtime…" forever over a process
       // that is running and answering. Nothing reports a failure, because
       // nothing failed.
+      //
+      // Re-keying rather than creating a second bucket is what keeps the
+      // placeholder's draft and any Send the person made during the start-up
+      // alive: the bucket is the same object, and only its key — the bridge's
+      // — changes. A fresh bucket would have been a conversation that lost
+      // whatever was typed into the one it replaced, one keystroke at a time.
 
-      // The session this one is replacing **on screen**, read here rather than
-      // from the `s` taken at the top: `attachRuntime` awaited, and the person
-      // may have moved to another conversation while the child was starting.
-      // `get().activeKey` at this point is still the one being looked at, which
-      // is what "left behind" means.
-      const leaving = get().activeKey;
-      set((state) => ({
-        sessions: { ...state.sessions, [key as string]: bucket },
-        order: [...state.order, key as string],
-        activeKey: key,
-        // A new conversation is on screen, so the rendered slot is re-aimed at
-        // it — the same act as in `focusSession`, and it matters here because a
-        // request this brand-new session sends while it is booting must draw
-        // over the screen it belongs to rather than queue behind one held from
-        // the session it displaced.
-        modal: headForActive(state.pendingModals, key as string),
-        panel: null,
-        // A new session is being shown, so any window-level refusal it was
-        // preceded by is no longer what the screen is about.
-        startupProblem: null,
-        // And so is the note about nothing having been opened, if there was one.
-        startupNotice: null,
-      }));
+      // The session this one displaced **on screen**: the one that was
+      // focused when the open was asked for, `s.activeKey` read at the top.
+      // Not `get().activeKey` here — the placeholder already took that seat,
+      // and the person may have moved on again while the child was starting,
+      // so neither answers "what did this open push off the screen". When the
+      // person switched away mid-start-up, `s.activeKey` names the session the
+      // placeholder displaced, which is the one that gets abandoned if it is
+      // untouched — the same rule `focusSession` applies.
+      const leaving = s.activeKey;
+      set((state) => {
+        const current = state.sessions[placeholderKey];
+        if (!current) return {};
+        const { [placeholderKey]: _old, ...rest } = state.sessions;
+        return {
+          sessions: { ...rest, [key as string]: current },
+          order: state.order.flatMap((entry) => (entry === placeholderKey ? [key as string] : [entry])),
+          // The screen stays where the person put it: focused back onto this
+          // bucket only when it is still the one being looked at.
+          activeKey: state.activeKey === placeholderKey ? key : state.activeKey,
+          // A new conversation is (or was) on screen, so the rendered slot is
+          // re-aimed at it — the same act as in `focusSession`, and it matters
+          // here because a request this brand-new session sends while it is
+          // booting must draw over the screen it belongs to rather than queue
+          // behind one held from the session it displaced.
+          modal: headForActive(state.pendingModals, state.activeKey === placeholderKey ? key : state.activeKey),
+          panel: null,
+        };
+      });
 
       // Only now, with somewhere for them to land.
       runtime.subscribe((msg) => {
@@ -4219,6 +4259,11 @@ export const useApp = create<AppStore>((set, get) => {
       const key = s.activeKey;
       const current = activeRuntime(s);
       if (key === null || !current) return;
+      // The conversation on screen has no process yet (a start-up in flight):
+      // there is nothing for a message to reach, so it is not sent rather
+      // than queued. The draft stays in the input — typing while the child
+      // boots is fine, sending is not.
+      if (!current.ready) return;
       // What the person wrote and what the runtime receives are **two strings**.
       // The draft carries placeholders; the sentence that goes out carries paths,
       // because a path in the text is the only image channel the runtime has.
