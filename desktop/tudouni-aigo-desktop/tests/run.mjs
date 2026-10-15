@@ -116,6 +116,11 @@ const SUITES = [
   // reason — §8.4's "an install failure must not look like a connection
   // failure", wired into `enterRemoteWorkspace`.
   'remote-workspace.test.ts',
+  // "New session" while the conversation on screen is remote: the remote
+  // workspace's directory is not a local one, so the button must dial another
+  // remote child rather than hand the remote path to the local spawn — which
+  // is what refused it with "the workspace … is not a directory".
+  'remote-new-session.test.ts',
   // The connecting toast: what it names (the workspace being opened, not the
   // focus) and when it is gone (the handshake landing, or a failure that has
   // its own surface). The selector is pure, so the two halves — the pre-bucket

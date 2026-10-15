@@ -1392,6 +1392,14 @@ export interface AppStore {
    * `sessionId` is the runtime's id from `sessions.items`. A null id means "a
    * new conversation", which is a session with no id at all — the missing id
    * *is* the new-session request, and the runtime mints one.
+   *
+   * **A new conversation whose on-screen session is a remote one is not a
+   * local child.** The active session's `workspace` is a directory on the
+   * *remote* host, and starting a local runtime there refuses with "not a
+   * directory" against this machine's filesystem. "New conversation" on a
+   * remote session means "here" — *there* — so this routes to
+   * `connectRemoteWorkspace` with `forceNew` instead. An explicit `workspace`
+   * argument still wins, because it is a local directory the caller named.
    */
   openSession(sessionId: string | null, workspace?: string): Promise<void>;
 
@@ -1803,8 +1811,14 @@ export interface AppStore {
    * §9.4's check — so the sidebar row and the wizard both go through
    * `enterRemoteWorkspace`, and this is the continuation rather than a second
    * entrance.
+   *
+   * The `forceNew` option skips the "a live session already exists for this
+   * workspace" no-op guard. One caller wants it: "New session" on a screen whose
+   * session is remote. Pressing the row again is a duplicate, pressing the
+   * button is a request for **another** conversation there — a second child,
+   * beside the first.
    */
-  connectRemoteWorkspace(remoteWorkspaceId: string): Promise<void>;
+  connectRemoteWorkspace(remoteWorkspaceId: string, options?: { forceNew?: boolean }): Promise<void>;
   /**
    * Installs or upgrades the Runtime on a remote workspace's host (§8 of
    * the design), without connecting afterwards. A separate act from
@@ -3294,6 +3308,28 @@ export const useApp = create<AppStore>((set, get) => {
           return;
         }
       }
+      // **A *new* conversation over a remote session goes remote, not local.**
+      // The session on screen carries `remoteWorkspaceId`, and its `workspace`
+      // is a directory on the *remote* host — `resolveAttachWorkspace` would
+      // hand that path to the local spawn, which checks it against this
+      // machine's filesystem and refuses with "the workspace … is not a
+      // directory". "New conversation" on a remote screen means "here", and
+      // here is there: a second child in the same remote workspace, which is
+      // `connectRemoteWorkspace` with `forceNew` (the guard that focuses an
+      // existing session is precisely what would swallow the request).
+      // An explicit `workspace` argument still wins: it is a local directory
+      // the caller named, so the local path is what was asked for.
+      if (sessionId === null && workspace === undefined) {
+        const active = s.activeKey === null ? null : (s.sessions[s.activeKey] ?? null);
+        // `?? null` folds the "no active session" case (`undefined`) and the
+        // "local session" case (`remoteWorkspaceId: null`) into one `null`, so
+        // a non-null result is exactly "the session on screen is remote".
+        const remoteId = active?.remoteWorkspaceId ?? null;
+        if (remoteId !== null) {
+          await get().connectRemoteWorkspace(remoteId, { forceNew: true });
+          return;
+        }
+      }
       await get().attachSession({
         ...(workspace === undefined ? {} : { workspace }),
         ...(sessionId === null ? {} : { sessionId }),
@@ -3450,6 +3486,21 @@ export const useApp = create<AppStore>((set, get) => {
       const current = runtimeOf(get(), key);
       if (!current) return;
       patch(key, { problem: null, stderrTail: [] });
+      // A remote failure is retried the remote way, with the same arguments
+      // that failed: a local spawn would check the remote path against this
+      // machine's filesystem and refuse it again, with the same sentence.
+      // The same `forceNew` route "New session" on a remote screen uses —
+      // it also covers a retry whose entry lost its binary (install, then
+      // connect), and it records a second refusal on its own new row, the
+      // same shape `connectRemoteWorkspace` gives every other failure.
+      if (current.remoteWorkspaceId !== null) {
+        // The failed row is retired before the dial, the same way the local
+        // path detaches before attaching: a retry must not leave the row that
+        // failed sitting beside the row that worked.
+        await get().detachSession(key);
+        await get().connectRemoteWorkspace(current.remoteWorkspaceId, { forceNew: true });
+        return;
+      }
       // A retry is a new process, because the old one is gone by definition —
       // there would be nothing to retry inside a live child. The failed bucket
       // is retired once the new one exists, so a retry never leaves the row
@@ -5137,7 +5188,7 @@ export const useApp = create<AppStore>((set, get) => {
       await get().connectRemoteWorkspace(remoteWorkspaceId);
     },
 
-    async connectRemoteWorkspace(remoteWorkspaceId) {
+    async connectRemoteWorkspace(remoteWorkspaceId, options) {
       const s = get();
       // **No entry-level clear of `openingRemote` here, deliberately.** The
       // mark set by `enterRemoteWorkspace` must survive everything this
@@ -5151,12 +5202,19 @@ export const useApp = create<AppStore>((set, get) => {
       // A second call for a workspace that already has a live session is a
       // no-op: the prompt's answer can arrive twice (a double press), and
       // opening two children against one row is not what either press meant.
-      const already = s.order.find((key) => s.sessions[key]?.remoteWorkspaceId === remoteWorkspaceId);
-      if (already) {
-        // No open is in flight — one already exists — so the mark goes.
-        if (s.openingRemote === remoteWorkspaceId) set({ openingRemote: null });
-        get().focusSession(already);
-        return;
+      // The `forceNew` caller — "New session" on screen over a remote bucket —
+      // is the exception: there the person asked for **another** conversation
+      // in the same place, which is a second child rather than a duplicate.
+      if (!options?.forceNew) {
+        const already = s.order.find(
+          (key) => s.sessions[key]?.remoteWorkspaceId === remoteWorkspaceId,
+        );
+        if (already) {
+          // No open is in flight — one already exists — so the mark goes.
+          if (s.openingRemote === remoteWorkspaceId) set({ openingRemote: null });
+          get().focusSession(already);
+          return;
+        }
       }
 
       const host = s.sshHosts.find((item) => item.id === entry.hostId);
