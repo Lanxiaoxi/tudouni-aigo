@@ -200,6 +200,20 @@ type harness struct {
 	mu       sync.Mutex
 	events   []map[string]any
 	warnings []string
+	// policyOverride and hasPolicyOverride are no longer read at build time:
+	// the harness builds the tool inside newHarness, before a test can call
+	// withPolicy, so the flag pair would never be seen. withPolicy writes
+	// straight into the built tool's config instead.
+}
+
+// withPolicy sets the policy the child's gate runs under, after the tool is
+// built. The harness builds the tool inside newHarness with the default
+// policy, and a test that wants a deny list (a policy that names a tool) can
+// only express that after construction — so the override goes into the
+// concrete tool's Config, which spawn reads at delegation time.
+func (h *harness) withPolicy(policy security.Policy) *harness {
+	h.handle.Policy = policy
+	return h
 }
 
 // records returns the events the parent's hook collected.
@@ -676,27 +690,29 @@ func TestARouteFailureDoesNotStartAChild(t *testing.T) {
 	}
 }
 
-// TestADeniedToolInsideTheChildDoesNotAskTheUser is the permission decision.
+// TestARiskyToolInsideTheChildRunsInAutopilot is the permission decision.
 //
-// The child is built with no asker and autopilot **off**, so a call needing
-// approval is refused. The test runs the whole loop with a medium-risk tool: if
-// the child inherited the parent's asker the call would be put to a person, and if
-// the gate were treated as "nobody to ask, so allow" (which is what this program's
-// autopilot switch means) the handler would run. Neither may happen.
+// The child has no asker and autopilot **on**, so a call that would have needed
+// approval at the top level runs: a gate that refused everything needing
+// approval would leave the child with only read-only tools, which is what made
+// a delegation useless for anything but looking.
 //
-// The handler setting `ran` is the assertion that matters: a test that only
-// inspected the audit could pass while the tool actually executed.
-func TestADeniedToolInsideTheChildDoesNotAskTheUser(t *testing.T) {
+// The assertion that matters is on the outcome, not on the tool having run: a
+// `rule_allowed` would also run the tool, and it would mean the child ran a
+// shell command on the strength of a rule from **another** agent's approvals —
+// the authority has to say it came from the delegation's own autopilot, and
+// the denial text would say "ask" when nothing was asked.
+func TestARiskyToolInsideTheChildRunsInAutopilot(t *testing.T) {
 	ran := false
 	child := &fakeModel{script: []model.ModelResponse{
-		toolCallResponse("c1", "needs_approval", `{"value":"x"}`),
-		textResponse("I was not allowed to do that"),
+		toolCallResponse("c1", "does_the_work", `{"value":"x"}`),
+		textResponse("done"),
 	}}
 
 	h := newHarness(t, child, tools.Tool{
-		Name:        "needs_approval",
-		Description: "a medium-risk tool",
-		Risk:        security.RiskMedium,
+		Name:        "does_the_work",
+		Description: "a high-risk tool, like shell",
+		Risk:        security.RiskHigh,
 		Schema:      tools.ObjectSchema(map[string]any{"value": tools.StringSchema("value")}, "value"),
 		Handler: func(_ context.Context, _ map[string]any) (tools.Result, error) {
 			ran = true
@@ -704,31 +720,78 @@ func TestADeniedToolInsideTheChildDoesNotAskTheUser(t *testing.T) {
 		},
 	})
 
-	result := h.call(t, map[string]any{"prompt": "do the thing that needs approval"})
+	result := h.call(t, map[string]any{"prompt": "do the work"})
 
-	if ran {
-		t.Error("the child ran a tool that needed approval; it has no authority of its own")
+	if !ran {
+		t.Fatal("the child did not run a tool that would have needed approval; autopilot is on for a reason")
 	}
-	if !strings.Contains(result.Text, "I was not allowed") {
-		t.Errorf("the parent did not get the child's report of the refusal: %q", result.Text)
+	if !strings.Contains(result.Text, "done") {
+		t.Errorf("the parent did not get the child's answer: %q", result.Text)
 	}
 
-	// The refusal has to be recorded on the child's stream, otherwise "why did it
-	// not do the obvious thing" has no answer afterwards. `no_asker` is the
-	// expected outcome specifically: it says the gate refused because there was
-	// nobody to ask, which is the fact a reader needs.
+	// The verdict has to be recorded, because "who authorised this" is a
+	// question the log has to answer: `autopilot` says the delegation's own
+	// switch let it through with nobody in the room, which is the fact a
+	// reader needs.
 	var outcome string
 	for _, record := range h.events {
 		if record["kind"] != "permission" {
 			continue
 		}
-		if name, _ := record["tool"].(string); name != "needs_approval" {
+		if name, _ := record["tool"].(string); name != "does_the_work" {
 			continue
 		}
 		outcome, _ = record["outcome"].(string)
 	}
-	if outcome != security.OutcomeNoAsker {
-		t.Errorf("the child's permission verdict was recorded as %q, want %q", outcome, security.OutcomeNoAsker)
+	if outcome != security.OutcomeAutopilot {
+		t.Errorf("the child's permission verdict was recorded as %q, want %q", outcome, security.OutcomeAutopilot)
+	}
+}
+
+// TestAPolicyDeniedToolStaysDeniedInsideTheChild is the boundary of the
+// autopilot: it covers asking only, and the deny list is "may not", not
+// "should not ask". A tool the user forbade at the top level is refused inside
+// a child the same way — the refusal has to reach the child as a tool result
+// so it can report the limit instead of retrying.
+func TestAPolicyDeniedToolStaysDeniedInsideTheChild(t *testing.T) {
+	ran := false
+	child := &fakeModel{script: []model.ModelResponse{
+		toolCallResponse("c1", "forbidden", `{"value":"x"}`),
+		textResponse("refused, reported it"),
+	}}
+
+	h := newHarness(t, child, tools.Tool{
+		Name:        "forbidden",
+		Description: "a tool the policy forbids",
+		Risk:        security.RiskLow,
+		Schema:      tools.ObjectSchema(map[string]any{"value": tools.StringSchema("value")}, "value"),
+		Handler: func(_ context.Context, _ map[string]any) (tools.Result, error) {
+			ran = true
+			return tools.TextResult("ran"), nil
+		},
+	}).withPolicy(security.Policy{AutoApprove: []string{string(security.RiskLow)}, DenyTools: []string{"forbidden"}})
+
+	result := h.call(t, map[string]any{"prompt": "use the forbidden tool"})
+
+	if ran {
+		t.Fatal("the child ran a tool the policy forbids; autopilot outranks the deny list and it must not")
+	}
+	if !strings.Contains(result.Text, "refused") {
+		t.Errorf("the parent did not get the child's report of the refusal: %q", result.Text)
+	}
+
+	var outcome string
+	for _, record := range h.events {
+		if record["kind"] != "permission" {
+			continue
+		}
+		if name, _ := record["tool"].(string); name != "forbidden" {
+			continue
+		}
+		outcome, _ = record["outcome"].(string)
+	}
+	if outcome != security.OutcomePolicyDenied {
+		t.Errorf("the child's permission verdict was recorded as %q, want %q", outcome, security.OutcomePolicyDenied)
 	}
 }
 

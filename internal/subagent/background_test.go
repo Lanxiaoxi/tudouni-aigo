@@ -115,7 +115,7 @@ func TestABackgroundDelegationReturnsBeforeTheChildFinishes(t *testing.T) {
 		if err != nil {
 			t.Errorf("the tool returned an error rather than a result: %v", err)
 		}
-		done <- toolsResult{result.Text}
+		done <- toolsResult{text: result.Text}
 	}()
 
 	bg.waitArrived(t, 1)
@@ -143,9 +143,12 @@ func TestABackgroundDelegationReturnsBeforeTheChildFinishes(t *testing.T) {
 	bg.settle(t, 1)
 }
 
-// toolsResult carries the one field the assertions read, so the goroutine that
+// toolsResult carries the fields the assertions read, so the goroutine that
 // runs the tool call can hand it back without racing the test.
-type toolsResult struct{ text string }
+type toolsResult struct {
+	text  string
+	audit map[string]any
+}
 
 // TestTheCollectedAnswerIsTheWholeResult pins what collection hands over: the
 // same rendered text a foreground delegation would have returned as its tool
@@ -219,10 +222,12 @@ func TestCollectWithoutAnIDListsWhatIsWaiting(t *testing.T) {
 	}
 }
 
-// TestCollectWhileRunningSaysToWait pins the distinction between "not yet" and
-// "nothing there": a still-running delegation is not collectable, and the
-// answer says so rather than pretending the id is wrong.
-func TestCollectWhileRunningSaysToWait(t *testing.T) {
+// TestCollectWhileRunningReturnsASnapshot pins the wait=false form: a
+// still-running delegation is answered with a progress snapshot, clearly not
+// a result, and nothing is collected. This is how the parent looks in without
+// occupying the call — the alternative, polling a blocking collect every few
+// seconds, is what this parameter set exists to remove.
+func TestCollectWhileRunningReturnsASnapshot(t *testing.T) {
 	bg := newBgHarness(t, 1)
 
 	if _, err := bg.tool.Execute(context.Background(), map[string]any{
@@ -234,12 +239,156 @@ func TestCollectWhileRunningSaysToWait(t *testing.T) {
 	bg.waitArrived(t, 1)
 
 	collect, _ := BuildCollect(bg.board)
-	result, err := collect.Execute(context.Background(), map[string]any{"id": firstChildID()})
+	result, err := collect.Execute(context.Background(), map[string]any{
+		"id": firstChildID(), "wait": false,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, "还在跑") {
-		t.Fatalf("a running delegation was answered as if unknown: %q", result.Text)
+	if !strings.Contains(result.Text, "还没结束") {
+		t.Fatalf("a running delegation was not answered as still running: %q", result.Text)
+	}
+	if status, _ := result.Audit["subagent_status"].(string); status != "running" {
+		t.Errorf("audit status = %q, want running", status)
+	}
+	if bg.board.Uncollected() != 0 {
+		t.Error("a wait=false peek collected the result; it should only report progress")
+	}
+	bg.letGo(t)
+	bg.settle(t, 1)
+}
+
+// TestCollectWaitsForTheChildToFinish is the whole point of the default: the
+// parent asks once, and the answer comes back when the child settles rather
+// than when the parent decides to poll again. The collect call is on its own
+// goroutine so the test can release the parked child in the middle of the
+// wait.
+func TestCollectWaitsForTheChildToFinish(t *testing.T) {
+	bg := newBgHarness(t, 1)
+
+	if _, err := bg.tool.Execute(context.Background(), map[string]any{
+		"prompt":     "slow work",
+		"background": true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bg.waitArrived(t, 1)
+
+	collect, _ := BuildCollect(bg.board)
+	done := make(chan toolsResult, 1)
+	go func() {
+		result, err := collect.Execute(context.Background(), map[string]any{"id": firstChildID()})
+		if err != nil {
+			t.Errorf("the collect call returned an error: %v", err)
+			return
+		}
+		done <- toolsResult{text: result.Text, audit: result.Audit}
+	}()
+
+	// The child settles while the collect call is still waiting. The wait
+	// polls the board, so the next tick after settlement sees the row out of
+	// the running table and collects it.
+	bg.letGo(t)
+
+	select {
+	case result := <-done:
+		if !strings.Contains(result.text, "background answer") {
+			t.Fatalf("the waited collect returned something other than the answer: %q", result.text)
+		}
+		if status, _ := result.audit["subagent_status"].(string); status != "collected" {
+			t.Errorf("audit status = %q, want collected", status)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the collect call did not return after the child settled")
+	}
+	if bg.board.Uncollected() != 0 {
+		t.Error("the waited collect left the settlement behind")
+	}
+}
+
+// TestCollectWaitDeadlineReportsProgress pins the wait's documented end: the
+// deadline passes, the answer is a progress snapshot marked as not a result,
+// and nothing is collected. A collect that blocked forever would be a second
+// background job wearing a collect's name.
+func TestCollectWaitDeadlineReportsProgress(t *testing.T) {
+	bg := newBgHarness(t, 1)
+
+	if _, err := bg.tool.Execute(context.Background(), map[string]any{
+		"prompt":     "slow work",
+		"background": true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bg.waitArrived(t, 1)
+
+	collect, _ := BuildCollect(bg.board)
+	result, err := collect.Execute(context.Background(), map[string]any{
+		"id": firstChildID(), "wait": true, "wait_seconds": 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "还没结束") {
+		t.Fatalf("a deadline-shaped collect did not report progress: %q", result.Text)
+	}
+	if strings.Contains(result.Text, "background answer") {
+		t.Fatal("a timed-out collect handed over an answer the child never produced")
+	}
+	if bg.board.Uncollected() != 0 {
+		t.Error("a timed-out collect collected the result; it should only report progress")
+	}
+	if bg.board.IsRunning(firstChildID()) == false {
+		t.Error("the running delegation was marked settled by a peek; the board lied")
+	}
+	bg.letGo(t)
+	bg.settle(t, 1)
+}
+
+// TestCollectWaitHonoursAStop pins the cancellation path: a stop reaches the
+// wait through the context, and the result says the wait was cut short rather
+// than reporting a deadline that never passed. The audit flag carries the same
+// fact for the log, for the reason the jobs board states for its own case.
+func TestCollectWaitHonoursAStop(t *testing.T) {
+	bg := newBgHarness(t, 1)
+
+	if _, err := bg.tool.Execute(context.Background(), map[string]any{
+		"prompt":     "slow work",
+		"background": true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bg.waitArrived(t, 1)
+
+	collect, _ := BuildCollect(bg.board)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan toolsResult, 1)
+	go func() {
+		result, err := collect.Execute(ctx, map[string]any{
+			"id": firstChildID(), "wait": true,
+		})
+		if err != nil {
+			t.Errorf("the collect call returned an error: %v", err)
+			return
+		}
+		done <- toolsResult{text: result.Text, audit: result.Audit}
+	}()
+
+	time.Sleep(300 * time.Millisecond)
+	cancel()
+
+	select {
+	case result := <-done:
+		if !strings.Contains(result.text, "被中断") {
+			t.Fatalf("an interrupted wait was not marked as interrupted: %q", result.text)
+		}
+		if interrupted, _ := result.audit[tools.InterruptedAuditKey].(bool); !interrupted {
+			t.Error("the interrupted collect did not set the interrupted audit flag")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the collect call did not return after its context was cancelled")
+	}
+	if bg.board.Uncollected() != 0 {
+		t.Error("an interrupted collect collected the result")
 	}
 	bg.letGo(t)
 	bg.settle(t, 1)

@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -252,6 +253,36 @@ func (b *Board) Progress(id string, update func(*Delegation)) {
 	}
 }
 
+// Snapshot renders one running delegation as a one-line progress report, for
+// the collect tool's "still running" answer. The seconds and the steps are the
+// difference between "working" and "stuck"; the activity is what it is doing
+// right now, and it is empty while the child is between calls.
+//
+// It renders in the board rather than in the caller because the numbers come
+// from the injected clock, which the caller does not hold.
+func (b *Board) Snapshot(id string) string {
+	if b == nil {
+		return ""
+	}
+	now := b.clock()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	entry, ok := b.running[id]
+	if !ok {
+		return ""
+	}
+	line := "子 agent " + id
+	if entry.Label != "" {
+		line += "（" + entry.Label + "）"
+	}
+	line += fmt.Sprintf("，已跑 %d 秒，%d 步，%d 次工具调用",
+		int(entry.Duration(now)), entry.Steps, entry.ToolCalls)
+	if entry.Activity != "" {
+		line += "，正在 " + entry.Activity
+	}
+	return line
+}
+
 // Observe folds one of a child's own audit records into its row.
 //
 // The child's records already travel through the runtime's event path — they are
@@ -476,7 +507,9 @@ func (b *Board) Note() string {
 	if len(parts) > 0 {
 		out.WriteString("## 子 agent\n")
 		out.WriteString(strings.Join(parts, "；") + "。\n")
-		out.WriteString("它的完整过程在它自己的会话文件里（用上面的 id 可以查），不要凭猜测替它下结论。")
+		out.WriteString("不要频繁轮询它：需要它结果时调一次 subagent_output(id=...)，" +
+			"默认会等到它完成（wait_seconds 可调大，中途看进度用 wait=false）；" +
+			"等待期间先做不依赖这个结果的事。不要凭猜测替它下结论。")
 	}
 	if len(uncollectedRows) > 0 {
 		if len(parts) > 0 {

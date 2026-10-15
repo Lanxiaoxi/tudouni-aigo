@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
@@ -14,6 +15,20 @@ import (
 // own: it reads the board, and everything else about a delegation is the
 // delegating tool's business.
 const DefaultCollectName = "subagent_output"
+
+// The wait parameters mirror job_output on purpose: the two tools answer the
+// same question ("is my background work done, and if so what did it say") for
+// two different kinds of background work, and two tools that wait differently
+// would teach the model two habits for one situation. The documented default
+// is what the default must be, for the reason the jobs board states.
+const (
+	DocumentedCollectWaitSeconds = 30
+	MaxCollectWaitSeconds        = 300
+)
+
+// collectPollInterval is how often the wait below looks at the board. It is a
+// variable rather than a constant only so a test can shorten it.
+var collectPollInterval = 100 * time.Millisecond
 
 // BuildCollect returns the tool that hands a finished background delegation's
 // result to the parent. It is registered beside the delegating tool whenever
@@ -29,9 +44,14 @@ func BuildCollect(board *Board) (tools.Tool, bool) {
 	}
 	return tools.Tool{
 		Name: DefaultCollectName,
-		Description: "收取已完成的后台子 agent 的结果。带上启动时返回的 id；" +
-			"不带 id 则列出所有还在等收取的子 agent。收取会把结果从待收取列表里移除，" +
-			"所以每个结果只取一次。还在跑的子 agent 不能收取，等它完成。",
+		Description: fmt.Sprintf(
+			"收取后台子 agent 的结果，参照 job_output 的等待语义：它**结束了才叫结果**，"+
+				"还没结束时返回的是进度快照（跑了多久、几步、正在做什么），那不是结果。\n"+
+				"带上启动时返回的 id；不带 id 则列出所有还在等收取的子 agent。收取会把结果从待收取列表里移除，"+
+				"所以每个结果只取一次。\n"+
+				"默认等最多 %d 秒，到点它还没结束就返回进度快照；知道它要跑更久就自己给 wait_seconds（上限 %d）。\n"+
+				"中途只想看它跑到哪儿了、不想占着：wait=false，立刻返回进度快照。",
+			DocumentedCollectWaitSeconds, MaxCollectWaitSeconds),
 		// Read on the runtime's own state, not a workspace or process operation:
 		// the answer exists only in memory, and handing it over changes nothing
 		// but the board's bookkeeping. Low risk keeps it inside the set a
@@ -41,37 +61,108 @@ func BuildCollect(board *Board) (tools.Tool, bool) {
 		Schema: tools.ObjectSchema(map[string]any{
 			"id": tools.StringSchema(
 				"要收取的子 agent 的 id，来自后台委派启动时返回的那一条。不填则只列出待收取的。"),
+			"wait": tools.BoolSchema(
+				"true（默认）表示它还没结束就等一会儿；false 表示立刻返回**到目前为止**的进度快照",
+				tools.Default(true)),
+			"wait_seconds": tools.IntSchema(
+				fmt.Sprintf("wait=true 时最多等多少秒（上限 %d）。到点它还没结束，返回的就是进度快照 —— 那不是结果", MaxCollectWaitSeconds),
+				tools.Default(DocumentedCollectWaitSeconds), tools.Minimum(1), tools.Maximum(MaxCollectWaitSeconds)),
 		}),
 		ParallelSafe: true,
-		Handler: func(_ context.Context, arguments map[string]any) (tools.Result, error) {
+		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			id := strings.TrimSpace(stringArg(arguments, "id"))
-			return collectExecute(board, id), nil
+			wait, _ := arguments["wait"].(bool)
+			seconds, _ := arguments["wait_seconds"].(int)
+			return collectExecute(ctx, board, id, wait, seconds), nil
 		},
 	}, true
 }
 
 // collectExecute is the handler body, split out so the board is the only
 // dependency and tests can drive it without a whole registry.
-func collectExecute(board *Board, id string) tools.Result {
+func collectExecute(ctx context.Context, board *Board, id string, wait bool, seconds int) tools.Result {
 	if id == "" {
 		return tools.TextResult(listUncollected(board))
 	}
-
-	// Still running? The wording matters: "wait" and "nothing by that id" are
-	// different next moves, and a collect result that conflated them would send
-	// the model re-delegating work that is about to arrive.
-	if board.IsRunning(id) {
-		return tools.TextResult(fmt.Sprintf(
-			"子 agent %s 还在跑，不能收取。先做别的，等它完成后再来收取。", id))
+	if seconds <= 0 {
+		seconds = DocumentedCollectWaitSeconds
 	}
 
+	// A delegation that is not running has a definite answer, and the wait
+	// cannot change it: settle it or report that the id names nothing.
+	if !board.IsRunning(id) {
+		return tools.Result{
+			Text:  collectFinished(board, id),
+			Audit: map[string]any{"subagent_id": id, "subagent_status": "collected"},
+		}
+	}
+
+	if !wait {
+		return runningResult(board, id, false)
+	}
+
+	// The wait: poll the board until the delegation stops running, the
+	// deadline passes, or the context is cancelled. A delegation that
+	// settles **during** the wait is collected here, which is the whole
+	// point of the parameter — the parent asks once and gets the answer,
+	// instead of polling every few seconds and paying a model round trip
+	// per poll.
+	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
+	for board.IsRunning(id) {
+		if !sleepOrDone(ctx, collectPollInterval) {
+			return runningResult(board, id, true)
+		}
+		if time.Now().After(deadline) {
+			return runningResult(board, id, false)
+		}
+	}
+	return tools.Result{
+		Text:  collectFinished(board, id),
+		Audit: map[string]any{"subagent_id": id, "subagent_status": "collected"},
+	}
+}
+
+// collectFinished settles a delegation that is no longer running.
+func collectFinished(board *Board, id string) string {
 	settlement, ok := board.Collect(id)
 	if !ok {
-		return tools.TextResult(fmt.Sprintf(
+		return fmt.Sprintf(
 			"没有待收取的子 agent 叫 %s：id 可能写错了，或者结果已经被收取过（每个结果只收一次）。"+
-				"不带 id 调用可以列出还在等收取的。", id))
+				"不带 id 调用可以列出还在等收取的。", id)
 	}
-	return tools.TextResult(settlement.Text)
+	return settlement.Text
+}
+
+// runningResult is the answer for a delegation that is still doing work.
+// interrupted marks a wait that was cut short by a stop rather than by its own
+// deadline, and that is a different fact from "it is still running": the model
+// has to know its wait did not run to completion, for the reason the jobs
+// board states for the same case.
+func runningResult(board *Board, id string, interrupted bool) tools.Result {
+	text := fmt.Sprintf("**还没结束**：%s。\n这不是结果，它结束后再收取（或直接带 wait=true 等）。",
+		board.Snapshot(id))
+	if interrupted {
+		text = "**这一轮的等待被中断了**（不是它结束，也不是等到了时间上限）—— " + text
+	}
+	audit := map[string]any{"subagent_id": id, "subagent_status": "running"}
+	if interrupted {
+		audit[tools.InterruptedAuditKey] = true
+	}
+	return tools.Result{Text: text, Audit: audit}
+}
+
+// sleepOrDone waits for d and reports whether it got there. A false answer
+// means the context was cancelled first, which is the caller's signal to stop
+// waiting.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // listUncollected renders the waiting list. Sorted by the board's own order

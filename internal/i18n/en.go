@@ -770,7 +770,7 @@ var catalog = map[string]string{
 	"notice.proxy.problem":              "[network] {problem}. Falling back to whatever else is configured; the request will fail if none of it works.",
 	"notice.jobs.leftovers":             "[background] the previous session left the output of {n} background jobs behind; they have been cleaned up. That session did not exit cleanly (window closed, or the process was killed), so **those commands may still be running** and they are outside this session's control — check yourself if a port or the CPU does not add up.",
 	"notice.jobs.no_job_object":         "[background] the guarantee that \"closing the window also collects the background jobs\" was not established ({problem}). A normal exit still cleans up, but **killing this process can orphan background commands**.",
-	"notice.subagent.enabled":           "[subagent] {tool} is registered: the model may hand a self-contained task to a fresh agent, up to {depth} levels deep. A subagent cannot ask for approval — anything it is not allowed to do on its own is refused — and its whole transcript is saved as its own session beside this one.",
+	"notice.subagent.enabled":           "[subagent] {tool} is registered: the model may hand a self-contained task to a fresh agent, up to {depth} levels deep. A subagent cannot ask for approval — it runs in autopilot, so anything not on the policy's deny list runs without asking — and its whole transcript is saved as its own session beside this one.",
 	// The two lines a delegation reports about itself while it runs. They are
 	// notices rather than stderr diagnostics because the runtime's stderr is the
 	// terminal the front end is drawing on: the same sentence written there would be

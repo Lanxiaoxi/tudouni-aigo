@@ -134,26 +134,31 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 		Chat:   chat,
 		Tools:  childTools,
 		Policy: t.Policy,
-		// No asker, deliberately. security.Check turns a missing asker into a
-		// refusal, so this is fail-closed: an operation the child is not allowed
-		// to perform on its own authority comes back as a denied tool result
-		// instead of a question aimed at a user who is watching a different task.
+		// No asker, deliberately. The child cannot prompt: a question aimed at
+		// a user who is watching a different task would interrupt the parent's
+		// job, and nobody could tell which task the question belongs to. The
+		// cost of having no asker is paid the other way — see Autopilot below.
 		Ask:    nil,
 		Memory: t.Memory,
-		// **Autopilot stays off, and that is the whole permission model in one
-		// line.** In this program autopilot means "nobody is watching, so let it
-		// run" — the gate returns an empty denial for every call. A delegated
-		// agent has no such authority: it was handed one task, not the session's
-		// permission to spend. With no asker and no autopilot the gate refuses
-		// everything that would have needed approval, which is the fail-closed
-		// answer the scope declaration promises the child.
+		// **Autopilot is on, and that is the whole permission model in one line.**
+		// The child has no asker, and a gate that refused everything needing
+		// approval would leave it with only read-only tools — no shell, no
+		// writes — which makes the delegation useless for anything but looking.
+		// Autopilot closes the gap the no-asker decision opens: whatever the
+		// policy does not deny runs.
 		//
-		// The consequence is deliberate and worth stating: **the set of things a
-		// subagent may do on its own is exactly the set that needs no approval.**
-		// That is the tools the policy already auto-approves, minus what the user
-		// granted by hand — a hand-granted rule does carry here, because Memory is
-		// shared and the user's stated intent outlives one task.
-		Autopilot: false,
+		// Autopilot only covers asking. The deny list still wins first in
+		// security.Check, so a tool the user forbade stays forbidden inside a
+		// child, and the withheld tools (see toolsForChild) never reach the gate
+		// at all. The audit records outcome=autopilot for every such call, so a
+		// delegation that ran a shell command is a fact a log can answer — the
+		// child's whole transcript is its own session beside the parent's.
+		//
+		// The price is deliberate and is what the scope declaration promises the
+		// child: inside a delegation there is nobody to say no to a risky call.
+		// The boundary of that authority is the delegation itself — one task,
+		// its own session, a step budget, and a per-child stop.
+		Autopilot: true,
 		Session:   session,
 		Model:     state.NewSessionModel(session.Metadata, chosen, route.Name),
 		MaxSteps:  t.MaxSteps,
@@ -190,8 +195,12 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 		// is why settle touches nothing the parent's turn holds a lock on.
 		go func() {
 			answer, runErr := sub.Run(runCtx, task)
-			t.settle(session, childID, started, answer, runErr, true)
+			// The stop handle dies the moment the child's work ends, before the
+			// settlement: after Run has returned the delegation is over, and a
+			// Stop in the settlement window must answer "not running" rather than
+			// claim it stopped something.
 			t.dropCancel(childID)
+			t.settle(session, childID, started, answer, runErr, true)
 		}()
 		return tools.Result{
 			Text: fmt.Sprintf(
@@ -401,9 +410,7 @@ var sessionScopedToolNames = []string{
 	// race above: a session is a **process-scoped resource**, not the parent's
 	// memory. Two agents reading one session is silent data loss rather than a
 	// crash — `ssh_read` drains the buffer, so whoever reads first takes the bytes
-	// and the other gets a hole it cannot see. The child could not open a session
-	// of its own either (it has no asker, so `ssh_connect` is refused), which is
-	// exactly why it must not be handed the parent's.
+	// and the other gets a hole it cannot see.
 	//
 	// A child that genuinely needs SSH should get its own manager, not this one.
 	"ssh_connect",

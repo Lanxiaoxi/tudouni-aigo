@@ -12,10 +12,14 @@
 //     task it is given has to stand on its own. Copying the parent's turns in
 //     would be the expensive half of delegation, and the costly part of a
 //     subagent is precisely the context it must *not* carry.
-//   - **it cannot ask.** The child is built with no asker, so a tool call that
-//     needs approval is refused rather than forwarded. A subagent that could
-//     prompt would interrupt the user in the middle of somebody else's job, with
-//     no way for them to tell which task the question belongs to.
+//   - **it cannot ask, so it runs in autopilot.** The child is built with no
+//     asker: a subagent that could prompt would interrupt the user in the
+//     middle of somebody else's job, with no way for them to tell which task
+//     the question belongs to. The price of that is paid the other way — the
+//     child runs in autopilot, so a tool call that would have needed approval
+//     runs anyway, and only the policy's deny list (and the withheld
+//     session-scoped tools) can still say no. Every such call is recorded with
+//     outcome=autopilot, so the authority is visible in the log.
 //   - **depth is persisted, never inferred.** See DepthOf.
 //
 // The package sits above agent, model and state, and below runtime, which is the
