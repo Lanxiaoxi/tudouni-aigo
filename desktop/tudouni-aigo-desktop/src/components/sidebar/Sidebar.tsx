@@ -102,6 +102,7 @@ export function Sidebar() {
           blockKey="tasks"
           title={t('block.tasks')}
           count={`${doneTasks}/${snap.todos.length}`}
+          countActive={snap.todos.length > 0}
           isEmpty={snap.todos.length === 0}
           emptyTitle={t('empty.tasks.title')}
           emptyHint={t('empty.tasks.hint')}
@@ -132,6 +133,7 @@ export function Sidebar() {
               : `${snap.jobs.length + subagentsDone.length}`
           }
           countAttention={uncollected > 0}
+          countActive={snap.jobs.length + subagentsDone.length > 0}
           isEmpty={snap.jobs.length === 0 && subagentsDone.length === 0}
           emptyTitle={t('empty.jobs.title')}
           emptyHint={t('empty.jobs.hint')}
@@ -153,6 +155,7 @@ export function Sidebar() {
           blockKey="skills"
           title={t('block.skills')}
           count={loadedSkills.length}
+          countActive={loadedSkills.length > 0}
           isEmpty={loadedSkills.length === 0}
           emptyTitle={t('empty.skills.title')}
           emptyHint={t('empty.skills.hint')}
@@ -173,6 +176,7 @@ export function Sidebar() {
           blockKey="mcp"
           title={t('block.mcp')}
           count={`${mcpLoaded} / ${snap.mcp.length}`}
+          countActive={snap.mcp.length > 0}
           isEmpty={snap.mcp.length === 0}
           emptyTitle={t('empty.mcp.title')}
           emptyHint={t('empty.mcp.hint')}
