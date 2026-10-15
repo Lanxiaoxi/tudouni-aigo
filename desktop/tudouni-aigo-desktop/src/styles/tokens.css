@@ -89,12 +89,22 @@
    * contradicts what the element does is worse than no token: it is a wrong
    * answer written down. The shell's position is now a fact about the shell
    * (`--z-shell`), stated where it is used. */
+   * **The popover rung is above the dialog, and that is the whole point of it.**
+   * A dropdown, a menu or a workspace picker is normally *opened from inside*
+   * something — most of this app's fields live in a dialog — so a popover rung
+   * under `--z-dialog` draws the menu behind the panel that owns it. It was
+   * `400` and therefore never appeared at all from inside a panel: the task
+   * row's overflow menu rendered, hit-tested and reported itself painted, while
+   * every pixel of it sat under the `.dialog` at 500. Measured, not reasoned —
+   * `document.elementFromPoint` at the menu's own centre returned the row
+   * underneath it. Below `--z-toast` (a toast is news, a menu is a thing you
+   * asked for and are waiting on) and well below `--z-shell`. */
   --z-sticky:   200;   /* 表头 / 侧栏 */
-  --z-popover:  400;   /* dropdown / menu */
+  --z-popover:  520;   /* dropdown / menu — above the dialog it opens from */
   --z-dialog:   500;
   /* 非阻塞浮层（连接 toast 这类）：对话框之上，因为它描述的是"正在发生的事"，
      弹窗不该把它盖住；标题栏之下，窗口按钮永远可达。 */
-  --z-toast:    520;
+  --z-toast:    540;
   --z-shell:    550;   /* 标题栏 / 窗口按钮：任何遮罩之上，tooltip 之下 */
   --z-tooltip:  600;   /* 永远最顶 */
 }

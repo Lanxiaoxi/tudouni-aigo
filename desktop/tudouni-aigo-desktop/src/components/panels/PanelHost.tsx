@@ -28,6 +28,12 @@ import { TaskPanel } from './TaskPanel';
  * palette is different — its input sits at the top and it hugs the top of the
  * window. Esc and clicking the overlay close, handled by the dialog primitive.
  *
+ * Two panels take the wide container (`dialog-wide`): the configuration editor,
+ * whose field grid needs the room, and the task panel, whose rows carry a name,
+ * a description, a workspace · model line and a fixed action slot across one
+ * line — at 640px the action slot and the meta line collide, which is the whole
+ * reason the task design puts them at opposite edges.
+ *
  * There is no theme panel: the theme follows the system and there is no in-app
  * switch (decision 4), so the command that used to open one is gone too.
  */
@@ -49,7 +55,9 @@ export function PanelHost() {
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="overlay-mask" />
         <DialogPrimitive.Content
-          className={`dialog${panel === 'commands' ? ' cmdk' : ''}${panel === 'config' ? ' dialog-wide' : ''}`}
+          className={`dialog${panel === 'commands' ? ' cmdk' : ''}${
+            panel === 'config' || panel === 'tasks' ? ' dialog-wide' : ''
+          }`}
           aria-label={t('topbar.commands')}
         >
           {panel === 'commands' ? <CommandPalette /> : null}

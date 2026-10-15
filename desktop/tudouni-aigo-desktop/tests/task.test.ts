@@ -26,7 +26,11 @@ import {
   emptyTask,
   isValidTask,
   isValidTaskRun,
+  outcomeOfChildExit,
+  outcomeOfTurnStatus,
+  runDay,
   taskProblems,
+  taskRunOutcome,
   workspaceRefLabel,
   type Task,
 } from '../src/task/tasks';
@@ -351,4 +355,186 @@ test('noteTaskRunInit back-fills the newest link still waiting for the id, and p
   useApp.getState().noteTaskRunInit('k-stranger', 'sid-x');
   s = useApp.getState();
   assert.equal(s.taskRuns.filter((row) => row.sessionId === 'sid-x').length, 0);
+});
+
+/* ============================================================
+   Run outcome: the four states the design's History draws
+   ============================================================ */
+
+test('a turn status becomes a verdict, and the engine\u2019s failures are the only failures', () => {
+  // The engine failing is a Failed row with a Retry on it.
+  assert.equal(outcomeOfTurnStatus('model_error'), 'failed');
+  assert.equal(outcomeOfTurnStatus('model_fatal'), 'failed');
+  assert.equal(outcomeOfTurnStatus('runtime_exited'), 'failed');
+
+  // **Not failures**, and this is the half worth pinning: pressing Stop three
+  // times must not earn three red marks, or red stops meaning anything. A step
+  // budget and a blank answer are not the engine breaking either.
+  assert.equal(outcomeOfTurnStatus('cancelled'), 'ok', 'the person stopping it is not a failure');
+  assert.equal(outcomeOfTurnStatus('max_steps'), 'ok');
+  assert.equal(outcomeOfTurnStatus('empty_response'), 'ok');
+  assert.equal(outcomeOfTurnStatus('answered'), 'ok');
+  assert.equal(outcomeOfTurnStatus('completed'), 'ok');
+});
+
+test('a child that goes away is a failure only when nobody asked it to', () => {
+  // The front end closing a session is not the run failing.
+  assert.equal(outcomeOfChildExit(true), null, 'a requested close records no verdict');
+  // The runtime dying mid-run is, however the last turn happened to end.
+  assert.equal(outcomeOfChildExit(false), 'failed');
+});
+
+test('what is happening outranks what was written down', () => {
+  // A turn in flight wins outright: a Retry offered on a row that is already
+  // running again would be a second run wearing the first one's row.
+  assert.equal(
+    taskRunOutcome({ live: true, running: true, stopReason: 'running', recorded: 'failed' }),
+    'running',
+  );
+
+  // A settled turn in a live session is newer than anything persisted, which
+  // is what catches a failure that happened since the last write.
+  assert.equal(
+    taskRunOutcome({ live: true, running: false, stopReason: 'model_error', recorded: 'ok' }),
+    'failed',
+    'the live transcript outranks a stale recorded success',
+  );
+  assert.equal(
+    taskRunOutcome({ live: true, running: false, stopReason: 'answered', recorded: 'failed' }),
+    'ok',
+    'and outranks a stale recorded failure too',
+  );
+
+  // A live child that has not run anything yet: the recorded verdict is all
+  // there is, and "no verdict" is not a success.
+  assert.equal(taskRunOutcome({ live: true, running: false, stopReason: null, recorded: null }), 'running');
+  assert.equal(taskRunOutcome({ live: true, running: false, stopReason: null, recorded: 'ok' }), 'ok');
+
+  // A closed session: only the recorded verdict survives it.
+  assert.equal(taskRunOutcome({ live: false, running: false, stopReason: null, recorded: 'failed' }), 'failed');
+  assert.equal(
+    taskRunOutcome({ live: false, running: false, stopReason: 'model_error', recorded: 'ok' }),
+    'ok',
+    'a stop reason with no live session to have read it from is not evidence',
+  );
+});
+
+test('the recorded verdict is back-filled once, and only for a session a task started', () => {
+  localScreen();
+  useApp.setState({
+    tasks: [makeTask()],
+    taskRuns: [
+      { taskId: 't', sessionId: 'sid', sessionKey: 'k-a', startedAtMs: 1, taskName: 'a', model: '', workspaceLabel: 'w' },
+    ],
+  });
+
+  useApp.getState().noteTaskRunOutcome('k-a', 'failed', 12_000);
+  let row = useApp.getState().taskRuns[0];
+  assert.equal(row?.outcome, 'failed');
+  assert.equal(row?.durationMs, 12_000, 'the runtime\u2019s own figure is copied onto the link');
+
+  // The identity of the array is the observable "was this a write": a second
+  // verdict saying the same thing must not rewrite the record, because that
+  // record is persisted on every write and a turn's end is not a reason to
+  // touch localStorage twice.
+  const before = useApp.getState().taskRuns;
+  useApp.getState().noteTaskRunOutcome('k-a', 'failed', 12_000);
+  assert.equal(useApp.getState().taskRuns, before, 'an unchanged verdict is not a write');
+
+  // A child that died mid-turn sends no duration; the one already recorded
+  // stays rather than being cleared by the absent value.
+  useApp.getState().noteTaskRunOutcome('k-a', 'ok', null);
+  row = useApp.getState().taskRuns[0];
+  assert.equal(row?.outcome, 'ok');
+  assert.equal(row?.durationMs, 12_000, 'no new measurement means keep the old one');
+
+  // A stranger key is a no-op, exactly like `noteTaskRunInit`.
+  const after = useApp.getState().taskRuns;
+  useApp.getState().noteTaskRunOutcome('k-nobody', 'failed', 1);
+  assert.equal(useApp.getState().taskRuns, after);
+});
+
+test('history keeps the verdicts of templates that no longer exist', () => {
+  localScreen();
+  useApp.setState({ tasks: [makeTask()], taskRuns: [] });
+  const id = useApp.getState().tasks[0]?.id ?? '';
+  useApp.setState({
+    taskRuns: [
+      { taskId: id, sessionId: 'sid', sessionKey: 'k-1', startedAtMs: 1, taskName: 'nightly', model: '', workspaceLabel: 'w' },
+    ],
+  });
+  useApp.getState().noteTaskRunOutcome('k-1', 'failed', 900);
+
+  useApp.getState().deleteTask(id);
+
+  const s = useApp.getState();
+  assert.equal(s.tasks.length, 0, 'the template is gone');
+  assert.equal(s.taskRuns.length, 1, 'its run is not');
+  assert.equal(s.taskRuns[0]?.outcome, 'failed', 'and its verdict survives with it');
+});
+
+test('clearing the run history drops the links and nothing else', () => {
+  localScreen();
+  useApp.setState({ tasks: [makeTask()], taskRuns: [] });
+  const id = useApp.getState().tasks[0]?.id ?? '';
+  useApp.setState({
+    taskRuns: [
+      { taskId: id, sessionId: 'sid', sessionKey: 'k-1', startedAtMs: 1, taskName: 'nightly', model: '', workspaceLabel: 'w' },
+    ],
+  });
+
+  useApp.getState().clearTaskRuns();
+
+  const s = useApp.getState();
+  assert.equal(s.taskRuns.length, 0);
+  assert.equal(s.tasks.length, 1, 'the template is not what was cleared');
+});
+
+/* ============================================================
+   The guard: an upgrade must not delete somebody's history
+   ============================================================ */
+
+test('a run link saved before outcomes existed is kept, and a malformed one is not', () => {
+  // The shape an older build wrote: no `outcome`, no `durationMs`.
+  const legacy = {
+    taskId: 't',
+    sessionId: 'sid',
+    sessionKey: 'k',
+    startedAtMs: 1,
+    taskName: 'n',
+    model: '',
+    workspaceLabel: 'w',
+  };
+  assert.equal(isValidTaskRun(legacy), true, 'history persisted before this field existed still loads');
+  assert.equal(isValidTaskRun({ ...legacy, outcome: 'ok' }), true);
+  assert.equal(isValidTaskRun({ ...legacy, outcome: 'failed', durationMs: 12 }), true);
+
+  // A *present* value is still checked: a record carrying a verdict that is
+  // not one of the two is malformed, and a malformed record is dropped whole.
+  assert.equal(isValidTaskRun({ ...legacy, outcome: 'maybe' }), false);
+  assert.equal(isValidTaskRun({ ...legacy, outcome: null }), false);
+  assert.equal(isValidTaskRun({ ...legacy, durationMs: '12' }), false);
+});
+
+/* ============================================================
+   Day grouping: the History headers
+   ============================================================ */
+
+test('the day headers follow the calendar, not the elapsed hours', () => {
+  // Local noon, so the test is time-zone independent: a midnight anchor is one
+  // hour away from the previous day in half the world's zones.
+  const at = (y: number, m: number, d: number, h: number) => new Date(y, m, d, h, 0, 0, 0).getTime();
+  const now = at(2026, 4, 20, 9); // 2026-05-20 09:00 local
+
+  assert.equal(runDay(now, now), 'today');
+  assert.equal(runDay(at(2026, 4, 20, 0), now), 'today', 'midnight today is still today');
+  assert.equal(runDay(at(2026, 4, 19, 23), now), 'yesterday', 'an hour ago, but yesterday');
+  assert.equal(runDay(at(2026, 4, 19, 0), now), 'yesterday');
+  assert.equal(runDay(at(2026, 4, 18, 23), now), 'earlier');
+  assert.equal(runDay(at(2026, 3, 1, 12), now), 'earlier');
+
+  // The case an hours-based rule gets wrong: at 00:30, a run from 23:50 is
+  // forty minutes ago and belongs to *yesterday*.
+  const justAfterMidnight = at(2026, 4, 20, 0);
+  assert.equal(runDay(at(2026, 4, 19, 23), justAfterMidnight), 'yesterday');
 });

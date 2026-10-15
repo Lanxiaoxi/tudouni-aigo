@@ -101,8 +101,11 @@ import {
   canRunTask,
   isValidTask,
   isValidTaskRun,
+  outcomeOfChildExit,
+  outcomeOfTurnStatus,
   type Task,
   type TaskRunLink,
+  type TaskRunOutcome,
 } from '@/task/tasks';
 import {
   registerRuntime,
@@ -1463,6 +1466,17 @@ export interface AppStore {
    *  that removing a template must not erase the trace of past runs. */
   deleteTask(taskId: string): void;
   /**
+   * Forget the whole run list.
+   *
+   * The one destructive act History offers, and it is deliberately narrower
+   * than it looks: it drops the **links**, not the sessions. Every run it
+   * forgets is still a session on disk, reachable from the rail and the
+   * library; all that goes is this panel's index of which template started
+   * which one. Nothing else in the app reads `taskRuns`, so nothing else can
+   * be surprised by this.
+   */
+  clearTaskRuns(): void;
+  /**
    * Run a task: open a new session per the template, then deliver the prompt
    * as its first message. Resolves to the child key the run landed in, or
    * `null` when nothing was started (no workspace, or the open refused).
@@ -1473,6 +1487,23 @@ export interface AppStore {
    * Called from `applyRuntimeMessage`; a no-op when nothing is waiting.
    */
   noteTaskRunInit(key: string, sessionId: string): void;
+  /**
+   * Record how a task-started run ended, onto its link.
+   *
+   * Called from `applyRuntimeMessage` at the two moments a turn settles — the
+   * `event` that ends one, and a child that died mid-turn. A no-op for a key no
+   * task started, and a no-op when the verdict is already on the link, so the
+   * ordinary case costs no write and no `localStorage` round trip.
+   *
+   * **Why the store writes this down at all**, rather than History deriving it
+   * at render time: the transcript a verdict comes from belongs to a child
+   * process, and once that session is closed and reopened from disk the only
+   * facts left are a `VmSessionListItem`'s counts and timestamps. A `Failed`
+   * filter that emptied itself as sessions aged out would be worse than no
+   * filter, so the one moment the answer is knowable is the moment it is
+   * written.
+   */
+  noteTaskRunOutcome(key: string, outcome: TaskRunOutcome, durationMs: number | null): void;
   /**
    * Take one runtime message, tagged with the session whose child sent it.
    *
@@ -3535,6 +3566,11 @@ export const useApp = create<AppStore>((set, get) => {
       persistPrefs(get());
     },
 
+    clearTaskRuns() {
+      set({ taskRuns: [] });
+      persistPrefs(get());
+    },
+
     async runTask(taskId) {
       const task = get().tasks.find((row) => row.id === taskId);
       if (!task || !canRunTask(task)) return null;
@@ -3664,6 +3700,30 @@ export const useApp = create<AppStore>((set, get) => {
       const index = s.taskRuns.length - 1 - at;
       set((state) => ({
         taskRuns: state.taskRuns.map((row, i) => (i === index ? { ...row, sessionId } : row)),
+      }));
+      persistPrefs(get());
+    },
+
+    noteTaskRunOutcome(key, outcome, durationMs) {
+      // Newest first, the same rule `noteTaskRunInit` uses and for the same
+      // reason: one task can have several runs against one child key over a
+      // long life of the app (a Retry focuses nothing — it starts a *new*
+      // child — but a key is reused by the bridge), and the one this verdict
+      // belongs to is the most recent link on that key.
+      const s = get();
+      const at = [...s.taskRuns].reverse().findIndex((row) => row.sessionKey === key);
+      if (at < 0) return;
+      const index = s.taskRuns.length - 1 - at;
+      const current = s.taskRuns[index];
+      const nextDuration = durationMs ?? current.durationMs;
+      // Nothing new to say. `durationMs` is `null` for a child that died
+      // mid-turn (the runtime never sent a figure), so comparing it against the
+      // stored one has to tolerate the absent case rather than treat "no new
+      // measurement" as a change and rewrite the record on every verdict.
+      if (current.outcome === outcome && nextDuration === current.durationMs) return;
+      const stamped: TaskRunLink = { ...current, outcome, ...(nextDuration !== undefined ? { durationMs: nextDuration } : {}) };
+      set((state) => ({
+        taskRuns: state.taskRuns.map((row, i) => (i === index ? stamped : row)),
       }));
       persistPrefs(get());
     },
@@ -3959,6 +4019,28 @@ export const useApp = create<AppStore>((set, get) => {
           if (result.runEnded) {
             wakePolling(key);
             throttled(key, () => sendTo(key, { v: 1, t: 'status' }));
+
+            // A task-started run's verdict, written the one moment it is
+            // knowable. Read from the **post-patch** state rather than from
+            // `msg`, because `result.entries` is the whole transcript and
+            // `lastStopReason` is the single authority on how a turn ended —
+            // restating that mapping here would be a second copy of the rule
+            // `selectRowStatus` already owns.
+            //
+            // The order matters: this runs after the `patch` above, so the
+            // finished turn is in `entries`, and before anything can close the
+            // child. A no-op for a session no task started.
+            const settled = get().sessions[key];
+            if (settled !== undefined) {
+              const stop = lastStopReason(settled.entries);
+              if (stop !== null) {
+                get().noteTaskRunOutcome(
+                  key,
+                  outcomeOfTurnStatus(stop),
+                  typeof msg.duration_ms === 'number' ? msg.duration_ms : null,
+                );
+              }
+            }
 
             // **The rail's saved list is re-read here, and this is the fix for
             // the frozen numbers.** A row used to carry whatever `sessions.items`
@@ -4410,6 +4492,24 @@ export const useApp = create<AppStore>((set, get) => {
                       problem: `the connection ended unexpectedly (exit code ${msg.code})`,
                     },
           });
+
+          // A task-started run whose child died. §"the child is the only thing
+          // that could settle this turn" above: if one *was* running,
+          // `settleAbandonedTurn` closed it with `runtime_exited` and that is
+          // the verdict. If none was, the exit itself is the statement —
+          // but only when nobody asked for it. See `outcomeOfChildExit` for why
+          // a requested close records nothing rather than recording success.
+          {
+            const settled = get().sessions[key];
+            if (settled !== undefined) {
+              const stop = lastStopReason(settled.entries);
+              const verdict =
+                stop === 'runtime_exited'
+                  ? outcomeOfTurnStatus(stop)
+                  : outcomeOfChildExit(msg.requested);
+              if (verdict !== null) get().noteTaskRunOutcome(key, verdict, null);
+            }
+          }
           break;
         }
 
@@ -6488,6 +6588,83 @@ export function selectLiveSessionIds(s: AppStore): Set<string> {
     if (id !== null && id !== undefined && id !== '') ids.add(id);
   }
   return ids;
+}
+
+/**
+ * The last finished turn's stop reason for a live session, or the live turn's
+ * own status while one is in flight.
+ *
+ * `null` when the bucket is gone. **This is the one-stop read for "how did
+ * this session's turn end"**: `lastStopReason` alone cannot answer it for a
+ * session that is running right now — it skips the in-flight turn and returns
+ * the *previous* one's status — so a caller that asked it directly would read a
+ * run in progress as already finished with its predecessor's verdict.
+ *
+ * `hasRunningTurn` first, then `lastStopReason`, is exactly the order
+ * `selectRowStatus` uses, and for the same reason.
+ */
+export function lastStopReasonOf(bucket: SessionRuntime | undefined): string | null {
+  if (bucket === undefined) return null;
+  if (hasRunningTurn(bucket.entries)) return 'running';
+  return lastStopReason(bucket.entries);
+}
+
+/**
+ * Whether one of a task's own runs has a turn in flight, **as a stable
+ * boolean**.
+ *
+ * A task's shelf row needs this to choose between its action slot's two
+ * shapes — a progress bar or a Run button — and the obvious implementation
+ * subscribes to `s.sessions` and loops the task's links in the component body,
+ * which re-renders every row on every token of every session. A boolean
+ * compares by value under zustand's identity check even though the loop behind
+ * it does not, so this is the whole fix.
+ *
+ * `keys` is the run links to consider, not `taskId`: the caller already holds
+ * them, and passing the ids keeps this from having to re-derive which link
+ * belongs to which task — the same list the row is drawing.
+ */
+export function selectRunInFlight(s: AppStore, runKeys: string[]): boolean {
+  for (const key of runKeys) {
+    const bucket = s.sessions[key];
+    if (bucket !== undefined && hasRunningTurn(bucket.entries)) return true;
+  }
+  return false;
+}
+
+/**
+ * The stop reasons and last-turn durations of the **task-started** sessions,
+ * as one compact string.
+ *
+ * **A task-started session, not every session**, because that is the whole
+ * point of the key: the history is a handful of rows and this subscription has
+ * to be stable while the rest of the window streams. Including every child
+ * would re-render the history panel on every token of every unrelated
+ * conversation.
+ *
+ * Both facts in one key rather than two subscriptions, because History draws
+ * them in one row — a status and the elapsed time beside it — and two keys
+ * would mean two chances to re-render for one visual change.
+ *
+ * A compact string for the same reason as `selectLiveSessionIdsKey`: a fresh
+ * array or `Map` per read never compares equal under zustand's identity check,
+ * so a component subscribing to one would re-render forever. Format is
+ * `sessionKey\u0000status\u0000durationMs` per row, joined by `\u0001` —
+ * control characters because a bridge key and a status name can both contain
+ * anything except a control character.
+ */
+export function selectTaskRunStatusKey(s: AppStore): string {
+  if (s.taskRuns.length === 0) return '';
+  const parts: string[] = [];
+  for (const link of s.taskRuns) {
+    // A pre-handshake link has no key yet; nothing to report until it does.
+    if (link.sessionKey === '') continue;
+    const bucket = s.sessions[link.sessionKey];
+    const stop = lastStopReasonOf(bucket) ?? '';
+    const ms = bucket?.lastTurnMs;
+    parts.push(`${link.sessionKey}\u0000${stop}\u0000${ms === null || ms === undefined ? '' : ms}`);
+  }
+  return parts.join('\u0001');
 }
 
 export function selectLiveOnlyKey(s: AppStore, workspace: string): string {

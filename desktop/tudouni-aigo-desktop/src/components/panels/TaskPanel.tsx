@@ -1,51 +1,86 @@
-import { useMemo, useState } from 'react';
-import { Check, ChevronRight, Copy, Pencil, Play, Plus, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import * as PopoverPrimitive from '@radix-ui/react-popover';
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  Clock,
+  Copy,
+  Folder,
+  Info as InfoGlyph,
+  MoreHorizontal,
+  Pencil,
+  Play,
+  Plus,
+  Search,
+  Sparkles,
+  SquareTerminal,
+  Trash2,
+  X,
+} from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
+  NO_MODEL_ROWS,
   selectLiveSessionIdsKey,
+  selectRunInFlight,
+  selectTaskRunStatusKey,
   useApp,
+  useSessionField,
 } from '@/state/store';
 import { useT } from '@/i18n/useT';
-import { baseName, formatRelative } from '@/utils/format';
+import { baseName, formatClock, formatDuration } from '@/utils/format';
 import {
   canRunTask,
   emptyTask,
-  taskProblemText,
+  runDay,
+  taskProblems,
+  taskRunOutcome,
   workspaceRefLabel,
+  type RunDay,
   type Task,
   type TaskRunLink,
   type TaskWorkspaceRef,
 } from '@/task/tasks';
-import { Badge, EmptyState, Tip } from '@/components/ui/kit';
-import { PanelBody, PanelShell } from './PanelShell';
+import { Tip } from '@/components/ui/kit';
+import { PanelBody } from './PanelShell';
 
 /**
  * Task templates: the desktop's repeatable session launchers.
  *
- * **Three surfaces, one dialog.** The shelf (every template), the editor (one
- * template's fields) and the history (the sessions a Run produced) are three
- * states of the same panel rather than three screens, for the same reason the
- * library is two tabs in one panel: they are views of one fact.
+ * **Three surfaces, one dialog.** The shelf (every template), the history
+ * (every run they produced) and the editor (one template's fields) are three
+ * states of one panel rather than three screens — the same reason the library
+ * is two tabs in one panel: they are views of one fact, and a second dialog
+ * would make "which one is on top" a question the person has to answer.
  *
- * **The workspace picker mirrors the sidebar's vocabulary.** "Here" (the
- * workspace on screen, local or remote — the ordinary open paths answer both),
- * a bookmarked local directory, or a saved remote workspace. A ref that names
- * something the store no longer knows (a forgotten bookmark, a deleted host)
- * is shown as unavailable and refuses to run, rather than silently running
- * somewhere else.
+ * **The layout is the design's; the parts are the app's.** A row's shape
+ * (leading mark, name, description, workspace · model, a fixed action slot at
+ * the right edge) comes from the task design; the tokens it is built from —
+ * `--bg-card`, `--border-subtle`, `--radius-lg`, `.btn`, `.badge` — come from
+ * the design system every other panel already wears. Inventing a second
+ * vocabulary for "a row" or "a field" is how a panel starts reading as a
+ * different application.
+ *
+ * **Actions sit in a fixed position.** Per the design's states sheet, the
+ * right-hand slot does not move: Run surfaces on hover **in the space the
+ * overflow button already occupies**, so nothing in the row shifts and the eye
+ * never has to hunt for it. A running task puts its progress bar in that same
+ * slot rather than replacing the row's contents; a disabled one leaves the slot
+ * to the overflow button alone.
  *
  * **Run is not a new protocol.** It is the store's `runTask`, which opens a
- * session the ordinary way and sends the prompt as its first message — the
- * same two steps `startLearning` established. The model, when the template
- * names one, is the same `set_model` the model panel sends.
+ * session the ordinary way and sends the prompt as its first message — the same
+ * two steps `startLearning` established.
  *
- * **History never re-derives state.** Each link froze the task's name and
- * model at start time (the design: history reflects what *was*), and its live
- * status reads the session's own bucket — the same facts the rail's dots read,
- * not a second state machine. Opening prefers the live child (a `focus`,
- * which sends nothing) and falls back to the saved id, the way the rail
- * itself opens a session.
+ * **History never re-derives state.** Each link froze the task's name and model
+ * at start time (the design: history reflects what *was*), its outcome was
+ * written down once by the reducer while the transcript that decided it still
+ * existed (`noteTaskRunOutcome` — see `TaskRunLink.outcome` for why that is
+ * recorded rather than recomputed), and its live status reads the session's own
+ * bucket. Opening prefers the live child (a `focus`, which sends nothing) and
+ * falls back to the saved id, the way the rail itself opens a session.
  */
 export function TaskPanel() {
   const t = useT();
@@ -53,29 +88,26 @@ export function TaskPanel() {
   const taskRuns = useApp((s) => s.taskRuns);
   const upsertTask = useApp((s) => s.upsertTask);
   const deleteTask = useApp((s) => s.deleteTask);
+  const clearTaskRuns = useApp((s) => s.clearTaskRuns);
   const runTask = useApp((s) => s.runTask);
   const workspaces = useApp((s) => s.workspaces);
   const remoteWorkspaces = useApp((s) => s.remoteWorkspaces);
-  const activeKey = useApp((s) => s.activeKey);
-  const liveIdsKey = useApp(selectLiveSessionIdsKey);
-  const focusSession = useApp((s) => s.focusSession);
-
-  // Which template the editor holds; `null` is the shelf. One dialog, three
-  // surfaces — the editor is a state of this panel, not a second dialog.
-  const [editingId, setEditingId] = useState<string | null>(null);
-  // The task's own id whose history is expanded on the shelf.
-  const [historyId, setHistoryId] = useState<string | null>(null);
-  // Delete needs the same two-press arm every other destructive control uses.
-  const [armedDelete, setArmedDelete] = useState<string | null>(null);
 
   const workspace = useApp(activeWorkspaceOf);
   const rt = useApp(activeRuntime);
   const remoteWorkspaceId = rt?.remoteWorkspaceId ?? null;
-  // The compact key, not a Set built per render: zustand compares selector
-  // output by identity, and this is the same string the rail subscribes to.
-  const liveKeysKey = useApp((s) =>
-    s.order.filter((key) => s.sessions[key]?.sessionId !== null).join('\u0001'),
-  );
+
+  /**
+   * Which surface is up, and which template the editor holds.
+   *
+   * History carries no task id on purpose: the design's history is a list of
+   * **runs across every template**, with its own title and back button. It is
+   * not one task's log — deleting a template keeps its runs (see `deleteTask`),
+   * and a log reachable only through a template would make those runs
+   * unreachable the moment the template went away.
+   */
+  const [surface, setSurface] = useState<'list' | 'history'>('list');
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const editing = editingId !== null ? (tasks.find((row) => row.id === editingId) ?? null) : null;
 
@@ -89,16 +121,6 @@ export function TaskPanel() {
     () => new Map(remoteWorkspaces.map((entry) => [entry.id, entry.label])),
     [remoteWorkspaces],
   );
-
-  const runsByTask = useMemo(() => {
-    const map = new Map<string, TaskRunLink[]>();
-    for (const link of taskRuns) {
-      const list = map.get(link.taskId) ?? [];
-      list.push(link);
-      map.set(link.taskId, list);
-    }
-    return map;
-  }, [taskRuns]);
 
   /** Resolve a ref the way Run will, and say what it names. `null` is
    *  "names something this window no longer knows" — shown, and refused. */
@@ -138,234 +160,796 @@ export function TaskPanel() {
           upsertTask(next);
           setEditingId(null);
         }}
-        onCancel={() => setEditingId(null)}
+        onCancel={() => {
+          // A brand-new, untouched template is not worth leaving behind: "New
+          // task" writes the row before the editor opens, so cancelling out of
+          // one that was never typed into would leave blank shelf litter. Only
+          // a row with nothing in it at all is discarded — anything typed keeps
+          // it, which is what makes Esc safe to press.
+          const untouched =
+            editing.description.trim() === '' && editing.prompt.trim() === '';
+          if (untouched) deleteTask(editing.id);
+          setEditingId(null);
+        }}
       />
     );
   }
 
+  if (surface === 'history') {
+    return <TaskHistory links={taskRuns} onBack={() => setSurface('list')} onClear={clearTaskRuns} />;
+  }
+
   return (
-    <PanelShell
-      title={t('panel.task.title')}
-      count={tasks.length}
-      note={t('panel.task.note')}
-    >
-      <PanelBody>
-        <button
-          type="button"
-          className="btn btn-outline btn-block"
-          style={{ margin: '0 var(--space-3) var(--space-2)' }}
-          onClick={startNew}
-        >
+    <TaskShelf
+      tasks={tasks}
+      links={taskRuns}
+      labelOf={labelOf}
+      onNew={startNew}
+      onEdit={(id) => setEditingId(id)}
+      onDuplicate={duplicate}
+      onHistory={() => setSurface('history')}
+      onRun={runTask}
+    />
+  );
+}
+
+/* ============================================================
+   The shelf: every template, in the design's row shape.
+   ============================================================ */
+
+type ShelfFilter = 'all' | 'enabled' | 'disabled';
+
+function TaskShelf({
+  tasks,
+  links,
+  labelOf,
+  onNew,
+  onEdit,
+  onDuplicate,
+  onHistory,
+  onRun,
+}: {
+  tasks: Task[];
+  links: TaskRunLink[];
+  labelOf: (ref: TaskWorkspaceRef) => string | null;
+  onNew: () => void;
+  onEdit: (id: string) => void;
+  onDuplicate: (task: Task) => void;
+  onHistory: () => void;
+  /** Resolves to the child key the run landed in, or `null` when nothing was
+   *  started — the store's own contract, which the row's error line reads. */
+  onRun: (id: string) => Promise<string | null>;
+}) {
+  const t = useT();
+  const [filter, setFilter] = useState<ShelfFilter>('all');
+  const [query, setQuery] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  // Whether this window has anywhere at all to run a template. Used only to
+  // disable Run with a reason: the store refuses an unresolvable ref silently,
+  // and a button that looks available and does nothing is the worse failure.
+  const noWorkspace = useApp(
+    (s) => s.order.every((key) => (s.sessions[key]?.session?.workspace ?? s.sessions[key]?.workspace ?? '') === ''),
+  );
+
+  const counts = useMemo(
+    () => ({
+      all: tasks.length,
+      enabled: tasks.filter((row) => row.enabled).length,
+      disabled: tasks.filter((row) => !row.enabled).length,
+    }),
+    [tasks],
+  );
+
+  const shown = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return tasks.filter((row) => {
+      if (filter === 'enabled' && !row.enabled) return false;
+      if (filter === 'disabled' && row.enabled) return false;
+      if (needle === '') return true;
+      return (
+        row.name.toLowerCase().includes(needle) || row.description.toLowerCase().includes(needle)
+      );
+    });
+  }, [tasks, filter, query]);
+
+  return (
+    <>
+      <div className="dialog-head tk-head">
+        <div className="grow">
+          <DialogPrimitive.Title className="dialog-title tk-title">
+            {t('panel.task.title')}
+            <TaskInfo />
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="dialog-desc">
+            {t('panel.task.note')}
+          </DialogPrimitive.Description>
+        </div>
+        <button type="button" className="btn btn-outline" onClick={onHistory}>
+          <Clock size={13} />
+          {t('panel.task.history')}
+        </button>
+        <div className="tk-search">
+          <Search size={13} className="tk-search-icon" />
+          <input
+            className="tk-search-input"
+            value={query}
+            spellCheck={false}
+            placeholder={t('panel.task.search')}
+            aria-label={t('panel.task.search')}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <button type="button" className="btn btn-primary" onClick={onNew}>
           <Plus size={13} />
           {t('panel.task.new')}
         </button>
+      </div>
+
+      <div className="tk-filters">
+        <div className="tk-chips" role="tablist" aria-label={t('panel.task.title')}>
+          {(['all', 'enabled', 'disabled'] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={filter === key}
+              className={`tk-chip${filter === key ? ' is-on' : ''}`}
+              onClick={() => setFilter(key)}
+            >
+              {t(`panel.task.filter.${key}`)}
+              <span className="tk-chip-count">{counts[key]}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <PanelBody>
+        {problem !== null ? (
+          <p className="tk-problem" role="alert">
+            {problem}
+          </p>
+        ) : null}
 
         {tasks.length === 0 ? (
-          <EmptyState title={t('panel.task.empty')} hint={t('panel.task.emptyHint')} />
+          <div className="tk-blank">
+            <SquareTerminal size={20} className="tk-blank-icon" />
+            <div className="tk-blank-title">{t('panel.task.empty')}</div>
+            <div className="tk-blank-hint">{t('panel.task.emptyHint')}</div>
+          </div>
+        ) : shown.length === 0 ? (
+          <div className="tk-blank">
+            <div className="tk-blank-title">{t('panel.task.noMatch')}</div>
+            <div className="tk-blank-hint">{t('panel.task.noMatchHint')}</div>
+          </div>
         ) : (
-          <div className="task-list">
-            {tasks.map((task) => {
+          <div className="tk-list">
+            {shown.map((task) => {
               const label = labelOf(task.workspace);
               const available = label !== null;
-              const problems = taskProblemText(
-                task,
-                t('panel.task.problem.name'),
-                t('panel.task.problem.prompt'),
-              );
-              const runnable = canRunTask(task) && available;
-              const runs = runsByTask.get(task.id) ?? [];
-              const openRuns = runs.filter(
-                (row) => row.sessionKey !== '' && liveKeysKey.split('\u0001').includes(row.sessionKey),
-              ).length;
-              const expanded = historyId === task.id;
+              const missing = taskProblems(task);
+              const runnable = canRunTask(task) && available && !noWorkspace;
+              const blocked =
+                missing.length > 0
+                  ? missing.includes('name')
+                    ? t('panel.task.problem.name')
+                    : t('panel.task.problem.prompt')
+                  : !available
+                    ? t('panel.task.workspaceMissing')
+                    : noWorkspace
+                      ? t('panel.task.emptyHint')
+                      : null;
+              const runs = links.filter((row) => row.taskId === task.id);
+              const busy = busyId === task.id;
               return (
-                <div key={task.id} className="task-card">
-                  <div className="task-card-head">
-                    <span className="task-card-name">
-                      {task.name.trim() === '' ? t('panel.task.unnamed') : task.name}
-                    </span>
-                    {!task.enabled ? <Badge tone="neutral">{t('panel.task.disabled')}</Badge> : null}
-                    {!available ? <Badge tone="warning">{t('panel.task.workspaceMissing')}</Badge> : null}
-                    <span className="grow" />
-                    <Tip label={t('panel.task.run')}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-icon"
-                        aria-label={t('panel.task.run')}
-                        disabled={!runnable}
-                        title={problems ?? undefined}
-                        onClick={() => void runTask(task.id)}
-                      >
-                        <Play size={13} />
-                      </button>
-                    </Tip>
-                    <Tip label={t('panel.task.edit')}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-icon"
-                        aria-label={t('panel.task.edit')}
-                        onClick={() => setEditingId(task.id)}
-                      >
-                        <Pencil size={13} />
-                      </button>
-                    </Tip>
-                    <Tip label={t('panel.task.copy')}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-icon"
-                        aria-label={t('panel.task.copy')}
-                        onClick={() => duplicate(task)}
-                      >
-                        <Copy size={13} />
-                      </button>
-                    </Tip>
-                    <Tip label={armedDelete === task.id ? t('panel.task.deleteConfirm') : t('panel.task.delete')}>
-                      <button
-                        type="button"
-                        className={`btn btn-ghost btn-icon${armedDelete === task.id ? ' is-armed' : ''}`}
-                        aria-label={armedDelete === task.id ? t('panel.task.deleteConfirm') : t('panel.task.delete')}
-                        onClick={() => {
-                          if (armedDelete === task.id) {
-                            setArmedDelete(null);
-                            deleteTask(task.id);
-                          } else {
-                            setArmedDelete(task.id);
-                          }
-                        }}
-                        onMouseLeave={() => {
-                          if (armedDelete === task.id) setArmedDelete(null);
-                        }}
-                      >
-                        {armedDelete === task.id ? <X size={13} /> : <Trash2 size={13} />}
-                      </button>
-                    </Tip>
-                  </div>
-                  {task.description.trim() !== '' ? (
-                    <div className="task-card-desc">{task.description}</div>
-                  ) : null}
-                  <div className="task-card-meta">
-                    <span className="caption faint mono truncate" title={label ?? undefined}>
-                      {available ? (label ?? '') : t('panel.task.workspaceMissing')}
-                    </span>
-                    {task.model.trim() !== '' ? (
-                      <span className="caption faint mono">{task.model}</span>
-                    ) : (
-                      <span className="caption faint">{t('panel.task.modelDefault')}</span>
-                    )}
-                    {runs.length > 0 ? (
-                      <button
-                        type="button"
-                        className="task-history-toggle caption faint"
-                        aria-expanded={expanded}
-                        onClick={() => setHistoryId(expanded ? null : task.id)}
-                      >
-                        <ChevronRight size={12} className={`caret${expanded ? ' caret-open' : ''}`} />
-                        {t('panel.task.history', { n: runs.length })}
-                        {openRuns > 0 ? <span className="task-open-count">{openRuns}</span> : null}
-                      </button>
-                    ) : null}
-                  </div>
-                  {expanded ? (
-                    <TaskHistory
-                      links={runs}
-                      liveIdsKey={liveIdsKey}
-                      liveKeys={new Set(liveKeysKey === '' ? [] : liveKeysKey.split('\u0001'))}
-                      activeKey={activeKey}
-                      onOpenLive={(key) => focusSession(key)}
-                      onOpenSaved={(sessionId) => void useApp.getState().openSession(sessionId)}
-                    />
-                  ) : null}
-                </div>
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  label={label}
+                  runs={runs}
+                  busy={busy}
+                  runnable={runnable}
+                  blocked={blocked}
+                  onRun={() => {
+                    setProblem(null);
+                    setBusyId(task.id);
+                    void onRun(task.id).then((key) => {
+                      setBusyId((current) => (current === task.id ? null : current));
+                      // `null` is the store's own "nothing was started": an
+                      // unresolvable workspace, or an open the bridge refused.
+                      // The panel says so rather than leaving a button that
+                      // appeared to work.
+                      if (key === null) setProblem(t('panel.task.workspaceMissing'));
+                    });
+                  }}
+                  onEdit={() => onEdit(task.id)}
+                  onDuplicate={() => onDuplicate(task)}
+                />
               );
             })}
           </div>
         )}
       </PanelBody>
-    </PanelShell>
+    </>
+  );
+}
+
+/** One template. The whole row shape from the design, in one place. */
+function TaskRow({
+  task,
+  label,
+  runs,
+  busy,
+  runnable,
+  blocked,
+  onRun,
+  onEdit,
+  onDuplicate,
+}: {
+  task: Task;
+  label: string | null;
+  runs: TaskRunLink[];
+  busy: boolean;
+  runnable: boolean;
+  blocked: string | null;
+  onRun: () => void;
+  onEdit: () => void;
+  onDuplicate: () => void;
+}) {
+  const t = useT();
+  const deleteTask = useApp((s) => s.deleteTask);
+  const upsertTask = useApp((s) => s.upsertTask);
+
+  // The design's "Row · Running": a progress bar in the action slot, because a
+  // run's own length is unknowable and a spinner in a row of other rows reads
+  // as "this page is loading" rather than "this one task is working".
+  //
+  // Through a selector returning a **stable boolean**, not a `sessions`
+  // subscription: a row is drawn for every template, and the naive version
+  // re-renders all of them on every token of every session in the window.
+  const runKeys = runs.map((link) => link.sessionKey);
+  const running = useApp((s) => selectRunInFlight(s, runKeys));
+
+  const newest = runs.length > 0 ? runs[runs.length - 1] : null;
+  const failed = newest !== null && newest.outcome === 'failed';
+
+  return (
+    <div className={`tk-row${task.enabled ? '' : ' is-disabled'}`}>
+      <span className="tk-mark" aria-hidden>
+        <SquareTerminal size={15} />
+      </span>
+
+      <div className="tk-row-main">
+        <div className="tk-row-title">
+          <button type="button" className="tk-row-name" onClick={onEdit}>
+            {task.name.trim() === '' ? t('panel.task.unnamed') : task.name}
+          </button>
+          {!task.enabled ? <span className="badge badge-neutral">{t('panel.task.disabled')}</span> : null}
+          {label === null ? (
+            <span className="badge badge-warning">{t('panel.task.workspaceMissing')}</span>
+          ) : null}
+        </div>
+
+        {task.description.trim() !== '' ? (
+          <div className="tk-row-desc">{task.description}</div>
+        ) : null}
+
+        <div className="tk-row-meta">
+          <span className="tk-meta-item" title={label ?? undefined}>
+            <Folder size={12} />
+            {label === null ? t('panel.task.workspaceMissing') : baseName(label) || label}
+          </span>
+          <span className="tk-meta-item">
+            <Sparkles size={12} />
+            {task.model.trim() === '' ? t('panel.task.modelDefault') : task.model}
+          </span>
+          {/* The last run's verdict, when it was a failure. A caption rather
+              than a badge, and it sits in the meta line with the workspace and
+              model: those three answer "what is this task now", while the
+              verdict is a fact about what *was*. A second badge beside the
+              name would read as a property of the template — which it is
+              not, and which is why the full ledger lives in History. */}
+          {failed && !running ? (
+            <span className="tk-meta-item tk-meta-failed">{t('panel.task.lastRunFailed')}</span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="tk-row-actions">
+        {running ? (
+          <span className="tk-running">
+            <span className="tk-bar" aria-hidden>
+              <span className="tk-bar-fill" />
+            </span>
+            <span className="tk-running-label">{t('panel.task.running')}</span>
+          </span>
+        ) : task.enabled ? (
+          <Tip label={blocked ?? t('panel.task.runHint')}>
+            {/* The wrapper keeps the design's fixed slot: a disabled button is
+                still a button, and removing it would move the overflow menu. */}
+            <button
+              type="button"
+              className="btn btn-primary tk-run"
+              disabled={!runnable || busy}
+              onClick={onRun}
+            >
+              <Play size={12} />
+              {t('panel.task.run')}
+            </button>
+          </Tip>
+        ) : null}
+
+        <TaskMenu
+          enabled={task.enabled}
+          onEdit={onEdit}
+          onDuplicate={onDuplicate}
+          onToggleEnabled={() => upsertTask({ ...task, enabled: !task.enabled })}
+          onDelete={() => deleteTask(task.id)}
+        />
+      </div>
+    </div>
   );
 }
 
 /* ============================================================
-   One task's history: its links, newest first.
+   The overflow menu: edit, duplicate, enable/disable, delete.
    ============================================================ */
-function TaskHistory({
-  links,
-  liveIdsKey,
-  liveKeys,
-  activeKey,
-  onOpenLive,
-  onOpenSaved,
+
+function TaskMenu({
+  enabled,
+  onEdit,
+  onDuplicate,
+  onToggleEnabled,
+  onDelete,
 }: {
-  links: TaskRunLink[];
-  liveIdsKey: string;
-  liveKeys: Set<string>;
-  activeKey: string | null;
-  onOpenLive: (key: string) => void;
-  onOpenSaved: (sessionId: string) => void;
+  enabled: boolean;
+  onEdit: () => void;
+  onDuplicate: () => void;
+  onToggleEnabled: () => void;
+  onDelete: () => void;
 }) {
   const t = useT();
+  const [open, setOpen] = useState(false);
+  // Delete keeps the two-press arm every other destructive control in this app
+  // uses: the first press only arms, and the menu stays up to say so. Anything
+  // else — the scrim, Escape, another row — closes the menu and disarms with
+  // it, so a stray first press costs nothing.
+  const [armed, setArmed] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) setArmed(false);
+  }, [open]);
+
+  function close(): void {
+    setOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
+  return (
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+      <PopoverPrimitive.Trigger asChild>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="btn btn-ghost btn-icon tk-more"
+          aria-label={t('panel.task.more')}
+          aria-haspopup="menu"
+        >
+          <MoreHorizontal size={15} />
+        </button>
+      </PopoverPrimitive.Trigger>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          className="tk-menu"
+          align="end"
+          sideOffset={6}
+          aria-label={t('panel.task.more')}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
+          <button type="button" role="menuitem" className="tk-menu-item" onClick={() => { onEdit(); close(); }}>
+            <Pencil size={13} />
+            {t('panel.task.edit')}
+          </button>
+          <button type="button" role="menuitem" className="tk-menu-item" onClick={() => { onDuplicate(); close(); }}>
+            <Copy size={13} />
+            {t('panel.task.copy')}
+          </button>
+          <button type="button" role="menuitem" className="tk-menu-item" onClick={() => { onToggleEnabled(); close(); }}>
+            {enabled ? <X size={13} /> : <Check size={13} />}
+            {enabled ? t('panel.task.disable') : t('panel.task.enable')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={`tk-menu-item is-destructive${armed ? ' is-armed' : ''}`}
+            onClick={() => {
+              if (armed) {
+                onDelete();
+                close();
+              } else {
+                setArmed(true);
+              }
+            }}
+          >
+            <Trash2 size={13} />
+            {armed ? t('panel.task.deleteConfirm') : t('panel.task.delete')}
+          </button>
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
+  );
+}
+
+/* ============================================================
+   History: every run, newest first, grouped by day.
+   ============================================================ */
+
+type HistoryFilter = 'all' | 'succeeded' | 'failed';
+
+/** One run as History draws it: the link plus the facts read off its session. */
+interface RunView {
+  link: TaskRunLink;
+  /** The child is up right now. */
+  live: boolean;
+  /** A turn is in flight in it. */
+  running: boolean;
+  /** The live bucket's own last-turn figure, for a run whose link has none. */
+  liveTurnMs: number | null;
+  outcome: 'running' | 'ok' | 'failed';
+  /** Whether its session can be opened at all — a live child, or an id this
+   *  window may still load. */
+  openable: boolean;
+}
+
+function TaskHistory({
+  links,
+  onBack,
+  onClear,
+}: {
+  links: TaskRunLink[];
+  onBack: () => void;
+  onClear: () => void;
+}) {
+  const t = useT();
+  const [filter, setFilter] = useState<HistoryFilter>('all');
+  const [query, setQuery] = useState('');
+  const activeKey = useApp((s) => s.activeKey);
+  const liveIdsKey = useApp(selectLiveSessionIdsKey);
+  const focusSession = useApp((s) => s.focusSession);
+
+  /**
+   * The verdicts, as **one stable primitive**.
+   *
+   * The obvious version of this subscribes to `s.sessions` and rebuilds a map
+   * of key → status in the component body — and that is the version that
+   * re-renders this list on *every token of every session*, because a bucket's
+   * identity changes on every appended entry. zustand compares selector output
+   * by reference, so a compact string is the same escape hatch
+   * `selectLiveSessionIdsKey` uses: it changes only when a turn's status
+   * actually does.
+   */
+  const statusKey = useApp(selectTaskRunStatusKey);
+
+  /** `sessionKey → status`, from the compact key. */
+  const statusOf = useMemo(() => {
+    const map = new Map<string, { stop: string | null; ms: number | null }>();
+    if (statusKey === '') return map;
+    for (const part of statusKey.split('\u0001')) {
+      const [key, stop, ms] = part.split('\u0000');
+      if (key === undefined) continue;
+      map.set(key, {
+        stop: stop === undefined || stop === '' ? null : stop,
+        ms: ms === undefined || ms === '' ? null : Number(ms),
+      });
+    }
+    return map;
+  }, [statusKey]);
+
+  const liveKeys = useMemo(() => new Set(statusOf.keys()), [statusOf]);
+
   const liveIds = useMemo(
     () => new Set(liveIdsKey === '' ? [] : liveIdsKey.split('\u0001')),
     [liveIdsKey],
   );
 
+  /** Every run, newest first, with its verdict resolved exactly once. */
+  const runs = useMemo<RunView[]>(() => {
+    const rows: RunView[] = [];
+    for (let i = links.length - 1; i >= 0; i -= 1) {
+      const link = links[i];
+      const live = liveKeys.has(link.sessionKey);
+      const read = statusOf.get(link.sessionKey);
+      const stop = read?.stop ?? null;
+      const running = stop === 'running';
+      rows.push({
+        link,
+        live,
+        running,
+        liveTurnMs: read?.ms ?? null,
+        outcome: taskRunOutcome({
+          live,
+          running,
+          stopReason: stop,
+          recorded: link.outcome ?? null,
+        }),
+        // The rail's own two reachability rules: a live child is focused, and
+        // a saved id is offered only while no live child already holds it —
+        // opening both would be two processes on one session file.
+        openable: live || (link.sessionId !== '' && !liveIds.has(link.sessionId)),
+      });
+    }
+    return rows;
+  }, [links, statusOf, liveKeys, liveIds]);
+
+  const counts = useMemo(
+    () => ({
+      all: runs.length,
+      succeeded: runs.filter((row) => row.outcome === 'ok').length,
+      failed: runs.filter((row) => row.outcome === 'failed').length,
+    }),
+    [runs],
+  );
+
+  const shown = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return runs.filter((row) => {
+      if (filter === 'succeeded' && row.outcome !== 'ok') return false;
+      if (filter === 'failed' && row.outcome !== 'failed') return false;
+      if (needle === '') return true;
+      return (
+        row.link.taskName.toLowerCase().includes(needle) ||
+        row.link.workspaceLabel.toLowerCase().includes(needle) ||
+        row.link.model.toLowerCase().includes(needle)
+      );
+    });
+  }, [runs, filter, query]);
+
+  // Grouped in one pass over the already-sorted list, so the day boundaries
+  // can never disagree with the order the rows are drawn in.
+  const groups = useMemo(() => {
+    const now = Date.now();
+    const out: { day: RunDay; rows: RunView[] }[] = [];
+    for (const row of shown) {
+      const day = runDay(row.link.startedAtMs, now);
+      const last = out[out.length - 1];
+      if (last !== undefined && last.day === day) last.rows.push(row);
+      else out.push({ day, rows: [row] });
+    }
+    return out;
+  }, [shown]);
+
+  function open(row: RunView): void {
+    if (row.live) focusSession(row.link.sessionKey);
+    else if (row.link.sessionId !== '') void useApp.getState().openSession(row.link.sessionId);
+  }
+
   return (
-    <div className="task-history">
-      {[...links].reverse().map((link) => {
-        // Read off the bucket the row names. The parent re-renders when the
-        // live-key string changes, so a run finishing or a child dying is
-        // picked up without this component subscribing to anything wider.
-        const live = liveKeys.has(link.sessionKey);
-        const saved = link.sessionId !== '';
-        // Opening prefers the live child; without one the saved id is what
-        // opens — the same two names the rail's own rows are reachable by.
-        // A saved id a live child holds is the focus path, never a second
-        // process on the same file.
-        const canOpen = live || (saved && !liveIds.has(link.sessionId));
-        return (
+    <>
+      <div className="dialog-head tk-head">
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          aria-label={t('panel.task.historyBack')}
+          title={t('panel.task.historyBack')}
+          onClick={onBack}
+        >
+          <ArrowLeft size={15} />
+        </button>
+        <div className="grow">
+          <DialogPrimitive.Title className="dialog-title tk-title">
+            {t('panel.task.historyTitle')}
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="dialog-desc">
+            {t('panel.task.historyNote')}
+          </DialogPrimitive.Description>
+        </div>
+        <div className="tk-search">
+          <Search size={13} className="tk-search-icon" />
+          <input
+            className="tk-search-input"
+            value={query}
+            spellCheck={false}
+            placeholder={t('panel.task.historySearch')}
+            aria-label={t('panel.task.historySearch')}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <HistoryMenu onClear={onClear} />
+      </div>
+
+      <div className="tk-filters">
+        <div className="tk-chips" role="tablist" aria-label={t('panel.task.historyTitle')}>
+          {(['all', 'succeeded', 'failed'] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={filter === key}
+              className={`tk-chip${filter === key ? ' is-on' : ''}`}
+              onClick={() => setFilter(key)}
+            >
+              {t(`panel.task.history${key === 'all' ? 'All' : key === 'succeeded' ? 'Succeeded' : 'Failed'}`)}
+              <span className="tk-chip-count">{counts[key]}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <PanelBody>
+        {runs.length === 0 ? (
+          <div className="tk-blank">
+            <SquareTerminal size={20} className="tk-blank-icon" />
+            <div className="tk-blank-title">{t('panel.task.historyEmpty')}</div>
+            <div className="tk-blank-hint">{t('panel.task.historyEmptyHint')}</div>
+          </div>
+        ) : shown.length === 0 ? (
+          <div className="tk-blank">
+            <div className="tk-blank-title">{t('panel.task.historyNoMatch')}</div>
+            <div className="tk-blank-hint">{t('panel.task.noMatchHint')}</div>
+          </div>
+        ) : (
+          <div className="tk-list">
+            {groups.map((group) => (
+              <div key={group.day}>
+                <div className="tk-day">
+                  <span className="tk-day-label">{t(`panel.task.day.${group.day}`)}</span>
+                  <span className="tk-day-count">
+                    {group.rows.length === 1
+                      ? t('panel.task.day.countOne')
+                      : t('panel.task.day.count', { n: group.rows.length })}
+                  </span>
+                </div>
+                {group.rows.map((row) => (
+                  <HistoryRow
+                    key={`${row.link.startedAtMs}-${row.link.sessionKey}`}
+                    row={row}
+                    onScreen={row.live && activeKey === row.link.sessionKey}
+                    onOpen={() => open(row)}
+                    onRetry={() => void useApp.getState().runTask(row.link.taskId)}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </PanelBody>
+    </>
+  );
+}
+
+function HistoryRow({
+  row,
+  onScreen,
+  onOpen,
+  onRetry,
+}: {
+  row: RunView;
+  onScreen: boolean;
+  onOpen: () => void;
+  onRetry: () => void;
+}) {
+  const t = useT();
+  const { link } = row;
+  // The recorded figure first — it is the one the runtime itself measured and
+  // the only one that survives the child. The live bucket's own number is the
+  // fallback for a run whose verdict was written before its duration was, and
+  // for one still in flight.
+  const durationMs = link.durationMs ?? row.liveTurnMs;
+  const failed = row.outcome === 'failed';
+
+  const meta = [
+    formatClock(link.startedAtMs),
+    link.workspaceLabel,
+    link.model.trim() === '' ? t('panel.task.modelDefault') : link.model,
+    durationMs === null ? null : formatDuration(durationMs),
+  ].filter((part): part is string => part !== null && part !== '');
+
+  return (
+    <div className="tk-row tk-run-row">
+      <span
+        className={`tk-run-dot is-${row.outcome}`}
+        title={
+          row.running
+            ? t('panel.task.historyLive')
+            : failed
+              ? t('panel.task.failed')
+              : t('panel.task.succeeded')
+        }
+      >
+        {row.running ? null : failed ? <X size={11} /> : <Check size={11} />}
+      </span>
+
+      <div className="tk-row-main">
+        <div className="tk-row-title">
+          <span className="tk-row-name is-static">{link.taskName}</span>
+          {failed ? <span className="badge badge-destructive">{t('panel.task.failed')}</span> : null}
+          {onScreen ? <span className="badge badge-neutral">{t('panel.task.onScreen')}</span> : null}
+        </div>
+        <div className="tk-row-meta">
+          <span className="tk-meta-item">{meta.join(' · ')}</span>
+        </div>
+      </div>
+
+      <div className="tk-row-actions">
+        {failed ? (
+          <Tip label={t('panel.task.retryHint')}>
+            <button type="button" className="btn tk-retry" onClick={onRetry}>
+              {t('panel.task.retry')}
+            </button>
+          </Tip>
+        ) : (
+          <Tip label={row.openable ? t('panel.task.openHint') : t('panel.task.openGone')}>
+            <button type="button" className="btn btn-outline" disabled={!row.openable} onClick={onOpen}>
+              {t('panel.task.open')}
+            </button>
+          </Tip>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HistoryMenu({ onClear }: { onClear: () => void }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [armed, setArmed] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) setArmed(false);
+  }, [open]);
+
+  return (
+    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+      <PopoverPrimitive.Trigger asChild>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="btn btn-ghost btn-icon"
+          aria-label={t('panel.task.more')}
+          aria-haspopup="menu"
+        >
+          <MoreHorizontal size={15} />
+        </button>
+      </PopoverPrimitive.Trigger>
+      <PopoverPrimitive.Portal>
+        <PopoverPrimitive.Content
+          className="tk-menu"
+          align="end"
+          sideOffset={6}
+          aria-label={t('panel.task.more')}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+        >
           <button
-            key={`${link.startedAtMs}-${link.sessionKey}`}
             type="button"
-            className="task-history-row"
-            disabled={!canOpen}
-            title={canOpen ? t('panel.task.historyOpen') : t('panel.task.historyGone')}
+            role="menuitem"
+            className={`tk-menu-item is-destructive${armed ? ' is-armed' : ''}`}
+            title={t('panel.task.clearHistoryHint')}
             onClick={() => {
-              if (live) onOpenLive(link.sessionKey);
-              else if (saved) onOpenSaved(link.sessionId);
+              if (armed) {
+                onClear();
+                setOpen(false);
+                requestAnimationFrame(() => triggerRef.current?.focus());
+              } else {
+                setArmed(true);
+              }
             }}
           >
-            <span
-              className={`task-dot${live ? ' is-live' : saved ? ' is-idle' : ' is-gone'}`}
-              title={
-                live
-                  ? t('panel.task.historyLive')
-                  : saved
-                    ? t('panel.task.historySaved')
-                    : t('panel.task.historyPending')
-              }
-            />
-            <span className="task-history-label">{link.taskName}</span>
-            <span className="caption faint mono">
-              {saved ? link.sessionId : t('panel.task.starting')}
-            </span>
-            <span className="grow" />
-            {link.model.trim() !== '' ? <span className="caption faint mono">{link.model}</span> : null}
-            <span className="caption faint">{formatRelative(link.startedAtMs)}</span>
-            {live && activeKey === link.sessionKey ? (
-              <Badge tone="success" dot={false}>
-                {t('panel.task.onScreen')}
-              </Badge>
-            ) : null}
+            <Trash2 size={13} />
+            {armed ? t('panel.task.clearHistoryConfirm') : t('panel.task.clearHistory')}
           </button>
-        );
-      })}
-    </div>
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
+    </PopoverPrimitive.Root>
   );
 }
 
 /* ============================================================
    The editor: one template's fields, saved whole.
    ============================================================ */
+
 function TaskEditor({
   task,
   localPaths,
@@ -381,151 +965,424 @@ function TaskEditor({
 }) {
   const t = useT();
   const [draft, setDraft] = useState<Task>(task);
+  // A required field is shown as an error only once it has been left empty *and*
+  // the person has been in it: marking "Name" red before anything has been typed
+  // is the form scolding somebody for not having started.
+  const [touched, setTouched] = useState(false);
 
-  const problems = taskProblemText(draft, t('panel.task.problem.name'), t('panel.task.problem.prompt'));
-  const canSave = problems === null;
+  const missing = taskProblems(draft);
+  const canSave = missing.length === 0;
+  // "New" is read off the task's own name rather than passed in as a flag: the
+  // editor's `key` is the task id, so for the whole life of one editor this is
+  // a constant, and a constant that cannot drift from the field it describes is
+  // worth more than a prop that can.
+  const isNew = task.name.trim() === '';
+
+  // Esc discards, which the footer says. `PanelShell` is not used here, so the
+  // key is bound where the state that has to be discarded lives — and the
+  // handler yields to an open popover or a select, whose own Esc is theirs.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      if (e.key !== 'Escape') return;
+      const target = e.target as HTMLElement | null;
+      if (target !== null && (target.closest('select') !== null || target.closest('[role="listbox"]') !== null)) {
+        return;
+      }
+      e.stopPropagation();
+      e.preventDefault();
+      onCancel();
+    }
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onCancel]);
 
   return (
-    <PanelShell title={t('panel.task.editTitle')} note={t('panel.task.editNote')}>
+    <>
+      <div className="dialog-head tk-head">
+        <div className="grow">
+          <DialogPrimitive.Title className="dialog-title">
+            {isNew ? t('panel.task.newTitle') : t('panel.task.editTitle')}
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="dialog-desc">
+            {t('panel.task.editNote')}
+          </DialogPrimitive.Description>
+        </div>
+        <DialogPrimitive.Close asChild>
+          <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')}>
+            <X size={14} />
+          </button>
+        </DialogPrimitive.Close>
+      </div>
+
       <PanelBody>
-        <div className="cfg-grid">
-          <label className="cfg-field">
-            <span className="cfg-label">
-              {t('panel.task.field.name')} <span className="cfg-required">*</span>
-            </span>
-            <input
-              className="cfg-input"
-              value={draft.name}
-              autoFocus
-              spellCheck={false}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            />
-          </label>
-        </div>
-
-        <label className="cfg-field">
-          <span className="cfg-label">{t('panel.task.field.desc')}</span>
-          <input
-            className="cfg-input"
-            value={draft.description}
-            spellCheck={false}
-            onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-          />
-        </label>
-
-        <label className="cfg-field">
-          <span className="cfg-label">
-            {t('panel.task.field.prompt')} <span className="cfg-required">*</span>
-          </span>
-          <textarea
-            className="cfg-textarea"
-            rows={6}
-            value={draft.prompt}
-            spellCheck={false}
-            placeholder={t('panel.task.field.promptPlaceholder')}
-            onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
-          />
-        </label>
-
-        <div className="cfg-field">
-          <span className="cfg-label">{t('panel.task.field.workspace')}</span>
-          <div className="task-ws" role="radiogroup" aria-label={t('panel.task.field.workspace')}>
-            <label className="cfg-check">
+        <div className="tk-editor">
+          <div className="tk-editor-main">
+            <label className="cfg-field">
+              <span className="cfg-label">
+                {t('panel.task.field.name')} <span className="cfg-required">*</span>
+              </span>
               <input
-                type="radio"
-                name="task-ws"
-                checked={draft.workspace.kind === 'active'}
-                onChange={() => setDraft({ ...draft, workspace: { kind: 'active' } })}
+                className={`cfg-input${touched && missing.includes('name') ? ' is-error' : ''}`}
+                value={draft.name}
+                autoFocus
+                spellCheck={false}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                onBlur={() => setTouched(true)}
               />
-              <span>{t('panel.task.wsActive')}</span>
+              {touched && missing.includes('name') ? (
+                <span className="tk-field-error">{t('panel.task.error.name')}</span>
+              ) : null}
             </label>
-            <label className="task-ws-row">
+
+            <label className="cfg-field">
+              <span className="cfg-label">
+                {t('panel.task.field.desc')} <span className="cfg-optional">{t('panel.task.optional')}</span>
+              </span>
               <input
-                type="radio"
-                name="task-ws"
-                checked={draft.workspace.kind === 'local'}
-                onChange={() =>
-                  setDraft({ ...draft, workspace: { kind: 'local', path: localPaths[0] ?? '' } })
-                }
+                className="cfg-input"
+                value={draft.description}
+                spellCheck={false}
+                placeholder={t('panel.task.field.descPlaceholder')}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
               />
-              <select
-                className="cfg-input task-ws-select"
-                value={draft.workspace.kind === 'local' ? draft.workspace.path : ''}
-                disabled={draft.workspace.kind !== 'local'}
-                onChange={(e) => setDraft({ ...draft, workspace: { kind: 'local', path: e.target.value } })}
-              >
-                {localPaths.map((path) => (
-                  <option key={path} value={path}>
-                    {baseName(path)} — {path}
-                  </option>
-                ))}
-              </select>
             </label>
-            {remoteLabels.size > 0 ? (
-              <label className="task-ws-row">
-                <input
-                  type="radio"
-                  name="task-ws"
-                  checked={draft.workspace.kind === 'remote'}
-                  onChange={() =>
-                    setDraft({ ...draft, workspace: { kind: 'remote', id: [...remoteLabels.keys()][0] ?? '' } })
-                  }
-                />
-                <select
-                  className="cfg-input task-ws-select"
-                  value={draft.workspace.kind === 'remote' ? draft.workspace.id : ''}
-                  disabled={draft.workspace.kind !== 'remote'}
-                  onChange={(e) => setDraft({ ...draft, workspace: { kind: 'remote', id: e.target.value } })}
-                >
-                  {[...remoteLabels.entries()].map(([id, label]) => (
-                    <option key={id} value={id}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
+
+            <label className="cfg-field">
+              <span className="cfg-label">
+                {t('panel.task.field.prompt')} <span className="cfg-required">*</span>
+              </span>
+              <textarea
+                className={`cfg-textarea tk-prompt${touched && missing.includes('prompt') ? ' is-error' : ''}`}
+                rows={9}
+                value={draft.prompt}
+                spellCheck={false}
+                placeholder={t('panel.task.field.promptPlaceholder')}
+                onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
+                onBlur={() => setTouched(true)}
+              />
+              {touched && missing.includes('prompt') ? (
+                <span className="tk-field-error">{t('panel.task.error.prompt')}</span>
+              ) : (
+                <span className="tk-field-hint">{t('panel.task.promptHint')}</span>
+              )}
+            </label>
           </div>
+
+          {/* The environment column. Grouped and tinted because these three
+              fields are not part of the prompt: they decide *where* the session
+              opens and *whether* Run is offered, and the design sets them apart
+              for exactly that reason. */}
+          <aside className="tk-editor-side">
+            <div className="tk-side-title">{t('panel.task.field.environment')}</div>
+
+            <label className="cfg-field">
+              <span className="cfg-label">{t('panel.task.field.workspace')}</span>
+              <WorkspacePicker
+                value={draft.workspace}
+                localPaths={localPaths}
+                remoteLabels={remoteLabels}
+                onChange={(workspace) => setDraft({ ...draft, workspace })}
+              />
+            </label>
+
+            <label className="cfg-field">
+              <span className="cfg-label">
+                {t('panel.task.field.model')} <span className="cfg-optional">{t('panel.task.optional')}</span>
+              </span>
+              <ModelPicker value={draft.model} onChange={(model) => setDraft({ ...draft, model })} />
+              <span className="tk-field-hint">{t('panel.task.field.modelHint')}</span>
+            </label>
+
+            <div className="tk-toggle-row">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={draft.enabled}
+                aria-label={t('panel.task.field.enabled')}
+                className={`tk-switch${draft.enabled ? ' is-on' : ''}`}
+                onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}
+              >
+                <span className="tk-switch-knob" />
+              </button>
+              <span className="tk-toggle-text">
+                <span className="tk-toggle-label">{t('panel.task.field.enabled')}</span>
+                <span className="tk-field-hint">{t('panel.task.field.enabledHint')}</span>
+              </span>
+            </div>
+          </aside>
         </div>
-
-        <label className="cfg-field">
-          <span className="cfg-label">{t('panel.task.field.model')}</span>
-          <p className="set-hint">{t('panel.task.field.modelHint')}</p>
-          <input
-            className="cfg-input mono"
-            value={draft.model}
-            spellCheck={false}
-            placeholder={t('panel.task.field.modelPlaceholder')}
-            onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-          />
-        </label>
-
-        <label className="cfg-check">
-          <input
-            type="checkbox"
-            checked={draft.enabled}
-            onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-          />
-          <span>{t('panel.task.field.enabled')}</span>
-        </label>
       </PanelBody>
 
       <div className="dialog-foot">
-        <span className="cfg-status">
-          {problems !== null ? (
-            <span className="cfg-status-error">{problems}</span>
-          ) : (
-            <Check size={14} className="cfg-status-ok" />
-          )}
-        </span>
+        <span className="tk-discard">{t('panel.task.discard')}</span>
         <span className="grow" />
-        <button type="button" className="btn btn-ghost" onClick={onCancel}>
+        <button type="button" className="btn btn-outline" onClick={onCancel}>
           {t('common.cancel')}
         </button>
         <button type="button" className="btn btn-primary" disabled={!canSave} onClick={() => onDone(draft)}>
-          {t('common.save')}
+          {t('panel.task.save')}
         </button>
       </div>
-    </PanelShell>
+    </>
+  );
+}
+
+/**
+ * Where a run opens: the workspace on screen, a bookmarked local folder, or a
+ * saved remote workspace.
+ *
+ * One collapsed control rather than the three radios this panel used to draw.
+ * The design shows a single workspace field with the resolved path underneath
+ * it, and the three-way choice lives inside its menu — the closed label always
+ * names the *resolved* place, which is what a person is choosing between, while
+ * the three refs are still three refs in the data (`TaskWorkspaceRef`).
+ *
+ * The resolved path is **not** rendered when there is none to show: a remote
+ * workspace's `label` is already the human name of a place this window cannot
+ * address locally, and echoing it underneath itself would be noise.
+ */
+function WorkspacePicker({
+  value,
+  localPaths,
+  remoteLabels,
+  onChange,
+}: {
+  value: TaskWorkspaceRef;
+  localPaths: string[];
+  remoteLabels: Map<string, string>;
+  onChange: (ref: TaskWorkspaceRef) => void;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const remoteEntries = [...remoteLabels.entries()];
+
+  // A ref the store no longer knows falls back to "the workspace on screen"
+  // rather than being shown as a selected value that cannot be run. The store
+  // refuses such a ref at Run time (`workspaceRefLabel` → `null`), so leaving
+  // it displayed would be a field claiming to point somewhere it cannot.
+  const current: TaskWorkspaceRef =
+    value.kind === 'local' && !localPaths.includes(value.path)
+      ? { kind: 'active' }
+      : value.kind === 'remote' && !remoteLabels.has(value.id)
+        ? { kind: 'active' }
+        : value;
+
+  const label =
+    current.kind === 'active'
+      ? t('panel.task.wsActive')
+      : current.kind === 'local'
+        ? baseName(current.path)
+        : (remoteLabels.get(current.id) ?? current.id);
+  const detail = current.kind === 'local' ? current.path : '';
+
+  function pick(next: TaskWorkspaceRef): void {
+    onChange(next);
+    setOpen(false);
+  }
+
+  /** One option row. `on` draws the tick *in the tick's own column*, so every
+   *  label starts at the same x whether or not it is the chosen one — the
+   *  reason for the empty gap span rather than a conditional. */
+  function option(
+    on: boolean,
+    name: string,
+    onClick: () => void,
+  ) {
+    return (
+      <button
+        type="button"
+        role="option"
+        aria-selected={on}
+        className={`tk-menu-item${on ? ' is-on' : ''}`}
+        onClick={onClick}
+      >
+        {on ? <Check size={13} /> : <span className="tk-menu-gap" />}
+        {name}
+      </button>
+    );
+  }
+
+  return (
+    <div className="tk-ws">
+      <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+        <PopoverPrimitive.Trigger asChild>
+          <button type="button" className="tk-select" aria-haspopup="listbox" aria-expanded={open}>
+            <Folder size={13} className="tk-select-icon" />
+            <span className="tk-select-label">{label}</span>
+            <ChevronDown size={13} className="tk-select-caret" />
+          </button>
+        </PopoverPrimitive.Trigger>
+        <PopoverPrimitive.Portal>
+          <PopoverPrimitive.Content
+            className="tk-menu"
+            align="start"
+            sideOffset={4}
+            aria-label={t('panel.task.field.workspace')}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+          >
+            {option(current.kind === 'active', t('panel.task.wsActive'), () => pick({ kind: 'active' }))}
+            {localPaths.length > 0 ? (
+              <div className="tk-menu-label">{t('panel.task.wsLocal')}</div>
+            ) : null}
+            {localPaths.map((path) =>
+              option(current.kind === 'local' && current.path === path, baseName(path), () =>
+                pick({ kind: 'local', path }),
+              ),
+            )}
+            {remoteEntries.length > 0 ? (
+              <div className="tk-menu-label">{t('panel.task.wsRemote')}</div>
+            ) : null}
+            {remoteEntries.map(([id, remoteLabel]) =>
+              option(current.kind === 'remote' && current.id === id, remoteLabel, () =>
+                pick({ kind: 'remote', id }),
+              ),
+            )}
+          </PopoverPrimitive.Content>
+        </PopoverPrimitive.Portal>
+      </PopoverPrimitive.Root>
+      {detail !== '' ? <span className="tk-field-hint">{detail}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * Which model the run's session is switched to — or "inherit", which is the
+ * default and means "whatever the workspace's own configuration says".
+ *
+ * **The catalogue is the open session's own**, not a task's: a model is a fact
+ * about the runtime's configuration at open time, and the only child this panel
+ * can read one from is the session on screen. That is honest rather than
+ * limiting — a task that names a model it cannot offer here can still be typed
+ * in, because the picker is a *menu over a text field*: the chosen value is a
+ * plain string and the field stays editable. An empty catalogue therefore
+ * degrades to exactly what this control used to be, which is the point.
+ *
+ * `provider/model` is what the run sends (`set_model` does no fuzzy matching),
+ * so the qualified form is the value — the same rule `ModelPanel` follows.
+ */
+function ModelPicker({ value, onChange }: { value: string; onChange: (model: string) => void }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState(false);
+  const models = useSessionField((rt) => rt.models, NO_MODEL_ROWS);
+
+  const qualify = (row: { provider: string; id: string }) =>
+    row.provider ? `${row.provider}/${row.id}` : row.id;
+  const label = value.trim() === '' ? t('panel.task.modelInherit') : value;
+
+  return (
+    <div className="tk-ws">
+      <PopoverPrimitive.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) setTyped(false); }}>
+        <PopoverPrimitive.Trigger asChild>
+          <button
+            type="button"
+            className="tk-select"
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            title={value.trim() === '' ? t('panel.task.field.modelHint') : value}
+          >
+            <Sparkles size={13} className="tk-select-icon" />
+            <span className="tk-select-label">{label}</span>
+            <ChevronDown size={13} className="tk-select-caret" />
+          </button>
+        </PopoverPrimitive.Trigger>
+        <PopoverPrimitive.Portal>
+          <PopoverPrimitive.Content
+            className="tk-menu"
+            align="start"
+            sideOffset={4}
+            aria-label={t('panel.task.field.model')}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+          >
+            {typed ? (
+              // Free text: the catalogue is one child's configuration, and a
+              // task may legitimately name a model this window cannot see.
+              <div className="tk-menu-typed">
+                <input
+                  className="cfg-input mono"
+                  autoFocus
+                  defaultValue={value}
+                  spellCheck={false}
+                  placeholder={t('panel.task.field.modelPlaceholder')}
+                  aria-label={t('panel.task.field.model')}
+                  onChange={(e) => onChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') setOpen(false);
+                  }}
+                />
+              </div>
+            ) : null}
+            <button
+              type="button"
+              role="option"
+              aria-selected={value.trim() === ''}
+              className={`tk-menu-item${value.trim() === '' ? ' is-on' : ''}`}
+              onClick={() => { onChange(''); setOpen(false); }}
+            >
+              {value.trim() === '' ? <Check size={13} /> : <span className="tk-menu-gap" />}
+              {t('panel.task.modelInherit')}
+            </button>
+            <button
+              type="button"
+              role="option"
+              aria-selected={typed}
+              className={`tk-menu-item${typed ? ' is-on' : ''}`}
+              onClick={() => setTyped(true)}
+            >
+              {typed ? <Check size={13} /> : <span className="tk-menu-gap" />}
+              {t('panel.task.modelCustom')}
+            </button>
+            {models.length > 0 ? (
+              <div className="tk-menu-label">{t('panel.task.modelAvailable')}</div>
+            ) : null}
+            {models.map((row) => {
+              const name = qualify(row);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  role="option"
+                  aria-selected={value === name}
+                  className={`tk-menu-item${value === name ? ' is-on' : ''}`}
+                  title={row.summary || row.note || undefined}
+                  onClick={() => { onChange(name); setOpen(false); }}
+                >
+                  {value === name ? <Check size={13} /> : <span className="tk-menu-gap" />}
+                  <span className="tk-menu-item-label">{row.label || row.id}</span>
+                  {row.provider ? <span className="tk-menu-item-hint">{row.provider}</span> : null}
+                </button>
+              );
+            })}
+            {models.length === 0 ? (
+              <div className="tk-menu-empty">{t('panel.task.modelNoCatalogue')}</div>
+            ) : null}
+          </PopoverPrimitive.Content>
+        </PopoverPrimitive.Portal>
+      </PopoverPrimitive.Root>
+    </div>
+  );
+}
+
+/** The title's `?`: what a task *is*, kept out of the one-line subtitle.
+ *
+ * A native `title` rather than the app's `Tip`, deliberately. `Tip` is a Radix
+ * tooltip, and this one is mounted **the instant the panel opens** — on the
+ * element the pointer is most likely to already be over, since the header sits
+ * where the dialog's own top edge is. A tooltip that announces itself before
+ * anybody has asked is worse than no tooltip: it covers the filter row it is
+ * supposed to be explaining. The native attribute has no such failure mode, and
+ * what is behind it is a definition, not an interaction.
+ */
+function TaskInfo() {
+  const t = useT();
+  return (
+    <button
+      type="button"
+      className="info-ic"
+      aria-label={t('panel.task.about')}
+      title={t('panel.task.about')}
+    >
+      <InfoGlyph size={13} />
+    </button>
   );
 }
