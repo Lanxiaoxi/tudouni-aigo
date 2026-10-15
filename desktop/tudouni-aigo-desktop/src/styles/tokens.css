@@ -88,7 +88,8 @@
    * 100, the mask is 500, so the mask covers it"). A token whose stated meaning
    * contradicts what the element does is worse than no token: it is a wrong
    * answer written down. The shell's position is now a fact about the shell
-   * (`--z-shell`), stated where it is used. */
+   * (`--z-shell`), stated where it is used.
+   *
    * **The popover rung is above the dialog, and that is the whole point of it.**
    * A dropdown, a menu or a workspace picker is normally *opened from inside*
    * something — most of this app's fields live in a dialog — so a popover rung

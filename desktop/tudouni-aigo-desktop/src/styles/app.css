@@ -659,6 +659,7 @@
  * disturb, is a *reader's* position: the pane must not creep while chunks land
  * above the eye. Checked with the reader parked mid-transcript and 120 chunks
  * arriving — 0px drift, and `scrollTop` not moved by a pixel. */
+/* The skip itself: one row per element, deferred until it is near the screen. */
 .stream-inner > * {
   content-visibility: auto;
   contain-intrinsic-size: auto 120px;
