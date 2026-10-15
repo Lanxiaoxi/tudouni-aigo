@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
 import { CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
-import { NO_SKILLS, useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
+import { NO_SKILLS, NO_SUBAGENTS_DONE, useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
 import { oneLine } from '@/utils/format';
 import type { JobState, SshRow } from '@/protocol/types';
-import type { VmGoal, VmJob, VmMcp, VmTask } from '@/runtime/adapt';
+import type { VmGoal, VmJob, VmMcp, VmSubagentDone, VmTask } from '@/runtime/adapt';
 
 /**
  * §3 Sidebar, six blocks, fixed order:
@@ -36,6 +36,14 @@ export function Sidebar() {
   // The merged loaded set (from `ui(skills).active` + `ui(state)` pointers),
   // not the snapshot's own pointer list.
   const loadedSkills = useSessionField((rt) => rt.skills, NO_SKILLS);
+  // Background delegations: the block answers "what is running in the
+  // background", and a background subagent is that too — it outlives the turn
+  // that started it, exactly like a background command. `subagentsDone` is the
+  // background-only list, so every row in it belongs here.
+  const subagentsDone = useSessionField(
+    (rt) => rt.uiState?.subagentsDone ?? NO_SUBAGENTS_DONE,
+    NO_SUBAGENTS_DONE,
+  );
 
   if (!snap) {
     return (
@@ -51,8 +59,17 @@ export function Sidebar() {
   }
 
   const doneTasks = snap.todos.filter((todo) => todo.status === 'completed').length;
-  const uncollected = snap.jobs.filter((job) => job.uncollected).length;
-  const outstanding = snap.jobs.filter((job) => job.outstanding).length;
+  // A background delegation counts the same way its command counterpart does:
+  // `running` and `uncollected` are the two states that mean somebody still has
+  // to look at it, and "uncollected" is the warning case that colours the badge.
+  const subagentUncollected = subagentsDone.filter(
+    (agent) => agent.state === 'uncollected',
+  ).length;
+  const subagentOutstanding = subagentsDone.length;
+  const uncollected =
+    snap.jobs.filter((job) => job.uncollected).length + subagentUncollected;
+  const outstanding =
+    snap.jobs.filter((job) => job.outstanding).length + subagentOutstanding;
   const mcpLoaded = snap.mcp.filter((server) => server.state === 'loaded').length;
   // The badge is the live count only: ended sessions the list still keeps are
   // history, not load, and a denominator that included them would make "how
@@ -100,20 +117,30 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 3 · Background jobs */}
+        {/* 3 · Background jobs. The block holds both kinds of background work —
+            commands sent to the background and background delegations — because
+            it answers one question: what is still running after the turn moved
+            on. A background subagent outlives its turn exactly like a
+            background command, so it gets a row here, not only in the /subagents
+            panel and the status bar. */}
         <Block
           blockKey="jobs"
           title={t('block.jobs')}
           count={
-            outstanding > 0 ? `${outstanding} / ${snap.jobs.length}` : `${snap.jobs.length}`
+            outstanding > 0
+              ? `${outstanding} / ${snap.jobs.length + subagentsDone.length}`
+              : `${snap.jobs.length + subagentsDone.length}`
           }
           countAttention={uncollected > 0}
-          isEmpty={snap.jobs.length === 0}
+          isEmpty={snap.jobs.length === 0 && subagentsDone.length === 0}
           emptyTitle={t('empty.jobs.title')}
           emptyHint={t('empty.jobs.hint')}
         >
           {snap.jobs.map((job) => (
             <JobRow key={job.id} job={job} />
+          ))}
+          {subagentsDone.map((agent) => (
+            <SubagentRow key={agent.id} agent={agent} />
           ))}
         </Block>
 
@@ -158,11 +185,15 @@ export function Sidebar() {
         {/* 6 · SSH sessions. Display only — the operations stay with the
             `ssh_*` tools, so unlike the MCP rows above there is no action
             button here. The badge counts live sessions; ended rows stay on
-            the list so "what was I connected to" keeps an answer. */}
+            the list so "what was I connected to" keeps an answer. `active`
+            while a session is up, so "1" beside a live connection reads as
+            load (accent) instead of furniture (muted grey) — the same rule
+            the Goal block applies to a set goal. */}
         <Block
           blockKey="ssh"
           title={t('block.ssh')}
           count={sshLive}
+          countActive={sshLive > 0}
           isEmpty={snap.ssh.length === 0}
           emptyTitle={t('empty.ssh.title')}
           emptyHint={t('empty.ssh.hint')}
@@ -381,6 +412,45 @@ function JobRow({ job }: { job: VmJob }) {
       </Badge>
       <span className="sbr-main" title={job.command}>
         <span className="mono">{oneLine(job.command, 40)}</span>
+      </span>
+      <span className="sbr-aside" title={aside}>
+        {aside}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * One background delegation in the rail, beside its command counterparts.
+ *
+ * The row answers the block's question the same way `JobRow` does: state
+ * first, then a name a person can match against the transcript (`label` is
+ * what the model passed as the delegation's description), then the detail.
+ * A foreground delegation never appears here — it ends with its turn, so it
+ * is the turn's business, not the rail's.
+ */
+function SubagentRow({ agent }: { agent: VmSubagentDone }) {
+  const t = useT();
+  const label =
+    agent.state === 'running'
+      ? t('jobs.running')
+      : agent.state === 'uncollected'
+        ? t('jobs.uncollected')
+        : t('jobs.done');
+
+  // The aside is the run's total, like a job's elapsed time: seconds and,
+  // once the child ended, how — `stop_reason` is the runtime's own word.
+  const aside = `${t('jobs.seconds', { n: agent.seconds })}${
+    agent.stopReason !== '' ? ` · ${agent.stopReason}` : ''
+  }`;
+
+  return (
+    <div className={`sb-row${agent.state === 'uncollected' ? ' is-uncollected' : ''}`}>
+      <Badge tone={agent.state === 'running' ? 'success' : 'warning'} dot={false}>
+        {t('panel.subagents.background')}/{label}
+      </Badge>
+      <span className="sbr-main" title={agent.label}>
+        <span className="mono">{oneLine(agent.label, 40)}</span>
       </span>
       <span className="sbr-aside" title={aside}>
         {aside}
