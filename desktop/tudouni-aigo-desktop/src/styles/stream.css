@@ -695,30 +695,167 @@
   }
 }
 
-/* Markdown 正文 */
+/* ============================================================
+   Markdown 正文
+   ------------------------------------------------------------
+   样式对齐 `design/md-render/md-preview-01.html` 与 `-02.html`（优化后的
+   Markdown 渲染样例），但**不照抄它的十六进制值**：那份稿子是固定浅色
+   + 青绿，而这里是跟随系统明暗的主题。设计值一律映射到既有 token，深色
+   与浅色因此各得一套：
+
+     #0E7C74 青绿  -> --accent          #16181D 标题 -> --fg
+     #3D4450 正文  -> --fg-secondary    #79818E 次要 -> --fg-muted
+     #A7AEB9 弱化  -> --fg-faint        #F2F4F6 嵌套面 -> --bg-muted
+     #E7EAEE 描边  -> --border-subtle
+
+   两处刻意偏离设计稿，都是因为这里不是那份文档：
+
+   1. **字号取项目的字阶，不取稿子的 15px / h1 30px / h2 20px。** 会话列
+      的正文是 `--text-body`(13px)，段落间距只有 8px，一套 30px 的标题会
+      把消息列撑成文档页。稿子的价值在层级对比与间距节奏，那部分照搬。
+   2. **`h1` 与 `h2` 保持同一级。** 模型最常见的写法是 `##` 起手，稿子里
+      `h1`（文章标题）在这里根本不会出现；让 `h2` 顶到最大值才和稿子的
+      "一级标题最重"关系一致。
+
+   区块之间的 `gap` 是稿子里 `margin-top` 的等价物：`.md` 是 flex 列，
+   子元素自己的 `margin-top` 会与 gap 叠加，所以下面只用 gap，不写 margin。
+   ============================================================ */
 .md {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
+}
+
+/* 标题：最亮的墨色 + 600，上方留白是稿子 42px 的比例。`--space-4` 与
+   gap 叠加后是 24px，正好是正文间距的三倍。 */
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md h5,
+.md h6 {
+  font-size: var(--text-h1);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--fg);
+  margin-top: var(--space-4);
 }
 
 .md h1,
-.md h2,
-.md h3 {
+.md h2 {
+  /* 稿子 h2 的 `letter-spacing: -0.3px`，按 15px 折成 -0.2px：负字距是
+     给大字号收紧字偶距的，小字号下同样比例才等价。 */
   font-size: var(--text-h2);
-  font-weight: 600;
-  color: var(--fg);
-  margin-top: var(--space-2);
+  letter-spacing: -0.2px;
 }
 
-.md h2 {
-  font-size: var(--text-h1);
+/* 相邻标题不叠留白；`h1/h2` 多一条划分线——稿子用它分节，一条消息里
+   通常只有一两个，所以是"章节感"而不是"每一段都画线"。 */
+.md :is(h1, h2) + :is(h2, h3, h4, h5, h6) {
+  margin-top: 0;
+}
+
+.md :is(h1, h2) {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* 紧随标题的块不再另起一段留白 */
+.md :is(h1, h2, h3, h4, h5, h6) + :is(p, ul, ol, blockquote) {
+  margin-top: 0;
 }
 
 .md p {
   margin: 0;
 }
 
+/* 文本样式。`strong` 提亮到最亮的墨色（稿子的 #16181D），不是换色——这样
+   深色下依然是"更亮"，浅色下是"更黑"，两个主题都读得对。 */
+.md strong {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.md em {
+  color: var(--fg-secondary);
+}
+
+.md del {
+  color: var(--fg-faint);
+}
+
+/* `<u>` 会原样穿过 react-markdown（没有开 `skipHtml`），所以 HTML 下划线
+   是支持的，只是默认那条线太贴字、太扎眼——稿子把它压到 4px 并染淡。 */
+.md u {
+  text-decoration-color: var(--accent-border);
+  text-underline-offset: 4px;
+}
+
+/* 链接：稿子的青绿换 `--accent`，下划线用 accent 的淡化描边色，offset 4px
+   与 `<u>` 一致——同一种标记不该有两种离线距离。 */
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-border);
+  text-underline-offset: 4px;
+  /* 长 URL 必须换行，不能把整列撑宽 */
+  overflow-wrap: anywhere;
+}
+
+.md a:hover {
+  color: var(--accent-hover);
+  text-decoration-color: var(--accent);
+}
+
+/* 行内代码：稿子的灰底 + 1px 描边 + 青绿字。`> code` 的限定是必要的——
+   `:not(pre) > code` 会把高亮后的代码块整体染成青绿。 */
+.md :not(pre) > code {
+  padding: 1px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--accent);
+}
+
+/* 引用：稿子是"左侧 3px 青绿竖线 + 淡底 + 右下圆角"。两处调整——底色改用
+   `--accent-subtle`（强调色低透明底，深色下自动变成低透明青绿，实色
+   `--bg-muted` 在深色里与正文底几乎同色，竖线就白画了）；圆角从 10px 收到
+   `--radius-md`，与代码块同一档。 */
+.md blockquote {
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--accent-subtle);
+  color: var(--fg-secondary);
+}
+
+.md blockquote > :first-child {
+  margin-top: 0;
+}
+
+.md blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+/* 嵌套引用：细一档的灰线、无底色、再收一档字号——"引用的引用"是旁注。 */
+.md blockquote blockquote {
+  margin-top: var(--space-2);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+/* 列表：符号挑 `•` / `–` / `·`——正好是稿子的三档，且序号不会被浏览器截断。
+   第三层之后重复 `·`。
+
+   `::marker` 只接受一小撮属性（`content` 与颜色在 Chromium 里可用），稿子
+   那套绝对定位的 span 在这里不存在——标记的位置由 `padding-left` 与
+   `list-style-position` 决定，所以缩进用 padding 写明而不是靠默认值。 */
 .md ul,
 .md ol {
   padding-left: 20px;
@@ -727,19 +864,102 @@
   gap: 3px;
 }
 
-.md li::marker {
+.md li {
+  padding-left: 2px;
+}
+
+.md li > :is(ul, ol) {
+  margin-top: 4px;
+}
+
+.md ul li::marker {
+  content: '\2022'; /* • */
+  color: var(--accent);
+}
+
+.md ul ul li::marker {
+  content: '\2013'; /* – */
+  color: var(--fg-muted);
+}
+
+.md ul ul ul li::marker {
+  content: '\00B7'; /* · */
   color: var(--fg-faint);
 }
 
-.md code {
-  padding: 1px 5px;
-  border-radius: var(--radius-xs);
-  background: var(--bg-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-code);
-  color: var(--fg-secondary);
+.md ol li::marker {
+  color: var(--accent);
+  font-weight: 600;
 }
 
+/* 任务列表（remark-gfm）：GFM 把勾选框写进第一个 `<li>`，所以列标记会被
+   挤掉——这里把它清空，勾选框自己占位。 */
+.md li:has(> input[type='checkbox']) {
+  padding-left: 0;
+}
+
+.md li:has(> input[type='checkbox'])::marker {
+  content: '';
+}
+
+/* 表格。GMF 的对齐来自分隔行：`| :---: |` 输出 `<th align="center">`，所以
+   用 `:has()` 对整列发 `text-align`，不需要 JS 参与。 */
+.md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: var(--text-code);
+}
+
+.md th,
+.md td {
+  padding: 5px 10px;
+  /* 左右竖线去掉：稿子只有横向分隔线 + 外框，内外的竖线让它读起来像表格
+     工具里的网格，而不是排版里的表格。 */
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.md th {
+  font-weight: 600;
+  color: var(--fg);
+  background: var(--bg-muted);
+  border-bottom-color: var(--border);
+}
+
+.md tr:last-child td {
+  border-bottom: none;
+}
+
+/* 对齐列：表头与实际单元格必须一起改，否则列头居中、内容左对齐。带 `align`
+   的列最后再补等宽数字——数字列才需要，文字列不需要。 */
+.md :is(th, td)[align='center'] {
+  text-align: center;
+}
+
+.md :is(th, td)[align='right'] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.md hr {
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* 图片：稿子没有这一条，但当前样式表也没有——模型给出图片时它会按原始像素
+   铺满整列。这条是补默认值，不是对齐稿子。 */
+.md img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+/* 代码块底：`<pre>` 只负责底与圆角，顶栏由 `.md-codeblock`（Markdown.tsx）
+   画在上面。 */
 .md pre {
   background: var(--terminal-bg);
   border-radius: var(--radius-md);
@@ -756,23 +976,42 @@
   color: var(--terminal-fg);
 }
 
-/* Fenced blocks are wrapped in `.md-codeblock` so the copy button (`Markdown.tsx`)
-   can pin to the block's corner. `position: relative` on the wrapper, a
-   reserved strip on top of `pre`, and a small square button over it. */
+/* Fenced blocks are wrapped in `.md-codeblock` (`Markdown.tsx`): a language
+   bar on top, the block below. The bar carries the language tag on the left —
+   the design's `GO` strip (`design/md-render/md-preview-02.html`) — and the copy
+   button on the right, where it used to float over the code.
+
+   The bar is *inside* the rounded block rather than above it: same
+   `--terminal-bg`, one hairline between them, and the code keeps the full
+   `padding-top` it would have had on its own. A bar in a different shade read as
+   a second card stacked on the first. */
 .md-codeblock {
-  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-md);
 }
 
-.md-codeblock pre {
-  padding-top: 34px;
+.md-lang {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid rgb(255 255 255 / 0.07);
+  color: var(--fg-faint);
+}
+
+.md-lang-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  letter-spacing: 0.6px;
+  /* The design uppercases the tag (`GO`); the tag itself is the model's, so it
+     is uppercased by CSS and never by rewriting the text. */
+  text-transform: uppercase;
 }
 
 .md-copy-btn {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  height: 24px;
-  width: 24px;
+  height: 22px;
+  width: 22px;
   padding: 0;
   border-radius: var(--radius-sm);
   color: var(--fg-faint);
@@ -780,8 +1019,24 @@
 }
 
 .md-copy-btn:hover:not(:disabled) {
-  background: var(--bg-muted);
-  color: var(--fg);
+  background: rgb(255 255 255 / 0.08);
+  color: var(--terminal-fg);
+}
+
+/* A fenced block with no language tag gets no bar: an empty strip with a copy
+   button and no name is worse than the button floating where it used to. */
+.md-codeblock:not(:has(.md-lang)) {
+  position: relative;
+}
+
+.md-codeblock:not(:has(.md-lang)) pre {
+  padding-top: 34px;
+}
+
+.md-codeblock:not(:has(.md-lang)) .md-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
 }
 
 /* The check swap after a successful copy. */
@@ -865,54 +1120,8 @@
   font-weight: 600;
 }
 
-.md blockquote {
-  padding-left: var(--space-3);
-  border-left: 2px solid var(--border-strong);
-  color: var(--fg-muted);
-}
-
-.md a {
-  color: var(--info);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  /* a long URL must wrap, not stretch the whole column wider */
-  overflow-wrap: anywhere;
-}
-
-.md hr {
-  border: none;
-  border-top: 1px solid var(--border-subtle);
-}
-
-/* GFM: tables, task lists, strikethrough (remark-gfm output) */
-/* A wide table scrolls inside the block instead of stretching the column:
-   `display: block` is what lets `overflow-x` work on the table element itself
-   — react-markdown emits no wrapper div to own the scroll. Narrow tables pay
-   the standard price: they fill the width rather than hugging their content. */
-.md table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
-  border-collapse: collapse;
-  font-size: var(--text-code);
-}
-
-.md th,
-.md td {
-  padding: 4px 10px;
-  border: 1px solid var(--border-subtle);
-  text-align: left;
-}
-
-.md th {
-  font-weight: 600;
-  background: var(--bg-muted);
-}
-
-.md del {
-  color: var(--fg-faint);
-}
-
+/* GFM 任务列表的勾选框。勾选色取 `--accent`：它是这一列里唯一一个真实控件，
+   也是唯一有原生着色入口（`accent-color`）的元素。 */
 .md input[type='checkbox'] {
   accent-color: var(--accent);
   margin-right: 6px;

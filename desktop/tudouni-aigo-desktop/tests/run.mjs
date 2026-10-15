@@ -20,8 +20,8 @@ const outDir = resolve(root, '.test-build');
 /**
  * Every suite, named **once**.
  *
- * There used to be two lists — the esbuild entry points, and the files handed to
- * `node --test` — and only the first was kept up to date. `workspace.test.ts` was
+ * There used to be two lists 鈥?the esbuild entry points, and the files handed to
+ * `node --test` 鈥?and only the first was kept up to date. `workspace.test.ts` was
  * therefore bundled and never executed, which is the worst possible failure for a
  * test: the suite reported a green total that silently excluded it, and the
  * assertions were never run at all. Deriving both from one list is what makes
@@ -43,12 +43,12 @@ const SUITES = [
   'terminal.test.ts',
   // The stylesheet rule that keeps a long conversation's stream flat. It reads
   // `app.css` as text, because the declaration has no behaviour to observe in
-  // Node and what is being protected is its presence — see the file for why a
+  // Node and what is being protected is its presence 鈥?see the file for why a
   // performance fix is worth a test at all.
   'stream-layout.test.ts',
   // What the conversation column shows, and in what order. A priority order
   // written as a chain of ternaries is exactly the kind of thing that reads as
-  // ordinary code while being wrong — this one hid an attached terminal behind
+  // ordinary code while being wrong 鈥?this one hid an attached terminal behind
   // the first screen, which took the composer away with it.
   'conversation-view.test.ts',
   // The left rail's two groups, and what makes its actions inert. This is the
@@ -60,12 +60,12 @@ const SUITES = [
   // the left rail is the right rail's mirror image rather than the same
   // expression), the clamp the store applies, and the stylesheet wiring that
   // carries a dragged value. The sign is the one thing here that is invisible
-  // when wrong — it shipped backwards on the right rail once — so both
+  // when wrong 鈥?it shipped backwards on the right rail once 鈥?so both
   // directions are asserted rather than checked by eye in a window.
   'rail-drag.test.ts',
   // The turn rail down the transcript's right edge: which marks exist, what they
-  // are called, and where each turn begins and ends. Its two rules — a live turn's
-  // prompt sits *above* its head, and a restored transcript has no heads at all —
+  // are called, and where each turn begins and ends. Its two rules 鈥?a live turn's
+  // prompt sits *above* its head, and a restored transcript has no heads at all 鈥?
   // are both invisible in a rendered string, which is why they are asserted here
   // rather than by looking at the window.
   'turn-rail.test.ts',
@@ -73,11 +73,11 @@ const SUITES = [
   // outside. The partition's rules ride on the wire's own ordering (a step's
   // tool events follow its `model_call` record; a retry is a backoff row, not
   // new work), so a partition that assumed otherwise would look correct on a
-  // session that never exercises the case — which is why the pure function is
+  // session that never exercises the case 鈥?which is why the pure function is
   // asserted here, over events shaped like the real audit stream.
   'stream-blocks.test.ts',
   // The output rate: the average over one call (completion tokens divided by
-  // its duration), and the rule that no measurement is never zero — a
+  // its duration), and the rule that no measurement is never zero 鈥?a
   // tool-only call reports no completion tokens, and printing `0.0 tok/s`
   // would claim a measurement the ledger does not have. The figure is
   // computed in one place and drawn in three (the model row, the step card's
@@ -86,20 +86,20 @@ const SUITES = [
   // Whether the start-up arguments the settings panel owns actually reach the
   // child. `--ericai` is the one that matters most: the runtime decides at open
   // whether it manages the session's token, so a flag that never arrives is a
-  // session that 401s forever once its token expires — while the panel says it is
+  // session that 401s forever once its token expires 鈥?while the panel says it is
   // in force. This is the "the desktop never refreshes my EricAI token" report.
   'ericai-launch.test.ts',
   // When a session is worth a system notification, and what the window's X button
   // does. Both are rules rather than behaviours: a notification that should not
   // have been sent looks identical on screen to one that should have, and a close
-  // policy that forgot a choice simply asks again — so neither failure is visible
+  // policy that forgot a choice simply asks again 鈥?so neither failure is visible
   // in a rendered string, and both have to be asserted here.
   'notify.test.ts',
   // The config panel's two invisible rules: the order of `providers` decides the
   // default route, so a save that re-orders them silently moves every request to
   // another account; and a section that did not change must not be sent, or
   // opening the panel to fix a key would create `mcp.json`. Neither is visible
-  // in a rendered string — the screen looks identical either way.
+  // in a rendered string 鈥?the screen looks identical either way.
   'user-config.test.ts',
   // Which config fields wear the required marker, against which ones actually
   // refuse the save. The two are the same list by construction and two lists in
@@ -113,25 +113,33 @@ const SUITES = [
   'learn.test.ts',
   // Opening a saved remote workspace: a blank binary path means "install it
   // first, then connect", and a failed install must report the install's own
-  // reason — §8.4's "an install failure must not look like a connection
+  // reason 鈥?搂8.4's "an install failure must not look like a connection
   // failure", wired into `enterRemoteWorkspace`.
   'remote-workspace.test.ts',
   // "New session" while the conversation on screen is remote: the remote
   // workspace's directory is not a local one, so the button must dial another
-  // remote child rather than hand the remote path to the local spawn — which
-  // is what refused it with "the workspace … is not a directory".
+  // remote child rather than hand the remote path to the local spawn 鈥?which
+  // is what refused it with "the workspace 鈥?is not a directory".
   'remote-new-session.test.ts',
   // The connecting toast: what it names (the workspace being opened, not the
   // focus) and when it is gone (the handshake landing, or a failure that has
-  // its own surface). The selector is pure, so the two halves — the pre-bucket
-  // `openingRemote` mark and the post-bucket `connection.phase` — are both
+  // its own surface). The selector is pure, so the two halves 鈥?the pre-bucket
+  // `openingRemote` mark and the post-bucket `connection.phase` 鈥?are both
   // asserted against store states rather than looked at in a window.
   'connecting-toast.test.ts',
   // Task templates: the pure rules (what makes one runnable, how a workspace
   // ref resolves) and the Run path (which open path each ref takes, and the
-  // design's "no fake success" rule — a link only when a new bucket landed,
+  // design's "no fake success" rule 鈥?a link only when a new bucket landed,
   // history surviving a deleted template, ids back-filled from `init`).
   'task.test.ts',
+  // The markdown answer's language bar. The tag is not an attribute anywhere in
+  // the tree `react-markdown` builds 鈥?it is a class on the inner `<code>` 鈥?so
+  // the reading is a claim about a third-party renderer's output. It is asserted
+  // against the **real** renderer, because the day that output changes the bar
+  // silently loses its label and every fence renders untagged. The stylesheet
+  // half is read as text, like `stream-layout.test.ts` does: a rule that went
+  // back to a hard-coded colour has no behaviour to observe in Node.
+  'markdown-fence.test.tsx',
 ];
 
 rmSync(outDir, { recursive: true, force: true });
@@ -141,7 +149,7 @@ await build({
   entryPoints: SUITES.map((name) => resolve(here, name)),
   outdir: outDir,
   // `.mjs`, because package.json declares `"type": "module"` and the sources are
-  // ESM — esbuild would otherwise emit `.js` and the runner's paths would miss.
+  // ESM 鈥?esbuild would otherwise emit `.js` and the runner's paths would miss.
   outExtension: { '.js': '.mjs' },
   bundle: true,
   platform: 'node',
@@ -164,7 +172,12 @@ const result = spawnSync(
   process.execPath,
   [
     '--test',
-    ...SUITES.map((name) => resolve(outDir, name.replace(/\.ts$/, '.mjs'))),
+    // `--test-force-exit`, because a suite that renders a component pulls in
+    // modules that touch the Tauri bridge, and those leave a handle open — the
+    // assertions have all run by then, and without this the process sits on an
+    // idle timer instead of reporting.
+    '--test-force-exit',
+    ...SUITES.map((name) => resolve(outDir, name.replace(/\.tsx?$/, '.mjs'))),
   ],
   {
     stdio: 'inherit',

@@ -6,6 +6,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useT } from '@/i18n/useT';
 import { copyText } from '@/utils/clipboard';
+import { fenceLanguage, fenceLayout } from './fence';
 
 /**
  * Markdown rendering.
@@ -28,13 +29,17 @@ import { copyText } from '@/utils/clipboard';
 type Components = Parameters<typeof ReactMarkdown>[0]['components'];
 
 /**
- * A fenced block, drawn as `<pre>` plus a copy button pinned to its top-right
- * corner. The button copies the block's own text — `innerText`, not the React
- * children, because that is exactly what the user sees and selects, language
- * tag and all markup gone. `execCommand('copy')` rather than
- * `navigator.clipboard.writeText`: Tauri webviews expose the latter only when
- * the page holds the `user-select: text` permission, which this build does not,
- * while the former works from a user gesture without it.
+ * A fenced block: a language bar on top (the tag itself, plus the copy button)
+ * over the code. `pre` is the mapping below, so the bar sits above the `<pre>`
+ * rather than inside it — a `<pre>` is one scrolling box, and a bar inside it
+ * would scroll away with the first line.
+ *
+ * The button copies the block's own text — `innerText`, not the React children,
+ * because that is exactly what the user sees and selects, language tag and all
+ * markup gone. `execCommand('copy')` rather than `navigator.clipboard.writeText`:
+ * Tauri webviews expose the latter only when the page holds the `user-select:
+ * text` permission, which this build does not, while the former works from a
+ * user gesture without it.
  *
  * The icon flips to a check for a moment so a press gives visible feedback;
  * without it a successful copy would be indistinguishable from a dead button.
@@ -44,6 +49,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | undefined>(undefined);
+  const { bar, language } = fenceLayout(fenceLanguage(children));
 
   const copy = async () => {
     const text = preRef.current?.innerText ?? '';
@@ -56,18 +62,30 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   };
 
   const icon = copied ? <Check size={14} /> : <Copy size={14} />;
+  const button = (
+    <button
+      type="button"
+      className={`btn btn-ghost btn-icon md-copy-btn${copied ? ' is-copied' : ''}`}
+      aria-label={copied ? t('md.codeCopied') : t('md.codeCopy')}
+      title={copied ? t('md.codeCopied') : t('md.codeCopy')}
+      onClick={() => void copy()}
+    >
+      {icon}
+    </button>
+  );
+
   return (
     <div className="md-codeblock">
+      {bar ? (
+        <div className="md-lang">
+          <span className="md-lang-name">{language}</span>
+          {button}
+        </div>
+      ) : null}
       <pre ref={preRef}>{children}</pre>
-      <button
-        type="button"
-        className={`btn btn-ghost btn-icon md-copy-btn${copied ? ' is-copied' : ''}`}
-        aria-label={copied ? t('md.codeCopied') : t('md.codeCopy')}
-        title={copied ? t('md.codeCopied') : t('md.codeCopy')}
-        onClick={() => void copy()}
-      >
-        {icon}
-      </button>
+      {/* Untagged blocks have no bar to hold the button, so it floats over the
+          code there instead (`stream.css`, `.md-codeblock:not(:has(.md-lang))`). */}
+      {bar ? null : button}
     </div>
   );
 }
@@ -81,9 +99,9 @@ const components: Components = {
   h4: ({ children }) => <h3>{children}</h3>,
   h5: ({ children }) => <h3>{children}</h3>,
   h6: ({ children }) => <h3>{children}</h3>,
-  // Fenced blocks only: a `pre` in this renderer is always a code block (inline
-  // `code` has no `pre` ancestor), so the copy button lands on exactly the
-  // things it applies to.
+  // A fenced block is the only place `pre` appears in this renderer (inline
+  // `code` has no `pre` ancestor), so the bar and the copy button land on
+  // exactly the things they apply to.
   pre: CodeBlock,
   // A model ending text with two spaces used to force a line break the old
   // renderer silently dropped; keep that behaviour visible here too.
