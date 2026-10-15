@@ -127,6 +127,11 @@ const SUITES = [
   // `openingRemote` mark and the post-bucket `connection.phase` — are both
   // asserted against store states rather than looked at in a window.
   'connecting-toast.test.ts',
+  // Task templates: the pure rules (what makes one runnable, how a workspace
+  // ref resolves) and the Run path (which open path each ref takes, and the
+  // design's "no fake success" rule — a link only when a new bucket landed,
+  // history surviving a deleted template, ids back-filled from `init`).
+  'task.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

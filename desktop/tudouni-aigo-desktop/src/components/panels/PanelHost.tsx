@@ -19,6 +19,7 @@ import {
 import { LearnPanel } from './LearnPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ConfigPanel } from './ConfigPanel';
+import { TaskPanel } from './TaskPanel';
 
 /**
  * §5 Panel host.
@@ -67,6 +68,7 @@ export function PanelHost() {
           {panel === 'files' ? <FilesPanel /> : null}
           {panel === 'terminal' ? <TerminalPanel /> : null}
           {panel === 'learn' ? <LearnPanel /> : null}
+          {panel === 'tasks' ? <TaskPanel /> : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

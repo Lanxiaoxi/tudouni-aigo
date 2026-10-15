@@ -98,6 +98,13 @@ import {
   type LearnScope,
 } from '@/learn/template';
 import {
+  canRunTask,
+  isValidTask,
+  isValidTaskRun,
+  type Task,
+  type TaskRunLink,
+} from '@/task/tasks';
+import {
   registerRuntime,
   sendTo,
   unregisterRuntime,
@@ -160,6 +167,13 @@ export const POLL_FLOOR_MS = 2000;
  *  usually the banner. */
 export const STDERR_TAIL = 60;
 
+/**
+ * The task-history cap. One Run appends one link; past this the oldest fall
+ * off. localStorage is not a database and the history is a recency list — a
+ * person reading it wants the last dozen runs, not every run ever.
+ */
+export const TASK_RUNS_MAX = 100;
+
 export type PanelKind =
   | 'commands'
   | 'model'
@@ -191,7 +205,12 @@ export type PanelKind =
   /* The workspace-learning configuration. It is a form whose submit becomes
    * a new session's first message — the panel holds no runtime state of its
    * own, and nothing is sent until the person presses Start. */
-  | 'learn';
+  | 'learn'
+  /* Task templates: the desktop's own repeatable session launchers. A panel
+   * rather than a view for the same reason Config is: the templates and their
+   * history are facts about the desktop, not about any one conversation, and
+   * a person opens the panel with no session running at all. */
+  | 'tasks';
 
 /* `ssh` sits with the workspace-capability blocks (jobs, mcp): it is about
  * things running in the workspace, not about this turn's conversation. */
@@ -1323,6 +1342,23 @@ export interface AppStore {
    */
   closePolicy: ClosePolicy;
 
+  /* ---------------- tasks (the desktop's own templates) ---------------- */
+  /**
+   * Task templates, newest edit first is *not* guaranteed here — the panel
+   * orders by what it reads; this is the shelf in insertion order.
+   *
+   * Front-end data end to end: created, edited and deleted by the actions
+   * below, persisted with the rest of `aigo.prefs`. The runtime never sees
+   * these; only the prompt, the workspace and (on run) a `set_model` do.
+   */
+  tasks: Task[];
+  /**
+   * Which sessions each task has started, oldest first, capped at
+   * `TASK_RUNS_MAX`. A link's `sessionId` is back-filled from `init`; until
+   * then `sessionKey` is what a row is reachable by.
+   */
+  taskRuns: TaskRunLink[];
+
   /* ---------------- composer ---------------- */
   /** An OS drag is currently over the window. Purely local, purely visual. */
   dragging: boolean;
@@ -1419,6 +1455,24 @@ export interface AppStore {
    * not started here — the panel says so instead.
    */
   startLearning(scope: LearnScope, deliverables: Deliverable[], objectives: string): Promise<void>;
+
+  /* ---------------- task templates ---------------- */
+  /** Create a task with the given fields and persist it. Returns the new id. */
+  upsertTask(task: Task): void;
+  /** Delete a template. Its run links are **kept** — the design is explicit
+   *  that removing a template must not erase the trace of past runs. */
+  deleteTask(taskId: string): void;
+  /**
+   * Run a task: open a new session per the template, then deliver the prompt
+   * as its first message. Resolves to the child key the run landed in, or
+   * `null` when nothing was started (no workspace, or the open refused).
+   */
+  runTask(taskId: string): Promise<string | null>;
+  /**
+   * Back-fill a run link's session id once the child's `init` names one.
+   * Called from `applyRuntimeMessage`; a no-op when nothing is waiting.
+   */
+  noteTaskRunInit(key: string, sessionId: string): void;
   /**
    * Take one runtime message, tagged with the session whose child sent it.
    *
@@ -1999,6 +2053,20 @@ type Prefs = {
    * for a value that is not one of the three — see `readClosePolicy`.
    */
   closePolicy: ClosePolicy;
+  /**
+   * Task templates and their run links, in the same record as the workspace
+   * bookmarks and the remote entries — the desktop's own persistence layer,
+   * which is exactly where the Task design says they belong. The runtime has
+   * no Task entity and the protocol gains nothing; these are front-end facts.
+   *
+   * `taskRuns` is capped: each new Run appends one row and the oldest rows fall
+   * off past `TASK_RUNS_MAX`, so the record cannot grow without bound over a
+   * long life of the app. Deleting a task keeps its links (the design: history
+   * must stay traceable), which is why the rows carry their own copies of the
+   * task's name and model rather than a live reference.
+   */
+  tasks: Task[];
+  taskRuns: TaskRunLink[];
 };
 
 /** Guards one parsed `sshHosts` entry before it is trusted. localStorage
@@ -2067,6 +2135,9 @@ function loadPrefs(): Prefs {
     // one ends every session, the other leaves a window the person thinks they
     // closed.
     closePolicy: 'ask',
+    // An empty task shelf on a first launch: nothing to run, nothing to show.
+    tasks: [],
+    taskRuns: [],
   };
   try {
     const raw = localStorage.getItem('aigo.prefs');
@@ -2145,6 +2216,11 @@ function loadPrefs(): Prefs {
       notifyEnabled: readNotifyEnabled(parsed.notifyEnabled),
       /** @see readClosePolicy for why an unrecognised value means `ask`. */
       closePolicy: readClosePolicy(parsed.closePolicy),
+      // Each record guarded on its own shape; a malformed one is dropped whole
+      // rather than let through with an `undefined` field. localStorage
+      // outlives every build, and these are records a person came to trust.
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks.filter(isValidTask) : [],
+      taskRuns: Array.isArray(parsed.taskRuns) ? parsed.taskRuns.filter(isValidTaskRun) : [],
     };
   } catch {
     return fallback;
@@ -2260,6 +2336,8 @@ function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): voi
         maxStepsDefault: s.maxStepsDefault,
         notifyEnabled: s.notifyEnabled,
         closePolicy: s.closePolicy,
+        tasks: s.tasks,
+        taskRuns: s.taskRuns,
       }),
     );
   } catch {
@@ -2947,6 +3025,9 @@ export const useApp = create<AppStore>((set, get) => {
     notifyEnabled: prefs.notifyEnabled,
     closePolicy: prefs.closePolicy,
 
+    tasks: prefs.tasks,
+    taskRuns: prefs.taskRuns,
+
     dragging: false,
     resizing: null,
 
@@ -3433,6 +3514,161 @@ export const useApp = create<AppStore>((set, get) => {
     },
 
     /* ==========================================================
+       Task templates
+       ========================================================== */
+    upsertTask(task) {
+      set((s) => {
+        const at = s.tasks.findIndex((row) => row.id === task.id);
+        const stamped: Task = { ...task, updatedAtMs: Date.now() };
+        const tasks =
+          at < 0 ? [...s.tasks, stamped] : s.tasks.map((row) => (row.id === task.id ? stamped : row));
+        return { tasks };
+      });
+      persistPrefs(get());
+    },
+
+    deleteTask(taskId) {
+      // The links stay: the design is explicit that removing a template must
+      // not erase the trace of the runs it produced — the link carries its own
+      // copies of the name and model precisely so it stays readable after this.
+      set((s) => ({ tasks: s.tasks.filter((row) => row.id !== taskId) }));
+      persistPrefs(get());
+    },
+
+    async runTask(taskId) {
+      const task = get().tasks.find((row) => row.id === taskId);
+      if (!task || !canRunTask(task)) return null;
+
+      // Where the run goes. `active` means the workspace on screen — whatever
+      // it is, local or remote, `openSession(null)` already answers it: it
+      // dials another child there on a remote screen and spawns here on a
+      // local one. An explicit local path is a plain attach; an explicit
+      // remote ref is the forceNew connect when the workspace already has a
+      // live child (a Run means a **new** session, never "focus the old one")
+      // and the rail's own entry otherwise, which owns the config-sync
+      // decision and the automatic install.
+      const s = get();
+      let workspaceLabel: string;
+      let opened: Promise<void>;
+      if (task.workspace.kind === 'active') {
+        const active = activeRuntime(s);
+        workspaceLabel = active?.session?.workspace ?? active?.workspace ?? '';
+        if (workspaceLabel === '') return null;
+        opened = get().openSession(null);
+      } else if (task.workspace.kind === 'local') {
+        workspaceLabel = task.workspace.path;
+        opened = get().openSession(null, task.workspace.path);
+      } else {
+        const remoteId = task.workspace.id;
+        const entry = s.remoteWorkspaces.find((item) => item.id === remoteId);
+        const host = entry !== undefined ? s.sshHosts.find((item) => item.id === entry.hostId) : undefined;
+        if (entry === undefined || host === undefined) return null;
+        workspaceLabel = entry.remotePath;
+        const live = s.order.find((key) => s.sessions[key]?.remoteWorkspaceId === remoteId);
+        opened =
+          live !== undefined
+            ? get().connectRemoteWorkspace(remoteId, { forceNew: true })
+            : get().enterRemoteWorkspace(remoteId);
+      }
+
+      // The keys that existed before the open. The run's link may only land on
+      // a bucket created **by this open**: the open paths can also merely
+      // focus an existing session (and a config-sync prompt can park the open
+      // entirely, leaving the screen where it was), and recording a run against
+      // a conversation that already existed would be the "fake success" the
+      // design refuses.
+      const previousKeys = new Set(s.order);
+
+      let openError: unknown = null;
+      try {
+        await opened;
+      } catch (err) {
+        // A refused open (the config check could not connect, for one) is the
+        // panel's to show; nothing was started, so nothing is recorded.
+        openError = err;
+      }
+      if (openError !== null) return null;
+
+      const after = get();
+      const key = after.activeKey;
+      const bucket = key !== null ? after.sessions[key] : null;
+      if (key === null || bucket === null || previousKeys.has(key) || bucket.problem !== null) {
+        // Either nothing opened, an existing session was focused, or the open
+        // failed with its own row (`failed-…` or a problem placeholder —
+        // `attachSession` catches its bridge's refusal and shows it there, so
+        // no throw reaches the `await` above) — in every one of those no
+        // session was created, so no link, no prompt, and no key is returned:
+        // the contract is "the key a run landed in", and nothing landed.
+        return null;
+      }
+
+      const link: TaskRunLink = {
+        taskId: task.id,
+        sessionId: '',
+        sessionKey: key,
+        startedAtMs: Date.now(),
+        taskName: task.name,
+        model: task.model,
+        workspaceLabel,
+      };
+      set((state) => ({
+        taskRuns: [...state.taskRuns, link].slice(-TASK_RUNS_MAX),
+      }));
+      persistPrefs(get());
+
+      // The model, when the template names one: the same `set_model` the model
+      // panel sends, once the child can receive it. Not a new protocol field.
+      const model = task.model.trim();
+      const applyModel = model === '' ? null : () => sendTo(key, { v: 1, t: 'set_model', model });
+
+      // The prompt, as the session's first message — the same two-step
+      // (`wait for ready`, then speak) `startLearning` established, for the
+      // same reason: `session_load` lands right behind `init` and must not
+      // wipe what the run writes into the transcript.
+      void (async () => {
+        const deadline = Date.now() + 30_000;
+        for (;;) {
+          const current = get().sessions[key];
+          if (current === undefined) return;
+          if (current.ready) break;
+          if (Date.now() >= deadline) return;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        applyModel?.();
+        const active = get().activeKey;
+        if (active !== key) {
+          patchWith(key, (b) => ({
+            entries: [...b.entries, { kind: 'user' as const, id: nextId('user'), text: task.prompt, atMs: Date.now() }],
+            draft: '',
+            history: [...b.history, task.prompt].slice(-100),
+            historyCursor: null,
+            hasSpoken: true,
+          }));
+          sendTo(key, { v: 1, t: 'user_message', text: task.prompt });
+          return;
+        }
+        get().setDraft(task.prompt);
+        get().submitDraft();
+      })();
+
+      return key;
+    },
+
+    noteTaskRunInit(key, sessionId) {
+      const s = get();
+      // Newest first matters here: a task can legitimately have many pending
+      // runs at once (the cap is per link, not per task), and the one this
+      // handshake names is the one still missing its id.
+      const at = [...s.taskRuns].reverse().findIndex((row) => row.sessionKey === key && row.sessionId === '');
+      if (at < 0) return;
+      const index = s.taskRuns.length - 1 - at;
+      set((state) => ({
+        taskRuns: state.taskRuns.map((row, i) => (i === index ? { ...row, sessionId } : row)),
+      }));
+      persistPrefs(get());
+    },
+
+    /* ==========================================================
        Outbound
        ========================================================== */
     send(msg) {
@@ -3637,6 +3873,12 @@ export const useApp = create<AppStore>((set, get) => {
             init.workspace.trim() !== ''
           ) {
             get().rememberWorkspace(init.workspace);
+          }
+          // A task run's link learns its session id here: `init` is the first
+          // message that carries one, and until it lands the link is reachable
+          // only by the child key. A no-op for every session no task started.
+          if (init.sessionId !== '') {
+            get().noteTaskRunInit(key, init.sessionId);
           }
           // The first screen shows the four most recent sessions, and only this
           // message ever asks for them. Without it those slots stay empty until

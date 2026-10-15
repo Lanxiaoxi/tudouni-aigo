@@ -1881,6 +1881,188 @@ table.table td.mono {
   color: var(--fg-muted);
 }
 
+/* ---------------- Task templates ----------------
+   The panel is one dialog with three surfaces (shelf, editor, history), and
+   every shape below is assembled from the tokens the configuration panel
+   already uses — `.cfg-field`, `.cfg-input`, `.cfg-check`, `.dialog-foot` —
+   for the same reason LearnPanel wears ConfigPanel's clothes: a second
+   vocabulary for "a field" or "a card" is how a panel starts reading as a
+   different application. What is genuinely this panel's own is the card
+   (`.task-card`) and its history rows (`.task-history`). */
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.task-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  background: rgba(127, 127, 127, 0.05);
+}
+
+.task-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* The delete button's armed state: the same statement the rail's row actions
+   make — the second press is the real one, and the destructive colour says so
+   while tooltip, aria-label and icon (already an X) all change too. */
+.task-card-head .btn-icon.is-armed {
+  color: var(--destructive);
+  background: var(--destructive-subtle);
+}
+
+.task-card-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-card-desc {
+  margin-top: var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-card-meta {
+  margin-top: var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.task-card-meta .truncate {
+  min-width: 0;
+}
+
+.task-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--fg-faint);
+}
+
+.task-history-toggle:hover {
+  color: var(--fg-muted);
+}
+
+/* The live-run count beside the history toggle: the same job the workspace
+   row's attention badge does, one grain finer. */
+.task-open-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--success);
+  color: var(--bg-elevated);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.task-history {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-1);
+  display: flex;
+  flex-direction: column;
+}
+
+.task-history-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1);
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  width: 100%;
+}
+
+.task-history-row:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.12);
+}
+
+.task-history-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.task-history-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One dot per link, three states: a live child, a session only on disk, and
+   one still waiting for its handshake (no id yet). Same job as the rail's
+   SessionDot, coarser: the row opens the session, it does not report detail. */
+.task-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+
+.task-dot.is-live {
+  background: var(--success);
+}
+
+.task-dot.is-idle {
+  background: var(--fg-faint);
+}
+
+.task-dot.is-gone {
+  background: none;
+  border: 1px solid var(--fg-faint);
+}
+
+/* The editor's workspace picker: three radio rows, the two with a payload
+   carrying their own select. Disabled-until-chosen, like LearnPanel's scope
+   numbers — a control that accepts input and has no effect is worse than one
+   that plainly refuses it. */
+.task-ws {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.task-ws-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.task-ws-row > input {
+  flex: none;
+}
+
+.task-ws-select {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ---------------- §10 终端 / Diff / 日志 ---------------- */
 .terminal {
   background: var(--terminal-bg);

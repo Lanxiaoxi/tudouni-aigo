@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Archive, ArchiveRestore, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, Plus, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, Plus, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -885,13 +885,13 @@ export function WorkspaceSidebar() {
       </div>
 
       {/* The foot of the rail: the workbench — a way out of the transcript,
-          then the two settings-shaped entries, in the order Files · Terminal ·
-          Learn · Board · Config · Settings. They are here rather than in the
+          then the settings-shaped entries, in the order Files · Terminal ·
+          Learn · Tasks · Board · Config · Settings. They are here rather than in the
           command palette because they sit next to the workspace list and hold
           the same kind of decision — where the runtime works, what it may do
           there, and what the process itself is.
 
-          The six buttons fold on their own; the head at the very bottom is the
+          The seven buttons fold on their own; the head at the very bottom is the
           toggle. The fold sits **above** the pinned head, so it closes
           bottom-up: the fold cell shrinks from its top edge toward the head,
           and the buttons ride `justify-content: flex-end` in `.lb-foot-fold`,
@@ -954,6 +954,23 @@ export function WorkspaceSidebar() {
                 >
                   <GraduationCap size={14} />
                   <span>{t('lb.learn')}</span>
+                </button>
+              </Tip>
+              {/* Task templates. Like Config's gate — `blocked` alone, never
+                  `hasSession`: templates are the desktop's own data and the
+                  panel must open on a first launch, before any child exists,
+                  because that is exactly when a repeatable launcher is most
+                  useful. Running one opens a session the ordinary way, but
+                  editing one never needs a runtime. */}
+              <Tip label={t('lb.taskHint')}>
+                <button
+                  type="button"
+                  className="lb-foot-btn"
+                  disabled={blocked}
+                  onClick={() => openPanel('tasks')}
+                >
+                  <ListChecks size={14} />
+                  <span>{t('lb.task')}</span>
                 </button>
               </Tip>
               {/* The session board. It sits with the other two because it is the same
@@ -1035,14 +1052,15 @@ export function WorkspaceSidebar() {
             <ChevronRight size={13} className="caret caret-open" />
           )}
           <span className="lb-foot-head-label">{t('lb.workbench')}</span>
-          {footCollapsed ? <Count value={6} /> : null}
-          {/* The tease strip: the six foot icons, one size smaller, rising
+          {footCollapsed ? <Count value={7} /> : null}
+          {/* The tease strip: the seven foot icons, one size smaller, rising
               into view above the row on hover. `aria-hidden` — it repeats
               the buttons' own accessible names with nothing new to say. */}
           <span className="lb-foot-tease" aria-hidden>
             <FileText size={11} />
             <SquareTerminal size={11} />
             <GraduationCap size={11} />
+            <ListChecks size={11} />
             <LayoutGrid size={11} />
             <FileJson size={11} />
             <Settings size={11} />
