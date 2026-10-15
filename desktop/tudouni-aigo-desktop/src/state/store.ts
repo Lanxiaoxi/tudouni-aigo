@@ -1265,6 +1265,20 @@ export interface AppStore {
    */
   pendingRemoteOpen: string | null;
   /**
+   * The remote workspace an **open is in flight** for, or `null` when none is.
+   *
+   * `enterRemoteWorkspace` sets it before the config-sync check — the whole
+   * pre-bucket stretch (the check over SSH, the automatic install, the gap
+   * until the session's bucket is installed) has no session to read
+   * `connection.phase` off, and this is what the connecting toast reads in
+   * that stretch. `connectRemoteWorkspace` clears it the moment the bucket
+   * exists (the bucket's own phase takes over from then on), and on every
+   * failure path. Window-level and never persisted: a "connecting" that
+   * survived a restart would describe a dial that is not happening any more,
+   * the same reason `pendingRemoteOpen` is not persisted.
+   */
+  openingRemote: string | null;
+  /**
    * The workspace the **next** launch should open: the one last worked in.
    *
    * Also a front-end preference, and also kept apart from `workspaces` — this
@@ -2894,6 +2908,7 @@ export const useApp = create<AppStore>((set, get) => {
     installStatus: {},
     configSyncPrompt: null,
     pendingRemoteOpen: null,
+    openingRemote: null,
     lastWorkspace: prefs.lastWorkspace,
 
     ericaiDefault: prefs.ericaiDefault,
@@ -5001,6 +5016,12 @@ export const useApp = create<AppStore>((set, get) => {
         return;
       }
 
+      // From this moment an open is in flight for this row, and the stretch
+      // ahead — the config-sync check, the automatic install, the dial — has no
+      // session bucket to read `connection.phase` off. The toast reads this
+      // instead; `connectRemoteWorkspace` clears it once the bucket exists.
+      set({ openingRemote: remoteWorkspaceId });
+
       // §9.4 of the design: config sync is checked before connecting, not
       // folded silently into the connection attempt itself — a policy of
       // 'ask' may need to put a prompt on screen, and that has to happen
@@ -5016,7 +5037,17 @@ export const useApp = create<AppStore>((set, get) => {
       // usable route (a fresh account, which is the ordinary first case) the
       // session then died with exit code 2 while the question was still on
       // screen, and answering it changed nothing.
-      await get().checkConfigSync(host.id);
+      try {
+        await get().checkConfigSync(host.id);
+      } catch (err) {
+        // The check itself failed to connect: the open never got to decide
+        // anything, so the "in flight" mark goes with it. The sentence
+        // belongs to the person, not the toast — but a toast kept over a
+        // failed dial would say "connecting…" forever.
+        set({ openingRemote: null });
+        window.dispatchEvent(new CustomEvent('tudouni-remote-check-failed', { detail: String(err) }));
+        return;
+      }
       if (get().configSyncPrompt !== null) {
         // Remember what was being opened, so the answer can resume it. The rest
         // of this function is `connectRemoteWorkspace`, which the prompt's own
