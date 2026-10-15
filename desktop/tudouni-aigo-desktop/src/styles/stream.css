@@ -698,10 +698,9 @@
 /* ============================================================
    Markdown 正文
    ------------------------------------------------------------
-   样式对齐 `design/md-render/md-preview-01.html` 与 `-02.html`（优化后的
-   Markdown 渲染样例），但**不照抄它的十六进制值**：那份稿子是固定浅色
-   + 青绿，而这里是跟随系统明暗的主题。设计值一律映射到既有 token，深色
-   与浅色因此各得一套：
+   这一段的排版取自一份 Markdown 渲染优化稿（固定浅色 + 青绿，正文 15px），
+   但**不照抄它的十六进制值**：那份稿子是单一配色，而这里是跟随系统明暗的
+   主题。设计值一律映射到既有 token，深色与浅色因此各得一套：
 
      #0E7C74 青绿  -> --accent          #16181D 标题 -> --fg
      #3D4450 正文  -> --fg-secondary    #79818E 次要 -> --fg-muted
@@ -978,8 +977,8 @@
 
 /* Fenced blocks are wrapped in `.md-codeblock` (`Markdown.tsx`): a language
    bar on top, the block below. The bar carries the language tag on the left —
-   the design's `GO` strip (`design/md-render/md-preview-02.html`) — and the copy
-   button on the right, where it used to float over the code.
+   the design's `GO` strip — and the copy button on the right, where it used to
+   float over the code.
 
    The bar is *inside* the rounded block rather than above it: same
    `--terminal-bg`, one hairline between them, and the code keeps the full

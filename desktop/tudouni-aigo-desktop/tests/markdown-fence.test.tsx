@@ -161,9 +161,10 @@ test('an untagged block keeps the floating copy button', () => {
   assert.match(ruleBody('.md-codeblock:not(:has(.md-lang)) .md-copy-btn'), /position: absolute/);
 });
 
-test('the restyle takes its colours from the theme, not from the design file', () => {
-  // The design is fixed light + teal; these four are the ones that would go
-  // illegible in the dark theme if a hex value were pasted in.
+test('the restyle takes its colours from the theme, not from fixed hex values', () => {
+  // The typography this follows is a single fixed palette (light + teal); these
+  // four are the ones that would go illegible in the dark theme if a hex value
+  // were pasted in instead of a token.
   assert.match(ruleBody('.md a'), /color: var\(--accent\)/);
   assert.match(ruleBody('.md blockquote'), /border-left: 3px solid var\(--accent\)/);
   assert.match(ruleBody('.md :not(pre) > code'), /color: var\(--accent\)/);
