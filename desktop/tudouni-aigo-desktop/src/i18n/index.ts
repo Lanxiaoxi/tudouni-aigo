@@ -473,6 +473,12 @@ export const en = {
   'conn.closing': 'Closing…',
   'conn.closed': 'Closed',
   'conn.failed': 'Failed',
+  /** The window-level toast for a remote workspace being opened (§5.1).
+   *  `{name}` is the row's label, or its path when the label is blank. It
+   *  stays on screen until the handshake lands — the phases it covers
+   *  (config check, install, dial, handshake) all read as "connecting" to a
+   *  person, and the distinction is the sidebar row's badges' to make. */
+  'conn.toast.connecting': 'Connecting to {name}…',
 
   /* ---------------- remote install (Phase 3, §8 of the design) ---------------- */
   'lb.remote.install': 'Install or upgrade the Runtime on this host',

@@ -37,6 +37,7 @@ import { PermissionModal } from '@/components/modals/PermissionModal';
 import { QuestionModal } from '@/components/modals/QuestionModal';
 import { CloseConfirm } from '@/components/modals/CloseConfirm';
 import { ConfigSyncPromptModal } from '@/components/modals/ConfigSyncPromptModal';
+import { ConnectingToast } from '@/components/ConnectingToast';
 
 export function App() {
   useRuntimeBridge();
@@ -295,6 +296,11 @@ export function App() {
       <PanelHost />
       <PermissionModal />
       <QuestionModal />
+      {/* The remote-open status: window-level, because the wait belongs to the
+          *open* — and its first stretch (config check, install) has no session
+          on screen at all. It says nothing a modal needs to block, so it sits
+          beside them rather than inside any of them. */}
+      <ConnectingToast />
       {/* After the two blocking modals, and it is the last thing raised: it is
           the newest question and the only one that is about the window rather
           than about a session. It cannot stack with them in practice — the

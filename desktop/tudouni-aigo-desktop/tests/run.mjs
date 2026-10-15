@@ -116,6 +116,12 @@ const SUITES = [
   // reason — §8.4's "an install failure must not look like a connection
   // failure", wired into `enterRemoteWorkspace`.
   'remote-workspace.test.ts',
+  // The connecting toast: what it names (the workspace being opened, not the
+  // focus) and when it is gone (the handshake landing, or a failure that has
+  // its own surface). The selector is pure, so the two halves — the pre-bucket
+  // `openingRemote` mark and the post-bucket `connection.phase` — are both
+  // asserted against store states rather than looked at in a window.
+  'connecting-toast.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

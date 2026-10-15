@@ -98,6 +98,7 @@ import {
   type LearnScope,
 } from '@/learn/template';
 import {
+  getRuntime,
   registerRuntime,
   sendTo,
   unregisterRuntime,
@@ -559,6 +560,20 @@ export interface SessionRuntime {
    * running, which is what the single window-wide field used to do.
    */
   problem: string | null;
+  /**
+   * A Send pressed while this session's child could not yet carry it.
+   *
+   * The starting placeholder is on screen — and its input is usable — before
+   * the bridge's spawn has returned, so a Send in that window has no process
+   * to reach. Holding the **two** forms the composer's own submit produces
+   * (the wire's `sent` with restored paths, the transcript's `text` with its
+   * placeholders) means the flush sends exactly what a Send would have sent.
+   *
+   * The transcript entry is appended **by the flush**, in `session_load`
+   * handling rather than here: that rebuild is the last word on the
+   * transcript at handshake, and an entry written before it would be wiped.
+   */
+  pendingSend: { text: string; sent: string } | null;
   /** This child's stderr, verbatim, bounded. Diagnostics, never protocol data. */
   stderrTail: string[];
   /** Set when this child ends without being asked to. */
@@ -932,6 +947,7 @@ export function createSessionBucket(
     connection: remoteWorkspaceId === null ? LOCAL_CONNECTION_STATE : { phase: 'connecting', problem: null },
     ready: false,
     problem: null,
+    pendingSend: null,
     stderrTail: [],
     runtimeExit: null,
     launch,
@@ -1278,6 +1294,19 @@ export interface AppStore {
    * the same reason `pendingRemoteOpen` is not persisted.
    */
   openingRemote: string | null;
+  /**
+   * The bucket a start-up is in flight into, or `null` when none is.
+   *
+   * A **local** start-up's child can take a moment to exist — the bridge's
+   * spawn and its staging sweep run while the screen still shows the session
+   * it was showing — and `attachSession` covers that window with a starting
+   * placeholder bucket whose key is this one. The "New session" button and
+   * the `/new`-family commands read it to say a start-up is already on its
+   * way, so a second press does not queue a second child against the same
+   * workspace. Cleared on every exit of `attachSession`, like
+   * `openingRemote`; never persisted.
+   */
+  openingSession: string | null;
   /**
    * The workspace the **next** launch should open: the one last worked in.
    *
@@ -2909,6 +2938,7 @@ export const useApp = create<AppStore>((set, get) => {
     configSyncPrompt: null,
     pendingRemoteOpen: null,
     openingRemote: null,
+    openingSession: null,
     lastWorkspace: prefs.lastWorkspace,
 
     ericaiDefault: prefs.ericaiDefault,
@@ -5037,16 +5067,19 @@ export const useApp = create<AppStore>((set, get) => {
       // usable route (a fresh account, which is the ordinary first case) the
       // session then died with exit code 2 while the question was still on
       // screen, and answering it changed nothing.
+      // A check that itself could not connect refuses the open before a bucket
+      // exists, so the "in flight" mark must not outlive it. The rejection is
+      // re-raised unchanged: that is how this call already reports a failure
+      // to its caller, and the toast's own job is to have cleared, not to
+      // invent a new failure sentence.
+      const openFailed = () => {
+        if (get().openingRemote === remoteWorkspaceId) set({ openingRemote: null });
+      };
       try {
         await get().checkConfigSync(host.id);
       } catch (err) {
-        // The check itself failed to connect: the open never got to decide
-        // anything, so the "in flight" mark goes with it. The sentence
-        // belongs to the person, not the toast — but a toast kept over a
-        // failed dial would say "connecting…" forever.
-        set({ openingRemote: null });
-        window.dispatchEvent(new CustomEvent('tudouni-remote-check-failed', { detail: String(err) }));
-        return;
+        openFailed();
+        throw err;
       }
       if (get().configSyncPrompt !== null) {
         // Remember what was being opened, so the answer can resume it. The rest
@@ -5061,6 +5094,12 @@ export const useApp = create<AppStore>((set, get) => {
 
     async connectRemoteWorkspace(remoteWorkspaceId) {
       const s = get();
+      // **No entry-level clear of `openingRemote` here, deliberately.** The
+      // mark set by `enterRemoteWorkspace` must survive everything this
+      // function does *before* a bucket exists — the automatic install and the
+      // dial — and only the terminal paths (bucket installed, or a failure)
+      // are allowed to end it. Clearing it on entry would drop the toast for
+      // the whole install stretch that follows a config-sync decision.
       const entry = s.remoteWorkspaces.find((item) => item.id === remoteWorkspaceId);
       if (!entry) return;
 
@@ -5069,13 +5108,15 @@ export const useApp = create<AppStore>((set, get) => {
       // opening two children against one row is not what either press meant.
       const already = s.order.find((key) => s.sessions[key]?.remoteWorkspaceId === remoteWorkspaceId);
       if (already) {
+        // No open is in flight — one already exists — so the mark goes.
+        if (s.openingRemote === remoteWorkspaceId) set({ openingRemote: null });
         get().focusSession(already);
         return;
       }
 
       const host = s.sshHosts.find((item) => item.id === entry.hostId);
       if (!host) {
-        set({ startupNotice: { code: 'no-workspace' } });
+        set({ startupNotice: { code: 'no-workspace' }, openingRemote: null });
         return;
       }
 
@@ -5124,6 +5165,8 @@ export const useApp = create<AppStore>((set, get) => {
             sessions: { ...state.sessions, [failed]: bucket },
             order: [...state.order, failed],
             activeKey: failed,
+            // The open is over, so the in-flight mark goes too.
+            openingRemote: null,
           }));
           return;
         }
@@ -5154,11 +5197,18 @@ export const useApp = create<AppStore>((set, get) => {
           sessions: { ...state.sessions, [failed]: bucket },
           order: [...state.order, failed],
           activeKey: failed,
+          // The open is over, so the in-flight mark goes too.
+          openingRemote: null,
         }));
         return;
       }
 
-      if (key === null) return;
+      // `null` is "no bridge at all" (a plain browser): nothing was started,
+      // so the open was never actually in flight.
+      if (key === null) {
+        set({ openingRemote: null });
+        return;
+      }
 
       const bucket = createSessionBucket(key, entry.remotePath, launch, remoteWorkspaceId);
       const runtime = createTauriRuntime(key, (line) => {
@@ -5175,6 +5225,12 @@ export const useApp = create<AppStore>((set, get) => {
         panel: null,
         startupProblem: null,
         startupNotice: null,
+        // The bucket now exists and its own `connection.phase` (starting at
+        // `'connecting'`) takes over announcing the open. The pre-bucket mark
+        // is done with, and clearing it here is what hands the toast to the
+        // phase-based half of the same selector — no gap, because the bucket
+        // lands and the mark clears in one write.
+        openingRemote: null,
       }));
 
       runtime.subscribe((msg) => {
@@ -5380,13 +5436,34 @@ export const useApp = create<AppStore>((set, get) => {
           // A failed upload is the answer the person needs: connecting anyway
           // would run the session against the remote file they just chose to
           // replace, which is the opposite of the choice they made.
-          const newFingerprint = await writeRemoteConfig(target, prompt.localText);
-          get().updateSshHost(prompt.hostId, { configBaselineFingerprint: newFingerprint });
+          try {
+            const newFingerprint = await writeRemoteConfig(target, prompt.localText);
+            get().updateSshHost(prompt.hostId, { configBaselineFingerprint: newFingerprint });
+          } catch (err) {
+            // The upload refused: the open it was blocking cannot proceed, so
+            // it is abandoned rather than resumed. The in-flight mark is
+            // cleared only if it names *this* open — a prompt raised by the
+            // row's own install button has `resume` null and belongs to no
+            // open, and must not clear a different one that is mid-flight.
+            set((state) => ({
+              configSyncPrompt: null,
+              pendingRemoteOpen: null,
+              ...(resume !== null && state.openingRemote === resume ? { openingRemote: null } : {}),
+            }));
+            // Re-raised so the caller sees the failure the same way every
+            // other refusal from this call is seen.
+            throw err;
+          }
         }
       } else if (prompt.remoteFingerprint !== null) {
         get().updateSshHost(prompt.hostId, { configBaselineFingerprint: prompt.remoteFingerprint });
       }
 
+      // The prompt is over, but the open it was blocking is **not**: the
+      // `connectRemoteWorkspace` below still has to run, and it — not this
+      // write — clears `openingRemote` once the bucket lands or the open
+      // fails. Clearing it here would drop the toast for the whole pre-bucket
+      // install stretch that follows the decision.
       set({ configSyncPrompt: null, pendingRemoteOpen: null });
       // §9.4's whole point, kept: the decision is made **before** the
       // connection, and this is what finally opens the workspace it was
@@ -5402,8 +5479,11 @@ export const useApp = create<AppStore>((set, get) => {
       // Cancel means "not now", and a session silently started against
       // whichever file happened to be there is exactly the outcome the
       // question existed to prevent. The row stays in the sidebar, so the
-      // person can press it again and get the question again.
-      set({ configSyncPrompt: null, pendingRemoteOpen: null });
+      // person can press it again and get the question again. The in-flight
+      // mark goes with the open it was describing — without this, the
+      // connecting toast would say "connecting…" over an open that no longer
+      // exists, with nothing to clear it.
+      set({ configSyncPrompt: null, pendingRemoteOpen: null, openingRemote: null });
     },
 
     async applyLaunch(next) {

@@ -923,6 +923,47 @@ table.table td.mono {
   }
 }
 
+/* ---------------- 连接 toast（远程工作区打开中） ----------------
+ *
+ * A status, not a notification: it has no action and no close control, so it
+ * wears no dialog chrome — just a pill on the window's overlay layer. Above
+ * dialogs on purpose (`--z-toast`): a dialog covering it would say "nothing is
+ * happening" over a dial that is mid-flight. Bottom-centred: the workspace
+ * rows it refers to live in the left rail, and it sits at the top of the window,
+ * just under the top bar, so it is the first thing read. */
+.connecting-toast {
+  position: fixed;
+  top: 78px; /* 36px title bar + 42px top bar — just under the chrome strip */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 6px var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  pointer-events: none; /* nothing to click; do not steal hover from what is under it */
+  animation: reveal var(--motion-base) var(--ease-out) 1;
+}
+
+.connecting-toast .ct-icon {
+  color: var(--info);
+  flex: none;
+}
+
+.connecting-toast .ct-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
+
 .dialog-head {
   display: flex;
   align-items: center;
