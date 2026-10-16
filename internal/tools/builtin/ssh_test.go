@@ -413,6 +413,114 @@ func TestWriteWarnsWhenTheDataHasNoTrailingNewline(t *testing.T) {
 	}
 }
 
+// TestSubmitAppendsTheNewline: `submit=true` on a complete command whose data
+// forgot its \n must deliver the newline so the command actually runs, and the
+// audit must record that the runtime supplied the byte — "what was typed on
+// that host" has to reflect the appended byte, not the model's draft.
+func TestSubmitAppendsTheNewline(t *testing.T) {
+	remote := newFakeRemote()
+	manager := sshManagerForTests(t, remote)
+	connect := toolNamed(t, manager, "ssh_connect")
+	write := toolNamed(t, manager, "ssh_write")
+
+	text, _ := callTool(t, connect, nil, map[string]any{"host": "prod"})
+	id := sessionIdFromText(t, text)
+
+	text, audit := callTool(t, write, nil, map[string]any{
+		"session_id": id, "data": "ls -la", "submit": true,
+	})
+	if !strings.HasSuffix(audit["data"].(string), "\n") {
+		t.Errorf("audit data = %q, want it to end with \\n (the bytes actually sent)", audit["data"])
+	}
+	if audit["newline_appended"] != true {
+		t.Errorf("audit newline_appended = %v, want true", audit["newline_appended"])
+	}
+	if strings.Contains(text, "没有以换行结尾") {
+		t.Errorf("a submit write warned about a missing newline even though it was supplied:\n%s", text)
+	}
+
+	// What actually reached the remote must carry the newline.
+	deadline := time.Now().Add(2 * time.Second)
+	for remote.sentBytes() == "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.HasSuffix(remote.sentBytes(), "ls -la\n") {
+		t.Errorf("remote received %q, want it to end with \"ls -la\\n\"", remote.sentBytes())
+	}
+}
+
+// TestSubmitIsInertWhenTheNewlineIsAlreadyThere: a model that did remember its
+// \n gets its bytes back untouched — submit may add, never rewrite.
+func TestSubmitIsInertWhenTheNewlineIsAlreadyThere(t *testing.T) {
+	manager := sshManagerForTests(t, newFakeRemote())
+	connect := toolNamed(t, manager, "ssh_connect")
+	write := toolNamed(t, manager, "ssh_write")
+
+	text, _ := callTool(t, connect, nil, map[string]any{"host": "prod"})
+	id := sessionIdFromText(t, text)
+
+	_, audit := callTool(t, write, nil, map[string]any{
+		"session_id": id, "data": "ls -la\n", "submit": true,
+	})
+	if audit["data"] != "ls -la\n" {
+		t.Errorf("audit data = %q, want the original bytes unchanged", audit["data"])
+	}
+	if audit["newline_appended"] != false {
+		t.Errorf("audit newline_appended = %v, want false", audit["newline_appended"])
+	}
+}
+
+// TestSubmitDefaultFalseKeepsInteractiveWritesRaw: the whole point of the flag
+// existing as opt-in is that an interactive half-line (a `y` to a prompt, a vim
+// keystroke) never gets a newline the caller did not ask for.
+func TestSubmitDefaultFalseKeepsInteractiveWritesRaw(t *testing.T) {
+	remote := newFakeRemote()
+	manager := sshManagerForTests(t, remote)
+	connect := toolNamed(t, manager, "ssh_connect")
+	write := toolNamed(t, manager, "ssh_write")
+
+	text, _ := callTool(t, connect, nil, map[string]any{"host": "prod"})
+	id := sessionIdFromText(t, text)
+
+	_, _ = callTool(t, write, nil, map[string]any{"session_id": id, "data": "y"})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for remote.sentBytes() == "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if remote.sentBytes() != "y" {
+		t.Errorf("remote received %q, want the bare \"y\" with nothing appended", remote.sentBytes())
+	}
+}
+
+// TestSubmitDoesNotSilenceTheWarningForOtherShapes: submit only covers the
+// missing-newline case. An empty write with submit=true has nothing to append,
+// and a \r-terminated write already executes — neither may be reported as
+// "newline appended".
+func TestSubmitDoesNotSilenceTheWarningForOtherShapes(t *testing.T) {
+	manager := sshManagerForTests(t, newFakeRemote())
+	connect := toolNamed(t, manager, "ssh_connect")
+	write := toolNamed(t, manager, "ssh_write")
+
+	text, _ := callTool(t, connect, nil, map[string]any{"host": "prod"})
+	id := sessionIdFromText(t, text)
+
+	_, empty := callTool(t, write, nil, map[string]any{
+		"session_id": id, "data": "", "submit": true,
+	})
+	if empty["newline_appended"] != false {
+		t.Errorf("an empty submit write claimed to have appended a newline: %v", empty["newline_appended"])
+	}
+
+	_, crlf := callTool(t, write, nil, map[string]any{
+		"session_id": id, "data": "q\r", "submit": true,
+	})
+	if crlf["data"] != "q\r" || crlf["newline_appended"] != false {
+		t.Errorf("a \\r-terminated submit write was altered: data=%q appended=%v",
+			crlf["data"], crlf["newline_appended"])
+	}
+}
+
 // TestReadTimeoutSuggestsTheMissingNewline: the timeout answer has to carry the
 // most likely cause, or a model that forgot its newline spends ten round trips
 // guessing that the tool ate it.

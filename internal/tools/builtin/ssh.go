@@ -162,19 +162,35 @@ func newSSHWrite(manager *sshlib.Manager) tools.Tool {
 	return tools.Tool{
 		Name: "ssh_write",
 		Description: "往一个 SSH 会话里写入原始字节：命令、换行、控制字符都直接发过去，**不做任何解析**。" +
-			"换行自己带（命令末尾写 `\\n`）；`\\u0003` 是 Ctrl+C，`\\u0004` 是 Ctrl+D。" +
-			"PTY 要求换行才执行：命令必须以 `\\n` 结尾，否则它只停在输入行、不会执行，runtime 不会替你补。\n" +
+			"换行自己带（命令末尾写 `\\n`）；`\\u0003` 是 Ctrl+C，`\\u0004` 是 Ctrl+D。\n" +
+			"PTY 要求换行才执行：命令必须以 `\\n` 结尾，否则它只停在输入行、不会执行。\n" +
+			"**写完整命令时用 `submit=true`**：runtime 会在末尾自动补 `\\n`，不用自己记。\n" +
+			"交互式场景（vim、`read -n 1` 的 y/n、`less` 翻页）保持默认 `false`，部分输入不会被打断。\n" +
 			"它返回「已写入」，**不是「命令成功了」** —— 结果要靠 ssh_read 读出来判断。\n" +
-			"写完立刻读：`ssh_read` 会等到有输出或超时，所以标准写法是 write 一条命令、read 到 `__DONE_$?__`、" +
-			"再决定下一步。交互式提示（密码、确认 y/n）也能这样回答。",
+			"写完立刻读：`ssh_read` 会等到有输出或超时，所以标准写法是 write 一条命令（submit=true）、read 到 `__DONE_$?__`、" +
+			"再决定下一步。",
 		Risk: security.RiskLow,
 		Schema: tools.ObjectSchema(map[string]any{
 			"session_id": tools.StringSchema("ssh_connect 返回的会话 id", tools.MinLength(1)),
-			"data":       tools.StringSchema("要写入的原始字节。命令记得以 \\n 结尾；Ctrl+C 写 \\u0003"),
+			"data":       tools.StringSchema("要写入的原始字节；Ctrl+C 写 \\u0003。命令用 submit=true 就不用自己加换行"),
+			"submit": tools.BoolSchema(
+				"true 表示这是一条完整命令：如果 data 没有以换行结尾，自动在末尾补 \\n 再发送。"+
+					"交互式输入（vim、y/n 确认、pager 翻页）保持默认的 false，避免把还没打完的话打出去",
+				tools.Default(false)),
 		}, "session_id", "data"),
 		Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 			id := stringArg(args, "session_id")
 			data := stringArg(args, "data")
+			submit := boolArg(args, "submit")
+			appended := false
+			if submit && data != "" && !endsWithNewline(data) {
+				// The whole reason this flag exists: models routinely forget the
+				// trailing \n, and the command then sits on the input line while
+				// every ssh_read times out for no apparent reason. Let a model
+				// declare "this is a complete command" and stop counting bytes.
+				data += "\n"
+				appended = true
+			}
 			if err := manager.Write(id, data); err != nil {
 				return tools.Result{
 					Text: "写入失败：" + err.Error(),
@@ -187,6 +203,9 @@ func newSSHWrite(manager *sshlib.Manager) tools.Tool {
 			}
 			text := fmt.Sprintf("已写入会话 %s %d 字节。这**不代表命令执行成功** —— 用 ssh_read(%s) 读输出再判断。",
 				id, len([]rune(data)), id)
+			if appended {
+				text += "（末尾自动补了 \\n，命令会执行。）"
+			}
 			if data != "" && !endsWithNewline(data) {
 				// The command sits on the input line unexecuted until a newline
 				// arrives, and no later read tells the model why its read timed
@@ -199,12 +218,15 @@ func newSSHWrite(manager *sshlib.Manager) tools.Tool {
 				Audit: map[string]any{
 					"session_action": "write",
 					"session_id":     id,
-					// The bytes themselves, so "what was typed on that host" is
-					// answerable afterwards. See this tool's constructor for why
-					// nothing else asks about a write.
-					"data":   data,
-					"bytes":  len(data),
-					"status": "ok",
+					// The bytes that actually went to the host, so "what was
+					// typed on that host" is answerable afterwards. See this
+					// tool's constructor for why nothing else asks about a
+					// write. `newline_appended` records when submit supplied
+					// the byte the model left out.
+					"data":             data,
+					"bytes":            len(data),
+					"newline_appended": appended,
+					"status":           "ok",
 				},
 			}, nil
 		},
