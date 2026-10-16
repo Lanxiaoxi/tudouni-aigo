@@ -3,7 +3,9 @@ import type { CSSProperties } from 'react';
 import { ArrowDown, Loader, Sparkles } from 'lucide-react';
 import { NO_ENTRIES, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import { useFindInStream } from '@/find/useFindInStream';
 import { EntryView } from './EntryView';
+import { FindBar } from './FindBar';
 import { QuietGroup } from './QuietGroup';
 import { TurnRail } from './TurnRail';
 import { MIN_RAIL_TURNS, turnRail, LANDING_PX } from '@/turnRail';
@@ -82,6 +84,24 @@ export function StreamView() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
+  // The transcript's own find (`Ctrl+F`). It is run here rather than in the bar
+  // because this component owns both the scroller a jump lands in and the row
+  // list the hits are drawn over.
+  const find = useFindInStream(scrollRef, entries);
+
+  /**
+   * Searching releases the bottom-follow.
+   *
+   * While pinned, every chunk writes `scrollTop = scrollHeight` — so a reader who
+   * is walking hits down a long answer would be dragged back to the last line of
+   * the conversation several times a second, and the hit they just went to would
+   * scroll away underneath them. Unpinning is one-way here: coming back to the
+   * bottom is the jump-to-latest button's job, as it is for any other reader who
+   * scrolled up.
+   */
+  useEffect(() => {
+    if (find.open) setPinned(false);
+  }, [find.open]);
 
   const rows = useMemo(() => buildRows(entries, quiet), [entries, quiet]);
   // The drawn rows, pulled tight into step panels. Same cadence as `rows`
@@ -145,49 +165,69 @@ export function StreamView() {
   }, []);
 
   return (
-    <div
-      className="stream-body"
-      // Where a jumped-to turn head lands, published for the stylesheet's
-      // `scroll-margin-top`. It is written here rather than in `stream.css`
-      // because `HEADING_BAND_PX` — the rule that decides which mark is active —
-      // is derived from it in `turnRail.ts`, and a jump that lands outside its own
-      // band makes the rail highlight the turn *before* the one that was clicked.
-      style={{ '--rail-landing': `${LANDING_PX}px` } as CSSProperties}
-    >
+    <>
+      {/* Above `.stream-body` rather than inside it: `.stream-body` is the
+          horizontal row that holds the transcript and the rail's lane, and a bar
+          inside it would either take a lane of its own or overlap the text. One
+          row of the column above it costs the transcript 32px and covers
+          nothing. */}
+      {find.open ? (
+        <FindBar
+          query={find.query}
+          count={find.count}
+          index={find.index}
+          focusToken={find.focusToken}
+          onQuery={find.setQuery}
+          onNext={find.next}
+          onPrev={find.prev}
+          onClose={find.close}
+        />
+      ) : null}
+
       <div
-        className="stream-scroll scroll"
-        ref={scrollRef}
-        onScroll={onScroll}
-        onKeyDown={onKeyDown}
-        tabIndex={0}
-        role="log"
-        aria-live="polite"
-        aria-label={t('stream.label')}
+        className="stream-body"
+        // Where a jumped-to turn head lands, published for the stylesheet's
+        // `scroll-margin-top`. It is written here rather than in `stream.css`
+        // because `HEADING_BAND_PX` — the rule that decides which mark is active —
+        // is derived from it in `turnRail.ts`, and a jump that lands outside its own
+        // band makes the rail highlight the turn *before* the one that was clicked.
+        style={{ '--rail-landing': `${LANDING_PX}px` } as CSSProperties}
       >
-        <div className="stream-inner">
-          {blocks.map((block) =>
-            block.kind === 'step' ? (
-              <StepBlock key={block.key} block={block} />
-            ) : (
-              <StreamRowView key={block.row.key} row={block.row} />
-            ),
-          )}
+        <div
+          className="stream-scroll scroll"
+          ref={scrollRef}
+          onScroll={onScroll}
+          onKeyDown={onKeyDown}
+          tabIndex={0}
+          role="log"
+          aria-live="polite"
+          aria-label={t('stream.label')}
+        >
+          <div className="stream-inner">
+            {blocks.map((block) =>
+              block.kind === 'step' ? (
+                <StepBlock key={block.key} block={block} />
+              ) : (
+                <StreamRowView key={block.row.key} row={block.row} />
+              ),
+            )}
+          </div>
+
+          {!pinned ? (
+            <button
+              type="button"
+              className="btn btn-secondary btn-compact jump-latest"
+              onClick={jumpToLatest}
+            >
+              <ArrowDown size={12} />
+              {t('common.jumpLatest')}
+            </button>
+          ) : null}
         </div>
 
-        {!pinned ? (
-          <button
-            type="button"
-            className="btn btn-secondary btn-compact jump-latest"
-            onClick={jumpToLatest}
-          >
-            <ArrowDown size={12} />
-            {t('common.jumpLatest')}
-          </button>
-        ) : null}
+        {rail ? <TurnRail turns={turns} scrollRef={scrollRef} /> : null}
       </div>
-
-      {rail ? <TurnRail turns={turns} scrollRef={scrollRef} /> : null}
-    </div>
+    </>
   );
 }
 

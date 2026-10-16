@@ -140,6 +140,13 @@ const SUITES = [
   // half is read as text, like `stream-layout.test.ts` does: a rule that went
   // back to a hard-coded colour has no behaviour to observe in Node.
   'markdown-fence.test.tsx',
+  // Find in the conversation: where a match lands (a `Range` offset that is one
+  // out puts the mark on the wrong word, and a match allowed to span a paragraph
+  // break draws one mark across two paragraphs), case folding that keeps its
+  // offsets, and the two links that fail invisibly 鈥?a searchable row that
+  // carries no `data-entry` is counted and never drawn, and a highlight registry
+  // name the stylesheet does not style paints nothing at all.
+  'find.test.tsx',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

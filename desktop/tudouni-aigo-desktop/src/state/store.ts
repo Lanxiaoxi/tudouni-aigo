@@ -1169,6 +1169,50 @@ export interface AppStore {
    */
   sessionFilter: 'active' | 'all';
 
+  /**
+   * Whether the transcript's find bar is up.
+   *
+   * Window-level, like `panel`: it is a question about the transcript **on
+   * screen**, asked with `Ctrl+F`, and there is exactly one of it. It lives here
+   * rather than inside `StreamView` for one reason — the keyboard reaches it from
+   * `useGlobalKeys`, which is a window listener with no part of the tree to hold
+   * the state.
+   */
+  findOpen: boolean;
+  /**
+   * What has been typed into it.
+   *
+   * Kept while the bar is up, and **dropped when the conversation on screen is
+   * replaced** (`FIND_IDLE`, used by the two paths that switch sessions): a needle
+   * is a question about one transcript, and carrying it into another one would
+   * answer a question nobody asked, with a count that looks like an answer.
+   */
+  findQuery: string;
+  /**
+   * Which hit is the current one, 0-based.
+   *
+   * **Clamped by whoever knows how many there are** — the scanning happens in
+   * `StreamView`'s own effect, which is the only place that has both the hits and
+   * the DOM. The store holds the number and nothing else, so there is no second
+   * copy of "how many matches" to fall out of step with the transcript.
+   */
+  findIndex: number;
+  /**
+   * How many times the keyboard has been asked for.
+   *
+   * A counter rather than a flag, and it is not the same fact as `findOpen`: the
+   * bar can already be up when `Ctrl+F` is pressed again — the reader clicked into
+   * the transcript and wants the box back — and "open, and put the cursor in it"
+   * has to be a **request** the bar can observe, not a state it already satisfies.
+   * With only `findOpen` the second press changed nothing, React re-rendered
+   * nothing, and the key read as having failed.
+   *
+   * It is deliberately **not** part of `FIND_IDLE`: closing the bar does not
+   * un-ask, and a counter that went back to zero would make the second open of a
+   * session's search indistinguishable from the first.
+   */
+  findFocus: number;
+
   /* ---------------- front-end preferences (window-level) ---------------- */
   sidebarVisible: boolean;
   /**
@@ -1653,6 +1697,18 @@ export interface AppStore {
   setSessionFilter(filter: 'active' | 'all'): void;
   setQuiet(q: boolean): void;
   toggleQuiet(): void;
+  /** Raise the transcript's find bar (`Ctrl+F`) and put the keyboard in it. */
+  openFind(): void;
+  /**
+   * Take it down, and hand the keyboard back to the transcript.
+   *
+   * Reached from three places — `Esc`, the bar's close button, and every session
+   * switch — which is why it is an action rather than a `setState` at each of
+   * them.
+   */
+  closeFind(): void;
+  setFindQuery(q: string): void;
+  setFindIndex(i: number): void;
   toggleSidebar(): void;
   setSidebarVisible(v: boolean): void;
   /**
@@ -2900,6 +2956,19 @@ export function terminalEndedNote(
   return { code: 'terminalEnded', id, reason, exitCode: code };
 }
 
+/**
+ * The find bar with nothing in it and nothing to point at.
+ *
+ * Used by the initial state and by the **two** paths that replace the transcript
+ * on screen (`focusSession`, and opening a remote workspace's session). A needle
+ * belongs to the conversation it was typed into: carried across a switch it would
+ * report hits in a transcript the reader never searched, which is worse than
+ * having to type it again. Spreading one constant is what keeps those two sites
+ * from drifting apart — the same lesson `closePanel` records for the session
+ * filter's six call sites.
+ */
+const FIND_IDLE = { findOpen: false, findQuery: '', findIndex: 0 } as const;
+
 export const useApp = create<AppStore>((set, get) => {
   /**
    * Write into one session's bucket.
@@ -3029,6 +3098,10 @@ export const useApp = create<AppStore>((set, get) => {
     // The desktop's steady state: archived sessions are hidden, so archiving
     // frees one of the runtime's fifty slots. See `SessionFilter`.
     sessionFilter: 'active',
+    // `findFocus` is a counter of requests, so it starts at zero and is not part
+    // of `FIND_IDLE`.
+    findFocus: 0,
+    ...FIND_IDLE,
 
     sidebarVisible: prefs.sidebarVisible,
     leftbarVisible: prefs.leftbarVisible,
@@ -3351,6 +3424,9 @@ export const useApp = create<AppStore>((set, get) => {
         activeKey: key,
         panel: null,
         modal: state.pendingModals.find((entry) => entry.key === key) ?? null,
+        // The transcript under the bar is about to be a different one. See
+        // `FIND_IDLE`.
+        ...FIND_IDLE,
       }));
       // The session being looked at is the one this window is working in, so its
       // workspace is what the next launch should open. Without this, "last used"
@@ -4844,6 +4920,29 @@ export const useApp = create<AppStore>((set, get) => {
       get().setQuiet(!current.quiet);
     },
 
+    openFind() {
+      // The needle is kept if the bar is re-raised over the same transcript —
+      // which is what `Ctrl+F` after `Esc` should do — and the index with it, so
+      // the reader is put back where they were rather than at the first hit. What
+      // is always asked for is the keyboard: see `findFocus`.
+      set((s) => ({ findOpen: true, findFocus: s.findFocus + 1 }));
+    },
+
+    closeFind() {
+      set({ ...FIND_IDLE });
+    },
+
+    setFindQuery(q) {
+      // Back to the first hit: a new needle's third match is not the third match
+      // of the old one, and keeping the number would land the reader somewhere
+      // arbitrary in the new set.
+      set({ findQuery: q, findIndex: 0 });
+    },
+
+    setFindIndex(i) {
+      set({ findIndex: i < 0 ? 0 : i });
+    },
+
     toggleSidebar() {
       set({ sidebarVisible: !get().sidebarVisible });
       persistPrefs(get());
@@ -5691,6 +5790,9 @@ export const useApp = create<AppStore>((set, get) => {
         activeKey: key,
         modal: headForActive(state.pendingModals, key as string),
         panel: null,
+        // A session opened into this window replaces what is on screen, so the
+        // find bar goes with it. See `FIND_IDLE`.
+        ...FIND_IDLE,
         startupProblem: null,
         startupNotice: null,
         // The bucket now exists and its own `connection.phase` (starting at

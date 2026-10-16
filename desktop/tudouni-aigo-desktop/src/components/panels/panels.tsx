@@ -627,6 +627,10 @@ const KEY_ROWS: Array<{ keys: string[]; label: TKey }> = [
   { keys: ['Ctrl', 'L'], label: 'key.leftbar' },
   { keys: ['Ctrl', 'K'], label: 'key.palette' },
   { keys: ['Ctrl', 'S'], label: 'key.skills' },
+  // Above `Ctrl+\\`, and next to the other `Ctrl` letters: the transcript's find
+  // belongs with the window's other keys, and the help table is the only place a
+  // reader can learn it exists.
+  { keys: ['Ctrl', 'F'], label: 'key.find' },
   { keys: ['Ctrl', '\\'], label: 'key.quiet' },
   { keys: ['Ctrl', 'A', 'E', 'W', 'U'], label: 'key.edit' },
   { keys: ['1', '9'], label: 'key.pick' },

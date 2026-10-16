@@ -2974,6 +2974,83 @@
   align-items: stretch;
 }
 
+/* ---------------- 会话内搜索 (`Ctrl+F`) ----------------
+ *
+ * 搜索栏是正文上方**自己的一行**，不是浮在正文上的浮层。理由和导航栏占用车道
+ * 一样（见 `.turn-rail` 上方那段量测）：正文是这个窗口里唯一不能被盖住的表面，
+ * 而读者正在找的那一行就在下面。占一行只让正文矮 32px，浮层会盖住答案本身。
+ *
+ * 正文行和它对齐：两者左右内边距一致，所以输入框的左边和正文文字的左边在同一条
+ * 竖线上 —— 它读起来是这一列的一部分，而不是另一条工具条。 */
+.find-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  /* 与 `.stream-inner` 的横向内边距一致（980px 居中列 + space-5），否则窄窗和
+     宽窗下输入框的起始位置会和正文差一个 `(100% - 980px) / 2`。 */
+  padding: 0 max(var(--space-5), calc((100% - 980px) / 2 + var(--space-5)));
+  border-bottom: 1px solid var(--border-subtle);
+  background: none;
+}
+
+.find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-2);
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  /* `.input` 的紧凑版（components.css §2）：同样是透明底 + `--border-strong`
+     描边 + 圆角，聚焦时换成 accent 描边和 focus ring。这里不套 `.input` 那个
+     wrapper，因为它是给"标签 + 控件"用的，而这一行里的控件就是输入框本身。 */
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.find-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.find-input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+.find-count {
+  flex: none;
+  /* 定宽 + 右对齐：命中数在打字时会从 `9 of 12` 变成 `10 of 12`，栏里的按钮
+     不能跟着左右抖。 */
+  min-width: 68px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* 命中高亮走 CSS Custom Highlight API（`find/engine.ts`），**不改 DOM** —— 那正是
+   它能和 `memo` 过的行列表共存的原因。两个注册名必须与引擎里的常量一致。
+ *
+ * 全部命中用中性暖色，当前命中用 accent：前者是"这里有"，后者是"你在这里"，
+ * 所以它们的对比度刻意不同（实测过：同色时读者看不出当前位置）。
+ *
+ * `color: inherit` 是必要的，不是多余的：`::highlight` 的默认前景色会覆盖原色，
+ * 于是代码块里高亮的 `--hljs` 语法颜色会被抹成正文色。 */
+::highlight(find-match) {
+  background-color: var(--warning-subtle);
+  color: inherit;
+}
+
+::highlight(find-current) {
+  background-color: var(--accent-tint);
+  color: inherit;
+}
+
 /* 正文在这一行里的位置。
  *
  * `min-width: 0` 是承重的，而且是这次改动**新引入**的需要：此前

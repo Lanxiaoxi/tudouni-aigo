@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react';
 import { useT } from '@/i18n/useT';
 import { activeMark, HEADING_BAND_PX, type RailTurn } from '@/turnRail';
+import { landOn } from '@/scrollLanding';
 
 /**
  * The transcript's turn rail: one dash per turn down the right edge, each a jump
@@ -288,36 +289,10 @@ export function TurnRail({
   /**
    * Scroll the transcript to a mark's row.
    *
-   * `scrollIntoView` rather than arithmetic on `offsetTop`: every transcript row
-   * carries `content-visibility: auto` (`app.css`), so a row nobody has scrolled
-   * past contributes an **estimate** rather than its real height, and adding up
-   * `offsetTop` would be arithmetic on numbers that are known to be
-   * approximations.
-   *
-   * **`scrollIntoView` alone is not enough either, and this is the measurement
-   * `app.css` says it was waiting for.** That comment rejects "re-assert the
-   * scroll on the next frame" for the *follow* path, correctly: the follow writes
-   * `scrollTop = scrollHeight`, which the estimate cannot disturb (measured, 0px
-   * gap over 150 chunks). A jump is the other case, and the estimate breaks it
-   * outright: when the rows past the viewport have never been seen, their 120px
-   * fallback makes the document **shorter than it is**, so the target's position
-   * clamps at the current bottom and the jump lands short — `scripts/turn-rail-check.mjs`
-   * measured a click on the last mark of a 60-turn session leaving its turn head
-   * **15,561px below the top**, with the transcript not moving at all from the
-   * previous jump. Re-aiming in a loop does not fix it: `scrollIntoView` is
-   * compositor-async, so every pass in the same task reads the same pre-scroll
-   * position, and the rows that would have to be laid out to extend the document
-   * are the ones still off screen. Re-aiming on the next frame does not fix it
-   * either — one frame lays out one viewport, so a long jump would need one frame
-   * per screen of history.
-   *
-   * So the estimate is lifted for the length of the jump instead: `is-landing`
-   * turns `content-visibility` off for the transcript's rows, the forced read
-   * below pays for the real layout once, and the scroll then lands exactly.
-   * Removing the class does not undo that — `contain-intrinsic-size: auto 120px`
-   * means a row's estimate *becomes* its real height the first time it is
-   * rendered, which is the whole reason the `auto` keyword is there — so this is
-   * paid once per session, on a click, and never on the streaming path.
+   * The landing itself is `scrollLanding.ts`'s `landOn`, shared with the find
+   * bar's hits — including the reason it has to lift `content-visibility` for the
+   * length of a jump, and the 15,561px measurement that says why. What is here is
+   * only the lookup.
    */
   const onJump = useCallback(
     (anchor: string) => {
@@ -333,13 +308,7 @@ export function TurnRail({
       // still anchored on its echo.
       const el = root.querySelector<HTMLElement>(`[data-anchor="${CSS.escape(anchor)}"]`);
       if (!el) return;
-      root.classList.add('is-landing');
-      // Read a layout property to force the layout that `is-landing` asked for.
-      // `scrollIntoView` would force it anyway, but only for the rows it decides
-      // to touch — and the point is the document's height, which is the sum.
-      void root.scrollHeight;
-      el.scrollIntoView({ block: 'start' });
-      root.classList.remove('is-landing');
+      landOn(root, el);
     },
     [scrollRef],
   );

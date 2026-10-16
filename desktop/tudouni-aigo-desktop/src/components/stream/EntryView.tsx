@@ -83,13 +83,19 @@ export const EntryView = memo(function EntryView({ entry }: { entry: Entry }) {
       return <ReasonEntry entry={entry} />;
     case 'answer':
       return (
-        <div className="e-answer">
+        // `data-entry` is the link between this row and the model entry it draws,
+        // and the find layer is its only reader: a hit is found as an offset into
+        // a row's text, and the only honest way back from there to a live `Text`
+        // node is an attribute this front end writes down itself. It is **not**
+        // `data-anchor`, which says "the turn rail may scroll here" and is on two
+        // row kinds only. See `find/matches.ts`.
+        <div className="e-answer" data-entry={entry.id}>
           <Markdown text={entry.text} />
         </div>
       );
     case 'stream':
       return (
-        <div className="e-stream">
+        <div className="e-stream" data-entry={entry.id}>
           {entry.text}
           {entry.streaming ? <span className="stream-caret" aria-hidden /> : null}
         </div>
@@ -176,8 +182,9 @@ function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
   return (
     // The second kind of rail anchor. A turn restored by `session_load` has no
     // `turn` head — the stored message list carries no turn boundary — so those
-    // marks scroll to the prompt they are named after instead.
-    <div className="e-user" data-anchor={entry.id}>
+    // marks scroll to the prompt they are named after instead. `data-entry` is the
+    // find layer's, and unrelated: see the note on the `answer` row below.
+    <div className="e-user" data-anchor={entry.id} data-entry={entry.id}>
       <span className="eu-tag">{t('entry.you')}</span>
       {entry.text}
       <button
@@ -486,7 +493,10 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
   const open = quiet ? manual === true : entry.streaming ? true : manual === true;
 
   return (
-    <div className="e-reason">
+    // `data-entry` marks the **row**, not the body: the body is inside the fold
+    // below, and a jump has to be able to walk up from a hit to the row it is
+    // drawn in (see `find/engine.ts`).
+    <div className="e-reason" data-entry={entry.id}>
       <div
         className="er-head"
         role="button"

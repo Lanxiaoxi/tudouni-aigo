@@ -1302,6 +1302,7 @@ export const en = {
   'key.pick': 'Confirm / close / numeric pick in a panel',
   'key.history': 'Browse input history',
   'key.quiet': 'Toggle quiet mode',
+  'key.find': 'Find in this conversation',
 
   /* ---------------- misc ---------------- */
   'common.close': 'Close',
@@ -1342,6 +1343,20 @@ export const en = {
   /** One mark's accessible name. It has to say what the press does **and** which
    *  turn, or a screen reader user hears "button" some hundreds of times. */
   'rail.jump': 'Jump to turn {n}',
+
+  /* ---------------- find in the conversation (`Ctrl+F`) ---------------- */
+  /** The bar's own name, and the search box's: one region, one label, and the
+   *  box is the only control in it. */
+  'find.label': 'Find in this conversation',
+  'find.placeholder': 'Find…',
+  /** How many hits, and which one the reader is on. `{n}` is 0 in one real case:
+   *  the hit they were on was in a streamed body the final answer replaced, so
+   *  there is a set of matches but none of them is current. */
+  'find.count': '{n} of {total}',
+  'find.none': 'no matches',
+  'find.next': 'Next match',
+  'find.prev': 'Previous match',
+  'find.close': 'Close find',
 } as const;
 
 export type TKey = keyof typeof en;

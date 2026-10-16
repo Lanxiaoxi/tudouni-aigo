@@ -821,6 +821,67 @@ It writes `render-check.png`; look at it. Two of the defects this project had
 progress" over a finished answer) were invisible to every assertion and obvious
 in the image.
 
+**What would a find-in-conversation cost, and would a highlight even paint?**
+`find-proto` is a **prototype, not a release gate**, and it exists because the
+mechanism a Ctrl+F layer would rest on cannot be asserted in Node: highlights are
+live `Range`s over text nodes React owns.
+
+```bash
+node scripts/find-proto.mjs http://127.0.0.1:5178/ 9333
+```
+
+It seeds 80 restored turns plus one live turn (548,188 characters of text), then
+measures what the layer above the match model has to be built out of. The numbers
+it printed are quoted in the script's own header; the four that changed the design
+were:
+
+- **A scan over the whole transcript costs 8.2ms and forces no layout**
+  (`scrollHeight` 38,240 before and after), so `content-visibility: auto`'s saving
+  is not spent by searching. Rescanning a single row costs nothing measurable.
+- **The CSS Custom Highlight registry lies.** After a commit replaces a row,
+  `size` and `isConnected` both report the ranges as healthy (`registry: 4,
+  connected: 4`) while every one of them is empty and draws nothing (`live: 0`).
+  React rewrites a text node rather than mutating it, which moves each range's
+  boundary to an ancestor. So the paint has to be rebuilt for the rows whose text
+  changed, and the hit count has to come from the model — never from the registry.
+- **A match inside a folded body has an ordinary rect** (`rectHeight: 17`) while
+  sitting in a clip box `0px` tall. "Hidden" is the folding ancestor, not an empty
+  rect.
+- **The height estimate is 1.55x wrong** (38,240px reported against 59,256px real),
+  which is why a jump uses the turn rail's `is-landing` technique rather than
+  arithmetic on measured offsets.
+
+**Does `Ctrl+F` find things, and does it stay out of the way?** `find-check` drives
+the bar with **real key events** (`Input.dispatchKeyEvent` for `Ctrl+F`, `Enter`,
+`Shift+Enter` and `Esc`; `Input.insertText` for the needle, so the box's `onChange`
+runs exactly as it does for a person) against a six-turn conversation several
+screens tall:
+
+```bash
+node scripts/find-check.mjs http://127.0.0.1:5178/ 9333
+```
+
+The four things it is for, none of which a unit test can see:
+
+- **`Ctrl+F` is wired to it at all.** The key was previously swallowed by
+  `useGlobalKeys`'s reload-key guard, and that guard runs before the terminal
+  check — so taking it off that list is a one-line change whose failure mode is
+  "the key does nothing".
+- **The mark is live and where the reader is looking.** The registry is asked
+  (`CSS.highlights.get`) and each range's own rect is compared against the
+  scroller's viewport, because a commit that rewrites a text node leaves ranges
+  that still count and draw nothing.
+- **A row whose `data-entry` element is its own content container is searched.**
+  This is the bug the check found on its first real run: `contentOf` looked for the
+  container among the row's *descendants*, so `.e-user` and `.e-stream` — a prompt,
+  and the body currently being written — were skipped entirely. A prompt is what
+  people search a transcript for most, and the hit was not miscounted, it was
+  invisible.
+- **`Esc` closes the search instead of interrupting the turn**, and a streamed
+  chunk does not drag the reader off the hit they are on. The chunk test prints a
+  per-chunk `scrollTop` trace: the one adjustment it makes is 20px, once, on the
+  sixth chunk (scroll anchoring), not a per-chunk follow.
+
 **Can a person actually click the window controls?** `check:window` answers that
 one question, and it is the check most likely to regress silently: every other
 gate passes while the buttons are dead, because the markup is right and a modal

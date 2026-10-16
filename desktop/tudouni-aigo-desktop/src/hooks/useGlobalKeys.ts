@@ -73,8 +73,15 @@ export function useGlobalKeys(): void {
        * both looked like keys "the pane would handle" and the guard returned
        * before this ever ran — reopening the exact hole this block exists to
        * close. A reload key has no meaning to a shell, so there is nothing to
-       * concede. */
-      if (e.key === 'F5' || (mod && !e.shiftKey && ['r', 'p', 'f'].includes(e.key.toLowerCase()))) {
+       * concede.
+       *
+       * `Ctrl+F` used to be in this list, on the grounds that it is a WebView
+       * key. It is not a reload key and it never destroyed anything — a webview
+       * with no menu has no find-in-page to open, so the key did nothing at all.
+       * It is now the transcript's own find (`case 'f'` below), which is why it
+       * is deliberately **not** in this list: the terminal guard has to be
+       * allowed to see it. */
+      if (e.key === 'F5' || (mod && !e.shiftKey && ['r', 'p'].includes(e.key.toLowerCase()))) {
         e.preventDefault();
         return;
       }
@@ -129,6 +136,20 @@ export function useGlobalKeys(): void {
         if (s.boardOpen) {
           e.preventDefault();
           s.setBoardOpen(false);
+          return;
+        }
+        // The find bar, before the interrupt and after everything that stacks
+        // over it. While it is up it is the closest thing to the keyboard, so
+        // `Esc` in a conversation that happens to be running must mean "close the
+        // search" — interrupting a turn is not what a reader who is searching the
+        // transcript is asking for, and it is not undoable.
+        //
+        // The bar's own input handles `Esc` itself and cancels the event, so this
+        // is the case where the focus is somewhere else: the transcript below it,
+        // a rail, the status bar.
+        if (s.findOpen) {
+          e.preventDefault();
+          s.closeFind();
           return;
         }
         // Esc interrupts **the session on screen** and nothing else. With
@@ -201,6 +222,20 @@ export function useGlobalKeys(): void {
               .reverse()
               .find((x) => x.kind === 'reason');
             if (last) s.toggleReasoning(last.id);
+            return;
+          }
+          case 'f': {
+            // The transcript's own find. Claimed here rather than in the stream
+            // so that it works from anywhere in the window — including while the
+            // bar is already up, where it re-focuses the box instead of toggling
+            // it away (a second `Ctrl+F` that closed the search would read as the
+            // key having failed).
+            //
+            // Reached only when no blocking modal is up: the visibility check
+            // above is what keeps a fail-closed approval unanswerable-by-accident,
+            // and searching a transcript is not an answer to it.
+            e.preventDefault();
+            s.openFind();
             return;
           }
           case '\\': {
