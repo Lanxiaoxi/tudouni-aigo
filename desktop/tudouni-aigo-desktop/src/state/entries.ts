@@ -791,43 +791,28 @@ export function reduceEvent(
       };
     }
 
+    // The four delegation records draw **no row here**, and that is deliberate.
+    //
+    // Each one's sentence is written by the runtime and arrives as a `notice`: the
+    // start (`notice.subagent.started`, carrying the resolved route and the depth),
+    // the end (`notice.delegation.finished`, carrying how it ended and where the
+    // answer went) and a child session that could not be saved
+    // (`notice.subagent.save_failed`). Composing a second sentence here from the
+    // same record put **three** rows in the transcript for one dispatch — two of
+    // them restatements, and both nameless, because the field they read for a name
+    // (`child_id`) is written by nothing in the runtime: these records carry
+    // `subagent_id`, and the label a person recognises only reached them later.
+    //
+    // A notice is one row, worded in one place, and reaches every front end the
+    // same way, which is also why the TUI never had the duplicate rows.
+    // `delegation_started` belongs on this list even though no notice covers it: it
+    // fires microseconds after `subagent_started` with less to say, and its real job
+    // is the `ui(state)` snapshot the runtime sends with it.
     case 'subagent_started':
     case 'subagent_problem':
     case 'delegation_started':
-    case 'delegation_finished': {
-      // The runtime's own account of a delegation. These are *reported* rather
-      // than inferred from the subagent block, which only ever shows the ones in
-      // flight — a delegation that started and finished between two snapshots
-      // left no trace at all.
-      // `delegation_*` names the child as `child_id`; the subagent's own records
-      // use `id`. Both are read so one row shape covers all four kinds.
-      const id =
-        typeof ev.child_id === 'string'
-          ? ev.child_id
-          : typeof ev.id === 'string'
-            ? ev.id
-            : '';
-      const problem = typeof ev.problem === 'string' ? ev.problem : '';
-      const label = typeof ev.label === 'string' && ev.label !== '' ? ev.label : id;
-      const what: Record<string, string> = {
-        subagent_started: `subagent started${label ? `: ${label}` : ''}`,
-        subagent_problem: `subagent problem${label ? ` (${label})` : ''}${problem ? `: ${problem}` : ''}`,
-        delegation_started: `delegation started${label ? `: ${label}` : ''}`,
-        delegation_finished: `delegation finished${label ? `: ${label}` : ''}`,
-      };
-      return {
-        entries: [
-          ...entries,
-          {
-            kind: 'note',
-            id: nextId('note'),
-            tone: ev.kind === 'subagent_problem' ? 'error' : 'info',
-            code: ev.kind,
-            text: what[ev.kind] ?? ev.kind,
-          },
-        ],
-      };
-    }
+    case 'delegation_finished':
+      return { entries };
 
     default:
       // An unknown kind is ignored. Both ends upgrade independently, and the

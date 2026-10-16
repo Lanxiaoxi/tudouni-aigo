@@ -127,8 +127,8 @@ func collectFinished(board *Board, id string) string {
 	settlement, ok := board.Collect(id)
 	if !ok {
 		return fmt.Sprintf(
-			"没有待收取的子 agent 叫 %s：id 可能写错了，或者结果已经被收取过（每个结果只收一次）。"+
-				"不带 id 调用可以列出还在等收取的。", id)
+			"no subagent waiting to be collected is called %s: the id may be wrong, or its result has already been collected (each result is handed over once). "+
+				"Call without an id to list what is still waiting.", id)
 	}
 	return settlement.Text
 }
@@ -139,10 +139,10 @@ func collectFinished(board *Board, id string) string {
 // has to know its wait did not run to completion, for the reason the jobs
 // board states for the same case.
 func runningResult(board *Board, id string, interrupted bool) tools.Result {
-	text := fmt.Sprintf("**还没结束**：%s。\n这不是结果，它结束后再收取（或直接带 wait=true 等）。",
+	text := fmt.Sprintf("**not finished yet**: %s.\nThis is not a result; collect it once it ends (or pass wait=true and wait).",
 		board.Snapshot(id))
 	if interrupted {
-		text = "**这一轮的等待被中断了**（不是它结束，也不是等到了时间上限）—— " + text
+		text = "**this wait was interrupted** (the child did not end, and the deadline was not reached) — " + text
 	}
 	audit := map[string]any{"subagent_id": id, "subagent_status": "running"}
 	if interrupted {
@@ -177,18 +177,18 @@ func listUncollected(board *Board) string {
 		}
 	}
 	if len(waiting) == 0 {
-		return "当前没有待收取的后台子 agent。"
+		return "no background subagent is waiting to be collected."
 	}
 	parts := make([]string, 0, len(waiting))
 	for _, row := range waiting {
 		entry, _ := row["id"].(string)
 		if label, _ := row["label"].(string); label != "" {
-			entry += "（" + label + "）"
+			entry += " (" + label + ")"
 		}
 		if reason, _ := row["stop_reason"].(string); reason != "" && reason != "answered" {
-			entry += "【" + reason + "】"
+			entry += " [" + reason + "]"
 		}
 		parts = append(parts, entry)
 	}
-	return strings.Join(parts, "、")
+	return strings.Join(parts, ", ")
 }

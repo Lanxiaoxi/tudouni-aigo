@@ -1514,9 +1514,9 @@ func (s *Server) OnEvent(record map[string]any) {
 		s.Send(s.stateMessage(false))
 	}
 
-	// The delegation's own two facts that a person needs and the badge does not
-	// carry: which route the child resolved to, and a child transcript that could not
-	// be written down.
+	// The delegation's own facts that a person needs and the badge does not carry:
+	// which route the child resolved to, how it ended, and a child transcript that
+	// could not be written down.
 	//
 	// They arrive as audit records because of where the tool that produces them runs.
 	// The runtime is the front end's child process, so its stderr *is* the terminal
@@ -1530,9 +1530,16 @@ func (s *Server) OnEvent(record map[string]any) {
 	// account of having delegated, so `session_id` is the parent's session and they
 	// are not marked as a child's. A notice in `forwardChild` would read correctly
 	// and never fire.
+	//
+	// **Every delegation row in a transcript is drawn from here.** The desktop
+	// client used to compose its own notes for `subagent_started`,
+	// `delegation_started` and `delegation_finished` on top of these notices, which
+	// made one dispatch three rows: two of them restatements, worded by the client,
+	// and nameless — the records carried no label for it to read. A notice is one
+	// row, is worded in one place (`internal/i18n`), and reaches every front end
+	// identically, so the client no longer composes any of the four.
 	switch kind {
 	case subagentStartedKind:
-		id, _ := String(record, "subagent_id")
 		provider, _ := String(record, "provider")
 		model, _ := String(record, "model")
 		// An absent depth renders as nothing rather than as zero: depth 0 is the
@@ -1543,24 +1550,61 @@ func (s *Server) OnEvent(record map[string]any) {
 			depth = itoa(number)
 		}
 		s.notice("info", "subagent", i18n.T("notice.subagent.started",
-			"id", id, "provider", provider, "model", model, "depth", depth))
+			"name", delegationName(record), "provider", provider, "model", model, "depth", depth))
 	case subagentProblemKind:
-		id, _ := String(record, "subagent_id")
 		reason, _ := String(record, "reason")
 		s.notice("warn", "subagent", i18n.T("notice.subagent.save_failed",
-			"id", id, "problem", reason))
+			"name", delegationName(record), "problem", reason))
+	case delegationFinishedKind:
+		name := delegationName(record)
+		reason, _ := String(record, "stop_reason")
+		// Two sentences, not one with a clause appended: a foreground delegation's
+		// answer is already in the transcript as the tool result, and a background
+		// one's is not anywhere the person can see, so "where did the answer go"
+		// has a different answer in each case and is the only thing this row is for.
+		if background, _ := record["background"].(bool); background {
+			s.notice("info", "subagent", i18n.T("notice.delegation.finished_background",
+				"name", name, "reason", reason))
+		} else {
+			s.notice("info", "subagent", i18n.T("notice.delegation.finished",
+				"name", name, "reason", reason))
+		}
 	}
 }
 
-// The two record kinds the delegation tool reports about itself.
+// delegationName is what to call one delegation in a sentence a person reads.
+//
+// The label is the display name the delegating model supplied, and it is the only
+// name that means anything to the person reading the transcript — the id is a
+// session id. An empty one is a real case rather than a defensive branch: the tool
+// falls back to `Config.Label`, which this build does not set, so a call the model
+// gave no label to resolves to the empty string. Falling back to the id is poorer
+// copy but it is better than a sentence with a hole in it.
+func delegationName(record map[string]any) string {
+	if label, _ := String(record, "label"); label != "" {
+		return label
+	}
+	id, _ := String(record, "subagent_id")
+	return id
+}
+
+// The record kinds the delegation tool reports about itself, and the two
+// transitions the board can be read from.
 //
 // They are spelled here rather than imported from `internal/subagent` on purpose:
 // this layer must not learn how a runtime is assembled, and the day the tool lives
 // in another process the strings are what crosses. The package that emits them owns
 // the canonical constants and says why they are records instead of stderr lines.
+//
+// `delegation_started` is deliberately absent from the notice switch above and is
+// not an oversight: `subagent_started` fires microseconds earlier with the resolved
+// route and the depth, so a second row announcing the same start would be a
+// restatement. The record still earns its keep — it is what makes the runtime send
+// the state snapshot that puts the row on the badge.
 const (
-	subagentStartedKind = "subagent_started"
-	subagentProblemKind = "subagent_problem"
+	subagentStartedKind    = "subagent_started"
+	subagentProblemKind    = "subagent_problem"
+	delegationFinishedKind = "delegation_finished"
 )
 
 // forwardChild sends one delegated agent's record to the front end.

@@ -559,7 +559,11 @@ export interface SubagentRow {
   model: string;
   provider: string;
   depth: number;
-  /** Elapsed seconds, not a start timestamp. */
+  /**
+   * Elapsed seconds, not a start timestamp. A row whose answer is already waiting
+   * to be collected reports the run's total, so it stops climbing — the done panel
+   * reports the same number for it.
+   */
   seconds: number;
   steps: number;
   tool_calls: number;

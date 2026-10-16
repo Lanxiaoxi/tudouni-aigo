@@ -56,7 +56,7 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 
 	resolved, err := t.resolveChild(parentModel, parentProvider)
 	if err != nil {
-		return tools.TextResult(fmt.Sprintf("委派失败：%v。请把这一步自己做完，或在最终答复里说明为什么需要子 agent。", err)), nil
+		return tools.TextResult(fmt.Sprintf("delegation failed: %v. Do this step yourself, or explain in your final answer why a subagent was needed.", err)), nil
 	}
 	chosen, route, chat := resolved.Model, resolved.Provider, resolved.Chat
 	// Reported through the audit hook, not to stderr: see KindSubagentStarted. The
@@ -68,8 +68,15 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 	// the child's id is a session where a run belongs. An empty field is a fact the
 	// reader can see; the child's id in that slot would be one they would have to
 	// disbelieve.
+	//
+	// `label` rides along because it is the only name a person can match against
+	// the transcript: the id is a session id, and the parameter exists to be shown
+	// (`subagent.go`'s schema says so). Without it on the record, every surface
+	// that is fed by audit records — the notice a front end draws, `--audit` —
+	// could name a delegation only by that id.
 	t.emit(audit.Event(KindSubagentStarted, t.parentID(), "", 0, map[string]any{
 		"subagent_id": childID,
+		"label":       t.callLabel(label),
 		"depth":       childDepth,
 		"model":       chosen,
 		"provider":    route.Name,
@@ -180,6 +187,7 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 
 	t.emit(audit.Event(KindDelegationStarted, t.parentID(), childID, 0, map[string]any{
 		"subagent_id":  childID,
+		"label":        t.callLabel(label),
 		"depth":        childDepth,
 		"max_depth":    t.MaxDepth,
 		"model":        chosen,
@@ -200,12 +208,19 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 			// Stop in the settlement window must answer "not running" rather than
 			// claim it stopped something.
 			t.dropCancel(childID)
-			t.settle(session, childID, started, answer, runErr, true)
+			t.settle(session, childID, label, started, answer, runErr, true)
 		}()
+		// The label is display-only and may legitimately be absent (`callLabel` is
+		// empty when the model supplied none), so the name is left out entirely
+		// rather than printed as an empty pair of brackets.
+		named := childID
+		if name := t.callLabel(label); name != "" {
+			named = childID + " (" + name + ")"
+		}
 		return tools.Result{
 			Text: fmt.Sprintf(
-				"已在后台启动子 agent %s（%s）。它跑它的，你继续你的回合；它完成后结果会出现在 payload 的「已完成待收取的子 agent」段，用收取工具带上 id 取回。在此之前不要凭猜测替它下结论。",
-				childID, t.callLabel(label)),
+				"subagent %s is running in the background. It works on its own while you carry on with this turn; when it finishes its result appears in the payload's \"finished, waiting to be collected\" section — fetch it with the collect tool and its id. Do not guess at its answer before then.",
+				named),
 			Audit: map[string]any{"subagent_id": childID},
 		}, nil
 	}
@@ -215,7 +230,7 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 	// parent's context here — the background branch returned already.
 	answer, runErr := sub.Run(runCtx, task)
 	return tools.Result{
-		Text: t.settle(session, childID, started, answer, runErr, false),
+		Text: t.settle(session, childID, label, started, answer, runErr, false),
 		// The child's id rides out on the tool result, which is how the parent's
 		// own `tool_result` event comes to name the delegation it belongs to. That
 		// is the whole correlation an interface needs: the parent's `tool_call`
@@ -233,7 +248,10 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 // log, retires the board row and reports the ending. The background flag picks
 // where the outcome goes: false returns it as the tool result text, true stores
 // it as the settlement the collect tool hands over later.
-func (t *Tool) settle(session *state.Session, childID string, started time.Time, answer string, runErr error, background bool) string {
+//
+// `label` is the call's own, carried through only so the record below can name
+// the delegation the way the person watching it knows it.
+func (t *Tool) settle(session *state.Session, childID, label string, started time.Time, answer string, runErr error, background bool) string {
 	// The child is written down before the outcome is decided, so a session that
 	// ended in a step limit or a model error is still there to be read.
 	t.checkpointChild(session)
@@ -250,12 +268,13 @@ func (t *Tool) settle(session *state.Session, childID string, started time.Time,
 				StopReason: stopReason,
 				Usage:      usage,
 			}, 0)
-			// A background delegation ends with no tool result to carry the
-			// news, so the terminal sink says it — the one user-visible cue
-			// that paid-for work is waiting to be read. "Stopped" rather than
-			// "interrupted": nothing the user was watching was cut short, the
-			// child itself was asked to end.
-			t.warn(fmt.Sprintf("子 agent %s 已完成（%s），结果待收取", childID, stopReason))
+			// A background delegation ends with no tool result to carry the news.
+			// The transcript's cue is the `delegation_finished` record, which
+			// `internal/protocol` turns into a notice every front end draws; this
+			// line is the diagnostic beside it, for a log that outlives the screen.
+			// "Stopped" rather than "interrupted": nothing the user was watching
+			// was cut short, the child itself was asked to end.
+			t.warn(fmt.Sprintf("subagent %s finished (%s); its result is waiting to be collected", childID, stopReason))
 		} else {
 			t.Board.Finish(childID)
 		}
@@ -263,6 +282,8 @@ func (t *Tool) settle(session *state.Session, childID string, started time.Time,
 
 	t.emit(audit.Event(KindDelegationFinished, t.parentID(), childID, 0, map[string]any{
 		"subagent_id":  childID,
+		"label":        t.callLabel(label),
+		"background":   background,
 		"depth":        DepthOf(session) - 1,
 		"duration_ms":  int(time.Since(started).Milliseconds()),
 		"stop_reason":  stopReason,
@@ -445,7 +466,7 @@ func (t *Tool) toolsForChild() *tools.Registry {
 // session that names a route it did not use is worse than no record at all.
 func (t *Tool) resolveChild(parentModel, parentProvider string) (ChildChat, error) {
 	if t.Resolver == nil {
-		return ChildChat{}, fmt.Errorf("没有配置子 agent 的路由解析器")
+		return ChildChat{}, fmt.Errorf("no route resolver is configured for subagents")
 	}
 	resolved, err := t.Resolver.ResolveChild(Route{
 		Model:    t.ChildModel,
@@ -456,7 +477,7 @@ func (t *Tool) resolveChild(parentModel, parentProvider string) (ChildChat, erro
 		return ChildChat{}, err
 	}
 	if strings.TrimSpace(resolved.Model) == "" || resolved.Chat == nil {
-		return ChildChat{}, fmt.Errorf("路由解析器没有给出可用的模型")
+		return ChildChat{}, fmt.Errorf("the route resolver produced no usable model")
 	}
 	return resolved, nil
 }
@@ -480,7 +501,7 @@ func (t *Tool) mintChildID() (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("子会话 id 用尽（同一父会话下已有 1000 个子 agent）")
+	return "", fmt.Errorf("the child session ids are exhausted (this parent session already has 1000 subagents)")
 }
 
 // parentID is the delegating session's id, or an empty string when the tool was

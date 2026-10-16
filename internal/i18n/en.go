@@ -771,12 +771,24 @@ var catalog = map[string]string{
 	"notice.jobs.leftovers":             "[background] the previous session left the output of {n} background jobs behind; they have been cleaned up. That session did not exit cleanly (window closed, or the process was killed), so **those commands may still be running** and they are outside this session's control — check yourself if a port or the CPU does not add up.",
 	"notice.jobs.no_job_object":         "[background] the guarantee that \"closing the window also collects the background jobs\" was not established ({problem}). A normal exit still cleans up, but **killing this process can orphan background commands**.",
 	"notice.subagent.enabled":           "[subagent] {tool} is registered: the model may hand a self-contained task to a fresh agent, up to {depth} levels deep. A subagent cannot ask for approval — it runs in autopilot, so anything not on the policy's deny list runs without asking — and its whole transcript is saved as its own session beside this one.",
-	// The two lines a delegation reports about itself while it runs. They are
+	// What a delegation reports about itself as it starts, ends and fails. These are
 	// notices rather than stderr diagnostics because the runtime's stderr is the
 	// terminal the front end is drawing on: the same sentence written there would be
-	// erased by the next redraw.
-	"notice.subagent.started":     "[subagent] {id} is running on {provider}/{model} (depth {depth}) — its own steps stay in its own session; only its final answer comes back to this one.",
-	"notice.subagent.save_failed": "[subagent] {id} finished, but its own session could not be written down, so the transcript behind its answer is gone: {problem}",
+	// erased by the next redraw — and the desktop client, which drains stderr into a
+	// ring only shown when start-up failed, would never draw it at all.
+	//
+	// They are the **only** rows a delegation puts in a transcript; no front end
+	// composes its own copy of them. `{name}` is the label the delegating model
+	// supplied, which is what a person matches against the tool row they can see; the
+	// runtime falls back to the child's session id for a call that supplied none.
+	"notice.subagent.started":     "[subagent] {name} is running on {provider}/{model} (depth {depth}) — its own steps stay in its own session; only its final answer comes back to this one.",
+	"notice.subagent.save_failed": "[subagent] {name} finished, but its own session could not be written down, so the transcript behind its answer is gone: {problem}",
+	// Where the answer went is the only thing these two rows are for, and it differs
+	// by kind: a foreground delegation's answer is already in the transcript as the
+	// tool result, while a background one's is held for the collect tool and is
+	// nowhere a person can see.
+	"notice.delegation.finished":            "[subagent] {name} finished ({reason}) — its answer is the result of this call.",
+	"notice.delegation.finished_background": "[subagent] {name} finished ({reason}) — its answer is waiting to be collected with subagent_output.",
 	"notice.tools.header":         "Registered tools:",
 	"notice.tools.row":            "  - {name} risk={risk}",
 	// --- what the line REPL says about flags it cannot honour --------------

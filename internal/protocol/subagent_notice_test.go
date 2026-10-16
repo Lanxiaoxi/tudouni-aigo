@@ -123,6 +123,110 @@ func TestTheDelegationRecordsAreForwardedUnmarked(t *testing.T) {
 	}
 }
 
+// TestANamedDelegationIsAnnouncedByItsLabel pins the name a person reads.
+//
+// The label is the only name that matches the tool row they can see; the child's
+// id is a session id. The tool puts the label on the record for exactly this
+// reason, and the id is only the fallback for a call that supplied none — which is
+// a real case, because the configured fallback label is unset in this build.
+func TestANamedDelegationIsAnnouncedByItsLabel(t *testing.T) {
+	var out strings.Builder
+	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
+	server.Attach(&stubRuntime{})
+
+	server.OnEvent(map[string]any{
+		"kind": "subagent_started", "session_id": "parent", "subagent_id": "sub-parent-1",
+		"label": "survey the auth flow", "depth": 1, "provider": "p", "model": "m",
+	})
+
+	notices := noticesOf(sentMessages(t, &out))
+	if len(notices) != 1 {
+		t.Fatalf("the route report produced %d notices, want 1", len(notices))
+	}
+	text, _ := notices[0]["text"].(string)
+	if !strings.Contains(text, "survey the auth flow") {
+		t.Errorf("the notice does not name the delegation by its label: %q", text)
+	}
+}
+
+// TestAFinishedDelegationSaysWhereItsAnswerWent runs the closing row for both
+// kinds.
+//
+// Where the answer ended up is the only thing this row is for, and it differs by
+// kind: a foreground delegation's answer is already the tool result in the
+// transcript, while a background one's is held for the collect tool and is nowhere
+// the person can look. A single sentence covering both would have to be vague
+// enough to be useless, or wrong for one of them.
+func TestAFinishedDelegationSaysWhereItsAnswerWent(t *testing.T) {
+	rendered := func(t *testing.T, background bool) string {
+		t.Helper()
+		var out strings.Builder
+		server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
+		server.Attach(&stubRuntime{})
+
+		server.OnEvent(map[string]any{
+			"kind": "delegation_finished", "session_id": "parent", "subagent_id": "sub-c-1",
+			"label": "survey", "background": background, "stop_reason": "answered",
+		})
+
+		notices := noticesOf(sentMessages(t, &out))
+		if len(notices) != 1 {
+			t.Fatalf("a finished delegation produced %d notices, want 1", len(notices))
+		}
+		if level, _ := notices[0]["level"].(string); level != "info" {
+			t.Errorf("an ordinary ending is announced as %q, want info — it is not a failure", level)
+		}
+		body, _ := notices[0]["text"].(string)
+		if strings.Contains(body, "⟪") {
+			t.Errorf("the notice is a missing i18n key: %q", body)
+		}
+		// The name and how it ended, because a transcript with two delegations on
+		// screen cannot tell two anonymous endings apart.
+		for _, want := range []string{"survey", "answered"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("the notice does not mention %q: %q", want, body)
+			}
+		}
+		return body
+	}
+
+	if body := rendered(t, false); strings.Contains(body, "subagent_output") {
+		t.Errorf("a foreground answer is already in the transcript, so the notice must not send the reader to the collect tool: %q", body)
+	}
+	if body := rendered(t, true); !strings.Contains(body, "subagent_output") {
+		t.Errorf("a background answer is nowhere the reader can see it, so the notice must say how it is fetched: %q", body)
+	}
+}
+
+// TestAStartedDelegationIsAnnouncedOnce pins the count rather than the wording.
+//
+// `subagent_started` and `delegation_started` fire microseconds apart for one
+// delegation. Drawing a row for each — or composing a client-side sentence on top
+// of the notice — turned a single dispatch into three rows saying the same thing,
+// two of them nameless. Only the record carrying the resolved route becomes a
+// notice; the other still earns its keep by triggering the state snapshot that puts
+// the row on the badge.
+func TestAStartedDelegationIsAnnouncedOnce(t *testing.T) {
+	var out strings.Builder
+	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
+	server.Attach(&stubRuntime{})
+
+	server.OnEvent(map[string]any{
+		"kind": "subagent_started", "session_id": "parent", "subagent_id": "sub-c-1",
+		"label": "survey", "depth": 1, "provider": "p", "model": "m",
+	})
+	server.OnEvent(map[string]any{
+		"kind": "delegation_started", "session_id": "parent", "run_id": "sub-c-1",
+		"subagent_id": "sub-c-1", "label": "survey", "depth": 1, "max_depth": 1,
+		"provider": "p", "model": "m", "prompt_chars": 40, "background": false,
+	})
+
+	notices := noticesOf(sentMessages(t, &out))
+	if len(notices) != 1 {
+		t.Fatalf("one delegation's start produced %d notices, want 1", len(notices))
+	}
+}
+
 // TestARuntimeThatCannotBeAssembledSaysWhy is the compensation for the child's
 // stderr being out of reach.
 //

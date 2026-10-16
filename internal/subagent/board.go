@@ -91,6 +91,20 @@ func (d Delegation) Duration(now float64) float64 {
 	return now - d.Started
 }
 
+// Elapsed is how long the delegation ran: the total once it has finished, and the
+// time so far while it is still going.
+//
+// `Duration` alone is not that, and the difference is visible. A settled background
+// delegation stays in the running table until it is collected, so a panel built
+// from `Duration(now)` kept a timer climbing on a child that had already stopped —
+// beside the frozen total the done panel reports for the very same row.
+func (d Delegation) Elapsed(now float64) float64 {
+	if d.Ended != 0 {
+		return d.Ended - d.Started
+	}
+	return d.Duration(now)
+}
+
 // NewBoard creates a board. A nil clock falls back to wall time; the runtime
 // passes the same injected clock everything else uses, so a duration on screen
 // and a duration in the audit are the same measurement.
@@ -138,11 +152,12 @@ func (b *Board) Finish(id string) {
 
 // Settle records that a background delegation is over and keeps its answer.
 //
-// The row stays in the running table (a front end's snapshot is still
-// consistent) and the settlement goes into the done table, where Collect and
-// DonePanel find it. An id this board never saw start is dropped, for the same
-// reason Observe drops unknown records — inventing a row from a fragment would
-// show a subagent whose start time is a guess.
+// The row stays in the running table until Collect hands the answer over and
+// removes both, and the settlement goes into the done table, where Collect and
+// DonePanel find it. A front end's snapshot is consistent either way — `Ended`
+// marks the row finished while it waits. An id this board never saw start is
+// dropped, for the same reason Observe drops unknown records — inventing a row
+// from a fragment would show a subagent whose start time is a guess.
 func (b *Board) Settle(id string, settlement Settlement, ended float64) {
 	if b == nil {
 		return
@@ -162,6 +177,16 @@ func (b *Board) Settle(id string, settlement Settlement, ended float64) {
 
 // Collect hands over a finished background delegation's result and forgets it.
 //
+// **The row goes with the settlement.** Every reader of `b.running` treats it as
+// "work in flight": `Panel` draws a row per entry, `BackgroundRunning` counts the
+// `Background` ones, and `DonePanel` answers `running` for an entry whose
+// settlement is missing. So a row left behind here would keep a finished
+// delegation on the badge with a timer that never stops, flip its done-panel row
+// back from `uncollected` to `running`, and — the expensive one — hold a slot in
+// the background cap for the rest of the session, because that cap is
+// `BackgroundRunning() >= max`: collect three delegations and `background: true`
+// is refused forever with nothing running.
+//
 // The bool distinguishes the two cases a collect tool must not confuse: "not
 // there" (unknown id, or already collected) and a real result. "Still running"
 // never reaches this method — the caller checks the running table first, because
@@ -178,6 +203,7 @@ func (b *Board) Collect(id string) (Settlement, bool) {
 		return Settlement{}, false
 	}
 	delete(b.done, id)
+	delete(b.running, id)
 	return *settlement, true
 }
 
@@ -235,9 +261,9 @@ func (b *Board) IsRunning(id string) bool {
 	if !ok {
 		return false
 	}
-	// Ended != 0 with no settlement is the already-collected case: Settle kept
-	// the row for display, the settlement was handed over and deleted. The row
-	// is history now, not work in flight.
+	// A settled row is finished whether or not it is still in the table: Settle
+	// marks `Ended` and Collect takes the row and the settlement away together,
+	// so `Ended != 0` can only ever mean "over".
 	return entry.Ended == 0
 }
 
@@ -271,14 +297,17 @@ func (b *Board) Snapshot(id string) string {
 	if !ok {
 		return ""
 	}
-	line := "子 agent " + id
+	// English, because this line is not only the model's "still running" answer: it
+	// is the first 200 characters of a tool result, so a person reads it in the
+	// desktop client's OUTPUT row. See `renderResult` for the same rule.
+	line := "subagent " + id
 	if entry.Label != "" {
-		line += "（" + entry.Label + "）"
+		line += " (" + entry.Label + ")"
 	}
-	line += fmt.Sprintf("，已跑 %d 秒，%d 步，%d 次工具调用",
-		int(entry.Duration(now)), entry.Steps, entry.ToolCalls)
+	line += fmt.Sprintf(", running %ds, %d steps, %d tool calls",
+		int(entry.Elapsed(now)), entry.Steps, entry.ToolCalls)
 	if entry.Activity != "" {
-		line += "，正在 " + entry.Activity
+		line += ", currently " + entry.Activity
 	}
 	return line
 }
@@ -375,7 +404,7 @@ func (b *Board) Panel() []map[string]any {
 			"model":      entry.Model,
 			"provider":   entry.Provider,
 			"depth":      entry.Depth,
-			"seconds":    int(entry.Duration(now)),
+			"seconds":    int(entry.Elapsed(now)),
 			"steps":      entry.Steps,
 			"tool_calls": entry.ToolCalls,
 			"activity":   entry.Activity,
@@ -424,11 +453,12 @@ func (b *Board) DonePanel() []map[string]any {
 	for _, pair := range pairs {
 		entry, settlement := pair.entry, pair.settlement
 		state := "running"
-		elapsed := entry.Duration(now)
+		// `Elapsed`, not `Duration`: a settled row's run is over, so its seconds
+		// must not go on climbing (see `Delegation.Elapsed`).
+		elapsed := entry.Elapsed(now)
 		stopReason := ""
 		if settlement != nil {
 			state = "uncollected"
-			elapsed = entry.Ended - entry.Started
 			stopReason = settlement.StopReason
 		}
 		rows = append(rows, map[string]any{

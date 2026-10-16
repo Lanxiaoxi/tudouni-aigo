@@ -123,7 +123,7 @@ func TestABackgroundDelegationReturnsBeforeTheChildFinishes(t *testing.T) {
 	// The tool result is back while the child is still parked at its model call
 	// — the fact this whole change exists to produce.
 	result := <-done
-	if !strings.Contains(result.text, "已在后台启动") {
+	if !strings.Contains(result.text, "in the background") {
 		t.Fatalf("the result does not say the delegation started: %q", result.text)
 	}
 	if !strings.Contains(result.text, firstChildID()) {
@@ -177,7 +177,7 @@ func TestTheCollectedAnswerIsTheWholeResult(t *testing.T) {
 	if !strings.Contains(result.Text, "background answer") {
 		t.Fatalf("the collected text lost the answer: %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "子 agent") {
+	if !strings.Contains(result.Text, "subagent ") {
 		t.Fatalf("the collected text lost the header: %q", result.Text)
 	}
 	if bg.board.Uncollected() != 0 {
@@ -189,7 +189,7 @@ func TestTheCollectedAnswerIsTheWholeResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(again.Text, "没有待收取") {
+	if !strings.Contains(again.Text, "waiting to be collected") {
 		t.Fatalf("a second collection did not say the result is gone: %q", again.Text)
 	}
 }
@@ -245,7 +245,7 @@ func TestCollectWhileRunningReturnsASnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, "还没结束") {
+	if !strings.Contains(result.Text, "not finished yet") {
 		t.Fatalf("a running delegation was not answered as still running: %q", result.Text)
 	}
 	if status, _ := result.Audit["subagent_status"].(string); status != "running" {
@@ -328,7 +328,7 @@ func TestCollectWaitDeadlineReportsProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, "还没结束") {
+	if !strings.Contains(result.Text, "not finished yet") {
 		t.Fatalf("a deadline-shaped collect did not report progress: %q", result.Text)
 	}
 	if strings.Contains(result.Text, "background answer") {
@@ -378,7 +378,7 @@ func TestCollectWaitHonoursAStop(t *testing.T) {
 
 	select {
 	case result := <-done:
-		if !strings.Contains(result.text, "被中断") {
+		if !strings.Contains(result.text, "this wait was interrupted") {
 			t.Fatalf("an interrupted wait was not marked as interrupted: %q", result.text)
 		}
 		if interrupted, _ := result.audit[tools.InterruptedAuditKey].(bool); !interrupted {
@@ -435,7 +435,7 @@ func TestTheBackgroundCapRefusesOnePastIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(second.Text, "上限") {
+	if !strings.Contains(second.Text, "limit is reached") {
 		t.Fatalf("the second background call was not refused at the cap: %q", second.Text)
 	}
 	if bg.board.BackgroundRunning() != 1 {
@@ -478,7 +478,7 @@ func TestStopCancelsOneBackgroundChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stopped.Text, "被中断") {
+	if !strings.Contains(stopped.Text, "was interrupted") {
 		t.Fatalf("a stopped child did not settle as cancelled: %q", stopped.Text)
 	}
 

@@ -536,6 +536,24 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
 /* ---------------- 12. attached / system rows ---------------- */
 
 /**
+ * The colour a note's tone earns it, where it has one of its own.
+ *
+ * `warn` and `error` used to be missing from this list, so a failure was drawn in
+ * the same `--fg-faint` grey as every ordinary notice around it: the icon changed
+ * and nothing else did. That is worst exactly where notes cluster — a
+ * `subagent problem` row landed between two "started/finished" rows that looked
+ * identical to it. The two colours are the ones the design system gives the same
+ * meanings everywhere else (`component-states.md`, the badge mapping).
+ */
+const NOTE_TONE_CLASS: Record<string, string> = {
+  degraded: ' is-degraded',
+  compacted: ' is-compacted',
+  image: ' is-image',
+  warn: ' is-warn',
+  error: ' is-error',
+};
+
+/**
  * Exported because the first screen renders notices too: they are session
  * content, and the design is explicit that the first screen must not squeeze
  * them out. One implementation, so the two places cannot drift.
@@ -557,14 +575,7 @@ export function NoteRow({ entry }: { entry: Extract<Entry, { kind: 'note' }> }) 
       <Info size={11} />
     );
 
-  const cls =
-    entry.tone === 'degraded'
-      ? ' is-degraded'
-      : entry.tone === 'compacted'
-        ? ' is-compacted'
-        : entry.tone === 'image'
-          ? ' is-image'
-          : '';
+  const cls = NOTE_TONE_CLASS[entry.tone] ?? '';
 
   return (
     <div className={`e-note${cls}`} data-code={entry.code}>

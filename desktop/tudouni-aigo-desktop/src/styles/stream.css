@@ -1153,6 +1153,19 @@
   color: var(--fg-muted);
 }
 
+/* A notice that says something is wrong has to be findable while scrolling past a
+   cluster of ordinary ones. Both colours are the ones the design system already
+   gives these meanings (`component-states.md`: 等待/警告 `--warning`,
+   错误 `--destructive`); the tone also picks the icon, so colour is never the only
+   signal. */
+.e-note.is-warn {
+  color: var(--warning);
+}
+
+.e-note.is-error {
+  color: var(--destructive);
+}
+
 /* ---------------- §5 流内大屏文本块 ---------------- */
 .inblock {
   border: 1px solid var(--border);

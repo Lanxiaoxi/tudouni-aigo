@@ -53,6 +53,79 @@ func TestTheBoardForgetsADelegationWhenItEnds(t *testing.T) {
 	}
 }
 
+// TestCollectingABackgroundDelegationTakesItsRowWithIt is the regression for a
+// collected delegation that went on counting as work in flight.
+//
+// `Panel`, `DonePanel` and `BackgroundRunning` all read the table of running
+// entries as "what is still going". A settlement handed over without its row
+// therefore left the badge showing a subagent forever with a timer that kept
+// climbing, made the done panel answer `running` again (an entry with no
+// settlement is the only thing that distinguishes the two states), and — the one
+// that breaks the feature — held a slot in the background cap for the rest of the
+// session, because that cap is `BackgroundRunning() >= max`.
+func TestCollectingABackgroundDelegationTakesItsRowWithIt(t *testing.T) {
+	clock := &fakeClock{}
+	board := NewBoard(clock.read)
+
+	board.Start(Delegation{ID: "sub-bg-1", Label: "survey", Depth: 1, Background: true})
+	clock.tick(30)
+	board.Settle("sub-bg-1", Settlement{Text: "the answer", StopReason: "answered"}, 0)
+
+	// Settled, waiting to be collected: the row is still there — that is what
+	// keeps it on the badge — and the done panel is where the two answers differ.
+	if got := board.BackgroundRunning(); got != 1 {
+		t.Errorf("background running = %d while waiting to be collected, want 1", got)
+	}
+	if got := board.Uncollected(); got != 1 {
+		t.Errorf("uncollected = %d while waiting to be collected, want 1", got)
+	}
+	done := board.DonePanel()
+	if len(done) != 1 || done[0]["state"] != "uncollected" {
+		t.Fatalf("done panel = %v, want exactly one `uncollected` row", done)
+	}
+
+	// The clock has stopped for this delegation. A settled row is still listed
+	// while its answer waits, so reading `Duration(now)` here would keep a timer
+	// climbing on a child that had already stopped — and the two panels would
+	// disagree about the same run.
+	clock.tick(270)
+	running := board.Panel()
+	if len(running) != 1 {
+		t.Fatalf("running panel = %v, want the settled row still listed while it waits", running)
+	}
+	if got := running[0]["seconds"]; got != 30 {
+		t.Errorf("the running panel reports %vs for a delegation that ran 30s", got)
+	}
+	if got := board.DonePanel()[0]["seconds"]; got != 30 {
+		t.Errorf("the done panel reports %vs for a delegation that ran 30s", got)
+	}
+
+	if _, ok := board.Collect("sub-bg-1"); !ok {
+		t.Fatal("Collect refused a settlement that was waiting for it")
+	}
+
+	// Collected. Time has already moved on, so a row left behind would also be
+	// reporting a longer run than it ever had.
+	if rows := board.Panel(); len(rows) != 0 {
+		t.Errorf("the running panel still lists %d row(s) after collecting: %v", len(rows), rows)
+	}
+	if rows := board.DonePanel(); len(rows) != 0 {
+		t.Errorf("the done panel still lists %d row(s) after collecting: %v", len(rows), rows)
+	}
+	if got := board.BackgroundRunning(); got != 0 {
+		t.Errorf("background running = %d after collecting, want 0 — the cap would never free up", got)
+	}
+	if got := board.Uncollected(); got != 0 {
+		t.Errorf("uncollected = %d after collecting, want 0", got)
+	}
+	if got := board.Count(); got != 0 {
+		t.Errorf("count = %d after collecting, want 0", got)
+	}
+	if board.IsRunning("sub-bg-1") {
+		t.Error("a collected delegation still reports as running")
+	}
+}
+
 // TestTheBoardReportsHowLongADelegationHasRun covers the number that turns
 // "running" into "running for a while": a badge that only ever said "1 subagent"
 // cannot tell a working child from a stuck one.

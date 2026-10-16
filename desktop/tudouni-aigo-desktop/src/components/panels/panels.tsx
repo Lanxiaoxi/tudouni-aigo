@@ -699,15 +699,17 @@ export function SubagentsPanel() {
   const t = useT();
   // Delegations and background jobs belong to one session's turn.
   const agents = useSessionField((rt) => rt.uiState?.subagents ?? NO_SUBAGENTS, NO_SUBAGENTS);
-  // Background delegations, newest first: the running half duplicates the list
-  // above by design (one delegation, one row per panel), the uncollected half
-  // is the panel's reason to grow — an answer is sitting in memory waiting.
+  // Background delegations, newest first. Only the **uncollected** half is drawn
+  // below: a background delegation that is still running is already a row in the
+  // SUBAGENTS list above — the runtime reports it in both lists and it carries its
+  // `bg` badge there — so drawing it a second time here would be one delegation
+  // twice in one panel. The uncollected half is this section's reason to exist: an
+  // answer is sitting in memory waiting to be read.
   const done = useSessionField((rt) => rt.uiState?.subagentsDone ?? NO_SUBAGENTS_DONE, NO_SUBAGENTS_DONE);
   const jobs = useSessionField((rt) => rt.uiState?.jobs ?? NO_JOBS, NO_JOBS);
   const stopSubagent = useApp((s) => s.stopSubagent);
 
   const uncollected = done.filter((row) => row.state === 'uncollected');
-  const runningBg = done.filter((row) => row.state === 'running');
 
   const { active, setActive } = useListKeys({
     count: agents.length,
@@ -798,12 +800,6 @@ export function SubagentsPanel() {
               </PanelRow>
             ))}
           </>
-        ) : null}
-
-        {runningBg.length > 0 && agents.length === 0 ? (
-          <div className="caption muted" style={{ marginTop: 'var(--space-2)' }}>
-            {t('panel.subagents.bgRunning', { n: runningBg.length })}
-          </div>
         ) : null}
 
         <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>

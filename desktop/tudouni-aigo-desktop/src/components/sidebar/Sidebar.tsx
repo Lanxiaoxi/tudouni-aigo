@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
+import { Bot, CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
 import { NO_SKILLS, NO_SUBAGENTS_DONE, useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
@@ -450,9 +450,16 @@ function SubagentRow({ agent }: { agent: VmSubagentDone }) {
 
   return (
     <div className={`sb-row${agent.state === 'uncollected' ? ' is-uncollected' : ''}`}>
+      {/* The state, and only the state — the same badge grammar `JobRow` above
+          uses, because both kinds answer one question ("is this still going?").
+          This row used to read `bg/uncollected`, where the `bg` repeated the block
+          title it already sits under and the slash made the pair read as a ratio.
+          The bot is what says "delegation" instead of "command"; the block heading
+          says the rest, so the icon is decoration and stays out of the a11y tree. */}
       <Badge tone={agent.state === 'running' ? 'success' : 'warning'} dot={false}>
-        {t('panel.subagents.background')}/{label}
+        {label}
       </Badge>
+      <Bot size={11} className="muted" aria-hidden />
       <span className="sbr-main" title={agent.label}>
         <span className="mono">{oneLine(agent.label, 40)}</span>
       </span>

@@ -358,8 +358,13 @@ export function StatusBar() {
           </button>
         </StatusPopover>
 
+        {/* The label mirrors the jobs chip's above — the subject plus the number
+            the chip's left-hand figure is — because `1✓ / 2` on its own does not
+            say what the ✓ counts. Both figures describe the same set: a delegation
+            the runtime reports in flight, and how many of those ended with an
+            answer nobody has read yet. */}
         <StatusPopover
-          label={`${t('status.subagents')} ${subagents.length}`}
+          label={`${t('status.subagents')} · ${t('status.jobsUncollected')} ${subagentUncollected}`}
           content={<SubagentsPanel />}
         >
           <button

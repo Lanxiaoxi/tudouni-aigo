@@ -1388,13 +1388,18 @@ func (r *Runtime) subagentsDonePanel() []any {
 // distinction is the whole answer a front end needs — "already finished" and
 // "no such id" are not the same failure, and the notice each deserves is worded
 // differently.
+//
+// The two sentences below are English because that is how they reach a person: the
+// protocol layer wraps them in an i18n notice (`channels.subagent.stop_failed`),
+// so a Chinese error here produced a sentence that switched language halfway
+// through.
 func (r *Runtime) SubagentStop(id string) (bool, error) {
 	if r.subagentStopper == nil {
-		return false, fmt.Errorf("子 agent 委派在此会话中不可用")
+		return false, fmt.Errorf("subagent delegation is unavailable in this session")
 	}
 	stopped := r.subagentStopper.Stop(id)
 	if !stopped {
-		return false, fmt.Errorf("没有在跑的后台子 agent 叫 %s（可能已完成、被停过，或 id 写错了）", id)
+		return false, fmt.Errorf("no background subagent called %s is running (it may have finished, been stopped already, or the id may be wrong)", id)
 	}
 	return true, nil
 }

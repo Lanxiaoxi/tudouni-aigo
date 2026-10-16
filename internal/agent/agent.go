@@ -1098,7 +1098,7 @@ func (a *Agent) runOne(ctx context.Context, item *prepared) {
 		// model — a stack trace in the context helps nobody — while the trace
 		// itself goes to stderr where the person running it can see it.
 		status = statusError
-		text = fmt.Sprintf("工具执行失败：%T: %v", err, err)
+		text = fmt.Sprintf("the tool failed: %T: %v", err, err)
 		a.reportToStderr(fmt.Sprintf("tool %s failed: %v", item.call.Name, err))
 		// Unless the turn was stopped, in which case "the tool failed" is the wrong
 		// story: whatever the transport reported on its way out, the cause is that
@@ -1274,12 +1274,19 @@ func previewArguments(raw string) string {
 	return firstN(raw, AuditPreviewLimit)
 }
 
+// firstN truncates to `limit` runes and says so.
+//
+// The marker is **English** on purpose. This string is not only an audit field: a
+// front end draws a tool call's arguments straight from it (the desktop client
+// shows `arguments` under its PARAMS label), so a Chinese marker here is Chinese
+// text in an English interface. `internal/prompts` is the one place that is
+// deliberately Chinese, and it is not this one.
 func firstN(text string, limit int) string {
 	runes := []rune(text)
 	if len(runes) <= limit {
 		return text
 	}
-	return string(runes[:limit]) + fmt.Sprintf("…(共 %d 字符)", len(runes))
+	return string(runes[:limit]) + fmt.Sprintf("…(%d chars total)", len(runes))
 }
 
 func mustJSON(value any) string {
@@ -1434,13 +1441,17 @@ func (a *Agent) debugLazy(build func() string) {
 // preview flattens multi-line text into one line and marks the real length when it
 // truncates. Flattening is lossless — a newline becomes a literal `\n` — so nothing
 // can be hidden by it.
+//
+// English marker for the same reason `firstN`'s is: a front end renders this
+// preview (`ui` tool results carry it, and the desktop client draws it under its
+// OUTPUT label), so it is interface text and not model content.
 func preview(text string, limit int) string {
 	flat := strings.ReplaceAll(text, "\n", "\\n")
 	if limit <= 0 || len([]rune(flat)) <= limit {
 		return flat
 	}
 	runes := []rune(flat)
-	return string(runes[:limit]) + fmt.Sprintf("…(共 %d 字符)", len(runes))
+	return string(runes[:limit]) + fmt.Sprintf("…(%d chars total)", len(runes))
 }
 
 // debugOutcomePrefix names each permission outcome for the debug line.

@@ -614,8 +614,12 @@ func TestTheChildsUsageReachesTheParent(t *testing.T) {
 	if !strings.Contains(result.Text, "56") {
 		t.Errorf("the result does not report the child's output tokens: %q", result.Text)
 	}
-	if !strings.Contains(result.Text, "1 次模型调用") {
-		t.Errorf("the result does not report the child's model calls: %q", result.Text)
+	// The whole line, and singular: `1 model call` and not `1 model calls`. This
+	// sentence is read by a person too — a front end draws it as the tool row's
+	// preview — so a plural that does not agree reads as a bug in the one line whose
+	// job is to be trusted about cost.
+	if !strings.HasSuffix(result.Text, "(subagent usage: 1.2k in / 56 out tokens, 1 model call)") {
+		t.Errorf("the result does not report the child's usage in one sentence: %q", result.Text)
 	}
 }
 
@@ -692,7 +696,7 @@ func TestARouteFailureDoesNotStartAChild(t *testing.T) {
 	if len(h.store.ListIDs()) != 0 {
 		t.Error("a session was created for a delegation that never started")
 	}
-	if !strings.Contains(result.Text, "委派失败") {
+	if !strings.Contains(result.Text, "delegation failed") {
 		t.Errorf("the parent was not told the delegation failed: %q", result.Text)
 	}
 }

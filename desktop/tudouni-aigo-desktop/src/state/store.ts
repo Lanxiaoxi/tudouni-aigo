@@ -6262,9 +6262,31 @@ function applyStateSnapshot(
   // This is the only reason the front end ever polls — and it gives up after a
   // few identical answers, so a job nobody collects cannot turn this into a
   // heartbeat.
-  const outstandingKey = snap.jobs
-    .filter((job) => job.outstanding)
-    .map((job) => `${job.id}:${job.state}:${job.seconds}`)
+  //
+  // **A delegation counts here for the same reason a job does, and polling is the
+  // only thing that makes its row move.** The runtime has no timers, so a running
+  // subagent's `seconds`, `steps` and `activity` are only ever as fresh as the last
+  // snapshot — and while a *foreground* delegation runs, the parent is blocked
+  // inside the tool call and the runtime sends none at all: the child's own records
+  // are forwarded deliberately without a snapshot, since forty tool calls must not
+  // become forty snapshots. Without this the panel and the badge sat on a row frozen
+  // at `0s · 0 steps` with an empty activity line for the whole delegation.
+  //
+  // The `seconds` in each key is what keeps the poll alive while something is really
+  // running and lets it stop once a settled row's numbers freeze — the same shape
+  // the job keys already had.
+  const outstandingKey = [
+    ...snap.jobs
+      .filter((job) => job.outstanding)
+      .map((job) => `job:${job.id}:${job.state}:${job.seconds}`),
+    ...snap.subagents.map(
+      (agent) =>
+        `subagent:${agent.id}:${agent.seconds}:${agent.steps}:${agent.toolCalls}:${agent.activity}`,
+    ),
+    ...snap.subagentsDone
+      .filter((row) => row.state === 'uncollected')
+      .map((row) => `subagentDone:${row.id}:${row.seconds}`),
+  ]
     .sort()
     .join(',');
   noteOutstanding(key, outstandingKey);

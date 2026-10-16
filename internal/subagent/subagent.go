@@ -329,7 +329,7 @@ func (t *Tool) execute(ctx context.Context, arguments map[string]any) (tools.Res
 	prompt := strings.TrimSpace(stringArg(arguments, "prompt"))
 	if prompt == "" {
 		return tools.TextResult(
-			"prompt 是空的：子 agent 看不到这次对话，你得把要做的事完整写进 prompt 里。"), nil
+			"prompt is empty: a subagent cannot see this conversation, so the whole task has to be written into prompt."), nil
 	}
 	// The label is read from this call's arguments rather than stored on the
 	// tool, because two invocations may be in flight at once: a shared field
@@ -367,8 +367,8 @@ func (t *Tool) depthRefusal() string {
 	depth := DepthOf(t.Parent)
 	if depth >= t.MaxDepth {
 		return fmt.Sprintf(
-			"不能再往下委派了：深度上限是 %d 层，你现在在第 %d 层。"+
-				"把这件事自己做完；确实需要拆分的话，把结论写清楚交给上层。",
+			"cannot delegate any deeper: the limit is %d level(s) and you are at level %d. "+
+				"Do this work yourself; if it really must be split, hand the conclusion up in writing.",
 			t.MaxDepth, depth)
 	}
 	return ""
@@ -391,12 +391,12 @@ func (t *Tool) backgroundDisabled() bool { return t.Config.MaxBackground < 0 }
 // fact that changes when one of the running children settles.
 func (t *Tool) backgroundRefusal() string {
 	if t.backgroundDisabled() {
-		return "后台委派没有启用（background 已被配置关闭）。请用前台委派等结果，或自己做这一步。"
+		return "background delegation is not enabled (background is switched off by the configuration). Delegate in the foreground and wait, or do this step yourself."
 	}
 	if t.Board != nil && t.Board.BackgroundRunning() >= t.maxBackground() {
 		return fmt.Sprintf(
-			"后台委派已经到上限（%d 个在跑）。等其中一个完成并收取后再派，"+
-				"或改用前台委派等结果。", t.maxBackground())
+			"the background delegation limit is reached (%d running). Delegate again once one of them has finished and been collected, "+
+				"or delegate in the foreground and wait.", t.maxBackground())
 	}
 	return ""
 }
@@ -449,20 +449,26 @@ func (t *Tool) Stop(childID string) bool {
 // parent reads this as fact and will act on it, so a failure must not be
 // indistinguishable from an answer, and a success must not carry a wall of
 // status text the parent will pay for on every later step.
+//
+// **The wrapper is English even though the model's system prompt is Chinese.** It
+// is not only a message to the parent: a front end renders the first 200 characters
+// of every tool result, so the header and the usage line below are read by a person
+// in an interface that speaks English only. The child's own answer is passed
+// through untouched, in whatever language it answered in.
 func renderResult(t *Tool, childID string, answer string, runErr error, usage map[string]any) string {
 	var b strings.Builder
 	switch stopReasonOf(runErr, answer) {
 	case "max_steps":
-		fmt.Fprintf(&b, "子 agent %s 用完了步数（%d 步），没有收尾。下面是它已经产出的内容：\n\n",
+		fmt.Fprintf(&b, "subagent %s ran out of steps (%d) without finishing. Here is what it produced:\n\n",
 			childID, t.MaxSteps)
 	case "cancelled":
-		fmt.Fprintf(&b, "子 agent %s 被中断了（用户停下了这一轮）。它已经产出的内容：\n\n", childID)
+		fmt.Fprintf(&b, "subagent %s was interrupted (the user stopped this turn). What it produced:\n\n", childID)
 	case "model_fatal", "error":
-		fmt.Fprintf(&b, "子 agent %s 执行失败：%s\n\n", childID, errorLine(runErr))
+		fmt.Fprintf(&b, "subagent %s failed: %s\n\n", childID, errorLine(runErr))
 	case "no_output":
-		fmt.Fprintf(&b, "子 agent %s 结束了，但没有给出任何内容。", childID)
+		fmt.Fprintf(&b, "subagent %s ended without producing anything.", childID)
 	default:
-		fmt.Fprintf(&b, "子 agent %s 的答复：\n\n", childID)
+		fmt.Fprintf(&b, "subagent %s answered:\n\n", childID)
 	}
 
 	body := strings.TrimSpace(answer)
@@ -470,7 +476,7 @@ func renderResult(t *Tool, childID string, answer string, runErr error, usage ma
 		// Nothing was said, so say what is known instead of leaving an empty
 		// result: an empty tool result reads as "it worked and there was nothing
 		// to report", which is the opposite of what happened.
-		body = "（子 agent 没有产出任何内容）"
+		body = "(the subagent produced nothing)"
 	}
 	b.WriteString(body)
 
@@ -495,14 +501,25 @@ func usageLine(usage map[string]any) string {
 	if prompt == 0 && completion == 0 {
 		return ""
 	}
-	line := fmt.Sprintf("（子 agent 用量：输入 %s / 输出 %s token", number(prompt), number(completion))
+	line := fmt.Sprintf("(subagent usage: %s in / %s out tokens", number(prompt), number(completion))
 	if calls := intOf(usage["model_calls"]); calls > 0 {
-		line += fmt.Sprintf("，%d 次模型调用", calls)
+		line += fmt.Sprintf(", %d model call%s", calls, pluralS(calls))
 	}
 	if calls := intOf(usage["tool_calls"]); calls > 0 {
-		line += fmt.Sprintf("，%d 次工具调用", calls)
+		line += fmt.Sprintf(", %d tool call%s", calls, pluralS(calls))
 	}
-	return line + "）"
+	return line + ")"
+}
+
+// pluralS is the English plural suffix for a count. One is a real case here — a
+// delegation that needed a single model call is the cheap end of the feature, and
+// "1 model calls" would read as a bug in the line whose whole job is to be trusted
+// about cost.
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // errorLine turns an error into one line for the parent.
@@ -512,7 +529,7 @@ func usageLine(usage map[string]any) string {
 // "retry or change the task", a step limit is "delegate something smaller".
 func errorLine(err error) string {
 	if err == nil {
-		return "未知原因"
+		return "unknown cause"
 	}
 	text := strings.Join(strings.Fields(err.Error()), " ")
 	return fmt.Sprintf("%T: %s", err, clip(text, 300))
