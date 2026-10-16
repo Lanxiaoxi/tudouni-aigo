@@ -1111,6 +1111,7 @@ var catalog = map[string]string{
 	"save.action.effort":   "changing thinking effort",
 	"save.failed":          "saving after {what} failed (it still applies this run; reopening the session goes back to what the config says): {problem}",
 	"close.jobs_failed":    "error collecting background jobs: {problem}",
+	"close.logs_failed":    "error releasing the audit log: {problem}",
 	"close.http_failed":    "error closing the http client: {problem}",
 
 	// --- session files and the missing system prompt ----------------------

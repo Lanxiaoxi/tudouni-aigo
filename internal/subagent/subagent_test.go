@@ -268,6 +268,13 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The sink holds its session's file open between records, so a test that
+	// never releases it leaves the handle behind — and on Windows that makes
+	// `t.TempDir`'s own cleanup fail, because the directory cannot be removed
+	// while a file inside it is open. Closing it here is not test tidiness: it is
+	// the same obligation every caller of `NewJsonlSink` now has, and this is the
+	// one place in the tree that had not been paying it.
+	t.Cleanup(func() { _ = logs.Close() })
 
 	resolver := &fakeResolver{chat: child}
 	h := &harness{parent: parent, store: store, logs: logs, resolver: resolver, child: child}

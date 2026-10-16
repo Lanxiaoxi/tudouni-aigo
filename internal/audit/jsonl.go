@@ -82,11 +82,24 @@ func Event(kind, sessionID, runID string, step int, data map[string]any) map[str
 
 // JsonlSink appends audit records to `<dir>/<session_id>.jsonl`.
 //
-// Every record opens, writes and closes the file. That is one syscall sequence
-// per event, and it is deliberate: a record is on disk the moment it is written,
-// so the worst a killed process can lose is the half line it was in the middle
-// of. Buffering would make "appended" mean "appended once 8KB have piled up",
-// which is a different promise.
+// **A record is on disk the moment it is written.** That is the promise this type
+// exists to keep: the worst a killed process can lose is the half line it was in
+// the middle of. Nothing here is ever buffered, and that is a property to
+// preserve rather than a coincidence — `os.File` has no userspace buffer, so a
+// `Write` is the syscall.
+//
+// What is *not* kept is the handle. This used to open, write and close **per
+// record**, which paid an `open`/`close` pair for every event and left the
+// record's own bytes as the smallest part of the cost. Benchmarked on Windows
+// (BenchmarkWriteResident against BenchmarkWriteOpenClosePerRecord), one
+// record went from ~600us to ~26us — the open is nearly all of it, because the
+// file-open path runs through the filter drivers. The handle is now held open and
+// reused, so a record costs one `write` and nothing else, and the durability
+// promise is untouched because a resident handle does not buffer anything either.
+//
+// The handle is keyed to the path it was opened for, so a session switch closes
+// the old file and opens the new one. That is the one case that still pays the
+// pair, and it is once per switch rather than once per event.
 //
 // Appending also means the audit log never grows in write cost with the length of
 // the session, which is the whole reason a long session stays cheap.
@@ -94,6 +107,8 @@ type JsonlSink struct {
 	mu   sync.Mutex
 	dir  string
 	path string
+	// file is the open handle for `path`. An empty `path` means no handle is
+	// held; the two are only ever set and cleared together, under `mu`.
 	file *os.File
 }
 
@@ -125,9 +140,8 @@ func (s *JsonlSink) Write(record map[string]any) error {
 		return err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	// Encoded before the lock: the encoding does not touch the handle, and
+	// keeping it outside means a slow marshal does not serialise other writers.
 	var builder strings.Builder
 	encoder := json.NewEncoder(&builder)
 	encoder.SetEscapeHTML(false)
@@ -135,29 +149,84 @@ func (s *JsonlSink) Write(record map[string]any) error {
 		return err
 	}
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file, err := s.handleLocked(path)
 	if err != nil {
 		return err
 	}
+	// One `write` syscall, and the record is in the kernel's hands. No `Sync`:
+	// the per-record close this replaced did not fsync either, so "killed with
+	// `kill -9` loses only the half line in flight" means the same thing before
+	// and after this change.
+	//
+	// A failed write drops the handle rather than keeping it. The file it points
+	// at may be the reason the write failed (a deleted directory, a full disk),
+	// and holding a handle that cannot be written to would turn one transient
+	// failure into every later record failing the same way — where reopening at
+	// least gives the next record its own chance.
 	if _, err := file.WriteString(builder.String()); err != nil {
-		file.Close()
-		return err
-	}
-	return file.Close()
-}
-
-// Close releases whatever the sink is holding. Records are never buffered, so
-// there is nothing to flush; the call exists so the runtime's shutdown path has
-// a symmetrical shape.
-func (s *JsonlSink) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.file != nil {
-		err := s.file.Close()
-		s.file = nil
+		s.dropHandleLocked()
 		return err
 	}
 	return nil
+}
+
+// handleLocked returns the open file for `path`, opening it if the held one
+// belongs to another session.
+//
+// The caller holds `s.mu`.
+func (s *JsonlSink) handleLocked(path string) (*os.File, error) {
+	if s.file != nil && s.path == path {
+		return s.file, nil
+	}
+	// A different session, so the previous handle is finished with. Its close
+	// error is not reported: it says nothing about whether this record landed,
+	// and the caller treats any error here as "the record was not written" —
+	// which a failed close of the *previous* file would misreport.
+	s.dropHandleLocked()
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	s.file = file
+	s.path = path
+	return file, nil
+}
+
+// dropHandleLocked releases the held handle, if any. The caller holds `s.mu`.
+//
+// The error is deliberately discarded — see `handleLocked`. `os.File.Close`
+// closes the descriptor even when it reports an error, so clearing the fields
+// unconditionally is right: the handle is gone either way, and a field left
+// pointing at it would be a handle that cannot be written to and cannot be
+// dropped.
+func (s *JsonlSink) dropHandleLocked() {
+	if s.file != nil {
+		_ = s.file.Close()
+	}
+	s.file = nil
+	s.path = ""
+}
+
+// Close releases the held file handle.
+//
+// Records are never buffered, so there is nothing to flush; the call exists so
+// the runtime's shutdown path can let go of the descriptor rather than leaving it
+// to process exit. It is safe to call more than once, and safe to call on a sink
+// that never wrote anything.
+func (s *JsonlSink) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.file == nil {
+		return nil
+	}
+	file := s.file
+	s.file = nil
+	s.path = ""
+	return file.Close()
 }
 
 // Read returns a session's audit records.

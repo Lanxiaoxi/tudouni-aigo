@@ -1654,6 +1654,15 @@ func (r *Runtime) Close() error {
 			warn("%s", i18n.T("close.jobs_failed", "problem", err.Error()))
 		}
 	}
+	// The audit sink holds its session's file open between records (see
+	// `audit.JsonlSink`). Letting the descriptor go here rather than at process
+	// exit is what keeps "one open file per session" from also meaning "one open
+	// file per session that outlives the shutdown path".
+	if r.Logs != nil {
+		if err := r.Logs.Close(); err != nil {
+			warn("%s", i18n.T("close.logs_failed", "problem", err.Error()))
+		}
+	}
 	// A mounted server is a child process. Leaving children behind on exit is how
 	// ports and file handles stay held after the window is closed.
 	for _, problem := range r.CloseMcp() {
