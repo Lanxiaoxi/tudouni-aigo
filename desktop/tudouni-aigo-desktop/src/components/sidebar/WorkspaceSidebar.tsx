@@ -1132,7 +1132,7 @@ function AddWorkspaceMenu({
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
-          className="plus-menu"
+          className="plus-menu lb-plus-menu"
           align="end"
           side="bottom"
           sideOffset={4}

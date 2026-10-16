@@ -1252,6 +1252,12 @@ table.table td.mono {
   overflow: hidden;
 }
 
+/* The sidebar's add-workspace menu only carries two short labels; the
+   shared 240px width reads as a menu with more room than it uses. */
+.lb-plus-menu {
+  width: 120px;
+}
+
 .plus-menu-list {
   flex: 1 1 auto;
   min-height: 0;
