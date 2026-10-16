@@ -2537,18 +2537,59 @@
    the runtime process was started with, and that belongs beside the workspace
    list rather than in the command palette (see WorkspaceSidebar's comment).
 
-   The foot is a two-part flex column: the six buttons in a `.collapse`, and
+   The foot is a two-part flex column: the seven buttons in a `.collapse`, and
    below them the fold's own head (`.lb-foot-head`), pinned to the very bottom.
    A folded foot is therefore one icon row tall — the head, with the wrench
    standing in for the workbench and the count saying how many rows are tucked
    away. The border-top moved here to the head, because the head is now the
    bottommost element of the foot: with the buttons above it the fold cell
    contributes zero height when folded, so a border on the cell would float
-   mid-gap. */
+   mid-gap.
+
+   The foot carries a surface of its own, one rung below the rail's: the
+   workbench is a drawer cut into the rail rather than seven more rows of it, and
+   `--bg-foot` (tokens.css) is that rung in both themes. The band is the whole
+   foot, head included, so the folded state is a strip too rather than a floating
+   label; the head's own border-top is the seam between the rows and that strip.
+   Nothing else in the rail paints a background, so this is also the only place
+   the rail's surface changes — the rows above stay on `--bg-rail`. */
 .lb-foot {
   flex: none;
   display: flex;
   flex-direction: column;
+  background: var(--bg-foot);
+}
+
+/* The foot's own fold cell: the clip, and the row inside it anchored to the
+   bottom. `.collapse` (global.css) animates the track from `0fr`, and in this
+   webview the row inside an auto-height grid comes out shorter than the cell the
+   transition sizes, pinned to the cell's top: measured at a half-expanded track,
+   the cell is 108px and the row only 54px. Two things follow from that one
+   measurement, and between them they are the whole of "expanding does not come
+   from the bottom".
+
+   **The row is anchored down** (`align-content: flex-end`), because the row's
+   bottom edge is the line the rows emerge from and it has to sit on the head.
+   Left at the cell's top it floated up to 54px above the head mid-fold and
+   dropped back at the end: the list left the toggle, hovered above it, and
+   settled back.
+
+   **The clip is this cell, not the row** (`overflow: hidden`, with the row's own
+   clip overridden to `visible` below). Clipping on the shorter row reveals only
+   that row-sized box, and ever since the foot paints a band under itself that
+   leftover is not invisible any more: the strip grows to its full height first
+   and the rows then climb into it, because the row is the *square* of the
+   track's fraction (a quarter of the content at half a track). Clipping on the
+   cell makes the visible edge and the cell's height the same number, so the rows
+   fill the band as it opens, in one sweep, on `--ease-standard`'s own timing.
+
+   Scoped to the foot deliberately: it is the one fold in the app whose content
+   is anchored **upward** (see `.lb-foot-fold` below). A fold that reveals
+   downward wants its row at the cell's top, which is where it already lands;
+   moving it to the bottom would float that one the other way. */
+.lb-foot .collapse {
+  align-content: flex-end;
+  overflow: hidden;
 }
 
 /* The fold cell's direct child, and the reason there are **two** levels here.
@@ -2562,30 +2603,42 @@
    reach zero (the same reason the config panel's body sits behind a plain
    `<div>`); it also owns the bottom anchor that gives the fold its direction:
    `justify-content: flex-end` keeps `.lb-foot-inner`'s bottom edge against the
-   shrinking track's bottom edge, so the overflow spills above the clip line
-   rather than below it — the top row (Files) is the first to leave and the
-   bottom row (Settings) the last, the fold sweeping the list bottom-up.
-   Without the anchor the overflow would spill downward and the direction
-   would be the opposite of what was asked. */
+   cell's bottom edge — the one `.lb-foot .collapse` above pins to the head — so
+   the overflow spills above the clip line rather than below it: the top row
+   (Files) is the first to leave and the bottom row (Settings) the last, the fold
+   sweeping the list bottom-up. Without the anchor the overflow would spill
+   downward and the direction would be the opposite of what was asked.
+
+   `overflow: visible` is the other half of the cell's `overflow: hidden`: this
+   box is the anchor and the grid item, not the clip, because it is exactly the
+   row — shorter than the cell for the whole of the transition. `min-height: 0`
+   from `global.css` still stands, and it is what lets the track reach `0fr`. */
 .lb-foot-fold {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  overflow: visible;
 }
 
-/* The fold cell's content. `min-height: 0` is load-bearing for the same reason
-   as on `.collapse > *`: without it the flex column's own min-content height
-   would keep the cell from ever reaching 0fr. It carries its own
-   `justify-content: flex-end` as well, and deliberately: the wrapper above
-   anchors *this box* against the track, while this one anchors the buttons
-   inside the box — the buttons' own min-content height (a row of text cannot
-   shrink to nothing) makes the inner the box that gives way once the track is
-   narrower than the rows, and without the anchor here the spill would turn
-   downward and the sweep would read top-down. */
+/* The fold cell's content. Its own `justify-content: flex-end` is deliberate:
+   the wrapper above anchors *this box* to the bottom of the cell, while this one
+   anchors the buttons inside the box — without the anchor here the spill would
+   turn downward and the sweep would read top-down.
+
+   `flex: none` is what makes the fold *reveal* the rows instead of squeezing
+   them. As a shrinkable flex item inside a box that is closing, this one gave
+   way first, and with it the rows: measured mid-fold, every button was 19px
+   tall instead of 28px, so the list compressed on the way past and expanded
+   again — a squash, not a slide. Held at its natural height it simply overflows
+   the cell, and the rows keep their size while the clip line sweeps over them.
+   `min-height: 0` stays for the same reason as on `.collapse > *`: a
+   content-based automatic minimum is what otherwise keeps a fold from
+   closing. */
 .lb-foot-inner {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
+  flex: none;
   gap: 2px;
   padding: var(--space-2) var(--space-2) 0;
   min-height: 0;
@@ -2650,7 +2703,7 @@
   transform: rotate(-45deg);
 }
 
-/* The tease strip: the six foot icons, one size smaller, that rise into
+/* The tease strip: the seven foot icons, one size smaller, that rise into
    view just above the folded row when the person hovers the toggle.
    `aria-hidden` in the markup — it repeats the buttons' accessible names
    with nothing new to say.
@@ -2658,15 +2711,22 @@
    The reveal is a mask, not a move: the strip's own box is clipped by
    `overflow: hidden` with a top inset, and each icon rises the full height
    out of it. Clipping is what makes the row read as "things emerging from
-   behind the rail" rather than six icons pasted above a button; and because
+   behind the rail" rather than seven icons pasted above a button; and because
    the motion is one property (`transform`) on one class the
    `prefers-reduced-motion` rule in global.css zeroes it for free — the
    strip simply appears, which is still a hint.
 
-   The per-icon delay is the **stagger**: a flat fade of six identical
-   glyphs reads as one blob; six of them one behind the other reads as a
-   hand passing over a shelf. `0.5s` total for six icons at 50ms apart is
-   fast enough that it never feels like waiting, long enough to be read. */
+   The per-icon delay is the **stagger**: a flat fade of seven identical
+   glyphs reads as one blob; seven of them one behind the other reads as a
+   hand passing over a shelf. `0.3s` of delays over seven icons at 50ms apart
+   is fast enough that it never feels like waiting, long enough to be read.
+
+   **Every child needs a step of its own.** The gear is the seventh and it had
+   none: with no rule matching it, `animation-delay` fell back to `0`, so it
+   rose together with Files — the first icon — while the five between them were
+   still waiting their turn. At the far end of the row that reads as the gear
+   simply being there already. A strip that grows an eighth icon needs an
+   eighth step here for the same reason. */
 .lb-foot-tease {
   display: none;
   position: absolute;
@@ -2719,6 +2779,10 @@
 .lb-foot-head.is-collapsed:hover .lb-foot-tease > :nth-child(6),
 .lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > :nth-child(6) {
   animation-delay: 250ms;
+}
+.lb-foot-head.is-collapsed:hover .lb-foot-tease > :nth-child(7),
+.lb-foot-head.is-collapsed:focus-visible .lb-foot-tease > :nth-child(7) {
+  animation-delay: 300ms;
 }
 
 @keyframes lb-foot-tease-rise {

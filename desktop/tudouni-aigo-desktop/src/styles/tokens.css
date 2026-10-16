@@ -136,6 +136,16 @@
      with a reference to follow, does distinguish them; see below. */
   --bg-bar:        #1A1E25;
   --bg-rail:       #1A1E25;
+  /* The workbench's band: the left rail's foot. It is the one surface *inside*
+     that rail which is not the rail's own shade, because the seven workbench
+     rows and the head under them are a drawer cut into the rail — and one rung
+     under `--bg-rail` is what says that without a border.
+     Deliberately **not** `--bg`, even though that is the next rung down here:
+     `render-check` reads a pixel painted with the window's own colour as a leak,
+     which is exactly what the rail used to show when it was sized by its content
+     — and a band wearing that colour could not be told from the defect, by the
+     check or by the eye. */
+  --bg-foot:       #15181E;
 
   --fg:            #F2F3F6;
   --fg-secondary:  #B9BFC9;
@@ -248,6 +258,11 @@
      session and workspace rows are `--bg-card` now. The depth order is still
      three rungs, one arrangement over: canvas `--bg` < rail < card. */
   --bg-rail:       #F7F8FA;
+  /* Same role as the dark theme's `--bg-foot` (see above): below the rail, and
+     deliberately not `--bg`. This ladder is tighter — five points between rungs,
+     not ten — so the band lands between the canvas and the sidebar's grey rather
+     than exactly one rung down. */
+  --bg-foot:       #EFF1F5;
 
   --fg:            #1A1D21;
   --fg-secondary:  #5C626B;

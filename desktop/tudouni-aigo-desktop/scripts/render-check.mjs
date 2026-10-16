@@ -263,8 +263,17 @@ async function main() {
   // end. What it reads is not the rail's own `height` (a size can be right while
   // the paint is not) but the colour a point there actually resolves to, walking
   // up from the topmost element to the first ancestor that paints anything. So
-  // the assertion is "the surface under the rail's bottom pixel is the rail's",
-  // which is the thing a person sees.
+  // the assertion is "the surface under the rail's bottom pixel belongs to the
+  // rail", which is the thing a person sees.
+  //
+  // **Belongs to**, not "is the rail's own colour": the left rail's foot paints
+  // a surface of its own (`--bg-foot`, the workbench's band), and the point at
+  // the bottom of the column lands on it. That is a deliberate second surface
+  // *inside* the rail, not a gap. It is **named** rather than waved through as
+  // "painted by any descendant", the same way the controls allowed to stay live
+  // behind a prompt are named further down: a third surface has to be decided on
+  // here, and until then it fails. The window's own colour is still a failure by
+  // any route — that is the `--bg` assertion below.
   const railSurface = await evaluate(`(() => {
     const main = document.querySelector('.app-main');
     if (!main) return null;
@@ -277,12 +286,13 @@ async function main() {
       const x = Math.round(b.x + b.width / 2);
       const hit = document.elementFromPoint(x, probeY);
       // The first ancestor that paints — a transparent wrapper is not an answer.
-      let node = hit, painted = null, by = null;
+      let node = hit, painted = null, by = null, belongs = false;
       while (node) {
         const c = getComputedStyle(node);
         if (c.backgroundColor !== 'rgba(0, 0, 0, 0)') {
           painted = c.backgroundColor;
           by = node.className || node.tagName;
+          belongs = node === rail || node.classList?.contains('lb-foot') === true;
           break;
         }
         node = node.parentElement;
@@ -292,6 +302,7 @@ async function main() {
         probeY,
         painted,
         by: String(by),
+        belongs,
         railBg: getComputedStyle(rail).backgroundColor,
       };
     };
@@ -316,8 +327,9 @@ async function main() {
         `the ${name} rail does not span the column: ${rail.h}px of ${RS.mainH}px — the window background shows below it`,
       );
     }
-    // And the point past its last row must resolve to the rail's own colour.
-    if (rail.painted !== rail.railBg) {
+    // And the point past its last row must resolve to the rail's own surface, or
+    // to the band its foot paints inside it.
+    if (rail.painted !== rail.railBg && !rail.belongs) {
       throw new Error(
         `the ${name} rail's bottom pixel is not painted by the rail: ${rail.painted} from "${rail.by}" vs the rail's ${rail.railBg}`,
       );
@@ -2221,15 +2233,16 @@ async function main() {
   // Measured by width, not by presence: the rail is permanently mounted now, so
   // a presence check here would assert nothing at all.
   //
-  // The rule is about **runtime** actions, not about buttons: the two local-only
-  // controls may stay live, because neither touches anything the runtime is
-  // holding. One is the rail's own collapse toggle; the other is the sessions
-  // fold, which is a preference (`persistPrefs`) and sends no message at all.
-  // This used to count enabled buttons and allow exactly one, which was true
-  // only until the fold toggle was added — since then it failed on an untouched
-  // codebase, which is how it was found. Naming the allowed controls is what
-  // keeps it from going stale again: a new button fails this unless somebody
-  // decides, here, that it is local.
+  // The rule is about **runtime** actions, not about buttons: the local-only
+  // controls may stay live, because none of them touches anything the runtime is
+  // holding. They are the rail's own collapse toggle, the sessions fold and the
+  // workbench fold — each a preference (`persistPrefs`) that sends no message at
+  // all. The sessions fold had to be named here when it was added, and the
+  // workbench's head is the same story one release later: it is live behind a
+  // prompt by design, so this failed on an untouched codebase until it was
+  // named too. That failure is the point — naming the allowed controls is what
+  // keeps this from going stale: a new button fails unless somebody decides,
+  // here, that it is local.
   const railDuringModal = await evaluate(`(() => {
     const bar = document.querySelector('.app-leftbar');
     const buttons = [...bar.querySelectorAll('button')];
@@ -2241,7 +2254,10 @@ async function main() {
       live: buttons.filter((b) => !b.disabled).map((b) => {
         const cls = typeof b.className === 'string' ? b.className : '';
         return {
-          local: cls.includes('lb-section-toggle') || cls.includes('lb-icon'),
+          local:
+            cls.includes('lb-section-toggle') ||
+            cls.includes('lb-icon') ||
+            cls.includes('lb-foot-head'),
           what: (b.getAttribute('aria-label') ?? b.innerText ?? '').replace(/\\s+/g,' ').trim().slice(0, 40),
           cls: cls.split(' ')[0],
         };

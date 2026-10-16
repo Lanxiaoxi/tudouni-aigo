@@ -1268,7 +1268,7 @@ export interface AppStore {
    */
   workspacesCollapsed: boolean;
   /**
-   * The left rail's foot (the six workbench buttons), folded on its own —
+   * The left rail's foot (the seven workbench buttons), folded on its own —
    * the same independent, persisted preference as `sessionsCollapsed`.
    */
   footCollapsed: boolean;
@@ -2087,7 +2087,7 @@ type Prefs = {
   sessionsCollapsed: boolean;
   /** The left rail's workspace list (local + remote), folded on its own. */
   workspacesCollapsed: boolean;
-  /** The left rail's foot (the six workbench buttons), folded on its own. */
+  /** The left rail's foot (the seven workbench buttons), folded on its own. */
   footCollapsed: boolean;
   workspaces: string[];
   sshHosts: SshHostConfig[];

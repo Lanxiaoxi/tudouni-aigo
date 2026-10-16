@@ -142,7 +142,7 @@ export function WorkspaceSidebar() {
   const toggleSessionsCollapsed = useApp((s) => s.toggleSessionsCollapsed);
   const workspacesCollapsed = useApp((s) => s.workspacesCollapsed);
   const toggleWorkspacesCollapsed = useApp((s) => s.toggleWorkspacesCollapsed);
-  // The foot's own fold. The six workbench buttons live in the fold and the
+  // The foot's own fold. The seven workbench buttons live in the fold and the
   // head below them is the toggle, so a folded foot is one icon row tall —
   // the same independent, persisted preference the two list sections keep.
   const footCollapsed = useApp((s) => s.footCollapsed);
@@ -915,7 +915,7 @@ export function WorkspaceSidebar() {
       <div className="lb-foot">
         {/* Folded rather than conditionally rendered, like the list sections:
             the buttons stay mounted, only the height changes, and `inert`
-            keeps Tab out of six buttons nobody can see. */}
+            keeps Tab out of seven buttons nobody can see. */}
         <div
           className={`collapse${footCollapsed ? ' is-collapsed' : ''}`}
           inert={footCollapsed}
@@ -1043,11 +1043,11 @@ export function WorkspaceSidebar() {
         </div>
 
         {/* The fold's head, pinned to the very bottom: the toggle. When the
-            foot is folded it is the **only** thing left of the six buttons —
+            foot is folded it is the **only** thing left of the seven buttons —
             one icon row, the wrench standing in for the workbench, the count
             saying how many rows are tucked away (the count is folded-state
             only: with the rows on screen it would just say the same thing
-            six times over). When the person hovers it folded, the six icons
+            seven times over). When the person hovers it folded, the seven icons
             run a quick staggered pass just above the row
             (`.lb-foot-tease`, CSS) and the wrench gives a quarter turn: a
             hint that the row hides things, which a bare chevron would never
