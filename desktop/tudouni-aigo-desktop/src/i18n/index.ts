@@ -266,6 +266,10 @@ export const en = {
   'deliverable.preview': 'Preview {name}',
   'deliverable.open': 'Open {name} in its default application',
   'deliverable.dismiss': 'Dismiss this message',
+  /** Shown when the page is not hosted by the desktop shell, so there is nothing
+   *  to hand a path to. It names the alternative rather than only the failure —
+   *  the preview still works, and that is what this reader should do next. */
+  'deliverable.noHost': 'Opening in another app needs the desktop window — use Preview here.',
   // The fallback notes, by kind. A word a person would use, not the extension in
   // capitals: `MD` is an identifier, "Markdown" is a thing someone asked for.
   'deliverable.kind.markdown': 'Markdown document',

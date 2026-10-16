@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import {
+  ExternalLink,
   FileCode,
   FileImage,
   FileSpreadsheet,
   FileText,
-  FolderOpen,
   Loader,
   Presentation,
   X,
@@ -13,7 +13,7 @@ import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { baseName } from '@/utils/format';
-import { openDeliverable } from '@/runtime/tauri';
+import { openDeliverable, isHosted } from '@/runtime/tauri';
 import type { Deliverable } from '@/state/entries';
 
 /**
@@ -49,6 +49,16 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
   const [problem, setProblem] = useState<Record<string, string>>({});
 
   async function open(file: Deliverable) {
+    // **Checked before the call, not inferred from the failure.** With no Tauri
+    // host the IPC import resolves to nothing and the throw is a `TypeError`
+    // about `invoke` — a sentence written for whoever maintains this file, shown
+    // to somebody who pressed a button. The state is knowable up front, so it is
+    // asked up front and the card says what a person can do about it.
+    if (!isHosted()) {
+      setPhase((current) => ({ ...current, [file.path]: 'error' }));
+      setProblem((current) => ({ ...current, [file.path]: t('deliverable.noHost') }));
+      return;
+    }
     setPhase((current) => ({ ...current, [file.path]: 'opening' }));
     try {
       await openDeliverable(workspace, file.path);
@@ -69,6 +79,11 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
       // The failure **stays on the card** rather than becoming a toast. It is
       // about this file, and a sentence that floats away leaves the card looking
       // like a button that does nothing.
+      //
+      // The message is passed through **verbatim**: it comes from Rust, it names
+      // the file, and it is the one sentence here that can say *why* — a sentence
+      // this window composed instead would be a second opinion about a fact it
+      // does not have.
       setPhase((current) => ({ ...current, [file.path]: 'error' }));
       setProblem((current) => ({ ...current, [file.path]: String(err) }));
     }
@@ -131,7 +146,7 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
                   aria-label={t('deliverable.open', { name })}
                   onClick={() => void open(file)}
                 >
-                  <FolderOpen size={13} />
+                  <ExternalLink size={13} />
                 </button>
               </Tip>
             )}
