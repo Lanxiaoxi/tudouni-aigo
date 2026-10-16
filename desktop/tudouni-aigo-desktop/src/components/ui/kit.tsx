@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { RiskLevel } from '@/protocol/types';
-import { HelpCircle } from 'lucide-react';
+import { HelpCircle, Info as InfoGlyph } from 'lucide-react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { useT } from '@/i18n/useT';
 
@@ -130,6 +130,30 @@ export function Info({ label, side = 'top' }: { label: ReactNode; side?: 'top' |
         </TooltipPrimitive.Content>
       </TooltipPrimitive.Portal>
     </TooltipPrimitive.Root>
+  );
+}
+
+/**
+ * The `?` beside a panel's title: what the panel *is*, kept out of the one-line
+ * subtitle.
+ *
+ * A native `title` rather than `Tip`, deliberately. `Tip` is a Radix tooltip, and
+ * this one is mounted **the instant a panel opens** — on the element the pointer
+ * is most likely to already be over, since the header sits where the dialog's own
+ * top edge is. A tooltip that announces itself before anybody has asked is worse
+ * than no tooltip: it covers the row it is supposed to be explaining. The native
+ * attribute has no such failure mode, and what is behind it is a definition, not
+ * an interaction.
+ *
+ * It lives here rather than in one panel because three panels now put it in the
+ * same place — the tasks shelf, Configuration and Learn this workspace — and a
+ * header control that means the same thing everywhere should be one component.
+ */
+export function PanelInfo({ label }: { label: string }) {
+  return (
+    <button type="button" className="info-ic" aria-label={label} title={label}>
+      <InfoGlyph size={13} />
+    </button>
   );
 }
 

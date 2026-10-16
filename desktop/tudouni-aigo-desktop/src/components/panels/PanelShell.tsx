@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { X } from 'lucide-react';
+import { ArrowLeft, X } from 'lucide-react';
 import { useT } from '@/i18n/useT';
 
 /**
@@ -17,6 +17,14 @@ import { useT } from '@/i18n/useT';
  * outside-click and the focus return are already the popover's. The default
  * surface is `dialog`, so `PanelHost` needs no wrapper; the popover side
  * provides `PopoverSurface`.
+ *
+ * **The head is shaped here because it is shared.** Three things a panel's
+ * *second* surface needs and its first does not: a `?` beside the title
+ * (`info`), a leading way back (`onBack`), and controls of its own (`actions` —
+ * "Add a route" belongs to the list, never to the editor opened from it). They
+ * are props rather than a second shell, because everything else about the two
+ * surfaces is the same: the title, the description, the close button, the body
+ * and the footer.
  */
 type PanelSurface =
   | { kind: 'dialog' }
@@ -46,12 +54,27 @@ export function PanelShell({
   title,
   count,
   note,
+  info,
+  onBack,
+  backLabel,
+  actions,
   children,
   footer,
 }: {
   title: string;
   count?: ReactNode;
   note?: string;
+  /** The `?` beside the title. See `PanelInfo`: a definition, not a control. */
+  info?: ReactNode;
+  /** Present on a panel's **second surface** — the editor a list row opens —
+   *  where the way back has to be a control and not an Escape key. When it is
+   *  set the head leads with it, the way the tasks history leads with its own. */
+  onBack?: () => void;
+  backLabel?: string;
+  /** The head's own controls, to the right of the title and left of the close.
+   *  Per-surface on purpose: the list surface offers "Add a route", the editor
+   *  that opens from it does not. */
+  actions?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
 }) {
@@ -63,9 +86,15 @@ export function PanelShell({
 
   const titleNode =
     surface.kind === 'dialog' ? (
-      <DialogPrimitive.Title className="dialog-title">{title}</DialogPrimitive.Title>
+      <DialogPrimitive.Title className={info ? 'dialog-title tk-title' : 'dialog-title'}>
+        {title}
+        {info}
+      </DialogPrimitive.Title>
     ) : (
-      <span className="dialog-title">{title}</span>
+      <span className={info ? 'dialog-title tk-title' : 'dialog-title'}>
+        {title}
+        {info}
+      </span>
     );
   const descNode =
     surface.kind === 'dialog' ? (
@@ -82,13 +111,26 @@ export function PanelShell({
 
   return (
     <>
-      <div className="dialog-head">
+      <div className="dialog-head tk-head">
+        {onBack !== undefined ? (
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label={backLabel ?? t('panel.back')}
+            title={backLabel ?? t('panel.back')}
+            onClick={onBack}
+          >
+            <ArrowLeft size={15} />
+          </button>
+        ) : null}
         <div className="grow">
           {titleNode}
           {descNode}
         </div>
 
         {count !== undefined ? <span className="count">{count}</span> : null}
+
+        {actions}
 
         {surface.kind === 'dialog' ? (
           <DialogPrimitive.Close asChild>

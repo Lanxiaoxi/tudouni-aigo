@@ -279,9 +279,18 @@ export const en = {
   'lb.learnHint':
     'Study this workspace\u2019s past sessions and draft candidate knowledge assets for review.',
   'panel.learn.title': 'Learn this workspace',
+  'panel.learn.about':
+    'Studies this workspace\u2019s own history and drafts candidate knowledge assets for you to review.',
   'panel.learn.note':
     'Starts a new session that studies the workspace\u2019s history. Its answer is a set of candidates you review and apply in a normal conversation.',
-  'panel.learn.workspace': 'Workspace',
+  /* The side card. Its title names the whole card — every line under it is a fact
+     about the run that is about to start, not a field — and the two fact labels
+     are the same nouns the rows on the left use, so the summary and the thing it
+     summarises cannot drift apart. */
+  'panel.learn.sideTitle': 'This run',
+  'panel.learn.factScope': 'Sessions in scope',
+  'panel.learn.factDeliverables': 'Deliverable types',
+  'panel.learn.factDeliverablesValue': '{n} of {total}',
   'panel.learn.scope': 'Session scope',
   'panel.learn.scope.all': 'All sessions',
   /* The two parameterised options are labelled by their **dimension**, with
@@ -305,12 +314,10 @@ export const en = {
   'panel.learn.objectives.placeholder':
     'e.g. recurring build errors, repeated user corrections, operations worth scripting…',
   'panel.learn.start': 'Start learning',
-  /* The footer's calm state: what the run will study, said where the blocked
-     sentence appears so the two read as the same slot. Deliberately a
-     `label: value` line rather than `Will study {n} sessions` — this
-     catalogue has no plural machinery (`'{n} steps'` renders "1 steps"), and
-     a count that can legitimately be 1 should not read as broken English. */
-  'panel.learn.footScope': 'Sessions in scope: {n}',
+  /* The footer's calm state is now empty, and that is the change the side card
+     made: "sessions in scope" is a *fact about the run*, so it sits with the
+     other facts instead of in the slot reserved for whatever is stopping Start.
+     What is left there is only ever the blocker, beside the button it disables. */
   'panel.learn.noneSelected': 'Pick at least one deliverable type',
   'panel.learn.invalidRange': 'Give a number of 1 or more',
   'panel.learn.noWorkspace': 'Open a workspace to start learning.',
@@ -954,6 +961,10 @@ export const en = {
   'panel.settings.close': 'Closing the window',
   'panel.settings.closeDesc': 'What the X button does.',
   'panel.close': 'Close',
+  /* The second surface's way back to the first — the head's leading arrow on
+     Configuration's editors and on the tasks history. One key, because it means
+     one thing; the label names where it goes, not the gesture. */
+  'panel.back': 'Back to the list',
 
   /* ---------------- the configuration files ----------------
    *
@@ -963,7 +974,54 @@ export const en = {
    * *when it opens*, which is why the effect sentence is a statement about next
    * time rather than a badge about now. */
   'panel.config.title': 'Configuration',
+  /* The `?` beside the title. A definition of the panel, not of a field — it is
+     the sentence somebody wants before they start reading the rest. */
+  'panel.config.about':
+    'Provider routes, the web-search keys and the MCP servers a session is built from. Both files are read when a session opens.',
   'panel.config.unreadable': 'The configuration files could not be read.',
+  /* The list rows' copy. "No key" and "default" are the two facts a route row
+     carries beyond its name: the first is `Provider.Usable()`, the second is
+     `Registry.DefaultProvider`'s rule (the first route with a key) said where the
+     order is decided rather than only in the hint above the list. */
+  'panel.config.defaultRoute': 'default',
+  'panel.config.tlsOff': 'TLS not verified',
+  'panel.config.noBaseUrl': 'no base URL',
+  'panel.config.noInvocation': 'nothing configured yet',
+  'panel.config.envCount': '{n} env var(s)',
+  'panel.config.timeoutValue': '{n}s timeout',
+  'panel.config.routeEmpty': 'No route yet',
+  'panel.config.routeEmptyHint':
+    'A route is one provider endpoint: a name, a base URL and an API key. The first route with a key is the one used by default.',
+  'panel.config.mcpEmpty': 'No MCP server yet',
+  'panel.config.mcpEmptyHint':
+    'Add a command the runtime runs on this machine, or a URL it connects to when a session starts.',
+  /* The rows' menus. Each sentence names its own noun, the way the tasks menu
+     does ("Delete this task"): a row's overflow is read out of context by anyone
+     using a screen reader, and "Remove" alone would leave them guessing what. */
+  'panel.config.edit': 'Edit',
+  'panel.config.duplicateRoute': 'Duplicate this route',
+  'panel.config.duplicateServer': 'Duplicate this server',
+  'panel.config.removeConfirm': 'Remove? Click again to confirm',
+  'panel.config.moreRoute': 'More actions for this route',
+  'panel.config.moreServer': 'More actions for this server',
+  /* The editors. The note is the same on both because it is a fact about the
+     dialog rather than about a route: what is on screen is a draft, and the file
+     is written by the Save at the foot. */
+  'panel.config.editRoute': 'Edit route',
+  'panel.config.newRoute': 'New route',
+  'panel.config.editServer': 'Edit server',
+  'panel.config.newServer': 'New server',
+  'panel.config.editorNote': 'Edits stay in this draft until you press Save.',
+  'panel.config.sectionIdentity': 'Identity',
+  'panel.config.sectionEndpoint': 'Endpoint',
+  'panel.config.sectionAdvanced': 'Advanced',
+  'panel.config.sectionServer': 'Server',
+  'panel.config.sideStatus': 'Availability',
+  'panel.config.sideStatusHint':
+    'A route with no key, or with no models, is in the file and cannot be selected.',
+  'panel.config.factSelectable': 'Selectable',
+  'panel.config.factModels': 'Models',
+  'panel.config.factDefault': 'Default',
   'panel.config.routes': 'Routes',
   'panel.config.routesHint':
     'One entry per provider route. The key is the route name; the order is the order the /model list shows, and the first route with a key is the default.',
@@ -993,10 +1051,16 @@ export const en = {
   'panel.config.apiStyleAuto': 'infer from the URL',
   'panel.config.displayName': 'Display name',
   'panel.config.displayNameHint': 'Optional. Shown instead of the route name.',
-  'panel.config.verify': 'TLS',
-  'panel.config.skipVerify': 'Skip certificate verification',
+  /* The switch is worded as **verify**, not as "skip verifying". The file stores
+     the second (`verify: false`), and the field used to be labelled with it — a
+     switch whose *on* state means "do not do the safe thing" is a control people
+     misread exactly once each. The hint below still reads correctly against the
+     new label, because it says what turning it off means. */
+  'panel.config.verifyCert': 'Verify the certificate',
   'panel.config.verifyHint':
     'On by default. Only turn this off for an endpoint whose certificate does not check out.',
+  'panel.config.transportHint':
+    'The runtime refuses a server that names both a command and a URL, so switching transports clears the other one.',
   'panel.config.headers': 'Extra headers',
   'panel.config.headersHint': 'One per line, name = value. Sent with every request to this route.',
   'panel.config.pairsHint': 'One per line, name = value.',
@@ -1247,6 +1311,10 @@ export const en = {
   'common.confirm': 'Confirm',
   'common.none': 'none',
   'common.unknown': 'unknown',
+  /* The two answers a fact line can carry (Configuration's availability card).
+     Lower-case on purpose: they are values in a `label: value` row, not sentences. */
+  'common.yes': 'yes',
+  'common.no': 'no',
   'common.count': '{n} items',
   'common.working': 'working',
   'common.loading': 'loading…',

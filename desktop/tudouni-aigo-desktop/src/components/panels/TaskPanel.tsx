@@ -8,7 +8,6 @@ import {
   Clock,
   Copy,
   Folder,
-  Info as InfoGlyph,
   MoreHorizontal,
   Pencil,
   Play,
@@ -43,7 +42,7 @@ import {
   type TaskRunLink,
   type TaskWorkspaceRef,
 } from '@/task/tasks';
-import { Tip } from '@/components/ui/kit';
+import { PanelInfo, Tip } from '@/components/ui/kit';
 import { PanelBody } from './PanelShell';
 
 /**
@@ -470,7 +469,7 @@ function TaskRow({
                 still a button, and removing it would move the overflow menu. */}
             <button
               type="button"
-              className="btn btn-primary tk-run"
+              className="btn btn-primary tk-row-cta"
               disabled={!runnable || busy}
               onClick={onRun}
             >
@@ -1365,24 +1364,11 @@ function ModelPicker({ value, onChange }: { value: string; onChange: (model: str
 
 /** The title's `?`: what a task *is*, kept out of the one-line subtitle.
  *
- * A native `title` rather than the app's `Tip`, deliberately. `Tip` is a Radix
- * tooltip, and this one is mounted **the instant the panel opens** — on the
- * element the pointer is most likely to already be over, since the header sits
- * where the dialog's own top edge is. A tooltip that announces itself before
- * anybody has asked is worse than no tooltip: it covers the filter row it is
- * supposed to be explaining. The native attribute has no such failure mode, and
- * what is behind it is a definition, not an interaction.
+ * The glyph itself is `PanelInfo` in the kit, because Configuration and Learn
+ * this workspace now put the same mark in the same place — one control, one
+ * behaviour (a native `title`, and the reason for that is on `PanelInfo`).
  */
 function TaskInfo() {
   const t = useT();
-  return (
-    <button
-      type="button"
-      className="info-ic"
-      aria-label={t('panel.task.about')}
-      title={t('panel.task.about')}
-    >
-      <InfoGlyph size={13} />
-    </button>
-  );
+  return <PanelInfo label={t('panel.task.about')} />;
 }

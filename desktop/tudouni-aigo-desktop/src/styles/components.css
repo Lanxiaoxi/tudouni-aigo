@@ -1690,32 +1690,19 @@ table.table td.mono {
 
    The learning run's configuration form.
 
-   **It is built from the configuration panel's parts, on purpose.** A
-   section is an `.etb-label` head plus a `.set-hint`; a path is a
-   `.cfg-path-row`; something wrong is a `.cfg-problem`; a tick box is a
-   `.cfg-check`; the textarea is a `.cfg-textarea`; the sentence that
-   explains the footer is a `.cfg-status`. Those classes are the vocabulary
-   this dialog already has for exactly those jobs, and the first version of
-   this panel invented a parallel one for every single one of them
-   (`.learn-section`, `.learn-workspace`, `.learn-warn`, `.learn-focus` and
-   a bespoke checkbox chip) — which is how a panel in the same dialog as
-   Settings and Config came to look like it belonged to another app.
+   **It is the task editor's shape, because it is the same kind of screen.** A
+   form holding two kinds of content: what you decide (the scope, the deliverable
+   types, the focus) and what is *true* of the run (which workspace it studies,
+   how many sessions that comes to, the model it inherits). The left column holds
+   the first and the tinted side card the second, exactly as `TaskEditor`
+   separates "what the run says" from "where it says it". It used to be five
+   stacked blocks, which made every fact look like one more field.
 
-   What is left here is the one shape nothing else in the app has: three
-   exclusive options that each carry their own number. */
-
-/* The vertical rhythm between sections. A single rule rather than a margin
-   per section, so the spacing cannot drift as sections are added — the
-   `.etb-label` heads then need no margin of their own, and the `.cfg-path-row`
-   and `.cfg-problems` below each keep the top margin they use in Config,
-   which is the same gap. */
-.learn-block {
-  margin-top: var(--space-4);
-}
-
-.learn-block:first-child {
-  margin-top: 0;
-}
+   **The parts are the app's.** A section is `.tk-section`; the three exclusive
+   options are `.tk-choice` rows, which is the same radio list the MCP transport
+   is chosen from; a tick box is `.cfg-check`, the textarea `.cfg-textarea`, the
+   workspace path `.cfg-path-row`, and something wrong a `.cfg-problem`. What is
+   left here is the one thing this panel owns: four file names on a wrapped row. */
 
 /* The folder glyph on the workspace row. A flex item inside
    `.cfg-path-row`, so it must not shrink and must not be pushed onto its
@@ -1725,141 +1712,19 @@ table.table td.mono {
   color: var(--fg-muted);
 }
 
-/* ---- session scope ----
-   One row per option, full width: the label names the choice, the number
-   input is that option's own parameter, and the count on the right is the
-   preview the form promises ("this scope studies N sessions").
-
-   The rows are a bordered list rather than three separate cards: they are
-   one choice, and three detached boxes read as three unrelated settings.
-   The chosen row wears the accent tint — the same pair the sidebar's
-   primary action and the settings panel's segmented control wear — and the
-   rows are joined by a negative margin so the group reads as one control. */
-.learn-scope {
-  display: flex;
-  flex-direction: column;
-  margin-top: var(--space-2);
-}
-
-.learn-scope-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  /* Overlapped by the next row's top edge: a shared 1px line instead of two
-     stacked ones, which is what makes the group read as one control. */
-  margin-top: -1px;
-  font-size: var(--text-compact);
-  color: var(--fg-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
-}
-
-.learn-scope-row:first-child {
-  margin-top: 0;
-  border-top-left-radius: var(--radius-md);
-  border-top-right-radius: var(--radius-md);
-}
-
-.learn-scope-row:last-child {
-  border-bottom-left-radius: var(--radius-md);
-  border-bottom-right-radius: var(--radius-md);
-}
-
-.learn-scope-row:hover {
-  background: var(--bg-muted);
-}
-
-/* The chosen row is raised over its neighbours, so the accent hairline is
-   not clipped in half by the next row's top border. */
-.learn-scope-row:has(input:checked) {
-  position: relative;
-  z-index: 1;
-  border-color: var(--accent-tint-border);
-  background: var(--accent-tint);
-}
-
-.learn-scope-row:has(input:checked) .learn-scope-text {
-  color: var(--fg);
-}
-
-.learn-scope-text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* The option's own number. **Disabled until its option is the chosen one** —
-   an input that accepts a value the form is not using is a control that
-   lies about having an effect. */
-.learn-scope-num {
-  width: 64px;
-  height: var(--control-h-compact);
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  font-family: var(--font-mono);
-  font-size: var(--text-caption);
-  font-variant-numeric: tabular-nums;
-  color: var(--fg);
-  text-align: center;
-  transition:
-    border-color var(--motion-fast) var(--ease-out),
-    background-color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
-}
-
-.learn-scope-num::placeholder {
-  color: var(--fg-faint);
-}
-
-.learn-scope-num:disabled {
-  border-color: var(--border);
-  background: transparent;
-  color: var(--fg-faint);
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-/* Focus is the ring every other control in the app draws, and the ring is
-   the *only* focus mark: the two rules it replaces painted a green border
-   on click, which is the mistake `global.css` documents. */
-.learn-scope-num:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-/* The preview count. Fixed width so the three rows' numbers line up in a
-   column — they are the same kind of fact in the same place three times. */
-.learn-scope-count {
-  flex: none;
-  width: 28px;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: var(--text-caption);
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-faint);
-}
-
-.learn-scope-row:has(input:checked) .learn-scope-count {
-  color: var(--accent-tint-text);
-}
-
 /* ---- deliverables ----
    Four short type names on one wrapped row. `.cfg-check` draws each one, so
    a ticked box in this panel is the same mark as a ticked box in Config —
    and the checkbox is a real, focusable, screen-readable one rather than a
    hidden input behind a painted chip. The chip shape was prettier and it
    was not a checkbox: it hid a 1px input under a label, so the keyboard
-   could reach it but nothing ever showed that it had. */
+   could reach it but nothing ever showed that it had.
+   No margin of its own: it is a `.tk-section`'s body, and the section's own
+   gap is the rhythm. */
 .learn-deliverables {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-5);
-  margin-top: var(--space-3);
 }
 
 /* The type names are file names, so they are mono — the same treatment the
@@ -1873,37 +1738,29 @@ table.table td.mono {
   white-space: nowrap;
 }
 
-/* The optional focus box. `.cfg-textarea` is the same control the
-   configuration panel's multi-line fields wear; the only thing added is the
-   top margin, so it sits under its label like every other field here. */
-.learn-block .cfg-textarea {
-  margin-top: var(--space-3);
-}
-
-/* The footer's calm sentence: what the run will study. Muted, and **not** the
-   warning colour `cfg-status-pending` uses — that one means "something here
-   still needs you", and this line is the form saying it is ready. */
-.learn-fact {
-  color: var(--fg-muted);
-}
-
 /* ---------------- Task templates ----------------
  *
  * Three surfaces, one dialog: the shelf, the history and the editor. The
- * vocabulary below is this panel's own — `.tk-*` — because almost none of these
- * shapes exist anywhere else in the app: a row with a fixed action slot at its
- * right edge, a filter chip strip, a two-column form with a tinted environment
- * card. What *is* shared is shared on purpose: the fields are `.cfg-input` /
- * `.cfg-textarea` / `.cfg-label`, the footer is `.dialog-foot`, the buttons are
- * `.btn`, and the badges are `.badge`. A second vocabulary for "a field" or "a
- * card" is how a panel starts reading as a different application.
+ * vocabulary below is `.tk-*`, and it began as this panel's own: almost none
+ * of these shapes existed anywhere else in the app: a row with a fixed action
+ * slot at its right edge, a filter chip strip, a two-column form with a tinted
+ * side card. It is now the dialog's shared vocabulary for those shapes: the
+ * configuration panel's routes and MCP servers are lists of these rows and
+ * editors of these sections, and Learn this workspace is one of these editors.
+ * Neither of them keeps a second word for a row or for a section.
+ *
+ * What is shared with the rest of the app is shared on purpose: the fields are
+ * `.cfg-input` / `.cfg-textarea` / `.cfg-label`, the footer is `.dialog-foot`,
+ * the buttons are `.btn`, and the badges are `.badge`. A second vocabulary for a
+ * field or a card is how a panel starts reading as a different application.
  *
  * **The action slot never moves.** Per the design's states sheet, the right
- * edge is reserved at a fixed height whether it holds Run, a progress bar or
- * nothing at all — which is why `.tk-row-actions` has a `min-height` and the
- * Run button is *hidden* at rest rather than unmounted. On hover the row tints
- * and Run appears in place, so the row's text does not reflow under the cursor.
- * See `.tk-row:hover .tk-run`.
+ * edge is reserved at the height of a control whether it holds Run, Edit, a
+ * progress bar or nothing at all, which is why `.tk-row-actions` has a
+ * `min-height` and the row's primary action is *hidden* at rest rather than
+ * unmounted. On hover the row tints and that action appears in place, so the
+ * row's text does not reflow under the cursor.
+ * See `.tk-row:hover .tk-row-cta`.
  */
 
 .tk-head {
@@ -2152,6 +2009,14 @@ table.table td.mono {
   color: var(--destructive);
 }
 
+/* The counterpart in the warning colour: a fact that is not a failure but that
+   somebody should see without opening the row. Today it is one thing — a route
+   whose TLS certificate is not verified — which is why it is amber rather than
+   red: the route works, and what it costs is a guarantee. */
+.tk-meta-warn {
+  color: var(--warning);
+}
+
 /* **The fixed action slot.** Reserved at the height of a control whether or
    not anything is in it, so putting Run on screen at hover cannot move the
    row — see the section comment above. */
@@ -2163,12 +2028,13 @@ table.table td.mono {
   min-height: var(--control-h);
 }
 
-/* Run is present at rest and hidden by opacity, not unmounted: an element that
+/* The row's primary action — Run on a task, Edit on a route or an MCP server.
+   Present at rest and hidden by opacity, not unmounted: an element that
    appears on hover and takes up space where it appears is the layout shift
    this whole slot exists to prevent. `visibility` rather than `display` so it
    is not read out by assistive tech while it is invisible, and the row's
    `:focus-within` is the keyboard's half of the same reveal. */
-.tk-run {
+.tk-row-cta {
   opacity: 0;
   visibility: hidden;
   transition:
@@ -2176,8 +2042,8 @@ table.table td.mono {
     visibility var(--motion-fast) var(--ease-out);
 }
 
-.tk-row:hover .tk-run,
-.tk-row:focus-within .tk-run {
+.tk-row:hover .tk-row-cta,
+.tk-row:focus-within .tk-row-cta {
   opacity: 1;
   visibility: visible;
 }
@@ -2445,6 +2311,19 @@ table.table td.mono {
   background: var(--destructive-subtle);
 }
 
+/* A menu entry that cannot act — "Move up" on the first row. Dimmed rather
+   than removed: the row's order is one of the things the menu is for, and an
+   item that vanishes at the top of the list reads as a different menu. */
+.tk-menu-item:disabled {
+  color: var(--fg-faint);
+  cursor: not-allowed;
+}
+
+.tk-menu-item:disabled:hover {
+  background: transparent;
+  color: var(--fg-faint);
+}
+
 .tk-menu-label {
   padding: var(--space-2) var(--space-2) var(--space-1);
   font-size: var(--text-caption);
@@ -2680,6 +2559,245 @@ table.table td.mono {
   color: var(--fg-faint);
 }
 
+/* ---- the parts every editor is built from ----
+
+   Four shapes, and they are shared on purpose: the task editor, a route's
+   editor, an MCP server's editor and the learning form all compose these. When
+   a panel needs "a group of fields", "a short exclusive choice", "a nested field
+   group" or "a fact in the side card", it comes here — inventing a fifth
+   vocabulary for any of them is how two panels in the same dialog start looking
+   like two applications. */
+
+/* A labelled group of fields inside a column: the head is a label, an optional
+   count and whatever acts on the group (a fold, an add button); the body is the
+   fields. Sections are separated by a hairline, which is what makes a form of
+   eleven fields readable as four subjects. */
+.tk-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.tk-section + .tk-section {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tk-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 22px;
+}
+
+/* A fold control that heads a section takes the row, so the label stays at the
+   left edge and the count rides with it however long the label is. */
+.tk-section-head .cfg-fold {
+  flex: 1 1 auto;
+}
+
+.tk-section-label {
+  flex: none;
+  font-size: var(--text-h2);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+/* A vertical radio list: one exclusive choice per row, the chosen one tinted.
+   The rows are joined by a shared hairline (`margin-top: -1px`) so the group
+   reads as one control rather than as N unrelated settings, and the chosen row
+   is lifted over its neighbour so its accent border is not clipped in half. */
+.tk-choice {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tk-choice-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  margin-top: -1px;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.tk-choice-row:first-child {
+  margin-top: 0;
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+}
+
+.tk-choice-row:last-child {
+  border-bottom-left-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+}
+
+.tk-choice-row:hover {
+  background: var(--bg-muted);
+}
+
+.tk-choice-row:has(input:checked) {
+  position: relative;
+  z-index: 1;
+  border-color: var(--accent-tint-border);
+  background: var(--accent-tint);
+}
+
+.tk-choice-row:has(input:checked) .tk-choice-text {
+  color: var(--fg);
+}
+
+.tk-choice-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The chosen option's own parameter. **Disabled until its option is the chosen
+   one** — an input that accepts a value the form is not using is a control that
+   lies about having an effect. Clicking it still selects the row, because the
+   whole row is the label. */
+.tk-choice-num {
+  width: 64px;
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  text-align: center;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.tk-choice-num::placeholder {
+  color: var(--fg-faint);
+}
+
+.tk-choice-num:disabled {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--fg-faint);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Focus is the ring every other control in the app draws, and the ring is
+   the *only* focus mark: the two rules it replaces painted a green border
+   on click, which is the mistake `global.css` documents. */
+.tk-choice-num:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The preview count. Fixed width so the rows' numbers line up in a column —
+   they are the same kind of fact in the same place, n times. */
+.tk-choice-count {
+  flex: none;
+  width: 28px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+}
+
+.tk-choice-row:has(input:checked) .tk-choice-count {
+  color: var(--accent-tint-text);
+}
+
+/* A nested field group inside an editor — one model of a route. It sits on the
+   window's own background rather than the card's, so a list of them reads as
+   the *contents* of the section they are in. */
+.tk-subcards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tk-subcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+/* A sub-card's own field grid pairs up sooner than a top-level one: its column
+   is already inset by the editor's, and two 240px fields do not fit the ~490px
+   that leaves — so without this a model's id and label stack, and one model
+   costs a screenful. */
+.tk-subcard .cfg-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.tk-subcard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+}
+
+/* The side card's `label: value` rows. The value is right-aligned and mono:
+   they are numbers and yes/no answers, and a column of them should be readable
+   down its right edge. */
+.tk-side-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tk-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+}
+
+.tk-fact-label {
+  color: var(--fg-muted);
+}
+
+.tk-fact-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-secondary);
+  text-align: right;
+}
+
+/* "no" on a route that cannot be selected is the one answer in the card that is
+   worth a colour: it is the difference between a route in the file and a route
+   the /model list will offer. */
+.tk-fact-value.is-negative {
+  color: var(--warning);
+}
+
+.tk-fact-value.is-muted {
+  color: var(--fg-faint);
+}
+
+/* A path row inside the side card: the card's own gap already spaces its
+   children, so the row's bottom margin would double it. */
+.tk-editor-side .cfg-path-row {
+  margin-bottom: 0;
+}
+
 /* A narrow window: the editor's second column folds under the first rather
    than being squeezed, since its fields are the ones that lose meaning first
    when a workspace path is cut to four characters. */
@@ -2838,12 +2956,14 @@ table.table td.mono {
    longer than the screen, and the first question after a refused save is "what
    do I fix" — which is exactly what scrolling to the bottom would lose.
 
-   **A whole route is one card.** The fields inside it belong together (they are
-   one entry in the file's `providers` object), and the reorder buttons in the
-   head are the only control here whose effect is invisible in the field it sits
-   next to: they change which route is the default. So the card is the unit, and
-   deleting one asks for no confirmation for the reason deleting a route is
-   recoverable — the dialog is one Escape away from discarding the whole draft. */
+   **Routes and MCP servers are lists of rows, and one row opens one editor** —
+   the task panel's shape, and its vocabulary (`.tk-head`, `.tk-chips`, `.tk-list`,
+   `.tk-row`, `.tk-menu`, `.tk-editor`, `.tk-section`, `.tk-subcard`). What is left
+   in this section is what is *only* true of these two files: their paths and the
+   problems that can make one unwritable, the field grid, and the status line in
+   the footer. The card classes this section used to carry (`.cfg-card*`,
+   `.cfg-models*`, `.cfg-model*`) are gone with the stacked-cards layout they
+   described. */
 
 .dialog-wide {
   width: min(860px, calc(100vw - 48px));
@@ -2909,38 +3029,14 @@ table.table td.mono {
   word-break: break-word;
 }
 
-/* ---- one route, or one MCP server ---- */
+/* ---- one field, and the shapes fields are built from ---- */
 
-.cfg-card {
-  margin-bottom: var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--bg-secondary);
-  overflow: hidden;
-}
-
-.cfg-card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--bg-muted);
-}
-
-.cfg-card-title {
-  font-size: var(--text-compact);
-  font-weight: 600;
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* A card's own fold control. It is a button **around the name**, not a click on
-   the whole head: the head also carries three icon buttons, and a wrapper that
-   took the click would fire on their presses too (a button inside a button is
-   not markup a browser accepts, either). */
+/* A fold control heading a section — today, a route's model list. It is a button
+   **around the label**, not a click on the whole head: the head also carries the
+   add button, and a wrapper that took the click would fire on its presses too (a
+   button inside a button is not markup a browser accepts, either). It takes the
+   row, so the label stays at the left edge and the count rides with it — see
+   `.tk-section-head .cfg-fold`. */
 .cfg-fold {
   display: flex;
   align-items: center;
@@ -2956,32 +3052,9 @@ table.table td.mono {
   cursor: pointer;
 }
 
-/* The card's fold takes the row, so whatever follows it — reorder and delete —
-   stays at the right edge however long the name is. */
-.cfg-card-head .cfg-fold {
-  flex: 1 1 auto;
-}
-
 .cfg-fold:hover .caret {
   color: var(--fg);
 }
-
-/* What a folded card still says: how many models are in it. It is the fact the
-   name does not carry, and the reason a route with none cannot be picked. */
-.cfg-card-meta {
-  flex: none;
-  font-size: var(--text-caption);
-  color: var(--fg-secondary);
-}
-
-.cfg-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3);
-}
-
-/* ---- fields ---- */
 
 /* Two columns, and they stack when the dialog is narrow. `auto-fit` with a
    minimum is what does it: a media query would need the dialog's own width,
@@ -3095,68 +3168,10 @@ table.table td.mono {
   accent-color: var(--accent);
 }
 
-.cfg-choice {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  height: var(--control-h-compact);
-}
-
-/* The delete buttons on a card's head. Destructive only on hover: a column of
-   red icons reads as a warning about the panel rather than as four controls. */
+/* The delete buttons inside a sub-card. Destructive only on hover: a column of
+   red icons reads as a warning about the panel rather than as controls. */
 .cfg-danger:hover:not(:disabled) {
   color: var(--destructive);
-}
-
-.cfg-add {
-  /* At the end of the list it appends to, at the width of its own label: a
-     full-width bar under a card reads as a section divider rather than as the
-     button that adds the next one. `align-self` is what does it inside the
-     flex column; a block parent needs nothing. */
-  margin-top: var(--space-1);
-  align-self: flex-start;
-}
-
-/* ---- the models block inside a route ---- */
-
-.cfg-models {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px dashed var(--border-subtle);
-}
-
-.cfg-models-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-/* The models list folds too, so the column layout sits here rather than on
-   `.cfg-models` — the `.collapse` grid in between only ever holds one child. */
-.cfg-models-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.cfg-model {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-}
-
-.cfg-model-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-caption);
-  color: var(--fg-secondary);
 }
 
 /* ---- the save row, and the sentence that has to be said ---- */
@@ -3188,11 +3203,9 @@ table.table td.mono {
   color: var(--warning);
 }
 
-.cfg-show-keys {
-  align-self: flex-start;
-  margin-top: var(--space-2);
-}
-
+/* The one sentence that has to be said somewhere: when the file takes effect. At
+   the foot of every surface, because it only matters *after* somebody has
+   understood what they are looking at. */
 .cfg-takes-effect {
   margin-top: var(--space-4);
   padding-top: var(--space-3);
