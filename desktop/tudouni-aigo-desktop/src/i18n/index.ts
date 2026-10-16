@@ -255,6 +255,27 @@ export const en = {
   'entry.occupiesInput': 'holds input',
   'entry.unknown': 'unknown',
 
+  /* ---------------- declared deliverables ----------------
+   *
+   * A `present` call's cards. The note under each file name is the **model's own
+   * sentence** when it wrote one, shown verbatim — it is not interface copy, and
+   * nothing here may reword it. These keys are the other half: the fallback for a
+   * declaration with no note, the two actions, and the label on the group.
+   */
+  'deliverable.label': 'Delivered files',
+  'deliverable.preview': 'Preview {name}',
+  'deliverable.open': 'Open {name} in its default application',
+  'deliverable.dismiss': 'Dismiss this message',
+  // The fallback notes, by kind. A word a person would use, not the extension in
+  // capitals: `MD` is an identifier, "Markdown" is a thing someone asked for.
+  'deliverable.kind.markdown': 'Markdown document',
+  'deliverable.kind.pdf': 'PDF document',
+  'deliverable.kind.sheet': 'Spreadsheet',
+  'deliverable.kind.document': 'Document',
+  'deliverable.kind.slides': 'Slides',
+  'deliverable.kind.image': 'Image',
+  'deliverable.kind.file': 'File',
+
   /* ---------------- left sidebar: workspaces and sessions ---------------- */
   'lb.workspaces': 'Workspaces',
   'lb.sessions': 'Sessions',

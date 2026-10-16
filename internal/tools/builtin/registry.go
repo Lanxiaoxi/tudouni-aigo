@@ -77,6 +77,14 @@ func CreateRegistry(assembly Assembly) (*Result, error) {
 			return nil, err
 		}
 	}
+	// present is the fifth file-facing tool and the only one that touches nothing:
+	// it declares paths the other tools already wrote. It is registered on its own
+	// rather than inside `NewFileTools` because those four share a shape — resolve,
+	// act, report a changed file — that this one does not have: it reads no bytes,
+	// writes no bytes, and its whole product is a fact for the interface.
+	if err := registry.Register(NewPresent(assembly.Workspace)); err != nil {
+		return nil, err
+	}
 	// read_image sits beside the file tools rather than inside NewFileTools, and the
 	// separation is the design rather than tidiness: those four return **text** and
 	// this one returns bytes, and a reader who sees them in one list would reasonably

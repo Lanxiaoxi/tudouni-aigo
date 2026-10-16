@@ -1058,6 +1058,118 @@ test('a tool_result with no matching call still becomes a row', () => {
   assert.equal((entries[0] as Extract<Entry, { kind: 'tool' }>).result?.status, 'error');
 });
 
+/* ============================================================
+   declared deliverables (the `present` tool)
+   ============================================================ */
+
+test('a present result puts the declared files on its own tool row', () => {
+  let entries: Entry[] = [];
+  entries = reduceEvent(
+    entries,
+    ev('tool_call', { tool: 'present', call_id: 'c1', tool_index: 0, arguments: '{"files":[…]}' }),
+    freshOptions(),
+  ).entries;
+  entries = reduceEvent(
+    entries,
+    ev('tool_result', {
+      tool: 'present',
+      call_id: 'c1',
+      tool_index: 0,
+      status: 'ok',
+      chars: 40,
+      duration_ms: 1,
+      deliverables: [
+        { path: 'docs/report.md', description: '性能分析报告' },
+        { path: 'dist/chart.png' },
+      ],
+    }),
+    freshOptions(),
+  ).entries;
+
+  const row = entries.find((e) => e.kind === 'tool') as Extract<Entry, { kind: 'tool' }>;
+  assert.ok(row.result, 'the result attached to the call');
+  assert.deepEqual(row.result.deliverables, [
+    { path: 'docs/report.md', description: '性能分析报告' },
+    // Missing description stays the empty string, which is what "no description"
+    // is — the card falls back to the file kind.
+    { path: 'dist/chart.png', description: '' },
+  ]);
+});
+
+test('a failed present declares nothing, even if the field arrives', () => {
+  // The runtime only writes the field on a successful call, and this is the
+  // front end's half of that rule: a declaration is an offer to open a file, and
+  // one made by a call that errored is an offer nobody stands behind.
+  const entries = reduceEvent(
+    [],
+    ev('tool_result', {
+      tool: 'present',
+      call_id: 'c1',
+      tool_index: 0,
+      status: 'error',
+      chars: 10,
+      duration_ms: 1,
+      deliverables: [{ path: 'a.md' }],
+    }),
+    freshOptions(),
+  ).entries;
+  const row = entries[0] as Extract<Entry, { kind: 'tool' }>;
+  assert.equal(row.result?.deliverables, undefined);
+});
+
+test('a malformed declaration produces no card rather than a broken one', () => {
+  for (const bad of [
+    [{ path: '   ' }],
+    [{ path: 42 }],
+    [{ path: 'ok.md', description: 7 }],
+    [{ nope: 'ok.md' }],
+    ['ok.md'],
+    [],
+  ]) {
+    const entries = reduceEvent(
+      [],
+      ev('tool_result', {
+        tool: 'present',
+        call_id: 'c1',
+        tool_index: 0,
+        status: 'ok',
+        chars: 1,
+        duration_ms: 0,
+        deliverables: bad,
+      }),
+      freshOptions(),
+    ).entries;
+    const row = entries[0] as Extract<Entry, { kind: 'tool' }>;
+    // The **result** still lands — the tool row must draw regardless, because the
+    // call happened. Only the cards are withheld.
+    assert.ok(row.result, `the result survived: ${JSON.stringify(bad)}`);
+    assert.equal(
+      row.result.deliverables,
+      undefined,
+      `no cards for ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test('a non-present result has no deliverables field at all', () => {
+  const entries = reduceEvent(
+    [],
+    ev('tool_result', {
+      tool: 'shell',
+      call_id: 'c1',
+      tool_index: 0,
+      status: 'ok',
+      chars: 12,
+      duration_ms: 3,
+      preview: 'hello',
+    }),
+    freshOptions(),
+  ).entries;
+  const row = entries[0] as Extract<Entry, { kind: 'tool' }>;
+  assert.equal(row.result?.preview, 'hello');
+  assert.equal(row.result?.deliverables, undefined);
+});
+
 test('a permission verdict without waited_ms means nobody was asked', () => {
   const entries = reduceEvent(
     [],

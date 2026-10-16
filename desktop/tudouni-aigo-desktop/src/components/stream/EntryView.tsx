@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CircleAlert,
   Copy,
+  FileCheck,
   Info,
   Layers,
   Minus,
@@ -22,6 +23,7 @@ import { copyText } from '@/utils/clipboard';
 import { Badge, RiskTag } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
 import { InBlock } from './InBlock';
+import { DeliverableCards } from './DeliverableCards';
 import { charCount, type Entry, type FrontMessage } from '@/state/entries';
 import { formatDuration, formatTokens, oneLine, tokPerSecond } from '@/utils/format';
 import type { TKey } from '@/i18n';
@@ -262,12 +264,20 @@ function ToolEntry({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
   const open = useApp((s) => s.toolOpen[entry.id] === true);
   const toggleTool = useApp((s) => s.toggleTool);
   const elevated = entry.risk === 'medium' || entry.risk === 'high';
+  // A declaration is the one tool result that is drawn **outside** the fold.
+  //
+  // That is the whole point of the tool: `present` produces no work to inspect —
+  // no command, no diff, no output — and folding its result away would hide the
+  // only thing it made. The cards are the result, so they sit under the row where
+  // a reader already is, and the disclosure triangle still opens the call's
+  // arguments for anyone checking what was declared.
+  const files = entry.result?.deliverables ?? [];
 
   return (
     <div
       className={`e-tool${entry.risk === 'medium' ? ' is-medium' : ''}${
         entry.risk === 'high' ? ' is-high' : ''
-      }`}
+      }${files.length > 0 ? ' has-deliverables' : ''}`}
     >
       <div
         className="et-head"
@@ -284,7 +294,11 @@ function ToolEntry({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
       >
         <ChevronRight size={13} className={`caret${open ? ' caret-open' : ''}`} />
         <span className="seq">{entry.index}</span>
-        <Wrench size={12} className="muted" />
+        {files.length > 0 ? (
+          <FileCheck size={12} color="var(--accent)" aria-hidden />
+        ) : (
+          <Wrench size={12} className="muted" />
+        )}
         <span className="et-name">{entry.tool}</span>
         <span className="et-params">{entry.arguments ? oneLine(entry.arguments, 120) : ''}</span>
 
@@ -305,6 +319,8 @@ function ToolEntry({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
           </span>
         ) : null}
       </div>
+
+      {files.length > 0 ? <DeliverableCards files={files} /> : null}
 
       {/* Kept mounted and folded, not conditionally rendered: an element that
           appears and disappears between frames has nothing to transition. The

@@ -1747,6 +1747,59 @@ fn os_user_name() -> Option<String> {
     None
 }
 
+/// Open one **declared deliverable** in the operating system's default
+/// application.
+///
+/// This exists as a command rather than as a direct `openPath` call from the
+/// page for one reason: **the boundary has to be re-checked on this side of the
+/// IPC**, against the file that is actually there. The path arrives from the
+/// model, through the runtime, through the card — three hops in which nothing
+/// verified that it names a file inside the workspace whose session declared it.
+/// The Go runtime checks it when the declaration is made, and that check is
+/// right; but a check made once, in another process, minutes ago, about a path
+/// that is a *string* in between, is not the thing to hand to `explorer.exe`.
+///
+/// So the same rule is applied here, at the moment of the act: join the
+/// workspace and the relative path, canonicalize both, and require the result to
+/// stay under the root. A `..` that escapes, a symlink pointing out, or a file
+/// that has been replaced since the declaration all fail the same way.
+///
+/// **It does not open through the plugin's own scope check.** `openPath` takes a
+/// path and learns nothing about workspaces, so the scope check would be the
+/// front end's, which is the layer this command exists to stop trusting.
+///
+/// The error string is written for a person: it is shown on the card, next to
+/// the file it is about, and "the file is gone" is the one outcome a reader can
+/// act on.
+#[tauri::command]
+fn deliverable_open(workspace: String, path: String) -> Result<(), String> {
+    let relative = path.trim();
+    if relative.is_empty() {
+        return Err("no file was named".to_string());
+    }
+    // An absolute path is refused rather than joined: `Path::join` with an
+    // absolute argument **replaces** the base, so passing one through would skip
+    // the boundary below by construction.
+    if Path::new(relative).is_absolute() {
+        return Err("the card names a path outside the workspace".to_string());
+    }
+
+    let root = fs::canonicalize(workspace.trim())
+        .map_err(|e| format!("cannot read the workspace directory: {e}"))?;
+    let target = fs::canonicalize(root.join(relative)).map_err(|_| {
+        format!("{relative} is not there any more — it may have been moved or deleted")
+    })?;
+    if target.strip_prefix(&root).is_err() {
+        return Err(format!("{relative} is outside the workspace"));
+    }
+    if !target.is_file() {
+        return Err(format!("{relative} is not a regular file"));
+    }
+
+    tauri_plugin_opener::open_path(&target, None::<&str>)
+        .map_err(|e| format!("the system could not open it: {e}"))
+}
+
 /// Can the runtime be started in this directory? `None` means yes; otherwise the
 /// reason, already written for a person.
 ///
@@ -2813,6 +2866,7 @@ pub fn run() {
             set_prevent_sleep,
             os_user_name,
             workspace_check,
+            deliverable_open,
             read_ssh_config,
             append_ssh_host,
             probe_remote_host,

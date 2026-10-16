@@ -1512,6 +1512,24 @@ export async function revealConfigFile(path: string): Promise<void> {
   }
 }
 
+/**
+ * Open one declared deliverable in the OS default application.
+ *
+ * **Through Rust, not through `openPath` directly.** The plugin's `openPath`
+ * takes a path and knows nothing about workspaces, so calling it from here would
+ * make this layer the only thing standing between a model-authored path and
+ * `explorer.exe`. The `deliverable_open` command re-checks the boundary against
+ * the file that is really there, at the moment of the act, and returns a sentence
+ * written for the person reading the card.
+ *
+ * `workspace` is the **runtime's own** answer (`init.workspace`), not something
+ * this window assembled: the path is relative to that root, and the two have to
+ * be the same fact for the join to mean anything.
+ */
+export async function openDeliverable(workspace: string, path: string): Promise<void> {
+  await tauriInvoke<void>('deliverable_open', { workspace, path });
+}
+
 /** What the bridge hands back after writing a pasted picture. */
 export interface StashedImage {
   /** Workspace-relative, with forward slashes — the string that goes into the

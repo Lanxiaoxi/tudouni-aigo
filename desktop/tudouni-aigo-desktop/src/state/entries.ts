@@ -58,6 +58,31 @@ export interface ToolResultState {
    *  three render as "no preview", never as an empty string pretending to be
    *  one. */
   preview: string | null;
+  /** Files a `present` call declared, in the order it declared them. Absent on
+   *  every other tool, and on a `present` that failed — the runtime only writes
+   *  the field on a call that succeeded, so "is it here" **is** "did the
+   *  declaration land". */
+  deliverables?: Deliverable[];
+}
+
+/**
+ * One file a `present` call declared as this turn's result.
+ *
+ * **A path and nothing else.** There is no size, no line count and no media type
+ * here, because the tool that produces this deliberately never reads the file —
+ * what travels is a reference, and every fact about the bytes is filled in by the
+ * read the card makes when somebody actually opens it. A size copied in at
+ * declaration time would also be a number that goes stale the moment the file is
+ * edited.
+ */
+export interface Deliverable {
+  /** Workspace-relative, and the **runtime's** spelling: it is what a
+   *  `file_read` is issued against, so this window never rewrites it. */
+  path: string;
+  /** The model's one-line note, or `''`. The runtime omits the field rather
+   *  than sending an empty string, and the card falls back to the file type —
+   *  an empty string here means "no description", never "the file has no type". */
+  description: string;
 }
 
 /**
@@ -259,6 +284,46 @@ function sameCall(entry: Entry, runId: string, step: number, index: number): boo
     entry.step === step &&
     entry.index === index
   );
+}
+
+/**
+ * Read the declaration off a `tool_result`, or `null` when there is none.
+ *
+ * **The runtime is the only source for this list, and this function is where
+ * that is enforced.** Two tempting shortcuts are refused here on purpose:
+ *
+ *   - parsing the paths back out of `arguments` — that field is the audit's own
+ *     truncation, so a call with six files and long descriptions would silently
+ *     lose the tail, and the card would be short a file with nothing on screen
+ *     to say so;
+ *   - scraping them out of `preview` — one flattened line, capped, reworded
+ *     whenever the tool's result text changes.
+ *
+ * A malformed record produces no card rather than a broken one: a declaration is
+ * an offer to open a file, and a row built from a half-read event would offer a
+ * path this window cannot name. The event itself stays in the transcript — the
+ * tool row draws regardless.
+ */
+function deliveredFiles(event: LooseEvent): Deliverable[] | null {
+  const raw = event.deliverables;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const files: Deliverable[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) return null;
+    const record = item as Record<string, unknown>;
+    const path = typeof record.path === 'string' ? record.path.trim() : '';
+    // A path is the whole point of the record. `description` is genuinely
+    // optional and the runtime omits it, so it is the one field allowed to be
+    // missing — but a present-but-wrong type means this event is not the shape
+    // this window understands, and guessing at it would be inventing data.
+    if (path === '') return null;
+    if (record.description !== undefined && typeof record.description !== 'string') return null;
+    files.push({
+      path,
+      description: typeof record.description === 'string' ? record.description : '',
+    });
+  }
+  return files;
 }
 
 /**
@@ -570,6 +635,13 @@ export function reduceEvent(
         parallel: ev.parallel === true,
         preview: typeof ev.preview === 'string' && ev.preview !== '' ? ev.preview : null,
       };
+      // The declaration rides on the result rather than becoming an entry of its
+      // own. A second entry kind would have to be threaded through the block
+      // partition, quiet mode and the row switches to say one thing — "these
+      // files were the result" — and it would arrive *beside* the call that made
+      // it, which is where a reader is already looking.
+      const deliverables = status === 'ok' ? deliveredFiles(ev) : null;
+      if (deliverables !== null) result.deliverables = deliverables;
 
       let attached = false;
       const patched = entries.map((entry) => {

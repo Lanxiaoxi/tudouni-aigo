@@ -205,6 +205,12 @@ func CountLines(text string) int {
 
 // typeOf maps a tool name to a coarse type. Anything unrecognised is plain text,
 // which is the only fallback that cannot be wrong.
+//
+// `present` is deliberately absent from the `file` line even though it is a file
+// tool. Its result is one `Presented <path>` line per file and nothing else, so
+// typing it `file` would make the range level offer to slice a list of paths — and
+// the paths themselves already travel in the declaration this tool puts on the
+// audit record. Nothing is lost by leaving it as text.
 func typeOf(tool string) string {
 	switch tool {
 	case "read_file", "write_file", "edit_file", "list_files":

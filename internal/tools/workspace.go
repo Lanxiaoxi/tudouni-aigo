@@ -229,6 +229,50 @@ func (w *Workspace) ListDir(path string) ([]string, error) {
 	return names, nil
 }
 
+// InspectFile resolves a path for a **declaration** and reports what is there.
+//
+// It is a third door beside `SafePath` and `WritablePath` because it answers a
+// third question. `read_file` asks "give me the bytes" — so a directory, a
+// binary file and a missing file are all failures of form. A declaration asks
+// only "is this a regular file a person can be sent to", and the two sides
+// disagree about which conditions matter: a 400MB video is a fine deliverable
+// and a terrible `read_file`, and refusing it here on size grounds would be this
+// layer inventing a policy the interface does not have.
+//
+// It reads no content. That is the point of the whole capability: what travels
+// is a path, so nothing here may open the file — a declaration that read the
+// bytes would put them on the protocol line it exists to keep them off.
+//
+// The boundary and the link walk are `SafePath`'s, unchanged: a declaration is
+// still a claim about a file inside the workspace, and a path through a link is
+// refused for the same reason it is refused there — the program cannot say
+// whether it stays inside.
+//
+// `os.Lstat` rather than `os.Stat`: `SafePath` has already resolved the path, so
+// a final component that is a link would have been followed before the walk ran,
+// and what is left to check is that the thing itself is a regular file rather
+// than a directory or a device.
+func (w *Workspace) InspectFile(path string) (os.FileInfo, error) {
+	target, err := w.SafePath(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("File not found: %s", path)
+		}
+		if os.IsPermission(err) {
+			return nil, fmt.Errorf("Permission denied: %s", path)
+		}
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("Not a regular file: %s", path)
+	}
+	return info, nil
+}
+
 // within reports whether path is root or lives under it.
 func within(path, root string) bool {
 	if path == root {

@@ -416,6 +416,190 @@
   border-color: var(--destructive);
 }
 
+/* A call that declared deliverables. Its cards are the result, so the row that
+   holds them is lifted to the accent the way a set goal is in the rail: this is
+   the turn's product, not its plumbing, and it has to be findable while scanning
+   a transcript full of ordinary tool rows. */
+.e-tool.has-deliverables {
+  border-color: var(--accent-border);
+}
+
+/* ---------------- 4b. declared deliverables ----------------
+ *
+ * One card per file a `present` call declared. The card is a **reference**, not a
+ * preview: no size, no first line, nothing read — see `DeliverableCards.tsx` for
+ * why, and note that these rules therefore have no truncation to do beyond the
+ * name and the note.
+ *
+ * Deliberately not `cursor: pointer` on the `li`: the card holds two buttons, and
+ * a pointer over the whole row would promise a click that the padding between
+ * them does not honour.
+ */
+.dl-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  /* Inside the call's own card, so the left edge aligns with the head's caret
+     column rather than with the card's outer border. */
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.dl-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 52px;
+  padding: 6px var(--space-2) 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-muted);
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.dl-card:hover {
+  border-color: var(--border-strong);
+}
+
+/* The preview target: a full-bleed button behind the icon and text, so the whole
+   card except the open control is one hit area. `text-align: left` because a
+   button centres its content by default and a centred file name reads as a chip
+   rather than as a row. */
+.dl-face {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dl-face:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* The 40px icon tile. The tint is the accent at low alpha in both themes — the
+   same treatment the tool row's own icon gets, so a deliverable reads as part of
+   the same family as the call that produced it. */
+.dl-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.dl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.dl-name {
+  font-size: var(--text-compact);
+  font-weight: 500;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The model's own note, or the kind of file. One line: a note that wrapped would
+   push the next card down and make the group's height depend on prose the model
+   wrote, which is the one thing a list of results must not do. */
+.dl-note {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A failed open says why, in place, and is allowed to wrap: this is the one line
+   on the card a person has to read, and clipping a failure to one line would hide
+   the half that says what to do. */
+.dl-note[data-error] {
+  color: var(--destructive);
+  white-space: normal;
+}
+
+.dl-open,
+.dl-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.dl-open:hover,
+.dl-dismiss:hover {
+  color: var(--fg);
+  background: var(--bg-card);
+}
+
+.dl-open:focus-visible,
+.dl-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dl-dismiss {
+  color: var(--destructive);
+}
+
+/* The wait, in the open control's own slot — so the row does not reflow when a
+   gesture starts, and the spinner lands exactly where the finger already is. */
+.dl-busy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  color: var(--fg-muted);
+}
+
+.dl-spin {
+  animation: dl-spin 900ms linear infinite;
+}
+
+@keyframes dl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-spin {
+    animation: none;
+  }
+}
+
 .e-tool-body {
   border-top: 1px solid var(--border-subtle);
   padding: var(--space-3);

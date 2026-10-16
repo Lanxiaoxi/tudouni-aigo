@@ -297,12 +297,21 @@ Both capabilities are also inside the agent's reach already: the file tools and
 
 ## The tools, and the four rules they are built on
 
-`read_file`, `write_file`, `edit_file`, `list_files`, `shell`, `grep`,
+`read_file`, `write_file`, `edit_file`, `list_files`, `present`, `shell`, `grep`,
 `get_current_time`, `ask_user`, `todo_write`; `shell_background`, `job_output`,
 `job_list`, `job_kill` for work that outlives one step; `web_search` and
 `fetch_web`; `load_skill`; and `subagent`, which hands a self-contained task to a
 fresh agent. The registry sorts by name, so the schema the model sees is stable
 between runs and a diff of two sessions means something.
+
+`present` is the one file tool that reads nothing and writes nothing: it declares
+files that are already there as the turn's result, and the front end draws a card
+for each one under the call. The **path** is what travels — the contents are not
+copied, uploaded or read, so a card always shows the file as it is now rather than
+as it was when it was declared. Paths are resolved through the same workspace
+boundary as every other file tool, which means an out-of-workspace path is refused
+rather than becoming a way to get a person to open something the agent may not
+touch.
 
 A tool is **absent from the schema, never present and broken**. `grep` without a
 vendored ripgrep for the platform, `web_search` without a key, `load_skill` in a

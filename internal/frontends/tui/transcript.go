@@ -1203,6 +1203,10 @@ func toolBrief(tool string, arguments string) string {
 		"shell_background": "command", "job_output": "job_id", "job_kill": "job_id",
 		"load_skill": "name", "fetch_web": "url", "web_search": "query",
 		"ask_user": "question", "todo_write": "todos", "get_current_time": "",
+		// `present` is the one entry whose subject is the whole list: it has no
+		// single naming argument, so the count is what the row can honestly say.
+		// `briefValue` turns the array into "N items" for exactly this case.
+		"present": "files",
 	}
 	// `file` and `prompt` are here because the table ages: a tool the interface
 	// has never heard of still names its subject with one of these.
