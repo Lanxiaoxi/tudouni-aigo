@@ -1,10 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArchiveRestore, MessageCircleQuestion, Trash2, X } from 'lucide-react';
 import {
-  activeWorkspaceOf,
   selectModalVisible,
   selectRowStatusKey,
-  selectSavedSessions,
   useApp,
   type RowStatus,
 } from '@/state/store';
@@ -12,7 +10,7 @@ import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { useTurnClock } from '@/hooks/useTurnClock';
 import { EmptyState, Progress, Tip } from '@/components/ui/kit';
-import { formatDuration, formatPercent, formatRelative, formatTokens } from '@/utils/format';
+import { formatDuration, formatPercent, formatRelative, formatTokens, normPath } from '@/utils/format';
 
 /**
  * The session board: what every session in this workspace is doing, on one
@@ -26,10 +24,12 @@ import { formatDuration, formatPercent, formatRelative, formatTokens } from '@/u
  * other sessions are waiting too).
  *
  * **It reads no session file and counts nothing itself.** Every number on a card
- * is either the runtime's (`sessions.items`, via `selectSavedSessions`) or this
- * end's own live bucket (`entries`, `session`) — the same two sources the left
- * rail already draws from. The status is `selectRowStatus`, unchanged, which is
- * what makes the dot on a card mean exactly what the dot on a rail row means.
+ * is either the runtime's (`sessions.items`, out of `savedSessions` — the map of
+ * saved lists, read per card in **that card's own workspace**, because the cards
+ * span workspaces while the rail draws only one) or this end's own live bucket
+ * (`entries`, `session`) — the same two sources the left rail already draws
+ * from. The status is `selectRowStatus`, unchanged, which is what makes the dot
+ * on a card mean exactly what the dot on a rail row means.
  *
  * **Most cards are `idle`, and that is the honest picture.** `SessionDot`'s
  * fourth rule — "no process, no dot" — is a fact, not a limitation: a saved
@@ -134,9 +134,33 @@ export function SessionBoard() {
   // own list of child keys, so this is "the conversations that are open right
   // now" — which is the board's whole subject.
   const order = useApp((s) => s.order);
-  // The workspace's saved rows, read the same way the rail reads them: one
-  // source, so a card's preview and a row's preview can never disagree.
-  const saved = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)));
+  // The saved-session lists of **every** workspace this end holds. `savedSessions`
+  // is a map keyed by `normPath(workspace)`, and its rows are read per card
+  // below by *that card's own* workspace — the board's cards span workspaces
+  // (`order` is all open sessions), so a single focused-workspace list would
+  // leave the others' cards with no row at all: their preview, counts and time
+  // would drop to the "nothing said yet" fallbacks whenever the focus moved
+  // away from their directory, and back when it came. The whole map is a stable
+  // reference while nothing writes it, so subscribing is safe under zustand's
+  // identity comparison.
+  const savedSessions = useApp((s) => s.savedSessions);
+  const currentWorkspace = useApp((s) => {
+    const rt = s.sessions[s.activeKey ?? ''];
+    return rt ? rt.session?.workspace ?? rt.workspace : '';
+  });
+  // Per-workspace lookups, rebuilt only when a list is written: one source per
+  // directory, so a card's preview and that directory's rail row can never
+  // disagree.
+  const rowsByIdByWorkspace = useMemo(
+    () =>
+      new Map(
+        Object.values(savedSessions).map((list) => [
+          normPath(list.workspace),
+          new Map(list.items.map((row) => [row.id, row])),
+        ]),
+      ),
+    [savedSessions],
+  );
 
   // A compact string, subscribed instead of the buckets, for the reason
   // `selectRowStatusKey` documents: subscribing to `sessions` re-renders on every
@@ -154,12 +178,10 @@ export function SessionBoard() {
 
   // The cards, built once per render from the two sources above. A live session
   // whose file already exists is matched to its saved row by the runtime's own
-  // id, so its preview and counts are the runtime's rather than a second guess.
+  // id — in **this session's own workspace's** list, so the card keeps its row
+  // no matter which workspace the person is focused on — and its preview and
+  // counts are the runtime's rather than a second guess.
   const buckets = useApp((s) => s.sessions);
-  const byId = useMemo(() => {
-    const out = new Map(saved.items.map((row) => [row.id, row]));
-    return out;
-  }, [saved.items]);
 
   const cards = useMemo(
     () =>
@@ -167,7 +189,15 @@ export function SessionBoard() {
         const bucket = buckets[key];
         if (!bucket) return [];
         const id = bucket.sessionId;
-        const row = id === null ? undefined : byId.get(id);
+        // The same workspace precedence the cards' live facts use: the
+        // handshake's own answer first, the child's start directory while it
+        // is still waiting for one. Either is the key that row's list is filed
+        // under, so the lookup and the write cannot disagree about a directory.
+        const ownWorkspace = bucket.session?.workspace ?? bucket.workspace;
+        const row =
+          id === null || ownWorkspace.trim() === ''
+            ? undefined
+            : rowsByIdByWorkspace.get(normPath(ownWorkspace))?.get(id);
         // `statusByKey` is keyed by **sessionId** (`selectRowStatusKey` builds
         // `sessionId:status`), not by the child key this card is otherwise
         // addressed by — looking the key up directly always missed and dropped
@@ -228,13 +258,13 @@ export function SessionBoard() {
             // uses (`session.fresh`), never a second vocabulary for it.
             fresh: bucket.session?.resumed === false,
             // The saved row's own fact, carried whole: the menu's verb depends
-            // on it ("Archive" or "Unarchive"), and the saved list is already
-            // subscribed via `byId` — reading it here costs nothing.
+            // on it ("Archive" or "Unarchive"), and the saved lists are already
+            // subscribed via `rowsByIdByWorkspace` — reading it here costs nothing.
             archived: row?.archived ?? false,
           },
         ];
       }),
-    [order, buckets, byId, statusByKey],
+    [order, buckets, rowsByIdByWorkspace, statusByKey],
   );
 
   const columns = useMemo(
@@ -330,10 +360,16 @@ export function SessionBoard() {
     cardPos.current = next;
   });
 
-  // `listed` false means no runtime has answered for this workspace yet, which is
-  // a different statement from "no sessions are open" — so the two are drawn
-  // differently rather than both as an empty board.
-  const loading = !saved.listed && order.length === 0;
+  // `listed` false means no runtime has answered for **the focused** workspace
+  // yet, which is a different statement from "no sessions are open" — so the
+  // two are drawn differently rather than both as an empty board. Only the
+  // focused workspace's list matters here: a card without its own row already
+  // falls back to honest placeholders (see `row` above), so the loading screen
+  // is about the directory on screen, not about every directory in the map.
+  const loading =
+    order.length === 0 &&
+    (currentWorkspace.trim() === '' ||
+      savedSessions[normPath(currentWorkspace)]?.listed !== true);
 
   return (
     <div className="board">
