@@ -50,6 +50,7 @@ function head(runId: string, status = 'running'): Entry {
     maxSteps: 120,
     status,
     startedAt: 0,
+    durationMs: null,
   };
 }
 
@@ -217,10 +218,12 @@ test('a stored prompt is the anchor when there is no head to anchor on', () => {
 });
 
 test('a restored session numbers the turn that follows it by position, not by ordinal', () => {
-  // The defect this guards: `lastTurnOrdinal` counts only `turn` rows, so the
-  // first live turn after a restore is numbered 1 while it is the conversation's
-  // third. The head says "Turn 1"; the rail must say 3, because the rail is a map
-  // of the conversation and the ordinal is a fact about this window.
+  // The defect this guards: the rail must number the conversation, and the
+  // restored turns have no heads to read a number from. A rail that counted
+  // `turn` rows would put the first live turn after a restore at 1 while it is
+  // the conversation's third. (The head's own badge is numbered from
+  // `restoredTurns` for the same reason — see `projection.test.ts`, "the first
+  // turn of a reopened conversation".)
   const entries = [
     user('first question'),
     answer('first answer'),

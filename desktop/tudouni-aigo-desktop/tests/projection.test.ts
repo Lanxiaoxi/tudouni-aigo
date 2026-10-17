@@ -58,6 +58,7 @@ import {
   type SessionRuntime,
 } from '@/state/store';
 import { normPath } from '@/utils/format';
+import { turnRail } from '@/turnRail';
 import type { FrontendMsg } from '@/protocol/types';
 
 /* ============================================================
@@ -1814,6 +1815,71 @@ test('focusing a session sends nothing and clears nothing', () => {
   assert.equal(sent.length, beforeCount, 'focusing sends nothing');
   // And the conversation that was on screen is untouched in its own bucket.
   assert.deepEqual(useApp.getState().sessions[KEY]?.entries, before);
+});
+
+/* ============================================================
+   Turn numbering across a restore
+   ============================================================ */
+
+/** The turn heads in a transcript, typed so their ordinal is readable. */
+function turnHeadsIn(entries: Entry[]): Array<Extract<Entry, { kind: 'turn' }>> {
+  return entries.filter((entry): entry is Extract<Entry, { kind: 'turn' }> => entry.kind === 'turn');
+}
+
+test('the first turn of a reopened conversation continues the numbering', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+
+  // Yesterday: ten turns. What `session_load` rebuilds from is the session's own
+  // `{role, content}` list — no turn boundaries at all, so the restored stream
+  // has no head whose ordinal could say how deep the conversation already is.
+  const messages = Array.from({ length: 10 }, (_, i) => [
+    { role: 'user', content: `question ${i + 1}` },
+    { role: 'assistant', content: `answer ${i + 1}` },
+  ]).flat();
+  useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'session_load', messages } as never);
+  assert.equal(rt().entries.filter((entry) => entry.kind === 'user').length, 10);
+
+  // Today: one message, in the order the app produces it — `submitDraft` echoes
+  // the prompt and only then does the runtime open the turn.
+  useApp.getState().setDraft('today\u2019s question');
+  useApp.getState().submitDraft();
+  useApp.getState().applyRuntimeMessage(KEY, ev('run_started'));
+
+  // Its head is the conversation's eleventh turn. It used to badge "Turn 1" —
+  // the count restarted with the window — while the rail said 11.
+  const heads = turnHeadsIn(rt().entries);
+  assert.equal(heads.length, 1);
+  assert.equal(heads[0]?.ordinal, 11, 'the badge restarted at 1 instead of continuing');
+
+  // And the badge has to be the rail's eleventh mark, naming today's prompt. Two
+  // numbering schemes that disagree is the defect; agreement is the assertion.
+  const turns = turnRail(rt().entries);
+  assert.equal(turns.length, 11);
+  assert.equal(turns[10]?.turn, 11);
+  assert.equal(turns[10]?.anchor, heads[0]?.id, 'the live head must be the last mark');
+  assert.equal(turns[10]?.prompt, 'today\u2019s question');
+
+  // The next turn follows it, and the restored turns are not counted twice: an
+  // ordinal read back off the previous head would put this one at 22.
+  useApp.getState().applyRuntimeMessage(KEY, ev('run_finished', { stop_reason: 'answered' }));
+  useApp.getState().setDraft('and one more');
+  useApp.getState().submitDraft();
+  useApp.getState().applyRuntimeMessage(KEY, ev('run_started', { run_id: 'r2' }));
+  const numbered = turnHeadsIn(rt().entries);
+  assert.equal(numbered.length, 2);
+  assert.equal(numbered[1]?.ordinal, 12);
+  assert.equal(turnRail(rt().entries).length, 12);
+});
+
+test('a conversation with nothing restored still starts at turn one', () => {
+  captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(KEY, ev('run_started'));
+
+  assert.equal(turnHeadsIn(rt().entries)[0]?.ordinal, 1);
 });
 
 test('mcp puts the servers in an array, and is only sent because a person asked', () => {

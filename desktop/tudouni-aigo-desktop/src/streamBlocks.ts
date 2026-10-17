@@ -1,4 +1,4 @@
-import type { Entry } from '@/state/entries';
+import type { Deliverable, Entry } from '@/state/entries';
 
 /**
  * The transcript's **blocks**: the pure partition that turns the flow rows
@@ -204,3 +204,300 @@ export function streamBlocks(rows: StreamRow[]): StreamBlock[] {
   flush(rows.length);
   return out;
 }
+
+/** The key a block is drawn with — its own, or the loose row's. Both are stable
+ *  across renders, which is what keeps a step card from replaying its entrance
+ *  animation on every chunk. */
+export function blockKey(block: StreamBlock): string {
+  return block.kind === 'step' ? block.key : block.row.key;
+}
+
+/* ============================================================
+   Turn sections — a turn head and the body it folds
+   ============================================================ */
+
+/**
+ * What a folded turn says it is doing, in one word.
+ *
+ * Only the four phases a reader can see happen, and each one is **observed**
+ * rather than inferred: `thinking` while reasoning deltas are live, `tool`
+ * while a call has no result yet, `reply` while body text is arriving. `model`
+ * is the remaining one — the call itself — and it is also the fallback, because
+ * a turn that has shown nothing else is on its first call. Nothing else the
+ * loop does can produce a row before that call's record arrives.
+ */
+export type TurnPhase = 'thinking' | 'model' | 'tool' | 'reply';
+
+/** A turn head together with every block drawn under it. */
+export interface TurnSection {
+  kind: 'turn';
+  /** Stable across renders — the head row's own key. */
+  key: string;
+  /** The head, always an `entry` row: `streamBlocks` draws a `step` block's head
+   *  itself and this partition must not be fooled by a model record. */
+  head: Extract<StreamRow, { kind: 'entry' }>;
+  /** Everything from the head to the next head, in arrival order. Empty for a
+   *  turn that has not drawn anything yet. */
+  body: StreamBlock[];
+  /** The same blocks, split into **what the turn did** and **what it said** —
+   *  the shape a folded turn is drawn in. See `turnRuns`. */
+  runs: TurnRun[];
+  /** Files a `present` call declared in this turn. Results, not process: they
+   *  stay on screen when the turn is folded, which is what `present` exists for
+   *  (see `EntryView`'s note on the one result drawn outside its own fold). */
+  deliverables: Deliverable[];
+  /** The phase the head states while the turn runs; see `TurnPhase`. */
+  phase: TurnPhase;
+}
+
+/** One stretch of a turn's body that is drawn either folded or plainly.
+ *
+ *  `process` is the work — the thinking, the model call cards, the tools, the
+ *  notes — and it is what a folded turn folds. `reply` is the turn's own words,
+ *  and it is never folded: a folded turn is the transcript with the middle taken
+ *  out, not with the answer taken out.
+ *
+ *  The body is split into **runs rather than two piles** so that the arrival
+ *  order survives: a `/status` block or a "history compacted" note appended after
+ *  the answer stays *below* the answer instead of being hoisted above it by the
+ *  fold. */
+export interface TurnRun {
+  kind: 'process' | 'reply';
+  blocks: StreamBlock[];
+}
+
+/** Shared so a turn with no declarations allocates nothing per pass. */
+const NO_DELIVERABLES: Deliverable[] = [];
+
+/**
+ * One horizontal slice of the transcript: rows that belong to no turn, and turns.
+ *
+ * The leading slice is the loose one — a restored session's `user`/`answer`
+ * rows, the handshake's notices, `/status` blocks, and a prompt whose
+ * `run_started` has not landed yet all sit above the first head.
+ */
+export type StreamSection =
+  | { kind: 'loose'; key: string; blocks: StreamBlock[] }
+  | TurnSection;
+
+/** The entries one block draws, in the order it draws them. */
+function blockEntries(block: StreamBlock): Entry[] {
+  if (block.kind === 'step') {
+    const out: Entry[] = [];
+    for (const row of block.rows) {
+      if (row.kind === 'entry') out.push(row.entry);
+      else out.push(...row.entries);
+    }
+    return out;
+  }
+  return block.row.kind === 'entry' ? [block.row.entry] : block.row.entries;
+}
+
+/**
+ * The phase of one turn, from the blocks drawn under its head.
+ *
+ * A walk forwards, so the **last** live signal wins: a turn streams thinking,
+ * then calls a tool, then streams its answer, and at each moment the head should
+ * name the thing that is happening now rather than the thing that started it.
+ *
+ * Two shapes are deliberately not signals:
+ *
+ *   - a `step` block whose call has settled — the call is over, and what follows
+ *     it (a tool, then another call) supplies the next word;
+ *   - a reasoning block that stopped streaming — its record landed, so the
+ *     thinking is done even though the text is still on screen.
+ *
+ * Neither clears the phase: the word stays on the last thing that was actually
+ * seen happening. That is a beat behind reality on a settled step, and it is the
+ * only honest option — the next call has not been written yet, so anything else
+ * would be a guess about what the loop is about to do.
+ */
+export function turnPhase(body: readonly StreamBlock[]): TurnPhase {
+  let phase: TurnPhase = 'model';
+
+  const see = (entry: Entry): void => {
+    if (entry.kind === 'stream' || entry.kind === 'answer') phase = 'reply';
+    else if (entry.kind === 'reason') {
+      if (entry.streaming) phase = 'thinking';
+    } else if (entry.kind === 'tool') {
+      if (entry.result === null) phase = 'tool';
+    } else if (entry.kind === 'model' && entry.retry !== null) {
+      // A retry row is the same call, being tried again: the head should not go
+      // on saying "reply" through a backoff.
+      phase = 'model';
+    }
+  };
+
+  for (const block of body) {
+    // A card's own head is not in `block.rows` (it is the record the bar
+    // restates), so the "call is in flight" fact comes from the block, not from
+    // an entry. It is read **before** the block's rows for the same reason the
+    // rows come after it: the call happens first.
+    if (block.kind === 'step' && block.running) phase = 'model';
+    for (const entry of blockEntries(block)) see(entry);
+  }
+  return phase;
+}
+
+/**
+ * The block that is **the turn's reply**: the last answer it produced, or — while
+ * no final answer has arrived — the last stretch of text it streamed.
+ *
+ * One block, not all of them, and that is the difference between a chat and a
+ * log. A turn usually streams text before each of its tool calls ("let me look at
+ * the file list first"), and those lines are narration, part of the work: a folded
+ * turn that kept them would read as a chat where the assistant says six unrelated
+ * things before its answer. What it settled on is the `answer` row;
+ * `applyFinalAnswer` removes the streamed copy beside it, so in practice exactly
+ * one of the two is present.
+ */
+function replyAt(body: readonly StreamBlock[]): number {
+  let answer = -1;
+  let stream = -1;
+  body.forEach((block, at) => {
+    for (const entry of blockEntries(block)) {
+      if (entry.kind === 'answer') answer = at;
+      else if (entry.kind === 'stream') stream = at;
+    }
+  });
+  return answer >= 0 ? answer : stream;
+}
+
+/** One turn's body, cut into the runs the fold draws. */
+function turnRuns(body: readonly StreamBlock[]): TurnRun[] {
+  const reply = replyAt(body);
+  const runs: TurnRun[] = [];
+
+  body.forEach((block, index) => {
+    const kind: TurnRun['kind'] = index === reply ? 'reply' : 'process';
+    const open = runs[runs.length - 1];
+    // A reply always stands alone among process; consecutive process blocks are
+    // one run, so a turn's whole body is normally **two** runs and one fold.
+    if (open !== undefined && open.kind === kind && kind === 'process') {
+      open.blocks.push(block);
+      return;
+    }
+    runs.push({ kind, blocks: [block] });
+  });
+
+  return runs;
+}
+
+/** The files a `present` call declared anywhere inside this turn. */
+function turnDeliverables(body: readonly StreamBlock[]): Deliverable[] {
+  let files: Deliverable[] | null = null;
+  for (const block of body) {
+    for (const entry of blockEntries(block)) {
+      if (entry.kind !== 'tool' || entry.result === null) continue;
+      const declared = entry.result.deliverables;
+      if (declared === undefined || declared.length === 0) continue;
+      if (files === null) files = [];
+      files.push(...declared);
+    }
+  }
+  return files ?? NO_DELIVERABLES;
+}
+
+/**
+ * Partition the blocks into loose rows and turns.
+ *
+ * **A turn runs from its head to the next head**, and that span is the whole
+ * definition — no second rule, no closing row. It is what a person means by
+ * "this turn" when they fold one, and it is safe because nothing but a head
+ * concludes a turn: the `answer` row can arrive before the `run_finished` record
+ * that closes it, and a note written between turns (a compaction, an attached
+ * picture) has no head of its own to belong to.
+ *
+ * The cost of that definition is worth stating: a session-level note appended
+ * after a turn finished lands **inside** that turn's span, so folding the turn
+ * takes the note off screen with the rest of the work. That is what the fold is
+ * for. The alternative — closing the span at the `answer` — would leave the rows
+ * that arrive between the answer and the next prompt belonging to no section at
+ * all, which is a worse lie: they would have to be drawn in an order that is not
+ * the arrival order.
+ *
+ * **One kind of trailing row is handed back, and it is the prompt.** An echo is
+ * appended by this window when the person presses Enter, and the head it opens
+ * only lands when the runtime answers `run_started` — so for a moment the next
+ * turn's question is the last row under the previous turn. Folding that turn
+ * would then hide the question the reader just asked, which is the one row a
+ * folded transcript must never swallow. So trailing `user` rows are pulled out of
+ * the span and drawn loose, between the two sections. That is the same rule
+ * `turnRail.ts` states from the other side: a head's prompt sits *above* the head,
+ * not inside it.
+ *
+ * Runs on every change to `entries`, including every chunk, so it does one pass
+ * and one `push` per block.
+ */
+export function streamSections(blocks: StreamBlock[]): StreamSection[] {
+  const out: StreamSection[] = [];
+  let loose: StreamBlock[] = [];
+  let turn: TurnSection | null = null;
+
+  const flushLoose = (): void => {
+    if (loose.length === 0) return;
+    const head = loose[0];
+    out.push({
+      kind: 'loose',
+      key: `loose-${head === undefined ? '' : blockKey(head)}`,
+      blocks: loose,
+    });
+    loose = [];
+  };
+
+  /** Close the open turn, if any, and hand its trailing prompts back to `loose`. */
+  const closeTurn = (): void => {
+    if (turn === null) return;
+    const open = turn;
+    turn = null;
+
+    let at = open.body.length;
+    while (at > 0) {
+      const block = open.body[at - 1];
+      if (block === undefined || block.kind !== 'entry') break;
+      if (block.row.kind !== 'entry' || block.row.entry.kind !== 'user') break;
+      at -= 1;
+    }
+
+    const prompts = open.body.splice(at);
+    open.phase = turnPhase(open.body);
+    open.runs = turnRuns(open.body);
+    open.deliverables = turnDeliverables(open.body);
+    out.push(open);
+    loose.push(...prompts);
+  };
+
+  for (const block of blocks) {
+    const head =
+      block.kind === 'entry' && block.row.kind === 'entry' && block.row.entry.kind === 'turn'
+        ? block.row
+        : null;
+
+    if (head === null) {
+      if (turn === null) loose.push(block);
+      else turn.body.push(block);
+      continue;
+    }
+
+    // The head that opens a section also closes the one above it — including an
+    // open turn with no body (two heads in a row is two turns, one of which drew
+    // nothing). The prompts it hands back are drawn between the two, which is
+    // where the echo already sits in the transcript's own order.
+    closeTurn();
+    flushLoose();
+    turn = {
+      kind: 'turn',
+      key: `turn-${head.key}`,
+      head,
+      body: [],
+      runs: [],
+      deliverables: NO_DELIVERABLES,
+      phase: 'model',
+    };
+  }
+
+  closeTurn();
+  flushLoose();
+  return out;
+}
+

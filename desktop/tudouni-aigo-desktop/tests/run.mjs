@@ -76,6 +76,13 @@ const SUITES = [
   // session that never exercises the case 鈥?which is why the pure function is
   // asserted here, over events shaped like the real audit stream.
   'stream-blocks.test.ts',
+  // Folding a turn away. Which rows a turn owns (from its head to the next one,
+  // and the prompt above it is *not* one of them), what the folded head says its
+  // body is doing, and the fact that a finished turn's duration has to be kept on
+  // its own head. All three are rules that a screenshot cannot check: a section
+  // that swallowed the next turn's rows, or a head stuck on "thinking" while text
+  // streams, looks like a working fold.
+  'turn-fold.test.ts',
   // The output rate: the average over one call (completion tokens divided by
   // its duration), and the rule that no measurement is never zero 鈥?a
   // tool-only call reports no completion tokens, and printing `0.0 tok/s`

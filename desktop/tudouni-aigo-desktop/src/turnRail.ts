@@ -12,13 +12,20 @@ import type { Entry } from '@/state/entries';
  * ### Why the rail numbers its own turns
  *
  * A mark could carry `entry.ordinal` — the turn head's own display number. It
- * does not, on purpose. `ordinal` is "a local ordinal over turns received"
- * (`entries.ts`), so after `session_load` rebuilds a stored transcript from
- * `user`/`answer` rows — which carry no turn number at all — the next live turn
- * is numbered `1` while the rail, numbering by position, is on turn 40. The
- * ordinal is a fact about *this window's* turns; the rail is a map of the
- * *conversation*. Where the two disagree the rail is the one telling the truth,
- * so the rail counts for itself and lets the hover card say which mark it is.
+ * does not, because most marks have no head to read one from: `session_load`
+ * rebuilds a stored transcript from `user`/`answer` rows, which carry no turn
+ * boundary at all, so the turns a person already had are numbered only by their
+ * position. The rail counts positions, which is the one rule that covers both
+ * kinds of turn.
+ *
+ * The store numbers each new head from the same count: `restoredTurns` is one per
+ * stored `user` row (exactly how a stored turn is counted below), and a head
+ * opened afterwards is `restoredTurns + heads so far + 1`. So the badge on the
+ * third turn of a reopened conversation says 3 and this rail's third mark is that
+ * same turn. Where they ever disagree, the rail is the one telling the truth — it
+ * is a map of the whole *conversation*, while the head's number is a display
+ * index this window maintains — so the rail keeps counting for itself and lets
+ * the hover card say which mark it is.
  */
 
 /** One mark on the rail. */

@@ -119,6 +119,35 @@
   color: var(--fg-faint);
 }
 
+/* 回合头左边的折叠键：整轮的回答就靠它收成一行。
+
+   `.caret` 已经给了尺寸、圆角、悬停底色和箭头旋转，这里只清掉 `<button>`
+   自带的盒模型——工具行（`.et-head`）和思考块头（`.er-head`）上的箭头跟它
+   必须是同一个东西，否则同一个正文里三个「能点开的地方」会长成三种样子。 */
+.turn-head .th-fold {
+  padding: 0;
+}
+
+/* 一轮的过程段（折叠的部分）：折叠容器（`.collapse`）里那一层，行件的容器。
+
+   `.stream-inner` 是「一行一块」的 flex 列，行距来自它的 `gap`。过程行整体搬进
+   聚合器之后，它们不再是它的直接子项，所以节奏要在这里重建一遍——12px 是
+   `--space-3`，和 `.stream-inner` 的 `gap` 同源，改一处就得改另一处。 */
+.turn-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* 收起时把这个（高度为 0 的）子项占掉的两份行距收回一份。
+
+   flex 列的 `gap` 不会因为子项高度为 0 就消失：不收的话，折叠后回合头和回答
+   之间会空出 24px，恰好是「收起了中间过程」最不该有的那道缝。两边各让半份，
+   合计仍是一份 12px。只在收起时生效，展开时的排版和这个功能出现之前一模一样。 */
+.turn-run.is-collapsed {
+  margin-block: calc(var(--space-3) / -2);
+}
+
 /* ---------------- 2. 用户输入 ---------------- */
 .e-user {
   position: relative;
@@ -3302,6 +3331,26 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   scroll-margin-top: var(--rail-landing, 0px);
 }
 
+/* 回合过程段的聚合器（`.turn-run`）反过来**不能**跳过布局，这一点和正文里其它
+   每一行相反。
+
+   `content-visibility: auto` 会给离屏元素一个估算高度（`auto 120px`），而它收起
+   时的真实高度是 0：一个折叠过的回合滚出屏幕、再滚回来，就会先凭空占住 120px
+   （或者上一次展开时记住的几千像素），滚动条和「跳到底」的落点都会跟着说谎。
+   它里面的行照旧各自跳过——跳过是为了 `scrollTop = scrollHeight` 那次全量布局，
+   而收起的聚合器里本来就没有要排的东西。 */
+.stream-inner > .turn-run {
+  content-visibility: visible;
+}
+
+/* 聚合器里面的行，拿到和正文其它行一模一样的跳过规则（`app.css` 的
+   `.stream-inner > *` 够不到它们了）。同一个声明、同一个数值，理由也同一份：
+   见 `app.css` 里那条规则和 `tests/stream-layout.test.ts`。 */
+.turn-rows > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
 /* 跳转期间把 `content-visibility` 关掉。
  *
  * `app.css` 给正文每一行都加了 `content-visibility: auto`，为的是让一个 chunk
@@ -3318,6 +3367,12 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
  * 类名由 `TurnRail.tsx` 的 `onJump` 加/去，整个开关发生在同一帧内、绘制之前，
  * 所以看不到闪动。 */
 .stream-scroll.is-landing .stream-inner > * {
+  content-visibility: visible;
+}
+
+/* 回合聚合成器里面的行同理：它们不在 `.stream-inner` 的直接子项里，选择器够不到，
+   所以跳转时要把它们一并放开，否则点最后一根横线只量到一遍估算高度。 */
+.stream-scroll.is-landing .turn-rows > * {
   content-visibility: visible;
 }
 

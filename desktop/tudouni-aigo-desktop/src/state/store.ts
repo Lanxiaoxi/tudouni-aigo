@@ -647,6 +647,22 @@ export interface SessionRuntime {
 
   entries: Entry[];
   /**
+   * Turns the transcript already held when `session_load` last rebuilt it.
+   *
+   * `session_load` rebuilds `entries` from the stored `{role, content}` message
+   * list, which has no turn boundaries — so the restored stream has no `turn`
+   * heads, and a head numbered by "how many heads are in `entries`" would start
+   * the count over at 1. That was the report: a conversation ten turns deep
+   * yesterday, and today's first message badged "Turn 1" while the turn rail,
+   * which numbers marks by position, still said 11.
+   *
+   * Read off the rebuilt rows, one per `user` row — the same rule `turnRail`
+   * applies to a stored turn — and handed to the reducer (`ReduceOptions.restoredTurns`)
+   * so a new head is numbered after them. Reset by every `session_load`, which is
+   * the message that replaces the stream.
+   */
+  restoredTurns: number;
+  /**
    * The handshake's own sentences (`init.notices`).
    *
    * They live **outside** `entries` because of the ordering: `init` is always
@@ -987,6 +1003,7 @@ export function createSessionBucket(
     lastTurnMs: null,
     liveCall: null,
     entries: [],
+    restoredTurns: 0,
     handshakeNotices: [],
     activeRunId: null,
     lastRunId: null,
@@ -1278,6 +1295,16 @@ export interface AppStore {
    */
   reasoningOpen: Record<string, boolean>;
   toolOpen: Record<string, boolean>;
+  /**
+   * Which turns are folded away, by turn-head entry id.
+   *
+   * Window-level for the same reason as the two above, and **default open**:
+   * the fold exists to tidy a transcript the person has already read, so a turn
+   * that has never been folded is drawn in full. Unlike those two, this one
+   * hides a whole turn's body — the model calls, the tools, the answer — behind
+   * its head, which then states what the turn is doing and how long it took.
+   */
+  turnFolded: Record<string, boolean>;
   /**
    * The left rail's session list, folded on its own. A front-end preference:
    * the protocol has no opinion on how a rail is arranged. It folds
@@ -1791,6 +1818,9 @@ export interface AppStore {
   toggleFootCollapsed(): void;
   toggleReasoning(id: string): void;
   toggleTool(id: string): void;
+  /** Fold a turn's whole body behind its head, or unfold it. Not persisted: it
+   *  describes this window's reading, like the two above. */
+  toggleTurnFold(id: string): void;
   /** Remove one in-stream block from the active session. No data involved. */
   removeBlock(id: string): void;
 
@@ -3196,6 +3226,7 @@ export const useApp = create<AppStore>((set, get) => {
     blockAutoExpanded: {},
     reasoningOpen: {},
     toolOpen: {},
+    turnFolded: {},
     sessionsCollapsed: prefs.sessionsCollapsed,
     workspacesCollapsed: prefs.workspacesCollapsed,
     footCollapsed: prefs.footCollapsed,
@@ -4124,12 +4155,26 @@ export const useApp = create<AppStore>((set, get) => {
               ? { kind: 'user', id: nextId('user'), text: row.text, atMs: 0 }
               : { kind: 'answer', id: nextId('answer'), runId: 'history', text: row.text },
           );
+          // The turns this rebuild already accounts for. The stored message list
+          // carries no turn boundary, so the rebuilt stream has no `turn` head to
+          // read a number from — without this the first message sent after
+          // reopening a conversation badged "Turn 1" again (the report: ten turns
+          // yesterday, and today's first message restarted the count while the
+          // turn rail went on saying 11).
+          //
+          // One per `user` row, which is exactly how `turnRail` counts a stored
+          // turn. See `SessionRuntime.restoredTurns`.
+          const restoredTurns = rebuilt.reduce(
+            (turns, row) => (row.kind === 'user' ? turns + 1 : turns),
+            0,
+          );
           // The handshake's diagnostics go back at the head of the rebuilt
           // stream. They belong to the session, not to the moment they were said,
           // and the design is explicit that they are not pushed out by session
           // content.
           patch(key, {
             entries: [...bucket.handshakeNotices, ...rebuilt],
+            restoredTurns,
             activeRunId: null,
             lastRunId: null,
             hasSpoken: history.length > 0,
@@ -4151,6 +4196,10 @@ export const useApp = create<AppStore>((set, get) => {
               // (different workspaces, different loaded skills).
               lookup: (name) => lookupToolFacts(bucket, name),
               maxSteps: bucket.session?.maxSteps ?? 0,
+              // What the restored transcript already accounted for, so a new
+              // head's "Turn N" continues the conversation instead of restarting
+              // at 1. See `SessionRuntime.restoredTurns`.
+              restoredTurns: bucket.restoredTurns,
             },
           );
           if (result.stale) {
@@ -5115,6 +5164,11 @@ export const useApp = create<AppStore>((set, get) => {
     toggleTool(id) {
       const cur = get().toolOpen;
       set({ toolOpen: { ...cur, [id]: !cur[id] } });
+    },
+
+    toggleTurnFold(id) {
+      const cur = get().turnFolded;
+      set({ turnFolded: { ...cur, [id]: !cur[id] } });
     },
 
     removeBlock(id) {

@@ -284,7 +284,7 @@ function rowOf(range: Range): HTMLElement | null {
 }
 
 /**
- * The fold a hit is shut inside, if it is shut inside one.
+ * The controls that stand between a hit and the screen, innermost first.
  *
  * **An empty rect is not the test, and this is the measurement that says so.** A
  * body folded by `.collapse` (`grid-template-rows: 0fr` + `overflow: hidden`)
@@ -292,20 +292,49 @@ function rowOf(range: Range): HTMLElement | null {
  * `rectHeight: 17` while sitting in a clip box `0px` tall. Reading that rect and
  * scrolling to it would aim at a line nothing draws, which is why the fold has to
  * be opened *before* the jump rather than discovered by it.
+ *
+ * There are two kinds of fold a hit can be shut inside, and they **nest**, so
+ * this walks outwards instead of stopping at the first one: a reasoning or tool
+ * body inside a turn whose work is folded away is two shut folds, and opening
+ * only the inner one would leave the hit just as invisible as before. The turn's
+ * toggle is found by the head it belongs to (a folded run carries `data-turn`, the
+ * head carries `data-anchor`), not by its position in the DOM: the two are
+ * siblings today, and a jump that depended on that would break silently the day
+ * they are not.
  */
-function shutFoldOf(range: Range): HTMLElement | null {
-  const parent = range.startContainer.parentElement;
-  if (parent === null) return null;
-  const collapsed = parent.closest('.collapse.is-collapsed');
-  if (collapsed === null) return null;
-  const card = collapsed.closest('.e-reason, .e-tool');
-  if (card === null) return null;
-  const head = card.querySelector<HTMLElement>('.er-head, .et-head');
-  return head;
+function shutFoldsOf(range: Range): HTMLElement[] {
+  const heads: HTMLElement[] = [];
+  let parent = range.startContainer.parentElement;
+
+  while (parent !== null) {
+    const collapsed = parent.closest<HTMLElement>('.collapse.is-collapsed');
+    if (collapsed === null) break;
+
+    let head: HTMLElement | null = null;
+    const card = collapsed.closest('.e-reason, .e-tool');
+    if (card !== null) {
+      head = card.querySelector<HTMLElement>('.er-head, .et-head');
+    } else if (collapsed.classList.contains('turn-run')) {
+      const id = collapsed.dataset.turn;
+      head =
+        id === undefined
+          ? null
+          : document.querySelector<HTMLElement>(
+              `.turn-head[data-anchor="${CSS.escape(id)}"] .th-fold`,
+            );
+    }
+    // A shut fold with no head to open it is not something this front end drew;
+    // going any further out would be guessing.
+    if (head === null) break;
+    heads.push(head);
+    parent = head.parentElement;
+  }
+
+  return heads;
 }
 
 /**
- * Go to a hit: open the fold if it is shut, then land on its row.
+ * Go to a hit: open whatever folds it is shut inside, then land on its row.
  *
  * Returns whether there was anything to go to. A hit whose row has left the
  * document — the streamed body a final answer replaced between the scan and the
@@ -314,15 +343,16 @@ function shutFoldOf(range: Range): HTMLElement | null {
 export function jumpToHit(hit: FindHit, scroller: HTMLElement): boolean {
   const row = rowOf(hit.range);
   if (row === null) return false;
-  const head = shutFoldOf(hit.range);
-  if (head !== null) {
+  const heads = shutFoldsOf(hit.range);
+  if (heads.length > 0) {
     // The reader's own gesture, so the store's fold state is what decides the
-    // row's shape afterwards — a jump that opened a fold some other way would
-    // leave the body open with `reasoningOpen` still saying shut.
-    head.click();
-    // A frame, so the fold's own transition has begun before the landing reads a
-    // height. The row's *top* does not move either way, but the land is a
-    // `scrollIntoView` on that row and the fold opens downwards inside it.
+    // rows' shape afterwards — a jump that opened a fold some other way would
+    // leave the body open with `reasoningOpen` (or `turnFolded`) still saying
+    // shut.
+    for (const head of heads) head.click();
+    // A frame, so the folds' own transitions have begun before the landing reads
+    // a height. The row's *top* does not move either way, but the land is a
+    // `scrollIntoView` on that row and the folds open downwards inside it.
     requestAnimationFrame(() => landOn(scroller, row));
     return true;
   }

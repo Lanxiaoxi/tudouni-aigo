@@ -19,12 +19,14 @@ import {
 } from 'lucide-react';
 import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import { useTurnClock } from '@/hooks/useTurnClock';
 import { copyText } from '@/utils/clipboard';
 import { Badge, RiskTag } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
 import { InBlock } from './InBlock';
 import { DeliverableCards } from './DeliverableCards';
 import { charCount, type Entry, type FrontMessage } from '@/state/entries';
+import type { TurnPhase } from '@/streamBlocks';
 import { formatDuration, formatTokens, oneLine, tokPerSecond } from '@/utils/format';
 import type { TKey } from '@/i18n';
 
@@ -65,10 +67,26 @@ import type { TKey } from '@/i18n';
  * The one row that does keep re-rendering is the one currently streaming, which
  * is the point.
  */
-export const EntryView = memo(function EntryView({ entry }: { entry: Entry }) {
+export const EntryView = memo(function EntryView({
+  entry,
+  phase = null,
+}: {
+  entry: Entry;
+  /**
+   * What a **turn head** says its body is doing, handed down by the section that
+   * owns both (`StreamView`'s `TurnFold`, through `streamSections`).
+   *
+   * It is a prop rather than something the head works out for itself because it
+   * is a fact about the head's *body*: computing it here would mean scanning the
+   * transcript from every head, which is quadratic in the number of turns and
+   * happens on every streamed chunk. Null on every other kind of row, and on a
+   * head drawn without its section.
+   */
+  phase?: TurnPhase | null;
+}) {
   switch (entry.kind) {
     case 'turn':
-      return <TurnHead entry={entry} />;
+      return <TurnHead entry={entry} phase={phase} />;
     case 'user':
       return <UserEntry entry={entry} />;
     case 'model':
@@ -126,9 +144,45 @@ const STOP_KEY: Record<string, TKey> = {
   empty_response: 'entry.turnEmpty',
 };
 
-function TurnHead({ entry }: { entry: Extract<Entry, { kind: 'turn' }> }) {
+/** What a running turn is doing, in the one word the folded head has room for. */
+const PHASE_KEY: Record<TurnPhase, TKey> = {
+  thinking: 'entry.turnPhaseThinking',
+  model: 'entry.turnPhaseModel',
+  tool: 'entry.turnPhaseTool',
+  reply: 'entry.turnPhaseReply',
+};
+
+/**
+ * The turn head: the number, how the turn stands, and its step, in one row.
+ *
+ * It is also **the control that folds the turn's work away** — the button on the
+ * left is the only way in — and, folded, the row is the live status the middle of
+ * a turn used to occupy: the badge says what the turn is doing right now
+ * (`thinking · 4.2s`) or how it ended and how long that took, and the answer is
+ * drawn below it like a chat message. What the fold removes is the thinking, the
+ * model call cards and the tools, never the reply.
+ *
+ * The fold is the store's (`turnFolded`), like the tool and reasoning folds, so
+ * the head and the work it hides cannot disagree: `StreamView` reads the same map
+ * to put `is-collapsed` on the runs. The head keeps `data-anchor` in either
+ * state, which is what keeps the turn rail able to land on a folded turn.
+ */
+function TurnHead({
+  entry,
+  phase,
+}: {
+  entry: Extract<Entry, { kind: 'turn' }>;
+  phase: TurnPhase | null;
+}) {
   const t = useT();
   const running = entry.status === 'running';
+  const folded = useApp((s) => s.turnFolded[entry.id] === true);
+  const toggleFold = useApp((s) => s.toggleTurnFold);
+  // The live figure is on screen **only while folded**, so the clock ticks for
+  // exactly that case: an expanded head has no number to advance, and a timer
+  // behind it would repaint a running turn's row once a second to redraw nothing.
+  const now = useTurnClock(running && folded);
+
   const tone = running
     ? 'success'
     : entry.status === 'model_error' || entry.status === 'model_fatal'
@@ -146,15 +200,66 @@ function TurnHead({ entry }: { entry: Extract<Entry, { kind: 'turn' }> }) {
   const rawIsInformative =
     !running && !['answered', 'completed'].includes(entry.status);
 
+  /**
+   * The figure beside the badge, and the only duration a turn may state:
+   *
+   *   - **while it runs**, this window's own clock against the stamp the reducer
+   *     took at `run_started` — the runtime sends no duration until the turn
+   *     ends, so a live number can only be measured here;
+   *   - **once it ends**, `run_finished.duration_ms`, which the reducer keeps on
+   *     this head. `null` is "nobody measured it" (the runtime went away, or a
+   *     `run_finished` written without one) and is omitted rather than drawn as
+   *     an em dash, which would read as a zero.
+   */
+  const elapsedMs = running
+    ? folded
+      ? Math.max(0, now - entry.startedAt)
+      : null
+    : entry.durationMs;
+
+  // Folded, the badge becomes the summary the fold exists to leave behind:
+  // what is happening now, or how it ended, and how long it took. Expanded, it
+  // keeps saying only how the turn stands — the body says the rest.
+  const badgeLabel = folded ? (running && phase !== null ? t(PHASE_KEY[phase]) : label) : label;
+  const badgeDetail = folded && elapsedMs !== null ? formatDuration(elapsedMs) : null;
+
   return (
     // `data-anchor` is how the turn rail finds this row to scroll to it. It is
     // the **entry's id** rather than its ordinal or its index: quiet mode merges
     // tool rows into one `.quiet-rollup` row, so a child index is not an entry
-    // index, and after a `session_load` the ordinals restart while the ids do
-    // not. See `turnRail.ts` and `TurnRail.tsx`.
+    // index, and an ordinal is a display number (the one on the badge) rather
+    // than an address. See `turnRail.ts` and `TurnRail.tsx`.
     <div className="turn-head" data-anchor={entry.id}>
+      {/* A `<button>`, not the row, and that is the one place this head differs
+          from the tool and reasoning heads. Those are `role="button"` rows
+          because the whole row is theirs; this one is a heading whose text a
+          reader may want to select, so the control is a real button beside it —
+          focusable, announced with its state, and inert to a drag. */}
+      <button
+        type="button"
+        className="caret th-fold"
+        aria-expanded={!folded}
+        aria-label={folded ? t('entry.turnUnfold') : t('entry.turnFold')}
+        title={folded ? t('entry.turnUnfold') : t('entry.turnFold')}
+        onClick={() => toggleFold(entry.id)}
+      >
+        <ChevronRight size={13} className={folded ? '' : 'caret-open'} />
+      </button>
       <span className="th-num">{t('entry.turn', { n: entry.ordinal })}</span>
-      <Badge tone={tone}>{label}</Badge>
+      <Badge tone={tone}>
+        {badgeLabel}
+        {/* A **running** turn's figure is hidden from the accessibility tree, and
+            that is not an oversight: this row lives inside the transcript's
+            `aria-live="polite"` log, so an announced counter would speak once a
+            second for as long as a folded turn runs. The phase is the live fact;
+            the seconds are for the eye. A settled turn's figure does not tick, so
+            it stays announced like every other number in the row. */}
+        {badgeDetail === null ? null : running ? (
+          <span aria-hidden> · {badgeDetail}</span>
+        ) : (
+          ` · ${badgeDetail}`
+        )}
+      </Badge>
       {rawIsInformative ? <span className="faint caption mono">{entry.status}</span> : null}
       <span className="th-step">
         {t('status.step', { n: entry.step, max: entry.maxSteps })}

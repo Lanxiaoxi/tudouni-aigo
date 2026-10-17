@@ -1,15 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { ArrowDown, Loader, Sparkles } from 'lucide-react';
-import { NO_ENTRIES, useSessionField } from '@/state/store';
+import { NO_ENTRIES, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { useFindInStream } from '@/find/useFindInStream';
 import { EntryView } from './EntryView';
+import { DeliverableCards } from './DeliverableCards';
 import { FindBar } from './FindBar';
 import { QuietGroup } from './QuietGroup';
 import { TurnRail } from './TurnRail';
 import { MIN_RAIL_TURNS, turnRail, LANDING_PX } from '@/turnRail';
-import { streamBlocks, type StreamBlock, type StreamRow } from '@/streamBlocks';
+import {
+  blockKey,
+  streamBlocks,
+  streamSections,
+  type StreamBlock,
+  type StreamRow,
+  type StreamSection,
+} from '@/streamBlocks';
 import { formatDuration, formatTokens, tokPerSecond } from '@/utils/format';
 import type { Entry } from '@/state/entries';
 
@@ -109,6 +117,11 @@ export function StreamView() {
   // and the same saving rule applies: earlier blocks keep the same row objects,
   // so a memo'd block re-renders only when its own rows moved.
   const blocks = useMemo(() => streamBlocks(rows), [rows]);
+  // And the turns they belong to: every head with the blocks drawn under it, and
+  // the phase its body is in. One more pass on the same cadence, which never
+  // redraws a row — a section is a grouping, and the head and its body are still
+  // drawn by the components that already drew them.
+  const sections = useMemo(() => streamSections(blocks), [blocks]);
   // One pass over the transcript, in its own order. Called on every change to
   // `entries` — including every chunk of every answer — so it walks the entries
   // once rather than scanning each turn's span independently: the spans
@@ -204,11 +217,15 @@ export function StreamView() {
           aria-label={t('stream.label')}
         >
           <div className="stream-inner">
-            {blocks.map((block) =>
-              block.kind === 'step' ? (
-                <StepBlock key={block.key} block={block} />
+            {sections.map((section) =>
+              section.kind === 'turn' ? (
+                <TurnFold key={section.key} section={section} />
               ) : (
-                <StreamRowView key={block.row.key} row={block.row} />
+                <Fragment key={section.key}>
+                  {section.blocks.map((block) => (
+                    <StreamBlockView key={blockKey(block)} block={block} />
+                  ))}
+                </Fragment>
               ),
             )}
           </div>
@@ -241,6 +258,91 @@ export function StreamView() {
 function StreamRowView({ row }: { row: StreamRow }) {
   if (row.kind === 'quiet') return <QuietGroup key={row.key} entries={row.entries} />;
   return <EntryView key={row.key} entry={row.entry} />;
+}
+
+/** One block, whichever half of the partition it came from. */
+function StreamBlockView({ block }: { block: StreamBlock }) {
+  if (block.kind === 'step') return <StepBlock block={block} />;
+  return <StreamRowView row={block.row} />;
+}
+
+/**
+ * One turn, drawn the way a chat draws it: what it said, and — folded — nothing of
+ * how it got there.
+ *
+ * **The fold takes the middle out, never the answer.** The body is split into runs
+ * by role (`streamBlocks.ts`'s `TurnRun`): the work — thinking, model call cards,
+ * tools, notes — goes inside the fold, and the turn's own words stay outside it.
+ * Folded, a turn is therefore its head line plus the answer; the head still says
+ * what the turn is doing (or how it ended) and for how long, which is the one line
+ * the earlier "collapse the whole turn" shape left and the answer now sits under.
+ *
+ * Two consequences worth stating, because both are choices:
+ *
+ *   - **The declared files stay on screen.** A `present` call's cards live inside a
+ *     tool row, which is process, so folding would bury the only thing that call
+ *     made — exactly what `EntryView`'s note on that card refuses. They are
+ *     collected per turn and drawn after the answer while folded.
+ *   - **Everything stays mounted.** The process is folded with `.collapse`, not
+ *     removed, for the same reason the reasoning body is: `Ctrl+F` counts what is
+ *     in the document, and a hit inside a shut fold is opened by the jump
+ *     (`find/engine.ts`). Removing it would make a word searchable only in some
+ *     part of the transcript.
+ *
+ * The fold state comes from the store rather than a prop for the same reason the
+ * tool and reasoning folds do: the head *is* the control, and it is drawn by
+ * `EntryView` — a `memo`'d row that must not start re-rendering because a
+ * sibling's body changed. Both halves read `turnFolded[headId]`, so they cannot
+ * disagree about whether the work is showing.
+ */
+function TurnFold({ section }: { section: Extract<StreamSection, { kind: 'turn' }> }) {
+  const headId = section.head.entry.id;
+  const folded = useApp((s) => s.turnFolded[headId] === true);
+
+  return (
+    <>
+      <EntryView entry={section.head.entry} phase={section.phase} />
+      {section.runs.map((run) => {
+        if (run.kind === 'reply') {
+          // Loose in `.stream-inner`, so the answer keeps the transcript's own row
+          // rhythm and never sits inside a fold it would be hidden by.
+          return (
+            <Fragment key={runKey(run)}>
+              {run.blocks.map((block) => (
+                <StreamBlockView key={blockKey(block)} block={block} />
+              ))}
+            </Fragment>
+          );
+        }
+        return (
+          <div
+            key={runKey(run)}
+            className={`collapse turn-run${folded ? ' is-collapsed' : ''}`}
+            data-turn={headId}
+            inert={folded}
+          >
+            {/* The grid child — the element whose height the fold animates, and
+                the one that carries the stream's row rhythm, because its rows no
+                longer sit in `.stream-inner`'s flex column. */}
+            <div className="turn-rows">
+              {run.blocks.map((block) => (
+                <StreamBlockView key={blockKey(block)} block={block} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      {folded && section.deliverables.length > 0 ? (
+        <DeliverableCards files={section.deliverables} />
+      ) : null}
+    </>
+  );
+}
+
+/** A run's key: its first block's, which is stable while the run grows. */
+function runKey(run: { kind: string; blocks: StreamBlock[] }): string {
+  const first = run.blocks[0];
+  return `${run.kind}-${first === undefined ? '' : blockKey(first)}`;
 }
 
 /**

@@ -201,6 +201,19 @@ export const en = {
   'entry.turnInterrupted': 'ended · interrupted',
   'entry.turnStepLimit': 'ended · step limit',
   'entry.turnEmpty': 'ended · empty response',
+  /** The turn head's fold. It is the only way in and out of a folded turn, so
+   *  the label says *which* turn's body — "Collapse" alone would be the same
+   *  words for every turn on screen. */
+  'entry.turnFold': 'Collapse this turn',
+  'entry.turnUnfold': 'Expand this turn',
+  /** What a folded **running** turn is doing, in the head's badge — the one line
+   *  the fold leaves behind. The words are the loop's own stages, and they are
+   *  the four a person can actually watch happen (`TurnPhase`): thinking, the
+   *  call itself, a tool it asked for, and the answer being written. */
+  'entry.turnPhaseThinking': 'thinking',
+  'entry.turnPhaseModel': 'model call',
+  'entry.turnPhaseTool': 'tool call',
+  'entry.turnPhaseReply': 'reply',
   'entry.you': 'you',
   /** Copy button on the user's own bubble (`EntryView.tsx`, `UserEntry`). */
   'entry.userCopy': 'Copy message',

@@ -143,8 +143,17 @@ export type Entry =
       kind: 'turn';
       id: string;
       runId: string;
-      /** A local ordinal over turns received — a display index, not a runtime
-       *  fact (the protocol has no turn number). */
+      /** The turn's position in the **conversation**, for the "Turn N" badge.
+       *
+       *  Not a runtime fact — the protocol has no turn number — and not a plain
+       *  count of heads either: `session_load` rebuilds the transcript from the
+       *  stored `{role, content}` message list, which has no turn boundaries, so
+       *  the turns a person already had carry no head to count. `restoredTurns`
+       *  (see `ReduceOptions`) supplies them, which is what keeps the badge
+       *  reading "Turn 11" on the first message of a reopened 10-turn
+       *  conversation instead of starting over at 1. It is also the number the
+       *  turn rail's matching mark carries — the rail counts by position, so the
+       *  two are the same count by construction. */
       ordinal: number;
       step: number;
       maxSteps: number;
@@ -163,6 +172,19 @@ export type Entry =
        * would be a second clock the interface has to trust.
        */
       startedAt: number;
+      /**
+       * How long the turn took, from `run_finished.duration_ms` — the runtime's
+       * own measurement, and the only figure that may be shown as this turn's
+       * final time.
+       *
+       * It is captured **on the head**, which is what makes it per-turn rather
+       * than per-session: `SessionRuntime.lastTurnMs` holds only the newest
+       * one, so a transcript full of folded turns would otherwise have every
+       * head but the last reading an em dash. Null until the turn ends, and
+       * null for a turn closed by the runtime going away — that turn has no
+       * measurement, and `0ms` would claim it took none.
+       */
+      durationMs: number | null;
     }
   /** 2. User input (local echo) */
   | { kind: 'user'; id: string; text: string; atMs: number }
@@ -378,6 +400,22 @@ export interface ReduceOptions {
   lastRunId: string | null;
   lookup: ToolLookup;
   maxSteps: number;
+  /**
+   * Turns the restored transcript already held when `session_load` rebuilt it.
+   *
+   * The rebuilt stream is `user`/`answer` rows only — the stored message list
+   * carries no turn boundary (`internal/runtime/composition.go`, `Messages()`) —
+   * so there is no head whose ordinal could say "this conversation is ten turns
+   * deep". Without this count the first turn opened after reopening a session was
+   * numbered 1: the badge said "Turn 1" while the turn rail, which numbers marks
+   * by position, said 11.
+   *
+   * The store reads it off the rebuilt transcript, one per `user` row — the same
+   * rule `turnRail` applies to a stored turn, so the head's number and the rail's
+   * mark stay the same number. Not a runtime fact, and reset by every
+   * `session_load` because that is the message that replaces the stream.
+   */
+  restoredTurns?: number;
 }
 
 /**
@@ -427,12 +465,22 @@ export interface ReduceResult {
   lastCall?: CallUsage;
 }
 
-function lastTurnOrdinal(entries: Entry[]): number {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry.kind === 'turn') return entry.ordinal;
+/**
+ * How many turn heads the transcript holds.
+ *
+ * A head is opened only by `run_started`, and `session_load` replaces the whole
+ * stream before any of them can exist, so this is "turns numbered in this window
+ * since the restore" — the half of the conversation's count that `restoredTurns`
+ * does not supply. Counted rather than read off the last head's ordinal because
+ * the ordinals already carry `restoredTurns`: `lastOrdinal + 1` would add the
+ * restored turns a second time on the second turn of a reopened session.
+ */
+function turnHeads(entries: Entry[]): number {
+  let heads = 0;
+  for (const entry of entries) {
+    if (entry.kind === 'turn') heads += 1;
   }
-  return 0;
+  return heads;
 }
 
 /**
@@ -469,7 +517,7 @@ export function reduceEvent(
   ev: LooseEvent,
   options: ReduceOptions,
 ): ReduceResult {
-  const { activeRunId, lastRunId, lookup, maxSteps } = options;
+  const { activeRunId, lastRunId, lookup, maxSteps, restoredTurns = 0 } = options;
 
   // A delegated agent's turn boundary is not this session's.
   //
@@ -493,9 +541,13 @@ export function reduceEvent(
   }
 
   // `run_started` is always accepted and becomes the current turn. It carries no
-  // turn number and no `max_steps`, so the ordinal is local and the cap comes
-  // from the handshake.
+  // turn number and no `max_steps`, so the number is this window's own count,
+  // and the cap comes from the handshake.
   if (ev.kind === 'run_started') {
+    // The head that is opening now follows every turn already in the
+    // conversation — including the ones a `session_load` restored, which have
+    // `user`/`answer` rows but no heads to count (see `restoredTurns`).
+    const ordinal = restoredTurns + turnHeads(entries) + 1;
     return {
       entries: [
         ...entries,
@@ -503,11 +555,12 @@ export function reduceEvent(
           kind: 'turn',
           id: nextId('turn'),
           runId: ev.run_id,
-          ordinal: lastTurnOrdinal(entries) + 1,
+          ordinal,
           step: 0,
           maxSteps,
           status: 'running',
           startedAt: Date.now(),
+          durationMs: null,
         },
       ],
       startedRunId: ev.run_id,
@@ -739,9 +792,15 @@ export function reduceEvent(
 
     case 'run_finished': {
       const stopReason = typeof ev.stop_reason === 'string' ? ev.stop_reason : '';
+      // The turn's own wall time rides this record and nowhere else: the head
+      // keeps it, so a folded turn can state its final time long after the run
+      // that produced it is gone (`SessionRuntime.lastTurnMs` holds only the
+      // newest). Read as "present or absent", never defaulted — a
+      // `run_finished` written without one is a turn nobody measured.
+      const durationMs = typeof ev.duration_ms === 'number' ? ev.duration_ms : null;
       const patched = entries.map((entry) => {
         if (entry.kind === 'turn' && entry.runId === ev.run_id) {
-          return { ...entry, status: stopReason, step: ev.step } satisfies Entry;
+          return { ...entry, status: stopReason, step: ev.step, durationMs } satisfies Entry;
         }
         // The turn is over, so every streaming caret stops.
         if ((entry.kind === 'stream' || entry.kind === 'reason') && entry.runId === ev.run_id) {
