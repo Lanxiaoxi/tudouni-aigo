@@ -1162,12 +1162,49 @@
 }
 
 /* 图片：稿子没有这一条，但当前样式表也没有——模型给出图片时它会按原始像素
-   铺满整列。这条是补默认值，不是对齐稿子。 */
-.md img {
+   铺满整列。这条是补默认值，不是对齐稿子。
+
+   地址到像素的那一步在 `MarkdownImage.tsx`：模型写的是一个**路径**，WebView
+   加载不了，所以字节由 Rust 侧的 `inline_image` 读出来交给这里。`.md img`
+   仍然留着，给直接写了 `data:`/`blob:` 的回复用——同一条尺寸规则，两种来源。 */
+.md img,
+.md-img {
   max-width: 100%;
   height: auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+}
+
+/* 还在读的图片：安静地显示 alt，像一张正在加载的图，而不是一行错误。 */
+.md-img-alt {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+
+/* 画不出来的图片：图标 + 路径。
+   这是三种失败态里唯一需要人看见的——"模型说它做了这张图，但那张图不在" 是
+   可以处理的（再要一次，或者去工作区看看），所以它留下路径；`title` 上是
+   Rust 侧给出的原因，那段话是写给人读的。 */
+.md-img-broken {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--fg-faint);
+  font-size: 12px;
+  cursor: help;
+}
+
+.md-img-broken-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
 }
 
 /* 代码块底：`<pre>` 只负责底与圆角，顶栏由 `.md-codeblock`（Markdown.tsx）
@@ -1845,7 +1882,7 @@
   padding: 0 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
 /* The rail's own scrollbar, narrowed to a rounded 3px hairline that takes the

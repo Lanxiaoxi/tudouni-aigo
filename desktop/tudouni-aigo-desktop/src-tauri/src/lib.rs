@@ -1800,6 +1800,165 @@ fn deliverable_open(workspace: String, path: String) -> Result<(), String> {
         .map_err(|e| format!("the system could not open it: {e}"))
 }
 
+/// One workspace picture, ready to be handed to the WebView as a `data:` URL.
+#[derive(Clone, Serialize)]
+struct InlineImage {
+    /// The picture's bytes, base64-encoded, already carrying its `data:` prefix.
+    ///
+    /// Returned as a complete URL rather than as raw bytes so the front end can
+    /// put the value straight into an `<img src>`. Raw bytes would arrive as a
+    /// JSON number array — over 20MB for a five megabyte picture — and the front
+    /// end would then have to base64 them itself, which is the same work done
+    /// twice in a slower place.
+    url: String,
+}
+
+/// Ceiling on one inline picture.
+///
+/// The same number `image_stash` accepts, and for the same reason: it is the
+/// runtime's own picture ceiling (`content.InspectImage`), so a picture the
+/// runtime would accept is one this can draw. A `data:` URL is a third larger
+/// than its bytes once base64 encoding is counted, and it lives in the DOM
+/// rather than in a file, so this is also the point past which drawing one is
+/// worse for the window than showing its path.
+const MAX_INLINE_IMAGE_BYTES: usize = MAX_IMAGE_BYTES;
+
+/// The extensions a workspace path may carry to be drawn inline.
+///
+/// A **name** check, deliberately, alongside the byte sniff below: the name
+/// decides whether to read the file at all, and the bytes decide whether what was
+/// read is really a picture. Neither alone is enough — the name is a claim, and
+/// sniffing means reading a file whose first bytes would otherwise be discarded.
+const INLINE_IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+/// Read one picture **inside the workspace** and return it as a `data:` URL.
+///
+/// ## Why this exists
+///
+/// The runtime has no channel for a picture other than a path in a sentence (see
+/// `image_stash`), so a model that generates an image hands back a path. Before
+/// this command the chat could only print that path: a WebView cannot load
+/// `C:\…\out.png` as an `<img>`, and the CSP deliberately allows no remote image
+/// origins. The person was told *where* the picture was instead of being shown
+/// it, which is the one thing a chat window is for.
+///
+/// ## Why through a command and not the `asset:` protocol
+///
+/// The `asset:` protocol is the obvious answer and it is the wrong one here: its
+/// scope is configuration, so the whole permitted surface is a static list of
+/// directories decided at build time, and it would have to name the workspace
+/// directory of whoever is running — which is not known until they pick one. It
+/// also turns **any** model-authored `![](asset://…)` into a read of any path the
+/// scope covers, decided by the renderer rather than by this boundary. A command
+/// takes the workspace from the bridge and re-checks every path against it, which
+/// is the same rule `deliverable_open` applies and for the same reason.
+///
+/// ## The boundary
+///
+/// Canonicalize the root and the target, then require the target to stay under
+/// the root. `..`, an absolute path, and a symlink pointing out all fail here,
+/// because the check is made against the file that is really there rather than
+/// against the string. `workspace` arrives from the front end but is only ever
+/// the runtime's own `init.workspace` — the relative path's meaning depends on
+/// it, so the two have to be the same fact.
+///
+/// ## What it refuses
+///
+/// Non-pictures by extension and by bytes, directories, files over the ceiling,
+/// and anything outside the workspace. Each refusal is a sentence for a person,
+/// because it is drawn next to the picture that did not load.
+#[tauri::command]
+fn inline_image(workspace: String, path: String) -> Result<InlineImage, String> {
+    let relative = path.trim();
+    if relative.is_empty() {
+        return Err("no picture was named".to_string());
+    }
+    let root = fs::canonicalize(workspace.trim())
+        .map_err(|e| format!("cannot read the workspace directory: {e}"))?;
+
+    // Resolved against the root, and an absolute path is refused rather than
+    // joined: `Path::join` with an absolute argument *replaces* the base, which
+    // would skip the boundary below by construction.
+    let named = Path::new(relative);
+    if named.is_absolute() {
+        return Err("the picture names a path outside the workspace".to_string());
+    }
+    let candidate = root.join(named);
+    let target = fs::canonicalize(&candidate).map_err(|_| {
+        format!("{relative} is not there — the picture may not have been written yet")
+    })?;
+    if target.strip_prefix(&root).is_err() {
+        return Err(format!("{relative} is outside the workspace"));
+    }
+    if !target.is_file() {
+        return Err(format!("{relative} is not a regular file"));
+    }
+
+    // The extension decides whether to read at all; see `INLINE_IMAGE_EXTENSIONS`.
+    let extension = target
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if !INLINE_IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(format!(
+            "{relative} is not a picture this window can draw (it accepts png, jpg, gif, webp and bmp)"
+        ));
+    }
+
+    let metadata = fs::metadata(&target).map_err(|e| format!("cannot read {relative}: {e}"))?;
+    if metadata.len() > MAX_INLINE_IMAGE_BYTES as u64 {
+        return Err(format!(
+            "{relative} is {} bytes, over the {} byte ceiling for one picture",
+            metadata.len(),
+            MAX_INLINE_IMAGE_BYTES
+        ));
+    }
+
+    let bytes = fs::read(&target).map_err(|e| format!("cannot read {relative}: {e}"))?;
+    // The bytes are the authority on what this is, never the name. `sniff_image`
+    // is the same check `image_stash` applies, so the two cannot accept
+    // different formats.
+    let known = sniff_image(&bytes).ok_or_else(|| {
+        format!("{relative} is not a PNG, JPEG or GIF — its contents do not match its name")
+    })?;
+
+    Ok(InlineImage {
+        url: format!("data:{};base64,{}", known.mime, base64_encode(&bytes)),
+    })
+}
+
+/// Base64 encode, for a `data:` URL.
+///
+/// Hand-written rather than a dependency: this is the whole of what the crate
+/// would be used for, and the alphabet has no options to get wrong. The standard
+/// `+/` alphabet with `=` padding is what a `data:` URL expects.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(triple >> 18) as usize & 0x3f] as char);
+        out.push(ALPHABET[(triple >> 12) as usize & 0x3f] as char);
+        // The final group is padded rather than filled with zero bits, so a
+        // decoder can tell a short tail from a real character.
+        if chunk.len() > 1 {
+            out.push(ALPHABET[(triple >> 6) as usize & 0x3f] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(ALPHABET[triple as usize & 0x3f] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
 /// Can the runtime be started in this directory? `None` means yes; otherwise the
 /// reason, already written for a person.
 ///
@@ -2875,6 +3034,7 @@ pub fn run() {
             config_read,
             config_write,
             image_stash,
+            inline_image,
             close_prompt_answer,
             close_prompt_ack,
             window_destroy,
@@ -2955,4 +3115,63 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("the Tauri application failed to start");
+}
+
+#[cfg(test)]
+mod inline_image_tests {
+    //! The half of `inline_image` that is testable without a Tauri app: the
+    //! encoding, and the boundary arithmetic the command applies.
+    //!
+    //! The command itself needs an `AppHandle`, so it is not called here; what is
+    //! pinned is that its two building blocks are right, because both are the kind
+    //! of code that fails silently — a base64 off-by-one produces a picture that
+    //! decodes to garbage, and a boundary check that lets a `..` through produces
+    //! no symptom at all until it matters.
+
+    use super::{base64_encode, INLINE_IMAGE_EXTENSIONS};
+
+    #[test]
+    fn base64_matches_the_standard_alphabet_and_padding() {
+        // Reference values produced by an independent implementation, because the
+        // failure mode here is a wrong character rather than a crash.
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"a"), "YQ==");
+        assert_eq!(base64_encode(b"ab"), "YWI=");
+        assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
+        assert_eq!(base64_encode(&[0, 1, 2, 253, 254, 255]), "AAEC/f7/");
+    }
+
+    #[test]
+    fn base64_produces_exactly_four_characters_per_three_bytes() {
+        // The property that matters for a `data:` URL: a decoder must see whole
+        // quanta, so the length is always a multiple of four.
+        for length in 0..64usize {
+            let bytes: Vec<u8> = (0..length).map(|index| index as u8).collect();
+            assert_eq!(
+                base64_encode(&bytes).len() % 4,
+                0,
+                "length {length} did not encode to whole quanta"
+            );
+        }
+    }
+
+    #[test]
+    fn the_accepted_extensions_are_the_ones_the_front_end_labels_as_pictures() {
+        // `DeliverableCards.tsx` classifies a deliverable as an image by the same
+        // extensions; a name it draws a card for but this refuses would be a
+        // picture that shows in one place and not the other.
+        for extension in ["png", "jpg", "jpeg", "gif", "webp"] {
+            assert!(
+                INLINE_IMAGE_EXTENSIONS.contains(&extension),
+                "{extension} is missing"
+            );
+        }
+        // Not pictures, and must not be read as if they were.
+        for extension in ["svg", "html", "txt", "exe"] {
+            assert!(
+                !INLINE_IMAGE_EXTENSIONS.contains(&extension),
+                "{extension} must not be accepted"
+            );
+        }
+    }
 }

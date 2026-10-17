@@ -155,6 +155,12 @@ const SUITES = [
   // half is read as text, like `stream-layout.test.ts` does: a rule that went
   // back to a hard-coded colour has no behaviour to observe in Node.
   'markdown-fence.test.tsx',
+  // Pictures in an answer. A model that generates one hands back a **path**, and
+  // a WebView cannot load a path as an `<img>` — so this suite pins the mapping
+  // that turns one into pixels, the destinations that are refused instead (a
+  // `file:` URL is an absolute path on this machine), and that a refusal stays
+  // visible as the path rather than going blank.
+  'markdown-image.test.tsx',
   // Find in the conversation: where a match lands (a `Range` offset that is one
   // out puts the mark on the wrong word, and a match allowed to span a paragraph
   // break draws one mark across two paragraphs), case folding that keeps its

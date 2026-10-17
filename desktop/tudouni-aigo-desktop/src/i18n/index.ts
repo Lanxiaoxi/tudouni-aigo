@@ -1410,6 +1410,17 @@ export const en = {
   /** Copy button on a fenced code block (`Markdown.tsx`). */
   'md.codeCopy': 'Copy code',
   'md.codeCopied': 'Copied',
+  /** A picture the model named but this window will not draw: an unsupported
+   *  scheme or media type (`MarkdownImage.tsx`). Shown as the picture's tooltip,
+   *  so it has to read as the reason, not as a label. */
+  'md.imageUnsupported': 'This is not a picture this window can draw',
+  /** Same row, when the destination is a relative path but no workspace is known
+   *  yet — the handshake has not landed, so the path has no root to resolve
+   *  against. Transient, but it has to say something. */
+  'md.imageNoWorkspace': 'This picture is relative to a workspace that is not open yet',
+  /** The renderer accepted the address but decoding it failed, or the bridge
+   *  returned bytes the WebView could not display. */
+  'md.imageFailed': 'This picture could not be drawn',
   /** The turn rail down the transcript's right edge (`TurnRail.tsx`). */
   'rail.label': 'Turn navigation',
   /** One mark's accessible name. It has to say what the press does **and** which

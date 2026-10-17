@@ -7,6 +7,8 @@ import { Check, Copy } from 'lucide-react';
 import { useT } from '@/i18n/useT';
 import { copyText } from '@/utils/clipboard';
 import { fenceLanguage, fenceLayout } from './fence';
+import { MarkdownImage } from './MarkdownImage';
+import { imageUrlTransform } from './imageUrl';
 
 /**
  * Markdown rendering.
@@ -121,6 +123,16 @@ const components: Components = {
       {children}
     </a>
   ),
+  // A picture is the one place this renderer reaches outside the DOM: the
+  // destination is a **path** the model wrote, and a WebView cannot load one.
+  // `MarkdownImage` decides what the string means and, for a workspace path,
+  // has the bridge read the bytes. It never resolves a filesystem path here —
+  // that decision belongs to the Rust side's boundary, not to the renderer.
+  // See its own module doc for why the resolution is a command rather than the
+  // `asset:` protocol.
+  img: ({ src, alt }) => (
+    <MarkdownImage src={typeof src === 'string' ? src : ''} alt={alt ?? ''} />
+  ),
 };
 
 export function Markdown({ text }: { text: string }) {
@@ -128,7 +140,12 @@ export function Markdown({ text }: { text: string }) {
   // container, so the flex-gap rules in stream.css apply to its output directly.
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={components}
+        urlTransform={imageUrlTransform}
+      >
         {text}
       </ReactMarkdown>
     </div>

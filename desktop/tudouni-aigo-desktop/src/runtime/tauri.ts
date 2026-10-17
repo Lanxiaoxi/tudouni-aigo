@@ -1530,6 +1530,37 @@ export async function openDeliverable(workspace: string, path: string): Promise<
   await tauriInvoke<void>('deliverable_open', { workspace, path });
 }
 
+/** What the bridge hands back after reading a workspace picture. */
+export interface InlineImage {
+  /** A complete `data:` URL, ready for an `<img src>`. */
+  url: string;
+}
+
+/**
+ * Read one picture inside the workspace as a `data:` URL, for drawing in the chat.
+ *
+ * **Through Rust, not through `asset:` or a bare filesystem read.** A WebView
+ * cannot load `C:\…\out.png` as an `<img>`, and the `asset:` protocol's scope is a
+ * static list decided at build time — it cannot name a workspace nobody has picked
+ * yet. It would also turn any model-authored `![](asset://…)` into a read of
+ * whatever the scope covers, decided by the renderer instead of by a boundary.
+ * The command instead takes the workspace, canonicalizes the target against it,
+ * and refuses anything that escapes — the same rule `deliverable_open` applies,
+ * for the same reason.
+ *
+ * `workspace` is the **runtime's own** answer (`init.workspace`), never a path
+ * this window assembled: the relative path only means something against that root.
+ *
+ * A refusal is returned as a rejected promise carrying a sentence written for a
+ * person; the caller shows it beside the picture that did not load.
+ */
+export async function inlineImage(workspace: string, path: string): Promise<InlineImage> {
+  if (!isHosted()) {
+    throw new Error('pictures can only be drawn in the desktop application');
+  }
+  return tauriInvoke<InlineImage>('inline_image', { workspace, path });
+}
+
 /** What the bridge hands back after writing a pasted picture. */
 export interface StashedImage {
   /** Workspace-relative, with forward slashes — the string that goes into the
