@@ -307,8 +307,43 @@ async function main() {
   const reopened = await read();
   assert.ok(reopened.runs[0].height > 0, 'and the work comes back');
 
+  // ---- 6. a new turn arrives in the state the turn above it is in ----
+  //
+  // The reading shape is inherited rather than reset: fold a turn and the next
+  // one arrives folded; open the turn above and the next one arrives open. This
+  // is the wiring, not the rule (`entries.ts` owns that) — the rule is fed the
+  // transcript *before* the new head, and a version fed the post-append
+  // transcript makes every new head its own predecessor and inherits nothing.
+  await apply({ v: 1, t: 'event', kind: 'run_finished', run_id: 'r2', step: 1, stop_reason: 'answered', duration_ms: 3000 });
+  await apply({ v: 1, t: 'ui', kind: 'run_finished', run_id: 'r2', answer: 'the second answer' });
+  // The steps above left the two turns in whatever states their own assertions
+  // needed, so this step *sets* the one it needs rather than assuming it.
+  if ((await read()).heads[1].expanded === 'true') await click('.turn-head .th-fold', 1);
+  assert.equal((await read()).heads[1].expanded, 'false', 'the second turn is folded');
+
+  await prompt('third');
+  await apply({ v: 1, t: 'event', kind: 'run_started', run_id: 'r3', step: 0 });
+  const third = await read();
+  assert.equal(third.heads.length, 3, 'a third turn should be on screen');
+  assert.equal(third.heads[2].expanded, 'false', 'a turn opened under a folded turn arrives folded');
+  console.log('inherited folded:', third.heads[2].text);
+
+  // Settle it, open it, and start a fourth: this is the other direction.
+  await apply({ v: 1, t: 'delta', run_id: 'r3', step: 1, channel: 'text', text: 'third answer' });
+  await apply({ v: 1, t: 'event', kind: 'run_finished', run_id: 'r3', step: 1, stop_reason: 'answered', duration_ms: 800 });
+  await apply({ v: 1, t: 'ui', kind: 'run_finished', run_id: 'r3', answer: 'third answer' });
+  await click('.turn-head .th-fold', 2);
+  assert.equal((await read()).heads[2].expanded, 'true', 'the third turn is open again');
+
+  await prompt('fourth');
+  await apply({ v: 1, t: 'event', kind: 'run_started', run_id: 'r4', step: 0 });
+  const fourth = await read();
+  assert.equal(fourth.heads.length, 4, 'a fourth turn should be on screen');
+  assert.equal(fourth.heads[3].expanded, 'true', 'a turn opened under an open turn arrives open');
+  console.log('inherited open:', fourth.heads[3].text);
+
   assert.deepEqual(problems, [], 'the page reported errors while folding');
-  console.log('ok: fold keeps the answer, live phase, prompt, find, and both directions');
+  console.log('ok: fold keeps the answer, live phase, prompt, find, both directions, inheritance');
 
   await fetch(`http://127.0.0.1:${port}/json/close/${created.id}`);
   ws.close();

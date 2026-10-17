@@ -25,7 +25,17 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { applyDelta, applyFinalAnswer, reduceEvent, type Entry, type LooseEvent } from '@/state/entries';
+import {
+  applyDelta,
+  applyFinalAnswer,
+  lastTurnHead,
+  newTurnStartsFolded,
+  reduceEvent,
+  type Entry,
+  type LooseEvent,
+} from '@/state/entries';
+import { createSessionBucket, useApp } from '@/state/store';
+import { registerRuntime } from '@/runtime/bus';
 import { streamBlocks, streamSections, type StreamRow, type StreamSection } from '@/streamBlocks';
 
 /* ============================================================
@@ -492,6 +502,150 @@ test('a body with live text inside a card still reads as reply', () => {
   const turn = sectionsOf(entries)[0];
   assert.ok(turn.kind === 'turn');
   assert.equal(turn.phase, 'reply');
+});
+
+/* ============================================================
+   the fold a new turn inherits
+   ============================================================ */
+
+test('a new turn starts the way the turn above it is', () => {
+  // The reading shape follows the person's last decision instead of resetting at
+  // every prompt: fold a turn and the next arrives folded; open one and the next
+  // arrives open. Asked for in these words — "第一个我折叠了，第二个也默认折叠；
+  // 第二个我打开了，第三个也应该是打开的".
+  assert.equal(newTurnStartsFolded([], {}), false, 'the first turn of a session opens');
+
+  const first = started();
+  const head = lastTurnHead(first);
+  assert.ok(head !== null);
+  assert.equal(newTurnStartsFolded(first, {}), false, 'a turn above that nobody touched is open');
+  assert.equal(newTurnStartsFolded(first, { [head.id]: false }), false, 'an opened turn above');
+  assert.equal(newTurnStartsFolded(first, { [head.id]: true }), true, 'a folded turn above');
+});
+
+test('it is the last head that decides, not the first', () => {
+  // With twenty turns on screen, fifteen of them folded, the new one must follow
+  // the turn it actually sits under — not "something in this transcript is
+  // folded", which would fold a turn the reader is looking at the work of.
+  let entries = started();
+  const firstHead = lastTurnHead(entries);
+  assert.ok(firstHead !== null);
+  entries = reduceEvent(
+    entries,
+    ev('run_started', { run_id: 'r2' }),
+    freshOptions({ activeRunId: 'r2' }),
+  ).entries;
+  const lastHead = lastTurnHead(entries);
+  assert.ok(lastHead !== null);
+  assert.notEqual(lastHead.id, firstHead.id);
+
+  const fold = { [firstHead.id]: true, [lastHead.id]: false };
+  assert.equal(newTurnStartsFolded(entries, fold), false, 'the turn above is open, so this one is');
+  assert.equal(newTurnStartsFolded(entries, { ...fold, [lastHead.id]: true }), true);
+});
+
+/* ============================================================
+   the wiring: the head the new one inherits from, in the store
+   ============================================================ */
+
+const KEY = 'k-fold-wire';
+
+/** The init payload, with every field the handshake's projection reads. */
+const INIT = {
+  v: 1,
+  t: 'init',
+  protocol: 3,
+  session_id: 's-fold',
+  resumed: false,
+  model: 'deepseek-chat',
+  provider: 'deepseek',
+  thinking: true,
+  effort: 'high',
+  effort_levels: ['low', 'high'],
+  model_catalog: { models: [], aliases: [] },
+  workspace: 'C:/work',
+  max_steps: 150,
+  stream: true,
+  context_tokens: 65536,
+  tools: [],
+  permissions: {},
+  audit_path: 'C:/work/.tudouni/audit/s-fold.jsonl',
+  notices: [],
+};
+
+/** One session, one child to send to, and no folds carried in from another test. */
+function installSession(): void {
+  registerRuntime({
+    key: KEY,
+    send() {
+      // The store asks for `status` and `session_list` when a turn ends; there is
+      // nothing behind this handle to answer, and nothing here asserts on it.
+    },
+    subscribe() {
+      return () => undefined;
+    },
+    dispose() {
+      return undefined;
+    },
+  });
+  useApp.setState({
+    sessions: { [KEY]: createSessionBucket(KEY, 'C:/work', { ericai: false, maxSteps: 150 }) },
+    order: [KEY],
+    activeKey: KEY,
+    turnFolded: {},
+  });
+  useApp.getState().applyRuntimeMessage(KEY, INIT as never);
+}
+
+function wire(kind: string, extra: Record<string, unknown> = {}): void {
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'event',
+    kind,
+    session_id: 's-fold',
+    run_id: 'r1',
+    step: 0,
+    ts: '2026-01-01T00:00:00Z',
+    ...extra,
+  } as never);
+}
+
+function heads(): Extract<Entry, { kind: 'turn' }>[] {
+  const bucket = useApp.getState().sessions[KEY];
+  assert.ok(bucket !== undefined, 'the session must be installed');
+  return bucket.entries.filter((entry): entry is Extract<Entry, { kind: 'turn' }> => entry.kind === 'turn');
+}
+
+test('the store hands a new turn the fold of the one above it', () => {
+  // The rule above is pure; this is the wiring, and the wiring is where the
+  // mistake would live: reading `turnFolded` against the transcript **after** the
+  // new head was appended makes the new head its own predecessor, its fold entry
+  // is unset, and nothing is ever inherited — silently, with every unit test of
+  // the rule still green.
+  installSession();
+
+  wire('run_started', { run_id: 'r1' });
+  const [first] = heads();
+  assert.ok(first !== undefined);
+  assert.notEqual(useApp.getState().turnFolded[first.id], true, 'a session opens with its turns open');
+
+  useApp.getState().toggleTurnFold(first.id);
+  wire('run_finished', { run_id: 'r1', stop_reason: 'answered', duration_ms: 1200, step: 1 });
+  wire('run_started', { run_id: 'r2' });
+
+  const second = heads()[1];
+  assert.ok(second !== undefined);
+  assert.equal(useApp.getState().turnFolded[second.id], true, 'the next turn arrived folded');
+
+  // And the other direction: opening it hands *open* to the turn after it.
+  useApp.getState().toggleTurnFold(second.id);
+  assert.equal(useApp.getState().turnFolded[second.id], false);
+  wire('run_finished', { run_id: 'r2', stop_reason: 'answered', duration_ms: 900, step: 1 });
+  wire('run_started', { run_id: 'r3' });
+
+  const third = heads()[2];
+  assert.ok(third !== undefined);
+  assert.notEqual(useApp.getState().turnFolded[third.id], true, 'and the next one arrived open');
 });
 
 /* ============================================================

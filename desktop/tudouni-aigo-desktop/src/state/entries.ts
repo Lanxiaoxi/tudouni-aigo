@@ -1250,3 +1250,38 @@ export function hasRunningTurn(entries: Entry[]): boolean {
   }
   return false;
 }
+
+/** The most recent turn head, or null before the first one.
+ *
+ *  The last head is **the turn above** the one about to open, which is the turn a
+ *  new one takes its fold state from — see `newTurnStartsFolded`. */
+export function lastTurnHead(entries: Entry[]): Extract<Entry, { kind: 'turn' }> | null {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry.kind === 'turn') return entry;
+  }
+  return null;
+}
+
+/**
+ * Does a turn that is opening now start folded?
+ *
+ * **It starts the way the turn above it is** — folded if that one is folded, open
+ * if it is open. This is a reading shape rather than a fact, and inheriting it is
+ * the whole point of the fold: a person who folds the work away to read a
+ * transcript like a chat should not have to fold every new turn by hand for the
+ * rest of the session. The other direction matters just as much — whoever has
+ * *opened* the turn above is reading its work, so the next one keeps its work on
+ * screen.
+ *
+ * `before` is the transcript **as it stood before the new head was appended**, so
+ * its last head is the turn above. `fold` is the window's own `turnFolded` map: a
+ * head with no entry has never been toggled, which is "open".
+ */
+export function newTurnStartsFolded(
+  before: Entry[],
+  fold: Readonly<Record<string, boolean>>,
+): boolean {
+  const above = lastTurnHead(before);
+  return above !== null && fold[above.id] === true;
+}

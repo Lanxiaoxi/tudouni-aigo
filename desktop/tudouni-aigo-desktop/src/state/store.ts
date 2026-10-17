@@ -48,6 +48,8 @@ import {
   clearStream,
   hasRunningTurn,
   lastStopReason,
+  lastTurnHead,
+  newTurnStartsFolded,
   nextId,
   pushBlock,
   reduceEvent,
@@ -4223,6 +4225,20 @@ export const useApp = create<AppStore>((set, get) => {
             // audit log and must not become a heartbeat).
             ...(result.lastCall ? { liveCall: result.lastCall } : {}),
           });
+
+          // **A new turn opens the way the turn above it is.** The fold is a
+          // reading shape, and a person who has just folded a turn's work away
+          // does not want the next one to arrive wide open — nor, having opened
+          // one to read it, does the next one arrive folded. See
+          // `newTurnStartsFolded`, which owns the rule; this is only where the
+          // head it applies to is written. `bucket.entries` is the transcript
+          // *before* the patch above, so its last head is the turn above.
+          if (result.startedRunId !== undefined) {
+            const fresh = lastTurnHead(result.entries);
+            if (fresh !== null && newTurnStartsFolded(bucket.entries, get().turnFolded)) {
+              set({ turnFolded: { ...get().turnFolded, [fresh.id]: true } });
+            }
+          }
 
           // A finished turn is the one moment the usage/cache/elapsed numbers are
           // worth fetching (decision 5) — and it is also what lifts the poll
