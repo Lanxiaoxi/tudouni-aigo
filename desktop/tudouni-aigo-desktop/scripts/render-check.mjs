@@ -1657,6 +1657,10 @@ async function main() {
     return JSON.stringify({
       blockCount: blocks.length,
       titles: blocks.map((b) => b.querySelector('.sbh-title')?.textContent ?? ''),
+      // Each block is a **list card**: the edge is what separates one section
+      // from the next. It was dropped silently in the realigning pass and only a
+      // screenshot caught it, so the width is asserted here.
+      blockEdges: blocks.map((b) => getComputedStyle(b).borderTopWidth),
       sidebarText: (document.querySelector('.app-sidebar')?.innerText ?? '').replace(/\\s+/g,' ').slice(0, 400),
     });
   })()`);
@@ -1666,6 +1670,9 @@ async function main() {
   // order comment): a display-only block added after this probe was written,
   // which is why the count check below used to read five.
   if (sb.blockCount !== 6) throw new Error(`expected 6 sidebar blocks, got ${sb.blockCount}`);
+  if ((sb.blockEdges ?? []).some((w) => w !== '1px')) {
+    throw new Error(`a right-rail block has no list-card border: ${JSON.stringify(sb.blockEdges)}`);
+  }
   const expected = ['Goal', 'Tasks', 'Background jobs', 'Loaded skills', 'MCP', 'SSH sessions'];
   if (JSON.stringify(sb.titles) !== JSON.stringify(expected)) {
     throw new Error(`block order/titles wrong: ${JSON.stringify(sb.titles)}`);

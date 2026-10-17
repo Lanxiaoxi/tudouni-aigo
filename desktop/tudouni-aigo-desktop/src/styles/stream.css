@@ -1469,7 +1469,7 @@
   padding: 0 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 /* The right rail's scrollbar, the left rail's: a 3px rounded thumb in the
@@ -1502,16 +1502,17 @@
   background: transparent;
 }
 
-/* The blocks are **sections on the rail's plane**, not cards floating above it.
-   The right rail used to hold white cards on grey; that was the arrangement the
-   left rail just gave up, and leaving one rail on it made the window read as two
-   applications. A block is now its head plus its rows, separated from the next
-   by the rail's own 14px rhythm — the same layer model, palette and seam as the
-   left rail. */
+/* Each block is a **list card on the rail's plane**: the same near-white
+   surface, hairline and radius the left rail's rows and workbench card use.
+   The previous pass removed the card edge with the old grey palette; that was
+   one step too far — the sections read as an unbroken column of text with no
+   boundary between "Goal" and "Tasks". The border is the only layer the block
+   needs: no shadow, no second background shade. */
 .sb-block {
-  border: none;
-  border-radius: 0;
-  background: transparent;
+  border: 1px solid var(--lb-line);
+  border-radius: 10px;
+  background: var(--bg-card);
+  overflow: hidden;
   flex: none;
 }
 
@@ -1519,9 +1520,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 2px 0 4px;
-  min-height: 22px;
-  border-radius: 8px;
+  padding: 6px 8px 6px 10px;
+  min-height: 30px;
   cursor: pointer;
   user-select: none;
   transition: background-color var(--motion-fast) var(--ease-out);
@@ -1565,7 +1565,7 @@
 }
 
 .sb-block-body {
-  padding: 4px 0 0;
+  padding: 2px 6px 6px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1591,8 +1591,8 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--row-h-compact);
-  padding: 2px 8px;
-  border-radius: 8px;
+  padding: 2px 6px;
+  border-radius: 6px;
   font-size: var(--text-compact);
   color: var(--fg-secondary);
   transition: background-color var(--motion-fast) var(--ease-out);
@@ -1668,11 +1668,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 2px 8px 6px;
+  padding: 2px 6px 6px;
 }
 
 .sb-goal {
-  padding: 2px 8px 6px;
+  padding: 2px 6px 6px;
   font-size: var(--text-compact);
   color: var(--fg-secondary);
 }
@@ -1845,7 +1845,7 @@
   padding: 0 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 /* The rail's own scrollbar, narrowed to a rounded 3px hairline that takes the
