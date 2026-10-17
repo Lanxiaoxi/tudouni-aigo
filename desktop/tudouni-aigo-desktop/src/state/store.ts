@@ -1268,8 +1268,13 @@ export interface AppStore {
    */
   workspacesCollapsed: boolean;
   /**
-   * The left rail's foot (the seven workbench buttons), folded on its own —
-   * the same independent, persisted preference as `sessionsCollapsed`.
+   * The left rail's foot (the workbench drawer), folded on its own — the same
+   * independent, persisted preference as `sessionsCollapsed`.
+   *
+   * **Closed on a first launch.** The redesign makes the foot a floating card
+   * whose open body is ~360px tall; left open by default it halves the number of
+   * sessions the rail can show, which is the one thing this list exists for. A
+   * person who wants the drawer opens it once and the preference keeps it.
    */
   footCollapsed: boolean;
   /**
@@ -2199,7 +2204,7 @@ function loadPrefs(): Prefs {
     blockTouched: {},
     sessionsCollapsed: false,
     workspacesCollapsed: false,
-    footCollapsed: false,
+    footCollapsed: true,
     workspaces: [],
     sshHosts: [],
     remoteWorkspaces: [],
@@ -2256,7 +2261,11 @@ function loadPrefs(): Prefs {
         parsed.workspacesCollapsed === true || parsed.workspacesCollapsed === false
           ? parsed.workspacesCollapsed
           : fallback.workspacesCollapsed,
-      footCollapsed: parsed.footCollapsed === true,
+      // A stored `false` is an answer ("leave it open") and must survive the
+      // launch; the fallback is what a profile that never chose gets, and it is
+      // now `true` (the drawer starts folded — see `footCollapsed`'s doc).
+      footCollapsed:
+        typeof parsed.footCollapsed === 'boolean' ? parsed.footCollapsed : fallback.footCollapsed,
       // Filtered rather than trusted: this is localStorage, it outlives every
       // build, and a stray non-string in it would reach `path.split` and take
       // the sidebar down with it.

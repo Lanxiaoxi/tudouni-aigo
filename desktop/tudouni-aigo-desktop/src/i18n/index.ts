@@ -459,18 +459,31 @@ export const en = {
   'lb.unfoldSessions': 'Unfold the session list',
   'lb.foldWorkspaces': 'Fold the workspace list',
   'lb.unfoldWorkspaces': 'Unfold the workspace list',
-  /* The rail's foot, folded on its own. The six buttons under it — files,
-     terminal, learning, board, config, settings — are the workbench: the
-     things the runtime works *with*, beside the workspaces it works *in*. */
+  /* The rail's foot, folded on its own. The seven rows under it — files,
+     terminal, learning, board, tasks, config, settings — are the workbench:
+     the things the runtime works *with*, beside the workspaces it works *in*. */
   'lb.workbench': 'Workbench',
   'lb.foldFoot': 'Fold the workbench',
   'lb.unfoldFoot': 'Unfold the workbench',
+  /* The drawer's two group names. They are the same nouns the rail already
+     uses — a workspace's own surfaces, then the process's settings — so the
+     groups read as parts of this rail rather than as a second menu. */
+  'lb.workbench.groupWorkspace': 'Workspace',
+  'lb.workbench.groupTasks': 'Tasks & settings',
+  'lb.workbench.search': 'Jump to or search',
+  'lb.workbench.clear': 'Clear the workbench filter',
+  'lb.workbench.none': 'Nothing matches',
   'lb.deleteSession': 'Delete this session',
   'lb.deleteConfirm': 'Delete? Click again to confirm',
   'lb.current': 'current',
   'lb.currentHint': 'The runtime is working in this directory',
   'lb.forget': 'Forget',
   'lb.forgetHint': 'Remove from this list. The directory itself is not touched.',
+  /* The fallback for a saved session whose runtime preview is empty: it never
+     spoke, so there is no topic. The name says exactly that and nothing more —
+     the id is still on the row (in `title`, and to the screen reader), so the
+     word does not have to stand in for a fact the row already carries. */
+  'lb.untitled': 'Untitled',
   'lb.emptyWorkspaces.title': 'No workspace listed',
   'lb.emptyWorkspaces.hint': 'Add the directory the runtime should work in.',
   /* The two flavours the add-workspace menu offers, and the tag a remote row
@@ -478,7 +491,7 @@ export const en = {
      row reads as the menu entry that created it. */
   'lb.workspaceKind.local': 'Local',
   'lb.workspaceKind.remote': 'Remote',
-  'lb.emptySessions.title': 'No past session',
+  'lb.emptySessions.title': 'No sessions yet',
   'lb.emptySessions.hint': 'Sessions are written under .tudouni/ in this workspace.',
   'lb.sessionsUnread': 'Could not read the session list',
   'lb.workspaceBad': 'Cannot be used',

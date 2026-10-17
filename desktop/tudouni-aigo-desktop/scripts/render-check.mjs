@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Render check: mount the real UI in a browser and drive it with real payloads.
  *
  * Type checking cannot catch a component that throws on mount, and a blank
@@ -292,7 +292,8 @@ async function main() {
         if (c.backgroundColor !== 'rgba(0, 0, 0, 0)') {
           painted = c.backgroundColor;
           by = node.className || node.tagName;
-          belongs = node === rail || node.classList?.contains('lb-foot') === true;
+          belongs = node === rail || node.classList?.contains('lb-foot') === true
+            || node.classList?.contains('lb-workbench') === true;
           break;
         }
         node = node.parentElement;
@@ -768,7 +769,7 @@ async function main() {
       // rather than restating the gate: the rail foot's row carries
       // aria-pressed too, and the two must agree in every frame.
       footBoardDisabled:
-        [...document.querySelectorAll('.lb-foot .lb-foot-btn')].find(
+        [...document.querySelectorAll('.lb-foot .lb-workbench-item')].find(
           (b) => b.hasAttribute('aria-pressed'),
         )?.disabled ?? null,
       store: { leftbarVisible: st.leftbarVisible, sidebarVisible: st.sidebarVisible, boardOpen: st.boardOpen },
@@ -1248,37 +1249,42 @@ async function main() {
       return el ? getComputedStyle(el).color : null;
     };
     const idEl = rows[0]?.querySelector('.lb-session-id');
-    const footEl = rows[0]?.querySelector('.lb-session-foot');
+    const box = (el) => {
+      const b = el?.getBoundingClientRect();
+      return b ? { h: Math.round(b.height), w: Math.round(b.width) } : null;
+    };
     return JSON.stringify({
       count: rows.length,
       first: (rows[0]?.innerText ?? '').replace(/\\s+/g,' ').trim(),
       current: rows.filter((r) => r.classList.contains('is-current')).length,
       times: [...document.querySelectorAll('.lb-rows:not(.lb-live-rows) .lb-session-time')].map((n) => n.textContent),
+      // The two painted lines of a row. The time rides the first, at its right
+      // edge; the meta line is the second. The id is not a line any more.
       lines: {
         topic: top(rows[0], '.lb-session-preview'),
         meta: top(rows[0], '.lb-session-meta'),
-        id: top(rows[0], '.lb-session-id'),
         time: top(rows[0], '.lb-session-time'),
       },
-      // The id must not be painted above the topic, and the row's last line must
-      // not stretch: the row is a column, so a child that grows there absorbs
-      // whatever height the row has. That is now asked of the **foot** - the
-      // line the id and the time share - because the id is a child of it and no
-      // longer a child of the column. Inside a row, the id's own flex-grow is
-      // what pushes the time to the right edge, and it is wanted.
       colours: {
         topic: colour(rows[0], '.lb-session-preview'),
         meta: colour(rows[0], '.lb-session-meta'),
-        id: colour(rows[0], '.lb-session-id'),
       },
-      idFlexGrow: idEl ? getComputedStyle(idEl).flexGrow : null,
-      footFlexGrow: footEl ? getComputedStyle(footEl).flexGrow : null,
+      // The id is a fact on the row, but not ink: it lives in sr-only and in
+      // the row's title, which is where a person goes looking for it before
+      // typing /resume.
+      id: {
+        text: idEl?.textContent ?? null,
+        position: idEl ? getComputedStyle(idEl).position : null,
+        box: box(idEl),
+      },
+      title: rows[0]?.getAttribute('title') ?? null,
+      rowHeight: box(rows[0])?.h ?? null,
+      fallback: rows[1]?.querySelector('.lb-session-preview')?.textContent ?? null,
     });
   })()`);
   console.log('session rows:', sessions);
   const sr = JSON.parse(sessions ?? '{}');
   if (sr.count !== 2) throw new Error(`expected 2 session rows, got ${sr.count}`);
-  if (!sr.first.includes('s-20260101-000000')) throw new Error('the session id is missing');
   if (!sr.first.includes('12 messages')) throw new Error(`the runtime's message count is missing: ${sr.first}`);
   if (!sr.first.includes('3/7')) throw new Error('the runtime-made progress text is missing');
   if (!sr.first.includes('fix the reconnect race')) throw new Error('the preview is missing');
@@ -1289,58 +1295,52 @@ async function main() {
   if (!sr.times.some((value) => value === 'unknown')) {
     throw new Error(`an unreadable modified_at was rendered as a time: ${JSON.stringify(sr.times)}`);
   }
-  // ---- the row reads topic, then progress, then id ----
+  // ---- two lines: topic + time, then progress ----
   //
-  // The id used to be the first line. Both orders render, both carry the same
-  // text and both pass every assertion above, so this is asserted as geometry:
-  // the topic is what identifies a conversation, and the id is a timestamp
-  // (`YYYYMMDD-HHMMSS`) that belongs under it, not in front of it.
-  const { topic, meta, id: idTop, time } = sr.lines ?? {};
-  if (topic === null || meta === null || idTop === null || topic === undefined) {
-    throw new Error(`a session row is missing one of its three lines: ${JSON.stringify(sr.lines)}`);
+  // The row used to be three lines of equal weight (topic, progress, id/time),
+  // and that is why only four conversations fit in the rail. The redesign's
+  // claim is a **density** claim, so it is asserted as geometry: a ~46px row
+  // whose time shares the topic's line, with the progress line under it.
+  const { topic, meta, time } = sr.lines ?? {};
+  if (topic === null || meta === null || time === null) {
+    throw new Error(`a session row is missing one of its lines: ${JSON.stringify(sr.lines)}`);
   }
-  if (!(topic <= meta && meta <= idTop)) {
+  if (!(topic < meta)) {
     throw new Error(
-      `the session row is not topic -> progress -> id, top to bottom: ${JSON.stringify(sr.lines)}`,
+      `the session row is not topic -> progress, top to bottom: ${JSON.stringify(sr.lines)}`,
     );
   }
-  // The time rides the **id's** line — the row's last. It used to sit on the
-  // topic's, which cost the preview a fixed ~40px on each of the two lines it
-  // is clamped to; the topic is the row's only line that scales with what the
-  // message actually said. The pair reads as one footnote: the runtime's name
-  // for the conversation, and when it was last touched.
-  if (!(time <= idTop + 1)) {
+  if (Math.abs(time - topic) > 2) {
+    throw new Error(`the time is not on the topic's line: time at ${time}, topic at ${topic}`);
+  }
+  if (!(sr.rowHeight >= 44 && sr.rowHeight <= 48)) {
+    throw new Error(`a two-line session row is ${sr.rowHeight}px, not the design's ~46px`);
+  }
+  // The id is still on the row — the runtime's own name, and what `/resume`
+  // takes — but it is not painted: `sr-only` keeps it for the screen reader and
+  // `title` puts it under the pointer.
+  if (sr.id?.text !== 's-20260101-000000') {
+    throw new Error(`the session id left the row entirely: ${JSON.stringify(sr.id)}`);
+  }
+  if (sr.id?.position !== 'absolute' || !(sr.id?.box?.w <= 1) || !(sr.id?.box?.h <= 1)) {
     throw new Error(
-      `the time is not on the id's line: time at ${time}, id at ${idTop}`,
+      `the session id is painted as a third line (${JSON.stringify(sr.id)}) — it belongs in ` +
+        'the accessible name and the hover title, not on a row whose height is the point',
     );
   }
-  // And the id is a footnote, not a second title. Compared as computed values
-  // rather than against a hard-coded rgb, because the tokens are theme-dependent:
-  // what must hold in every theme is that the id sits on the **progress line's**
-  // layer and the topic does not.
-  if (sr.colours.id !== sr.colours.meta) {
-    throw new Error(
-      `the session id is not on the metadata layer: id ${sr.colours.id}, progress ${sr.colours.meta}`,
-    );
+  if (sr.title !== 's-20260101-000000') {
+    throw new Error(`the row carries no hover title for its id: ${JSON.stringify(sr.title)}`);
   }
-  if (sr.colours.topic === sr.colours.id) {
-    throw new Error(
-      `the topic and the id are painted in the same colour (${sr.colours.topic}): the topic is the row's title and the id is a footnote`,
-    );
+  // A session that never spoke has no preview. The design's fallback names that
+  // fact instead of leaving the title blank.
+  if (sr.fallback !== 'Untitled') {
+    throw new Error(`an empty preview did not fall back to "Untitled": ${JSON.stringify(sr.fallback)}`);
   }
-  // The row is a column, so a child that grows there absorbs whatever height the
-  // row has. That question is now asked of the **foot** — the line the id and
-  // the time share — because the id is a child of that row and no longer a child
-  // of the column. Inside a row, the id's own `flex-grow` is `1` and wanted: it
-  // is what pushes the stamp to the right edge.
-  if (sr.footFlexGrow !== '0') {
+  // The topic is the row's title and the meta line is a footnote: two layers,
+  // not one colour repeated.
+  if (sr.colours.topic === sr.colours.meta) {
     throw new Error(
-      `the row's foot still grows (flex-grow ${sr.footFlexGrow}) — in a column row that stretches it to the row's height`,
-    );
-  }
-  if (sr.idFlexGrow !== '1') {
-    throw new Error(
-      `the id does not take the foot row's slack (flex-grow ${sr.idFlexGrow}): the stamps would end wherever each id happens to`,
+      `the topic and its progress line are painted in the same colour (${sr.colours.topic})`,
     );
   }
 
@@ -2257,7 +2257,7 @@ async function main() {
           local:
             cls.includes('lb-section-toggle') ||
             cls.includes('lb-icon') ||
-            cls.includes('lb-foot-head'),
+            cls.includes('lb-workbench-head'),
           what: (b.getAttribute('aria-label') ?? b.innerText ?? '').replace(/\\s+/g,' ').trim().slice(0, 40),
           cls: cls.split(' ')[0],
         };
@@ -2424,7 +2424,8 @@ async function main() {
     const idleEl = savedRows.find((r) => !r.classList.contains('is-current'));
     const savedCurrentEl = savedRows.find((r) => r.classList.contains('is-current'));
     const currentEl = q('.lb-session.is-current');
-    const rowEl = q('.lb-row');
+    const rowEl = q('.lb-row:not(.is-current)') ?? q('.lb-row');
+    const workspaceCurrentEl = q('.lb-row.is-current');
     const appEl = q('.app');
     const image = appEl ? getComputedStyle(appEl).backgroundImage : '';
     // Every "at <x> <y>" in the background, as percentages. The failure this
@@ -2447,53 +2448,27 @@ async function main() {
     const stepHead = step?.querySelector('.e-step-head');
     const curActs = savedCurrentEl?.closest('.lb-session-wrap')?.querySelector('.lb-session-actions');
     const idleActs = idleEl?.closest('.lb-session-wrap')?.querySelector('.lb-session-actions');
-    // The current card's second edge layer, and what could cut it. Read here as
-    // two facts because the first is only correct *because* of the second: a
-    // box-shadow with a positive spread paints outside the border box, and the
-    // session fold's body (".collapse > *", overflow: hidden, global.css) sits
-    // exactly on the card's own edges with no padding of its own. So the layer
-    // has to be inset, and the ancestor that would cut it has to still be there —
-    // otherwise the "inset" reads as decoration and the next reader deletes it.
-    // See the assertion below for the defect this measured.
-    const ringCard = savedCurrentEl ?? currentEl;
-    const ring = (() => {
-      const raw = cs(ringCard)?.boxShadow ?? '';
-      // The layer that is the accent edge: not the wide lift, not the drop.
-      const accent = /rgba\\(5, ?150, ?105/;
-      const layer = raw.split(/,(?![^(]*\\))/).map((s) => s.trim())
-        .find((s) => accent.test(s)) ?? null;
-      return { layer, inset: layer ? /(^|\\s)inset(\\s|$)/.test(layer) : null };
-    })();
-    const clippers = (() => {
-      if (!ringCard) return null;
-      const r = ringCard.getBoundingClientRect();
-      const out = [];
-      let node = ringCard.parentElement;
-      while (node && node !== document.documentElement) {
-        const c = getComputedStyle(node);
-        const b = node.getBoundingClientRect();
-        const sides = [];
-        // 1px of slack: the ring is 1px, and the question is whether this
-        // ancestor's box stops at the card's own edge or beyond it.
-        if (c.overflowX !== 'visible') {
-          if (b.left > r.left - 1) sides.push('left');
-          if (b.right < r.right + 1) sides.push('right');
-        }
-        if (c.overflowY !== 'visible') {
-          if (b.top > r.top - 1) sides.push('top');
-          if (b.bottom < r.bottom + 1) sides.push('bottom');
-        }
-        if (sides.length) out.push({ cls: String(node.className || node.tagName), sides });
-        node = node.parentElement;
-      }
-      return out;
-    })();
+    // The reveal is on the **buttons** (.lb-row-action), not on their column
+    // wrapper: the wrapper is only a layout box, so reading its opacity would
+    // always report 1 and the assertion would be vacuous.
+    const actBtn = (acts) => acts?.querySelector('.lb-row-action') ?? null;
+    const curTime = savedCurrentEl?.querySelector('.lb-session-time');
+    const idleTime = idleEl?.querySelector('.lb-session-time');
+    // The redesign's two surfaces, read from the token set rather than written
+    // as literals: the rail's plane and the capsule are different values in each
+    // theme, and what must hold in both is their *relationship*.
+    const root = getComputedStyle(document.documentElement);
     return JSON.stringify({
-      ring: { ...ring, clippers },
+      tokens: {
+        rail: root.getPropertyValue('--lb-surface').trim(),
+        selected: root.getPropertyValue('--lb-selected').trim(),
+        hover: root.getPropertyValue('--lb-hover').trim(),
+      },
       rail: bg(railEl),
       idle: bg(idleEl),
       current: bg(currentEl),
       row: bg(rowEl),
+      workspaceCurrent: bg(workspaceCurrentEl),
       idleBorder: cs(idleEl)?.borderTopColor ?? null,
       currentBorder: cs(currentEl)?.borderTopColor ?? null,
       idleShadow: cs(idleEl)?.boxShadow ?? null,
@@ -2521,17 +2496,19 @@ async function main() {
       },
       retraction: {
         hasSavedCurrent: !!savedCurrentEl,
-        currentPaddingRight: cs(savedCurrentEl)?.paddingRight ?? null,
-        idlePaddingRight: cs(idleEl)?.paddingRight ?? null,
-        currentActionsOpacity: cs(curActs)?.opacity ?? null,
-        currentActionsPointer: cs(curActs)?.pointerEvents ?? null,
-        // The idle row's opacity is deliberately **not** measured: it is the
-        // pre-existing reveal rule, and what it computes to depends on where the
-        // pointer and focus happen to be by this point in the run (an earlier
-        // step leaves focus inside a row, which lights :focus-within). What
-        // distinguishes the two rows is the band and the pointer, not the fade.
-        idleActionsPointer: cs(idleActs)?.pointerEvents ?? null,
-        actionsTransition: cs(curActs)?.transitionProperty ?? null,
+        currentActionsOpacity: cs(actBtn(curActs))?.opacity ?? null,
+        currentActionsPointer: cs(actBtn(curActs))?.pointerEvents ?? null,
+        // The idle row's opacity is deliberately **not** measured: what it
+        // computes to depends on where the pointer and focus happen to be by this
+        // point in the run. What distinguishes the two rows is the tappable
+        // state, not the fade.
+        idleActionsPointer: cs(actBtn(idleActs))?.pointerEvents ?? null,
+        actionsTransition: cs(actBtn(curActs))?.transitionProperty ?? null,
+        // On hover the row's two actions take the time's place: the time fades
+        // out, the buttons fade in, and nothing reflows.
+        currentTimeOpacity: cs(curTime)?.opacity ?? null,
+        idleTimeOpacity: cs(idleTime)?.opacity ?? null,
+        timeTransition: cs(idleTime)?.transitionProperty ?? null,
       },
     });
   })()`);
@@ -2540,67 +2517,45 @@ async function main() {
   if (!sk.rail || !sk.idle || !sk.current) {
     throw new Error(`the rail's cards are not all on screen: ${JSON.stringify(sk)}`);
   }
-  // Three rungs, and the idle card must not be the rail's own colour — that is
-  // the whole "session card" look, and it is exactly what was missing.
-  if (sk.idle === sk.rail) {
-    throw new Error(`an idle session card is painted the rail's own colour (${sk.idle}), so there are no cards`);
-  }
-  // Both rails are one shade and both card states are white, so idle and
-  // current are separated by the **edge and the lift**, not by the fill: the
-  // reference gives the active card a green edge and its green shadow, and the
-  // idle card neither. Asserting a fill difference here would be asserting the
-  // arrangement the rails no longer have.
-  const accented = (c) => typeof c === 'string' && /rgba?\(5,\s*150,\s*105/.test(c);
-  if (!accented(sk.currentBorder)) {
-    throw new Error(`the current session card has no accent edge: ${sk.currentBorder}`);
-  }
-  if (accented(sk.idleBorder)) {
-    throw new Error(`an idle session card wears the accent edge too: ${sk.idleBorder}`);
-  }
-  // The lift itself: only the current card floats. An idle card carrying a
-  // shadow is the inverse error — every row competing for the same emphasis.
-  if (sk.idleShadow !== 'none') {
-    throw new Error(`an idle session card carries a shadow (${sk.idleShadow})`);
-  }
-  if (!sk.currentShadow || sk.currentShadow === 'none') {
-    throw new Error('the current session card is not lifted');
-  }
-  // ---- the heavier edge has to reach all four sides ----
+  // ---- the rail's layer model ----
   //
-  // A `box-shadow` with a positive spread is painted **outside** the border box,
-  // and this card has a clipping ancestor sitting exactly on its own edges: the
-  // session fold's body (`.collapse > *`, `overflow: hidden`, global.css) is as
-  // wide as the rows and has no padding. So a ring drawn outside the border lost
-  // its top and both sides, and the topmost row's edge came out no heavier than
-  // an idle row's — while the check above, which only reads the computed value,
-  // passed either way. Measured off the reported screenshot: two device pixels of
-  // green across the top, four down the bottom.
-  //
-  // Both halves are asserted, and the second is the one that keeps this from
-  // regressing: the ring has to be `inset`, **and** the ancestor that would cut
-  // it has to still be there. If the fold ever stops clipping, the `inset` looks
-  // redundant and the next reader deletes it — and then the fold's own change
-  // takes an argument with it that this check no longer holds.
-  const ring = sk.ring ?? {};
-  if (!ring.layer) {
-    throw new Error(`no accent layer among the current card's shadows: ${sk.currentShadow}`);
+  // The redesign removed the cards: the rail is one plane, a session row is
+  // transparent at rest, and **the current row is a single pale green capsule**
+  // — no border, no ring, no shadow. That is a paint decision no text assertion
+  // can see, and it is the whole of the design's first fix. Asserted as facts
+  // about the computed surfaces, not as literal colours, so a retune of the
+  // palette does not fail a check about the layer model.
+  const TRANSPARENT = 'rgba(0, 0, 0, 0)';
+  if (sk.idle !== TRANSPARENT) {
+    throw new Error(`an idle session row is still a card (${sk.idle}); flat rows are the redesign`);
   }
-  if (!ring.inset) {
+  if (sk.row !== TRANSPARENT) {
+    throw new Error(`the workspace row is still a card (${sk.row}); flat rows are the redesign`);
+  }
+  // The current workspace keeps the same one-signal capsule as the current
+  // session: one selected state, stated once, in both lists.
+  if (sk.workspaceCurrent === TRANSPARENT || sk.workspaceCurrent === sk.rail) {
     throw new Error(
-      `the current card's second edge layer is drawn outside the border box (${ring.layer}) — ` +
-        'the session fold clips it, so three of its four sides never paint',
+      `the current workspace row has no capsule (${sk.workspaceCurrent}) against the rail's ${sk.rail}`,
     );
   }
-  if (!Array.isArray(ring.clippers) || ring.clippers.length === 0) {
+  if (sk.current === TRANSPARENT || sk.current === sk.rail) {
     throw new Error(
-      'no ancestor clips the session list, so the ring can be drawn outside the border box again: ' +
-        'this assertion is the one that holds the change (see `ring.inset` above)',
+      `the current session row has no capsule (${sk.current}) against the rail's ${sk.rail}`,
     );
   }
-  // The workspace row is a card too, on the same surface as the active one —
-  // it used to be an accent wash, i.e. the only green rectangle in the rail.
-  if (sk.row !== sk.current) {
-    throw new Error(`the workspace row is not on the card surface: ${sk.row} vs ${sk.current}`);
+  const currentChannels = String(sk.current).match(/rgba?\(([^)]+)\)/);
+  const rgb = currentChannels ? currentChannels[1].split(',').map((s) => Number(s.trim())) : null;
+  if (!rgb || !(rgb[1] > rgb[0] && rgb[1] > rgb[2])) {
+    throw new Error(`the current row's capsule is not a pale green (${sk.current})`);
+  }
+  // **One signal.** The capsule is the state; an edge, a ring or a shadow would
+  // be a second and third mark for the same fact — the exact conflict the design
+  // reports ("selected draws a green border AND a current capsule").
+  if (sk.idleShadow !== 'none' || sk.currentShadow !== 'none') {
+    throw new Error(
+      `a session row still floats (idle ${sk.idleShadow}, current ${sk.currentShadow})`,
+    );
   }
   // Both halos, each centred inside the element. A centre outside it means the
   // visible part is only the falloff, which reads as "no gradient" at these
@@ -2694,31 +2649,24 @@ async function main() {
     throw new Error(`the model-call head still draws a border under its wash (${stc.headBorderBottom})`);
   }
 
-  // ---- a hovered idle row takes the accent's wash ----
-  //
-  // The row's hover used to be a no-op with a hairline: it repainted
-  // `--bg-card`, which is what the card already *is* at rest, so the only thing
-  // the pointer changed was a grey 1px border. Nothing in this script could see
-  // that — a computed `background-color` reads the same white either way, and a
-  // row that answers a hover with one grey line renders perfectly.
+  // ---- a hovered idle row: the neutral wash, and the actions take the time's place ----
   //
   // `:hover` cannot be produced by a synthetic JS event, so the pointer is moved
-  // with a real CDP mouse event. Two things are asserted, and the second is what
-  // makes the first mean something:
+  // with a real CDP mouse event. Three things are asserted, and each has a
+  // failure the others cannot see:
   //
-  //   - the hovered idle card's fill is the accent wash and **not** the resting
-  //     card fill, so "it changed" cannot be satisfied by a repaint of the same
-  //     colour;
-  //   - the **current** row keeps its own picture under the pointer. It is
-  //     `disabled`, and a fill reading "you could open this" on the conversation
-  //     you are already in is a lie. This half also guards the `:not(:disabled)`
-  //     that makes it true.
+  //   - the hover **changes** the row from its resting transparency;
+  //   - the wash is the rail's neutral `--lb-hover`, **not** the accent. The
+  //     accent now means exactly one thing in this rail — the row you are in —
+  //     and a hover wearing it would make two rows look selected at once;
+  //   - the row's two actions take the time's place: the time fades, the buttons
+  //     fade in, and nothing reflows (the actions are absolutely positioned
+  //     against the wrapper, the row keeps its width).
   //
-  // The wash is compared against the token rather than against a hard-coded
-  // rgb: `--accent-subtle` is a different value in each theme, and this check
-  // runs with the light token set (the theme is switched to light above). The
-  // dark set was measured by hand rather than assumed, and reads
-  // `rgba(52, 211, 153, 0.14)` where light reads `rgba(5, 150, 105, 0.1)`.
+  // The wash is resolved from the token through a probe element rather than
+  // written as an rgb literal: `--lb-hover` is a different value in each theme,
+  // and this check runs with the light token set.
+  //
   // Node-side selectors, scoped to the **saved** list on purpose: the live
   // group's row (a conversation with no file yet) is `.lb-session.is-current`
   // too, so an unscoped selector would end up hovering the wrong element.
@@ -2731,23 +2679,35 @@ async function main() {
         const el = q(s);
         if (!el) return null;
         const c = getComputedStyle(el);
-        return { bg: c.backgroundColor, border: c.borderTopColor, w: Math.round(el.getBoundingClientRect().width) };
+        const time = el.querySelector('.lb-session-time');
+        const acts = el.closest('.lb-session-wrap')?.querySelector('.lb-session-actions');
+        const actBtn = acts?.querySelector('.lb-row-action') ?? null;
+        return {
+          bg: c.backgroundColor,
+          w: Math.round(el.getBoundingClientRect().width),
+          timeOpacity: time ? getComputedStyle(time).opacity : null,
+          actionsOpacity: actBtn ? getComputedStyle(actBtn).opacity : null,
+          actionsPointer: actBtn ? getComputedStyle(actBtn).pointerEvents : null,
+        };
       };
       const idle = q(${JSON.stringify(hoverIdleSel)});
       const cur = q(${JSON.stringify(selSavedCurrent)});
       if (!idle || !cur) return JSON.stringify({ missing: true });
-      const cs = getComputedStyle(document.documentElement);
       const centre = (el) => {
         const b = el.getBoundingClientRect();
         return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
       };
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:absolute;visibility:hidden;background:var(--lb-hover)';
+      document.body.appendChild(probe);
+      const hoverWash = getComputedStyle(probe).backgroundColor;
+      probe.remove();
       return JSON.stringify({
         idleRest: read(${JSON.stringify(hoverIdleSel)}),
         currentRest: read(${JSON.stringify(selSavedCurrent)}),
         idleAt: centre(idle),
         currentAt: centre(cur),
-        accentSubtle: cs.getPropertyValue('--accent-subtle').trim(),
-        bgCard: cs.getPropertyValue('--bg-card').trim(),
+        hoverWash,
       });
     })()`)) ?? {},
   );
@@ -2766,7 +2726,15 @@ async function main() {
           const el = document.querySelector(s);
           if (!el) return null;
           const c = getComputedStyle(el);
-          return { bg: c.backgroundColor, border: c.borderTopColor };
+          const time = el.querySelector('.lb-session-time');
+          const acts = el.closest('.lb-session-wrap')?.querySelector('.lb-session-actions');
+          const actBtn = acts?.querySelector('.lb-row-action') ?? null;
+          return {
+            bg: c.backgroundColor,
+            timeOpacity: time ? getComputedStyle(time).opacity : null,
+            actionsOpacity: actBtn ? getComputedStyle(actBtn).opacity : null,
+            actionsPointer: actBtn ? getComputedStyle(actBtn).pointerEvents : null,
+          };
         };
         return JSON.stringify({
           idle: read(${JSON.stringify(hoverIdleSel)}),
@@ -2787,43 +2755,78 @@ async function main() {
     const x = channels(a);
     const y = channels(b);
     if (!x || !y) return false;
-    // Alpha is compared too: an opaque white and a 10% wash are not the same
-    // colour even though two of their channels agree.
     if (x.length !== y.length) return false;
     return x.every((v, i) => Math.abs(Number(v) - Number(y[i])) < 0.6);
-  };
-  // Alpha of a colour, defaulting to 1 for the `rgb()` form.
-  const alphaOf = (c) => {
-    const ch = channels(c);
-    return ch && ch.length === 4 ? Number(ch[3]) : 1;
   };
 
   await dispatch('mouseMoved', 1400, 880);
   await sleep(250);
+  // Park the pointer **and** the keyboard: a focused row lights `:focus-within`,
+  // which reveals its actions, and the static probe earlier in the run cannot
+  // know where focus was left. This reading is the reliable one.
+  await evaluate(`(() => { document.activeElement?.blur?.(); return true; })()`);
+  await sleep(150);
   const rest = await readStyles();
   if (rest.idle?.bg !== hoverGeometry.idleRest?.bg) {
     throw new Error(
-      `parking the pointer changed the idle card (${hoverGeometry.idleRest?.bg} -> ${rest.idle?.bg}): the probe cannot tell a hover from a rest`,
+      `parking the pointer changed the idle row (${hoverGeometry.idleRest?.bg} -> ${rest.idle?.bg}): the probe cannot tell a hover from a rest`,
+    );
+  }
+  // At rest: the row is flat, the time is readable, the actions are invisible.
+  if (rest.idle?.bg !== 'rgba(0, 0, 0, 0)') {
+    throw new Error(`an idle row is painted at rest (${rest.idle?.bg}), so it still reads as a card`);
+  }
+  if (rest.idle?.timeOpacity !== '1') {
+    throw new Error(`an idle row's time is hidden at rest (opacity ${rest.idle?.timeOpacity})`);
+  }
+  if (rest.idle?.actionsOpacity !== '0') {
+    throw new Error(`an idle row's actions are visible at rest (opacity ${rest.idle?.actionsOpacity})`);
+  }
+  if (rest.current?.actionsOpacity !== '0') {
+    throw new Error(
+      `the current row's actions are visible at rest (opacity ${rest.current?.actionsOpacity})`,
+    );
+  }
+  if (rest.current?.timeOpacity !== '1') {
+    throw new Error(
+      `the current row's time is hidden at rest (opacity ${rest.current?.timeOpacity})`,
     );
   }
 
   await dispatch('mouseMoved', hoverGeometry.idleAt.x, hoverGeometry.idleAt.y);
   await sleep(300);
   const hovered = await readStyles();
-  if (hovered.idle?.bg === hoverGeometry.bgCard) {
+  if (sameColour(hovered.idle?.bg, rest.idle?.bg)) {
     throw new Error(
-      `hovering an idle row repaints the card fill it already has (${hovered.idle?.bg}): the hover is a no-op`,
+      `hovering an idle row changes nothing (${hovered.idle?.bg}): the hover is a no-op`,
     );
   }
-  if (!sameColour(hovered.idle?.bg, hoverGeometry.accentSubtle)) {
+  if (!sameColour(hovered.idle?.bg, hoverGeometry.hoverWash)) {
     throw new Error(
-      `a hovered session row is not filled with the accent wash: got ${hovered.idle?.bg}, expected --accent-subtle (${hoverGeometry.accentSubtle})`,
+      `a hovered session row is not filled with the neutral wash: got ${hovered.idle?.bg}, expected --lb-hover (${hoverGeometry.hoverWash})`,
     );
   }
-  // A wash over an opaque card must keep its alpha: an opaque fill would hide the
-  // card rather than tint it, and would read as a selected row.
-  if (!(alphaOf(hovered.idle?.bg) < 1)) {
-    throw new Error(`the hover wash is opaque (${hovered.idle?.bg}), so it covers the card instead of tinting it`);
+  // The accent is the current row's, not the pointer's. This is the design's
+  // fix 03 ("one signal") asserted as a colour.
+  if (/rgba?\(5,\s*150,\s*105/.test(String(hovered.idle?.bg))) {
+    throw new Error(`a hovered row wears the selected accent wash (${hovered.idle?.bg})`);
+  }
+  if (hovered.idle?.timeOpacity !== '0') {
+    throw new Error(
+      `the row's actions did not take the time's place (time opacity ${hovered.idle?.timeOpacity})`,
+    );
+  }
+  if (hovered.idle?.actionsOpacity !== '1') {
+    throw new Error(`a hovered row's actions did not appear (opacity ${hovered.idle?.actionsOpacity})`);
+  }
+  if (hovered.idle?.actionsPointer === 'none') {
+    throw new Error('a hovered row\'s actions are visible but cannot be clicked');
+  }
+  // No reflow: the row is the same width before and during the reveal.
+  if (hovered.idle?.w !== rest.idle?.w) {
+    throw new Error(
+      `revealing the actions moved the row (${rest.idle?.w}px -> ${hovered.idle?.w}px)`,
+    );
   }
 
   // The current row: the pointer must not hand it the "you could open this"
@@ -2842,40 +2845,24 @@ async function main() {
   await dispatch('mouseMoved', 1400, 880);
   await sleep(200);
 
-  // ---- the current row opens right and its actions retract ----
-  //
-  // The visible half of the motion. The card gives up the band its actions sit
-  // in and the buttons fade out of it, so the current conversation reads wider
-  // than the others. Asserted as "the current card reserves less than an idle
-  // one" rather than as exact pixels: the band is a sum of a padding and a
-  // button size, and pinning the number here would make a future resize of the
-  // rail's icon button fail a check about an animation.
+  // ---- the actions: hidden at rest, and the current row's must not be clickable while invisible ----
   const rt = sk.retraction ?? {};
-  const px = (v) => Number(String(v ?? '').replace('px', ''));
-  if (!(px(rt.currentPaddingRight) >= 0) || !(px(rt.idlePaddingRight) >= 0)) {
-    throw new Error(`could not read the rows' reserved bands: ${JSON.stringify(rt)}`);
-  }
-  if (!(px(rt.currentPaddingRight) < px(rt.idlePaddingRight))) {
-    throw new Error(
-      `the current session card does not open up when its actions retract: current reserves ${rt.currentPaddingRight}, idle reserves ${rt.idlePaddingRight}`,
-    );
-  }
-  if (rt.currentActionsOpacity !== '0') {
-    throw new Error(`the current row's actions are not retracted (opacity ${rt.currentActionsOpacity})`);
-  }
   if (rt.currentActionsPointer !== 'none') {
     throw new Error(
-      `the retracted actions still take the pointer (${rt.currentActionsPointer}), so they can be clicked while invisible`,
+      `the current row's invisible actions still take the pointer (${rt.currentActionsPointer})`,
     );
   }
-  // The idle row keeps its own actions interacting, which is what makes the
-  // retraction a property of the current row rather than of every row.
+  // The idle row keeps its own actions interacting, which makes the pointer
+  // rule a property of the current (disabled) row rather than of every row.
   if (rt.idleActionsPointer === 'none') {
-    throw new Error('an idle row\'s actions are not reachable, so the retraction leaked onto every row');
+    throw new Error('an idle row\'s actions are not reachable at all');
   }
-  // A motion needs a transition; without one the card would jump.
+  // A motion needs a transition; without one the buttons would jump.
   if (!String(rt.actionsTransition ?? '').includes('opacity')) {
-    throw new Error(`the retraction has no transition, so it jumps: ${rt.actionsTransition}`);
+    throw new Error(`the actions' reveal has no transition, so it jumps: ${rt.actionsTransition}`);
+  }
+  if (!String(rt.timeTransition ?? '').includes('opacity')) {
+    throw new Error(`the time's fade has no transition, so it jumps: ${rt.timeTransition}`);
   }
 
   // The **light** shot is the one worth keeping, and it is the one this check

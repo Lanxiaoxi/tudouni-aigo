@@ -147,6 +147,28 @@
      check or by the eye. */
   --bg-foot:       #15181E;
 
+  /* ---------- the left rail's own surfaces（会话侧栏重设计） ----------
+   * The left rail used to be the right rail's shade holding white row cards.
+   * The redesign makes the rail itself the surface and the rows flat, so the
+   * rail needs its own rung: `--lb-surface` is the one plane everything in the
+   * column sits on, `--lb-hover` is the pointer's neutral wash, and
+   * `--lb-selected` is the single selected-state signal (a pale capsule — no
+   * edge, no shadow, no second marker). The dark theme keeps the same three
+   * roles with the accent at low alpha for the capsule, because a solid pale
+   * fill is unreadable on a near-black rail. */
+  --lb-surface:    #1A1E25;
+  --lb-hover:      rgba(255, 255, 255, 0.055);
+  --lb-selected:   rgba(52, 211, 153, 0.16);
+  --lb-selected-line: rgba(52, 211, 153, 0.28);
+  --lb-tag:        #262C35;
+  --lb-line:       #2A3039;
+  --lb-float:      0 2px 6px rgba(0, 0, 0, 0.35), 0 14px 30px -14px rgba(0, 0, 0, 0.60);
+  --lb-float-hover: 0 4px 10px rgba(0, 0, 0, 0.40), 0 20px 40px -16px rgba(0, 0, 0, 0.70);
+  /* The workbench's identification tile: a dark chip in both themes, the same
+     object the application mark is drawn on. */
+  --lb-mark-bg:    #2C2820;
+  --lb-mark-fg:    #E9DFC8;
+
   --fg:            #F2F3F6;
   --fg-secondary:  #B9BFC9;
   --fg-muted:      #878E99;
@@ -263,6 +285,21 @@
      not ten — so the band lands between the canvas and the sidebar's grey rather
      than exactly one rung down. */
   --bg-foot:       #EFF1F5;
+
+  /* The left rail's own surfaces — see the dark theme for the three roles.
+     The values are sampled from the sidebar redesign: a near-white green-tinted
+     plane, a neutral-green hover, and the pale green capsule that is the only
+     selected signal in the rail. */
+  --lb-surface:    #FBFDFA;
+  --lb-hover:      #F0F4EE;
+  --lb-selected:   #DCF0E1;
+  --lb-selected-line: #C9E5D2;
+  --lb-tag:        #EAEFE7;
+  --lb-line:       #E7EDE5;
+  --lb-float:      0 2px 4px rgba(23, 26, 31, 0.04), 0 12px 26px -12px rgba(23, 26, 31, 0.16);
+  --lb-float-hover: 0 4px 10px rgba(23, 26, 31, 0.07), 0 18px 34px -14px rgba(23, 26, 31, 0.22);
+  --lb-mark-bg:    #241D17;
+  --lb-mark-fg:    #E9DFC8;
 
   --fg:            #1A1D21;
   --fg-secondary:  #5C626B;

@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Archive, ArchiveRestore, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, Plus, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -257,6 +257,13 @@ export function WorkspaceSidebar() {
   // remote list no longer has its own section, so its add button would have
   // had to live somewhere a person would not look.
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  /**
+   * The workbench's own filter. It is a **local** search, not the command
+   * palette: it narrows the seven rows the drawer already holds, which is the
+   * only thing a search field inside this drawer can honestly promise. The
+   * palette's `Ctrl K` keeps its own job and its own hint elsewhere.
+   */
+  const [navQuery, setNavQuery] = useState('');
   // Which saved remote workspace, if any, the active session belongs to —
   // the same "where am I" question `currentWorkspace` answers for the local
   // half, read from the session's own `remoteWorkspaceId` rather than
@@ -361,10 +368,120 @@ export function WorkspaceSidebar() {
     ? [currentWorkspace, ...workspaces]
     : workspaces;
 
+  /**
+   * The workbench's seven destinations, in two groups.
+   *
+   * The order is the drawer's reading order — the workspace's own surfaces
+   * first, then the process's settings — rather than the flat list the old foot
+   * drew. Grouping is what answers "where am I" inside a menu of destinations:
+   * seven equal rows with equal gaps read as seven unrelated buttons.
+   *
+   * The gates are unchanged from the row each one replaces (each is the same
+   * `openPanel`/`setBoardOpen` call; the disabled reasons are the same ones the
+   * old rows carried). What changed is only how they are arranged.
+   */
+  const navItems: {
+    key: string;
+    group: 'workspace' | 'settings';
+    label: string;
+    hint: string;
+    icon: ReactNode;
+    disabled: boolean;
+    active?: boolean;
+    run: () => void;
+  }[] = [
+    {
+      key: 'files',
+      group: 'workspace',
+      label: t('panel.files.title'),
+      hint: t('cmd.files.desc'),
+      icon: <FileText size={14} />,
+      disabled: blocked || !hasSession,
+      run: () => openPanel('files'),
+    },
+    {
+      key: 'terminal',
+      group: 'workspace',
+      label: t('panel.term.title'),
+      hint: t('cmd.terminal.desc'),
+      icon: <SquareTerminal size={14} />,
+      disabled: blocked || !hasSession,
+      run: () => openPanel('terminal'),
+    },
+    {
+      key: 'learn',
+      group: 'workspace',
+      label: t('lb.learn'),
+      hint: t('lb.learnHint'),
+      icon: <GraduationCap size={14} />,
+      disabled: blocked || !hasLiveChild,
+      run: () => openPanel('learn'),
+    },
+    {
+      key: 'board',
+      group: 'workspace',
+      label: t('board.title'),
+      hint: t('board.openHint'),
+      icon: <LayoutGrid size={14} />,
+      // The board's gate is the workspace's, not the session's — the same
+      // selector the session bar's second door reads (see `SessionBar`).
+      disabled: blocked || (!hasLiveChild && !boardOpen),
+      active: boardOpen,
+      run: () => setBoardOpen(!boardOpen),
+    },
+    {
+      key: 'tasks',
+      group: 'settings',
+      label: t('lb.task'),
+      hint: t('lb.taskHint'),
+      icon: <ListChecks size={14} />,
+      disabled: blocked,
+      run: () => openPanel('tasks'),
+    },
+    {
+      key: 'config',
+      group: 'settings',
+      label: t('lb.config'),
+      hint: t('lb.configHint'),
+      icon: <FileJson size={14} />,
+      // `blocked` alone, never `hasSession`: configuration is what a child
+      // reads at open, so the person who needs it most has no session yet.
+      disabled: blocked,
+      run: () => openPanel('config'),
+    },
+    {
+      key: 'settings',
+      group: 'settings',
+      label: t('lb.settings'),
+      hint: t('lb.settings'),
+      icon: <Settings size={14} />,
+      disabled: blocked,
+      run: () => openPanel('settings'),
+    },
+  ];
+  const navOrder = new Map(navItems.map((item, index) => [item.key, index]));
+  const navFilter = navQuery.trim().toLowerCase();
+  const navVisible =
+    navFilter === ''
+      ? navItems
+      : navItems.filter((item) => item.label.toLowerCase().includes(navFilter));
+  const navGroups = [
+    {
+      key: 'workspace' as const,
+      label: t('lb.workbench.groupWorkspace'),
+      items: navVisible.filter((item) => item.group === 'workspace'),
+    },
+    {
+      key: 'settings' as const,
+      label: t('lb.workbench.groupTasks'),
+      items: navVisible.filter((item) => item.group === 'settings'),
+    },
+  ].filter((group) => group.items.length > 0);
+
   return (
     <aside className="app-leftbar" aria-label={t('lb.workspaces')}>
       <div className="lb-head">
-        <Logo size={20} title={t('app.name')} />
+        <Logo size={28} title={t('app.name')} />
         <span className="lb-brand">{t('app.name')}</span>
       </div>
 
@@ -372,11 +489,11 @@ export function WorkspaceSidebar() {
         <Tip label={t('lb.newSessionHint')}>
           <button
             type="button"
-            className="btn btn-outline btn-block"
+            className="lb-new-btn"
             disabled={blockedByBoard}
             onClick={() => void openSession(null)}
           >
-            <Plus size={13} />
+            <Plus size={15} />
             {t('lb.newSession')}
           </button>
         </Tip>
@@ -710,17 +827,19 @@ export function WorkspaceSidebar() {
                                 `init` lands there is no id yet, and the honest
                                 label for that moment is the runtime's, not an
                                 invented one. */}
-                            <span className="lb-session-id">
+                            <span className="lb-session-preview">
                               {row.id !== '' ? row.id : t('lb.sessionPending')}
                             </span>
+                            <span className="lb-session-time">{t('lb.unsaved')}</span>
+                          </span>
+                          <span className="lb-session-meta">
+                            {t('lb.sessionOpen')}
                             {learningKeys.has(row.key) ? (
                               <span className="lb-session-learning" title={t('lb.sessionLearningHint')}>
                                 {t('lb.sessionLearning')}
                               </span>
                             ) : null}
-                            <span className="lb-session-time">{t('lb.unsaved')}</span>
                           </span>
-                          <span className="lb-session-meta">{t('lb.sessionOpen')}</span>
                         </button>
                       </div>
                     );
@@ -735,11 +854,24 @@ export function WorkspaceSidebar() {
                 // "no past session" is a statement about files and the screen
                 // already has a conversation on it.
                 liveOnly.length > 0 ? null : (
-                  <EmptyState
-                    compact
-                    title={t('lb.emptySessions.title')}
-                    hint={t('lb.emptySessions.hint')}
-                  />
+                  /* The design's empty state: a quiet panel that says what is
+                     missing and puts the way forward *inside* it. The old one
+                     was two lines of text and left "New session" at the top of
+                     the rail, away from the section it fills. */
+                  <div className="lb-empty-sessions">
+                    <MessageSquare size={18} className="lbes-icon" aria-hidden />
+                    <div className="lbes-title">{t('lb.emptySessions.title')}</div>
+                    <div className="lbes-hint">{t('lb.emptySessions.hint')}</div>
+                    <button
+                      type="button"
+                      className="lbes-action"
+                      disabled={blockedByBoard}
+                      onClick={() => void openSession(null)}
+                    >
+                      <Plus size={12} />
+                      {t('lb.newSession')}
+                    </button>
+                  </div>
                 )
               ) : (
                 <div className="lb-rows">
@@ -753,6 +885,13 @@ export function WorkspaceSidebar() {
                           className={`lb-session${isCurrent ? ' is-current' : ''}`}
                           disabled={blocked || isCurrent}
                           aria-current={isCurrent ? 'true' : undefined}
+                          // The runtime's own name for the conversation is still
+                          // here, on hover, because it is what a person types at
+                          // `/resume`. It used to be a third visible line; the
+                          // redesign spends that line on the reader instead, and
+                          // the id is exactly the sort of fact that is needed
+                          // once — when you go looking for it.
+                          title={item.id}
                           onClick={() => void openSession(item.id)}
                         >
                           <span className="lb-session-top">
@@ -764,21 +903,20 @@ export function WorkspaceSidebar() {
                                 session row carries no icon, unlike a workspace
                                 row. */}
                             <SessionDot status={statusBySessionId.get(item.id) ?? 'idle'} />
-                            {/* The first line is the **topic** — the runtime's preview
-                                of the first user message — because that is what a
-                                person recognizes a conversation by. The id is a
-                                timestamp (`YYYYMMDD-HHMMSS`), so a list led by ids is
-                                a column of twelve-digit numbers that all look alike;
-                                it moved to the row's last line instead. An empty
-                                preview means the session never spoke, and then this
-                                line is only the dot.
-
-                                The topic owns this whole line: the time used to ride
-                                its right edge, and that cost the preview a fixed ~40px
-                                on each of the two lines it is clamped to — the topic
-                                is the row's longest text and the only one that scales
-                                with the message it came from. */}
-                            <span className="lb-session-preview">{item.preview}</span>
+                            {/* Two lines, not three. The first is the **topic** —
+                                the runtime's preview of the first user message —
+                                and the time rides its right edge, because the two
+                                are the row's headline facts. A session that never
+                                spoke has no topic; it gets the design's fallback
+                                ("Untitled") rather than a blank first line. */}
+                            <span className="lb-session-preview">
+                              {item.preview.trim() !== '' ? item.preview : t('lb.untitled')}
+                            </span>
+                            <span className="lb-session-time">
+                              {item.modifiedAt === null
+                                ? t('common.unknown')
+                                : formatRelative(item.modifiedAt * 1000)}
+                            </span>
                           </span>
                           {/* Both computed by the runtime. `todos` is ready-made
                               progress text, and an empty string means there is no task
@@ -788,31 +926,16 @@ export function WorkspaceSidebar() {
                             {' · '}
                             {t('panel.resume.steps', { n: item.steps })}
                             {item.todos ? ` · ${item.todos}` : ''}
-                          </span>
-                          {/* The id, last and faintest. It is still the runtime's own
-                              name for this conversation and the thing a person types
-                              at `/resume`, so it stays on the row — just not in front
-                              of the topic. The time rides this line rather than the
-                              topic's: the two are the same kind of fact — the
-                              runtime's name for the conversation and when it was last
-                              touched — while the topic above is prose and is the only
-                              line here that wants every column it can get.
-
-                              `modified_at` is epoch **seconds**; null means the file
-                              could not be read, and then there is no time to show. */}
-                          <span className="lb-session-foot">
-                            <span className="lb-session-id">{item.id}</span>
                             {learningIds.has(item.id) ? (
                               <span className="lb-session-learning" title={t('lb.sessionLearningHint')}>
                                 {t('lb.sessionLearning')}
                               </span>
                             ) : null}
-                            <span className="lb-session-time">
-                              {item.modifiedAt === null
-                                ? t('common.unknown')
-                                : formatRelative(item.modifiedAt * 1000)}
-                            </span>
                           </span>
+                          {/* Visible to a screen reader, invisible on screen: the
+                              id is a footnote, not a title, but it is still the
+                              conversation's name and the thing `/resume` takes. */}
+                          <span className="lb-session-id sr-only">{item.id}</span>
                         </button>
                         {/* The two per-row actions, **stacked** in a column at
                             the wrap's right edge: archive on top, delete under
@@ -896,191 +1019,128 @@ export function WorkspaceSidebar() {
         </section>
       </div>
 
-      {/* The foot of the rail: the workbench — a way out of the transcript,
-          then the settings-shaped entries, in the order Files · Terminal ·
-          Learn · Tasks · Board · Config · Settings. They are here rather than in the
-          command palette because they sit next to the workspace list and hold
-          the same kind of decision — where the runtime works, what it may do
-          there, and what the process itself is.
-
-          The seven buttons fold on their own; the head at the very bottom is the
-          toggle. The fold sits **above** the pinned head, so it closes
-          bottom-up: the fold cell shrinks from its top edge toward the head,
-          and the buttons ride `justify-content: flex-end` in `.lb-foot-fold`,
-          which pushes the overflow above the clip — Files goes first, Settings
-          stays longest, and the toggle never moves. `.lb-foot-inner` needs that
-          wrapper between it and the fold (its own top padding cannot be
-          squeezed past), and the sweep keeps its direction; both are written
-          down where the CSS lives (stream.css). */}
+      {/* The workbench — the rail's drawer of destinations.
+          It is one card with a head that is also its handle: folded, the card
+          is the handle alone (mark, name, count, arrow); open, the body above
+          the handle carries a filter and the seven destinations in two groups.
+          The body is folded with `.collapse` rather than unmounted, because an
+          element that is not there has no height to animate — and the rows keep
+          their stagger, which is what makes opening read as a drawer coming up
+          rather than a block appearing. Placement and animation live in
+          stream.css (`.lb-workbench*`). */}
       <div className="lb-foot">
-        {/* Folded rather than conditionally rendered, like the list sections:
-            the buttons stay mounted, only the height changes, and `inert`
-            keeps Tab out of seven buttons nobody can see. */}
-        <div
-          className={`collapse${footCollapsed ? ' is-collapsed' : ''}`}
-          inert={footCollapsed}
-        >
-          <div className="lb-foot-fold">
-            <div className="lb-foot-inner">
-              {/* Files and Terminal. The design's left rail lists exactly these three
-                  (§20: Chat / Files / Terminal), and this build's "Chat" is the
-                  transcript that is already the main view — so these two rows are the
-                  two ways **out** of it. Both are disabled with no session: a terminal
-                  belongs to a workspace the runtime is in, so with no child there is
-                  no workspace to open one in, and a button that could only produce a
-                  refusal would be worse than one that is plainly unavailable. */}
-              <Tip label={t('cmd.files.desc')}>
-                <button
-                  type="button"
-                  className="lb-foot-btn"
-                  disabled={blocked || !hasSession}
-                  onClick={() => openPanel('files')}
-                >
-                  <FileText size={14} />
-                  <span>{t('panel.files.title')}</span>
-                </button>
-              </Tip>
-              <Tip label={t('cmd.terminal.desc')}>
-                <button
-                  type="button"
-                  className="lb-foot-btn"
-                  disabled={blocked || !hasSession}
-                  onClick={() => openPanel('terminal')}
-                >
-                  <SquareTerminal size={14} />
-                  <span>{t('panel.term.title')}</span>
-                </button>
-              </Tip>
-              {/* Workspace learning. It studies the workspace on screen, so its
-                  gate is the workspace rather than a ready session: the
-                  configuration is assembled from the saved-session list, which a
-                  child of this workspace answers for even before the session on
-                  screen has finished its handshake. `hasSession` (Files/Terminal's
-                  gate) would hide it during exactly that window. */}
-              <Tip label={t('lb.learnHint')}>
-                <button
-                  type="button"
-                  className="lb-foot-btn"
-                  disabled={blocked || !hasLiveChild}
-                  onClick={() => openPanel('learn')}
-                >
-                  <GraduationCap size={14} />
-                  <span>{t('lb.learn')}</span>
-                </button>
-              </Tip>
-              {/* Task templates. Like Config's gate — `blocked` alone, never
-                  `hasSession`: templates are the desktop's own data and the
-                  panel must open on a first launch, before any child exists,
-                  because that is exactly when a repeatable launcher is most
-                  useful. Running one opens a session the ordinary way, but
-                  editing one never needs a runtime. */}
-              <Tip label={t('lb.taskHint')}>
-                <button
-                  type="button"
-                  className="lb-foot-btn"
-                  disabled={blocked}
-                  onClick={() => openPanel('tasks')}
-                >
-                  <ListChecks size={14} />
-                  <span>{t('lb.task')}</span>
-                </button>
-              </Tip>
-              {/* The session board. It sits with the other two because it is the same
-                  kind of thing — a way *out* of the transcript — but its gate is
-                  deliberately **not** `hasSession`, which is what Files and Terminal
-                  use. Those two key off "the session on screen is ready"; the board is
-                  about the whole workspace, so it must open in exactly the case they
-                  cannot: when the session on screen was the one that failed to start
-                  and the others are running fine. What it needs instead is **some live
-                  child in this workspace** to answer for the list. */}
-              <Tip label={t('board.openHint')}>
-                <button
-                  type="button"
-                  className={`lb-foot-btn${boardOpen ? ' is-active' : ''}`}
-                  disabled={blocked || (!hasLiveChild && !boardOpen)}
-                  aria-pressed={boardOpen}
-                  onClick={() => setBoardOpen(!boardOpen)}
-                >
-                  <LayoutGrid size={14} />
-                  <span>{t('board.title')}</span>
-                </button>
-              </Tip>
-              {/* The configuration files, above Settings and deliberately **not**
-                  inside it. Settings holds this session's start-up arguments, and
-                  changing one restarts a child; this edits the files that are read
-                  *when* a child starts, and what it writes outlives every session.
+        <div className={`lb-workbench${footCollapsed ? ' is-collapsed' : ''}`}>
+          <div
+            className={`collapse${footCollapsed ? ' is-collapsed' : ''}`}
+            inert={footCollapsed}
+          >
+            {/* A padding-free grid item, like the old foot's `.lb-foot-fold`:
+                `.collapse > *` clips the content, but padding sits outside that
+                clip, so a padded body would keep the folded card a few pixels
+                taller than its own head. */}
+            <div className="lb-workbench-fold">
+              <div className="lb-workbench-body">
+              <div className="lb-workbench-search">
+                <Search size={13} className="lb-workbench-search-icon" aria-hidden />
+                <input
+                  className="lb-workbench-input"
+                  value={navQuery}
+                  onChange={(e) => setNavQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setNavQuery('');
+                  }}
+                  placeholder={t('lb.workbench.search')}
+                  aria-label={t('lb.workbench.search')}
+                  spellCheck={false}
+                />
+                {navQuery !== '' ? (
+                  <button
+                    type="button"
+                    className="lb-icon"
+                    aria-label={t('lb.workbench.clear')}
+                    onClick={() => setNavQuery('')}
+                  >
+                    <X size={12} />
+                  </button>
+                ) : (
+                  /* A legend, not a control: the shortcut is handled globally by
+                     `useGlobalKeys` and opens the command palette, which is the
+                     surface that can jump anywhere in the window. */
+                  <kbd className="lb-workbench-kbd">Ctrl K</kbd>
+                )}
+              </div>
 
-                  Its gate is `blocked` alone — **not** `hasSession`, which is what
-                  Files and Terminal require. That difference is the whole point of
-                  putting it here: configuration is what a child reads at open, so the
-                  person who needs this panel most is the one with no session at all,
-                  because no route is configured yet. Requiring a session would hide the
-                  key editor behind the very failure it exists to fix. */}
-              <Tip label={t('lb.configHint')}>
-                <button
-                  type="button"
-                  className="lb-foot-btn"
-                  disabled={blocked}
-                  onClick={() => openPanel('config')}
-                >
-                  <FileJson size={14} />
-                  <span>{t('lb.config')}</span>
-                </button>
-              </Tip>
-              <Tip label={t('lb.settings')}>
-                <button
-                  type="button"
-                  className="lb-foot-btn"
-                  disabled={blocked}
-                  onClick={() => openPanel('settings')}
-                >
-                  <Settings size={14} />
-                  <span>{t('lb.settings')}</span>
-                </button>
-              </Tip>
+              {navGroups.length === 0 ? (
+                <div className="lb-workbench-empty">{t('lb.workbench.none')}</div>
+              ) : (
+                navGroups.map((group) => (
+                  <div key={group.key} className="lb-workbench-group">
+                    <div className="lb-workbench-group-label">{group.label}</div>
+                    <div className="lb-workbench-items">
+                      {group.items.map((item) => (
+                        <Tip key={item.key} label={item.hint}>
+                          <button
+                            type="button"
+                            className={`lb-workbench-item${item.active ? ' is-active' : ''}`}
+                            // The stagger is the row's own index in the whole
+                            // drawer, not in its group: the two groups open as
+                            // one sweep. `--i` is read by the transition-delay
+                            // in stream.css.
+                            style={{ '--i': navOrder.get(item.key) ?? 0 } as CSSProperties}
+                            disabled={item.disabled}
+                            aria-pressed={item.active === undefined ? undefined : item.active}
+                            onClick={item.run}
+                          >
+                            <span className="lb-workbench-item-icon">{item.icon}</span>
+                            <span className="lb-workbench-item-label">{item.label}</span>
+                          </button>
+                        </Tip>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* The fold's head, pinned to the very bottom: the toggle. When the
-            foot is folded it is the **only** thing left of the seven buttons —
-            one icon row, the wrench standing in for the workbench, the count
-            saying how many rows are tucked away (the count is folded-state
-            only: with the rows on screen it would just say the same thing
-            seven times over). When the person hovers it folded, the seven icons
-            run a quick staggered pass just above the row
-            (`.lb-foot-tease`, CSS) and the wrench gives a quarter turn: a
-            hint that the row hides things, which a bare chevron would never
-            say. */}
-        <button
-          type="button"
-          className={`lb-foot-head${footCollapsed ? ' is-collapsed' : ''}`}
-          aria-expanded={!footCollapsed}
-          onClick={toggleFootCollapsed}
-        >
-          {footCollapsed ? (
-            <Wrench size={14} className="lb-foot-wrench" />
-          ) : (
-            <ChevronRight size={13} className="caret caret-open" />
-          )}
-          <span className="lb-foot-head-label">{t('lb.workbench')}</span>
-          {footCollapsed ? <Count value={7} /> : null}
-          {/* The tease strip: the seven foot icons, one size smaller, rising
-              into view above the row on hover. `aria-hidden` — it repeats
-              the buttons' own accessible names with nothing new to say. */}
-          <span className="lb-foot-tease" aria-hidden>
-            <FileText size={11} />
-            <SquareTerminal size={11} />
-            <GraduationCap size={11} />
-            <ListChecks size={11} />
-            <LayoutGrid size={11} />
-            <FileJson size={11} />
-            <Settings size={11} />
-          </span>
-          <span className="sr-only">
-            {footCollapsed ? t('lb.unfoldFoot') : t('lb.foldFoot')}
-          </span>
-        </button>
+          {/* The handle. Folded it wears the dark identification tile; open it
+              wears the pale green collapse square — the same two objects the
+              design draws, and the reason the open state needs no second
+              "close" control. The arrow rotates by class, not by swapping the
+              glyph, so the two frames are one motion. */}
+          <button
+            type="button"
+            className={`lb-workbench-head${footCollapsed ? ' is-collapsed' : ''}`}
+            aria-expanded={!footCollapsed}
+            onClick={() => {
+              // Closing clears the filter, so reopening shows the drawer rather
+              // than whatever was left typed in it.
+              if (!footCollapsed) setNavQuery('');
+              toggleFootCollapsed();
+            }}
+          >
+            {footCollapsed ? (
+              <span className="lb-workbench-mark" aria-hidden>
+                <Wrench size={15} />
+              </span>
+            ) : (
+              <span className="lb-workbench-collapse" aria-hidden>
+                <ChevronDown size={14} />
+              </span>
+            )}
+            <span className="lb-workbench-title">{t('lb.workbench')}</span>
+            <Count value={navItems.length} />
+            {footCollapsed ? (
+              <span className="lb-workbench-caret" aria-hidden>
+                <ChevronDown size={14} />
+              </span>
+            ) : null}
+            <span className="sr-only">
+              {footCollapsed ? t('lb.unfoldFoot') : t('lb.foldFoot')}
+            </span>
+          </button>
+        </div>
       </div>
     </aside>
   );
