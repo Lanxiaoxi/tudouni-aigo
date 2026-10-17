@@ -3274,6 +3274,14 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   background-color: var(--bg-muted);
 }
 
+/* 聚焦模式：面板里只有这一个文件，所以它拿整个面板。
+   上面那条 `max-height: 42vh` 是为"浏览器在上、查看器在下"的两段式准备的——
+   在只剩一段时它会把图压成一条，明明整个窗口都是空的。 */
+.dialog-files .files-view.is-focus {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
 /* A refusal of a file read, in the runtime's own words. Same treatment as the
    listing's refusal above it, so one panel does not have two ways of saying
    "this did not work". */

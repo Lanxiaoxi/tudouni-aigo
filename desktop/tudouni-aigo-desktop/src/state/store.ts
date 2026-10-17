@@ -1178,6 +1178,20 @@ export interface AppStore {
    */
   filePick: boolean;
   /**
+   * Whether the files panel is open **to show one file** rather than to browse.
+   *
+   * Set by a deliverable card, which is a direct request for one file: the person
+   * pressed a card that named it, so drawing the workspace's directory listing
+   * above it answers a question nobody asked and pushes the picture they wanted
+   * off the bottom of the panel. In this mode the browser is not drawn at all and
+   * the viewer takes the panel.
+   *
+   * Window-level like `filePick`, and cleared the same way, so browsing can never
+   * inherit it: an entry that shows one file and forgets to say so would be a
+   * panel that silently refuses to list anything.
+   */
+  fileFocus: boolean;
+  /**
    * Whether the minimize-or-close prompt is up.
    *
    * Window-level, like `panel`, and not per session: it is a question about the
@@ -1755,7 +1769,16 @@ export interface AppStore {
   /** Forget one attached file. Called when its chip is dismissed. */
   forgetAttachedFile(path: string): void;
 
-  openPanel(p: PanelKind | null): void;
+  /**
+   * Open one panel.
+   *
+   * `focus` is **asked for, never inherited**: it opens the files panel onto a
+   * single file instead of the browser, and only `previewImage` passes it. Every
+   * other caller gets the browser, including a second `openPanel('files')` —
+   * inheriting the flag made the directory listing silently unavailable for the
+   * rest of the window's life.
+   */
+  openPanel(p: PanelKind | null, focus?: boolean): void;
   /**
    * Open the files panel **as a picker**: picking a row attaches the file to
    * the draft instead of reading it. The plain `/files` command goes through
@@ -3231,6 +3254,7 @@ export const useApp = create<AppStore>((set, get) => {
     pendingModals: [],
     panel: null,
     filePick: false,
+    fileFocus: false,
     closePrompt: false,
     boardOpen: false,
     // The desktop's steady state: archived sessions are hidden, so archiving
@@ -4970,11 +4994,21 @@ export const useApp = create<AppStore>((set, get) => {
     /* ==========================================================
        Panels and preferences
        ========================================================== */
-    openPanel(p) {
+    openPanel(p, focus) {
       // A pick mode is never inherited: only `openFilePicker` turns it on, and
       // any other way into a panel is the plain browser's. ('files' keeps
       // whatever `openFilePicker` just set; everything else clears it.)
-      set({ panel: p, filePick: p === 'files' ? get().filePick : false });
+      //
+      // `fileFocus` is **asked for, never inherited**: only `previewImage` passes
+      // `focus`, so a second `openPanel('files')` — the palette, a re-open,
+      // anything — is a browser. Inheriting it made the directory listing
+      // silently unavailable for the rest of the window's life, which is a worse
+      // failure than the layout it fixes.
+      set({
+        panel: p,
+        filePick: p === 'files' ? get().filePick : false,
+        fileFocus: p === 'files' && focus === true,
+      });
       const key = get().activeKey;
       // **The library borrows the connection's filter.** Its Archived tab draws
       // rows the rail is not supposed to show, and the runtime's list is one
@@ -5017,7 +5051,7 @@ export const useApp = create<AppStore>((set, get) => {
 
     closePanel() {
       const wasLibrary = get().panel === 'resume';
-      set({ panel: null, filePick: false });
+      set({ panel: null, filePick: false, fileFocus: false });
       // Only when the library was the one open: every other panel leaves the
       // filter alone, and asking for a list nobody wants would be a message per
       // panel close.
@@ -5436,8 +5470,24 @@ export const useApp = create<AppStore>((set, get) => {
     },
 
     previewImage(path) {
+      // **Open the panel first, before any session check.**
+      //
+      // The bytes need a session (the workspace they are relative to is that
+      // child's), but *opening a window* does not — and returning early on a null
+      // key made the card do nothing at all in a window that had no live session,
+      // which is a dead button rather than a refusal. Nothing is read in that
+      // case; the viewer says so.
+      // `true` is the focus flag, so `openPanel` sets it in the same update that
+      // opens the panel — one place, not two that could disagree.
+      get().openPanel('files', true);
       const key = get().activeKey;
-      if (key === null) return;
+      if (key === null) {
+        // No child to ask, and `fileView` lives on a session bucket — so there is
+        // nowhere to record why. The panel draws its own "nothing to show" state
+        // in focus mode when the view is missing, which is the honest answer: the
+        // window has no workspace, so this path cannot be resolved.
+        return;
+      }
       const workspace = get().sessions[key]?.session?.workspace ?? get().sessions[key]?.workspace ?? '';
       // `image: null` is "a picture, being read" — distinct from the `undefined`
       // that means "this is not a picture at all", which is what keeps the panel

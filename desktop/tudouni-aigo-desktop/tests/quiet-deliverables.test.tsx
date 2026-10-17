@@ -25,6 +25,7 @@ import { renderToStaticMarkup } from 'react-dom/server.browser';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QuietGroup } from '@/components/stream/QuietGroup';
 import { isPicturePath } from '@/components/panels/panels';
+import { useApp } from '@/state/store';
 import type { Entry } from '@/state/entries';
 
 /**
@@ -152,5 +153,61 @@ test('a dotted directory does not make its files pictures', () => {
   // The first dot is in the directory, not the name. Deriving the extension from
   // the whole path would call this a `.png` directory entry.
   assert.equal(isPicturePath('v1.2/README'), false);
+});
+
+/* ---------------- focus mode: one file, not the browser ---------------- */
+
+/**
+ * The store is a module singleton, so these read and restore the two flags
+ * directly. `openPanel`/`closePanel` are the real transitions under test — a
+ * hand-set `fileFocus` would prove only that a boolean can be assigned.
+ */
+function withStore(): typeof useApp.getState {
+  return useApp.getState();
+}
+
+test('previewing a picture opens the panel in focus mode', () => {
+  const store = withStore();
+  store.closePanel();
+  // No session is active in this harness, so `previewImage` returns early after
+  // the flags — which is exactly the part under test.
+  store.previewImage('out/chart.png');
+  assert.equal(useApp.getState().panel, 'files');
+  assert.equal(
+    useApp.getState().fileFocus,
+    true,
+    'a card press asks for one file, so the browser must not be drawn above it',
+  );
+  store.closePanel();
+});
+
+test('browsing afterwards is a browser again, not a stale focus', () => {
+  const store = withStore();
+  store.previewImage('out/chart.png');
+  // Any other route into the panel has to clear it, or the directory listing is
+  // silently unavailable for the rest of the window's life.
+  store.openPanel('files');
+  assert.equal(useApp.getState().fileFocus, false, 'a plain open must browse');
+
+  store.previewImage('out/chart.png');
+  store.openPanel('model');
+  assert.equal(useApp.getState().fileFocus, false, 'leaving the panel must clear it too');
+  store.closePanel();
+});
+
+test('closing the panel clears focus', () => {
+  const store = withStore();
+  store.previewImage('out/chart.png');
+  store.closePanel();
+  assert.equal(useApp.getState().fileFocus, false);
+});
+
+test('the picker is still a browser, not a focus view', () => {
+  const store = withStore();
+  store.previewImage('out/chart.png');
+  store.openFilePicker();
+  assert.equal(useApp.getState().filePick, true);
+  assert.equal(useApp.getState().fileFocus, false, 'a picker has to list files to pick from');
+  store.closePanel();
 });
 

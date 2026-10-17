@@ -902,6 +902,9 @@ export const en = {
     'Showing the first {chars} characters. The whole body is stored as {id}.',
   'panel.files.failed': 'Could not read it',
   'panel.files.reading': 'reading…',
+  /** Focus mode with no view: the panel was opened for a file but no session is
+   *  live, so there is no workspace to resolve the path against. */
+  'panel.files.noSession': 'No session is running, so there is no workspace to read it from.',
   /* ---- workspace: terminals ---- */
   'panel.term.title': 'Terminals',
   'panel.term.empty': 'No terminal open in this workspace',

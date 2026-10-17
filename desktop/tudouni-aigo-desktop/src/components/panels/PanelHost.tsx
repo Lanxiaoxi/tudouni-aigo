@@ -58,7 +58,7 @@ export function PanelHost() {
         <DialogPrimitive.Content
           className={`dialog${panel === 'commands' ? ' cmdk' : ''}${
             panel === 'config' || panel === 'tasks' || panel === 'learn' ? ' dialog-wide' : ''
-          }`}
+          }${panel === 'files' ? ' dialog-files' : ''}`}
           aria-label={t('topbar.commands')}
         >
           {panel === 'commands' ? <CommandPalette /> : null}

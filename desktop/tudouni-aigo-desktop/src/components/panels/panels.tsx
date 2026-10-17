@@ -852,6 +852,7 @@ export function FilesPanel() {
   // file attaches it to the draft instead of reading it. Window-level, so the
   // same panel serves both entries without a second component.
   const pickMode = useApp((s) => s.filePick);
+  const focus = useApp((s) => s.fileFocus);
   const attachFilePath = useApp((s) => s.attachFilePath);
 
   function open(entry: FileEntry) {
@@ -897,24 +898,41 @@ export function FilesPanel() {
 
   return (
     <PanelShell
-      title={t('panel.files.title')}
-      count={entries.length}
-      note={pickMode ? t('panel.files.pick') : path === '' ? t('panel.files.root') : path}
+      title={focus ? (view === null ? t('panel.files.title') : baseNameOf(view.path)) : t('panel.files.title')}
+      count={focus ? undefined : entries.length}
+      note={
+        focus
+          ? view?.path ?? ''
+          : pickMode
+            ? t('panel.files.pick')
+            : path === ''
+              ? t('panel.files.root')
+              : path
+      }
     >
-      <PanelBody>
-        {path !== '' ? (
-          <button
-            type="button"
-            className="btn btn-ghost btn-compact"
-            style={{ margin: '0 var(--space-3) var(--space-2)' }}
-            onClick={() => listFiles(parent)}
-          >
-            <ArrowUp size={12} />
-            {t('panel.files.parent')}
-          </button>
-        ) : null}
+      {/* **In focus mode the browser is not drawn at all.**
+       *
+       * A deliverable card is a request for one file: the person pressed a card
+       * that named it. Drawing the workspace's directory listing above it answers
+       * a question nobody asked and pushes the picture they wanted off the bottom
+       * of the panel — which is what "点开卡片只有上半截是文件树" was. The listing is
+       * still one Escape away, and `openPanel` clears this flag on every other
+       * route in, so browsing is never secretly unavailable. */}
+      {focus ? null : (
+        <PanelBody>
+          {path !== '' ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact"
+              style={{ margin: '0 var(--space-3) var(--space-2)' }}
+              onClick={() => listFiles(parent)}
+            >
+              <ArrowUp size={12} />
+              {t('panel.files.parent')}
+            </button>
+          ) : null}
 
-        {/* **Three states, not two.** "Loading", "empty" and "the runtime
+          {/* **Three states, not two.** "Loading", "empty" and "the runtime
             refused" are three different statements, and the third had no
             representation at all: a refusal arrives as a `notice` rather than a
             `ui(files)`, so nothing cleared `loading` and the panel sat on
@@ -923,8 +941,8 @@ export function FilesPanel() {
 
             The refusal is the runtime's own wording, unaltered: it is the
             authority on why it will not read a path. */}
-        {loading ? (
-          <EmptyState title={t('panel.files.loading')} />
+          {loading ? (
+            <EmptyState title={t('panel.files.loading')} />
         ) : problem !== null ? (
           <EmptyState title={t('panel.files.failed')} hint={problem} />
         ) : entries.length === 0 ? (
@@ -952,7 +970,8 @@ export function FilesPanel() {
             </PanelRow>
           ))
         )}
-      </PanelBody>
+        </PanelBody>
+      )}
 
       {/* **The viewer, in the panel's own lower half.**
 
@@ -969,7 +988,7 @@ export function FilesPanel() {
           where a file read belongs in arrival order and where a person reads it
           once the panel is closed. */}
       {view !== null ? (
-        <div className="files-view">
+        <div className={`files-view${focus ? ' is-focus' : ''}`}>
           {view.problem !== null ? (
             <div className="files-view-problem" role="alert">
               {view.problem}
@@ -1004,9 +1023,26 @@ export function FilesPanel() {
             />
           )}
         </div>
+      ) : focus ? (
+        /* Focus mode with nothing to view: the panel was opened for a file and no
+           session could answer for it. Saying so beats an empty white panel, and
+           it is the only state in this mode that can be reached without a view. */
+        <EmptyState title={t('panel.files.failed')} hint={t('panel.files.noSession')} />
       ) : null}
     </PanelShell>
   );
+}
+
+/**
+ * The last segment of a path, for a panel head that names one file.
+ *
+ * Both separators, because a path in this window may be spelled either way: the
+ * runtime hands back forward slashes and the OS dialogs hand back backslashes.
+ */
+function baseNameOf(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, '');
+  const cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return cut < 0 ? trimmed : trimmed.slice(cut + 1);
 }
 
 /**

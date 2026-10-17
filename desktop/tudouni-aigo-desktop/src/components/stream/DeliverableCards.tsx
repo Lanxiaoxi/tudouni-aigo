@@ -193,17 +193,22 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
  */
 function previewFile(path: string) {
   const store = useApp.getState();
-  store.openPanel('files');
   // **A picture takes a different door.** `readFile` speaks the runtime's
   // `file_read`, which refuses anything that is not UTF-8 — so pressing a card
   // for a PNG used to open the panel onto "not UTF-8 text, so it cannot be shown
   // here". That is a true sentence about the wrong question: the runtime was
   // never able to draw it. `previewImage` reads the bytes through the desktop's
   // own command and hands the panel a `data:` URL instead.
+  //
+  // **The panel is opened by the callee, not here.** `openPanel` clears
+  // `fileFocus` for any route that is not the one setting it, so opening the
+  // panel first and setting the flag afterwards left the flag false and drew the
+  // directory listing anyway — the very thing focus mode exists to suppress.
   if (isPicturePath(path)) {
     store.previewImage(path);
     return;
   }
+  store.openPanel('files');
   store.readFile(path);
 }
 
