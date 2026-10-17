@@ -303,3 +303,36 @@ func TestPresentRefusesALinkOutOfTheWorkspace(t *testing.T) {
 		t.Fatal("a file reached through a link out of the workspace was declared")
 	}
 }
+
+// TestTheDescriptionSendsAPictureToMarkdownRatherThanToPresent.
+//
+// The description is what the model reads every turn, so it is a rule about
+// routing rather than a doc comment: a picture that is *evidence* belongs in the
+// answer as `![](path)`, and only a picture that is the *deliverable* also earns a
+// card. Without that sentence the tool's own shape argued the other way — it listed
+// pictures among its examples, so "take a screenshot and look at it" came back as a
+// declared deliverable and the person got a file card instead of the picture.
+//
+// Named fragments rather than the whole text: the prose around them should stay
+// editable, and what must not drift is that the display route is stated and that
+// the evidence case is excluded from `present`.
+func TestTheDescriptionSendsAPictureToMarkdownRatherThanToPresent(t *testing.T) {
+	description := NewPresent(nil).Description
+
+	// The display route, with the syntax the renderer actually reads.
+	if !strings.Contains(description, "![说明](路径)") {
+		t.Error("the description does not give the Markdown syntax, so the model is not told this route exists")
+	}
+	// The delivery route has to survive — this is a distinction, not a removal.
+	if !strings.Contains(description, "present") {
+		t.Error("the description no longer names its own tool")
+	}
+	// The evidence case has to be spelled out as a "do not". An omission would not
+	// outrank the fact that the tool is about delivering files.
+	if !strings.Contains(description, "只是想让人看到") {
+		t.Error("the description does not exclude the evidence case from present")
+	}
+	if !strings.Contains(description, "过程的证据") {
+		t.Error("the description does not name the reason a screenshot is not a deliverable")
+	}
+}

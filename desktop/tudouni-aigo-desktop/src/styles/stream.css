@@ -3258,6 +3258,22 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   padding: var(--space-1) 0;
 }
 
+/* 图片本身。面板的下半区是滚动容器，所以图按可用宽度缩放而不是按原始像素铺开，
+   否则一张 2756px 的截图会把面板顶成横向滚动。棋盘底用来区分透明 PNG 与面板。 */
+.files-view-image {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-2) 0;
+}
+
+.files-view-image img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-muted);
+}
+
 /* A refusal of a file read, in the runtime's own words. Same treatment as the
    listing's refusal above it, so one panel does not have two ways of saying
    "this did not work". */

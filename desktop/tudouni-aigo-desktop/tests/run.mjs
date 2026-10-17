@@ -161,6 +161,11 @@ const SUITES = [
   // `file:` URL is an absolute path on this machine), and that a refusal stays
   // visible as the path rather than going blank.
   'markdown-image.test.tsx',
+  // A declared deliverable under quiet mode. The card vanished there while the
+  // model's prose said "已经放到下面了", so the person was sent looking for a card
+  // the renderer had decided was detail. Both halves are pinned: that a card is
+  // drawn, and that it is drawn even when the rollup line is collapsed.
+  'quiet-deliverables.test.tsx',
   // Find in the conversation: where a match lands (a `Range` offset that is one
   // out puts the mark on the wrong word, and a match allowed to span a paragraph
   // break draws one mark across two paragraphs), case folding that keeps its

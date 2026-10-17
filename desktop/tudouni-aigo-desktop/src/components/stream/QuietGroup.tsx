@@ -4,6 +4,7 @@ import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, RiskTag } from '@/components/ui/kit';
 import { ToolBody } from './EntryView';
+import { DeliverableCards } from './DeliverableCards';
 import type { Entry } from '@/state/entries';
 import { formatDuration } from '@/utils/format';
 
@@ -101,6 +102,7 @@ function QuietLine({
   if (entry.kind !== 'tool') return null;
 
   const result = entry.result;
+  const declared = result?.deliverables ?? [];
   const tone =
     result?.status === 'ok' ? 'success' : result?.status === 'error' ? 'destructive' : 'neutral';
 
@@ -153,6 +155,15 @@ function QuietLine({
           <ToolBody entry={entry} />
         </div>
       ) : null}
+
+      {/* A declaration is **the turn's result**, not detail about the call that
+          made it — so it survives quiet mode, and survives it *folded*. Before
+          this, a `present` under quiet mode drew a one-line summary and nothing
+          else: the files existed only in the model's prose, which is the one
+          place a card exists to replace. Rendered outside the expanded branch
+          on purpose: the cards are not a detail of the row, so collapsing the
+          row must not take them away. */}
+      {declared.length > 0 ? <DeliverableCards files={declared} /> : null}
     </>
   );
 }

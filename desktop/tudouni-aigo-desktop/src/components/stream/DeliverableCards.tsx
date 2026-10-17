@@ -14,6 +14,7 @@ import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { baseName } from '@/utils/format';
 import { openDeliverable, isHosted } from '@/runtime/tauri';
+import { isPicturePath } from '@/components/panels/panels';
 import type { Deliverable } from '@/state/entries';
 
 /**
@@ -193,6 +194,16 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
 function previewFile(path: string) {
   const store = useApp.getState();
   store.openPanel('files');
+  // **A picture takes a different door.** `readFile` speaks the runtime's
+  // `file_read`, which refuses anything that is not UTF-8 — so pressing a card
+  // for a PNG used to open the panel onto "not UTF-8 text, so it cannot be shown
+  // here". That is a true sentence about the wrong question: the runtime was
+  // never able to draw it. `previewImage` reads the bytes through the desktop's
+  // own command and hands the panel a `data:` URL instead.
+  if (isPicturePath(path)) {
+    store.previewImage(path);
+    return;
+  }
   store.readFile(path);
 }
 

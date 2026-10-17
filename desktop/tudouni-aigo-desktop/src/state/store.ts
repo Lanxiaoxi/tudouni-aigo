@@ -153,6 +153,7 @@ import {
   readRuntimeStderr,
   shutdownRuntime,
   stashImage,
+  inlineImage,
   writeRemoteConfig,
   type BridgeOptions,
   type InstallStage,
@@ -312,6 +313,19 @@ export interface FileView {
   answer: UiFileReadMsg | null;
   /** Why it failed, verbatim from the runtime. `null` when it did not. */
   problem: string | null;
+  /**
+   * A `data:` URL, when the file is a picture rather than text.
+   *
+   * **A second channel beside `answer`, not a variant of it.** `file_read` is the
+   * runtime's text protocol and it refuses anything that is not UTF-8 — a PNG sent
+   * down it comes back as "not UTF-8 text, so it cannot be shown here", which is a
+   * true sentence about a question that should never have been asked. Pictures
+   * come from the desktop's own `inline_image` command instead (the same one
+   * `MarkdownImage` uses), so the runtime is not asked to decode what it never
+   * offered to.
+   *
+   * `undefined` is "not a picture"; `null` is "a picture, still being read". */
+  image?: string | null;
 }
 
 /**
@@ -1886,6 +1900,14 @@ export interface AppStore {
   /** Read one file. The reply's head goes in the viewer and its `artifact_id`
    *  names the body on disk; the whole file is never sent. */
   readFile(path: string): void;
+  /**
+   * Show one **picture** in the viewer.
+   *
+   * Separate from {@link readFile} because the two cannot share a path: that one
+   * speaks `file_read`, which refuses anything that is not UTF-8. A picture is
+   * read by the desktop's own command and arrives as a `data:` URL.
+   */
+  previewImage(path: string): void;
 
   /* ---------------- the workspace: terminals ---------------- */
 
@@ -5411,6 +5433,40 @@ export const useApp = create<AppStore>((set, get) => {
       // own; this is the panel's copy of the same fact, not a second one.
       patch(key, { fileView: { path, answer: null, problem: null } });
       sendTo(key, { v: 1, t: 'file_read', path });
+    },
+
+    previewImage(path) {
+      const key = get().activeKey;
+      if (key === null) return;
+      const workspace = get().sessions[key]?.session?.workspace ?? get().sessions[key]?.workspace ?? '';
+      // `image: null` is "a picture, being read" — distinct from the `undefined`
+      // that means "this is not a picture at all", which is what keeps the panel
+      // from drawing an empty picture frame for a text file.
+      patch(key, { fileView: { path, answer: null, problem: null, image: null } });
+
+      // The command answers with a refusal written for a person when the file is
+      // gone, outside the workspace, or not an image it can draw — so the failure
+      // is shown where the picture would have been, not only in the transcript.
+      void inlineImage(workspace, path).then(
+        (image) => {
+          // Re-check: the person may have closed the panel, or opened another
+          // file, while the bytes were being read. Writing the answer into a view
+          // that has moved on would draw one file's picture under another's name.
+          const current = get().sessions[key]?.fileView;
+          if (!current || current.path !== path) return;
+          patch(key, { fileView: { ...current, image: image.url } });
+        },
+        (error: unknown) => {
+          const current = get().sessions[key]?.fileView;
+          if (!current || current.path !== path) return;
+          patch(key, {
+            fileView: {
+              ...current,
+              problem: error instanceof Error && error.message !== '' ? error.message : null,
+            },
+          });
+        },
+      );
     },
 
     /* ==========================================================

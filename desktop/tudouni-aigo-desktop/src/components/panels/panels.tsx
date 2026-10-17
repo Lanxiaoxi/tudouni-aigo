@@ -847,6 +847,7 @@ export function FilesPanel() {
   const view = useSessionField((rt) => rt.fileView, null);
   const listFiles = useApp((s) => s.listFiles);
   const readFile = useApp((s) => s.readFile);
+  const previewImage = useApp((s) => s.previewImage);
   // **Picker mode.** Opened from the plus menu rather than `/files`: picking a
   // file attaches it to the draft instead of reading it. Window-level, so the
   // same panel serves both entries without a second component.
@@ -869,6 +870,13 @@ export function FilesPanel() {
       const draft = useApp.getState().sessions[useApp.getState().activeKey ?? '']?.draft ?? '';
       attachFilePath(entry.path, draft.length);
       closePanel();
+      return;
+    }
+    // The same split the deliverable card makes, for the same reason: a picture
+    // sent down `file_read` comes back as "not UTF-8 text", which is true and
+    // useless. Browsing to a PNG has to draw it.
+    if (isPicturePath(entry.path)) {
+      previewImage(entry.path);
       return;
     }
     readFile(entry.path);
@@ -966,6 +974,21 @@ export function FilesPanel() {
             <div className="files-view-problem" role="alert">
               {view.problem}
             </div>
+          ) : view.image !== undefined ? (
+            /* A picture, drawn rather than read. `image === null` is still in
+               flight; a string is the `data:` URL the desktop's command
+               returned. This branch has to come before the `answer === null`
+               check below: a picture never has an `answer`, so the text arm
+               would sit on "reading…" forever. */
+            view.image === null ? (
+              <div className="files-view-head caption faint">
+                <span className="mono">{view.path}</span> · {t('panel.files.reading')}
+              </div>
+            ) : (
+              <div className="files-view-image">
+                <img src={view.image} alt={view.path} decoding="async" />
+              </div>
+            )
           ) : view.answer === null ? (
             <div className="files-view-head caption faint">
               <span className="mono">{view.path}</span> · {t('panel.files.reading')}
@@ -987,6 +1010,25 @@ export function FilesPanel() {
 }
 
 /**
+ * Whether the viewer should draw this file rather than read it as text.
+ *
+ * **Exported and imported by `DeliverableCards`**, so the card and the browser
+ * cannot disagree about what counts as a picture: a file the card refuses to draw
+ * but the panel does is a card that opens onto an error. A name check, not a byte
+ * sniff — the panel has not read anything yet, and reading a file to decide how to
+ * read it defeats the point. The command re-checks the real bytes and refuses with
+ * a sentence when the name and the contents disagree.
+ */
+export function isPicturePath(path: string): boolean {
+  const name = path.slice(path.replace(/\\/g, '/').lastIndexOf('/') + 1);
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot === name.length - 1) return false;
+  return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico'].includes(
+    name.slice(dot + 1).toLowerCase(),
+  );
+}
+
+/**
  * The directory one level up, in the runtime's own vocabulary.
  *
  * The empty string is the workspace root **and** its own parent, so walking up
@@ -995,8 +1037,7 @@ export function FilesPanel() {
  * generated one would be inviting a refusal notice for a button that should
  * simply stop.
  */
-export function parentPath(path: string): string {
-  const trimmed = path.replace(/\/+$/, '');
+export function parentPath(path: string): string {  const trimmed = path.replace(/\/+$/, '');
   if (trimmed === '') return '';
   const at = trimmed.lastIndexOf('/');
   return at < 0 ? '' : trimmed.slice(0, at);
