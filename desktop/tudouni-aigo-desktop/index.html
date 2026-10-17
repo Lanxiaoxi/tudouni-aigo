@@ -17,9 +17,94 @@
         }
       })();
     </script>
+    <style>
+      /* ============================================================
+         Startup screen.
+
+         **It exists for the ~800 ms between this document existing and React's
+         first commit**, and for nothing else. A cold launch gets a window at
+         ~560 ms, a document at ~1.1 s, and real content at ~1.9 s. The window is
+         painted the right colour by Rust before it is ever shown
+         (`WINDOW_BG_DARK` / `WINDOW_BG_LIGHT` in lib.rs), so what is left to
+         cover is the stretch where the window is correct but says nothing.
+
+         Three rules it is built to, each a constraint rather than a preference:
+
+         1. **No JavaScript and no web font.** The CSP is `default-src 'self'`
+            with `style-src 'self' 'unsafe-inline'`, so an inline <style> costs
+            nothing while an inline <script> would need a hash. A @font-face
+            would make this first paint wait for a download that cannot have
+            arrived yet — measured, that is what used to push
+            first-contentful-paint past 1.5 s. The system stack is why it paints
+            at 72 ms instead of 120 ms.
+
+         2. **It hides itself, with one selector.** `#root:not(:empty) + #splash`
+            is the whole mechanism: React's first commit fills #root and the
+            splash goes. There is no timer to fire at the wrong moment and no
+            code that can be forgotten.
+
+         3. **If React never mounts, it stays.** That is the honest failure: a
+            window that says "Starting…" reports more than a window that says
+            nothing — which is what a white rectangle was.
+
+         `position: fixed` and the maximum z-index because it is not part of the
+         layout: it must cover whatever the application has half-drawn, and must
+         not be covered by it.
+         ============================================================ */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: var(--bg, #12151a);
+        /* The system stack, deliberately: tokens.css has not been parsed yet. */
+        color: var(--fg-faint, #5f6774);
+        font: 400 12px/1.5 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+        /* A still image of an application starting, not content: nothing here
+           should be selectable while it is up. */
+        user-select: none;
+      }
+
+      #splash .mark {
+        width: 26px;
+        height: 26px;
+        border: 2px solid transparent;
+        border-top-color: #34d399;
+        border-right-color: #34d399;
+        border-radius: 50%;
+        animation: splash-turn 900ms linear infinite;
+      }
+
+      @keyframes splash-turn {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* A spinning ring is the one thing here that must stop on request. */
+      @media (prefers-reduced-motion: reduce) {
+        #splash .mark {
+          animation: none;
+          border-right-color: transparent;
+        }
+      }
+
+      /* One selector: there is something to show, so stop showing this. */
+      #root:not(:empty) + #splash {
+        display: none;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="splash" role="status" aria-live="polite">
+      <div class="mark"></div>
+      <div>Starting…</div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

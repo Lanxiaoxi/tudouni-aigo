@@ -75,6 +75,24 @@ sha2 = "=0.10.9"
 # process that showed the toast. Everywhere else delivery stays with the plugin.
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.8"
+# Reading one DWORD out of `HKCU\...\Themes\Personalize`. This is how the
+# window's background colour is chosen *before* the window is shown, so the
+# first frame the person sees is already the right colour rather than white.
+#
+# A direct dependency rather than a transitive one, because `windows-sys` is
+# re-exported by nobody and a transitive version is free to change. The version
+# is the one already in the tree (`winreg` pulls the same), so this compiles an
+# existing crate and adds nothing to the build.
+#
+# Reading the registry rather than asking the window is deliberate: the window's
+# theme accessor blocks on a message to the event loop, and this runs inside
+# `setup`, which runs *before* the event loop starts — asking it there would
+# deadlock the launch it is trying to improve. `tao` reads the same two keys
+# (`dark_mode.rs`), so doing it directly agrees with what the window will think.
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Registry",
+] }
 
 # The OS's own view of what this application is using: the front end polls
 # `resource_usage` on a slow tick and draws one chip in the status bar. The
