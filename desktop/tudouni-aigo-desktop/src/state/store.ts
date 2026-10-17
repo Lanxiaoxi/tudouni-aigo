@@ -156,6 +156,7 @@ import {
   type InstallStage,
   type RemoteConfigStatus,
 } from '@/runtime/tauri';
+import { decideConfigSync, type ConfigSyncChoice } from '@/state/configSync';
 
 /* ============================================================
    Constants that belong to the presentation layer
@@ -382,6 +383,17 @@ export interface SshHostConfig {
    * treats as an unconditional conflict rather than a reason to guess.
    */
   configBaselineFingerprint?: string;
+  /**
+   * What the **local** file's fingerprint was at that same moment.
+   *
+   * The remote baseline above is not enough to describe a decision: answering
+   * "use remote" leaves the local file different from it on purpose, and a
+   * comparison against the single baseline then reports a local change on every
+   * later open — the same question, from an answer already given. `undefined`
+   * means the host was saved before this field existed, and the comparison falls
+   * back to the single baseline (`state/configSync.ts`).
+   */
+  configBaselineLocalFingerprint?: string;
 }
 
 /**
@@ -480,9 +492,20 @@ export interface InstallStatus {
 export interface ConfigSyncPrompt {
   hostId: string;
   conflict: 'none' | 'remote_changed' | 'local_changed' | 'both_changed';
+  /**
+   * `true` when the host has no baseline at all, which `conflict` reports as
+   * `both_changed` — the two read very differently on screen ("this host has
+   * never been synced" vs. "both files changed since the last sync"), and only
+   * the store knows which one it is, because only the store has the baseline.
+   */
+  firstSync: boolean;
   remoteStatus: RemoteConfigStatus;
   /** `null` when there is no local config.json yet. */
   localText: string | null;
+  /** The local file's fingerprint at the moment of the check — what the answer
+   *  records as the local side's last-seen value. `null` when there is no local
+   *  file (and then it is recorded as "none", never as an empty fingerprint). */
+  localFingerprint: string | null;
   /** `null` when the remote status is `'missing'`. */
   remoteFingerprint: string | null;
 }
@@ -1324,6 +1347,29 @@ export interface AppStore {
    */
   configSyncPrompt: ConfigSyncPrompt | null;
   /**
+   * The answer currently being carried out, or `null` when none is.
+   *
+   * **Answering is not instant, and the prompt used to look frozen while it
+   * happened.** Every resolution opens a *fresh* SSH connection and speaks SFTP
+   * over it — `check_remote_config`/`write_remote_config` in `remote_config.rs`
+   * each dial from scratch — so "use local (overwrite remote)" is a one-to-two
+   * second wait on a real network. With no state to draw, the dialog sat there
+   * unchanged and the second press started a second upload against the same
+   * file. This is what the prompt reads to disable its buttons, name what it is
+   * waiting for, and refuse to be dismissed mid-write.
+   */
+  configSyncBusy: ConfigSyncChoice | null;
+  /**
+   * Why the last answer to `configSyncPrompt` failed, or `null`.
+   *
+   * The upload is the slow, failure-prone half of this dialog — a dropped
+   * connection, a read-only home, a full disk — and a refusal that only went to
+   * the console was indistinguishable from "the dialog vanished and nothing
+   * happened". The prompt therefore stays up with this sentence when an answer
+   * fails, so the same buttons can be pressed again.
+   */
+  configSyncError: string | null;
+  /**
    * The remote workspace a config-sync answer is currently blocking, or `null`
    * when none is.
    *
@@ -1993,9 +2039,17 @@ export interface AppStore {
    * and, depending on the host's `configPolicy`, either resolves it
    * automatically (`'sync-local'` uploads the local file; `'use-remote'`
    * only ever records the remote's own fingerprint as the baseline and
-   * never uploads) or — for `'ask'`, when both sides have actually
-   * changed since the last synced baseline — sets `configSyncPrompt` for
-   * the UI to draw a choice from.
+   * never uploads) or sets `configSyncPrompt` for the UI to draw a choice
+   * from.
+   *
+   * **The rules for whether `'ask'` asks at all live in `state/configSync.ts`,
+   * not here.** They are the half of this that cannot be seen in a rendered
+   * dialog, and the first version asked on comparisons that were not decisions:
+   * a host with no local file re-flagged itself on every single open, and a host
+   * whose answer was "use remote" was asked again on every later open because
+   * the kept local file can never match the synced baseline. Both are asserted
+   * in `tests/config-sync.test.ts`; this method does the I/O and applies the
+   * answer.
    *
    * Call before `enterRemoteWorkspace`/`installRemoteWorkspace` for a
    * host whose config might matter to what runs there; this method does
@@ -2007,10 +2061,31 @@ export interface AppStore {
    * Answers an `ask` prompt (`configSyncPrompt`): `'use-local'` uploads the
    * local file (backing up the remote one first, server-side);
    * `'use-remote'` only records the remote's fingerprint as the new
-   * baseline. Clears `configSyncPrompt` either way.
+   * baseline. Clears `configSyncPrompt` on success.
+   *
+   * Either answer records **both** sides' last-seen fingerprints — the remote's
+   * and the local's — which is what makes the decision stay decided: "use remote"
+   * leaves the local file different on purpose, and a single baseline would read
+   * that as a local change on every later open.
+   *
+   * A failed write keeps the prompt up with `configSyncError` and the open still
+   * parked, so the same button retries it. The rejection is re-raised for
+   * programmatic callers (the dialog consumes it — the sentence is on screen).
+   *
+   * `remember` writes the answer into the host's `configPolicy` — `'sync-local'`
+   * for "use local", `'use-remote'` for "use remote" — so the same host is not
+   * asked again. That is the whole point of the policy field existing: §9.4
+   * gives each host one of three policies, and until this option there was no
+   * way for a person to leave `'ask'` at all, however many times they gave the
+   * same answer. An in-flight answer is refused here rather than doubled:
+   * `configSyncBusy` is set for the duration (`configSyncBusy`'s own doc says
+   * why answering takes a second or two).
    */
-  resolveConfigSync(choice: 'use-local' | 'use-remote'): Promise<void>;
-  /** Dismisses `configSyncPrompt` without changing either file. */
+  resolveConfigSync(choice: ConfigSyncChoice, options?: { remember?: boolean }): Promise<void>;
+  /**
+   * Dismisses `configSyncPrompt` without changing either file. A no-op while an
+   * answer is being written — see `configSyncBusy`.
+   */
   dismissConfigSync(): void;
   /** Look up a tool's facts for the active session's stream rows. */
   toolFacts(name: string): ToolFacts | null;
@@ -3129,6 +3204,8 @@ export const useApp = create<AppStore>((set, get) => {
     remoteWorkspaces: prefs.remoteWorkspaces,
     installStatus: {},
     configSyncPrompt: null,
+    configSyncBusy: null,
+    configSyncError: null,
     pendingRemoteOpen: null,
     openingRemote: null,
     lastWorkspace: prefs.lastWorkspace,
@@ -5929,69 +6006,74 @@ export const useApp = create<AppStore>((set, get) => {
       const [remote, local] = await Promise.all([checkRemoteConfig(target), readLocalConfigText()]);
 
       const baseline = host.configBaselineFingerprint ?? '';
-      const localFingerprint = local?.fingerprint ?? '';
-      const remoteFingerprint = remote.fingerprint;
-      // Mirrors bootstrap.DetectConflict exactly (§9.5): no baseline is
-      // always a conflict, never a silent "take whichever side exists."
-      const conflict: ConfigSyncPrompt['conflict'] =
-        baseline === ''
-          ? 'both_changed'
-          : localFingerprint === baseline && remoteFingerprint === baseline
-            ? 'none'
-            : remoteFingerprint !== baseline && localFingerprint !== baseline
-              ? 'both_changed'
-              : remoteFingerprint !== baseline
-                ? 'remote_changed'
-                : 'local_changed';
+      const localFingerprint = local?.fingerprint ?? null;
+      // Mirrors bootstrap.DetectConflict and §9.5's four outcomes, plus the
+      // "this is not a question" rules — all in `state/configSync.ts`, so they
+      // are assertable without a window. Note `null` for a missing local file:
+      // substituting `''` is what made a host with no local config.json flag
+      // itself on every open, forever. And two baselines, because a decision is
+      // about each side moving away from what was last *seen*, not from the one
+      // value the last sync happened to leave behind.
+      const decision = decideConfigSync({
+        baseline,
+        localBaseline: host.configBaselineLocalFingerprint ?? '',
+        localFingerprint,
+        remoteFingerprint: remote.fingerprint,
+        remoteStatus: remote.status,
+        policy: host.configPolicy ?? 'ask',
+      });
 
-      const policy = host.configPolicy ?? 'ask';
+      if (decision.kind === 'nothing') return;
 
-      // No real conflict (or the remote has not changed since the last
-      // sync at all): nothing to decide, and nothing to do either — the
-      // baseline already describes what is there.
-      if (conflict === 'none') return;
-
-      if (policy === 'use-remote') {
-        // A one-way lock (§9.4): the remote file is trusted, and a local
-        // change is never pushed up without an explicit later action. Only
-        // the baseline moves, so the next check compares against today's
-        // remote content rather than re-flagging the same "conflict" on
-        // every connection.
-        get().updateSshHost(hostId, { configBaselineFingerprint: remoteFingerprint });
+      if (decision.kind === 'adopt-remote') {
+        // The remote was not written, so the local file is exactly where it was:
+        // recording it as seen is what keeps this same pair from being reported
+        // as a change on the next open.
+        get().updateSshHost(hostId, {
+          configBaselineFingerprint: decision.fingerprint,
+          configBaselineLocalFingerprint: localFingerprint ?? '',
+        });
         return;
       }
 
-      if (policy === 'sync-local') {
+      if (decision.kind === 'upload-local') {
+        // `upload-local` is only ever decided with a local file in hand (see
+        // `decideConfigSync`), but the null check is what type-narrows it.
         if (local === null) return;
         const newFingerprint = await writeRemoteConfig(target, local.text);
-        get().updateSshHost(hostId, { configBaselineFingerprint: newFingerprint });
+        // Both sides are now the uploaded bytes, so both baselines are it.
+        get().updateSshHost(hostId, {
+          configBaselineFingerprint: newFingerprint,
+          configBaselineLocalFingerprint: newFingerprint,
+        });
         return;
       }
 
-      // 'ask': only genuinely new information is worth interrupting for.
-      // A remote config that was never synced but is still just an empty
-      // template, for instance, is not a decision — it is the first screen
-      // a fresh account always starts from (§9.3's "a confirmed empty
-      // template may be initialised by the default policy without asking").
-      if (remote.status === 'empty_template' && local === null) {
-        get().updateSshHost(hostId, { configBaselineFingerprint: remoteFingerprint });
-        return;
-      }
-
+      // Only genuinely new information is worth interrupting for — what reached
+      // this point has already been filtered by `decideConfigSync`.
       set({
         configSyncPrompt: {
           hostId,
-          conflict,
+          conflict: decision.conflict,
+          firstSync: baseline === '',
           remoteStatus: remote.status,
           localText: local?.text ?? null,
-          remoteFingerprint: remote.status === 'missing' ? null : remoteFingerprint,
+          localFingerprint,
+          remoteFingerprint: remote.status === 'missing' ? null : remote.fingerprint,
         },
+        // A fresh question is not carrying the previous one's failure.
+        configSyncError: null,
       });
     },
 
-    async resolveConfigSync(choice) {
+    async resolveConfigSync(choice, options) {
       const prompt = get().configSyncPrompt;
       if (!prompt) return;
+      // One answer at a time. The write below is a fresh SSH dial plus an SFTP
+      // round trip, and a second press landing inside it used to start a second
+      // upload against the same remote file.
+      if (get().configSyncBusy !== null) return;
+
       const host = get().sshHosts.find((item) => item.id === prompt.hostId);
       if (!host) {
         set({ configSyncPrompt: null });
@@ -6010,32 +6092,66 @@ export const useApp = create<AppStore>((set, get) => {
       // cannot leave it to be resumed a second time by the next answer.
       const resume = get().pendingRemoteOpen;
 
-      if (choice === 'use-local') {
-        if (prompt.localText !== null) {
-          // A failed upload is the answer the person needs: connecting anyway
-          // would run the session against the remote file they just chose to
-          // replace, which is the opposite of the choice they made.
-          try {
+      set({ configSyncBusy: choice });
+      try {
+        if (choice === 'use-local') {
+          if (prompt.localText !== null) {
+            // A failed upload is the answer the person needs: connecting anyway
+            // would run the session against the remote file they just chose to
+            // replace, which is the opposite of the choice they made.
             const newFingerprint = await writeRemoteConfig(target, prompt.localText);
-            get().updateSshHost(prompt.hostId, { configBaselineFingerprint: newFingerprint });
-          } catch (err) {
-            // The upload refused: the open it was blocking cannot proceed, so
-            // it is abandoned rather than resumed. The in-flight mark is
-            // cleared only if it names *this* open — a prompt raised by the
-            // row's own install button has `resume` null and belongs to no
-            // open, and must not clear a different one that is mid-flight.
-            set((state) => ({
-              configSyncPrompt: null,
-              pendingRemoteOpen: null,
-              ...(resume !== null && state.openingRemote === resume ? { openingRemote: null } : {}),
-            }));
-            // Re-raised so the caller sees the failure the same way every
-            // other refusal from this call is seen.
-            throw err;
+            // Both sides are the uploaded bytes now, so both baselines are it —
+            // which is also what stops this same pair from asking again.
+            get().updateSshHost(prompt.hostId, {
+              configBaselineFingerprint: newFingerprint,
+              configBaselineLocalFingerprint: newFingerprint,
+            });
           }
+        } else {
+          if (prompt.remoteFingerprint !== null) {
+            get().updateSshHost(prompt.hostId, { configBaselineFingerprint: prompt.remoteFingerprint });
+          }
+          // The local file was kept, not written — recording what it is now is
+          // the whole point of the answer: "yes, I know these two differ, and I
+          // chose the remote". Without it every later open says the same thing.
+          get().updateSshHost(prompt.hostId, {
+            configBaselineLocalFingerprint: prompt.localFingerprint ?? '',
+          });
         }
-      } else if (prompt.remoteFingerprint !== null) {
-        get().updateSshHost(prompt.hostId, { configBaselineFingerprint: prompt.remoteFingerprint });
+
+        // The choice, remembered as the host's own policy (§9.4). Without this
+        // there was no way to leave `'ask'` at all: `configPolicy` was read in
+        // three places and written by nothing, so a person who answered the same
+        // way every time was asked every time. `'sync-local'` is "local always
+        // wins", which is exactly what the button says.
+        if (options?.remember === true) {
+          get().updateSshHost(prompt.hostId, {
+            configPolicy: choice === 'use-local' ? 'sync-local' : 'use-remote',
+          });
+        }
+      } catch (err) {
+        // The upload refused. **The question stays up, with the reason**, rather
+        // than the dialog vanishing and the workspace simply not opening: this is
+        // the slow, failure-prone half of the flow (a dial, an SFTP write, a
+        // rename on the far side), and a refusal that only ever reached the
+        // console was indistinguishable from a dialog that closed for no reason.
+        // The open stays parked in `pendingRemoteOpen`, so pressing the same
+        // button again retries the write and then resumes it; only the toast's
+        // in-flight mark goes, because nothing is connecting while this prompt is
+        // still on screen.
+        set((state) => ({
+          configSyncError: describeFailure(err),
+          ...(resume !== null && state.openingRemote === resume ? { openingRemote: null } : {}),
+        }));
+        // Still re-raised, so a programmatic caller sees the failure the same way
+        // every other refusal from this call is seen. The dialog consumes it —
+        // the sentence is on screen by then (`configSyncError`).
+        throw err;
+      } finally {
+        // Cleared whatever happened, and **before** the `connectRemoteWorkspace`
+        // below: from there on the connecting toast owns the wait, and a busy
+        // flag left set would lock the next prompt's buttons.
+        set({ configSyncBusy: null });
       }
 
       // The prompt is over, but the open it was blocking is **not**: the
@@ -6043,7 +6159,7 @@ export const useApp = create<AppStore>((set, get) => {
       // write — clears `openingRemote` once the bucket lands or the open
       // fails. Clearing it here would drop the toast for the whole pre-bucket
       // install stretch that follows the decision.
-      set({ configSyncPrompt: null, pendingRemoteOpen: null });
+      set({ configSyncPrompt: null, pendingRemoteOpen: null, configSyncError: null });
       // §9.4's whole point, kept: the decision is made **before** the
       // connection, and this is what finally opens the workspace it was
       // blocking. Skipped when this prompt came from the row's own install
@@ -6054,6 +6170,11 @@ export const useApp = create<AppStore>((set, get) => {
     },
 
     dismissConfigSync() {
+      // A write already in flight is not cancellable, and letting the prompt go
+      // mid-write would strand the open it belongs to: `resolveConfigSync`'s
+      // finally would still resume it, with nothing on screen having asked for
+      // it. Cancel is simply unavailable for that one or two seconds.
+      if (get().configSyncBusy !== null) return;
       // A dismissed prompt abandons the open it was blocking, deliberately:
       // Cancel means "not now", and a session silently started against
       // whichever file happened to be there is exactly the outcome the
@@ -6062,7 +6183,7 @@ export const useApp = create<AppStore>((set, get) => {
       // mark goes with the open it was describing — without this, the
       // connecting toast would say "connecting…" over an open that no longer
       // exists, with nothing to clear it.
-      set({ configSyncPrompt: null, pendingRemoteOpen: null, openingRemote: null });
+      set({ configSyncPrompt: null, pendingRemoteOpen: null, configSyncError: null, openingRemote: null });
     },
 
     async applyLaunch(next) {

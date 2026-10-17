@@ -642,12 +642,30 @@ export const en = {
   /* ---------------- config sync (Phase 4, §9 of the design) ---------------- */
   'cfgsync.title': 'Configuration conflict',
   'cfgsync.subtitle':
-    'The local and remote model configuration have both changed since the last sync. Choose which one to keep.',
+    'The local and the remote model configuration disagree. Choose which one this workspace should use.',
   'cfgsync.noLocal': 'No local configuration file yet.',
   'cfgsync.hasLocal': 'A local configuration file exists.',
   'cfgsync.remoteMissing': 'The remote host has no configuration file yet.',
   'cfgsync.remoteValid': 'The remote host has a usable configuration.',
   'cfgsync.remoteOther': 'The remote host has a configuration file.',
+  /* Why this was asked. The comparison is over content fingerprints (§9.5), so
+     "it asked me again five minutes after I rewrote it" is answered by naming
+     the side whose bytes actually moved — never a timestamp. */
+  'cfgsync.reason.firstSync':
+    'This host has never been synced, so there is no baseline to compare against yet.',
+  'cfgsync.reason.remoteChanged':
+    'The remote file changed since the last sync. The local file did not.',
+  'cfgsync.reason.bothChanged':
+    'Both files changed since the last sync, so neither side can be taken as the one the other is measured against.',
+  'cfgsync.reason.localChanged':
+    'The local file changed since the last sync. The remote file did not.',
+  /* Answering is a fresh SSH connection plus an SFTP round trip, so it is not
+     instant — the dialog has to say what it is waiting for. */
+  'cfgsync.writing': 'Uploading the local configuration over SSH…',
+  'cfgsync.reading': 'Recording the remote configuration over SSH…',
+  'cfgsync.remember': 'Remember this answer for this host',
+  'cfgsync.rememberHint':
+    'Becomes this host’s config policy, so later opens follow it without asking — “use local” keeps overwriting the remote file.',
   'cfgsync.useLocal': 'Use local (overwrite remote)',
   'cfgsync.useRemote': 'Use remote (keep as is)',
 

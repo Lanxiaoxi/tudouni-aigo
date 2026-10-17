@@ -116,6 +116,14 @@ const SUITES = [
   // reason 鈥?搂8.4's "an install failure must not look like a connection
   // failure", wired into `enterRemoteWorkspace`.
   'remote-workspace.test.ts',
+  // Which config-sync question is worth asking (§9.4/§9.5), and which is not.
+  // The prompt looks identical whether it was necessary or not, so the report
+  // "I rewrote the server five minutes ago and it is asking again" cannot be
+  // settled by looking at the dialog — it is settled by these rules: a missing
+  // local file is not a change, each side is compared against the value it was
+  // last *seen* at (so an answer cannot re-ask the same pair of fingerprints),
+  // and two absent files are not a question with two disabled buttons.
+  'config-sync.test.ts',
   // "New session" while the conversation on screen is remote: the remote
   // workspace's directory is not a local one, so the button must dial another
   // remote child rather than hand the remote path to the local spawn 鈥?which

@@ -1606,7 +1606,12 @@ table.table td.mono {
   color: var(--destructive);
 }
 
-.close-remember {
+/* The "remember this answer" row. Named for the close prompt because that is
+   where it first appeared; `scripts/close-notify-check.mjs` drives that dialog
+   by `.close-remember`, so the config-sync prompt gets a second selector on the
+   same rules rather than the rules being renamed out from under the script. */
+.close-remember,
+.cfgsync-remember {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
@@ -1616,13 +1621,15 @@ table.table td.mono {
   cursor: pointer;
 }
 
-.close-remember input {
+.close-remember input,
+.cfgsync-remember input {
   flex: none;
   margin-top: 2px;
   accent-color: var(--accent);
 }
 
-.close-remember-text {
+.close-remember-text,
+.cfgsync-remember-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
