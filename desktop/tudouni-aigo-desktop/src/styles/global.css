@@ -199,8 +199,13 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
      content-sized rail was also clipped instead of scrolling its own list once
      the content outran the column. */
   height: 100%;
-  border-left: 1px solid var(--border-subtle);
-  background: var(--bg-rail);
+  /* The **same surface and seam as the left rail** (`--lb-*`): the two rails
+     flank one transcript, so one of them on the old grey and the other on the
+     redesign's near-white plane made the window read as two applications. The
+     right rail keeps its block structure; what it shares is the palette, the
+     flat plane, and the pale green selection family. */
+  border-left: 1px solid var(--lb-line);
+  background: var(--lb-surface);
   display: flex;
   flex-direction: column;
   overflow: hidden;

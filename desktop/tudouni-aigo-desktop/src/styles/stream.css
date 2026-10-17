@@ -1437,48 +1437,28 @@
    §3 侧栏 5 区块
    ============================================================ */
 
-/* The right rail's own head: "Session runtime" + the way to fold it.
-   The left rail's `.lb-head` (§3b below), crossed over that rail's own axis: the
-   same order (title, button) and the same numbers, with the **padding
-   swapped**, so the roomier side (12px) is against the window's outer frame in
-   both rails — the left head's left edge, this one's right edge. The button on
-   the outer edge is where it belongs: it is the one a pointer aims at from the
-   window's edge.
-
-   The height and the `border-bottom` are deliberately the same number as
-   `.lb-head`'s. The two heads sit at one height on either side of the
-   transcript, so indeed they draw one horizontal band across the window, and a
-   height difference here shows up as a step at the transcript's edges rather
-   than as a wrong header. Change one, change both.
-
-   `flex: none` is the left head's too, and it is not tidiness: only
-   `.sidebar-inner` scrolls, and a head that scrolled would let the goal text
-   push the rail's own identity off the top, which is the failure the left head's
-   comment names. */
+/* The right rail's own head: "Session runtime". The same band as the left
+   head — 42px, no separator — so the two rails read as the frame around one
+   transcript. Its title is the left rail's brand typography (13.5 / 600 / sans),
+   one rank above the block labels below it. */
 .rb-head {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   height: 42px;
-  padding: 0 var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 12px;
 }
 
-/* Sans, where the left head's brand is mono. The left head carries a product
-   name, which the mono face suits; this one is a description of the rail, and
-   mono on a two-word English sentence reads as code. Same size and weight as
-   `.lb-brand` so the two heads' text lines up in rank — the hierarchy that
-   matters is against the block titles below (13px / 600 / `--fg-secondary`),
-   and this head is one step above them. */
 .rb-head .rb-title {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-h2);
+  font-size: 13.5px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--fg);
 }
 
@@ -1486,46 +1466,80 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-2);
+  padding: 0 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 14px;
 }
 
-/* The block panels take the **card** surface, which on the light theme is the
-   white of the design's rail cards floating on the rail's own grey. The rule
-   that matters is the one this replaced: `--bg-card` and the rail keep the same
-   value in the **dark** theme (tokens.css says why), so nothing changes there —
-   a folded block still reveals the rail itself rather than a second shade. The
-   light theme is the one with a reference to follow, and in it the rail is
-   `--bg-rail` (#F7F8FA) while the card is white. */
+/* The right rail's scrollbar, the left rail's: a 3px rounded thumb in the
+   rail's own line colour. The shared `.scroll` thumb is a 4px bar in a 10px
+   gutter, which in a 268px rail reads as a second column of ink. */
+.sidebar-inner {
+  scrollbar-width: thin;
+  scrollbar-color: var(--lb-line) transparent;
+}
+
+.sidebar-inner::-webkit-scrollbar {
+  width: 7px;
+}
+
+.sidebar-inner::-webkit-scrollbar-thumb {
+  background: var(--lb-line);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.sidebar-inner::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.sidebar-inner::-webkit-scrollbar-track,
+.sidebar-inner::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* The blocks are **sections on the rail's plane**, not cards floating above it.
+   The right rail used to hold white cards on grey; that was the arrangement the
+   left rail just gave up, and leaving one rail on it made the window read as two
+   applications. A block is now its head plus its rows, separated from the next
+   by the rail's own 14px rhythm — the same layer model, palette and seam as the
+   left rail. */
 .sb-block {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  overflow: hidden;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   flex: none;
 }
 
 .sb-block-head {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 6px var(--space-2) 6px var(--space-3);
-  min-height: 30px;
+  gap: 6px;
+  padding: 0 2px 0 4px;
+  min-height: 22px;
+  border-radius: 8px;
   cursor: pointer;
   user-select: none;
   transition: background-color var(--motion-fast) var(--ease-out);
 }
 
 .sb-block-head:hover {
-  background: var(--bg-muted);
+  background: var(--lb-hover);
 }
 
+/* The block label is the left rail's **shelf label**: 10.5px, sentence case,
+   `--fg-muted`. It used to be 13px/600 in the reading colour, which made six
+   section names compete with the facts under them; at this size the count at
+   the row's end is the thing that stands out, which is what it is for. */
 .sb-block-head .sbh-title {
-  font-size: var(--text-h2);
-  font-weight: 600;
-  color: var(--fg);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--fg-muted);
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1533,15 +1547,32 @@
   white-space: nowrap;
 }
 
+/* The count is a pale tag, the same shape the left rail's rows use for their
+   quiet markers. Its two semantic variants keep their own colours. */
+.sb-block-head .count {
+  background: var(--lb-tag);
+  color: var(--fg-muted);
+}
+
+.sb-block-head .count.count-active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.sb-block-head .count.count-attention {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
 .sb-block-body {
-  padding: var(--space-1) var(--space-2) var(--space-2);
+  padding: 4px 0 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
 .sb-empty {
-  padding: var(--space-2) var(--space-2) var(--space-3);
+  padding: 4px 8px 8px;
 }
 
 .sb-empty .se-title {
@@ -1560,8 +1591,8 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--row-h-compact);
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  border-radius: 8px;
   font-size: var(--text-compact);
   color: var(--fg-secondary);
   transition: background-color var(--motion-fast) var(--ease-out);
@@ -1572,7 +1603,7 @@
 }
 
 .sb-row.is-clickable:hover {
-  background: var(--bg-muted);
+  background: var(--lb-hover);
 }
 
 /* 名字是主信息：保底 9ch，不许被右侧明细挤没。
@@ -1637,13 +1668,31 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 2px 6px 6px;
+  padding: 2px 8px 6px;
 }
 
 .sb-goal {
-  padding: 2px 6px 6px;
+  padding: 2px 8px 6px;
   font-size: var(--text-compact);
   color: var(--fg-secondary);
+}
+
+/* The rail's own ghost buttons take the rail's hover wash, not the shell's
+   neutral `--bg-muted`: the two rails use one green-grey for the pointer, and a
+   third grey inside a block would be the inconsistency this change removes. */
+.sidebar-inner .btn-ghost:hover:not(:disabled) {
+  background: var(--lb-hover);
+}
+
+/* Neutral badges are the rail's tag colour too. The tinted ones (running,
+   waiting, failed, info) keep their semantic colours on purpose — those are
+   states, not surfaces, and the left rail has no equivalent to recolour. */
+.sidebar-inner .badge-neutral {
+  background: var(--lb-tag);
+}
+
+.sidebar-inner .badge-outline {
+  border-color: var(--lb-line);
 }
 
 /* The objective is shown in full: the rail scrolls and the tail of a long
