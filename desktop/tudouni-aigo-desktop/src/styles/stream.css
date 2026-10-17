@@ -1166,13 +1166,111 @@
 
    地址到像素的那一步在 `MarkdownImage.tsx`：模型写的是一个**路径**，WebView
    加载不了，所以字节由 Rust 侧的 `inline_image` 读出来交给这里。`.md img`
-   仍然留着，给直接写了 `data:`/`blob:` 的回复用——同一条尺寸规则，两种来源。 */
+   仍然留着，给直接写了 `data:`/`blob:` 的回复用——同一条尺寸规则，两种来源。
+
+   **两个方向都要限，这是两个不同的失败。** `max-width: 100%` 只解决横版：
+   一张 390×844 的手机截图宽度撑满内容列之后，高度是 1688px —— 一条回复因为
+   一张图变成一整屏，后面的文字全被推到视野外，而图片本身**并没有变大**，它
+   只是把原始像素一个不落地铺开了。所以再加一条高度上限，让竖版也落在同一个
+   视野预算里。
+
+   用 `max-height` 而不是固定高度 + `object-fit: cover`：cover 会裁掉图上下的
+   内容，而一张界面截图被裁掉底部的按钮就是一张说谎的图。等比缩小到装得下，
+   是唯一不丢信息的做法；想看细节有下面的放大。
+
+   数值取 60vh，和 `.file-view` 的上限一致——同一个窗口里"一块内容最多占多高"
+   应该是同一个数，否则同一次会话中打开文件和看回复里的图会是两种尺度。 */
 .md img,
 .md-img {
   max-width: 100%;
+  max-height: 60vh;
+  /* 等比缩放交给浏览器：`width`/`height` 都是 auto 时，两条上限谁先命中谁生效，
+     另一边按图片自身的宽高比推出来。 */
+  width: auto;
   height: auto;
+  /* `object-fit` 在这里只作用于被压缩的那个方向的"盒子里"。
+     默认的 `contain` 才会保留全部像素；写 `fill` 会把竖图压扁。 */
+  object-fit: contain;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+  /* 缩小后的图默认按内联元素的基线对齐，会在图下留一条几像素的空隙；
+     `block` 让它成为一个独立的块，圆角与上下间距才和别的块级元素一致。 */
+  display: block;
+  margin: var(--space-2) 0;
+  /* 一张被缩到 60vh 的图，人是想看细节的——光标说明它可点。 */
+  cursor: zoom-in;
+}
+
+/* ---- a picture opened at full size ----
+ *
+ * The transcript's 60vh cap exists so one screenshot cannot fill the column; this
+ * is the way past it, which is why nothing here is capped except by the viewport
+ * itself. A lightbox that also shrank the picture would make the cap un-undoable
+ * and the `zoom-in` cursor a lie.
+ *
+ * Dark backdrop rather than the app's usual translucent mask: a picture is often
+ * light-on-light with the transcript, and a picture on a pale scrim has no edge.
+ * `rgba(0,0,0,.86)` is enough to isolate it while still showing that something is
+ * behind the layer. */
+.md-img-lightbox-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  background: rgba(0, 0, 0, 0.86);
+  animation: reveal var(--motion-fast) var(--ease-out) 1;
+}
+
+.md-img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-dialog) + 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  /* The container is the backdrop's size, so a click on the empty area around the
+     picture reaches it — the dialog's outside-click then closes, which is what a
+     person tries first. The picture itself stops the event. */
+  cursor: zoom-out;
+}
+
+.md-img-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  /* Still no cap past the viewport, and `object-fit` is unnecessary here: with
+     both axes auto the picture scales down uniformly and keeps every pixel. */
+  width: auto;
+  height: auto;
+  border-radius: var(--radius-md);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  cursor: default;
+  /* A picture may be larger than the viewport at full size; it is the *viewport*
+     that bounds it here, and scrolling inside the lightbox would fight the
+     dialog's own scroll lock. */
+  object-fit: contain;
+}
+
+.md-img-lightbox-close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  /* A circle is a shape, not a size: `50%` stays round at whatever the button is
+     sized to, where the radius scale's fixed steps would not. */
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.md-img-lightbox-close:hover {
+  background: rgba(0, 0, 0, 0.75);
 }
 
 /* 还在读的图片：安静地显示 alt，像一张正在加载的图，而不是一行错误。 */

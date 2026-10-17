@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ImageOff } from 'lucide-react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import { ImageOff, X } from 'lucide-react';
 import { useT } from '@/i18n/useT';
 import { useSessionField } from '@/state/store';
 import { inlineImage } from '@/runtime/tauri';
@@ -181,6 +182,8 @@ export function MarkdownImage({ src, alt }: { src: string; alt: string }) {
   // guessing — an empty one makes every path unresolvable for that moment.
   const workspace = useSessionField((rt) => rt.session?.workspace ?? rt.workspace, '');
   const intent = imageIntent(src, alt);
+  /** The full-size view, when the picture has been pressed. */
+  const [open, setOpen] = useState(false);
 
   const [state, setState] = useState<LoadState>(() => {
     switch (intent.kind) {
@@ -240,22 +243,42 @@ export function MarkdownImage({ src, alt }: { src: string; alt: string }) {
 
   if (state.kind === 'ready') {
     return (
-      <img
-        className="md-img"
-        src={state.src}
-        alt={alt}
-        // Decoded off the main thread: a pasted screenshot can be several
-        // thousand pixels wide, and decoding it on the paint path stalls the
-        // stream behind it.
-        decoding="async"
-        // No `loading="lazy"`: these are `data:` URLs already in memory, so
-        // laziness saves no request, and it would let a picture stay blank until
-        // it scrolled close to the viewport — including one the person is
-        // looking at, right after it arrived.
-        onError={() => {
-          setState({ kind: 'unreadable', label: alt.trim(), reason: t('md.imageFailed') });
-        }}
-      />
+      <>
+        <img
+          className="md-img"
+          src={state.src}
+          alt={alt}
+          // Decoded off the main thread: a pasted screenshot can be several
+          // thousand pixels wide, and decoding it on the paint path stalls the
+          // stream behind it.
+          decoding="async"
+          // No `loading="lazy"`: these are `data:` URLs already in memory, so
+          // laziness saves no request, and it would let a picture stay blank until
+          // it scrolled close to the viewport — including one the person is
+          // looking at, right after it arrived.
+          onError={() => {
+            setState({ kind: 'unreadable', label: alt.trim(), reason: t('md.imageFailed') });
+          }}
+          // **The cap has to be undoable.** The stylesheet limits a picture to
+          // 60vh so one screenshot cannot fill the transcript, and a downscaled
+          // picture is unreadable at exactly the detail a screenshot was sent to
+          // show. A cap with no way past it is a picture nobody can actually look
+          // at — so pressing it opens the file at full size.
+          onClick={() => setOpen(true)}
+          role="button"
+          tabIndex={0}
+          title={t('md.imageOpen')}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              setOpen(true);
+            }
+          }}
+        />
+        {open ? (
+          <Lightbox src={state.src} alt={alt} onClose={() => setOpen(false)} />
+        ) : null}
+      </>
     );
   }
 
@@ -270,5 +293,47 @@ export function MarkdownImage({ src, alt }: { src: string; alt: string }) {
       <ImageOff size={12} aria-hidden />
       <span className="md-img-broken-path">{state.label || alt.trim() || src}</span>
     </span>
+  );
+}
+
+/**
+ * One picture at full size, over the transcript.
+ *
+ * The transcript caps a picture at 60vh because one screenshot must not fill the
+ * column — but a screenshot downscaled to 60vh is unreadable at exactly the
+ * detail it was sent to show. So the cap has to be **undoable**, and this is the
+ * undo.
+ *
+ * Radix Dialog rather than a hand-rolled overlay, for the reason every other
+ * panel uses it: Escape, the focus trap and the scroll lock are already solved
+ * there, and a second implementation of "a modal layer" is a second set of those
+ * three to get wrong. Clicking the backdrop closes it, which is what a person
+ * tries first.
+ *
+ * The image is **not** capped here: the point of opening it is the pixels the
+ * transcript threw away.
+ */
+function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  const t = useT();
+  return (
+    <DialogPrimitive.Root open onOpenChange={(next) => !next && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="md-img-lightbox-mask" />
+        <DialogPrimitive.Content className="md-img-lightbox" aria-label={alt || t('md.imageOpen')}>
+          <DialogPrimitive.Title className="sr-only">
+            {alt || t('md.imageOpen')}
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">
+            {t('md.imageOpen')}
+          </DialogPrimitive.Description>
+          <img src={src} alt={alt} decoding="async" />
+          <DialogPrimitive.Close asChild>
+            <button type="button" className="md-img-lightbox-close" aria-label={t('md.imageClose')}>
+              <X size={16} />
+            </button>
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

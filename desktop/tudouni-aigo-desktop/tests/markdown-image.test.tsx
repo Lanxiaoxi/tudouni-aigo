@@ -112,6 +112,38 @@ test('the picture rule caps width, so one screenshot cannot fill the column', ()
   assert.match(streamCss, /\.md img,\s*\n\.md-img \{[^}]*max-width: 100%/);
 });
 
+test('the picture rule caps height too, because a portrait screenshot is tall', () => {
+  // **The bug this pins.** `max-width: 100%` alone fixes landscape only: a
+  // 390×844 phone screenshot is 1688px tall once its width fills the column, so
+  // one picture became a whole screen and pushed every following line out of
+  // view. A width cap and a height cap are two different failures, and the CSS
+  // reads as complete while only one of them is present.
+  assert.match(streamCss, /\.md img,\s*\n\.md-img \{[^}]*max-height: 60vh/);
+});
+
+test('the height cap is proportional, not a crop', () => {
+  // `object-fit: cover` would slice the top and bottom off a screenshot — a UI
+  // capture with its buttons cropped out is a picture that lies. `contain` scales
+  // the whole thing down instead.
+  const rule = /\.md img,\s*\n\.md-img \{([^}]*)\}/.exec(streamCss)?.[1] ?? '';
+  assert.match(rule, /object-fit: contain/);
+  assert.doesNotMatch(rule, /object-fit: cover/);
+  // Both axes auto, so the browser derives the other dimension from the aspect
+  // ratio rather than stretching the picture to the box.
+  assert.match(rule, /width: auto/);
+  assert.match(rule, /height: auto/);
+});
+
+test('the full-size view is not capped, or the cap would be permanent', () => {
+  // A lightbox that also shrank the picture would make `zoom-in` a lie and the
+  // 60vh cap un-undoable — the same failure as no lightbox at all, for anyone
+  // who actually needs to read the screenshot.
+  const rule = /\.md-img-lightbox img \{([^}]*)\}/.exec(streamCss)?.[1] ?? '';
+  assert.notEqual(rule, '', 'the lightbox picture rule is missing');
+  assert.match(rule, /max-height: 100%/);
+  assert.doesNotMatch(rule, /max-height: 60vh/);
+});
+
 test('the unreadable row can truncate a long path instead of overflowing', () => {
   assert.match(streamCss, /\.md-img-broken-path \{[^}]*text-overflow: ellipsis/);
 });

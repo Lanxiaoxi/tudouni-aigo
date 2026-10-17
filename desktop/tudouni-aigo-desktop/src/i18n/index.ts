@@ -1424,6 +1424,10 @@ export const en = {
   /** The renderer accepted the address but decoding it failed, or the bridge
    *  returned bytes the WebView could not display. */
   'md.imageFailed': 'This picture could not be drawn',
+  /** The transcript caps a picture at 60vh; this is the way past it, so the
+   *  title has to say what pressing does rather than name the feature. */
+  'md.imageOpen': 'Open at full size',
+  'md.imageClose': 'Close the picture',
   /** The turn rail down the transcript's right edge (`TurnRail.tsx`). */
   'rail.label': 'Turn navigation',
   /** One mark's accessible name. It has to say what the press does **and** which
