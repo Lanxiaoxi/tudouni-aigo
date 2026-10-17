@@ -85,7 +85,10 @@ func TestSessionSummariesCountsMessagesStepsAndTodos(t *testing.T) {
 	if row["steps"] != 2 {
 		t.Errorf("steps = %v, want 2", row["steps"])
 	}
-	if row["preview"] != "do the thing" {
+	// The topic pairs with the answer that closed its own turn: "and again"
+	// opened a second turn, and its answer belongs to that question, not this
+	// row's topic. See state.digestPreview.
+	if row["preview"] != "do the thing → on it" {
 		t.Errorf("preview = %q", row["preview"])
 	}
 	todos, _ := row["todos"].(string)

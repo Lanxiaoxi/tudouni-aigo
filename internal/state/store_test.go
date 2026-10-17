@@ -270,8 +270,8 @@ func TestLoadSummaryMatchesLoad(t *testing.T) {
 	if summary.Steps != loaded.StepCount() {
 		t.Errorf("Steps = %d, want %d", summary.Steps, loaded.StepCount())
 	}
-	if summary.Preview != "hello world" {
-		t.Errorf("Preview = %q, want %q (folded, first user message)", summary.Preview, "hello world")
+	if summary.Preview != "hello world → hi" {
+		t.Errorf("Preview = %q, want %q (topic, then that turn's answer)", summary.Preview, "hello world → hi")
 	}
 	// The metadata a todo line is drawn from has to be the **last** record's, not
 	// the first: the list showing stale task state is exactly what a resumed
@@ -291,7 +291,8 @@ func TestLoadSummaryMatchesLoad(t *testing.T) {
 
 // TestLoadSummaryTruncatesThePreview pins the cap: the preview exists to be one
 // line in a picker, and a session that opens with a pasted log must not put the
-// log in the list. The ellipsis is the same one the old list code added.
+// log in the list. The ellipsis is counted **inside** the budget, so a clamped
+// preview is never longer than the number the caller asked for.
 func TestLoadSummaryTruncatesThePreview(t *testing.T) {
 	store, err := NewSessionStore(t.TempDir())
 	if err != nil {
@@ -306,7 +307,7 @@ func TestLoadSummaryTruncatesThePreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSummary: %v", err)
 	}
-	want := strings.Repeat("x", 40) + "…"
+	want := strings.Repeat("x", 39) + "…"
 	if summary.Preview != want {
 		t.Errorf("Preview = %q, want %q", summary.Preview, want)
 	}

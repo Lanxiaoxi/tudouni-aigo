@@ -945,7 +945,12 @@ export interface SessionListItem {
   steps: number;
   /** Ready-made progress text; empty string means no tasks. */
   todos: string;
-  /** Truncated preview of the first user message; empty means never spoke. */
+  /**
+   * One line describing the session: what was asked, then (when the budget has
+   * room) where that turn got to. The runtime composes and caps it — a front
+   * end that re-cut it would disagree with the next one about the same row.
+   * Empty means the session never spoke.
+   */
   preview: string;
   /** Epoch **seconds**, or null when the file could not be read. */
   modified_at: number | null;

@@ -521,7 +521,7 @@ func (s *SessionStore) Load(id string) (*Session, error) {
 //
 // It exists because a session file is mostly `ctx` records — in one measured
 // session, 47 MB of the 52 MB file — and `Load` parses every one of them. The
-// session list asked only for numbers and a 40-character preview, and paid the
+// session list asked only for numbers and one line of preview, and paid the
 // cost of the whole transcript, twice (once to sort, once to describe).
 type SessionSummary struct {
 	CreatedAt float64
@@ -536,17 +536,16 @@ type SessionSummary struct {
 	// Steps counts assistant messages, like `Session.StepCount`.
 	Steps int
 	Metadata map[string]any
-	// Preview is the first user message's text, already whitespace-folded and
-	// truncated — the shape the picker draws. An empty string means the session
-	// has no describable user message.
+	// Preview is the session list's one line: the first user message that says
+	// what the session is about, then that turn's answer when the budget has
+	// room for both (see digestPreview). It is whitespace-folded, capped at the
+	// caller's budget, and empty only when the session never spoke.
+	//
+	// It is computed here rather than by the caller because "how a preview is
+	// cut" has to have one owner, or two front ends will disagree about the same
+	// row — see docs/spec/protocol.md, §3.6.
 	Preview string
 }
-
-// SummaryPreviewChars bounds the preview `LoadSummary` extracts. The list's own
-// cap is 40 characters; the slack means the caller can re-trim without reading
-// the file again, while a message that is mostly one long paste still cannot
-// drag megabytes into the summary.
-const SummaryPreviewChars = 256
 
 // ctxRecordPrefix is the leading bytes of an encoded `ctx` record.
 //
@@ -576,11 +575,14 @@ type summaryRecord struct {
 
 // LoadSummary reads just enough of a session file to fill a SessionSummary.
 //
-// The scan differs from `Load` in two deliberate ways. It keeps the **first**
-// user message with text rather than every message: that is the preview, and the
-// first real message of a conversation is never a later `ctx` or tool record. And
-// it never materialises a `ctx` record — the context is references to artifacts
-// on disk, can be the bulk of the file, and nothing in a summary looks at it.
+// The scan differs from `Load` in three deliberate ways. It never materialises a
+// `ctx` record — the context is references to artifacts on disk, can be the bulk
+// of the file, and nothing in a summary looks at it. It keeps only three message
+// facts instead of the transcript: the first user message, the first one that
+// says what the session is about, and that turn's answer (the digest's two
+// halves and its fallback). And it cleans no text while scanning: the digest is
+// built once at the end, because this loop runs per line of a file that can be
+// tens of megabytes.
 //
 // Errors match `Load`: a missing file is a `store.missing_file` key, a line that
 // does not parse is skipped, and a file written by a newer version is refused
@@ -600,9 +602,16 @@ func (s *SessionStore) LoadSummary(id string, previewChars int) (*SessionSummary
 	defer file.Close()
 
 	if previewChars <= 0 {
-		previewChars = SummaryPreviewChars
+		previewChars = PreviewBudget
 	}
 	summary := &SessionSummary{Metadata: map[string]any{}}
+	// The three facts the digest is built from: the first user message, the
+	// first one that says what the session is about, and the answer to that
+	// message's turn. They are held as the raw strings the decoder produced —
+	// cleaning and folding one is only worth doing once, at the end.
+	var firstUser, topic, answer string
+	// answerLocked says the topic's turn is over. See the user branch below.
+	var answerLocked bool
 	scanner := bufio.NewScanner(file)
 	// The buffer cap is derived from the file's own size, so no line can ever
 	// exceed it and a huge `ctx` record is skipped rather than failing the read.
@@ -662,20 +671,48 @@ func (s *SessionStore) LoadSummary(id string, previewChars int) (*SessionSummary
 			if role == "assistant" {
 				summary.Steps++
 			}
-			if role == "user" && summary.Preview == "" {
-				if text, ok := MessageText(record.Message); ok {
-					text = strings.Join(strings.Fields(text), " ")
-					runes := []rune(text)
-					if len(runes) > previewChars {
-						text = string(runes[:previewChars]) + "…"
+			text, ok := MessageText(record.Message)
+			if !ok {
+				continue
+			}
+			switch role {
+			case "user":
+				// The first one is the fallback: when every message is a greeting
+				// or a command, "hi" is still a truer row than a blank one.
+				if firstUser == "" {
+					firstUser = text
+				}
+				switch {
+				case topic == "":
+					if !previewNoise(record.Message, text) {
+						topic = text
 					}
-					summary.Preview = text
+				case answer != "" && !answerLocked:
+					// A later user message closes the topic's turn: the answer
+					// recorded so far is that turn's last word. A later answer
+					// belongs to a different question, and pairing it with the
+					// topic would describe two conversations in one row.
+					answerLocked = true
+				}
+			case "assistant":
+				if strings.TrimSpace(text) != "" && topic != "" && !answerLocked {
+					answer = text
 				}
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
+	}
+	if topic == "" {
+		topic = firstUser
+	}
+	summary.Preview = digestPreview(topic, answer, previewChars)
+	if summary.Preview == "" && firstUser != "" {
+		// The topic cleaned away to nothing (a message that was only a code
+		// fence, say). The row still has to say the session spoke, even if all
+		// it can show is what was typed.
+		summary.Preview = clipRunes(foldSpace(firstUser), previewChars)
 	}
 	return summary, nil
 }

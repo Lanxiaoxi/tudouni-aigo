@@ -126,8 +126,14 @@ func ResolveSession(store *state.SessionStore, sessionID string) (*state.Session
 	return session, true, nil
 }
 
-// PreviewChars bounds the one-line preview in the session list.
-const PreviewChars = 40
+// PreviewChars bounds the one-line digest in the session list.
+//
+// The number lives in `state.PreviewBudget`, beside the rule that spends it,
+// because a front end must never re-cut the preview: "how a preview is cut" has
+// one owner, or two screens disagree about the same row. It used to be 40 here
+// and the row was the first user message; a session that opened with "hi" was
+// listed as "hi" for its whole life.
+const PreviewChars = state.PreviewBudget
 
 // SessionListLimit bounds how many sessions the picker shows.
 const SessionListLimit = 50
@@ -156,7 +162,7 @@ const subagentMaxBackground = subagent.DefaultMaxBackground
 // records that make up the bulk of a session file. The list used to load every
 // session twice — once to sort, once to describe — and each load parsed the whole
 // transcript; on a workspace with a few dozen sessions that was seconds of work
-// for forty characters of preview per row.
+// for one line of preview per row.
 //
 // `includeArchived` decides whether archived sessions are in the answer. The
 // filter runs **before the cap**, and that order is the whole point of putting

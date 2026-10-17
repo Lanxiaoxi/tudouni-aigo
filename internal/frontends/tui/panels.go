@@ -568,8 +568,8 @@ func modifiedOf(item map[string]any) float64 {
 }
 
 // recentRow is `12 minutes ago  the title of that conversation`. The title —
-// the first user message's opening, which the runtime already computed — is
-// what a person recognises; the id is a timestamp nobody can read.
+// the runtime's one-line digest of the session — is what a person recognises;
+// the id is a timestamp nobody can read.
 func recentRow(item map[string]any) string {
 	stamp := ""
 	if modified := modifiedOf(item); modified > 0 {
