@@ -3625,7 +3625,10 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg);
+  /* The left rail's plane, and the column slots take its hover tint — the two
+     tokens the redesign falls out of. The board used to be a grey canvas with
+     grey wells; that was a third palette beside the two rails. */
+  background: var(--lb-surface);
   /**
    * The board is conditionally mounted, so without this it would appear in a
    * single frame — while the right rail is *still sliding away* next to it
@@ -3657,7 +3660,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--lb-line);
   flex: 0 0 auto;
 }
 
@@ -3679,8 +3682,8 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   font-size: var(--text-caption);
   font-weight: 400;
   color: var(--fg-muted);
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
+  background: var(--lb-surface);
+  border: 1px solid var(--lb-line);
   border-radius: 99px;
   padding: 0 8px;
   font-variant-numeric: tabular-nums;
@@ -3716,13 +3719,15 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   overflow: auto;
   flex: 1 1 auto;
   min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lb-line) transparent;
 }
 
-/* **The columns are panels, not ruled lists.** Depth comes from layering
-   surfaces, not from stacking borders: the column carries the muted well, the
-   card carries the raised surface, and the only hairlines left are the ones
-   inside a card. This is the same trick the rail's rows already use
-   (`--bg-secondary` rows on `--bg`), one level down. */
+/* **The columns are slots on the board's plane.** The board takes the left
+   rail's surface (`--lb-surface`) and each lane its hover tint (`--lb-hover`);
+   the cards sit back on the surface as near-white panels. That is the whole
+   layer model of the redesign — no third grey, no white card floating on a
+   grey well. */
 .board-col {
   display: flex;
   flex-direction: column;
@@ -3731,7 +3736,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   min-width: 230px;
   padding: var(--space-2);
   border-radius: var(--radius-lg);
-  background: var(--bg-muted);
+  background: var(--lb-hover);
   /* The stretch above gives every lane exactly one viewport of height, so a
      busy column's cards are taller than it is. The lane had no overflow of its
      own, and the cards then spilled out past the panel's bottom edge — still
@@ -3739,7 +3744,38 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
      while never being inside any lane. Each lane scrolls its own cards instead. */
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-color: var(--lb-line) transparent;
+}
+
+/* The board's two scrollers take the rails' 3px thumb: the shared `.scroll`
+   thumb is a 4px bar in a 10px gutter, which in a 230px lane is a second column
+   of ink. Same geometry as `.lb-scroll` / `.sidebar-inner`. */
+.board-cols::-webkit-scrollbar,
+.board-col::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.board-cols::-webkit-scrollbar-thumb,
+.board-col::-webkit-scrollbar-thumb {
+  background: var(--lb-line);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.board-cols::-webkit-scrollbar-thumb:hover,
+.board-col::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.board-cols::-webkit-scrollbar-track,
+.board-cols::-webkit-scrollbar-corner,
+.board-col::-webkit-scrollbar-track,
+.board-col::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .board-col-head {
@@ -3773,12 +3809,13 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   box-shadow: 0 0 0 3px var(--warning-subtle);
 }
 
-/* Finished. The rail's own `is-unseen` blue (`--info`), not the faint grey Idle
-   uses: a column head carries no words about *why* it is empty, so sharing
-   `--fg-faint` with Idle made the one column that means "it stopped and you
-   have not looked" indistinguishable from the one that means "nothing here". */
+/* Finished. The rail's `is-unseen` used to be blue (`--info`); on a green board
+   that was the one cold mark in the whole panel. It is now the **teal end of
+   the success family** (`--success`), which still reads as a different green
+   from Working's accent — the two columns stay one glance apart without
+   introducing a colour from outside the rail's palette. */
 .board-col-dot.is-unseen {
-  background: var(--info);
+  background: var(--success);
 }
 
 .board-col-dot.is-idle {
@@ -3796,9 +3833,9 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
 }
 
 .board-col-title {
-  font-size: var(--text-caption);
+  font-size: 10.5px;
   font-weight: 600;
-  color: var(--fg-secondary);
+  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -3812,41 +3849,18 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--fg-muted);
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
+  background: var(--lb-surface);
+  border: 1px solid var(--lb-line);
   border-radius: 99px;
   padding: 0 8px;
   font-variant-numeric: tabular-nums;
 }
 
-/* **The number wears the dot's own colour**, state for state: the same four
-   tokens the mark at the head's other end is drawn with — `--accent`,
-   `--warning`, `--info`, and the neutral `--fg-faint` Idle's dot uses. The chip
-   is the one place a column announces itself in numbers ("3 waiting" versus "0"),
-   so a coloured dot beside a colourless number read as two facts; the class
-   comes from `statusClass`, the same map the dot takes, so the two cannot drift
-   apart.
-
-   The chip's surface stays the card fill, deliberately: a *filled* chip would
-   paint the amber and blue columns' frequent honest `0` in the loudest colour on
-   the board, which is the opposite of what "nothing needs you" should look like.
-   The board's own total (`board-title-count`) stays neutral grey — it counts the
-   whole board, not a state, and has no dot to agree with. */
-.board-col-count.is-running {
-  color: var(--accent);
-}
-
-.board-col-count.is-asking {
-  color: var(--warning);
-}
-
-.board-col-count.is-unseen {
-  color: var(--info);
-}
-
-.board-col-count.is-idle {
-  color: var(--fg-faint);
-}
+/* The number is a **quantity**, the dot is the state. The redesign's board
+   keeps the count in the rail's muted tag colour, the same as the left rail's
+   quiet markers: a coloured dot beside a grey number still tells one fact, and
+   a quiet "0" in the amber or teal column no longer becomes the loudest mark on
+   the board. The board's own total (`board-title-count`) is the same chip. */
 
 .board-card {
   display: flex;
@@ -3854,11 +3868,11 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   gap: 2px;
   flex: none;
   padding: var(--space-3);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--lb-line);
   border-radius: var(--radius-md);
-  /* The raised surface above the column well — white-on-grey in light mode,
-     bright-on-dim in dark, whichever tokens are live. */
-  background: var(--bg-card);
+  /* The raised surface above the column's hover tint — the same two tokens the
+     left rail uses for its plane and its wash, in that order. */
+  background: var(--lb-surface);
   box-shadow: var(--shadow-card);
   text-align: left;
   color: var(--fg-secondary);
@@ -3871,7 +3885,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
 }
 
 .board-card:hover {
-  border-color: var(--border);
+  border-color: var(--accent-tint-border);
   /* A one-pixel lift and the faintest shadow on the palette's own tone — no
      scale, no glow. The tokens carry the lift, so both themes read it; the
      hard-coded dark shadow that used to sit here read as a smudge under a card
@@ -3880,26 +3894,23 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   box-shadow: var(--shadow-card-hover);
 }
 
-/* The session on screen, marked the same way the rail marks it — the accent
-   edge and the accent wash — because the two surfaces are showing the same
-   fact and a card that looked "current" differently would be a second idiom
-   for one state. */
+/* The session on screen: **a pale green edge, and nothing else.** It used to
+   take the accent wash plus an inset accent ring — two marks for the one fact
+   the border already states, and a green rectangle inside a board that is
+   already green. The redesign's layer model is explicit about this: the board
+   is the surface, the lane is the wash, and the card you are in is the card
+   with the green hairline. */
 .board-card.is-current {
-  border-color: var(--accent-border);
-  background: var(--accent-subtle);
+  border-color: var(--lb-selected-line);
+  background: var(--lb-surface);
   color: var(--fg);
-  /* The ring and the lift are two layers, so the card that is marked stays at
-     the same height as its neighbours instead of dropping out of the column. */
-  box-shadow:
-    inset 0 0 0 1.5px var(--accent),
-    var(--shadow-card);
+  box-shadow: var(--shadow-card);
 }
 
 .board-card.is-current:hover {
-  background: var(--accent-subtle);
-  box-shadow:
-    inset 0 0 0 1.5px var(--accent),
-    var(--shadow-card-hover);
+  border-color: var(--lb-selected-line);
+  background: var(--lb-surface);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .board-card .board-card-top {
@@ -3917,12 +3928,12 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
-  color: var(--fg);
-  font-weight: 500;
+  color: var(--fg-muted);
+  font-weight: 400;
 }
 
 .board-card.is-current .board-card-id {
-  color: var(--fg);
+  color: var(--fg-muted);
 }
 
 /* One flag, at the top row's far edge. The two tones are the dot palette's
@@ -3956,7 +3967,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   overflow: hidden;
   font-size: var(--text-compact);
   line-height: var(--leading-body);
-  color: var(--fg-secondary);
+  color: var(--fg);
   word-break: break-word;
   margin-bottom: var(--space-1);
 }
@@ -4067,8 +4078,8 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--fg-muted);
-  background: var(--bg-muted);
-  border-radius: var(--radius-xs);
+  background: var(--lb-tag);
+  border-radius: 5px;
   padding: 1px 6px;
 }
 
@@ -4106,7 +4117,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
 }
 
 .board-card .board-card-ctx-track {
-  stroke: var(--bg-muted);
+  stroke: var(--lb-line);
 }
 
 .board-card .board-card-ctx-arc {
@@ -4193,7 +4204,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
 /* The empty column: dashed, centred, honest. A blank column reads as a
    rendering bug; a dashed panel says "this state exists, it is just empty". */
 .board-col-empty {
-  border: 1px dashed var(--border-strong);
+  border: 1px dashed var(--lb-line);
   border-radius: var(--radius-md);
   padding: var(--space-5) var(--space-3);
   text-align: center;
@@ -4205,18 +4216,17 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
    Needs you; this row is what says the click on the card is also the way to
    answer — the prompt itself is deliberately held unrendered while the board
    is up (`selectModalVisible`), so without this line the card would read like
-   any other. Warning colours, the same pair the amber dot uses. */
+   any other. Warning colours, the same pair the amber dot uses.
+
+   The edge says it; the inset amber bar that used to sit inside the card was a
+   second mark for the same fact. The flag on the top row keeps the words. */
 .board-card.is-asking {
   border-color: var(--warning-border);
-  box-shadow:
-    inset 2px 0 0 var(--warning),
-    var(--shadow-card);
+  box-shadow: var(--shadow-card);
 }
 
 .board-card.is-asking:hover {
-  box-shadow:
-    inset 2px 0 0 var(--warning),
-    var(--shadow-card-hover);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .board-card-nudge {

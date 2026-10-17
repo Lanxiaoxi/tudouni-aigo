@@ -419,12 +419,13 @@ export function SessionBoard() {
                     draws nothing for. */}
                 <BoardColDot status={column.statuses[0]} />
                 <span className="board-col-title">{t(column.title)}</span>
-                {/* The count wears the same state class as the dot beside it,
-                    so the head's number and its mark are one colour — see
-                    `statusClass` for why the mapping is not duplicated. */}
-                <span className={`board-col-count ${statusClass(column.statuses[0])}`}>
-                  {column.cards.length}
-                </span>
+                {/* The count is a **quantity**, not a second state mark: the dot
+                    beside it says which column this is, and the number says how
+                    many cards are in it. Colouring the chip with the dot's token
+                    made a quiet "0" in an amber or blue column the loudest thing
+                    on the board — the redesign keeps the state in the dot and
+                    the chip in the rail's muted tag. */}
+                <span className="board-col-count">{column.cards.length}</span>
               </div>
               {/* **Creation order, never re-sorted by status.** The columns may
                   move a card between them — that is the board's whole value —
@@ -688,14 +689,13 @@ export function SessionBoard() {
 }
 
 /**
- * The state → colour class map, shared by a column head's dot and its count.
+ * The state → colour class map, used by a column head's dot.
  *
- * **One map, because the two marks in a head are one statement.** The count
- * takes the dot's own token (`--accent` / `--warning` / `--info`, and the
- * neutral `--fg-faint` Idle already uses — `stream.css`), so a second copy of
- * this mapping could only ever disagree with the first: a green dot beside a
- * grey number. Every state is spelled out; an `:not([class*=…])`-style rule
- * would silently match whatever `RowStatus` is added next.
+ * The dot is the one mark that carries the column's state. The count beside it
+ * is a quantity and stays in the rail's muted tag colour, so a quiet "0" in the
+ * amber column is not painted as the loudest thing on the board. The mapping is
+ * spelled out rather than built from `:not([class*=…])`, because an absence-based
+ * selector would silently match whatever `RowStatus` is added next.
  */
 function statusClass(status: RowStatus): string {
   return status === 'broken' || status === 'asking'
