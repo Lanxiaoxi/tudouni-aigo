@@ -39,6 +39,14 @@ debug.log
 # Session state, never committed
 .tudouni/
 
+# The code-index database `codegraph init` builds for this workspace: it is
+# derived entirely from the files on disk, runs to tens of megabytes, and is
+# stale the moment one file changes — so there is nothing in it worth a commit.
+# `codegraph.json`, the optional hand-written settings that sit beside it, is the
+# opposite: that one is meant to be committed, which is why this rule names the
+# directory and not the tool.
+.codegraph/
+
 # The agent harness's own working notes for this repository. They are a scratchpad
 # that happens to live here, and nothing in the program reads them.
 /.workbuddy/
