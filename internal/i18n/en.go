@@ -981,6 +981,24 @@ var catalog = map[string]string{
 	"channels.subagent.needs_id":    "[subagent] {action} needs a subagent id.",
 	"channels.subagent.stop_failed": "[subagent] could not stop {id}: {problem}",
 
+	// --- workspace memory ---------------------------------------------------
+	//
+	// The three cases are the same three the files handlers report, for the same
+	// reason: "no session", "this build has no memory" and "the request was wrong"
+	// need three different fixes, and merging them sends a person after the wrong
+	// one. The last line is the load-bearing one — it is what a person reads when a
+	// proposal could not be published, and it carries the runtime's own sentence
+	// because the runtime is the authority on why.
+	"channels.memory.no_session":    "[memory] no session yet.",
+	"channels.memory.unsupported":   "[memory] this runtime has no workspace memory.",
+	"channels.memory.needs_action":  "[memory] the request needs an action (one of {actions}).",
+	"channels.memory.unknown_action": "[memory] unrecognized action: {action} (only {actions})",
+	"channels.memory.action_failed": "[memory] {action} failed: {problem}",
+	"channels.memory.published":     "[memory] published {id} (revision {revision}). It is part of this workspace's memory from now on.",
+	"channels.memory.queued":        "[memory] {id} is in the review queue. Nothing changes until it is published.",
+	"channels.memory.rebuilt":       "[memory] index rebuilt from the Markdown files ({entries} memories).",
+	"channels.memory.saved":         "[memory] settings saved.",
+
 	// --- the /context screen ------------------------------------------------
 	"context.title":        "Context and compaction",
 	"context.kv.window":    "Window",

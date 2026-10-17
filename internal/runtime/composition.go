@@ -17,6 +17,7 @@ import (
 	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/files"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/memory"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/process"
@@ -377,6 +378,18 @@ type Runtime struct {
 	SSH *sshlib.Manager
 	// Skills is the loaded-skill board, which the payload tail renders from.
 	Skills *builtin.SkillBoard
+	// WorkspaceMemory is this workspace's long-lived memory: past solutions, project
+	// experience, and confirmed collaboration preferences. Nil means the directories
+	// could not be created, which every caller treats as "no memory" rather than as an
+	// error — see internal/runtime/memory.go.
+	//
+	// It is deliberately **not** called `Memory`: that name is already the approval
+	// memory above, and two fields with one name is how "which memory did you mean"
+	// becomes a bug nobody can see.
+	WorkspaceMemory *memory.Workspace
+	// memory is what one turn has recalled so far. Guarded by its own mutex because
+	// the tool-failure trigger runs on parallel tool goroutines.
+	memory memoryRecall
 	// Goal is the session's long-running objective: the board the goal tools write
 	// through and the payload tail reads. It is always present — a session with no
 	// goal is the normal state, not a missing feature, and the tools have to exist
@@ -562,6 +575,17 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		runtimeValue.MaxSteps = agent.DefaultMaxSteps
 	}
 
+	// [memory] The workspace's own memory. Opened **here**, before the tools are
+	// assembled, because the three memory tools are registered from it and a runtime
+	// that cannot open its memory directory must not offer tools that would then fail
+	// on every call.
+	//
+	// A failure is not returned: it becomes a warning and the session runs without
+	// memory. That is the design's rule, and it is also the only defensible one — a
+	// workspace whose `.tudouni/memory` cannot be created (a read-only checkout, a
+	// permission problem) is still a workspace somebody needs to work in.
+	runtimeValue.openMemory()
+
 	// [context] The "xx / yy" in the usage line needs a yy, and the endpoint does not
 	// report a window — it comes from the catalogue. With no entry there is no
 	// denominator, so the interface reports usage without a percentage; a wrong
@@ -630,6 +654,10 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// costs a round trip every time it is tried, and teaches it that tools lie.
 	extra := append([]tools.Tool{}, jobTools...)
 	extra = append(extra, builtin.NewFetchWeb(runtimeValue.httpClient))
+	// The memory tools. Empty when the subsystem did not open, which is why this is an
+	// append of a possibly-empty slice rather than a conditional registration: "there is
+	// no memory here" and "there are no memory tools" are the same state.
+	extra = append(extra, builtin.NewMemoryTools(runtimeValue.WorkspaceMemory).All...)
 	hasFetch := true
 
 	// The SSH tools. They are registered only when a manager exists, and the
@@ -913,6 +941,12 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		OnDelta:      deltaSink(options),
 		OnCheckpoint: runtimeValue.checkpoint,
 		OnEvent:      runtimeValue.onEvent,
+		// [memory] The second automatic trigger. It is a **separate hook from OnEvent**
+		// because the audit truncates a tool result to two hundred characters, and an
+		// error's distinctive half is often at the end of it — a nested "caused by"
+		// chain, a version number in the last line. Recall is the one consumer that has
+		// to read the whole text.
+		OnToolResult: runtimeValue.onToolResult,
 		Notes:        runtimeValue.notes,
 		// The pre-request check. It goes in as one more thing the retry loop does
 		// before an attempt, and it is deliberately **not** called anything about
@@ -1556,10 +1590,10 @@ func (r *Runtime) onEvent(record map[string]any) {
 
 // notes is the trailing block appended to every request payload.
 //
-// Six parts, in this order: the skill catalogue, the loaded skill bodies, the
-// goal, the task list, the background-job warning, and the delegations in flight.
-// None of them enters the session's messages: all six are this run's working
-// memory, not something either party said.
+// Seven parts, in this order: the skill catalogue, the loaded skill bodies, the
+// workspace memory, the goal, the task list, the background-job warning, and the
+// delegations in flight. None of them enters the session's messages: all seven are
+// this run's working memory, not something either party said.
 //
 // **The order is by how costly it is to miss.** The catalogue is a menu; the goal
 // and the task list are what the model is doing and why; the jobs and the
@@ -1589,6 +1623,13 @@ func (r *Runtime) notes() string {
 		if note := r.Skills.Note(); note != "" {
 			parts = append(parts, note)
 		}
+	}
+	// [memory] What this workspace already knows about this turn. It goes here — above
+	// the goal and the task list — because those two describe *this* turn and have to
+	// stay closest to the token being generated, while a memory is background reference
+	// material: read it, judge whether it still applies, then get on with the work.
+	if note := r.memoryNote(); note != "" {
+		parts = append(parts, note)
 	}
 	// The goal, if this session has one. It is rendered from the same board the
 	// goal tools write through, so the model cannot be told one thing here and
@@ -1665,6 +1706,11 @@ func (r *Runtime) MarkStop() {}
 // returns the body — which is a plain string whenever nothing was attached, so a
 // session that never used the feature sends exactly what it always sent.
 func (r *Runtime) RunTurn(ctx context.Context, text string) (string, error) {
+	// [memory] The turn-start retrieval happens **before** the agent runs, so the first
+	// request of the turn already carries what this workspace knows. It is the only
+	// trigger that sees the person's own words rather than an error, and that is where a
+	// collaboration preference is found.
+	r.recallForTurn(text)
 	return r.Agent.RunMessages(ctx, r.turnMessages(text))
 }
 

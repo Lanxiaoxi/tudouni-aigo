@@ -52,7 +52,13 @@ const VERSION = 1
 // file itself, and the desktop has no such file, so the status screen is where
 // its "where did the turn's seconds go" panel gets its numbers. Additive again —
 // a front end that does not know the key simply never reads it.
-const PROTOCOL = 5
+//
+// 6 adds workspace memory: `memory_list` / `memory_action` inbound, and one more
+// `ui` kind (`memory`) carrying the panel's snapshot. Additive in the same way 4 was:
+// a front end that knows neither simply never asks, and one that does not know the
+// `memory` kind ignores it — nothing about a session's behaviour depends on the panel
+// being drawn.
+const PROTOCOL = 6
 
 // Message keys used by every envelope.
 const (
@@ -110,6 +116,17 @@ const (
 	// The id is the child's session id, the same string every panel row and
 	// audit record carries.
 	InSubagentStop = "subagent_stop"
+
+	// Workspace memory. Two verbs, and they are not symmetric: `memory_list` reads
+	// everything the panel draws, `memory_action` carries one decision.
+	//
+	// The decisions are the person's, not the model's. `memory_propose` (the model's
+	// write path) is a tool and lands in the candidate queue; publishing, rejecting and
+	// deprecating are only reachable from here, which is only reachable from a front end
+	// somebody is looking at. That split is the design's review rule expressed as two
+	// vocabularies.
+	InMemoryList   = "memory_list"
+	InMemoryAction = "memory_action"
 )
 
 // Message kinds travelling runtime -> front end.
@@ -172,6 +189,16 @@ const (
 	UITerminalCreated = "terminal_created"
 	UITerminalOutput  = "terminal_output"
 	UITerminalExit    = "terminal_exit"
+
+	// Workspace memory. One kind for both verbs: `memory_list`'s whole snapshot, and
+	// the answer to a `memory_action` — which is the same snapshot taken again after
+	// the change, for the reason the terminal list is re-sent after a create: the panel
+	// draws one consistent view rather than patching its own.
+	//
+	// A refusal arrives as this kind carrying `problem` and no `memory`, never as a
+	// notice alone. The panel is a modal layer over the transcript, so a notice lands
+	// behind the thing that is covering it — the trap the files panel hit first.
+	UIMemory = "memory"
 )
 
 // Terminal statuses. The runtime is the only source of truth for these; a front
@@ -240,6 +267,24 @@ const (
 // GoalActions is the wire's own list, for the error message that names them.
 var GoalActions = []string{GoalPause, GoalResume, GoalClear}
 
+// Actions a `memory_action` message accepts.
+//
+// The vocabulary lives here rather than being re-exported from `internal/memory`,
+// for the same reason the goal verbs do: the wire's spelling is this package's
+// business, and a protocol constant that aliased a storage one would move the day
+// somebody renamed a field. `publish`, `reject` and `deprecate` are review decisions;
+// `rebuild` repairs the derived index; `config` writes the workspace's settings.
+const (
+	MemoryPublish   = "publish"
+	MemoryReject    = "reject"
+	MemoryDeprecate = "deprecate"
+	MemoryRebuild   = "rebuild"
+	MemoryConfig    = "config"
+)
+
+// MemoryActions is the accepted list, for the error message that names them.
+var MemoryActions = []string{MemoryPublish, MemoryReject, MemoryDeprecate, MemoryRebuild, MemoryConfig}
+
 // Answers a front end may return for a question. The third value the runtime
 // can produce — `unavailable`, nobody to ask — is never sent by a front end.
 const (
@@ -294,6 +339,11 @@ var RequiredKeys = map[string][]string{
 	InTerminalClose:  {"v", "t", "terminal_id"},
 
 	InSubagentStop: {"v", "t", "subagent_id"},
+
+	InMemoryList: {"v", "t"},
+	// `action` is the verb; the rest of the message is that verb's arguments and is
+	// validated by the runtime, which is the side that knows what publishing needs.
+	InMemoryAction: {"v", "t", "action"},
 }
 
 // TerminalDefaults are the size a terminal is created with when the client does

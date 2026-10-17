@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
+import { Archive, ArchiveRestore, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -428,6 +428,23 @@ export function WorkspaceSidebar() {
       disabled: blocked || (!hasLiveChild && !boardOpen),
       active: boardOpen,
       run: () => setBoardOpen(!boardOpen),
+    },
+    {
+      key: 'memory',
+      group: 'workspace',
+      // The workspace's own surface, next to the browser and the shells — not a
+      // setting. Its subject is what *this* workspace has learned, the way the
+      // Learn panel's subject is what it can be taught; the settings it also
+      // carries are a section **inside** the panel, not the reason it exists.
+      label: t('lb.memory'),
+      hint: t('lb.memoryHint'),
+      icon: <Brain size={14} />,
+      // A live session, not merely a workspace: the corpus lives under
+      // `<workspace>/.tudouni/memory`, but the code that reads and writes it is the
+      // runtime, and there is one of those per open conversation. Same gate as
+      // Files and Terminal, and for the same reason.
+      disabled: blocked || !hasSession,
+      run: () => openPanel('memory'),
     },
     {
       key: 'tasks',

@@ -515,5 +515,38 @@
       }
     },
     "required": ["v", "t", "id", "status"]
+  },
+  "memory_list": {
+    "summary": "要一份工作区记忆的全量快照（出站 ui(memory)）。面板打开时发一次。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "memory_list"}
+    },
+    "required": ["v", "t"]
+  },
+  "memory_action": {
+    "summary": "对工作区记忆的一次审核决定。**回答永远是 ui(memory) 的全量快照**，成功失败都发。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "memory_action"},
+      "action": {
+        "type": "string",
+        "enum": ["publish", "reject", "deprecate", "rebuild", "config"],
+        "doc": [
+          "publish / reject / deprecate 是审核决定 —— 只有人能做，模型只能提案；",
+          "rebuild 从 Markdown 重建派生索引；config 写这个工作区的记忆设置。",
+          "publish、reject 要 proposal_id；deprecate 要 entry_id（可选 reason）；",
+          "config 要 config 对象。"
+        ]
+      },
+      "proposal_id": {"type": "string", "doc": "action=publish / reject 时要处理的那条候选（proposal_00N）"},
+      "entry_id": {"type": "string", "doc": "action=deprecate 时要废弃的那条记忆（mem_00N）"},
+      "reason": {"type": "string", "doc": "action=deprecate 时写进归档副本的理由；空串表示不写"},
+      "config": {
+        "type": "object",
+        "doc": "action=config 时的设置。**是补丁不是整体替换**：只带想改的键，没带的保持原值，未知键忽略（老版本面板照样能存）"
+      }
+    },
+    "required": ["v", "t", "action"]
   }
 }

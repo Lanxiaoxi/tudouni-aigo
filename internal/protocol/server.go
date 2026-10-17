@@ -512,6 +512,12 @@ func (s *Server) Dispatch(message map[string]any) bool {
 	case InSubagentStop:
 		s.handleSubagentStop(message)
 
+	case InMemoryList:
+		s.handleMemoryList()
+
+	case InMemoryAction:
+		s.handleMemoryAction(message)
+
 	case InUserMessage:
 		text, _ := String(message, "text")
 		s.startTurn(text)

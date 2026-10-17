@@ -17,6 +17,7 @@ import {
   TimingPanel,
 } from './panels';
 import { LearnPanel } from './LearnPanel';
+import { MemoryPanel } from './MemoryPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ConfigPanel } from './ConfigPanel';
 import { TaskPanel } from './TaskPanel';
@@ -57,7 +58,9 @@ export function PanelHost() {
         <DialogPrimitive.Overlay className="overlay-mask" />
         <DialogPrimitive.Content
           className={`dialog${panel === 'commands' ? ' cmdk' : ''}${
-            panel === 'config' || panel === 'tasks' || panel === 'learn' ? ' dialog-wide' : ''
+            panel === 'config' || panel === 'tasks' || panel === 'learn' || panel === 'memory'
+              ? ' dialog-wide'
+              : ''
           }${panel === 'files' ? ' dialog-files' : ''}`}
           aria-label={t('topbar.commands')}
         >
@@ -78,6 +81,7 @@ export function PanelHost() {
           {panel === 'terminal' ? <TerminalPanel /> : null}
           {panel === 'learn' ? <LearnPanel /> : null}
           {panel === 'tasks' ? <TaskPanel /> : null}
+          {panel === 'memory' ? <MemoryPanel /> : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

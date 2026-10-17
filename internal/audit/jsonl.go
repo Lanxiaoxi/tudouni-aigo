@@ -55,6 +55,15 @@ const (
 	// outcomes, and splitting them would make a reader merge three of them back
 	// together to count how many were named at all.
 	KindImageAttached = "image_attached"
+	// KindMemoryRecall records one automatic retrieval from workspace memory: which
+	// trigger fired, what was asked, and which memories came back.
+	//
+	// It is an audit kind rather than nothing at all because "why did the model know
+	// that" is a question about a run, and the answer has to live where the run is
+	// read back. The bodies do **not** travel here — the ids do, and the files are
+	// still on disk: copying a memory into the log would make the log a second copy of
+	// the corpus, the same rule `context_compacted` follows for summaries.
+	KindMemoryRecall = "memory_recall"
 )
 
 // Event builds one audit record with the fields every record carries.

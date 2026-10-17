@@ -3087,6 +3087,42 @@ table.table td.mono {
   gap: var(--space-3);
 }
 
+/* ---------- 工作区记忆（Workspace memory）----------
+ *
+ * 一张卡片 = 一条记忆或一条待审核的提案。用卡片而不是列表行，是因为
+ * 审核要**读正文**：一行放不下「这条记录到底说了什么」，而把正文藏在
+ * 点击后面等于让批准的人不读就批。
+ *
+ * 两个类而不是给每一行写行内样式：间距和边框在这里只有一处定义，
+ * 面板再加一种卡片时不必重新抄一遍 token。
+ */
+.wm-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+/* 提案正文：**可滚动但高度有上限**。一条记忆可以很长，而审核面板不能让
+ * 一条记录把后面所有待审的行推到屏幕外。 */
+.wm-body {
+  margin: 0;
+  padding: var(--space-2);
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+}
+
 .cfg-field {
   display: flex;
   flex-direction: column;

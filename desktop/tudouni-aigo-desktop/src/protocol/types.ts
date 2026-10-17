@@ -410,6 +410,114 @@ export interface UiFileReadMsg {
 }
 
 /**
+ * Workspace memory: the model's confidence in one memory.
+ *
+ * It is a statement about the evidence, not about the content: the same note is
+ * `inferred` the first time somebody guesses and `verified` after it is reproduced.
+ * The panel shows it because it is the difference between "this happened here" and
+ * "this was deduced", and a reader deciding whether to trust a note needs it.
+ */
+export type MemoryConfidence = 'observed' | 'verified' | 'inferred';
+
+/**
+ * The workspace's memory settings, as `config.json` holds them.
+ *
+ * Every field is present, including the ones this panel does not draw: the runtime
+ * writes the whole file, and a front end that reconstructed it from the fields it
+ * knows would silently reset the others on every save.
+ */
+export interface MemoryConfig {
+  version: number;
+  /** The master switch. Off pauses recall; the files on disk are untouched. */
+  enabled: boolean;
+  /** Whether recalled memories go into the request at all. Off leaves the
+   *  explicit `memory_search` tool working — which is what somebody who wants to
+   *  choose for themselves actually wants. */
+  auto_inject: boolean;
+  recall_on_turn_start: boolean;
+  recall_on_tool_failure: boolean;
+  max_recall: number;
+  max_results: number;
+  min_score: number;
+  entry_chars: number;
+  note_chars: number;
+}
+
+/** One published memory, as the panel lists it. No body: rows are a list, and the
+ *  body is what `memory_get` is for. `chars` is its size, which is how a person
+ *  decides whether opening it is worth it. */
+export interface MemoryEntryRow {
+  id: string;
+  revision: number;
+  title: string;
+  updated_at: string;
+  confidence: MemoryConfidence;
+  triggers: string[];
+  tags: string[];
+  scope_paths: string[];
+  chars: number;
+}
+
+/** One proposal waiting for review.
+ *
+ *  `op` says what publishing it would do, and that has to be on the row: `create`,
+ *  `update` and `deprecate` are one click away from each other and only one of them
+ *  adds something. `expected_revision` is the version the proposal was written
+ *  against — publishing it against a newer one is refused by the runtime. */
+export interface MemoryCandidateRow {
+  id: string;
+  op: 'create' | 'update' | 'deprecate';
+  target_id: string;
+  expected_revision: number;
+  title: string;
+  created_at: string;
+  confidence: MemoryConfidence;
+  triggers: string[];
+  tags: string[];
+  body: string;
+  chars: number;
+  reason: string;
+}
+
+/** The derived index, as the panel reports it. `rebuilt` means this session found
+ *  it missing or stale and repaired it — worth saying, because it is the
+ *  difference between "your index is fine" and "it was broken and has been fixed". */
+export interface MemoryIndexStatus {
+  entries: number;
+  built_at: string;
+  rebuilt: boolean;
+  problem: string;
+}
+
+/** `ui(memory)`'s `memory` object: the whole panel, in one message.
+ *
+ *  Full snapshots rather than deltas, for the reason the terminal list is one: a
+ *  front end that patched its own copy would eventually disagree with the runtime
+ *  about what exists. */
+export interface MemorySnapshot {
+  root: string;
+  config: MemoryConfig;
+  entries: MemoryEntryRow[];
+  candidates: MemoryCandidateRow[];
+  index: MemoryIndexStatus;
+  problem: string;
+  unreadable: string[];
+}
+
+/** `ui(memory)`.
+ *
+ *  **A refusal arrives here too**, as `problem` with the snapshot still attached:
+ *  the panel is a modal layer over the transcript, so a `notice` explaining a
+ *  failed publish would be printed behind the panel that is asking. */
+export interface UiMemoryMsg {
+  v: number;
+  t: 'ui';
+  kind: 'memory';
+  memory?: MemorySnapshot;
+  problem?: string;
+}
+
+/**
  * One terminal, as the runtime reports it.
  *
  * A terminal belongs to the **workspace**, not to a session: switching or
@@ -903,7 +1011,8 @@ export type UiMsg =
   | UiTerminalsMsg
   | UiTerminalCreatedMsg
   | UiTerminalOutputMsg
-  | UiTerminalExitMsg;
+  | UiTerminalExitMsg
+  | UiMemoryMsg;
 
 /* ---------------- the rest ---------------- */
 
@@ -1051,6 +1160,14 @@ export type McpAction = 'list' | 'load' | 'unload';
 
 export type GoalAction = 'pause' | 'resume' | 'clear';
 
+/** The verbs a `memory_action` message accepts.
+ *
+ *  They are the **person's** vocabulary: `publish`, `reject` and `deprecate` are
+ *  review decisions, and the model has no way to send any of them — it can only
+ *  propose, which lands in the candidate queue. `rebuild` repairs the derived index
+ *  and `config` writes this workspace's settings. */
+export type MemoryActionKind = 'publish' | 'reject' | 'deprecate' | 'rebuild' | 'config';
+
 export type FrontendMsg =
   | { v: number; t: 'user_message'; text: string }
   | { v: number; t: 'permission_response'; id: string; decision: PermissionDecision }
@@ -1094,6 +1211,24 @@ export type FrontendMsg =
   | { v: number; t: 'goal'; action?: GoalAction }
   /** Only send this when you know something of yours is outstanding. */
   | { v: number; t: 'refresh_state' }
+  /** Ask for the workspace-memory panel's whole snapshot (`ui(memory)`). */
+  | { v: number; t: 'memory_list' }
+  /** One review decision about workspace memory.
+   *
+   *  The verbs are the person's: the model can only *propose*. `publish` and `reject`
+   *  take `proposal_id`; `deprecate` takes `entry_id` (and an optional `reason`);
+   *  `rebuild` repairs the derived index; `config` writes a patch of the settings. The
+   *  answer is always a fresh `ui(memory)`, so a front end never patches its own view
+   *  from a success flag. */
+  | {
+      v: number;
+      t: 'memory_action';
+      action: MemoryActionKind;
+      proposal_id?: string;
+      entry_id?: string;
+      reason?: string;
+      config?: Partial<MemoryConfig>;
+    }
   | { v: number; t: 'mcp'; action: McpAction; servers: string[] }
   /** List one directory level. An **empty** path is the workspace root — the
    *  same value the runtime uses for "the workspace itself", so there is no

@@ -29,6 +29,9 @@ import { conversationView } from '@/conversationView';
 import type {
   FileEntry,
   FrontendMsg,
+  MemoryActionKind,
+  MemoryConfig,
+  MemorySnapshot,
   ModelAlias,
   PermissionDecision,
   PermissionRequestMsg,
@@ -217,7 +220,12 @@ export type PanelKind =
    * rather than a view for the same reason Config is: the templates and their
    * history are facts about the desktop, not about any one conversation, and
    * a person opens the panel with no session running at all. */
-  | 'tasks';
+  | 'tasks'
+  /* Workspace memory: what this workspace has learned, plus the proposals
+   * waiting to be reviewed. A panel rather than a view because its subject is
+   * the workspace, not the conversation — it opens from the same drawer as
+   * Config and Tasks, and what it edits outlives every session. */
+  | 'memory';
 
 /* `ssh` sits with the workspace-capability blocks (jobs, mcp): it is about
  * things running in the workspace, not about this turn's conversation. */
@@ -883,6 +891,29 @@ export interface SessionRuntime {
    */
   fileView: FileView | null;
 
+  /* ---------------- workspace memory ----------------
+   *
+   * The panel's whole subject, in one snapshot. It is **per session** because the
+   * runtime that answered is per session: two conversations in two workspaces have
+   * two unrelated memory corpora, and one slot would let the second overwrite the
+   * first's list.
+   *
+   * `null` means "not asked yet", which is a different statement from an empty
+   * corpus — the panel draws "loading" for the first and "nothing recorded" for the
+   * second.
+   */
+  memory: MemorySnapshot | null;
+  /**
+   * Why the last `memory_action` did **not** take effect, verbatim from the runtime.
+   *
+   * A third state, and it is here rather than left to the notice stream for the same
+   * reason `filesProblem` exists: the panel is a modal layer over the transcript, so a
+   * notice about a failed publish is printed behind the panel that asked. It is
+   * cleared by the next successful snapshot, because at that point it describes a
+   * request that has been superseded.
+   */
+  memoryProblem: string | null;
+
   /* ---------------- this session's own input state ---------------- */
   draft: string;
   history: string[];
@@ -1058,6 +1089,8 @@ export function createSessionBucket(
     filesLoading: false,
     filesProblem: null,
     fileView: null,
+    memory: null,
+    memoryProblem: null,
     draft: '',
     history: [],
     historyCursor: null,
@@ -1077,6 +1110,25 @@ function prefsQuietDefault(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The arguments one memory action may carry.
+ *
+ * All optional, because the verbs differ: `publish` and `reject` take `proposal_id`,
+ * `deprecate` takes `entry_id` and an optional `reason`, `config` takes a patch of the
+ * settings. Which one a verb needs is the **runtime's** judgement — it is the side that
+ * knows what publishing takes, and a second check here would be a second answer that
+ * eventually disagrees with it.
+ *
+ * `config` is a **patch**, not a whole struct: keys left out keep their current value,
+ * so a panel built against an older build can still save the knobs it knows.
+ */
+export interface MemoryActionArgs {
+  proposal_id?: string;
+  entry_id?: string;
+  reason?: string;
+  config?: Partial<MemoryConfig>;
 }
 
 export interface AppStore {
@@ -1931,6 +1983,27 @@ export interface AppStore {
    * read by the desktop's own command and arrives as a `data:` URL.
    */
   previewImage(path: string): void;
+
+  /* ---------------- workspace memory ---------------- */
+
+  /**
+   * Ask for the panel's whole snapshot.
+   *
+   * One request for everything, the way `terminal_list` is: the panel has four
+   * sections that describe one corpus, and assembling them from several replies
+   * would give it a window in which the candidate list disagrees with the entry list
+   * drawn beside it.
+   */
+  requestMemory(): void;
+  /**
+   * Perform one review decision.
+   *
+   * The verbs are the runtime's (`publish`, `reject`, `deprecate`, `rebuild`,
+   * `config`) and they are the **person's**: the model can only propose. Every one of
+   * them answers with a fresh snapshot, so this store never patches the panel's view
+   * itself — it redraws from the runtime's answer.
+   */
+  memoryAction(action: MemoryActionKind, args?: MemoryActionArgs): void;
 
   /* ---------------- the workspace: terminals ---------------- */
 
@@ -4456,6 +4529,26 @@ export const useApp = create<AppStore>((set, get) => {
               });
               break;
             }
+            case 'memory': {
+              // **The snapshot replaces, never merges.** It is the runtime's whole
+              // answer about what memories and proposals exist, and a front end that
+              // unioned it with what it already had would keep a published proposal on
+              // the review list for ever — the same rule the terminal list follows.
+              //
+              // `problem` arrives on a refusal **together with** the snapshot, which is
+              // why the two are handled in one branch: the panel has to say what failed
+              // and still draw the state it failed in.
+              const snapshot = msg.memory;
+              patch(key, {
+                ...(snapshot && typeof snapshot === 'object'
+                  ? { memory: snapshot as MemorySnapshot }
+                  : {}),
+                memoryProblem: typeof msg.problem === 'string' && msg.problem !== ''
+                  ? msg.problem
+                  : null,
+              });
+              break;
+            }
             case 'file_read': {
               // **Two destinations, one answer.** The body goes into the
               // transcript as a block — that is where a file read belongs in
@@ -5047,6 +5140,12 @@ export const useApp = create<AppStore>((set, get) => {
         // sent this would still show terminals, one snapshot later.
         sendTo(key, { v: 1, t: 'terminal_list' });
       }
+      if (p === 'memory') {
+        // The snapshot is asked for on open because it is the only source: unlike the
+        // terminal list it does not ride on `ui(state)`, since a workspace memory is
+        // not something every turn needs to redraw.
+        get().requestMemory();
+      }
     },
 
     closePanel() {
@@ -5517,6 +5616,33 @@ export const useApp = create<AppStore>((set, get) => {
           });
         },
       );
+    },
+
+    /* ==========================================================
+       The workspace: memory
+       ========================================================== */
+
+    requestMemory() {
+      const key = get().activeKey;
+      if (key === null) return;
+      // No "loading" flag to raise: the panel draws `memory === null` as its loading
+      // state already, and a second boolean saying the same thing is a second thing to
+      // get out of step.
+      sendTo(key, { v: 1, t: 'memory_list' });
+    },
+
+    memoryAction(action, args) {
+      const key = get().activeKey;
+      if (key === null) return;
+      // The previous refusal is cleared here rather than on the answer: a new decision
+      // supersedes it the moment it is asked for, and leaving it up would show a stale
+      // reason over a panel whose state may now be fine.
+      patch(key, { memoryProblem: null });
+      // The verb and its arguments travel as the runtime's own vocabulary. Which
+      // argument a verb needs is the **runtime's** judgement — it is the side that knows
+      // what publishing takes, and a second check here would be a second answer that
+      // eventually disagrees with it.
+      sendTo(key, { v: 1, t: 'memory_action', action, ...(args ?? {}) });
     },
 
     /* ==========================================================

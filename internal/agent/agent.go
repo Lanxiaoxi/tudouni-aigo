@@ -145,6 +145,18 @@ type Config struct {
 	// callers (the JSONL sink and the protocol server) both swallow their own
 	// errors, because observation must not be able to affect what is observed.
 	OnEvent func(map[string]any)
+	// OnToolResult receives one finished tool call's **full** result text, together
+	// with its status and name.
+	//
+	// It exists because the audit record for the same call carries only a two-hundred
+	// character preview: enough to skim a log, not enough to recognise an error whose
+	// distinctive half is at the end of it. The workspace-memory recall is the one
+	// consumer that has to read the whole thing.
+	//
+	// Like OnEvent, it is observation and may never fail the turn: it is called after
+	// the result is settled, from whichever goroutine ran the call, and a panic in it
+	// is swallowed.
+	OnToolResult func(name, status, result string)
 	// OnDelta reports a stream increment. reset=true means "throw away what you
 	// have drawn for this step".
 	//
@@ -1183,6 +1195,21 @@ func (a *Agent) reportToolResult(item *prepared, durationMs int, ok bool) {
 			len([]rune(item.result)), preview(item.result, DebugPreviewLimit))
 	})
 	a.emit(audit.Event(audit.KindToolResult, a.Session.SessionID, a.runID, a.step, data))
+	a.reportToObserver(item)
+}
+
+// reportToObserver hands the full result to the configured hook.
+//
+// Separate from `reportToolResult` because the two have different contracts: the audit
+// record is a bounded summary written by the agent, while this is the raw text handed
+// to somebody else. Swallowing a panic here is deliberate — a broken observer must not
+// settle a tool call as failed, which is what an escaping panic would do.
+func (a *Agent) reportToObserver(item *prepared) {
+	if a.OnToolResult == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	a.OnToolResult(item.call.Name, item.status, item.result)
 }
 
 func (a *Agent) runParallel(ctx context.Context, batch []prepared) {
