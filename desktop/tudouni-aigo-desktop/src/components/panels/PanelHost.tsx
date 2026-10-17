@@ -36,6 +36,10 @@ import { TaskPanel } from './TaskPanel';
  * whole reason the task design puts them at opposite edges; and Learn this
  * workspace, which is the same two-column editor shape as the task panel's.
  *
+ * Workspace memory has a rung of its own (`dialog-memory`, 1000px): it is the one
+ * panel that is two real columns rather than a form with a side card, and the
+ * review card stops fitting beside the tuning rows below ~1000px.
+ *
  * There is no theme panel: the theme follows the system and there is no in-app
  * switch (decision 4), so the command that used to open one is gone too.
  */
@@ -58,10 +62,10 @@ export function PanelHost() {
         <DialogPrimitive.Overlay className="overlay-mask" />
         <DialogPrimitive.Content
           className={`dialog${panel === 'commands' ? ' cmdk' : ''}${
-            panel === 'config' || panel === 'tasks' || panel === 'learn' || panel === 'memory'
-              ? ' dialog-wide'
-              : ''
-          }${panel === 'files' ? ' dialog-files' : ''}`}
+            panel === 'config' || panel === 'tasks' || panel === 'learn' ? ' dialog-wide' : ''
+          }${panel === 'files' ? ' dialog-files' : ''}${
+            panel === 'memory' ? ' dialog-memory' : ''
+          }`}
           aria-label={t('topbar.commands')}
         >
           {panel === 'commands' ? <CommandPalette /> : null}

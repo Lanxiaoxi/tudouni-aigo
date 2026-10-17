@@ -1454,12 +1454,11 @@ export const en = {
 
   /* ---------------- workspace memory ----------------
    *
-   * One panel, four jobs: configure the recall, review what the agent proposed,
-   * see what is on record, and repair the index. The labels are the runtime's
-   * vocabulary rather than new words for the same things — `config.json`, the
-   * candidate queue and `mem_` ids all appear in the files a person may open, and
-   * a screen that renamed them would send somebody looking for a file that does
-   * not exist.
+   * One panel, two columns: how recall behaves on the left, what the workspace
+   * knows on the right. The labels are the runtime's vocabulary rather than new
+   * words for the same things — `config.json`, the candidate queue and `mem_` ids
+   * all appear in the files a person may open, and a screen that renamed them
+   * would send somebody looking for a file that does not exist.
    */
   'lb.memory': 'Workspace memory',
   'lb.memoryHint': 'What this workspace has learned, and what is waiting to be reviewed',
@@ -1469,43 +1468,50 @@ export const en = {
   'panel.memory.noSession': 'No conversation is open, so there is no runtime to ask.',
   'panel.memory.failed': 'This workspace’s memory could not be read',
   'panel.memory.empty': 'Nothing recorded yet',
-  'panel.memory.emptyHint':
-    'The agent proposes memories as it works; nothing becomes one of these until you publish it.',
+  'panel.memory.emptyHint': 'Approved memories land here and get indexed for recall.',
   /** The review queue. Its head has to say what "waiting" means — a proposal is
-   *  inert by design, and a row that looked like a memory would make publishing
+   *  inert by design, and a row that looked like a memory would make approving
    *  look like a formality. */
   'panel.memory.review': 'Waiting for review',
-  'panel.memory.reviewHint': 'Nothing here is in effect yet.',
   'panel.memory.reviewEmpty': 'Nothing waiting',
   'panel.memory.recorded': 'On record',
-  'panel.memory.settings': 'Settings',
-  'panel.memory.settingsHint': 'Stored in config.json and read on every turn of every session in this workspace.',
-  'panel.memory.enabled': 'Workspace memory on',
-  'panel.memory.enabledHint': 'Off stops recall and stops accepting proposals. The files stay where they are.',
-  'panel.memory.autoInject': 'Put recalled memories in the request',
-  'panel.memory.autoInjectHint':
-    'Off leaves the memory_search tool working, which is what "I would rather ask for it myself" means.',
+  'panel.memory.behavior': 'Behavior',
+  'panel.memory.tuning': 'Recall tuning',
+  'panel.memory.enabled': 'Workspace memory',
+  'panel.memory.enabledHint': 'Off stops recall and ignores proposals. Files stay on disk.',
+  'panel.memory.autoInject': 'Inject recalled memories',
+  'panel.memory.autoInjectHint': 'Off still lets you search memory by hand.',
   'panel.memory.turnStart': 'Look up when a turn starts',
-  'panel.memory.turnStartHint':
-    'Matches against your own words. This is where a working preference is found.',
+  'panel.memory.turnStartHint': 'Matches your own words at the start of each turn.',
   'panel.memory.toolFailure': 'Look up when a tool fails',
-  'panel.memory.toolFailureHint':
-    'Matches against the error text. Usually the moment a remembered fix is worth the most.',
-  'panel.memory.maxRecall': 'Memories per automatic recall',
+  'panel.memory.toolFailureHint': 'Matches the error text — where a remembered fix helps most.',
+  'panel.memory.maxRecall': 'Memories per recall',
   'panel.memory.maxResults': 'Results per search',
   'panel.memory.minScore': 'Relevance floor',
   'panel.memory.entryChars': 'Characters per memory',
   'panel.memory.noteChars': 'Characters per block',
-  'panel.memory.save': 'Save settings',
-  'panel.memory.saved': 'Saved',
+  'panel.memory.decrease': 'Decrease {label}',
+  'panel.memory.increase': 'Increase {label}',
+  'panel.memory.save': 'Save changes',
+  /** Where a saved config takes effect. **This session now, not "new sessions"**:
+   *  saving replaces the config of the runtime this panel is talking to, and the
+   *  next turn in this session already uses it. A session already open in another
+   *  window is a different runtime with its own loaded copy, so it keeps the old
+   *  numbers until it is reopened — which is the second half of the sentence. */
+  'panel.memory.saveNote': 'Applies to this session now, and to sessions opened later.',
   'panel.memory.dirty': 'Unsaved changes',
-  'panel.memory.publish': 'Publish',
-  'panel.memory.reject': 'Reject',
+  'panel.memory.reset': 'Reset to defaults',
+  'panel.memory.approve': 'Approve',
+  'panel.memory.discard': 'Discard',
+  'panel.memory.proposed': 'proposed {when}',
+  'panel.memory.read': 'Read',
+  'panel.memory.hide': 'Hide',
+  'panel.memory.updated': 'updated {when}',
+  'panel.memory.chars': '{n} chars',
   'panel.memory.deprecate': 'Deprecate',
   'panel.memory.deprecateConfirm': 'Confirm',
   'panel.memory.deprecateCancel': 'Cancel',
   'panel.memory.deprecateReason': 'Why is it no longer true? (optional)',
-  'panel.memory.refresh': 'Reload from disk',
   'panel.memory.rebuild': 'Rebuild index',
   'panel.memory.indexLine': '{n} memories indexed · built {when}',
   'panel.memory.rebuilt': 'rebuilt this session',
