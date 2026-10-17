@@ -254,6 +254,31 @@ type McpServerSpec struct {
 	URL     string
 	Headers map[string]string
 	Timeout float64
+	// AutoLoad mounts this server when a session starts, instead of waiting for
+	// `/mcp load`.
+	//
+	// **False is the default and the default is the rule.** Mounting starts a
+	// program on this machine, and "every configured server runs whenever a
+	// session opens" is a different product from "nothing runs until you say so" —
+	// it is not a detail to inherit by accident from a file you wrote months ago.
+	//
+	// What the switch changes is **when** a process starts, not what it may do:
+	// every tool it contributes stays high risk and every call still needs
+	// approval (see internal/mcp's own comment on why that level is not
+	// configurable). That is why this is a per-server field rather than a second
+	// trust level, and why turning it on does not weaken the call-time boundary.
+	AutoLoad bool
+}
+
+// mcpServerKeys is everything one `servers[name]` object may contain.
+//
+// An unknown key is **refused rather than ignored**. Silence is the wrong answer
+// here: `auto_load` misspelled as `autoload` would otherwise mount nothing, warn
+// about nothing, and leave the person certain they had configured it. The cost is
+// one error message naming the key and the known ones; the alternative is a
+// feature that appears not to work for reasons nothing on screen explains.
+var mcpServerKeys = []string{
+	"command", "url", "args", "env", "headers", "timeout_seconds", "auto_load",
 }
 
 // LoadMcpServers reads mcp.json.
@@ -298,6 +323,12 @@ func parseMcpServers(object map[string]any, path string) ([]McpServerSpec, []str
 			return nil, nil, errorf("%s", i18n.T("config.error.mcp_problem", "file", path,
 				"problem", i18n.T("mcp.cfg.server_not_object", "name", name)))
 		}
+		if unknown := unknownKeys(entry, mcpServerKeys); len(unknown) > 0 {
+			return nil, nil, errorf("%s", i18n.T("config.error.mcp_problem", "file", path,
+				"problem", i18n.T("mcp.cfg.unknown_server_keys", "name", name,
+					"names", strings.Join(unknown, ", "),
+					"known", strings.Join(mcpServerKeys, ", "))))
+		}
 		spec := McpServerSpec{Name: name}
 		spec.Command, _ = entry["command"].(string)
 		spec.URL, _ = entry["url"].(string)
@@ -312,6 +343,18 @@ func parseMcpServers(object map[string]any, path string) ([]McpServerSpec, []str
 		spec.Headers = stringMapOf(entry["headers"])
 		if timeout, ok := entry["timeout_seconds"].(float64); ok {
 			spec.Timeout = timeout
+		}
+		// An explicit `null` says nothing rather than something wrong, so it reads
+		// as absent. A string like "true" is **not** true: this field decides
+		// whether a program runs at start-up, and the only value that means yes is
+		// the boolean.
+		if value, present := entry["auto_load"]; present && value != nil {
+			flag, ok := value.(bool)
+			if !ok {
+				return nil, nil, errorf("%s", i18n.T("config.error.mcp_problem", "file", path,
+					"problem", i18n.T("mcp.cfg.auto_load_not_bool", "name", name)))
+			}
+			spec.AutoLoad = flag
 		}
 		if (spec.Command == "") == (spec.URL == "") {
 			given := i18n.T("mcp.cfg.neither_given")

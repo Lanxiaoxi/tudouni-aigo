@@ -71,6 +71,15 @@ export interface McpServerView {
   env: Pair[];
   headers: Pair[];
   timeoutSeconds: number | null;
+  /**
+   * Whether the runtime mounts this server when a session opens.
+   *
+   * One boolean rather than `boolean | null`: the runtime treats an absent key as
+   * false, so "unset" and "off" are the same fact and a checkbox with a third,
+   * half-drawn state would be inventing a distinction the thing behind it does not
+   * make. Saving with this false removes the key from the file.
+   */
+  autoLoad: boolean;
 }
 
 export interface McpDocumentView {
@@ -158,6 +167,9 @@ export function emptyServer(): McpServerView {
     env: [],
     headers: [],
     timeoutSeconds: null,
+    // A new server waits for `/mcp load`, like every server did before the switch
+    // existed. Ticking it is a decision somebody makes, not a default they inherit.
+    autoLoad: false,
   };
 }
 

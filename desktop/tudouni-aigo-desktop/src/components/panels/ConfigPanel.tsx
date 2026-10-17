@@ -1395,6 +1395,23 @@ function ServerEditor({
               />
             </Field>
           </div>
+          {/*
+            Not in the side card with the transport. The side card answers "where
+            does this server run"; this answers "when", and folding the two together
+            would suggest ticking it changes the transport.
+          */}
+          <div className="cfg-field">
+            <span className="cfg-label">{t('panel.config.mcpAutoLoad')}</span>
+            <label className="cfg-check">
+              <input
+                type="checkbox"
+                checked={server.autoLoad}
+                onChange={(e) => onChange({ autoLoad: e.target.checked })}
+              />
+              <span>{t('panel.config.mcpAutoLoadOn')}</span>
+            </label>
+            <span className="cfg-hint">{t('panel.config.mcpAutoLoadHint')}</span>
+          </div>
         </section>
       </div>
 

@@ -744,10 +744,23 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		runtimeValue.Subagents = nil
 	}
 
-	// Configured servers are announced but **not mounted**: a server is a program
-	// that runs on this machine with this user's privileges, so starting one is a
-	// decision a person makes rather than a consequence of a config file existing.
-	if line := mcpNotice(mcpSpecs); line != "" {
+	// Servers are announced, and the ones that asked to come up with the session
+	// are mounted here — which is the only place mounting happens without a person
+	// asking for it, so the decision itself is recorded in mcp.json's `auto_load`
+	// rather than inferred from the file existing.
+	//
+	// **Mounting runs before the notice**, and that order is the point: the line
+	// then reports what is actually running instead of what was meant to be, so a
+	// server that failed shows up as its own warning and the counts in the notice
+	// can be trusted.
+	autoNotes, autoFailed, autoMounted := runtimeValue.mcpAutoMount(mcpSpecs)
+	for _, line := range autoNotes {
+		runtimeValue.notices = append(runtimeValue.notices, notice("info", "mcp", line))
+	}
+	for _, line := range autoFailed {
+		runtimeValue.notices = append(runtimeValue.notices, notice("warn", "mcp", line))
+	}
+	if line := mcpNotice(mcpSpecs, autoMounted); line != "" {
 		runtimeValue.notices = append(runtimeValue.notices, notice("info", "mcp", line))
 	}
 

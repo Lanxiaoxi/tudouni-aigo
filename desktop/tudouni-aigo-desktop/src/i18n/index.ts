@@ -1171,6 +1171,10 @@ export const en = {
   'panel.config.mcpEnv': 'Environment',
   'panel.config.mcpTimeout': 'Timeout',
   'panel.config.mcpTimeoutHint': 'Seconds. Empty means the runtime’s own default.',
+  'panel.config.mcpAutoLoad': 'Session start',
+  'panel.config.mcpAutoLoadOn': 'Mount this server when a session opens',
+  'panel.config.mcpAutoLoadHint':
+    'Off means it waits for /mcp. Mounting only starts the server — every tool it offers is still high risk and every call still needs your approval.',
   'panel.config.addRoute': 'Add a route',
   'panel.config.addModel': 'Add a model',
   'panel.config.addServer': 'Add a server',

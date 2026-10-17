@@ -20,6 +20,7 @@ import {
   buildPatch,
   draftFrom,
   emptyRoute,
+  emptyServer,
   isDirty,
   linesOf,
   moved,
@@ -201,18 +202,55 @@ test('an MCP server needs exactly one of a command or a URL', () => {
   const base = draftFrom(document());
   const both = {
     ...base,
-    mcp: [{ name: 'x', command: 'npx', url: 'https://x.example', args: [], env: [], headers: [], timeoutSeconds: null }],
+    mcp: [{ name: 'x', command: 'npx', url: 'https://x.example', args: [], env: [], headers: [], timeoutSeconds: null, autoLoad: false }],
   };
   assert.match(texts(blockingProblems(validateDraft(both))), /exactly one/);
 
-  const neither = { ...base, mcp: [{ name: 'x', command: '', url: '', args: [], env: [], headers: [], timeoutSeconds: null }] };
+  const neither = { ...base, mcp: [{ name: 'x', command: '', url: '', args: [], env: [], headers: [], timeoutSeconds: null, autoLoad: false }] };
   assert.match(texts(blockingProblems(validateDraft(neither))), /exactly one/);
 
-  const stdio = { ...base, mcp: [{ name: 'x', command: 'npx', url: '', args: [], env: [], headers: [], timeoutSeconds: null }] };
+  const stdio = { ...base, mcp: [{ name: 'x', command: 'npx', url: '', args: [], env: [], headers: [], timeoutSeconds: null, autoLoad: false }] };
   assert.equal(
     validateDraft(stdio).filter((problem) => problem.text.includes('MCP server')).length,
     0,
   );
+});
+
+test('auto_load is off for a new server, and an untouched switch is not a change', () => {
+  // The runtime reads an absent key as false, so there is one unticked box rather
+  // than a third "unset" state to draw.
+  assert.equal(emptyServer().autoLoad, false);
+
+  const doc = document({
+    mcp: {
+      path: '/home/somebody/.tudouni/mcp.json',
+      exists: true,
+      problem: null,
+      servers: [
+        {
+          name: 'codegraph',
+          command: 'codegraph',
+          url: '',
+          args: [],
+          env: [],
+          headers: [],
+          timeoutSeconds: 120,
+          autoLoad: true,
+        },
+      ],
+    },
+  });
+
+  const draft = draftFrom(doc);
+  assert.equal(draft.mcp[0]!.autoLoad, true);
+  // Opening the panel and closing it must not write the file: a save that dropped
+  // this key would quietly turn a server that starts with the session back into one
+  // that waits for /mcp.
+  assert.equal(isDirty(doc, draft), false);
+
+  // Flipping it off is a real change, and it is the whole field that travels.
+  const off = { ...draft, mcp: [{ ...draft.mcp[0]!, autoLoad: false }] };
+  assert.deepEqual(buildPatch(doc, off).mcp?.[0]?.autoLoad, false);
 });
 
 test('the protocol list is the catalogue\'s three styles, plus "infer it"', () => {

@@ -33,11 +33,7 @@ type mcpMount struct {
 // they have different readers: the panel is drawn, the notes are read — and one of
 // the notes being a warning is something the caller decides, not this function.
 func (r *Runtime) MCPMessage(action string, servers []string) (map[string]any, []string) {
-	r.mcpMu.Lock()
-	if r.mcpMounts == nil {
-		r.mcpMounts = map[string]*mcpMount{}
-	}
-	r.mcpMu.Unlock()
+	r.ensureMounts()
 
 	// Re-read the file every time: a server added while this session is open should
 	// be loadable without a restart, and a file that has become unreadable is worth
@@ -110,8 +106,24 @@ func (r *Runtime) McpTrustGroup(toolName string) (security.TrustGroup, bool) {
 	return security.TrustGroup{}, false
 }
 
+// ensureMounts creates the mount table on first use.
+//
+// It exists because **two** code paths mount now — a `/mcp load` and the start-up
+// auto-mount — and only the first one used to run after something else had already
+// initialized the map. Writing to a nil map is a panic rather than an error, so the
+// invariant belongs next to the write, not at one of the callers: a future third
+// caller would otherwise have to know this, and nothing would tell it.
+func (r *Runtime) ensureMounts() {
+	r.mcpMu.Lock()
+	if r.mcpMounts == nil {
+		r.mcpMounts = map[string]*mcpMount{}
+	}
+	r.mcpMu.Unlock()
+}
+
 // mcpLoad brings one server up and registers its tools.
 func (r *Runtime) mcpLoad(spec McpServerSpec) []string {
+	r.ensureMounts()
 	if mount, present := r.mcpMountsSnapshot()[spec.Name]; present {
 		return []string{i18n.T("mcp.host.already_loaded", "name", spec.Name, "n", len(mount.tools))}
 	}
@@ -296,17 +308,58 @@ func toMcpSpecs(specs []McpServerSpec) []mcp.ServerSpec {
 	return out
 }
 
+// mcpAutoMount brings up every server that asked to come up with the session.
+//
+// **Fail-soft, one server at a time.** A server that will not start becomes a
+// warning on the next screen and nothing more: an external program being missing,
+// slow or misconfigured is not a fault in this one, and refusing to open a session
+// over it would make one bad line in mcp.json fatal to a person who cannot get far
+// enough to fix it.
+//
+// The sentences come back split by outcome rather than inspected a second time by
+// the caller, and `mounted` is counted here because the note list cannot be counted
+// — one server contributes one or several notes, and the start-up line has to report
+// **servers**, not sentences.
+func (r *Runtime) mcpAutoMount(specs []McpServerSpec) (notes, failed []string, mounted int) {
+	for _, spec := range specs {
+		if !spec.AutoLoad {
+			continue
+		}
+		sentences := r.mcpLoad(spec)
+		if _, up := r.mcpMountsSnapshot()[spec.Name]; up {
+			notes = append(notes, sentences...)
+			mounted++
+			continue
+		}
+		failed = append(failed, sentences...)
+	}
+	return notes, failed, mounted
+}
+
 // mcpNotice is the start-up line about configured servers.
 //
-// It says **"none of them is mounted yet"** on purpose: mounting is a decision, and
-// a person who reads only this line should not be left believing the servers are
-// already running.
-func mcpNotice(specs []McpServerSpec) string {
+// Before `auto_load` existed this could say one thing — "none of them is mounted
+// yet" — and be right every time. Now three situations are possible, so the sentence
+// is chosen from the counts instead of being fixed: a line claiming nothing is
+// running while servers are running is the same kind of wrong as a line claiming
+// something is running when it is not, and the person who reads only this line
+// would act on it either way. The third wording exists because "none" and "all" are
+// both false when some came up and some did not.
+func mcpNotice(specs []McpServerSpec, mounted int) string {
 	if len(specs) == 0 {
 		return ""
 	}
-	return i18n.T("notice.mcp.configured",
-		"n", len(specs),
-		"file", MCPFile(),
-		"names", strings.Join(mcp.Names(toMcpSpecs(specs)), ", "))
+	names := strings.Join(mcp.Names(toMcpSpecs(specs)), ", ")
+	switch {
+	case mounted <= 0:
+		return i18n.T("notice.mcp.configured",
+			"n", len(specs), "file", MCPFile(), "names", names)
+	case mounted >= len(specs):
+		return i18n.T("notice.mcp.all_mounted",
+			"n", len(specs), "file", MCPFile(), "names", names)
+	default:
+		return i18n.T("notice.mcp.partly_mounted",
+			"n", len(specs), "file", MCPFile(), "names", names,
+			"mounted", mounted, "waiting", len(specs)-mounted)
+	}
 }

@@ -112,6 +112,12 @@ pub struct McpServerView {
     pub env: Vec<Pair>,
     pub headers: Vec<Pair>,
     pub timeout_seconds: Option<f64>,
+    /// Whether the runtime mounts this server when a session opens.
+    ///
+    /// Read straight from the file's `auto_load` (`parseMcpServers` defaults it to
+    /// false). Absent and false are one fact to the runtime, so the panel draws one
+    /// unticked box rather than inventing a third state for the two spellings.
+    pub auto_load: bool,
 }
 
 /// `mcp.json` and the trouble it is in, kept **separate** from the rest.
@@ -190,6 +196,14 @@ pub struct McpPatch {
     pub env: Vec<Pair>,
     pub headers: Vec<Pair>,
     pub timeout_seconds: Option<f64>,
+    /// `true` mounts this server at session start.
+    ///
+    /// A missing field deserialises to false and the save then **removes** the key
+    /// from the file. That direction is the deliberate one: forgetting the field can
+    /// only make a server less automatic, never more, so a writer that does not know
+    /// about `auto_load` cannot turn a manually mounted server into one that runs on
+    /// its own at start-up.
+    pub auto_load: bool,
 }
 
 /// One save. **An absent section is not written at all.**
@@ -395,6 +409,7 @@ fn server_view(name: &str, entry: &Map<String, Value>) -> McpServerView {
         env: pairs_of(entry, "env"),
         headers: pairs_of(entry, "headers"),
         timeout_seconds: float_of(entry, "timeout_seconds"),
+        auto_load: flag_of(entry, "auto_load", false),
     }
 }
 
@@ -865,6 +880,15 @@ fn apply_mcp(object: &mut Map<String, Value>, servers: &[McpPatch]) -> Result<()
             _ => {
                 entry.remove("timeout_seconds");
             }
+        }
+        // `true` is written; `false` removes the key. The runtime reads absent and
+        // false as the same fact, and a file where every server carries
+        // "auto_load": false is noise in something people read by hand — the same
+        // rule `timeout_seconds` follows one block up.
+        if server.auto_load {
+            entry.insert("auto_load".to_string(), Value::Bool(true));
+        } else {
+            entry.remove("auto_load");
         }
         out.insert(name.to_string(), Value::Object(entry));
     }
