@@ -959,32 +959,78 @@
   padding: var(--space-3) var(--space-5) var(--space-3);
 }
 
-/* The composer's inner width is capped to the **same** 980px the transcript uses,
-   and its horizontal padding matches `.stream-inner`'s. Both have to agree: the
-   transcript centres itself in the conversation column, so an uncapped box would
-   span the whole column and its left edge would drift away from the text on any
-   window wider than about 1020px. Two numbers, one relationship — which is why
-   they are written next to each other rather than left to be rediscovered.
+/* The composer's inner width is capped to the **same** 980px the transcript
+   uses, and its horizontal padding matches `.stream-inner`'s. Both have to
+   agree: the transcript centres itself in the conversation column, so an
+   uncapped box would span the whole column and its left edge would drift away
+   from the text on any window wider than about 1020px. Two numbers, one
+   relationship — which is why they are written next to each other.
 
-   The box is a column of two rows: the input, then the controls. `flex-direction:
-   column` plus `align-items: stretch` is what keeps row 1 a full-width line — a
-   `row` here would put the buttons back beside the text, which is the layout this
-   replaced. */
+   **Two fixed heights, not a growing box.** Empty the composer is one 48px row
+   — `+`, the placeholder, the send button. With something to say it is 96px:
+   two lines of text, then a toolbar with `+`, the hint and the action.
+
+   The layout is a 3-column grid with named areas, and the areas are what moves
+   the two buttons between the two states: in the empty state they share the
+   input's row; in the filled state the input spans the full width above them.
+   One `+` and one action exist in the DOM at all times, so the two states cannot
+   drift apart.
+
+   `height` is a layout property and `tokens.css` keeps those off the animatable
+   list. The deviation is the design's own ("height switches between 48 and 96")
+   and is the same one-shot, single-element case `.collapse` already argues:
+   nothing is scrolling and no other element moves. The curve is the design's
+   `cubic-bezier(.32,.72,0,1)`, 200ms. */
 .composer .cp-box {
   max-width: 980px;
   margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-3) var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xl);
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  grid-template-areas:
+    "trays trays trays"
+    "add input send";
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 0;
+  height: 48px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   /* The design puts the composer on the card surface and lifts it with its own
      (larger) shadow, so the thing you type into floats above the transcript
      instead of being a grey well cut into it. */
   background: var(--bg-card);
   box-shadow: var(--shadow-composer);
-  transition: border-color var(--motion-fast) var(--ease-out);
+  transition:
+    height 200ms cubic-bezier(0.32, 0.72, 0, 1),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+/* Filled: the input gets its own full-width line, the controls move under it.
+   The green edge is the design's "there is something to send" state — it is not
+   the keyboard's focus ring, which stays neutral and external (below). */
+.composer .cp-box.is-filled {
+  grid-template-areas:
+    "trays trays trays"
+    "input input input"
+    "add note send";
+  height: 96px;
+  border-color: var(--accent-border);
+}
+
+/* Attachments are the one thing the two fixed heights cannot predict. A tray
+   adds a row and the box takes its natural height; the 48/96 values become
+   minimums. This is why the height transition is skipped in that case — an
+   `auto` endpoint cannot interpolate, and a jump between two states that are
+   already taller than both fixed heights is the honest behaviour. */
+.composer .cp-box:has(.cp-trays > *) {
+  height: auto;
+  min-height: 48px;
+}
+
+.composer .cp-box.is-filled:has(.cp-trays > *) {
+  height: auto;
+  min-height: 96px;
 }
 
 /* A keyboard ring drawn **outside** the box, and nothing at all for a pointer.
@@ -1025,21 +1071,47 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   opacity: 0.55;
 }
 
-.composer textarea {
-  flex: 1 1 auto;
+/* The two attachment trays share the grid's top row. `display: none` when empty
+   is what keeps an unused row from reserving the 6px the trays would need; the
+   margin (rather than a row-gap) only exists when there is something in it. */
+.composer .cp-trays {
+  grid-area: trays;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   min-width: 0;
-  max-height: 168px;
-  min-height: 38px;
+  margin-bottom: 6px;
+}
+
+.composer .cp-trays:empty {
+  display: none;
+}
+
+/* The input: one line high while the box is empty, two lines when it is filled,
+   and it scrolls inside that second height rather than growing. That is the
+   whole of "the composer no longer grows with the sentence". */
+.composer .cp-input {
+  grid-area: input;
+  align-self: center;
+  width: 100%;
+  height: 20px;
+  min-height: 0;
+  padding: 0 2px;
   resize: none;
+  overflow-y: hidden;
   background: transparent;
   color: var(--fg);
   font-size: var(--text-body);
-  line-height: var(--leading-body);
+  line-height: 20px;
   font-family: var(--font-sans);
-  /* The input is the first thing on its own line, so it carries no indent of its
-     own: the row's padding is the only inset, which is why the text lines up with
-     the `+` below it. */
-  padding: 0 var(--space-1);
+}
+
+.composer .cp-box.is-filled .cp-input {
+  align-self: start;
+  height: 40px;
+  margin-bottom: 6px;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .composer textarea::placeholder {
@@ -1047,10 +1119,10 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
 }
 
 /* The pasted pictures, above the input.
-   `flex-wrap` rather than a scroller: the box grows by a row when the chips do
+   `flex-wrap` rather than a scroller: the tray grows by a row when the chips do
    not fit, which keeps every chip reachable without a second scroll region
-   inside a box that already has one. `gap` comes from `.cp-box`'s own `gap`, so
-   the tray sits the same distance from the input as the control row does. */
+   inside a box that already has one. The space below the tray comes from
+   `.cp-trays`'s own `margin-bottom`; the tray itself is only a wrapping row. */
 .composer .cp-images {
   display: flex;
   flex-wrap: wrap;
@@ -1139,21 +1211,17 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   color: var(--fg);
 }
 
-/* Row 2: one `+` on the left, the action on the right, and any transient
-   statement in between. `min-height` keeps the row from collapsing when the
-   middle is empty (which is the common case), so the box does not change height
-   between "quiet" and "a drop was refused". */
-.composer .cp-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 28px;
-}
+/* The `+`: the grid's leading cell. In the empty state that is the input's own
+   row; once filled it drops to the toolbar's leading edge. The grid area, not a
+   second copy of the button, is what moves it.
 
-/* `--cp-press` holds the press scale; the trigger's own `transform` and the
+   `--cp-press` holds the press scale; the trigger's own `transform` and the
    icon's rotation both build on it, so the two never overwrite each other. */
 .composer .cp-add {
   --cp-press: 1;
+  grid-area: add;
+  align-self: center;
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1205,28 +1273,60 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   cursor: not-allowed;
 }
 
-/* The transient statements. They share the control row rather than a line of
-   their own below the box, and they only ever appear when something needs
-   saying — a blocked runtime, a refused drop, a drag in flight. */
+/* The toolbar's middle: the key hint, the running turn's sentence, or a
+   transient statement when one is due. It is right-aligned against the action,
+   which is where the design puts it, and it is one line with an ellipsis — a
+   notice long enough to need two lines is a notice that has already been
+   answered by the time it is read.
+
+   The entrance is the design's: 4px up, fade, delayed until the box's height
+   has started to open. It is an animation rather than a transition because the
+   element mounts with the toolbar; there is no previous frame to transition
+   from. */
 .composer .cp-note {
-  flex: 1 1 auto;
+  grid-area: note;
+  align-self: center;
+  justify-self: end;
   min-width: 0;
-  font-size: var(--text-caption);
-  color: var(--fg-faint);
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: right;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  animation: cp-note-in 160ms var(--ease-out) 60ms both;
 }
 
-.composer .cp-note.is-warn {
+.composer .cp-note .is-warn {
   color: var(--warning);
 }
 
+/* The dismiss button inside a notice sits after the sentence, not in a row of
+   its own: one line is the whole allowance. */
+.composer .cp-note .btn {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+@keyframes cp-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .composer .cp-actions {
+  grid-area: send;
+  align-self: center;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  margin-left: auto;
   flex: none;
 }
 
@@ -1283,21 +1383,30 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   transform: scale(0.94);
 }
 
+/* Disabled is the **same** circle, one step quieter: the pale green fill and a
+   pale green arrow. It must read as "nothing to send yet", not as a control
+   that is merely dimmed, and it must not be a different shape — the row would
+   jump on the first character. `opacity` stays 1 because the pair of pale
+   tokens already says disabled; fading the fill again made it look broken. */
 .composer .cp-send:disabled {
-  opacity: 0.4;
+  background: var(--lb-selected);
+  color: var(--accent-tint-border);
+  opacity: 1;
   cursor: not-allowed;
 }
 
-/* While a turn runs the same button stops it, and it is stated by shape and
-   colour, never by colour alone. Its hover stays a dim, not a lift: an
-   interrupt gets no invitation. */
+/* While a turn runs the same button stops it: a **square** in the same place,
+   in the accent's dark end. The shape is the state (a circle sends, a square
+   stops), so the change survives both themes and colour-blind readers. Its
+   hover stays a dim, not a lift: an interrupt gets no invitation. */
 .composer .cp-send.is-stop {
-  background: var(--destructive);
-  color: #ffffff;
+  border-radius: 8px;
+  background: var(--accent-active);
+  color: var(--fg-on-accent);
 }
 
 .composer .cp-send.is-stop:hover {
-  filter: brightness(0.92);
+  filter: brightness(0.94);
 }
 
 /* The window is the drop target (`dragDropEnabled: true` is what makes the OS

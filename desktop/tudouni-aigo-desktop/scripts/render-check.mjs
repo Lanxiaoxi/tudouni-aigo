@@ -346,73 +346,74 @@ async function main() {
     }
   }
 
-  // ---- 1c. the composer is two rows in one box, with exactly two controls ----
+  // ---- 1c. the composer's empty state: one 48px row, exactly two controls ----
   //
-  // These are facts about structure and geometry that a CSS edit can quietly
-  // undo while every element stays present: the input and the buttons are all
-  // still in the DOM if the box goes back to `flex-direction: row`, it just
-  // stops being two rows. Three claims are worth asserting:
-  //
-  //   - the input is on its own line (its bottom is above the control row);
-  //   - there are exactly two controls, a plus and an action, and nothing else;
-  //   - there is no hint row below the box.
+  // The redesign's claim is that an empty composer is **one row** — `+`, the
+  // placeholder, the action — and reserves no toolbar. That is a layout fact no
+  // text assertion can see: every element is still present if the box goes back
+  // to two rows; it just takes twice the height and the transcript pays for it.
+  // The filled state is measured later, once a session exists to hold a draft.
   const composer = await evaluate(`(() => {
     const q = (s) => document.querySelector(s);
     const box = (el) => { const r = el?.getBoundingClientRect(); return r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), bottom: Math.round(r.bottom) } : null; };
-    const cpBox = q('.cp-box');
+    const cp = q('.cp-box');
     const ta = q('.composer textarea');
-    const row = q('.cp-row');
     const add = q('.cp-add');
     const send = q('.cp-send');
+    const note = q('.cp-note');
+    const c = cp ? getComputedStyle(cp) : null;
     return JSON.stringify({
-      boxBox: box(cpBox),
+      boxBox: box(cp),
       taBox: box(ta),
-      rowBox: box(row),
       addBox: box(add),
       sendBox: box(send),
-      boxDirection: cpBox ? getComputedStyle(cpBox).flexDirection : null,
+      display: c?.display ?? null,
+      filled: cp?.classList.contains('is-filled') ?? null,
+      gridAreas: c?.gridTemplateAreas ?? null,
       // Every focusable control in the composer, named, so a third one shows up
       // by name rather than as a changed count.
-      controls: [...(cpBox?.querySelectorAll('button') ?? [])].map((b) => b.className),
+      controls: [...(cp?.querySelectorAll('button') ?? [])].map((b) => b.className),
       // The removed pieces.
       hintRow: !!q('.cp-hint'),
       toolsRow: !!q('.cp-tools'),
-      // The input must be the first child, so nothing sits to its left.
-      textareaIsFirst: cpBox?.firstElementChild?.tagName === 'TEXTAREA',
+      note: note ? note.innerText : null,
+      placeholder: ta?.placeholder ?? null,
     });
   })()`);
   console.log('composer:', composer);
   const C = JSON.parse(composer ?? '{}');
 
-  if (C.boxDirection !== 'column') {
-    throw new Error(`the composer box is not a column of rows: flex-direction is ${C.boxDirection}`);
+  if (C.display !== 'grid') {
+    throw new Error(`the composer box is not the two-state grid: display is ${C.display}`);
   }
-  if (!C.textareaIsFirst) {
-    throw new Error('the textarea is not the first child of the composer box');
+  if (C.filled !== false) throw new Error('an empty composer claims to be filled');
+  if (Math.abs((C.boxBox?.h ?? -1) - 48) > 1) {
+    throw new Error(`the empty composer is ${C.boxBox?.h}px, not the design's 48px`);
   }
-  // The input row must sit above the control row — that is the whole shape.
-  if (!(C.taBox && C.rowBox)) {
-    throw new Error('could not measure the composer rows');
+  if (!(C.taBox && C.addBox && C.sendBox)) {
+    throw new Error('the empty composer is missing the input or a control');
   }
-  if (C.taBox.bottom > C.rowBox.y) {
-    throw new Error(`the input overlaps the control row: input bottom ${C.taBox.bottom}, row top ${C.rowBox.y}`);
+  // One row: the input's centre, the plus's centre and the action's centre all
+  // sit on the same line.
+  const centreY = (b) => b.y + b.h / 2;
+  if (Math.abs(centreY(C.taBox) - centreY(C.addBox)) > 2 || Math.abs(centreY(C.addBox) - centreY(C.sendBox)) > 2) {
+    throw new Error(
+      `the empty composer is not one row: input ${JSON.stringify(C.taBox)}, plus ${JSON.stringify(C.addBox)}, action ${JSON.stringify(C.sendBox)}`,
+    );
   }
+  // And left-to-right: plus, input, action.
+  if (C.addBox.x >= C.taBox.x) throw new Error('the plus is not at the leading edge');
+  if (!(C.taBox.x + C.taBox.w <= C.sendBox.x)) throw new Error('the send button overlaps the input');
   if (C.taBox.w < 100) throw new Error(`the input is not a full-width line: width ${C.taBox.w}`);
-  // The two ends of the control row.
-  if (!C.addBox) throw new Error('the plus button is missing');
-  if (!C.sendBox) throw new Error('the send button is missing');
-  if (Math.abs(C.addBox.y - C.sendBox.y) > 2) {
-    throw new Error('the plus and the action are not on the same row');
-  }
-  if (C.addBox.x >= C.sendBox.x) {
-    throw new Error('the plus is not at the left end of the control row');
-  }
-  // Exactly two controls, and no others.
   if (C.controls.length !== 2) {
     throw new Error(`expected 2 composer controls, found ${C.controls.length}: ${JSON.stringify(C.controls)}`);
   }
+  if (C.note !== null) throw new Error(`the empty composer reserves a toolbar ("${C.note}")`);
   if (C.hintRow) throw new Error('the hint row below the composer is still rendered');
   if (C.toolsRow) throw new Error('the old single-row tools container is still rendered');
+  if (C.placeholder !== 'Say something…') {
+    throw new Error(`the empty placeholder still carries the key hint: "${C.placeholder}"`);
+  }
   // ---- the composer ring is for the keyboard only ----
   //
   // The first version of this assertion measured the box's `borderColor`, which
@@ -541,6 +542,12 @@ async function main() {
       sessions: { ...s.sessions, [${JSON.stringify(KEY)}]: bucket },
       order: s.order.includes(${JSON.stringify(KEY)}) ? s.order : [...s.order, ${JSON.stringify(KEY)}],
       activeKey: ${JSON.stringify(KEY)},
+      // A **second** workspace so the rail has an idle row to measure against
+      // the current one. The current workspace is prepended from the session's
+      // own init.workspace; without this, a browser with no saved preferences
+      // (a fresh profile, a CI run) has exactly one row and the layer-model probe
+      // has nothing idle to read.
+      workspaces: ['C:/work/other'],
     }));
     window.__aigoKey = ${JSON.stringify(KEY)};
     return 'ok';
@@ -629,6 +636,110 @@ async function main() {
   // would be a second copy of the runtime's judgement.
   if (ai.sessionbar?.includes('asks on')) {
     throw new Error(`the session bar still draws the permission statement: ${ai.sessionbar}`);
+  }
+
+  // ---- 2b. the composer's filled state ----
+  //
+  // The empty state was measured before any session existed; the filled state
+  // needs a draft, and a draft belongs to a session. Now there is one. What is
+  // asserted is the design's "two fixed heights": 96px with the input on its
+  // own full-width line and the toolbar under it, the key hint in that toolbar,
+  // and a send button that is enabled and filled with the accent because there
+  // is something to send.
+  await evaluate(`(() => {
+    window.__aigoStore.getState().setDraft('A draft with something to send');
+    return true;
+  })()`);
+  await sleep(300);
+  const filledComposer = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const boxEl = (el) => {
+      const b = el?.getBoundingClientRect();
+      return b ? { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), bottom: Math.round(b.bottom) } : null;
+    };
+    const cp = q('.cp-box');
+    const ta = q('.composer textarea');
+    const add = q('.cp-add');
+    const send = q('.cp-send');
+    const note = q('.cp-note');
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:absolute;visibility:hidden;background:var(--accent);border:1px solid var(--accent-border)';
+    document.body.appendChild(probe);
+    const accent = getComputedStyle(probe).backgroundColor;
+    const accentBorder = getComputedStyle(probe).borderTopColor;
+    probe.remove();
+    const c = cp ? getComputedStyle(cp) : null;
+    return JSON.stringify({
+      filled: cp?.classList.contains('is-filled') ?? null,
+      h: Math.round(cp?.getBoundingClientRect().height ?? -1),
+      ta: boxEl(ta),
+      add: boxEl(add),
+      send: boxEl(send),
+      areas: c?.gridTemplateAreas ?? null,
+      note: (note?.innerText ?? '').replace(/\\s+/g, ' ').trim(),
+      sendDisabled: send?.disabled ?? null,
+      sendBg: send ? getComputedStyle(send).backgroundColor : null,
+      accent,
+      border: c?.borderTopColor ?? null,
+      accentBorder,
+      transition: c ? c.transitionProperty + ' ' + c.transitionDuration + ' ' + c.transitionTimingFunction : null,
+    });
+  })()`);
+  console.log('composer, filled:', filledComposer);
+  const CF = JSON.parse(filledComposer ?? '{}');
+  if (CF.filled !== true) throw new Error('a draft did not fill the composer');
+  if (Math.abs(CF.h - 96) > 1) {
+    throw new Error(`the filled composer is ${CF.h}px, not the design's 96px`);
+  }
+  if (!(CF.ta && CF.add && CF.send)) throw new Error('the filled composer is missing a control');
+  if (!(CF.ta.bottom <= CF.add.y)) {
+    throw new Error(
+      `the toolbar is not under the input: input bottom ${CF.ta.bottom}, plus top ${CF.add.y}`,
+    );
+  }
+  if (Math.abs(CF.add.y - CF.send.y) > 2) {
+    throw new Error('the plus and the action are not on the same toolbar row');
+  }
+  if (!String(CF.areas).includes('input input input') || !String(CF.areas).includes('add note send')) {
+    throw new Error(`the filled grid does not give the input its own line: ${CF.areas}`);
+  }
+  if (!CF.note.includes('Enter sends') || !CF.note.includes('Shift+Enter')) {
+    throw new Error(`the key hint is missing from the filled toolbar: "${CF.note}"`);
+  }
+  if (CF.sendDisabled !== false) throw new Error('send is disabled with a non-empty draft');
+  if (CF.sendBg !== CF.accent) {
+    throw new Error(`the available send is not the accent fill: ${CF.sendBg} vs ${CF.accent}`);
+  }
+  if (CF.border !== CF.accentBorder) {
+    throw new Error(`the filled composer has no accent edge: ${CF.border} vs ${CF.accentBorder}`);
+  }
+  if (
+    !String(CF.transition).includes('height') ||
+    !(String(CF.transition).includes('200ms') || String(CF.transition).includes('0.2s'))
+  ) {
+    throw new Error(`the height switch is not the design's 200ms transition: ${CF.transition}`);
+  }
+
+  // And the switch is reversible: clearing the draft returns the box to one row
+  // and takes the toolbar with it.
+  await evaluate(`(() => {
+    window.__aigoStore.getState().setDraft('');
+    return true;
+  })()`);
+  await sleep(300);
+  const backToEmpty = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const cp = q('.cp-box');
+    return JSON.stringify({
+      filled: cp?.classList.contains('is-filled') ?? null,
+      h: Math.round(cp?.getBoundingClientRect().height ?? -1),
+      note: !!q('.cp-note'),
+    });
+  })()`);
+  console.log('composer, back to empty:', backToEmpty);
+  const BE = JSON.parse(backToEmpty ?? '{}');
+  if (BE.filled !== false || Math.abs(BE.h - 48) > 1 || BE.note) {
+    throw new Error(`clearing the draft did not return the composer to 48px: ${JSON.stringify(BE)}`);
   }
 
   // ---- the left rail: workspaces and sessions ----
@@ -1913,6 +2024,50 @@ async function main() {
     model: 'deepseek-chat',
     provider: 'deepseek',
   });
+
+  // While that turn runs, the composer's action is a stop **square** in the
+  // send button's place, and the toolbar says what is happening and how to stop
+  // it. The shape is the state; this is the half a screenshot cannot regress
+  // silently because a circle would still look like a plausible button.
+  //
+  // The extra wait is the 200ms height transition: `apply` already waits 120ms,
+  // which catches the box mid-flight (~94px) and would make this a flake about
+  // timing rather than a check about the state.
+  await sleep(300);
+  const stopButton = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const btn = q('.cp-send.is-stop');
+    const cp = q('.cp-box');
+    const note = q('.cp-note');
+    if (!btn || !cp) return JSON.stringify({ missing: true });
+    const b = btn.getBoundingClientRect();
+    const c = getComputedStyle(btn);
+    return JSON.stringify({
+      missing: false,
+      w: Math.round(b.width),
+      h: Math.round(b.height),
+      radius: c.borderRadius,
+      bg: c.backgroundColor,
+      filled: cp.classList.contains('is-filled'),
+      height: Math.round(cp.getBoundingClientRect().height),
+      note: (note?.innerText ?? '').replace(/\\s+/g, ' ').trim(),
+    });
+  })()`);
+  console.log('composer, running:', stopButton);
+  const SB = JSON.parse(stopButton ?? '{}');
+  if (SB.missing) throw new Error('a running turn has no stop button');
+  if (SB.w !== 28 || SB.h !== 28) {
+    throw new Error(`the stop button is ${SB.w}x${SB.h}, not the send button's 28x28`);
+  }
+  if (SB.radius !== '8px') {
+    throw new Error(`the stop control is not the design's square (radius ${SB.radius})`);
+  }
+  if (!SB.filled || Math.abs(SB.height - 96) > 1) {
+    throw new Error(`a running turn's composer changed height (${SB.height}px, filled=${SB.filled})`);
+  }
+  if (!SB.note.includes('Streaming') || !SB.note.includes('Esc to stop')) {
+    throw new Error(`the running toolbar does not say what to do: "${SB.note}"`);
+  }
   await apply({
     v: 1,
     t: 'event',

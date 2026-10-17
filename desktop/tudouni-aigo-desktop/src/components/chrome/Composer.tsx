@@ -11,12 +11,18 @@ import { useClipboardPaste } from '@/hooks/useClipboardPaste';
 /**
  * §1·7 The composer: a multi-line editor with a caret and history.
  *
- * **Two rows inside one box.** The upper row is the input and nothing else; the
- * lower row is the controls — a `+` at the left edge and the action at the right.
- * That split is the reference design's, and the reason it is worth having is
- * that the input row stays a plain place to type: no button shares its line, so
- * the text never starts to the right of something and never reflows when a
- * control's label changes.
+ * **Two fixed heights, and one row of controls at a time.** Empty, the box is
+ * 48px and is a single row: the `+`, the placeholder, the action. Once there is
+ * something to say it becomes 96px — two lines of text with a toolbar under
+ * them, holding the `+`, the key hint, and the action. That split is the
+ * redesign's, and the reason it is worth having is that the empty box stops
+ * reserving a toolbar nobody is using, while the filled box stops growing: a
+ * long sentence scrolls inside its two lines instead of pushing the transcript
+ * up the window.
+ *
+ * The height is CSS's (`height: 48px` / `96px` on `.cp-box`), never a measured
+ * `scrollHeight` written back by this component. That measurement is what made
+ * the old box grow without a bound.
  *
  * Only two controls, on purpose. The reference has four (attach, permission,
  * model, send); this build's plus opens the **plus menu** (`PlusMenu`): files
@@ -24,12 +30,12 @@ import { useClipboardPaste } from '@/hooks/useClipboardPaste';
  * palette — the same panel `Ctrl+K` opens, which was what the plus did before
  * the menu gave it company.
  *
- * There is **no hint line below the box**. What used to live there is either
- * already elsewhere (the key list is in `/help` and on the first screen) or is
- * transient and now shares the control row: a refused drop, a blocked runtime,
- * a drag in progress. Those three are statements, not hints, so they are still
- * said — a drop refusal especially, since a path the runtime cannot resolve sits
- * in the sentence looking exactly like one that worked.
+ * There is **no hint line below the box**. The key hint and the transient
+ * statements share the filled box's toolbar: a refused drop, a blocked runtime,
+ * a drag in progress, the sentence a running turn's stop button deserves. Those
+ * are statements, not standing hints, so they are still said — a drop refusal
+ * especially, since a path the runtime cannot resolve sits in the sentence
+ * looking exactly like one that worked.
  *
  * Keys follow the capability list. This layer is the only place allowed to carry
  * emacs-style bindings:
@@ -96,14 +102,6 @@ export function Composer() {
     if (active instanceof HTMLElement && active !== document.body) return;
     taRef.current?.focus();
   }, [ready, blocked, panel]);
-
-  // Recompute the height on every change; the row cap is CSS's job.
-  useEffect(() => {
-    const el = taRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  }, [draft]);
 
   function setValueAndCaret(el: HTMLTextAreaElement, value: string, caret: number) {
     setDraft(value);
@@ -195,22 +193,48 @@ export function Composer() {
     }
   }
 
+  /**
+   * The composer has **two fixed heights**, not a growing box.
+   *
+   * Empty it is one 48px row: `+`, the placeholder, the send button. Once there
+   * is something to send it is 96px: two lines of text above, and a toolbar
+   * under them holding `+`, the key hint and the action. The quote "two fixed
+   * heights" is the design's, and it is the reason the box no longer measures the
+   * textarea: a long sentence does not turn the composer into a panel that grows
+   * until it reaches the transcript — the input scrolls inside two lines instead.
+   *
+   * The toolbar is drawn for anything that has something to say in it, not only
+   * for text: a running turn (the stop button and its sentence), a drop notice,
+   * a refused file. An empty box has no toolbar to reserve.
+   */
+  const empty = draft.trim() === '';
+  const showTools = !empty || running || composerNotice !== null || dragging;
+
   return (
     <div className="composer">
-      <div className={`cp-box${blocked ? ' is-blocked' : ''}`}>
-        {/* The files attached from the plus menu, beside the pasted pictures.
-            Same tray shape, same derive-from-the-draft rule; see `FileTray`. */}
-        <FileTray />
+      <div className={`cp-box${blocked ? ' is-blocked' : ''}${showTools ? ' is-filled' : ''}`}>
+        {/* The two attachment trays share one grid area, above both states.
+            Wrapped rather than passed through because they are two components
+            with one job, and an empty wrapper must not leave a gap. */}
+        <div className="cp-trays">
+          {/* The files attached from the plus menu, beside the pasted pictures.
+              Same tray shape, same derive-from-the-draft rule; see `FileTray`. */}
+          <FileTray />
 
-        {/* The pasted pictures, above the input. They are a *reading* of the
-            draft, not a second list of attachments: a chip is drawn while its
-            path is still in the sentence and gone the moment it is not. See
-            `ImageTray`. */}
-        <ImageTray />
+          {/* The pasted pictures, above the input. They are a *reading* of the
+              draft, not a second list of attachments: a chip is drawn while its
+              path is still in the sentence and gone the moment it is not. See
+              `ImageTray`. */}
+          <ImageTray />
+        </div>
 
-        {/* Row 1: the input, alone on its line. */}
+        {/* The input. One line when the box is empty, two when it has content;
+            the height is CSS's (see `.cp-box.is-filled`), not a measured
+            `scrollHeight`, so typing cannot make the composer grow without a
+            bound. */}
         <textarea
           ref={taRef}
+          className="cp-input"
           rows={1}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -224,71 +248,71 @@ export function Composer() {
           aria-label={t('composer.placeholder')}
         />
 
-        {/* Row 2: the controls, and only two of them. */}
-        <div className="cp-row">
-          {/* The plus menu: files, skills, commands. The command palette it
-              used to open directly is now the menu's third page's target, and
-              `Ctrl+K` still opens it — the shortcut is unchanged, the button
-              just gained the two entries the palette could not hold (a file
-              needs a picker, a skill needs a list). */}
-          <PlusMenu taRef={taRef} disabled={blocked} />
+        {/* The plus menu: files, skills, commands. In the empty row it sits at
+            the leading edge beside the placeholder; once the box is filled it
+            drops to the toolbar's leading edge. The grid area decides that, so
+            there is one button, not two copies that could disagree. */}
+        <PlusMenu taRef={taRef} disabled={blocked} />
 
-          {/* The transient statements that used to live in a hint row under the
-              box. They belong on this row because they are about what is
-              happening to *this* input, and because a row of standing hints is
-              noise a person reads once and then has to look past forever.
-
-              One slot, rendered from a code: the store holds the fact and the
-              wording lives in i18n, so a new reason to speak needs no new field
-              and no new branch here beyond its sentence. */}
-          {blocked ? (
-            <span className="cp-note">{t('composer.hint.modal')}</span>
-          ) : composerNotice !== null ? (
-            <span className={`cp-note${composerNotice.tone === 'warn' ? ' is-warn' : ''}`}>
-              {noticeText(t, composerNotice)}
-              <button
-                type="button"
-                className="btn btn-ghost btn-compact"
-                onClick={() => setComposerNotice(null)}
-              >
-                {t('common.close')}
-              </button>
-            </span>
-          ) : dragging ? (
-            <span className="cp-note">{t('composer.dropHint')}</span>
-          ) : null}
-
-          <div className="cp-actions">
-            {running ? (
-              <Tip label="Esc">
+        {/* The toolbar's middle: the transient statement if there is one, the
+            key hint otherwise, and the stop sentence while a turn runs. Only
+            rendered when there is a toolbar at all — an empty box reserves no
+            second row. */}
+        {showTools ? (
+          <div className="cp-note">
+            {blocked ? (
+              <span>{t('composer.hint.modal')}</span>
+            ) : composerNotice !== null ? (
+              <span className={composerNotice.tone === 'warn' ? 'is-warn' : undefined}>
+                {noticeText(t, composerNotice)}
                 <button
                   type="button"
-                  className="cp-send is-stop"
-                  onClick={interrupt}
-                  aria-label={t('composer.interrupt')}
+                  className="btn btn-ghost btn-compact"
+                  onClick={() => setComposerNotice(null)}
                 >
-                  <Square size={13} />
+                  {t('common.close')}
                 </button>
-              </Tip>
+              </span>
+            ) : dragging ? (
+              <span>{t('composer.dropHint')}</span>
+            ) : running ? (
+              <span>{t('composer.hint.streaming')}</span>
             ) : (
-              <Tip label={t('composer.send')}>
-                <button
-                  type="button"
-                  className="cp-send"
-                  onClick={submitDraft}
-                  // While the child is still starting there is no process for a
-                  // message to reach — the send stays available-looking is a
-                  // lie, so it is disabled with everything else the store
-                  // refuses (`submitDraft` guards the same condition for the
-                  // Enter key).
-                  disabled={blocked || !ready || draft.trim() === ''}
-                  aria-label={t('composer.send')}
-                >
-                  <ArrowUp size={16} />
-                </button>
-              </Tip>
+              <span>{t('composer.hint.send')}</span>
             )}
           </div>
+        ) : null}
+
+        <div className="cp-actions">
+          {running ? (
+            <Tip label="Esc">
+              <button
+                type="button"
+                className="cp-send is-stop"
+                onClick={interrupt}
+                aria-label={t('composer.interrupt')}
+              >
+                <Square size={13} />
+              </button>
+            </Tip>
+          ) : (
+            <Tip label={t('composer.send')}>
+              <button
+                type="button"
+                className="cp-send"
+                onClick={submitDraft}
+                // While the child is still starting there is no process for a
+                // message to reach — the send stays available-looking is a
+                // lie, so it is disabled with everything else the store
+                // refuses (`submitDraft` guards the same condition for the
+                // Enter key).
+                disabled={blocked || !ready || draft.trim() === ''}
+                aria-label={t('composer.send')}
+              >
+                <ArrowUp size={16} />
+              </button>
+            </Tip>
+          )}
         </div>
       </div>
     </div>

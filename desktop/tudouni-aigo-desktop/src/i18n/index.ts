@@ -1281,7 +1281,7 @@ export const en = {
   'notify.title.finished': 'Finished',
 
   /* ---------------- composer ---------------- */
-  'composer.placeholder': 'Say something…  Enter sends, Shift+Enter newlines',
+  'composer.placeholder': 'Say something…',
   'composer.blocked': 'Resolve the prompt above first',
   'composer.send': 'Send',
   /** The `+` at the left of the control row: it opens the plus menu — files,
@@ -1300,7 +1300,11 @@ export const en = {
    *  name, not a visible heading: the chips are self-explanatory. */
   'composer.files': 'Attached files',
   'composer.removeFile': 'Remove this file',
-  'composer.hint.send': 'Enter send · Shift+Enter newline · Esc interrupt',
+  'composer.hint.send': 'Enter sends · Shift+Enter newlines',
+  /* The running turn's toolbar sentence: what is happening, then how to stop it.
+     The stop button beside it says the same thing by shape; this is the readable
+     half, and the reason the hint area is not blank while a turn runs. */
+  'composer.hint.streaming': 'Streaming… Esc to stop',
   'composer.hint.modal': 'The runtime is blocked by a modal — answer it to continue',
   'composer.dropHint': 'Drop a file to insert its path, or drop it in the workspace — pictures are attached by naming their path',
   'composer.dropOutside': 'not in this workspace, so the runtime could not read it: {names}',
