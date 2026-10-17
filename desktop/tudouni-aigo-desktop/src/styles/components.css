@@ -476,7 +476,7 @@ table.table td.mono {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: var(--bg);
+  background: var(--bg-card);
   transform: translateX(2px);
   transition: transform var(--motion-base) var(--ease-out);
   will-change: transform;

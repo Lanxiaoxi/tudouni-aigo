@@ -269,23 +269,23 @@
    **It is the card's own surface, not a band across it.** The reference's
    `.mc-head` has no background and no separator: the head sits on the white
    card and is separated from the rows below by spacing alone. Ours was
-   `--bg-secondary` (#EDEFF3) — the *rail's* grey, inside a white card — and
-   with the same fill on the collapse pill and on every permission row, one
-   card carried three grey slabs. That was the grey-on-white clash: the colour
-   of a rail used as a fill for content. */
+   `--bg-secondary` (the old rail grey) — a rail's colour used as a fill inside
+   a white card — and with the same fill on the collapse pill and on every
+   permission row, one card carried three grey slabs. That was the grey-on-white
+   clash: the colour of a rail used as a fill for content. */
 .e-step-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--row-h);
   padding: 5px var(--space-3) 4px;
-  /* A pale wash across the head. This row had `--bg-secondary` — the *rail's*
+  /* A pale wash across the head. This row had `--bg-secondary` — the old rail
      grey, inside a white card — and what was wrong with it was the colour, not
-     the idea of the head having a surface: #EDEFF3 read as a slab of the sidebar
-     dropped into the card. This is the accent's own wash, so the head belongs to
-     the card it is on. It carries no `border-bottom`: the fill is what separates
-     the head from the rows, and doing both draws a line the reference does not
-     have. */
+     the idea of the head having a surface: that grey read as a slab of the
+     sidebar dropped into the card. This is the accent's own wash, so the head
+     belongs to the card it is on. It carries no `border-bottom`: the fill is
+     what separates the head from the rows, and doing both draws a line the
+     reference does not have. */
   background: var(--accent-subtle);
 }
 
@@ -2504,16 +2504,19 @@
 }
 
 /* A turn is in flight: the same continuing condition the status bar's
-   `.is-working` breathes for. */
+   `.is-working` breathes for. The **accent**, because this is the board's
+   Working colour too — one state, one green, on both surfaces. */
 .lb-dot.is-running {
-  background: var(--success);
+  background: var(--accent);
   animation: breathe 1.2s var(--ease-standard) infinite alternate;
 }
 
 /* Finished, and nobody has looked. The state a three-colour scheme cannot
-   express, and the one that matters most with several sessions open. */
+   express, and the one that matters most with several sessions open. The
+   **teal end of the success family**, the board's Finished colour — the old
+   `--info` blue was the one cold mark left in a green rail. */
 .lb-dot.is-unseen {
-  background: var(--info);
+  background: var(--success);
 }
 
 /* ---------------- workspace attention badge ---------------- */

@@ -254,37 +254,26 @@
 
 /* ============================================================
    浅色（跟随系统切换，JS 见 docs/tauri-native-spec.md §4）
-   来源：Ardot 设计稿「App Window — Light Green」+ Color System — Light Palette
-   逻辑：灰底浮白卡（越白越浮），emerald 主强调，状态色深字浅底成对
+   来源：Ardot 设计稿「App Window — Light Green」+ 侧栏/看板重设计
+   逻辑：淡绿底浮近白卡（越白越浮），emerald 主强调，状态色深字浅底成对
    ============================================================ */
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg:            #F2F3F6;  /* 画布 */
-  --bg-secondary:  #EDEFF3;  /* 侧栏 */
-  --bg-card:       #FFFFFF;  /* 卡片浮起 */
-  --bg-elevated:   #FFFFFF;  /* 浮层专用 */
-  --bg-muted:      #E9ECF1;  /* hover 底 / 嵌套面 */
+  --bg:            #F1F5EF;  /* 画布：设计稿的淡绿底，不再是蓝灰 */
+  --bg-secondary:  #EDF1EB;  /* 次级面 / 顶栏里的嵌套 chip */
+  --bg-card:       #FCFEFB;  /* 卡片浮起：设计稿的近白绿 */
+  --bg-elevated:   #FFFFFF;  /* 浮层专用，比卡片再亮一档 */
+  --bg-muted:      #E9EEE6;  /* hover 底 / 嵌套面 */
   --bg-inverse:    #1A1D21;
-  /* The design separates three flat greys by depth, and the window chrome is
-     what needs all three: the side bar is the darkest (`--bg-secondary`), the
-     canvas sits on top of it (`--bg`), and the top / bottom bars and the right
-     rail go one step lighter still (#FBFBFD / #F7F8FA). Collapsing them onto
-     the side bar's grey — which is what the app did before — is why the bars
-     read as part of the rail instead of as the frame around it. */
-  --bg-bar:        #FBFBFD;  /* 顶栏 / 状态栏 */
-  /* Both rails take this one value, and the cards on them are white. The
-     reference distinguishes its two rails (`--sidebar` #EDEFF3 against
-     `--rail` #F7F8FA); the app asks for them to match, so the left rail moves
-     up to the right rail's shade and the surfaces *on* it move with it — the
-     session and workspace rows are `--bg-card` now. The depth order is still
-     three rungs, one arrangement over: canvas `--bg` < rail < card. */
-  --bg-rail:       #F7F8FA;
-  /* Same role as the dark theme's `--bg-foot` (see above): below the rail, and
-     deliberately not `--bg`. This ladder is tighter — five points between rungs,
-     not ten — so the band lands between the canvas and the sidebar's grey rather
-     than exactly one rung down. */
-  --bg-foot:       #EFF1F5;
+  /* The window chrome is the same near-white as the two rails now, and the
+     canvas under it is the green-tinted plane. The old three flat greys were
+     blue-grey (#EDEFF3 / #F2F3F6 / #FBFBFD); the redesign replaced that family
+     with the left rail's green-neutral one, so the bars and the rails no longer
+     read as two different applications around one transcript. */
+  --bg-bar:        #FBFDFA;  /* 顶栏 / 状态栏 */
+  --bg-rail:       #FBFDFA;
+  --bg-foot:       #F4F7F2;
 
   /* The left rail's own surfaces — see the dark theme for the three roles.
      The values are sampled from the sidebar redesign: a near-white green-tinted
@@ -307,9 +296,9 @@
   --fg-faint:      #A2A8B1;
   --fg-on-accent:  #FFFFFF;
 
-  --border:        #E3E6EB;
-  --border-strong: #C9CFD8;
-  --border-subtle: #E9ECF1;
+  --border:        #E1E7DF;
+  --border-strong: #C7D1C4;
+  --border-subtle: #E7EDE5;
 
   --accent:        #059669;
   --accent-hover:  #047857;
@@ -319,13 +308,14 @@
   --accent-border-strong: rgba(5, 150, 105, 0.55);
 
   /* The reference's `--green-tint` / `--green-tint-border` / `--green-700`, the
-     pale green the sidebar's primary action wears (`.btn-new`, and the user
-     asked for the app's to match it). Three tokens rather than a reuse of
-     `--accent-subtle`: that one is a *selection wash* — the accent at 10% over
-     whatever surface is behind it, so it changes with the surface — while these
-     are solid colours sampled off the reference and must not move. */
-  --accent-tint:        #E7F6EE;
-  --accent-tint-border: #BFE8D2;
+     pale green the sidebar's primary action wears (`.btn-new`). Three tokens
+     rather than a reuse of `--accent-subtle`: that one is a *selection wash* —
+     the accent at 10% over whatever surface is behind it, so it changes with the
+     surface — while these are solid colours. The values were retuned to the
+     sidebar redesign's `--lb-selected` family so the pale-green buttons and the
+     selected rows are the same green, on every surface. */
+  --accent-tint:        #DFF0E3;
+  --accent-tint-border: #BFE0C3;
   --accent-tint-text:   #047857;
 
   --info:          #2563EB;  --info-subtle:    #EAF1FC;
@@ -341,7 +331,7 @@
   /* The light theme keeps the terminal dark, so its foreground does **not**
      follow the theme's `--fg` — it is paired with `--terminal-bg` above. */
   --terminal-fg:   #e2e8f0;
-  --scrollbar-thumb: #C9CFD8;
+  --scrollbar-thumb: #C7D1C4;
 
   /* 浅色下阴影整体减淡（浮层不再沿用深色的重投影） */
   --shadow-overlay: 0 8px 24px rgba(23, 26, 31, 0.14), 0 2px 6px rgba(23, 26, 31, 0.08);
@@ -353,9 +343,9 @@
   --halo-green:    rgba(5, 150, 105, 0.08);
   --halo-warm:     rgba(217, 131, 36, 0.07);  /* = 设计稿 .aurora.warm 的原值 */
   /* Verbatim from the reference (`--shadow-card` / `--shadow-composer`), down
-     to the negative spread. A card on the canvas is white on #F2F3F6, which is
-     a 3% difference — the whole lift is carried by these two layers, so the
-     exact values are the design, not a starting point. */
+     to the negative spread. A card on the canvas is near-white on the pale
+     green, a ~4% difference — the whole lift is carried by these two layers, so
+     the exact values are the design, not a starting point. */
   --shadow-card:        0 8px 20px -6px rgba(23, 26, 31, 0.05), 0 1px 3px rgba(23, 26, 31, 0.02);
   --shadow-card-hover:  0 12px 26px -6px rgba(23, 26, 31, 0.10), 0 2px 6px rgba(23, 26, 31, 0.04);
   --shadow-composer:    0 12px 32px -8px rgba(23, 26, 31, 0.08), 0 2px 6px rgba(23, 26, 31, 0.03);

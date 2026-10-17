@@ -19,10 +19,9 @@ import type { TKey } from '@/i18n';
  *
  * 1. **Colour is never the only signal.** The design system settled this for the
  *    workspace row ("Marked by colour **and** by the word 'current', never by
- *    colour alone"), and it matters more here: `--success` and `--destructive`
- *    are `#16A34A` and `#DC2626` in light mode, which is not a pair to ask a
- *    reader to separate. So every dot carries an accessible name saying what it
- *    means.
+ *    colour alone"), and it matters more here: a green working dot, a teal
+ *    finished dot and a red broken dot are not a set to ask a reader to separate
+ *    by hue alone. So every dot carries an accessible name saying what it means.
  *
  * 2. **Breathe only for a continuing condition.** `component-states.md` §7
  *    forbids announcing a **state change** with a breathing light — but `running`
