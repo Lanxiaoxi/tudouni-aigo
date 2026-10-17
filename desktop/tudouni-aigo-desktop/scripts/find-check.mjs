@@ -178,7 +178,25 @@ async function main() {
     features: [{ name: 'prefers-color-scheme', value: 'dark' }],
   });
   await send('Page.navigate', { url });
-  await sleep(3500);
+  /**
+   * Wait for the app, not for a number of milliseconds.
+   *
+   * A cold Vite — one that has just optimised its dependencies — takes longer to
+   * mount React than a warm one, and a fixed wait then reads as "the dev-only
+   * handles are missing", which is a lie about the code. This bit the run that
+   * first exercised this script after the dev server had been restarted.
+   */
+  const waitForMount = async () => {
+    const started = Date.now();
+    while (Date.now() - started < 20000) {
+      if ((await evaluate(`typeof window.__aigoCreateBucket === 'function'`)) === true) return true;
+      await sleep(250);
+    }
+    return false;
+  };
+  if (!(await waitForMount())) {
+    throw new Error(`the app never mounted at ${url} (waited 20s)`);
+  }
 
   /* ---- a conversation: three restored turns, and one that stays running ---- */
 
@@ -352,9 +370,71 @@ async function main() {
   check('the store agrees, needle and all', running.open === false && running.query === '');
   check('the turn was not interrupted', running.status === 'running', `status=${running.status}`);
 
-  /* ---- 6. a chunk under the reader’s cursor does not move the viewport ---- */
+  /* ---- 6. the session bar's own search button ---- */
 
-  console.log('\n6. a streamed chunk while the bar is up');
+  console.log('\n6. the button in the session bar');
+  /** A real mouse press, like `window-controls-check.mjs` uses: a synthetic
+   *  `.click()` bypasses hit testing, so it reports success on a control a person
+   *  cannot actually reach. */
+  const clickAt = async (selector) => {
+    const at = await evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (el === null) return null;
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+    if (at === null) return false;
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', buttons: 1, clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', buttons: 0, clickCount: 1 });
+    await sleep(350);
+    return true;
+  };
+
+  const buttonState = () =>
+    evaluate(`(() => {
+      const el = document.querySelector('.sb-find');
+      return { present: el !== null, disabled: el !== null ? el.disabled : null };
+    })()`);
+
+  let button = await buttonState();
+  check(
+    'it is drawn beside the right rail’s toggle, and enabled',
+    button.present && button.disabled === false,
+    JSON.stringify(button),
+  );
+  check('the press lands on it', await clickAt('.sb-find'));
+  bar = await barState();
+  check('and it raises the bar with the keyboard in it', bar.open && bar.focused, JSON.stringify(bar));
+
+  // Closed again first, so the next assertion is about the key rather than about
+  // a flag the button left set.
+  await escape();
+  await sleep(250);
+  check(
+    'Esc closes what the button opened',
+    (await evaluate(`window.__aigoStore.getState().findOpen`)) === false,
+  );
+
+  // The gate. On the board there is no conversation text on screen, so the
+  // button is not drawn — and `Ctrl+F` must not leave a flag set that would
+  // produce a bar out of nowhere once the board closes.
+  await evaluate(`(() => { window.__aigoStore.getState().setBoardOpen(true); return true; })()`);
+  await sleep(500);
+  button = await buttonState();
+  check('the board takes it away with the transcript', !button.present, JSON.stringify(button));
+  await ctrlF();
+  check(
+    'and Ctrl+F there opens nothing',
+    (await evaluate(`window.__aigoStore.getState().findOpen`)) === false,
+  );
+  await evaluate(`(() => { window.__aigoStore.getState().setBoardOpen(false); return true; })()`);
+  await sleep(600);
+  button = await buttonState();
+  check('closing the board brings it back', button.present, JSON.stringify(button));
+
+  /* ---- 7. a chunk under the reader’s cursor does not move the viewport ---- */
+
+  console.log('\n7. a streamed chunk while the bar is up');
   await ctrlF();
   const focused = await evaluate(`(() => {
     const s = window.__aigoStore.getState();
@@ -463,13 +543,15 @@ async function main() {
   if (problems.length > 0 || failures.length > 0) {
     console.log(`FAILED: ${failures.length} assertion(s), ${problems.length} page problem(s)`);
     for (const f of failures) console.log(`   ${f}`);
+    // `exitCode` rather than `process.exit`: exiting while the WebSocket is
+    // still closing trips a libuv assertion on Windows
+    // (`!(handle->flags & UV_HANDLE_CLOSING)`), and the process then reports
+    // `0xC0000409` instead of 1. Setting the code and returning lets Node close
+    // the socket itself and exit honestly.
     await fetch(`http://127.0.0.1:${port}/json/close/${created.id}`);
     ws.close();
-    // `process.exit` only on the way out with a failure, like the other checks:
-    // on the success path this returns and Node closes the socket itself. Calling
-    // it while the WebSocket is still closing trips a libuv assertion on Windows
-    // (`!(handle->flags & UV_HANDLE_CLOSING)`), which turned a PASS into exit 1.
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log('PASS — Ctrl+F finds, walks, opens folds, and holds the reader’s place');

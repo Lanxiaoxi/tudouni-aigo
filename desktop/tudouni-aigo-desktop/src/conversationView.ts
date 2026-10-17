@@ -133,3 +133,19 @@ export function conversationView(input: ConversationViewInput): ConversationView
 export function showsComposer(view: ConversationView): boolean {
   return view !== 'terminal' && view !== 'board';
 }
+
+/**
+ * Whether the transcript is the column's occupant.
+ *
+ * The find bar lives inside the transcript (`StreamView` draws it and runs the
+ * scan), so "can anything be searched right now" is exactly this question — not
+ * "is a session open". On the board or in a shell there is no conversation text
+ * on screen, and a search control there would be a button whose press produces
+ * nothing; the same three states are why the bar is not drawn.
+ *
+ * It is the composer's rule read from the other end: the composer is withheld
+ * from four occupants, the find bar is offered in only one.
+ */
+export function showsTranscript(view: ConversationView): boolean {
+  return view === 'stream';
+}

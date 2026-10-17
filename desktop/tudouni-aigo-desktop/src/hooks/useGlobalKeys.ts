@@ -37,6 +37,31 @@ function keyboardIsAtAShell(): boolean {
   );
 }
 
+/** The class the transcript's scroll region carries. Named here for the same
+ *  reason `TERMINAL_PANE_CLASS` is: the guard below and the region itself must
+ *  not be able to disagree about what "the transcript" is. */
+export const TRANSCRIPT_CLASS = 'stream-scroll';
+
+/**
+ * Is there a transcript on screen to search?
+ *
+ * The find bar is drawn **by the transcript** — `StreamView` renders it, and its
+ * scan walks the rows that component owns — so this is the condition, measured
+ * directly rather than inferred from "a session is open". The column also shows
+ * the session board, a shell and the first screen, all states with a session and
+ * none of them with conversation text on screen; `Ctrl+F` there would set a flag
+ * that draws nothing now and produces a bar out of nowhere later, which is the
+ * "a key that appears to do nothing" failure this file keeps being about.
+ *
+ * A DOM read inside an event handler, for the same reason `keyboardIsAtAShell`
+ * is one: by the time a key arrives the tree that decides it is already
+ * committed.
+ */
+function transcriptIsOnScreen(): boolean {
+  if (typeof document === 'undefined') return false;
+  return document.querySelector(`.${TRANSCRIPT_CLASS}`) !== null;
+}
+
 /**
  * Global keys (the capability list).
  *
@@ -234,7 +259,13 @@ export function useGlobalKeys(): void {
             // Reached only when no blocking modal is up: the visibility check
             // above is what keeps a fail-closed approval unanswerable-by-accident,
             // and searching a transcript is not an answer to it.
+            //
+            // The transcript has to be the thing on screen — the session bar's
+            // own search button asks the same question (`showsTranscript`) and is
+            // not drawn when this is false, so the key and the button agree about
+            // when there is something to search.
             e.preventDefault();
+            if (!transcriptIsOnScreen()) return;
             s.openFind();
             return;
           }

@@ -36,6 +36,7 @@ import { test } from 'node:test';
 import {
   conversationView,
   showsComposer,
+  showsTranscript,
   type ConversationViewInput,
 } from '@/conversationView';
 
@@ -119,6 +120,43 @@ test('the composer is drawn for every view except the terminal and the board', (
   }
   assert.equal(showsComposer('board'), false, 'the board has no addressee, so no composer');
   assert.equal(showsComposer('terminal'), false, 'the shell owns the keyboard');
+});
+
+test('find is offered only while the transcript is the column', () => {
+  // The find bar is drawn **by** the transcript, so this is the whole condition
+  // for "there is something to search": not "is a session open" — four of the
+  // seven occupants have one. `App` hands the same answer to the session bar,
+  // which is why a wrong rule here would put a search button on screen whose
+  // press produced nothing.
+  //
+  // Driven from **inputs** rather than a list of view names, like the composer
+  // contract above: an eighth occupant added later cannot be forgotten here.
+  const inputs: ConversationViewInput[] = [
+    healthy({ startupProblem: true }),
+    healthy({ sessionProblem: true }),
+    healthy({ attachedTerminalId: 'term-1' }),
+    healthy({ boardOpen: true }),
+    healthy({ hasConversation: false }),
+    healthy({ ready: false }),
+    healthy(),
+  ];
+  const views = inputs.map(conversationView);
+  // Seven inputs, seven occupants: if two of them ever collapse onto one view,
+  // the priority order has lost a branch, and the loop below would silently stop
+  // covering one of them.
+  assert.equal(new Set(views).size, inputs.length, `views: ${views.join(', ')}`);
+  for (const view of views) {
+    assert.equal(
+      showsTranscript(view),
+      view === 'stream',
+      `${view}: find must be ${view === 'stream' ? 'available' : 'unavailable'}`,
+    );
+  }
+  // Spelled out for the two that are easiest to conflate: both show a session,
+  // neither shows its text.
+  assert.equal(showsTranscript('board'), false);
+  assert.equal(showsTranscript('welcome'), false);
+  assert.equal(showsTranscript('stream'), true);
 });
 
 /* ============================================================

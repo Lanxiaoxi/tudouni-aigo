@@ -426,6 +426,23 @@
   margin-left: var(--space-1);
 }
 
+/* The transcript's find, immediately left of the trailing toggle.
+ *
+ * It borrows `.rail-toggle`'s square, colour, hover and disabled states — the
+ * four things that make a control on this bar read as a control — and overrides
+ * only the two margins: the inner gap moves to its **left** so that the run
+ * stays evenly spaced (`facts · 4px · find · 4px · toggle · edge`), where the
+ * leading toggle's gap is on its right for the same reason.
+ *
+ * Specificity is raised past `.rail-toggle` deliberately rather than relying on
+ * this block coming later in the file: the margin override is the whole point of
+ * the modifier, and a reorder that silently put the base rule last would bring
+ * the doubled gap back. */
+.sessionbar .rail-toggle.sb-find {
+  margin-right: 0;
+  margin-left: var(--space-1);
+}
+
 .sessionbar .rail-toggle:hover:not(:disabled) {
   background: var(--bg-muted);
   color: var(--fg);

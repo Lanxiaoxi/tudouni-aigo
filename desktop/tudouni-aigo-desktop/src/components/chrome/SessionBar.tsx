@@ -1,4 +1,4 @@
-import { LayoutGrid, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose } from 'lucide-react';
+import { LayoutGrid, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Search } from 'lucide-react';
 import { railBlocked, selectBoardAvailable, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Fact, Tip } from '@/components/ui/kit';
@@ -47,7 +47,7 @@ import { Fact, Tip } from '@/components/ui/kit';
  * foot's row. One control with two entrances rather than two controls that can
  * disagree.
  */
-export function SessionBar() {
+export function SessionBar({ canFind }: { canFind: boolean }) {
   const t = useT();
   // Everything on this row is a statement about **one** conversation, so it all
   // comes from the session being shown.
@@ -59,6 +59,7 @@ export function SessionBar() {
   const sidebarVisible = useApp((s) => s.sidebarVisible);
   const toggleSidebar = useApp((s) => s.toggleSidebar);
   const setBoardOpen = useApp((s) => s.setBoardOpen);
+  const openFind = useApp((s) => s.openFind);
   // The board's gate is the **workspace's**, not the conversation on screen's:
   // it reports on every session at once, so it must open in the one case Files
   // and Terminal cannot — the session on screen is the one whose child failed
@@ -152,6 +153,38 @@ export function SessionBar() {
     </Tip>
   );
 
+  /**
+   * The transcript's find, as a visible control beside the right rail's toggle —
+   * the same act as `Ctrl+F`, for a hand that is already on the mouse.
+   *
+   * **Beside the toggle rather than inside the rail**, for the reason this whole
+   * row exists: a control inside the thing it acts on goes away with it, and the
+   * right rail is exactly the surface a reader folds while scanning a long answer.
+   * Its shortcut is advertised (`aria-keyshortcuts`) and its label is the same
+   * sentence the bar's own search box carries, so the two cannot drift.
+   *
+   * It is drawn **only while the transcript is the column's occupant**
+   * (`showsTranscript`), which is a different question from "is a session open":
+   * on the board or in a shell there is no conversation text on screen, so the
+   * button would be one whose press produced nothing. That is the failure this
+   * bar's neighbours were rebuilt to avoid, and it is why the gate is a prop from
+   * `App` rather than a fact guessed here.
+   */
+  const findButton = canFind ? (
+    <Tip label={t('find.label')}>
+      <button
+        type="button"
+        className="rail-toggle sb-find"
+        aria-label={t('find.label')}
+        aria-keyshortcuts="Control+F"
+        disabled={blocked}
+        onClick={openFind}
+      >
+        <Search size={14} />
+      </button>
+    </Tip>
+  ) : null;
+
   if (!session) {
     // The toggles are rendered in this state too. Before the handshake lands
     // there are no facts to show, and leaving them out of the placeholder would
@@ -165,6 +198,7 @@ export function SessionBar() {
           <span className="sb-label">{t('session.label')}</span>
           <span className="muted">—</span>
         </div>
+        {findButton}
         {rightToggle}
       </div>
     );
@@ -236,6 +270,7 @@ export function SessionBar() {
         </div>
       </div>
 
+      {findButton}
       {rightToggle}
     </div>
   );

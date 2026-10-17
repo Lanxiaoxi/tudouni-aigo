@@ -3,7 +3,7 @@ import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
 import { activeRuntime, NO_ENTRIES, NO_NOTES, useApp } from '@/state/store';
 import { draggedRailWidth, type RailSide } from '@/railWidth';
-import { conversationView, showsComposer } from '@/conversationView';
+import { conversationView, showsComposer, showsTranscript } from '@/conversationView';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
 import { useKeepAwake } from '@/hooks/useKeepAwake';
@@ -216,7 +216,7 @@ export function App() {
               follows `.app-conversation`, so the two sidebars reach the top of
               this row; the facts they would have shown are theirs to draw. */}
           <div className="app-conversation">
-            <SessionBar />
+            <SessionBar canFind={showsTranscript(view)} />
             {/* The summary row stands in for the right rail once it is folded,
                 so it is drawn **under the session bar and inside the
                 conversation column** — the same width as the row above it,
