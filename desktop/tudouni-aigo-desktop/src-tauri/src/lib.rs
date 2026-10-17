@@ -1829,7 +1829,16 @@ const MAX_INLINE_IMAGE_BYTES: usize = MAX_IMAGE_BYTES;
 /// decides whether to read the file at all, and the bytes decide whether what was
 /// read is really a picture. Neither alone is enough — the name is a claim, and
 /// sniffing means reading a file whose first bytes would otherwise be discarded.
-const INLINE_IMAGE_EXTENSIONS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+///
+/// **It must agree with `IMAGE_SIGNATURES`, and a test pins that.**
+///
+/// The list used to carry two extra entries — `webp` and `bmp` — that no signature
+/// knows. A `.webp` then passed this check, was read in full, and was refused by
+/// the sniff below with "its contents do not match its name": a sentence that is
+/// false, about a file whose contents matched its name perfectly. The two lists are
+/// kept as a literal plus a test rather than derived in a `const`, because the
+/// derivation is less readable than the rule it enforces.
+const INLINE_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif"];
 
 /// Read one picture **inside the workspace** and return it as a `data:` URL.
 ///
@@ -1902,7 +1911,7 @@ fn inline_image(workspace: String, path: String) -> Result<InlineImage, String> 
         .unwrap_or_default();
     if !INLINE_IMAGE_EXTENSIONS.contains(&extension.as_str()) {
         return Err(format!(
-            "{relative} is not a picture this window can draw (it accepts png, jpg, gif, webp and bmp)"
+            "{relative} is not a picture this window can draw (it accepts png, jpg and gif)"
         ));
     }
 
@@ -3156,18 +3165,47 @@ mod inline_image_tests {
     }
 
     #[test]
-    fn the_accepted_extensions_are_the_ones_the_front_end_labels_as_pictures() {
-        // `DeliverableCards.tsx` classifies a deliverable as an image by the same
-        // extensions; a name it draws a card for but this refuses would be a
-        // picture that shows in one place and not the other.
-        for extension in ["png", "jpg", "jpeg", "gif", "webp"] {
+    fn the_accepted_extensions_are_exactly_the_ones_a_signature_knows() {
+        // The invariant that was violated once: a name this accepts whose bytes the
+        // sniff cannot vouch for is read in full and then refused with a message
+        // that blames the file ("contents do not match its name") for a limit that
+        // is really ours.
+        //
+        // JPEG is the one alias: a signature declares its canonical extension
+        // (`jpg`), and `.jpeg` is the same format spelled the long way. The alias
+        // table below is the whole of the extra spelling, so a second one cannot be
+        // added here without naming it — which is the point.
+        const ALIASES: &[(&str, &str)] = &[("jpeg", "jpg")];
+
+        for signature in super::IMAGE_SIGNATURES.iter() {
             assert!(
-                INLINE_IMAGE_EXTENSIONS.contains(&extension),
-                "{extension} is missing"
+                INLINE_IMAGE_EXTENSIONS.contains(&signature.extension),
+                "{} is a known signature but is not an accepted extension",
+                signature.extension
             );
         }
-        // Not pictures, and must not be read as if they were.
-        for extension in ["svg", "html", "txt", "exe"] {
+        for extension in INLINE_IMAGE_EXTENSIONS {
+            let canonical = ALIASES
+                .iter()
+                .find(|(alias, _)| alias == extension)
+                .map(|(_, canonical)| *canonical)
+                .unwrap_or(extension);
+            assert!(
+                super::IMAGE_SIGNATURES
+                    .iter()
+                    .any(|signature| signature.extension == canonical),
+                "{extension} is accepted by name but no signature knows it, so the \
+                 sniff can only refuse it"
+            );
+        }
+    }
+
+    #[test]
+    fn the_formats_the_runtime_cannot_measure_are_not_accepted() {
+        // `content.ImageMIMEs` has no decoder for these, so the runtime would stash
+        // one and then refuse it. Accepting the name here would only move the
+        // refusal later and make it look like a rendering bug.
+        for extension in ["webp", "bmp", "svg", "html", "txt", "exe"] {
             assert!(
                 !INLINE_IMAGE_EXTENSIONS.contains(&extension),
                 "{extension} must not be accepted"
