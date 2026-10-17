@@ -376,6 +376,15 @@ export function WorkspaceSidebar() {
    * drew. Grouping is what answers "where am I" inside a menu of destinations:
    * seven equal rows with equal gaps read as seven unrelated buttons.
    *
+   * Session board is drawn in the lower group, directly under Tasks, and that
+   * placement is the one thing here that is not a gate: the board is a view
+   * over the set of sessions rather than one of the workspace's surfaces —
+   * Files, Terminal, Learn and Memory are each about *this directory and the
+   * child running in it*, while the board is about the conversations at large.
+   * Keeping it in the upper group made that block read as five things of one
+   * kind; next to Tasks the two "what is happening" views sit together and the
+   * workspace rows stay one unbroken block.
+   *
    * The gates are unchanged from the row each one replaces (each is the same
    * `openPanel`/`setBoardOpen` call; the disabled reasons are the same ones the
    * old rows carried). What changed is only how they are arranged.
@@ -418,18 +427,6 @@ export function WorkspaceSidebar() {
       run: () => openPanel('learn'),
     },
     {
-      key: 'board',
-      group: 'workspace',
-      label: t('board.title'),
-      hint: t('board.openHint'),
-      icon: <LayoutGrid size={14} />,
-      // The board's gate is the workspace's, not the session's — the same
-      // selector the session bar's second door reads (see `SessionBar`).
-      disabled: blocked || (!hasLiveChild && !boardOpen),
-      active: boardOpen,
-      run: () => setBoardOpen(!boardOpen),
-    },
-    {
       key: 'memory',
       group: 'workspace',
       // The workspace's own surface, next to the browser and the shells — not a
@@ -454,6 +451,21 @@ export function WorkspaceSidebar() {
       icon: <ListChecks size={14} />,
       disabled: blocked,
       run: () => openPanel('tasks'),
+    },
+    {
+      key: 'board',
+      // The lower group, next to Tasks — see the note above `navItems` for why
+      // this row left the workspace's own four. Only the grouping moved; the
+      // gate below is the one it always had.
+      group: 'settings',
+      label: t('board.title'),
+      hint: t('board.openHint'),
+      icon: <LayoutGrid size={14} />,
+      // The board's gate is the workspace's, not the session's — the same
+      // selector the session bar's second door reads (see `SessionBar`).
+      disabled: blocked || (!hasLiveChild && !boardOpen),
+      active: boardOpen,
+      run: () => setBoardOpen(!boardOpen),
     },
     {
       key: 'config',

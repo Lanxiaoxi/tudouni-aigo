@@ -524,7 +524,14 @@ Goal · Tasks · Background jobs · Loaded skills · MCP。顺序固定，各有
 
 **不画登录，不画插件市场**：这个窗口后面没有账号，运行时也没有插件注册表——它的扩展面是 MCP 与技能，那是右侧栏的事。画出来就是一个「按了不会有任何事发生」的控件。
 
-**footer 有四个入口**：Files · Terminal · **Session board** · Settings。板子的 gate **不是** Files/Terminal 用的 `hasSession`（那两个 key 在"当前会话就绪"）：板子讲的是全工作区，当前会话启动失败时它更该能开——它要的是"**这个工作区有活着的子进程**"（`hasLiveChild`）。
+**底部的 workbench 抽屉有两个分组**，顺序固定：
+
+| 分组 | 入口 |
+| --- | --- |
+| Workspace | Files · Terminals · Learn workspace · Workspace memory |
+| Tasks & settings | Tasks · **Session board** · Config · Settings |
+
+上半组是**这个目录与它里面那个子进程**的表面，下半组是过程本身的东西。**Session board 在下半组、紧跟 Tasks**：板子的主语是**会话的集合**（左栏自己的主语），而不是某一个工作区的文件或终端——放进上半组会让那四行读成同一类东西的五件，而它恰好是唯一不在这类里的那个。板子的 gate **不是** Files/Terminal 用的 `hasSession`（那两个 key 在"当前会话就绪"）：板子讲的是全工作区，当前会话启动失败时它更该能开——它要的是"**这个工作区有活着的子进程**"（`hasLiveChild`）。分组只是排布，**每个入口的 gate 与它单独成行时完全相同**。
 
 **已归档的会话不出现在已保存列表里**，这是归档唯一改变左栏行为的地方。它读的是 `SavedSessions.active`（构建时按 `archived` 过滤出的那份），**不是** `items`——因为库打开时连接会向运行时请求 `all`，若读 `items`，归档的会话会在有人开着 `/resume` 的那段时间里重新冒回左栏，且"左栏显示哪些行"会取决于一个无关面板。`Ctrl+1..9` 读同一份 `active`。
 
