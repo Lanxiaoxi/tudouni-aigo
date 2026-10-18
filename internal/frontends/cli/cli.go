@@ -68,9 +68,17 @@ type Options struct {
 // always empty. The rule reached the configuration file either way, which is exactly
 // what made it hard to notice — it worked on the *next* run.
 func Channels(autopilot bool, in io.Reader, diag io.Writer) protocol.Channels {
+	// **One reader for every question this runtime asks.** A fresh `bufio.Reader`
+	// per question would swallow the answers to the questions after the first:
+	// `ReadString` fills its buffer with whatever has already arrived, so a piped
+	// `answer1\nanswer2\n` would leave the second question reading from an empty
+	// stream and reporting "nobody answered" while both answers sat in the first
+	// reader's buffer. The line REPL is the front end that runs in pipes and CI
+	// logs, so it is exactly the one that has to survive this.
+	reader := bufio.NewReader(in)
 	return protocol.Channels{
 		Questioner: func(args protocol.AskUserArgs) protocol.Answer {
-			return askOnTerminal(args, in, diag)
+			return askOnTerminal(args, reader, diag)
 		},
 		AskerFactory: func(memory *security.Memory, trust security.TrustGroupLookup) security.AskFunc {
 			if autopilot {
@@ -95,7 +103,11 @@ func Channels(autopilot bool, in io.Reader, diag io.Writer) protocol.Channels {
 //
 // The question goes to the diagnostic stream because stdout carries the result:
 // mixing the two pollutes it, most visibly when the output is redirected to a file.
-func askOnTerminal(args protocol.AskUserArgs, in io.Reader, diag io.Writer) protocol.Answer {
+//
+// `reader` is shared across every question the runtime asks (see `Channels`), so
+// the answers to a run of questions arrive intact even when the input is a pipe
+// with more than one line already buffered in it.
+func askOnTerminal(args protocol.AskUserArgs, reader *bufio.Reader, diag io.Writer) protocol.Answer {
 	if args.Header != "" {
 		fmt.Fprintf(diag, "[提问] %s\n", args.Header)
 	}
@@ -105,7 +117,6 @@ func askOnTerminal(args protocol.AskUserArgs, in io.Reader, diag io.Writer) prot
 	}
 	fmt.Fprint(diag, "[提问] 回答（回车=跳过）：")
 
-	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')
 	if err != nil && line == "" {
 		// Nobody to ask is a different thing from an empty answer, and the model is

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 )
 
@@ -66,5 +67,24 @@ func TestAutopilotStillAnswersWithoutAReader(t *testing.T) {
 
 	if !ask("shell", security.RiskHigh, map[string]any{"command": "anything"}) {
 		t.Error("autopilot refused a call; it is supposed to answer yes without asking")
+	}
+}
+
+// TestSequentialQuestionsReadConsecutivePipedAnswers: a single `ask_user` call can
+// carry several questions, and the line REPL is the front end that runs in pipes
+// and CI logs. If each question built its own `bufio.Reader`, the first one would
+// buffer the whole pipe and the rest would read from an empty stream — reporting
+// "nobody answered" for answers that had already arrived.
+func TestSequentialQuestionsReadConsecutivePipedAnswers(t *testing.T) {
+	channels := Channels(false, strings.NewReader("甲\n乙\n"), &strings.Builder{})
+
+	first := channels.Questioner(protocol.AskUserArgs{Question: "第一个？"})
+	second := channels.Questioner(protocol.AskUserArgs{Question: "第二个？"})
+
+	if first.Status != protocol.AnswerAnswered || first.Text != "甲" {
+		t.Errorf("the first question got %+v, want 甲", first)
+	}
+	if second.Status != protocol.AnswerAnswered || second.Text != "乙" {
+		t.Errorf("the second question got %+v, want 乙", second)
 	}
 }
