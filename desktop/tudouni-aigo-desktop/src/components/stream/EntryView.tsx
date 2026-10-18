@@ -102,17 +102,7 @@ export const EntryView = memo(function EntryView({
     case 'reason':
       return <ReasonEntry entry={entry} />;
     case 'answer':
-      return (
-        // `data-entry` is the link between this row and the model entry it draws,
-        // and the find layer is its only reader: a hit is found as an offset into
-        // a row's text, and the only honest way back from there to a live `Text`
-        // node is an attribute this front end writes down itself. It is **not**
-        // `data-anchor`, which says "the turn rail may scroll here" and is on two
-        // row kinds only. See `find/matches.ts`.
-        <div className="e-answer" data-entry={entry.id}>
-          <Markdown text={entry.text} />
-        </div>
-      );
+      return <AnswerEntry entry={entry} />;
     case 'stream':
       return (
         <div className="e-stream" data-entry={entry.id}>
@@ -270,22 +260,51 @@ function TurnHead({
 
 /* ---------------- 2. user input ---------------- */
 
-function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
-  const t = useT();
+/**
+ * The copy affordance drawn under both the user's bubble and the model's reply.
+ *
+ * It owns its own "copied" flag rather than lifting one to the row: the two rows
+ * copy different text, and a shared flag would flash the check on a row nobody
+ * clicked. The two names arrive as props because a screen reader should hear
+ * what is being copied — a prompt and a reply are not the same thing.
+ */
+function CopyButton({
+  text,
+  copyLabel,
+  copiedLabel,
+}: {
+  text: string;
+  copyLabel: string;
+  copiedLabel: string;
+}) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
-  // Copies the prompt exactly as typed — `entry.text`, not the rendered bubble,
-  // which is the same words plus whatever chrome the bubble grows.
+  // Copies the text exactly as the runtime stored it, not the rendered row —
+  // the same words plus whatever chrome the row grows.
   const onCopy = async () => {
-    const ok = await copyText(entry.text);
-    if (ok) {
-      setCopied(true);
-      window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => setCopied(false), 1500);
-    }
+    const ok = await copyText(text);
+    if (!ok) return;
+    setCopied(true);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setCopied(false), 1500);
   };
 
+  return (
+    <button
+      type="button"
+      className={`entry-copy${copied ? ' is-copied' : ''}`}
+      aria-label={copied ? copiedLabel : copyLabel}
+      title={copied ? copiedLabel : copyLabel}
+      onClick={() => void onCopy()}
+    >
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  );
+}
+
+function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
+  const t = useT();
   return (
     // The second kind of rail anchor. A turn restored by `session_load` has no
     // `turn` head — the stored message list carries no turn boundary — so those
@@ -302,15 +321,38 @@ function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
       <div className="e-user" data-entry={entry.id}>
         {entry.text}
       </div>
-      <button
-        type="button"
-        className={`eu-copy${copied ? ' is-copied' : ''}`}
-        aria-label={copied ? t('entry.userCopied') : t('entry.userCopy')}
-        title={copied ? t('entry.userCopied') : t('entry.userCopy')}
-        onClick={() => void onCopy()}
-      >
-        {copied ? <Check size={13} /> : <Copy size={13} />}
-      </button>
+      <CopyButton
+        text={entry.text}
+        copyLabel={t('entry.userCopy')}
+        copiedLabel={t('entry.userCopied')}
+      />
+    </div>
+  );
+}
+
+/* ---------------- 2b. model reply ---------------- */
+
+function AnswerEntry({ entry }: { entry: Extract<Entry, { kind: 'answer' }> }) {
+  const t = useT();
+  return (
+    // The mirror of the user's row, on the other side and without a bubble: the
+    // reply, then its copy button **under** it, flush with the text's own left
+    // edge.
+    //
+    // `data-entry` stays on `.e-answer`, which is the find layer's
+    // `.e-answer .md` container (`find/matches.ts`): a hit is found as an offset
+    // into a row's text, and the only honest way back to a live `Text` node is an
+    // attribute this front end writes down itself. The button is a sibling, so it
+    // is outside the searched text.
+    <div className="e-answer-row">
+      <div className="e-answer" data-entry={entry.id}>
+        <Markdown text={entry.text} />
+      </div>
+      <CopyButton
+        text={entry.text}
+        copyLabel={t('entry.answerCopy')}
+        copiedLabel={t('entry.answerCopied')}
+      />
     </div>
   );
 }

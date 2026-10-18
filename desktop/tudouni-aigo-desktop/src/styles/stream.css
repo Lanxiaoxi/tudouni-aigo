@@ -173,8 +173,10 @@
   animation: step-slide-in var(--motion-base) var(--ease-out) 1;
 }
 
-/* Copy affordance below the bubble (`EntryView.tsx`, `UserEntry`). */
-.eu-copy {
+/* Copy affordance below the row it belongs to — the user's bubble (`UserEntry`)
+   and the model's reply (`AnswerEntry`) share it. The row owns the alignment
+   (`align-items`), so this is only the button itself. */
+.entry-copy {
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -189,13 +191,13 @@
   cursor: pointer;
 }
 
-.eu-copy:hover {
+.entry-copy:hover {
   background: var(--bg-muted);
   color: var(--fg);
 }
 
 /* The check swap after a successful copy. */
-.eu-copy.is-copied {
+.entry-copy.is-copied {
   color: var(--success);
 }
 
@@ -872,6 +874,17 @@
 }
 
 /* ---------------- 10/11. 回答与流式正文 ---------------- */
+/* Reply row: the answer, then its copy button **under** it, flush left — the
+   mirror of `.e-user-row`. `data-entry` stays on `.e-answer` (the find layer's
+   `.e-answer .md` container), so the button is a sibling, outside the searched
+   text. */
+.e-answer-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
 .e-answer,
 .e-stream {
   font-size: var(--text-body);

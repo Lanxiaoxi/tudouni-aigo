@@ -217,6 +217,9 @@ export const en = {
   /** Copy button under the user's own bubble (`EntryView.tsx`, `UserEntry`). */
   'entry.userCopy': 'Copy message',
   'entry.userCopied': 'Copied',
+  /** Copy button under the model's reply (`EntryView.tsx`, `AnswerEntry`). */
+  'entry.answerCopy': 'Copy reply',
+  'entry.answerCopied': 'Copied',
   'entry.assistant': 'model',
   'entry.model': 'model call',
   'entry.modelRetry': 'retry · waiting {ms}ms',
