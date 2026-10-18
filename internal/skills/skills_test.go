@@ -92,9 +92,8 @@ func TestABrokenSkillIsDataNotAnError(t *testing.T) {
 	cases := map[string]string{
 		"no_frontmatter":       "## 步骤\n1. 没有 frontmatter\n",
 		"unclosed_frontmatter": "---\nname: broken\ndescription: 没关\n## 步骤\n",
-		"unknown_key":          "---\nname: broken\ndescription: x\ncolour: red\n---\n",
 		"missing_description":  "---\nname: broken\n---\n",
-		"multiline_block":      "---\nname: broken\ndescription: |\n  多行\n---\n",
+		"bad_chars":            "---\nname: broken\ndescription: 一个 {占位符}\n---\n",
 		"indented":             "---\nname: broken\n  description: 缩进了\n---\n",
 		"duplicate_key":        "---\nname: broken\ndescription: a\ndescription: b\n---\n",
 	}
@@ -281,6 +280,148 @@ func TestAllowedToolsAcceptsBothSpellingsAndDeduplicates(t *testing.T) {
 	want := []string{"Bash(git:*)", "Bash(jq:*)", "Read", "Write"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// TestAnUnknownKeyIsSteppedOverNotRefused ...
+//
+// A skill written for another agent carries fields this program has no use for —
+// Claude Code alone adds `argument-hint`, `model`, `context` and more. The
+// instructions live in the body, so a field that is stepped over cannot change
+// what the model is told, and refusing the file over one bought nothing.
+func TestAnUnknownKeyIsSteppedOverNotRefused(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "ported", "---\nname: ported\ndescription: 别家写的。\nargument-hint: \"[platform] [style]\"\nmodel: opus\ncontext: fork\n---\nbody\n")
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+	if len(catalog.Problems) != 0 {
+		t.Fatalf("an unknown key still refused the skill: %+v", catalog.Problems)
+	}
+	if len(catalog.Skills) != 1 {
+		t.Fatalf("found %d skills, want 1", len(catalog.Skills))
+	}
+	if got := catalog.Skills[0].Description; got != "别家写的。" {
+		t.Fatalf("the description is %q", got)
+	}
+}
+
+// TestAnUnknownKeysIndentedContinuationGoesWithIt: `hooks:` is followed by a
+// list, and stopping at the key alone would leave those lines to be read as a
+// nested structure and refuse the file after all.
+func TestAnUnknownKeysIndentedContinuationGoesWithIt(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "continuation", "---\nname: continuation\ndescription: 续行。\nhooks:\n  - one\n  - two\n---\nbody\n")
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+	if len(catalog.Problems) != 0 {
+		t.Fatalf("the indented continuation was not stepped over: %+v", catalog.Problems)
+	}
+	if len(catalog.Skills) != 1 {
+		t.Fatalf("found %d skills, want 1", len(catalog.Skills))
+	}
+}
+
+// TestAQuotedValueLosesItsQuotes ...
+//
+// The quotes are YAML's way of putting a `:` in a plain scalar, and leaving them
+// on hands the model a description that opens and closes with a quotation mark.
+func TestAQuotedValueLosesItsQuotes(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "quoted", "---\nname: quoted\ndescription: \"Searchable data: 79 styles, 50 active.\"\n---\nbody\n")
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+	if len(catalog.Skills) != 1 {
+		t.Fatalf("a quoted description was refused: %+v", catalog.Problems)
+	}
+	want := "Searchable data: 79 styles, 50 active."
+	if got := catalog.Skills[0].Description; got != want {
+		t.Fatalf("the description is %q, want %q", got, want)
+	}
+}
+
+// TestAQuotedValueMayHoldWhatWouldOtherwiseBeRefused: the character check exists
+// to catch a nested structure, and a `#` inside quotes is not one.
+func TestAQuotedValueMayHoldWhatWouldOtherwiseBeRefused(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "hashed", "---\nname: hashed\ndescription: 'Tokens use #fff and {placeholder} syntax.'\n---\nbody\n")
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+	if len(catalog.Skills) != 1 {
+		t.Fatalf("a quoted value was refused: %+v", catalog.Problems)
+	}
+	want := "Tokens use #fff and {placeholder} syntax."
+	if got := catalog.Skills[0].Description; got != want {
+		t.Fatalf("the description is %q, want %q", got, want)
+	}
+}
+
+// TestQuotesInsideAValueAreNotDelimiters: `"one" and "two"` starts and ends with
+// a quote and is not one scalar, and trimming there would cut the sentence.
+func TestQuotesInsideAValueAreNotDelimiters(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "halved", "---\nname: halved\ndescription: \"one\" and \"two\"\n---\nbody\n")
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+	if len(catalog.Skills) != 1 {
+		t.Fatalf("a plain value with quotes in it was mangled: %+v", catalog.Problems)
+	}
+	want := "\"one\" and \"two\""
+	if got := catalog.Skills[0].Description; got != want {
+		t.Fatalf("the value is %q, want %q", got, want)
+	}
+}
+
+// TestBlockScalarsAreRead ...
+//
+// A description long enough to need a paragraph is written under `|` or `>`,
+// because a one-line value cannot hold one. Refusing the file made a whole class
+// of upstream skills unusable.
+func TestBlockScalarsAreRead(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "literal", "---\nname: literal\ndescription: |\n  first line\n  second line\nlicense: MIT\n---\nbody\n")
+	writeSkill(t, root, "folded", "---\nname: folded\ndescription: >\n  one long\n  sentence here\n\n  a second paragraph\n---\nbody\n")
+	writeSkill(t, root, "stripped", "---\nname: stripped\ndescription: |-\n  no trailing newline\n---\nbody\n")
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+	if len(catalog.Problems) != 0 {
+		t.Fatalf("a block scalar produced problems: %+v", catalog.Problems)
+	}
+	got := map[string]string{}
+	for _, skill := range catalog.Skills {
+		got[skill.Name] = skill.Description
+	}
+	want := map[string]string{
+		"literal":  "first line\nsecond line",
+		"folded":   "one long sentence here\na second paragraph",
+		"stripped": "no trailing newline",
+	}
+	for name, description := range want {
+		if got[name] != description {
+			t.Errorf("%s is %q, want %q", name, got[name], description)
+		}
+	}
+}
+
+// TestTheLineAfterABlockScalarIsStillReadAsAFrontmatterKey: the block is read by
+// the same loop that reads the keys, so resuming one line too far would swallow
+// the key below it — or one line too few would read the block's own text as one.
+func TestTheLineAfterABlockScalarIsStillReadAsAFrontmatterKey(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "followed", "---\nname: followed\ndescription: |\n  the description\nallowed-tools: shell read_file\n---\nbody\n")
+
+	catalog := (&Loader{Roots: []string{root}}).Reload()
+	if len(catalog.Problems) != 0 {
+		t.Fatalf("a block scalar broke the loop: %+v", catalog.Problems)
+	}
+	if len(catalog.Skills) != 1 {
+		t.Fatalf("found %d skills, want 1", len(catalog.Skills))
+	}
+	skill := catalog.Skills[0]
+	if skill.Description != "the description" {
+		t.Fatalf("the block swallowed its neighbour: %q", skill.Description)
+	}
+	if len(skill.AllowedTools) != 2 {
+		t.Fatalf("the key below the block was lost: %v", skill.AllowedTools)
 	}
 }
 

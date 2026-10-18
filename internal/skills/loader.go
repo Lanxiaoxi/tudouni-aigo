@@ -353,6 +353,13 @@ func parseSkill(path, directoryName string) (Skill, *Problem, bool) {
 // does not understand becomes a problem rather than a guess** — mis-guessing a quote
 // or an indent silently drops part of a skill's instructions, and the model then
 // follows a procedure with a hole in it.
+//
+// The one thing it steps over instead of refusing is a key it does not know. A
+// frontmatter field is metadata; the instructions are in the body, so stepping
+// over a field cannot change what the model is told. Every skill written for
+// another agent carries keys this program has no use for — Claude Code alone
+// adds `argument-hint`, `model`, `context` and more — and refusing the file over
+// one of them would make that whole catalogue unusable here for no gain.
 func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 	lines := strings.Split(text, "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
@@ -376,6 +383,9 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 	// the following indented lines (e.g. `allowed-tools:` followed by
 	// `  - shell`). Empty means no list is in progress.
 	inListKey := ""
+	// inIgnoredKey is the unknown key whose indented continuation is being
+	// stepped over along with it. Empty means no key is being ignored.
+	inIgnoredKey := ""
 
 	for index := 1; index < end; index++ {
 		raw := lines[index]
@@ -385,10 +395,11 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 		trimmed := strings.TrimSpace(raw)
 
 		// Indentation is allowed under `metadata` (skipped without being
-		// interpreted) and as YAML list items under a key that had an empty
+		// interpreted), under a key this parser does not know (skipped along
+		// with the key), and as YAML list items under a key that had an empty
 		// value (e.g. `allowed-tools:` followed by `  - shell`).
 		if raw != trimmed {
-			if inMetadata {
+			if inMetadata || inIgnoredKey != "" {
 				continue
 			}
 			if inListKey != "" && strings.HasPrefix(trimmed, "- ") {
@@ -404,6 +415,7 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 		}
 		inListKey = ""
 		inMetadata = false
+		inIgnoredKey = ""
 
 		if strings.HasPrefix(trimmed, "- ") {
 			return nil, "", &Problem{Code: "unparsable", Params: [][2]any{{"line", trimmed}}}
@@ -420,9 +432,11 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 		}
 
 		if !contains(knownFrontmatterKeys, key) {
-			return nil, "", &Problem{Code: "unknown_key", Params: [][2]any{
-				{"key", key}, {"known", strings.Join(knownFrontmatterKeys, ", ")},
-			}}
+			// Stepped over rather than refused: the field is metadata, and one
+			// that is stepped over cannot change the body, which is where the
+			// instructions live.
+			inIgnoredKey = key
+			continue
 		}
 		if _, duplicate := fields[key]; duplicate {
 			return nil, "", &Problem{Code: "duplicate_key", Params: [][2]any{{"key", key}}}
@@ -436,14 +450,23 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 			continue
 		}
 
-		if value == "|" || value == ">" || strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">") {
-			return nil, "", &Problem{Code: "multiline_block", Params: [][2]any{
-				{"key", key}, {"value", value},
-			}}
+		// A block scalar (`key: |` or `key: >`) puts its value on the indented
+		// lines below, which the one-line `key: value` shape cannot express.
+		if style, chomp, isBlock := blockHeader(value); isBlock {
+			block, last := readBlock(lines, index+1, end, style, chomp)
+			fields[key] = block
+			index = last
+			continue
 		}
-		// Only licence and compatibility are read for their value; the rest are
-		// carried as text.
-		if key != "license" && key != "compatibility" {
+
+		// A quoted value is how a `#` or a `{` is written without being read as
+		// the start of a nested structure, so the character check below applies
+		// to the value as written, and the quotes come off only afterwards.
+		if quote, isQuoted := quoteStyle(value); isQuoted {
+			value = unquote(value, quote)
+		} else if key != "license" && key != "compatibility" {
+			// Only licence and compatibility are read for their value; the rest
+			// are carried as text.
 			if chars := unsupportedChars(value); chars != "" {
 				return nil, "", &Problem{Code: "bad_chars", Params: [][2]any{
 					{"key", key}, {"chars", chars},
@@ -462,6 +485,203 @@ func parseFrontmatter(text string) (map[string]string, string, *Problem) {
 
 	body := strings.Join(lines[end+1:], "\n")
 	return fields, body, nil
+}
+
+// quoteStyle reports whether a value is a quoted YAML scalar, and which quote
+// character delimits it.
+//
+// It checks the whole value rather than its first and last byte, because
+// `"one" and "two"` starts and ends with a quote and is not one scalar: trimming
+// there would hand the model half a sentence with a stray mark on it.
+func quoteStyle(value string) (byte, bool) {
+	if len(value) < 2 {
+		return 0, false
+	}
+	quote := value[0]
+	if quote != '"' && quote != '\'' {
+		return 0, false
+	}
+	if value[len(value)-1] != quote {
+		return 0, false
+	}
+	inner := value[1 : len(value)-1]
+	for index := 0; index < len(inner); index++ {
+		if quote == '"' && inner[index] == '\\' {
+			index++ // the escaped character cannot close the scalar
+			continue
+		}
+		if inner[index] == quote {
+			if quote == '\'' && index+1 < len(inner) && inner[index+1] == '\'' {
+				index++ // a doubled quote is an escaped quote
+				continue
+			}
+			return 0, false
+		}
+	}
+	return quote, true
+}
+
+// unquote removes the delimiters and the escaping YAML puts inside them. The two
+// styles escape differently: a single-quoted scalar doubles the quote, a
+// double-quoted one uses a backslash.
+func unquote(value string, quote byte) string {
+	inner := value[1 : len(value)-1]
+	if quote == '\'' {
+		return strings.ReplaceAll(inner, "''", "'")
+	}
+	var out strings.Builder
+	out.Grow(len(inner))
+	for index := 0; index < len(inner); index++ {
+		if inner[index] != '\\' || index+1 >= len(inner) {
+			out.WriteByte(inner[index])
+			continue
+		}
+		index++
+		switch inner[index] {
+		case 'n':
+			out.WriteByte('\n')
+		case 't':
+			out.WriteByte('\t')
+		case 'r':
+			out.WriteByte('\r')
+		default:
+			out.WriteByte(inner[index])
+		}
+	}
+	return out.String()
+}
+
+// blockHeader recognises a block scalar header: `|` (literal) or `>` (folded),
+// with an optional chomping indicator (`-` strips the trailing newline, `+`
+// keeps every one) and an optional indentation digit.
+func blockHeader(value string) (style, chomp byte, ok bool) {
+	if value == "" {
+		return 0, 0, false
+	}
+	style = value[0]
+	if style != '|' && style != '>' {
+		return 0, 0, false
+	}
+	for index := 1; index < len(value); index++ {
+		switch {
+		case value[index] == '-' || value[index] == '+':
+			if chomp != 0 {
+				return 0, 0, false
+			}
+			chomp = value[index]
+		case value[index] >= '1' && value[index] <= '9':
+			// The indentation digit is accepted and not interpreted: the block's
+			// own indentation is measured from its lines either way.
+		default:
+			return 0, 0, false
+		}
+	}
+	return style, chomp, true
+}
+
+// readBlock collects the indented lines that follow a block scalar header,
+// starting at `start` and stopping at the first line that is neither blank nor
+// indented. It returns the value and the index of the last line it consumed, so
+// the caller's loop resumes below the block rather than inside it.
+func readBlock(lines []string, start, end int, style, chomp byte) (string, int) {
+	var block []string
+	last := start - 1
+	for index := start; index < end; index++ {
+		line := lines[index]
+		if strings.TrimSpace(line) == "" {
+			block = append(block, "")
+			last = index
+			continue
+		}
+		if line == strings.TrimSpace(line) {
+			break
+		}
+		block = append(block, line)
+		last = index
+	}
+	// Trailing blank lines belong to the chomping indicator, not to the text.
+	for len(block) > 0 && block[len(block)-1] == "" {
+		block = block[:len(block)-1]
+	}
+
+	if indent := commonIndent(block); indent > 0 {
+		for index, line := range block {
+			if len(line) >= indent {
+				block[index] = line[indent:]
+			}
+		}
+	}
+
+	var value string
+	if style == '|' {
+		// Literal: a newline is a newline.
+		value = strings.Join(block, "\n")
+	} else {
+		// Folded: a newline inside a paragraph is a space.
+		value = foldBlock(block)
+	}
+
+	trimmed := strings.TrimRight(value, "\n")
+	if trimmed == "" {
+		return "", last
+	}
+	switch chomp {
+	case '-': // strip: the value ends where the text does
+		return trimmed, last
+	case '+': // keep: every trailing newline stays
+		return value, last
+	default: // clip: exactly one trailing newline
+		return trimmed + "\n", last
+	}
+}
+
+// commonIndent is the smallest indentation among the block's non-blank lines:
+// the amount all of them share, and therefore the amount the block is indented
+// by rather than made of.
+func commonIndent(block []string) int {
+	indent := -1
+	for _, line := range block {
+		if line == "" {
+			continue
+		}
+		width := len(line) - len(strings.TrimLeft(line, " "))
+		if indent < 0 || width < indent {
+			indent = width
+		}
+	}
+	if indent < 0 {
+		return 0
+	}
+	return indent
+}
+
+// foldBlock joins a folded (`>`) block: the lines of one paragraph become one
+// line separated by spaces, and each blank line becomes the break between
+// paragraphs.
+func foldBlock(block []string) string {
+	var out strings.Builder
+	blank := 0
+	started := false
+	for _, line := range block {
+		if strings.TrimSpace(line) == "" {
+			blank++
+			continue
+		}
+		if started {
+			if blank > 0 {
+				out.WriteString(strings.Repeat("\n", blank))
+			} else {
+				out.WriteByte(' ')
+			}
+		}
+		out.WriteString(line)
+		started = true
+		blank = 0
+	}
+	if started {
+		out.WriteByte('\n')
+	}
+	return out.String()
 }
 
 // splitTools reads `allowed-tools`. It accepts the `Tool(specifier)` spelling and
