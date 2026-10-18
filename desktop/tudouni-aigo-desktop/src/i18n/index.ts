@@ -214,8 +214,7 @@ export const en = {
   'entry.turnPhaseModel': 'model call',
   'entry.turnPhaseTool': 'tool call',
   'entry.turnPhaseReply': 'reply',
-  'entry.you': 'you',
-  /** Copy button on the user's own bubble (`EntryView.tsx`, `UserEntry`). */
+  /** Copy button under the user's own bubble (`EntryView.tsx`, `UserEntry`). */
   'entry.userCopy': 'Copy message',
   'entry.userCopied': 'Copied',
   'entry.assistant': 'model',

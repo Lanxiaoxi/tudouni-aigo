@@ -275,8 +275,8 @@ function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
-  // Copies the prompt exactly as typed — `entry.text`, not the rendered
-  // bubble, whose `eu-tag` line is chrome, not part of the message.
+  // Copies the prompt exactly as typed — `entry.text`, not the rendered bubble,
+  // which is the same words plus whatever chrome the bubble grows.
   const onCopy = async () => {
     const ok = await copyText(entry.text);
     if (ok) {
@@ -289,11 +289,19 @@ function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
   return (
     // The second kind of rail anchor. A turn restored by `session_load` has no
     // `turn` head — the stored message list carries no turn boundary — so those
-    // marks scroll to the prompt they are named after instead. `data-entry` is the
-    // find layer's, and unrelated: see the note on the `answer` row below.
-    <div className="e-user" data-anchor={entry.id} data-entry={entry.id}>
-      <span className="eu-tag">{t('entry.you')}</span>
-      {entry.text}
+    // marks scroll to the prompt they are named after instead. The anchor sits on
+    // the row rather than the bubble so the rail's landing offset applies to the
+    // whole row, the way it does for `.turn-head`.
+    //
+    // `data-entry` stays on the bubble: the find layer's rule is that a row's
+    // `data-entry` element **is** its own content container, and a prompt is the
+    // one row shape shaped that way. The row is a column — the bubble, then the
+    // copy button **under** it — so the button is outside the bubble and outside
+    // the searched text.
+    <div className="e-user-row" data-anchor={entry.id}>
+      <div className="e-user" data-entry={entry.id}>
+        {entry.text}
+      </div>
       <button
         type="button"
         className={`eu-copy${copied ? ' is-copied' : ''}`}

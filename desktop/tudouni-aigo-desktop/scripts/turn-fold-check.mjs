@@ -256,10 +256,10 @@ async function main() {
   // The point of the shape: this is a chat, not a stub. The answer is still there.
   assert.ok(folded.answers[0].height > 0, 'the answer survives the fold');
   assert.match(folded.answers[0].text, /folded answer/, `the folded answer text: ${folded.answers[0].text}`);
-  assert.equal(folded.prompts[0], 'you fold this turn away', 'the prompt above a folded turn stays readable');
+  assert.equal(folded.prompts[0], 'fold this turn away', 'the prompt above a folded turn stays readable');
   assert.equal(
     folded.prompts[1],
-    'you and this one is still running',
+    'and this one is still running',
     'the next turn’s prompt is not swallowed by the fold above it',
   );
   console.log('folded:', folded.heads[0].text, '+', folded.answers[0].text);

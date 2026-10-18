@@ -149,11 +149,19 @@
 }
 
 /* ---------------- 2. 用户输入 ---------------- */
+/* Row: the bubble on the right and the copy button **under** it, both flush right
+   (`EntryView.tsx`, `UserEntry`). The row, not the bubble, owns the alignment, so
+   the button can sit below the bubble instead of on top of it. */
+.e-user-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
 .e-user {
-  position: relative;
-  align-self: flex-end;
   max-width: 78%;
-  padding: 8px 34px 14px 12px;
+  padding: 10px 12px;
   border: 1px solid var(--accent-border);
   border-radius: var(--radius-lg);
   background: var(--accent-subtle);
@@ -165,22 +173,10 @@
   animation: step-slide-in var(--motion-base) var(--ease-out) 1;
 }
 
-.e-user .eu-tag {
-  display: block;
-  margin-bottom: 3px;
-  font-family: var(--font-mono);
-  font-size: var(--text-caption);
-  color: var(--fg-faint);
-}
-
-/* Copy affordance on the bubble's own corner (`EntryView.tsx`, `UserEntry`).
-   The right/bottom padding on `.e-user` reserves the strip the button sits
-   in, so text never runs under it. */
+/* Copy affordance below the bubble (`EntryView.tsx`, `UserEntry`). */
 .eu-copy {
-  position: absolute;
-  bottom: 5px;
-  right: 5px;
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
   width: 22px;
