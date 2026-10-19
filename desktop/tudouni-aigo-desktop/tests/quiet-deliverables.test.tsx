@@ -25,6 +25,7 @@ import { renderToStaticMarkup } from 'react-dom/server.browser';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QuietGroup } from '@/components/stream/QuietGroup';
 import { isPicturePath } from '@/components/panels/panels';
+import { previewFile } from '@/components/stream/DeliverableCards';
 import { useApp } from '@/state/store';
 import type { Entry } from '@/state/entries';
 
@@ -177,6 +178,24 @@ test('previewing a picture opens the panel in focus mode', () => {
     useApp.getState().fileFocus,
     true,
     'a card press asks for one file, so the browser must not be drawn above it',
+  );
+  store.closePanel();
+});
+
+test('a text card opens the panel in focus mode too', () => {
+  // The picture door asked for focus and the text door did not: a card for a
+  // `.html` opened onto the workspace's directory listing above the file, the
+  // same failure the picture fix suppressed for PNGs. `previewFile` is the
+  // shared entry for both doors, so it is what gets asserted — the flag is the
+  // one thing a screenshot of the panel cannot check afterwards.
+  const store = withStore();
+  store.closePanel();
+  previewFile('docs/architecture.html');
+  assert.equal(useApp.getState().panel, 'files');
+  assert.equal(
+    useApp.getState().fileFocus,
+    true,
+    'a text card asks for one file as much as a picture does',
   );
   store.closePanel();
 });

@@ -1825,10 +1825,11 @@ export interface AppStore {
    * Open one panel.
    *
    * `focus` is **asked for, never inherited**: it opens the files panel onto a
-   * single file instead of the browser, and only `previewImage` passes it. Every
-   * other caller gets the browser, including a second `openPanel('files')` —
-   * inheriting the flag made the directory listing silently unavailable for the
-   * rest of the window's life.
+   * single file instead of the browser, and only the deliverable-card preview
+   * passes it (the picture door via `previewImage`, the text door right before
+   * its `file_read`). Every other caller gets the browser, including a second
+   * `openPanel('files')` — inheriting the flag made the directory listing
+   * silently unavailable for the rest of the window's life.
    */
   openPanel(p: PanelKind | null, focus?: boolean): void;
   /**

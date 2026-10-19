@@ -172,14 +172,24 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
 }
 
 /**
- * Send one declared file to the workspace browser and open it there.
+ * Send one declared file to the files panel and open it there, **in focus
+ * mode** either way the file is drawn.
  *
- * The two store actions are called in this order for a reason: opening the panel
- * asks the runtime for the root listing, and reading the file right after only
- * sets the viewer's own state — so the panel comes up with a listing behind the
- * file rather than an empty one. Reversed, the panel would be built after the
- * read and would list the workspace root over a viewer that is already showing
- * something else.
+ * The card is a request for one file, so the panel must not answer with a
+ * browser: a card for a `.html` or a `.md` used to open onto the workspace's
+ * directory listing above the file, the text twin of the picture regression
+ * the focus flag exists to suppress. Both doors therefore ask for the flag;
+ * the panel is opened by the callee, not here, because `openPanel` clears
+ * `fileFocus` for any route that is not the one setting it — opening the panel
+ * first and setting the flag afterwards left the flag false and drew the
+ * directory listing anyway.
+ *
+ * **The doors differ in what they read, not in how they open.** `readFile`
+ * speaks the runtime's `file_read`, which refuses anything that is not UTF-8 —
+ * a PNG sent down it opens the panel onto "not UTF-8 text, so it cannot be
+ * shown here", a true sentence about the wrong question: the runtime was never
+ * able to draw it. `previewImage` reads the bytes through the desktop's own
+ * command and hands the panel a `data:` URL instead.
  *
  * The path is sent **verbatim**, as the runtime spelled it. This window never
  * rewrites a path on its way to a `file_read`: the boundary and the normalisation
@@ -190,25 +200,16 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
  * already makes for every file it opens, and the read also lands in the stream as
  * a block — so the answer is still there afterwards, not only while the panel is
  * up.
+ *
+ * Exported for the test that pins the focus flag on the text door.
  */
-function previewFile(path: string) {
+export function previewFile(path: string) {
   const store = useApp.getState();
-  // **A picture takes a different door.** `readFile` speaks the runtime's
-  // `file_read`, which refuses anything that is not UTF-8 — so pressing a card
-  // for a PNG used to open the panel onto "not UTF-8 text, so it cannot be shown
-  // here". That is a true sentence about the wrong question: the runtime was
-  // never able to draw it. `previewImage` reads the bytes through the desktop's
-  // own command and hands the panel a `data:` URL instead.
-  //
-  // **The panel is opened by the callee, not here.** `openPanel` clears
-  // `fileFocus` for any route that is not the one setting it, so opening the
-  // panel first and setting the flag afterwards left the flag false and drew the
-  // directory listing anyway — the very thing focus mode exists to suppress.
   if (isPicturePath(path)) {
     store.previewImage(path);
     return;
   }
-  store.openPanel('files');
+  store.openPanel('files', true);
   store.readFile(path);
 }
 
