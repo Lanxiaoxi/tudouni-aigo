@@ -51,6 +51,12 @@ const SUITES = [
   // ordinary code while being wrong 鈥?this one hid an attached terminal behind
   // the first screen, which took the composer away with it.
   'conversation-view.test.ts',
+  // The welcome motto, which exists twice on purpose (the desktop's catalogue
+  // and the runtime's) and therefore has to be compared: a line edited in only
+  // one of the two still renders, and the two front ends quietly stop agreeing.
+  // The day arithmetic is pinned there too, since a local-midnight or zero-based
+  // rotation shows a different maxim on one side for part of every day.
+  'motto.test.ts',
   // The left rail's two groups, and what makes its actions inert. This is the
   // "I press New session and nothing happens" report: a session with no file yet
   // was in no list at all, and a panel made the rail unclickable while it still

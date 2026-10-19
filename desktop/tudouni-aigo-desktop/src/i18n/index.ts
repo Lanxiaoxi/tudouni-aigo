@@ -187,7 +187,25 @@ export const en = {
   'welcome.greetingAnon': 'Hi',
   'welcome.meta': 'desktop v{desktop} · runtime {runtime}',
   'welcome.where': '{model} · {workspace}',
-  'welcome.start': 'Start here: describe what you want, or reopen the last session.',
+  /** The motto under the identity block. The list and the day arithmetic are
+   *  shared with the TUI (`internal/i18n/en.go`, `mottoOfDay` in
+   *  `internal/frontends/tui/panels.go`): both front ends show the same line on
+   *  the same day, so an edit here belongs in that file too. */
+  'motto.1': 'Decide what you want before you start.',
+  'motto.2': 'If you can write the test, you understand it.',
+  'motto.3': 'Change one thing, and only that thing.',
+  'motto.4': "Don't edit code you don't understand.",
+  'motto.5': 'Small steps, look back often.',
+  'motto.6': 'Write for the next person who reads it.',
+  'motto.7': 'Failures should be loud, never swallowed.',
+  'motto.8': 'Repeated a third time? Extract it.',
+  'motto.9': 'Make it right first, then make it fast.',
+  'motto.10': 'A wrong name leads to wrong code.',
+  'motto.11': 'Comments explain why, not what.',
+  'motto.12': 'Nothing is done until it has run.',
+  'motto.13': 'Interfaces outlive implementations.',
+  'motto.14': 'Deleting a line is worth as much as writing one.',
+  'motto.15': "Today's decision is tomorrow's default.",
   'welcome.recent': 'Recent sessions',
   'welcome.recentEmpty': 'No past sessions',
   'welcome.recentEmptyHint': 'Sessions are written under .tudouni/ in this workspace.',
@@ -1549,4 +1567,15 @@ export function interpolate(
 
 export function makeT(): Translate {
   return (key, params) => interpolate(en[key] ?? key, params);
+}
+
+/** Today's line from the rotating list — the same maxim the TUI's welcome shows.
+ *
+ *  The day is the Unix day, not the local one, because that is what
+ *  `mottoOfDay` in `internal/frontends/tui/panels.go` divides by: counting local
+ *  midnights would leave the two front ends on different lines for part of every
+ *  day. The modulus and the `+ 1` mirror that function too. */
+export function mottoOfDay(t: Translate): string {
+  const day = Math.floor(Date.now() / 86_400_000);
+  return t(`motto.${(day % 15) + 1}` as TKey);
 }

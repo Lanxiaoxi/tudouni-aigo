@@ -1466,6 +1466,14 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   color: var(--fg-secondary);
 }
 
+/* The day's motto, in the slot the start line used to hold. It is somebody
+   else's sentence rather than an instruction to the person reading it, so it
+   takes the quieter colour the meta lines use — and no italic face: the copy is
+   from the runtime's own list, and Plex Sans is loaded in weights, not slants. */
+.welcome-id .wi-motto {
+  color: var(--fg-muted);
+}
+
 /* Why nothing is open. It takes the `wi-start` slot rather than adding a line,
    and it is drawn in the warning colour because it states that something the
    person expects to be true is not: this is not the workspace they left. Colour

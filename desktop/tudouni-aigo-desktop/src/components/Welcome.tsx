@@ -7,6 +7,7 @@ import {
   useSessionField,
 } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import { mottoOfDay } from '@/i18n';
 import { StartupNoticeLine, ChooseWorkspaceButton } from '@/components/StartupNotice';
 import { Logo } from '@/components/ui/Logo';
 import { NoteRow } from '@/components/stream/EntryView';
@@ -16,7 +17,7 @@ import { formatPath, formatRelative } from '@/utils/format';
 /**
  * §7 The first screen. Two blocks, not two pages:
  *   1. identity: mark, greeting (with the OS user name), version, model +
- *      workspace, and one line on where to start
+ *      workspace, and the day's motto
  *   2. recent sessions: by last modified, at most 4, with empty slots
  *
  * The keybinding card that used to be the third block is **gone**. Eight
@@ -103,12 +104,9 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
 
           {/* Why nothing is open, when that needs saying.
            *
-           * It replaces `welcome.start` rather than sitting beside it, because
-           * that line is advice for somebody who has somewhere to start ("describe
-           * what you want, or reopen the last session") and this state is exactly
-           * the one where they do not: there is no workspace, so there is no
-           * session to reopen and nothing for a turn to run in. Two lines, one of
-           * which assumes a workspace, would contradict each other.
+           * It takes the motto's slot rather than sitting beside it: when no
+           * workspace is open, why that is matters more than a maxim, and the
+           * first screen should not open with two unrelated paragraphs.
            *
            * The button is not decoration, and it is not the sentence's
            * direction either. The line used to end with "choose one below",
@@ -124,7 +122,7 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
               <ChooseWorkspaceButton />
             </div>
           ) : (
-            <div className="wi-start">{t('welcome.start')}</div>
+            <div className="wi-start wi-motto">{mottoOfDay(t)}</div>
           )}
         </section>
 
