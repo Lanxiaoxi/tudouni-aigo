@@ -369,6 +369,19 @@ export function WorkspaceSidebar() {
     : workspaces;
 
   /**
+   * How many of this workspace's terminals are still alive, and how many memory
+   * candidates are waiting for a review. These are the two things a folded
+   * workbench can usefully count: a running shell is work in progress the person
+   * may want to get back to, and a pending candidate is a decision the runtime
+   * is holding for them. Their sum is what the folded head shows — a figure that
+   * means "things in this workspace want your attention" rather than the old
+   * `navItems.length`, which was always the same number and said nothing.
+   */
+  const terminalsRunning = rt?.terminals.filter((t) => t.status === 'running').length ?? 0;
+  const memoryPending = rt?.memory?.candidates.length ?? 0;
+  const workbenchAttention = terminalsRunning + memoryPending;
+
+  /**
    * The workbench's seven destinations, in two groups.
    *
    * The order is the drawer's reading order — the workspace's own surfaces
@@ -388,6 +401,12 @@ export function WorkspaceSidebar() {
    * The gates are unchanged from the row each one replaces (each is the same
    * `openPanel`/`setBoardOpen` call; the disabled reasons are the same ones the
    * old rows carried). What changed is only how they are arranged.
+   *
+   * **Per-item badges.** Terminal wears the count of running shells in the
+   * `active` tone (accent — "something is alive here"), and Memory wears the
+   * count of pending candidates in the `attention` tone (warning — "a decision
+   * is waiting"). Both are omitted when their count is zero: a badge that is
+   * always present says nothing, which is the problem the old head count had.
    */
   const navItems: {
     key: string;
@@ -397,6 +416,7 @@ export function WorkspaceSidebar() {
     icon: ReactNode;
     disabled: boolean;
     active?: boolean;
+    badge?: { value: number; tone: 'active' | 'attention' };
     run: () => void;
   }[] = [
     {
@@ -415,6 +435,7 @@ export function WorkspaceSidebar() {
       hint: t('cmd.terminal.desc'),
       icon: <SquareTerminal size={14} />,
       disabled: blocked || !hasSession,
+      badge: terminalsRunning > 0 ? { value: terminalsRunning, tone: 'active' } : undefined,
       run: () => openPanel('terminal'),
     },
     {
@@ -441,6 +462,7 @@ export function WorkspaceSidebar() {
       // runtime, and there is one of those per open conversation. Same gate as
       // Files and Terminal, and for the same reason.
       disabled: blocked || !hasSession,
+      badge: memoryPending > 0 ? { value: memoryPending, tone: 'attention' } : undefined,
       run: () => openPanel('memory'),
     },
     {
@@ -1122,6 +1144,18 @@ export function WorkspaceSidebar() {
                           >
                             <span className="lb-workbench-item-icon">{item.icon}</span>
                             <span className="lb-workbench-item-label">{item.label}</span>
+                            {item.badge ? (
+                              <span
+                                className={`lb-workbench-item-badge${item.badge.tone === 'attention' ? ' is-attention' : ''}`}
+                                aria-label={
+                                  item.badge.tone === 'attention'
+                                    ? t('lb.attention', { n: item.badge.value })
+                                    : undefined
+                                }
+                              >
+                                {item.badge.value}
+                              </span>
+                            ) : null}
                           </button>
                         </Tip>
                       ))}
@@ -1159,7 +1193,9 @@ export function WorkspaceSidebar() {
               </span>
             )}
             <span className="lb-workbench-title">{t('lb.workbench')}</span>
-            <Count value={navItems.length} />
+            {workbenchAttention > 0 ? (
+              <Count value={workbenchAttention} attention />
+            ) : null}
             {footCollapsed ? (
               <span className="lb-workbench-caret" aria-hidden>
                 <ChevronDown size={14} />

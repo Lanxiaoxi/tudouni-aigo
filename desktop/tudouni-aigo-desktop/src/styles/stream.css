@@ -2960,6 +2960,31 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   white-space: nowrap;
 }
 
+/* A per-item count: running terminals (accent) or pending memory candidates
+   (warning). Omitted entirely when the count is zero, so the row reads as
+   "nothing to report here" rather than wearing a permanent grey 0. */
+.lb-workbench-item-badge {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lb-workbench-item-badge.is-attention {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
 .lb-workbench-empty {
   padding: 10px 8px;
   font-size: 11px;
