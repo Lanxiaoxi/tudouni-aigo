@@ -177,7 +177,7 @@ func newMemoryPropose(store *memory.Workspace) tools.Tool {
 **它不是"记下来就生效"**：候选不会进入检索，只有用户审核通过之后才成为正式记忆。所以宁可多提，不要怕提错 —— 但也不要提没有依据的东西。
 **什么时候该提**：
 - 你解决了一个不显然的问题，而且做法可以复用（写清症状、原因、做法和验证方式）；
-- 用户明确表达了在这个工作区里怎么和他协作（例如"以后先说结论""别改这个目录"）—— 这种要写进 kind=preference 的偏好记忆，并在正文里引用用户的原话；
+- 用户明确表达了在这个工作区里怎么和他协作（例如"以后先说结论""别改这个目录"）—— 这种叫偏好记忆，用 tags 标注（例如 tags=["preference"]），并在正文里引用用户的原话；
 - 你发现了已有记忆是错的或过时的 —— 用 op=update 提一条修正，或者 op=deprecate 提一条废弃。
 **什么时候不该提**：一次性的操作细节、只对当前这一步成立的事实、你自己也不确定是不是对的猜测（那种用 confidence=inferred，并且写清不确定在哪）。
 **不要从单次行为推断长期习惯。** 用户说过的是事实，你猜的是猜测，两者在 confidence 上必须分开。
@@ -185,7 +185,8 @@ func newMemoryPropose(store *memory.Workspace) tools.Tool {
 参数说明：
 - op：create 新建（默认）；update 修正已有记忆（要给 entry_id 和你读到的 revision）；deprecate 废弃已有记忆（要给 entry_id 和 reason）
 - triggers 是以后**怎么再找到它**的线索：报错原文、命令、用户当时的说法，尽量具体
-- paths 是**哪里适用**：留空表示整个工作区`,
+- paths 是**哪里适用**：留空表示整个工作区
+- tags 是粗粒度的分类标签；偏好类记忆用 tags=["preference"] 标注（没有单独的类型字段）`,
 		Risk: security.RiskLow,
 		Schema: tools.ObjectSchema(map[string]any{
 			"op": tools.StringSchema(
@@ -251,7 +252,16 @@ func newMemoryPropose(store *memory.Workspace) tools.Tool {
 			if err != nil {
 				return tools.Result{}, err
 			}
-			text := fmt.Sprintf("已写入候选：%s（%s）。它**还没有生效** —— 用户在工作区记忆里审核通过之后才会进入正式记忆，届时会拿到一个 mem_ 开头的正式 id。",
+			// The wording is the anti-duplication cue, and it is load-bearing.
+			// Observed in a real turn: a model asked to remember two preferences
+			// called this tool four times, each proposal differing only slightly.
+			// The old sentence led with "它**还没有生效**", and a model reading its
+			// own tool result for confirmation takes that as "not done yet" — so
+			// the first clause now states that it *was* written, and the last one
+			// says outright not to submit it again. The pending review is still
+			// said, because that is what stops the model claiming it as a fact.
+			text := fmt.Sprintf("已成功写入候选区：%s（%s）。写入本身就是成功，**不要再用同样的内容重复提交一次**。"+
+				"它还没有生效 —— 用户在记忆面板里审核通过后才会成为正式记忆，届时会拿到一个 mem_ 开头的正式 id。",
 				id, proposal.Op)
 			return tools.Result{
 				Text: text,
