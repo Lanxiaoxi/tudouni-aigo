@@ -189,6 +189,23 @@
   background: transparent;
   color: var(--fg-faint);
   cursor: pointer;
+  /* Hidden until its row's content is hovered (`.e-user` / `.e-answer`): the
+     affordance is noise when the reader is not reading the row, and the row's
+     `:hover` also covers the button itself, so a hovered button never disappears
+     under the cursor before it can be clicked. */
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+
+/* `:has()` (not a sibling combinator): the button is a sibling of the bubble,
+   and the answer's content is nested — a selector cannot reach "the content,
+   or any of its descendants". Chromium (the webview) supports `:has`. */
+.e-user-row:has(.e-user:hover) .entry-copy,
+.e-answer-row:has(.e-answer:hover) .entry-copy,
+.entry-copy:hover,
+/* A successful copy must stay visible for its check to be seen. */
+.entry-copy.is-copied {
+  opacity: 1;
 }
 
 .entry-copy:hover {
