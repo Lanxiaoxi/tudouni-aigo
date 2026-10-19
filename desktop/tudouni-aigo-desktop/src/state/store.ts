@@ -3802,10 +3802,29 @@ export const useApp = create<AppStore>((set, get) => {
       });
 
       // A new child, in the workspace on screen — the same act the rail's
-      // "new session" takes. `attachSession` is what moves the screen there,
-      // so the learning run and its transcript are what the person sees next.
-      const key = await get().attachSession({});
-      if (key === null) return;
+      // "new session" takes, so the learning run and its transcript are what
+      // the person sees next. `attachSession` moves the screen there for a
+      // **local** workspace, but a screen over a remote bucket carries a
+      // workspace that is a directory on the *remote* host: handing it to the
+      // local spawn fails the local directory check with "the workspace … is
+      // not a directory". `openSession` makes the same split — a remote
+      // screen goes through `connectRemoteWorkspace` with `forceNew` (the
+      // guard that focuses an existing session is precisely what would
+      // swallow the request).
+      // `?? null` folds "no active session" and "local session"
+      // (`remoteWorkspaceId: null`) into one `null`, so a non-null result is
+      // exactly "the screen is over a remote workspace" — the same fold
+      // `openSession` uses to make its split.
+      const remoteId = activeRuntime(s)?.remoteWorkspaceId ?? null;
+      let key: string | null;
+      if (remoteId !== null) {
+        await get().connectRemoteWorkspace(remoteId, { forceNew: true });
+        key = get().activeKey;
+        if (key === null) return;
+      } else {
+        key = await get().attachSession({});
+        if (key === null) return;
+      }
       patchWith(key, () => ({ learning: true }));
 
       // The task prompt goes out as the session's first `user_message`.
