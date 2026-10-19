@@ -47,6 +47,7 @@ import { registerRuntime, sendTo } from '@/runtime/bus';
 import {
   activeRuntime,
   createSessionBucket,
+  recomputeModelCurrent,
   selectModalOrigin,
   selectModalVisible,
   selectQueuedModals,
@@ -57,6 +58,7 @@ import {
   useApp,
   type SessionRuntime,
 } from '@/state/store';
+import type { VmModel } from '@/runtime/adapt';
 import { normPath } from '@/utils/format';
 import { turnRail } from '@/turnRail';
 import type { FrontendMsg } from '@/protocol/types';
@@ -543,6 +545,75 @@ test('an empty goal shape is how the runtime says "there is none"', () => {
   } as never);
   assert.equal(state.goal.present, false);
   assert.equal(state.goal.objective, '');
+});
+
+/* ============================================================
+   Model catalogue `current` re-stamp
+   ============================================================ */
+
+const MODEL_ROW = (over: Partial<VmModel>): VmModel => ({
+  provider: 'ericai',
+  id: 'm-one',
+  label: '',
+  window: null,
+  summary: '',
+  note: '',
+  vision: false,
+  current: false,
+  effort: '',
+  effortLevels: [],
+  ...over,
+});
+
+test('the catalogue `current` follows the snapshot, not the init stamp', () => {
+  // At init the first row is flagged; a later snapshot says a *different* model
+  // is in effect. The stored flag on row one is now a lie — it must move to the
+  // row the snapshot names.
+  const rows = [MODEL_ROW({ id: 'm-one', current: true }), MODEL_ROW({ id: 'm-two' })];
+  const next = recomputeModelCurrent(rows, 'm-two', 'ericai');
+  assert.deepEqual(
+    next.map((row) => [row.id, row.current]),
+    [
+      ['m-one', false],
+      ['m-two', true],
+    ],
+  );
+});
+
+test('a same-named model on another route does not light up', () => {
+  // Two routes, same id. The snapshot names the second route's copy; only that
+  // row may carry `current`. Matching on id alone would flag both — the billing
+  // and compliance are different on the two answers, so the pair is what counts.
+  const rows = [
+    MODEL_ROW({ provider: 'ericai', id: 'flash' }),
+    MODEL_ROW({ provider: 'self-host', id: 'flash' }),
+  ];
+  const next = recomputeModelCurrent(rows, 'flash', 'self-host');
+  assert.deepEqual(
+    next.map((row) => [row.provider, row.current]),
+    [
+      ['ericai', false],
+      ['self-host', true],
+    ],
+  );
+});
+
+test('a snapshot the flags already agree with is not a re-render', () => {
+  // The snapshot rides on every tool result and turn end. If the model is
+  // unchanged, a fresh array on each one would redraw the panel for nothing —
+  // the same reference must come back.
+  const rows = [
+    MODEL_ROW({ id: 'm-one', current: true }),
+    MODEL_ROW({ id: 'm-two' }),
+  ];
+  assert.equal(recomputeModelCurrent(rows, 'm-one', 'ericai'), rows);
+});
+
+test('an absent model in the snapshot leaves the stored flags alone', () => {
+  // `''` is the projection's "the key was absent", not a real model. It names
+  // nothing to mark, so the flags are not wiped by a snapshot that said no model.
+  const rows = [MODEL_ROW({ id: 'm-one', current: true }), MODEL_ROW({ id: 'm-two' })];
+  assert.equal(recomputeModelCurrent(rows, '', 'ericai'), rows);
 });
 
 /* ============================================================
