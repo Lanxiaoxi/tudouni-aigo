@@ -4108,21 +4108,29 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   box-shadow: var(--shadow-card-hover);
 }
 
-/* The session on screen: **a pale green edge, and nothing else.** It used to
-   take the accent wash plus an inset accent ring — two marks for the one fact
-   the border already states, and a green rectangle inside a board that is
-   already green. The redesign's layer model is explicit about this: the board
-   is the surface, the lane is the wash, and the card you are in is the card
-   with the green hairline. */
+/* The session on screen: **a green edge two pixels wide.**
+ *
+ * It used to be a one-pixel `--lb-selected-line` hairline — the rail's pale
+ * capsule colour, which is right for a selected row and nearly invisible around
+ * a card on the lane's tinted wash, especially in the light theme. The edge is
+ * now `--accent-border` (the same "this one is current" green the terminal tabs
+ * use) and twice as thick, which is what makes it readable at a glance.
+ *
+ * It is still an edge and nothing else — no wash, no inset ring: the board is
+ * the surface, the lane is the wash, and the card you are in is the card with
+ * the green border. The padding gives back the pixel the wider border takes on
+ * each side, so selecting a card does not resize it. */
 .board-card.is-current {
-  border-color: var(--lb-selected-line);
+  border-width: 2px;
+  border-color: var(--accent-border);
+  padding: calc(var(--space-3) - 1px);
   background: var(--lb-surface);
   color: var(--fg);
   box-shadow: var(--shadow-card);
 }
 
 .board-card.is-current:hover {
-  border-color: var(--lb-selected-line);
+  border-color: var(--accent-border);
   background: var(--lb-surface);
   box-shadow: var(--shadow-card-hover);
 }
