@@ -486,6 +486,26 @@
   color: var(--fg);
 }
 
+/* The grid turns a quarter on its way in and back out again — the same idea as
+   the composer's `+`, where the turn is the whole animation rather than a
+   decoration on top of one. It is the **icon** that turns, not the button:
+   the `+` sits on a circle, so rotating the trigger is invisible, while this
+   one is a rounded square whose background would visibly swing. A quarter turn
+   rather than the `+`'s 45° because four squares rotated 45° become a diamond —
+   a different glyph, not the same one turned — whereas 90° leaves the grid
+   reading as a grid at rest and makes the movement itself the feedback.
+   `--motion-base` for the same reason as the `+`: the turn is the animation,
+   too fast and it flickers. The transition lives on the base state so the
+   turn-back on close is eased too; global reduced-motion zeroes the duration. */
+.sessionbar .sb-board svg {
+  transform-origin: center;
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.sessionbar .sb-board.is-active svg {
+  transform: rotate(90deg);
+}
+
 /* **Engaged, not merely hovered.** While the board holds the column the button
    is the way back to the transcript, so it has to say so — the same idiom as
    the rail's foot (`.lb-foot-btn.is-active`) and, before either, `Ctrl+L`'s own
