@@ -174,8 +174,9 @@ test('the envelope version is the one hard failure point', () => {
   // is a **semantic** version and not the hard one: a front end that does not
   // know the key ignores it and still reads every other group, which is
   // exactly why `protocol` is separate from `v` in the first place. 7 adds
-  // `session_fork` inbound.
-  assert.equal(PROTOCOL_VERSION, 7);
+  // `session_fork` inbound. 8 adds `memory_pending` to the `ui(state)`
+  // snapshot so the workbench's Memory badge moves without the panel being open.
+  assert.equal(PROTOCOL_VERSION, 8);
 
   // Decoding an `init` from a **3** runtime still works: the field is documented
   // as survivable, and the capture in `tests/fixtures/opening.jsonl` is one, so

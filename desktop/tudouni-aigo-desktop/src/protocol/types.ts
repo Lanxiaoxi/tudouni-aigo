@@ -40,8 +40,13 @@ export const ENVELOPE_VERSION = 1;
  * control gates it on this number: a runtime below 7 would silently ignore the
  * message, and a button that answers with nothing is a promise the runtime
  * behind it cannot keep.
+ *
+ * **8** adds `memory_pending` to the `ui(state)` snapshot: the count of memory
+ * proposals waiting for review. Additive — a runtime below 8 simply never
+ * sends the key, and a badge that reads "absent" as zero would hide a queue
+ * the runtime is holding, so the badge gates on this number.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 /* ============================================================
    Shared vocabulary
@@ -797,6 +802,15 @@ export interface UiStateMsg {
    *  (`internal/runtime/ssh.go`). Empty — `[]`, never `null` — before the
    *  first connection. */
   ssh: SshRow[];
+  /** The count of memory proposals waiting for review, on every snapshot.
+   *  Protocol 8. Count only — the full candidate list still travels on
+   *  `ui(memory)`, which the front end only asks for when the panel is open.
+   *  Without this the workbench's Memory badge stayed empty after a
+   *  `memory_propose`, because that is a **tool** and the only snapshot a
+   *  tool result re-states is this one. Absent on a runtime below 8, and
+   *  "absent" must not be read as zero: the runtime is holding a queue the
+   *  front end has no way of counting. */
+  memory_pending?: number;
 }
 
 /** `ui(status).status` — grouped on purpose; the screen spans four layers. */

@@ -379,6 +379,16 @@ export interface VmState {
    * first time the runtime adds one.
    */
   ssh: SshRow[];
+  /**
+   * The count of memory proposals waiting for review, carried on every snapshot
+   * (protocol 8, from `internal/runtime/memory.go` `memoryPending`).
+   *
+   * `null` rather than `0` when the key is absent: a runtime below 8 never
+   * sends it, and "the runtime did not say" is not the same statement as
+   * "the queue is empty" — the latter would hide a queue the runtime is
+   * holding. The badge falls back to the panel snapshot in that case.
+   */
+  memoryPending: number | null;
 }
 
 /* ============================================================
@@ -729,6 +739,9 @@ export function projectState(msg: UiStateMsg): VmState {
     // every snapshot, so a front end that started after a connection was opened
     // learns about it from the next one instead of never.
     ssh: Array.isArray(msg.ssh) ? msg.ssh : [],
+    // `num` gives `null` for an absent key, which is the honest answer for a
+    // runtime below 8: it does not count the queue, so neither may the badge.
+    memoryPending: num(msg.memory_pending),
   };
 }
 

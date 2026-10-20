@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -214,6 +215,71 @@ func TestMemoryNoteRespectsTheBudget(t *testing.T) {
 	// read the block — so the assertion allows for it.
 	if runes := len([]rune(note)); runes > 1400 {
 		t.Errorf("the block is %d runes, far past the 700-rune budget", runes)
+	}
+}
+
+// TestTheStatePayloadCarriesTheMemoryCandidateCount is the regression for the
+// workbench badge staying empty after a `memory_propose`.
+//
+// `memory_propose` is a tool, and the only snapshot a tool result re-states is
+// `ui(state)`. The full snapshot travels on `ui(memory)`, which a front end only
+// asks for when the panel is open — so a badge reading the panel snapshot alone
+// learned about the queue at the one moment it was already being looked at.
+// The count must ride on the state snapshot instead.
+func TestTheStatePayloadCarriesTheMemoryCandidateCount(t *testing.T) {
+	session := state.NewEmptySession("s")
+	store := openMemoryForTest(t)
+	runtimeValue := statePanelRuntime(session)
+	runtimeValue.WorkspaceMemory = store
+
+	count := func() int {
+		t.Helper()
+		payload := runtimeValue.StateMessage(false)
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatalf("the state payload does not encode: %v", err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatalf("the state payload does not decode: %v", err)
+		}
+		got, ok := decoded["memory_pending"].(float64)
+		if !ok {
+			t.Fatalf("memory_pending is %T on the wire, want an integer", decoded["memory_pending"])
+		}
+		return int(got)
+	}
+
+	if got := count(); got != 0 {
+		t.Errorf("an empty queue reported %d candidates, want 0", got)
+	}
+	for _, title := range []string{"第一条提案", "第二条提案"} {
+		if _, err := store.Propose(memory.Proposal{Title: title, Body: "正文。"}); err != nil {
+			t.Fatalf("Propose: %v", err)
+		}
+	}
+	if got := count(); got != 2 {
+		t.Errorf("after two proposals the state payload reported %d, want 2", got)
+	}
+	id, err := store.Propose(memory.Proposal{Title: "第三条提案", Body: "正文。"})
+	if err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+	if _, err := store.Publish(id); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := count(); got != 2 {
+		t.Errorf("after publishing one of three, the state payload reported %d, want 2", got)
+	}
+}
+
+// TestMemoryPendingWithoutAMemorySystem: a runtime that could not open its
+// memory directory is not "a runtime that is hiding a count" — it reports zero,
+// never an error, and the state snapshot's shape stays the same.
+func TestMemoryPendingWithoutAMemorySystem(t *testing.T) {
+	runtimeValue := statePanelRuntime(state.NewEmptySession("s"))
+	if got := runtimeValue.memoryPending(); got != 0 {
+		t.Errorf("a runtime without memory reported %d pending candidates, want 0", got)
 	}
 }
 

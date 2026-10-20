@@ -361,6 +361,16 @@
         "type": "string",
         "doc": "**只有 kind=terminal_exit 有**。`exited`（shell 自己退的）还是 `killed`（有人在 `terminal_kill` 里结束了它）。**这个区分不能让前端猜**：一个 `exit` 命令和一个被杀的进程在 UI 上应该长得不一样，而两者的退出码可能都是 0 —— 实际上被杀的那个往往**没有**退出码（null）。"
       },
+      "memory_pending": {
+        "type": "integer",
+        "doc": [
+          "**只有 kind=state 有**。待审核记忆提案（`candidates/`）的**条数**。",
+          "**只带数、不带列表**：state 快照在每条 `tool_result` 后都会重发，而 `memory_propose` 正是一个工具 ——",
+          "没有这一格，新提案落进候选区之后，工作台徽章上的数字要等用户打开记忆面板（前端第一次发 `memory_list` 的时刻）",
+          "才会补上。全量清单仍然只在 `ui(memory)` 里，两处的口径都是 runtime 自己数的。",
+          "runtime 没有工作区记忆（目录建不起来）时是 0 —— 0 和「没有这一格」在旧 runtime 上的区分由 protocol 版本号承担。"
+        ]
+      },
       "memory": {
         "type": "object",
         "doc": [

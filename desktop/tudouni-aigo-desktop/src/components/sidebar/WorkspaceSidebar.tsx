@@ -378,7 +378,15 @@ export function WorkspaceSidebar() {
    * `navItems.length`, which was always the same number and said nothing.
    */
   const terminalsRunning = rt?.terminals.filter((t) => t.status === 'running').length ?? 0;
-  const memoryPending = rt?.memory?.candidates.length ?? 0;
+  // The badge's number comes from the state snapshot's `memory_pending`, not
+  // from the panel snapshot: the model's `memory_propose` is a tool, and the
+  // only snapshot a tool result re-states is `ui(state)`. The panel snapshot
+  // (`rt.memory`) arrives only when the panel is open or an action is taken —
+  // which is why the badge used to stay empty until a person opened the panel.
+  // `null` (a runtime below protocol 8) falls back to the panel snapshot,
+  // never to zero: "the runtime did not say" is not "the queue is empty".
+  const memoryPending =
+    rt?.uiState?.memoryPending ?? rt?.memory?.candidates.length ?? 0;
   const workbenchAttention = terminalsRunning + memoryPending;
 
   /**

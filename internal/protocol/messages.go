@@ -65,7 +65,16 @@ const VERSION = 1
 // end that draws a fork control gates it on this number: a runtime below 7
 // would silently ignore the message, and a button that answers with nothing is
 // a promise the runtime behind it cannot keep.
-const PROTOCOL = 7
+//
+// 8 adds `memory_pending` to the `ui(state)` snapshot: the count of memory
+// proposals waiting for review. Additive, like the terminal list in 4: a front
+// end that does not know the key simply never reads it, and without it the
+// workbench badge stayed empty after a `memory_propose` because the full
+// snapshot only travels on `ui(memory)`, which a front end only asks for when
+// the panel is open. A front end that draws the badge gates it on this number:
+// a runtime below 8 never sends the key, and a badge that read "absent" as
+// zero would hide a queue the runtime is holding.
+const PROTOCOL = 8
 
 // Message keys used by every envelope.
 const (

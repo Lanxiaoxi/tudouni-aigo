@@ -4632,13 +4632,33 @@ export const useApp = create<AppStore>((set, get) => {
               // why the two are handled in one branch: the panel has to say what failed
               // and still draw the state it failed in.
               const snapshot = msg.memory;
-              patch(key, {
-                ...(snapshot && typeof snapshot === 'object'
-                  ? { memory: snapshot as MemorySnapshot }
-                  : {}),
-                memoryProblem: typeof msg.problem === 'string' && msg.problem !== ''
-                  ? msg.problem
-                  : null,
+              patchWith(key, (live) => {
+                const uiState = live.uiState
+                  ? {
+                      ...live.uiState,
+                      // The workbench's Memory badge reads `uiState.memoryPending`,
+                      // which a state snapshot keeps fresh. A publish or reject in
+                      // the panel must not leave it showing the pre-decision count
+                      // until the next state snapshot happens to arrive — so the
+                      // panel's own answer re-stamps the same figure, from the same
+                      // runtime snapshot. When the answer carried no snapshot
+                      // (a refusal that dropped it) the old value is kept, and a
+                      // `null` from a runtime below protocol 8 stays `null`, not
+                      // zero: "the runtime did not say" is not "the queue is empty".
+                      memoryPending: Array.isArray(snapshot?.candidates)
+                        ? snapshot.candidates.length
+                        : live.uiState.memoryPending,
+                    }
+                  : live.uiState;
+                return {
+                  ...(snapshot && typeof snapshot === 'object'
+                    ? { memory: snapshot as MemorySnapshot }
+                    : {}),
+                  uiState,
+                  memoryProblem: typeof msg.problem === 'string' && msg.problem !== ''
+                    ? msg.problem
+                    : null,
+                };
               });
               break;
             }

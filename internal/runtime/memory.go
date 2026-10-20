@@ -302,6 +302,21 @@ func (r *Runtime) MemoryProblems() []string {
 
 // --- protocol surface -------------------------------------------------------
 
+// memoryPending is the state snapshot's count of proposals waiting for review.
+//
+// It rides on **every** `ui(state)` because that is the only snapshot a tool
+// result re-states, and `memory_propose` is a tool: without this, a new proposal
+// left the front end's badge empty until a person opened the memory panel (the
+// moment the front end first asks for `ui(memory)`). The full snapshot stays on
+// `ui(memory)`; this is just the figure a badge needs, counted in `O(files)`
+// rather than by parsing every proposal.
+func (r *Runtime) memoryPending() int {
+	if r.WorkspaceMemory == nil {
+		return 0
+	}
+	return r.WorkspaceMemory.PendingCandidates()
+}
+
 // MemoryPanel is the `ui(memory)` payload: everything the workspace-memory panel
 // draws, in one message.
 //

@@ -1820,6 +1820,16 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		// and a front end that lost or never saw a connect learns the current
 		// list from the next snapshot instead of never.
 		"ssh": r.sshPanel(),
+		// The count of memory proposals waiting for review, and the same reason it
+		// is here at all: the model's `memory_propose` is a tool, and the only
+		// snapshot a tool result re-states is this one. The full snapshot travels
+		// on `ui(memory)`, which the front end only asks for when the panel is
+		// open — so without this figure a new proposal left the workbench badge
+		// empty until a person happened to open the panel, which is how the badge
+		// learned about its own queue. A count rather than the list, because this
+		// rides on every tool result and parsing every proposal there would make
+		// the review queue the workspace's hottest file.
+		"memory_pending": r.memoryPending(),
 		// Always present, in both the "there is one" and "there is not" shapes: a
 		// front end with two cases to draw has two places to get the empty one
 		// wrong.

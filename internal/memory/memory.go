@@ -289,6 +289,24 @@ func (w *Workspace) RebuildIndex() IndexStatus {
 	return w.status
 }
 
+// PendingCandidates is how many proposals are waiting for review.
+//
+// It counts files rather than reading them, because this is what the state
+// snapshot reports on **every** tool result: parsing every proposal on every
+// snapshot would make the review queue the workspace's hottest file. The count
+// and `Snapshot` can differ by one unreadable file at the moment its parse fails,
+// which resolves itself on the next snapshot — and the panel always reads the
+// snapshot, never this number.
+func (w *Workspace) PendingCandidates() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	ids, err := w.repo.listIDs(w.repo.candidatesDir())
+	if err != nil {
+		return 0
+	}
+	return len(ids)
+}
+
 // IndexStatus returns what the index currently looks like.
 func (w *Workspace) IndexStatus() IndexStatus {
 	w.mu.Lock()
