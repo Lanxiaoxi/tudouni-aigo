@@ -113,6 +113,45 @@ if ($needStage) {
     if ($LASTEXITCODE -ne 0) { Fail 'runtime:stage failed' }
 }
 
+# ---------------- 1b. the staged remote packages ----------------
+# The Remote Bootstrapper ships one `.zip` per platform triple inside
+# `remote-packages/`. `tauri build` bundles whatever is there, so a stale
+# staging (or two versions side by side) produces an installer that quietly
+# installs the wrong runtime on a remote host. The check mirrors the local
+# runtime's: every archive for the current VERSION must exist, and no stale
+# archives for other versions may remain.
+$remoteStaged = Join-Path (Join-Path $app 'src-tauri') 'remote-packages'
+$remoteTriples = @('x86_64-unknown-linux-musl', 'x86_64-pc-windows-msvc')
+
+$needRemoteStage = $Force -or (-not (Test-Path $remoteStaged))
+if (-not $needRemoteStage) {
+    $zips = Get-ChildItem $remoteStaged -Filter '*.zip' -ErrorAction SilentlyContinue
+    # Missing the exact-version archive for a triple, or any stale archive
+    # for a *different* version, both mean the directory needs a restage.
+    foreach ($triple in $remoteTriples) {
+        $expected = "tudouni-aigo-$version-$triple.zip"
+        if (-not ($zips | Where-Object { $_.Name -eq $expected })) {
+            Write-Host "remote-packages/ is missing $expected - restaging"
+            $needRemoteStage = $true
+            break
+        }
+    }
+    if (-not $needRemoteStage) {
+        $stale = $zips | Where-Object { $_.Name -notlike "tudouni-aigo-$version-*.zip" }
+        if ($stale) {
+            Write-Host "remote-packages/ has stale archives: $($stale.Name -join ', ') - restaging"
+            $needRemoteStage = $true
+        }
+    }
+}
+
+if ($needRemoteStage) {
+    if (-not (Test-Path $dist)) { Fail "no dist/ at $dist - build one first:  make release" }
+    Write-Host 'staging the remote packages (npm run runtime:stage-remote)...'
+    cmd /c "cd /d `"$app`" && npm run runtime:stage-remote"
+    if ($LASTEXITCODE -ne 0) { Fail 'runtime:stage-remote failed' }
+}
+
 # ---------------- 2. the installer ----------------
 $step = 'tauri build'
 # Same cmd /c wrapper as above, with the output going to a log file: the
