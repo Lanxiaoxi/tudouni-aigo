@@ -303,6 +303,10 @@ export const en = {
   'deliverable.label': 'Delivered files',
   'deliverable.preview': 'Preview {name}',
   'deliverable.open': 'Open {name} in its default application',
+  /** The remote card's first step: pull the file down from the far host before
+   *  anything local can open it. The second press reads as "open the copy"
+   *  (the ordinary `deliverable.open` label), which is what it is. */
+  'deliverable.download': 'Download {name} from the remote host',
   'deliverable.dismiss': 'Dismiss this message',
   /** Shown when the page is not hosted by the desktop shell, so there is nothing
    *  to hand a path to. It names the alternative rather than only the failure —

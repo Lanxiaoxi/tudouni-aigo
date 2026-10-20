@@ -87,6 +87,13 @@ mod remote_config;
 /// for why the flow connects *before* it asks a person anything.
 mod remote_probe;
 
+/// Remote file access for the doors that used to be local-only: downloading
+/// a declared deliverable, reading a remote picture back as a `data:` URL,
+/// and uploading a pasted picture into the remote workspace's own paste
+/// staging area. See its own module doc for why every act dials a fresh
+/// connection and for the boundary it applies.
+mod remote_files;
+
 /// How long a graceful shutdown is given before the child is killed.
 ///
 /// The Go client hard-codes the same 30 seconds inside `Close()`, and for the
@@ -175,8 +182,8 @@ const STDERR_RING: usize = 200;
 /// the repository's `.gitignore`. Writing screenshots into the user's project tree
 /// would leave them in `git status` for a feature whose whole point is being
 /// cheap to use.
-const PASTE_DIR: &str = ".tudouni";
-const PASTE_SUBDIR: &str = "paste";
+pub(crate) const PASTE_DIR: &str = ".tudouni";
+pub(crate) const PASTE_SUBDIR: &str = "paste";
 
 /// The per-picture ceiling, mirroring `content.MaxImageBytes`
 /// (`internal/content/content.go`). The front end checks the same number before
@@ -332,16 +339,53 @@ struct Child_ {
     /// two are no longer the same thing: a paste made while looking at session B
     /// has to land in B's workspace, which is not necessarily A's.
     ///
-    /// For a remote child this is still the **local** app's own concept of a
-    /// workspace path and is not meaningful — image pasting into a remote
-    /// workspace is Phase 2 (remote file access) territory, not this phase's.
-    /// It is kept as `None` for a remote child rather than given a fabricated
-    /// local path, so `image_stash` can refuse cleanly instead of writing
-    /// somewhere wrong.
+    /// For a remote child this is the **local** app's own concept of a workspace
+    /// path and is not meaningful: the directory is on the far host, and a
+    /// fabricated local one would make the local doors (stash, inline image,
+    /// deliverable open) write or read files that do not exist here. It is kept
+    /// `None` for a remote child so those doors take the remote branch instead.
     workspace: Option<PathBuf>,
     /// This child's slice of the paste staging area, cleared when it exits.
     /// `None` for a remote child, for the same reason `workspace` is.
     staging: Option<PathBuf>,
+    /// The workspace **on the remote host**, for a remote child — the directory
+    /// the runtime there treats as its working directory. Pasted pictures land
+    /// under `<remote_workspace>/.tudouni/paste/<key>/`, resolved against this
+    /// root on the far end. `None` for a local child.
+    remote_workspace: Option<String>,
+    /// How to reach the host a remote child runs on, kept so the paste's upload
+    /// dials the same destination the session itself was started through. The
+    /// connection is re-dialled per act (see `remote_files`' module doc) rather
+    /// than sharing the runtime's channel. `None` for a local child.
+    remote_ssh: Option<RemoteSshConn>,
+}
+
+/// The SSH destination of one remote child, as `spawn_remote` was handed it.
+///
+/// A struct rather than reusing `RemoteAttachOptions` because that type also
+/// carries the session's launch arguments, and a connection record that says
+/// "and this session's `--max-steps`" is a shape that drifts.
+#[derive(Clone)]
+struct RemoteSshConn {
+    host: String,
+    port: u16,
+    user: String,
+    identity_files: Vec<String>,
+    password: Option<String>,
+    connect_timeout: Duration,
+}
+
+impl RemoteSshConn {
+    fn to_target(&self) -> ssh_backend::SshTarget {
+        ssh_backend::SshTarget {
+            host: self.host.clone(),
+            port: self.port,
+            user: self.user.clone(),
+            identity_files: self.identity_files.clone(),
+            password: self.password.clone(),
+            connect_timeout: self.connect_timeout,
+        }
+    }
 }
 
 /// Options the front end passes to `runtime_attach`.
@@ -665,6 +709,8 @@ fn spawn(
                 stderr: VecDeque::new(),
                 workspace: Some(workspace.clone()),
                 staging: Some(staging.clone()),
+                remote_workspace: None,
+                remote_ssh: None,
             },
         );
 
@@ -869,10 +915,20 @@ fn spawn_remote(app: &AppHandle, options: &RemoteAttachOptions) -> Result<ChildK
     let process: Box<dyn ssh_backend::RuntimeProcess> = Box::new(process);
 
     // The key is minted and the child registered under the bridge lock, same
-    // as the local path — but with no staging directory, since pasting a
-    // picture into a remote workspace is Phase 2 territory (see `Child_`'s
-    // own doc for `workspace`/`staging` being `None` here).
-    let key = {
+    // as the local path. There is no **local** staging directory — a remote
+    // child's workspace is on the far host, and its paste area lives there
+    // too — but the remote workspace and the SSH destination are recorded so
+    // `image_stash` can upload into it and the remote doors can dial it.
+    let remote_workspace = options.remote_workspace.trim().to_string();
+    let remote_ssh = RemoteSshConn {
+        host: options.host.clone(),
+        port: options.port,
+        user: options.user.clone(),
+        identity_files: options.identity_files.clone(),
+        password: options.password.clone(),
+        connect_timeout: target.connect_timeout,
+    };
+    let (key, live_slices) = {
         let state: State<Bridge> = app.state();
         let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
         guard.next_key += 1;
@@ -886,10 +942,38 @@ fn spawn_remote(app: &AppHandle, options: &RemoteAttachOptions) -> Result<ChildK
                 stderr: VecDeque::new(),
                 workspace: None,
                 staging: None,
+                remote_workspace: Some(remote_workspace.clone()),
+                remote_ssh: Some(remote_ssh.clone()),
             },
         );
-        key
+        // Which remote children's paste slices belong to somebody: every
+        // running remote child in this same remote workspace, including the
+        // one just registered. Collected under the same lock as the local
+        // sweep's `live` set, so a concurrent start cannot have its slice
+        // removed by this sweep.
+        let live_slices: Vec<String> = guard
+            .children
+            .iter()
+            .filter(|(_, current)| {
+                current.remote_workspace.as_deref() == Some(remote_workspace.as_str())
+            })
+            .map(|(child_key, _)| child_key.to_string())
+            .collect();
+        (key, live_slices)
     };
+
+    // Leftovers from finished remote sessions are swept in the background,
+    // at the same moment the local sweep runs: a local child is starting,
+    // which means the person is working in this workspace, and nothing is in
+    // flight for the sessions that are over. The sweep dials its own
+    // connection (see `remote_files`' module doc) and never blocks the start.
+    {
+        let sweep_target = target;
+        let sweep_workspace = remote_workspace;
+        thread::spawn(move || {
+            remote_files::sweep_remote_paste(&sweep_target, &sweep_workspace, &live_slices);
+        });
+    }
 
     // ---- stdout: one JSON line at a time, queued until attach ----
     //
@@ -1838,7 +1922,10 @@ const MAX_INLINE_IMAGE_BYTES: usize = MAX_IMAGE_BYTES;
 /// false, about a file whose contents matched its name perfectly. The two lists are
 /// kept as a literal plus a test rather than derived in a `const`, because the
 /// derivation is less readable than the rule it enforces.
-const INLINE_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif"];
+///
+/// Visible to `remote_files` rather than re-listed there: the remote door reads
+/// through the same two facts, and a second copy is a second place to drift.
+pub(crate) const INLINE_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif"];
 
 /// Read one picture **inside the workspace** and return it as a `data:` URL.
 ///
@@ -1942,7 +2029,11 @@ fn inline_image(workspace: String, path: String) -> Result<InlineImage, String> 
 /// Hand-written rather than a dependency: this is the whole of what the crate
 /// would be used for, and the alphabet has no options to get wrong. The standard
 /// `+/` alphabet with `=` padding is what a `data:` URL expects.
-fn base64_encode(bytes: &[u8]) -> String {
+///
+/// Also the remote picture door's encoder: the two must produce the same
+/// `data:` URL for the same bytes, so there is one implementation rather than
+/// one per door.
+pub(crate) fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -2229,7 +2320,11 @@ struct StashedImage {
 /// (`content.InspectImage`), so a file accepted here is one that layer accepts —
 /// which is the point of asking at all rather than letting the refusal arrive a
 /// round trip later.
-fn sniff_image(bytes: &[u8]) -> Option<&'static ImageSignature> {
+// Visible to `remote_files` because the remote picture door applies the same
+// check to bytes that arrived over the wire: a format accepted locally but
+// refused remotely (or the reverse) would be a disagreement between two doors
+// for the same picture.
+pub(crate) fn sniff_image(bytes: &[u8]) -> Option<&'static ImageSignature> {
     IMAGE_SIGNATURES
         .iter()
         .find(|known| bytes.len() >= known.signature.len() && &bytes[..known.signature.len()] == known.signature)
@@ -2319,32 +2414,38 @@ fn image_stash(app: AppHandle, request: Request<'_>) -> Result<StashedImage, Str
     })?;
     let (extension, mime) = (known.extension, known.mime);
 
-    // The workspace and the staging directory both come from the child — its
-    // working directory and its own slice of the staging area, facts this layer
-    // already owns — and never from the caller. Letting a front end name the
-    // directory would be letting it choose where a file is written; letting it
-    // omit one would leave the picture to land in an arbitrary session's
-    // workspace.
-    let (workspace, directory) = {
+    // Where the picture lands, decided from the child — its working directory
+    // and its own slice of the staging area (local), or its remote workspace
+    // and the SSH destination (remote). Both are facts this layer already owns,
+    // and never from the caller: letting a front end name the directory would
+    // be letting it choose where a file is written, and letting it omit one
+    // would leave the picture to land in an arbitrary session's workspace.
+    enum StashDestination {
+        Local { workspace: PathBuf, staging: PathBuf },
+        Remote { workspace: String, ssh: RemoteSshConn },
+    }
+    let destination = {
         let state: State<Bridge> = app.state();
         let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
         let current = guard
             .children
             .get(&key)
             .ok_or("that session's runtime is not running, so there is nowhere to put the picture")?;
-        let workspace = current
-            .workspace
-            .clone()
-            .ok_or("that session's workspace is remote; pasting a picture into a remote workspace is not supported yet")?;
-        let staging = current
-            .staging
-            .clone()
-            .ok_or("that session's workspace is remote; pasting a picture into a remote workspace is not supported yet")?;
-        (workspace, staging)
+        match (current.workspace.clone(), current.staging.clone()) {
+            (Some(workspace), Some(staging)) => StashDestination::Local { workspace, staging },
+            _ => {
+                let (workspace, ssh) = match (current.remote_workspace.clone(), current.remote_ssh.clone()) {
+                    (Some(workspace), Some(ssh)) => (workspace, ssh),
+                    _ => {
+                        return Err(
+                            "that session has no workspace to put the picture in".to_string()
+                        )
+                    }
+                };
+                StashDestination::Remote { workspace, ssh }
+            }
+        }
     };
-
-    fs::create_dir_all(&directory)
-        .map_err(|e| format!("could not create {}: {e}", directory.display()))?;
 
     // The name is generated here, and that is a security property rather than
     // tidiness: the clipboard's own name is attacker-influenced text that can
@@ -2355,29 +2456,244 @@ fn image_stash(app: AppHandle, request: Request<'_>) -> Result<StashedImage, Str
         .duration_since(std::time::UNIX_EPOCH)
         .map(|since| since.as_millis())
         .unwrap_or(0);
-    let mut target = directory.join(format!("paste-{stamp}.{extension}"));
-    let mut counter = 1;
-    while target.exists() {
-        target = directory.join(format!("paste-{stamp}-{counter}.{extension}"));
-        counter += 1;
-    }
 
-    fs::write(&target, &bytes).map_err(|e| format!("could not write {}: {e}", target.display()))?;
+    // Both doors return the same two facts — the file's own name and the
+    // workspace-relative path the sentence carries — so they are settled in
+    // one shape and the answer below is written once. The local door writes to
+    // disk; the remote door uploads into the same relative staging area on the
+    // far host, where the runtime's own `SafePath` resolves it.
+    let (name, relative) = match destination {
+        StashDestination::Local { workspace, staging } => {
+            fs::create_dir_all(&staging)
+                .map_err(|e| format!("could not create {}: {e}", staging.display()))?;
 
-    let relative = target
-        .strip_prefix(&workspace)
-        .map_err(|_| "the picture was written outside the workspace".to_string())?
-        .to_string_lossy()
-        .replace('\\', "/");
+            let mut target = staging.join(format!("paste-{stamp}.{extension}"));
+            let mut counter = 1;
+            while target.exists() {
+                target = staging.join(format!("paste-{stamp}-{counter}.{extension}"));
+                counter += 1;
+            }
+
+            fs::write(&target, &bytes).map_err(|e| format!("could not write {}: {e}", target.display()))?;
+
+            let relative = target
+                .strip_prefix(&workspace)
+                .map_err(|_| "the picture was written outside the workspace".to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            let name = target
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())
+                .unwrap_or_default();
+            (name, relative)
+        }
+        StashDestination::Remote { workspace, ssh } => {
+            // The staging area is the child's own slice, exactly as the local
+            // door's: one directory per key, so two remote sessions in the same
+            // workspace do not clear each other's in-flight pastes. The far
+            // runtime's startup sweep is what empties a finished session's
+            // slice — the same storage/staging split the local sweep relies on.
+            let base = format!("{PASTE_DIR}/{PASTE_SUBDIR}/{key}");
+            let target = ssh.to_target();
+            let mut counter = 1;
+            loop {
+                let candidate = if counter == 1 {
+                    format!("{base}/paste-{stamp}.{extension}")
+                } else {
+                    format!("{base}/paste-{stamp}-{counter}.{extension}")
+                };
+                match remote_files::upload_if_new(&target, &workspace, &candidate, &bytes) {
+                    Ok(()) => {
+                        let name = remote_files::last_component(&candidate, "paste");
+                        break (name, candidate);
+                    }
+                    // The name is taken: the next counter. The collision is the
+                    // remote twin of the local `target.exists()` loop.
+                    Err(remote_files::UploadError::Exists) => counter += 1,
+                    Err(remote_files::UploadError::Io(message)) => return Err(message),
+                }
+            }
+        }
+    };
 
     Ok(StashedImage {
-        name: target
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default(),
+        name,
         path: relative,
         mime: mime.to_string(),
         bytes: bytes.len(),
+    })
+}
+
+/* ============================================================
+   The remote doors: the same acts as their local twins, over SSH
+   ============================================================ */
+
+/// The destination of one downloaded remote deliverable.
+#[derive(Clone, Serialize)]
+struct DownloadedDeliverable {
+    /// The absolute path of the local copy — what the OS is handed and what
+    /// the card shows as "the copy is here".
+    path: String,
+    /// False when the copy was already cached and nothing was transferred.
+    /// The front end says "the copy is here" rather than "downloaded" for
+    /// that, because saying it downloaded a file it did not touch would be
+    /// a sentence about an act that did not happen.
+    from_cache: bool,
+}
+
+/// Open a **local copy** of a downloaded remote deliverable in the OS default
+/// application — the second half of the remote card's gesture.
+///
+/// `deliverable_open` cannot be reused for this: its boundary is the
+/// workspace root, and the copy lives under this app's own data directory
+/// (`deliverable_download` put it there). The same rule applies with a
+/// different root: the path is canonicalized and required to stay under the
+/// downloads tree, so a string the page hands back cannot reach anywhere else
+/// on disk, even if it was never produced by `deliverable_download`.
+#[tauri::command]
+fn deliverable_open_local(app: AppHandle, path: String) -> Result<(), String> {
+    let target = fs::canonicalize(path.trim()).map_err(|_| {
+        "the downloaded copy is not there any more — it may have been moved or deleted"
+            .to_string()
+    })?;
+    let downloads = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("cannot find this app's data directory: {e}"))?
+        .join("downloads");
+    let downloads = fs::canonicalize(&downloads).map_err(|_| {
+        "the downloads directory is not there — the copy cannot be located".to_string()
+    })?;
+    if target.strip_prefix(&downloads).is_err() {
+        return Err("that file is outside the downloads directory and is not opened".to_string());
+    }
+    if !target.is_file() {
+        return Err("the downloaded copy is not a regular file".to_string());
+    }
+    tauri_plugin_opener::open_path(&target, None::<&str>)
+        .map_err(|e| format!("the system could not open it: {e}"))
+}
+
+/// Download one declared deliverable from the session's remote workspace into
+/// the local cache tree, so the card's "open" can hand the local copy to the
+/// OS default application — the act `deliverable_open` refuses for a remote
+/// workspace, because its boundary is a local `canonicalize`.
+///
+/// The session is named by its child's **key**, never by the connection
+/// parameters: the host, credentials and remote workspace all come from the
+/// child this layer started, the same rule `image_stash` follows. A caller
+/// that could name the destination could pull a file from a machine the
+/// session does not run on, which is exactly the trust this layer exists to
+/// withhold.
+///
+/// The local destination keeps the workspace's own shape per segment
+/// (`remote_files::local_download_path`): one directory per
+/// (host, user, remote workspace), then the file's own relative path. An
+/// existing copy is served as-is — a second press is "open the copy", not a
+/// re-download.
+#[tauri::command]
+fn deliverable_download(app: AppHandle, key: ChildKey, path: String) -> Result<DownloadedDeliverable, String> {
+    let (workspace, ssh, dest) = {
+        let state: State<Bridge> = app.state();
+        let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+        let current = guard
+            .children
+            .get(&key)
+            .ok_or("that session's runtime is not running, so there is no file to pull")?;
+        let (workspace, ssh) = match (current.remote_workspace.clone(), current.remote_ssh.clone()) {
+            (Some(workspace), Some(ssh)) => (workspace, ssh),
+            _ => return Err("that session's workspace is local; use the ordinary open for it".to_string()),
+        };
+        // The destination is decided here, under the same lock that owns the
+        // connection facts it is built from — and before the network is
+        // touched, because a path that fails the boundary check should not
+        // cost a handshake.
+        let app_data = app
+            .path()
+            .app_local_data_dir()
+            .map_err(|e| format!("cannot find this app's data directory: {e}"))?;
+        let dest = remote_files::local_download_path(
+            &app_data,
+            &ssh.host,
+            &ssh.user,
+            &workspace,
+            &path,
+        )?;
+        (workspace, ssh, dest)
+    };
+
+    if dest.is_file() {
+        return Ok(DownloadedDeliverable {
+            path: dest.to_string_lossy().to_string(),
+            from_cache: true,
+        });
+    }
+
+    let target = ssh.to_target();
+    remote_files::download(&target, &workspace, path.trim(), &dest, remote_files::MAX_DOWNLOAD_BYTES)?;
+
+    Ok(DownloadedDeliverable {
+        path: dest.to_string_lossy().to_string(),
+        from_cache: false,
+    })
+}
+
+/// Read one picture from the session's remote workspace as a `data:` URL —
+/// the remote twin of `inline_image`, which for the same reason cannot reach
+/// a file on the far host (its boundary is a local `canonicalize`).
+///
+/// Named by the child's key for the same reason `deliverable_download` is:
+/// the workspace and the connection are facts the child carries, and
+/// neither may arrive from the caller. The extension check, the ceiling and
+/// the byte sniff are the local door's own, read from the same constants, so
+/// a picture accepted by one door is accepted by the other.
+#[tauri::command]
+fn inline_image_remote(app: AppHandle, key: ChildKey, path: String) -> Result<InlineImage, String> {
+    let relative = path.trim().to_string();
+    if relative.is_empty() {
+        return Err("no picture was named".to_string());
+    }
+    // The extension decides whether to read at all; see `INLINE_IMAGE_EXTENSIONS`.
+    // `rsplit_once` plus a non-empty stem rather than a bare last-segment, so a
+    // name that is *only* a dot and an extension (`.png`) names no file and is
+    // refused rather than read — the same answer `Path::extension` gives.
+    let name = remote_files::file_name_of(&relative);
+    let extension = name
+        .rsplit_once('.')
+        .filter(|(stem, _)| !stem.is_empty())
+        .map(|(_, ext)| ext.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !INLINE_IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(format!(
+            "{relative} is not a picture this window can draw (it accepts png, jpg and gif)"
+        ));
+    }
+
+    let (workspace, target) = {
+        let state: State<Bridge> = app.state();
+        let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+        let current = guard
+            .children
+            .get(&key)
+            .ok_or("that session's runtime is not running, so there is no picture to read")?;
+        let (workspace, ssh) = match (current.remote_workspace.clone(), current.remote_ssh.clone()) {
+            (Some(workspace), Some(ssh)) => (workspace, ssh),
+            _ => return Err("that session's workspace is local; read it with the ordinary door".to_string()),
+        };
+        (workspace, ssh.to_target())
+    };
+
+    let bytes = remote_files::read_image(&target, &workspace, &relative, MAX_INLINE_IMAGE_BYTES)?;
+    // The bytes are the authority on what this is, never the name: the same
+    // check the local door applies, so the two cannot accept different
+    // formats.
+    let known = sniff_image(&bytes).ok_or_else(|| {
+        format!("{relative} is not a PNG, JPEG or GIF — its contents do not match its name")
+    })?;
+
+    Ok(InlineImage {
+        url: format!("data:{};base64,{}", known.mime, base64_encode(&bytes)),
     })
 }
 
@@ -3143,6 +3459,9 @@ pub fn run() {
             os_user_name,
             workspace_check,
             deliverable_open,
+            deliverable_open_local,
+            deliverable_download,
+            inline_image_remote,
             read_ssh_config,
             append_ssh_host,
             probe_remote_host,

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Download,
   ExternalLink,
   FileCode,
   FileImage,
@@ -13,7 +14,7 @@ import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { baseName } from '@/utils/format';
-import { openDeliverable, isHosted } from '@/runtime/tauri';
+import { isHosted, openDeliverable, openLocalDeliverable, downloadDeliverable } from '@/runtime/tauri';
 import { isPicturePath } from '@/components/panels/panels';
 import type { Deliverable } from '@/state/entries';
 
@@ -31,11 +32,21 @@ import type { Deliverable } from '@/state/entries';
  *
  *   - **preview** opens the file in the workspace browser, which draws it through
  *     the same `FileBlock` the transcript uses. This is the one that works for
- *     anything the runtime can read as UTF-8 text.
+ *     anything the runtime can read as UTF-8 text — including, for a remote
+ *     session, through the runtime's own `file_read`, which runs on the far
+ *     host and therefore reaches remote files as well.
  *   - **open** hands the absolute path to the OS default application, through
  *     `deliverable_open` (Rust re-checks the boundary — see that command's own
  *     note). This is the one that works for a `.docx`, and the one this whole
  *     capability exists for.
+ *
+ * For a **remote** session the open is a two-step act the button absorbs:
+ * first it pulls the file down (`deliverable_download` — the boundary is a
+ * local `canonicalize`, which cannot reach the far host), and once the copy is
+ * on this machine the button becomes "open the copy" (a second press serves
+ * the cache without re-downloading, and a refresh control re-pulls it). The
+ * card's single affordance stays "get me the file" — the two steps are an
+ * implementation detail of *where* the file is, not a second thing to learn.
  *
  * The whole card is the preview target and the open control sits beside it, on
  * purpose: a card whose only affordance is "open in Word" is useless for the
@@ -45,9 +56,22 @@ import type { Deliverable } from '@/state/entries';
 export function DeliverableCards({ files }: { files: Deliverable[] }) {
   const t = useT();
   const workspace = useSessionField((rt) => rt.workspace, '');
+  // A non-null id is the split that decides which door the open uses: the
+  // session's own field, never a guess from the shape of `workspace` (a remote
+  // path can look like a local one, and the rule the connection state follows
+  // is that the UI does not re-derive "is this remote").
+  const remoteWorkspaceId = useSessionField((rt) => rt.remoteWorkspaceId, null);
+  // The child's key, for the remote doors: they are keyed by the child rather
+  // than by connection parameters, so the destination is the one the bridge
+  // started the session through.
+  const childKey = useSessionField((rt) => rt.key, '');
   // Per file, keyed by path: two cards in one turn are two independent gestures.
   const [phase, setPhase] = useState<Record<string, 'opening' | 'error'>>({});
   const [problem, setProblem] = useState<Record<string, string>>({});
+  // The remote half, per file: where the local copy is, once it exists. `null`
+  // (absent) means "not downloaded yet", which the button renders as a
+  // download rather than as an open.
+  const [copied, setCopied] = useState<Record<string, string | null>>({});
 
   async function open(file: Deliverable) {
     // **Checked before the call, not inferred from the failure.** With no Tauri
@@ -60,34 +84,72 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
       setProblem((current) => ({ ...current, [file.path]: t('deliverable.noHost') }));
       return;
     }
+    // Remote door: download first, open the copy second. The two are one
+    // gesture here — the button the person pressed means "get me the file" —
+    // and the copied map is what turns the second press into an instant open.
+    if (remoteWorkspaceId !== null) {
+      const existing = copied[file.path];
+      if (existing !== null && existing !== undefined) {
+        await openCopy(file, existing);
+        return;
+      }
+      setPhase((current) => ({ ...current, [file.path]: 'opening' }));
+      try {
+        const downloaded = await downloadDeliverable(childKey, file.path);
+        setCopied((current) => ({ ...current, [file.path]: downloaded.path }));
+        await openCopy(file, downloaded.path);
+      } catch (err) {
+        fail(file, err);
+      }
+      return;
+    }
     setPhase((current) => ({ ...current, [file.path]: 'opening' }));
     try {
       await openDeliverable(workspace, file.path);
-      // Success clears in place. There is no success sentence to show: the OS
-      // brought a window forward, and a card that also said "opened" would be
-      // telling the person about something they are already looking at.
-      setPhase((current) => {
-        const next = { ...current };
-        delete next[file.path];
-        return next;
-      });
-      setProblem((current) => {
-        const next = { ...current };
-        delete next[file.path];
-        return next;
-      });
+      clear(file);
     } catch (err) {
-      // The failure **stays on the card** rather than becoming a toast. It is
-      // about this file, and a sentence that floats away leaves the card looking
-      // like a button that does nothing.
-      //
-      // The message is passed through **verbatim**: it comes from Rust, it names
-      // the file, and it is the one sentence here that can say *why* — a sentence
-      // this window composed instead would be a second opinion about a fact it
-      // does not have.
-      setPhase((current) => ({ ...current, [file.path]: 'error' }));
-      setProblem((current) => ({ ...current, [file.path]: String(err) }));
+      fail(file, err);
     }
+  }
+
+  /** The second half of a remote open: hand the local copy to the OS. */
+  async function openCopy(file: Deliverable, localPath: string) {
+    setPhase((current) => ({ ...current, [file.path]: 'opening' }));
+    try {
+      await openLocalDeliverable(localPath);
+      clear(file);
+    } catch (err) {
+      fail(file, err);
+    }
+  }
+
+  function fail(file: Deliverable, err: unknown) {
+    // The failure **stays on the card** rather than becoming a toast. It is
+    // about this file, and a sentence that floats away leaves the card looking
+    // like a button that does nothing.
+    //
+    // The message is passed through **verbatim**: it comes from Rust, it names
+    // the file, and it is the one sentence here that can say *why* — a sentence
+    // this window composed instead would be a second opinion about a fact it
+    // does not have.
+    setPhase((current) => ({ ...current, [file.path]: 'error' }));
+    setProblem((current) => ({ ...current, [file.path]: String(err) }));
+  }
+
+  function clear(file: Deliverable) {
+    // Success clears in place. There is no success sentence to show: the OS
+    // brought a window forward, and a card that also said "opened" would be
+    // telling the person about something they are already looking at.
+    setPhase((current) => {
+      const next = { ...current };
+      delete next[file.path];
+      return next;
+    });
+    setProblem((current) => {
+      const next = { ...current };
+      delete next[file.path];
+      return next;
+    });
   }
 
   function dismiss(file: Deliverable) {
@@ -139,6 +201,17 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
               <span className="dl-busy" aria-hidden>
                 <Loader size={12} className="dl-spin" />
               </span>
+            ) : remoteWorkspaceId !== null && copied[file.path] === undefined ? (
+              <Tip label={t('deliverable.download', { name })}>
+                <button
+                  type="button"
+                  className="dl-open"
+                  aria-label={t('deliverable.download', { name })}
+                  onClick={() => void open(file)}
+                >
+                  <Download size={13} />
+                </button>
+              </Tip>
             ) : (
               <Tip label={t('deliverable.open', { name })}>
                 <button

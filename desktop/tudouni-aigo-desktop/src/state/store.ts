@@ -157,6 +157,7 @@ import {
   shutdownRuntime,
   stashImage,
   inlineImage,
+  inlineImageRemote,
   writeRemoteConfig,
   type BridgeOptions,
   type InstallStage,
@@ -2792,6 +2793,36 @@ export function activeWorkspaceOf(s: AppStore): string {
   const rt = activeRuntime(s);
   if (!rt) return '';
   return rt.session?.workspace ?? rt.workspace;
+}
+
+/** The connection facts of one session's remote workspace, or `null`.
+ *
+ * The saved entry and its host are the **only** sources a front-end dial can
+ * use — the same record `connectRemoteWorkspace` reads when it starts the
+ * child — so a download or a picture read reaches the machine the session
+ * actually runs on, never a destination assembled from a display label.
+ * `null` for a local session, or when the entry or its host has been deleted
+ * since the session started (the session keeps running; its files are simply
+ * unreachable from this window, and the refusal says so).
+ */
+export function remoteConnectionOf(
+  s: AppStore,
+  key: string | null,
+): { host: string; port: number; user: string; workspace: string } | null {
+  if (key === null) return null;
+  const bucket = s.sessions[key];
+  const id = bucket?.remoteWorkspaceId ?? null;
+  if (id === null) return null;
+  const entry = s.remoteWorkspaces.find((item) => item.id === id);
+  if (!entry) return null;
+  const host = s.sshHosts.find((item) => item.id === entry.hostId);
+  if (!host) return null;
+  return {
+    host: host.host,
+    port: host.port,
+    user: host.user,
+    workspace: entry.remotePath,
+  };
 }
 
 /**
@@ -5726,10 +5757,20 @@ export const useApp = create<AppStore>((set, get) => {
       // from drawing an empty picture frame for a text file.
       patch(key, { fileView: { path, answer: null, problem: null, image: null } });
 
+      // A remote session's picture lives on the far host, so the local door
+      // (`inlineImage`, whose boundary is a local `canonicalize`) cannot reach
+      // it: the same split the deliverable card makes for its "open" button.
+      // The remote door is keyed by the child, never by a destination the UI
+      // assembled, for the same reason. A session whose saved entry or host
+      // was deleted since it started has no dial to give — the local door's
+      // refusal ("not there") is the honest answer for that one.
+      const remote = remoteConnectionOf(get(), key);
+      const read = remote !== null ? inlineImageRemote(key, path) : inlineImage(workspace, path);
+
       // The command answers with a refusal written for a person when the file is
       // gone, outside the workspace, or not an image it can draw — so the failure
       // is shown where the picture would have been, not only in the transcript.
-      void inlineImage(workspace, path).then(
+      void read.then(
         (image) => {
           // Re-check: the person may have closed the panel, or opened another
           // file, while the bytes were being read. Writing the answer into a view

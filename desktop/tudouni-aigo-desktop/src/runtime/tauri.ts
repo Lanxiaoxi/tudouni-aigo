@@ -1530,6 +1530,75 @@ export async function openDeliverable(workspace: string, path: string): Promise<
   await tauriInvoke<void>('deliverable_open', { workspace, path });
 }
 
+/** What the bridge hands back after pulling one remote deliverable down. */
+export interface DownloadedDeliverable {
+  /** The absolute path of the local copy — what the OS is handed and what
+   *  the card shows as "the copy is here". */
+  path: string;
+  /** True when nothing was transferred: the copy was already in the cache
+   *  tree, and the sentence on the card should say so rather than claim a
+   *  download that did not happen. */
+  fromCache: boolean;
+}
+
+/**
+ * Download one declared deliverable from a **remote** session's workspace
+ * into the local cache tree.
+ *
+ * Named by the session's child key, not by connection parameters: the host,
+ * credentials and remote workspace come from the child the bridge started —
+ * the same rule `stashImage` follows — so a caller cannot pull a file from a
+ * machine the session does not run on.
+ *
+ * The card's "open" becomes "download" for a remote workspace for one reason:
+ * `deliverable_open`'s boundary is a local `canonicalize`, which cannot reach
+ * a file on the far host. This command pulls the bytes over, and the OS opens
+ * the local copy. A second call for the same file serves the cached copy
+ * without re-downloading (`fromCache: true`).
+ *
+ * Rejections arrive as sentences written for the person reading the card, the
+ * same convention as every other bridge refusal.
+ */
+export async function downloadDeliverable(key: string, path: string): Promise<DownloadedDeliverable> {
+  if (!isHosted()) {
+    throw new Error('deliverables can only be downloaded in the desktop application');
+  }
+  return tauriInvoke<DownloadedDeliverable>('deliverable_download', { key: Number(key), path });
+}
+
+/**
+ * Open a **local copy** of a downloaded remote deliverable in the OS default
+ * application — the second half of the remote card's gesture.
+ *
+ * `deliverable_open` cannot be reused for this: its boundary is the workspace
+ * root, and the copy lives under the app's own data directory. The Rust
+ * command applies the same rule with a different root — canonicalize and
+ * require the path to stay under the downloads tree — so a string this window
+ * hands back cannot reach anywhere else on disk.
+ */
+export async function openLocalDeliverable(path: string): Promise<void> {
+  if (!isHosted()) {
+    throw new Error('deliverables can only be opened in the desktop application');
+  }
+  await tauriInvoke<void>('deliverable_open_local', { path });
+}
+
+/**
+ * Read one picture from a **remote** session's workspace as a `data:` URL —
+ * the remote twin of {@link inlineImage}, whose boundary is a local
+ * `canonicalize` and therefore cannot reach a file on the far host either.
+ *
+ * Keyed by the session's child for the same reason {@link downloadDeliverable}
+ * is: the workspace and the SSH connection are facts the child carries, and
+ * neither may arrive from the caller.
+ */
+export async function inlineImageRemote(key: string, path: string): Promise<InlineImage> {
+  if (!isHosted()) {
+    throw new Error('pictures can only be drawn in the desktop application');
+  }
+  return tauriInvoke<InlineImage>('inline_image_remote', { key: Number(key), path });
+}
+
 /** What the bridge hands back after reading a workspace picture. */
 export interface InlineImage {
   /** A complete `data:` URL, ready for an `<img src>`. */

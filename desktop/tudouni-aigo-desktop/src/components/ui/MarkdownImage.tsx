@@ -3,7 +3,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { ImageOff, X } from 'lucide-react';
 import { useT } from '@/i18n/useT';
 import { useSessionField } from '@/state/store';
-import { inlineImage } from '@/runtime/tauri';
+import { inlineImage, inlineImageRemote } from '@/runtime/tauri';
 
 /**
  * A picture in model output.
@@ -134,14 +134,26 @@ function cacheKey(workspace: string, path: string): string {
   return JSON.stringify([workspace, path]);
 }
 
-function loadImage(workspace: string, path: string): Promise<string> {
+/**
+ * Read one picture, local or remote.
+ *
+ * `childKey` is the session's child when the session is remote — the picture
+ * then lives on the far host and only `inlineImageRemote` (keyed by the
+ * child, never by a destination the UI assembled) can reach it; the local
+ * `inlineImage`'s boundary is a local `canonicalize`. `null` for a local
+ * session. The cache is keyed by (workspace, path) either way, because the
+ * bytes that answer for a path are the same bytes a second scroll would ask
+ * for, remote or not.
+ */
+function loadImage(workspace: string, path: string, childKey: string | null): Promise<string> {
   const key = cacheKey(workspace, path);
   const cached = loadCache.get(key);
   if (cached !== undefined) return Promise.resolve(cached);
   const pending = inFlight.get(key);
   if (pending !== undefined) return pending;
 
-  const request = inlineImage(workspace, path)
+  const read = childKey !== null ? inlineImageRemote(childKey, path) : inlineImage(workspace, path);
+  const request = read
     .then((image) => {
       loadCache.set(key, image.url);
       return image.url;
@@ -181,6 +193,11 @@ export function MarkdownImage({ src, alt }: { src: string; alt: string }) {
   // the front end started the child with, and either is a better answer than
   // guessing — an empty one makes every path unresolvable for that moment.
   const workspace = useSessionField((rt) => rt.session?.workspace ?? rt.workspace, '');
+  // The session's child, when the session is remote: the picture then lives on
+  // the far host, and only the remote door — keyed by the child, never by a
+  // destination this window assembled — can reach it. `null` for a local
+  // session, the same fold the deliverable card uses for its split.
+  const remoteChildKey = useSessionField((rt) => (rt.remoteWorkspaceId !== null ? rt.key : null), null);
   const intent = imageIntent(src, alt);
   /** The full-size view, when the picture has been pressed. */
   const [open, setOpen] = useState(false);
@@ -217,7 +234,7 @@ export function MarkdownImage({ src, alt }: { src: string; alt: string }) {
     }
 
     let live = true;
-    loadImage(workspace, destination).then(
+    loadImage(workspace, destination, remoteChildKey).then(
       (resolved) => {
         if (live) setState({ kind: 'ready', src: resolved });
       },
@@ -237,7 +254,7 @@ export function MarkdownImage({ src, alt }: { src: string; alt: string }) {
     return () => {
       live = false;
     };
-  }, [workspace, destination, t]);
+  }, [workspace, destination, remoteChildKey, t]);
 
   if (state.kind === 'empty') return null;
 
