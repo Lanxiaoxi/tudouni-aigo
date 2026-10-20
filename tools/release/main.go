@@ -112,6 +112,7 @@ func run(argv []string) error {
 			Binary:        filepath.Join(root, "dist", release.StageDirName(version, target), target.BinaryName()),
 			PromptsDir:    filepath.Join(root, "dist", release.StageDirName(version, target), "prompts"),
 			RgBinary:      filepath.Join(root, "dist", release.StageDirName(version, target), "tools", "vendor", "rg", target.Triple, target.RgName()),
+			CgParser:      filepath.Join(root, "dist", release.StageDirName(version, target), "tools", "vendor", "cg", target.Triple, target.CgName()),
 			ExampleConfig: filepath.Join(root, "dist", release.StageDirName(version, target), "config.example.json"),
 		}
 		if !*skipBuild {

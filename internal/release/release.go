@@ -63,6 +63,17 @@ var Targets = []Target{
 	{GOOS: "linux", GOARCH: "amd64", Triple: "x86_64-unknown-linux-musl"},
 }
 
+// CgName is the parser executable's file name for this target.
+//
+// Mirrors RgName: the vendored directory is keyed by Triple, and the file name differs by
+// platform only in its suffix.
+func (t Target) CgName() string {
+	if t.GOOS == "windows" {
+		return "cg-parse.exe"
+	}
+	return "cg-parse"
+}
+
 // CommandName is what the program is installed as and typed as. The platforms differ
 // only in the suffix, so the name itself has exactly one definition — the same one
 // the help text and the flag set use.
@@ -112,7 +123,13 @@ type Layout struct {
 	Target     Target
 	Binary     string
 	PromptsDir string
-	RgBinary   string
+	RgBinary string
+	// CgParser is the code-index parser. Unlike ripgrep it is not needed for the program
+	// to work: without it the index can still be queried, it just cannot be rebuilt, and
+	// `code_explore` reports that instead of silently answering from a stale index. It is
+	// on the required list anyway, because a package that ships the feature half-working
+	// is the failure mode this file exists to prevent.
+	CgParser string
 	// ExampleConfig is the configuration template. Its bytes are compiled in, so a
 	// package without it still works — which is exactly why it belongs on the
 	// required list: "it starts and one thing is missing" is this package's
@@ -131,6 +148,7 @@ func (l Layout) RequiredFiles() map[string]string {
 		"the executable":        l.Binary,
 		"the prompts directory": l.PromptsDir,
 		"the vendored ripgrep":  l.RgBinary,
+		"the code-index parser": l.CgParser,
 		"config.example.json":   l.ExampleConfig,
 		"install.ps1":           filepath.Join(l.Root, "install.ps1"),
 		"install.sh":            filepath.Join(l.Root, "install.sh"),

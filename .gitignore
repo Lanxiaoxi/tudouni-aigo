@@ -57,3 +57,8 @@ debug.log
 
 # The Python project this was rewritten from, kept on disk as reference material.
 tudouni-ai/
+# The code index this project's cg tool builds for a workspace.
+.tudouni-index/
+
+# A locally built cg binary.
+cg.exe

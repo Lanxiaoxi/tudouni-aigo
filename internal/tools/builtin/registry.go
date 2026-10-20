@@ -125,6 +125,17 @@ func CreateRegistry(assembly Assembly) (*Result, error) {
 		result.Missing = append(result.Missing, "grep")
 	}
 
+	// The code index is built by a separate CLI and is optional: without it there is
+	// nothing to explore, so the tool is absent rather than answering "no index" every
+	// time it is offered. See internal/codeintel.
+	if codeExplore, ok := NewCodeExplore(assembly.Workspace); ok {
+		if err := registry.Register(codeExplore); err != nil {
+			return nil, err
+		}
+	} else {
+		result.Missing = append(result.Missing, "code_explore")
+	}
+
 	if assembly.SkillLoader != nil {
 		// Registered only when there is something to load. A skill directory that
 		// does not exist is not a configuration error — skills are optional, and

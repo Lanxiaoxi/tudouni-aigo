@@ -23,6 +23,7 @@
 | `internal/config/`、`internal/paths/` | 配置文件、安装包内路径解析 |
 | `internal/skills/`、`internal/mcp/` | 技能与 MCP 连接 |
 | `internal/i18n/` | 界面文案 |
+| `internal/codeintel/` | 代码智能索引。`cgparse/` 解码 `cg-parse` 的缓冲区契约并批量调度；`cggraph/` SQLite schema、解析器（7 种语言 tier、`implements` 合成、`ambiguous` 标记）、查询与 C/C++ 降级提取；`cgwasm/` WASM 兜底（**未接线**，卡在 emscripten 动态链接，卡点写在包文档里）；`refresh.go` 决定**何时**重建（`EnsureFresh`：stat 比对 → 小分歧内联重建 / 大分歧只报告）。模型侧只有 **`code_explore` 一个工具**（`internal/tools/builtin/code_explore.go`），查询在本进程内完成，只有重建索引才 exec `tools/vendor/cg/<triple>/cg-parse`。独立 CLI 入口 `cmd/cg/`，与官方基线对比的工具 `tools/cgcompare/` |
 | `internal/version/` | 版本号的读取与展示；**命令名也在这里**（`version.Name`，`--help`、flag set 名、打包产物名都从它取，改名字只改这一处 + `packaging/`） |
 | `internal/release/`、`tools/release/` | 打包、暂存目录、校验、压缩 |
 | `desktop/tudouni-aigo-desktop/` | 独立的桌面客户端（Tauri 2 + React）；出安装包见下文「桌面端安装包」一节 |

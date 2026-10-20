@@ -8,6 +8,52 @@ import (
 	"testing"
 )
 
+// codeIndexParserPending lists the targets whose parser is not vendored yet.
+//
+// This is a debt list, not an exemption. The test below fails when a target is missing from
+// both the vendor directory and this map, so adding a platform still forces a decision; and an
+// entry here that later gets vendored fails too, so the list cannot quietly go stale. Every
+// entry states why, because "pending" with no reason is how a gap becomes permanent.
+var codeIndexParserPending = map[string]string{
+	"x86_64-unknown-linux-musl": "cross-compiling the parser needs a musl C toolchain " +
+		"(x86_64-linux-musl-gcc or zig), which this build machine does not have. " +
+		"Build it on a Linux host: cargo build --release --target x86_64-unknown-linux-musl --bin cg-parse",
+}
+
+// TestTargetsHaveAVendoredCodeIndexParser is the same rule as the ripgrep gate, for the second
+// vendored binary.
+//
+// The failure it prevents is quieter than ripgrep's absence: without the parser the program
+// starts, `code_explore` is registered, and every answer comes from an index that can never be
+// updated. A stale index reads exactly like a current one, so shipping this half-built would be
+// invisible until someone chased a bug that had already been fixed.
+func TestTargetsHaveAVendoredCodeIndexParser(t *testing.T) {
+	root := repoRoot(t)
+	for _, target := range Targets {
+		path := filepath.Join(root, "tools", "vendor", "cg", target.Triple, target.CgName())
+		info, err := os.Stat(path)
+		if err != nil {
+			if reason, pending := codeIndexParserPending[target.Triple]; pending {
+				t.Logf("%s: parser not vendored, and that is recorded — %s", target.Triple, reason)
+				continue
+			}
+			t.Errorf("%s/%s: no vendored code-index parser at %s — vendor it, or add %q to "+
+				"codeIndexParserPending with the reason",
+				target.GOOS, target.GOARCH, target.Triple, target.Triple)
+			continue
+		}
+		// A Rust release binary of this program is tens of megabytes. Anything much smaller is
+		// a placeholder or a truncated copy, not a build.
+		if info.Size() < 1_000_000 {
+			t.Errorf("%s: %s is only %d bytes, which is not a parser build", target.Triple, path, info.Size())
+		}
+		if reason, pending := codeIndexParserPending[target.Triple]; pending {
+			t.Errorf("%s: the parser is vendored now, so remove it from codeIndexParserPending "+
+				"(recorded reason was: %s)", target.Triple, reason)
+		}
+	}
+}
+
 // TestTargetsHaveAVendoredRipgrep is the rule the target list exists to obey.
 //
 // Shipping a platform whose ripgrep is not vendored produces a program that starts
@@ -87,14 +133,15 @@ func TestCheckLayoutReportsEveryMissingPiece(t *testing.T) {
 		Binary:        filepath.Join(root, target.BinaryName()),
 		PromptsDir:    filepath.Join(root, "prompts"),
 		RgBinary:      filepath.Join(root, "tools", "vendor", "rg", target.Triple, target.RgName()),
+		CgParser:      filepath.Join(root, "tools", "vendor", "cg", target.Triple, target.CgName()),
 		ExampleConfig: filepath.Join(root, "config.example.json"),
 	}
 
 	missing := layout.CheckLayout()
-	// Everything is absent: the binary, the prompts directory, ripgrep, the
-	// configuration template and the three files that travel with the package.
-	if len(missing) != 7 {
-		t.Fatalf("expected 7 missing entries, got %d: %v", len(missing), missing)
+	// Everything is absent: the binary, the prompts directory, ripgrep, the code-index
+	// parser, the configuration template, and the three files that travel with the package.
+	if len(missing) != 8 {
+		t.Fatalf("expected 8 missing entries, got %d: %v", len(missing), missing)
 	}
 	for _, label := range []string{"executable", "prompts", "ripgrep", "config.example.json", "install.ps1", "install.sh", "README.txt"} {
 		found := false
@@ -108,9 +155,9 @@ func TestCheckLayoutReportsEveryMissingPiece(t *testing.T) {
 		}
 	}
 
-	// An empty file counts as missing: a zero-byte ripgrep is in the tree and
+	// An empty file counts as missing: a zero-byte ripgrep or parser is in the tree and
 	// still unusable, and a size check is the only thing that catches it.
-	for _, path := range []string{layout.Binary, layout.RgBinary} {
+	for _, path := range []string{layout.Binary, layout.RgBinary, layout.CgParser} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +174,7 @@ func TestCheckLayoutReportsEveryMissingPiece(t *testing.T) {
 		}
 	}
 	missing = layout.CheckLayout()
-	if len(missing) != 2 {
+	if len(missing) != 3 {
 		t.Fatalf("empty files must still be reported, got %v", missing)
 	}
 	for _, entry := range missing {
@@ -148,7 +195,14 @@ func TestZipRoundTripsAndRefusesSource(t *testing.T) {
 		Binary:        filepath.Join(root, target.BinaryName()),
 		PromptsDir:    filepath.Join(root, "prompts"),
 		RgBinary:      filepath.Join(root, "tools", "vendor", "rg", target.Triple, target.RgName()),
+		CgParser:      filepath.Join(root, "tools", "vendor", "cg", target.Triple, target.CgName()),
 		ExampleConfig: filepath.Join(root, "config.example.json"),
+	}
+	if err := os.MkdirAll(filepath.Dir(layout.CgParser), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layout.CgParser, []byte("parser"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.MkdirAll(layout.PromptsDir, 0o755); err != nil {
 		t.Fatal(err)

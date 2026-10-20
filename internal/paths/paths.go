@@ -140,6 +140,14 @@ func VendorRG() string {
 	return filepath.Join(PackageDir(), "tools", "vendor", "rg")
 }
 
+// VendorCG returns the directory holding the code-index parser binaries.
+//
+// Mirrors VendorRG: one binary per platform target, because the indexer is a separate
+// executable and cannot be linked into this one.
+func VendorCG() string {
+	return filepath.Join(PackageDir(), "tools", "vendor", "cg")
+}
+
 // SchemaDir returns the directory holding the protocol schema files.
 func SchemaDir() string {
 	return filepath.Join(PackageDir(), "protocol", "schema")
