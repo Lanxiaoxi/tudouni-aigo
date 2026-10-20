@@ -37,36 +37,53 @@ const maxWholeReadBytes = 16 * 1024 * 1024
 // MB of memory instead of the file's size.
 const maxRangeBytes = 5 * 1024 * 1024
 
+// maxOutlineBytes: the largest file a skeleton is built for.
+//
+// The extractor walks the text a line at a time and never keeps it past the
+// call, but it does need the whole string, so it cannot share maxWholeReadBytes
+// without inheriting that ceiling's problem: a generated 100MB file is exactly
+// where a skeleton is most valuable and a whole read is impossible. 64MB covers
+// every real source file with room to spare; past it the honest answer is the
+// same one the whole-read ceiling gives.
+const maxOutlineBytes = 64 * 1024 * 1024
+
 // NewFileTools builds the four file-system tools, all bound to the same workspace.
 //
 // read_file / list_files are parallel-safe (read-only, no shared state); write_file
 // and edit_file are not, because two concurrent writes can silently overwrite each
 // other (the classic lost-update), and both would report success.
 func NewFileTools(workspace *tools.Workspace) []tools.Tool {
+	properties := map[string]any{
+		"path": tools.StringSchema("文件路径", tools.MinLength(1)),
+		// No Default on either bound. A default would be applied by the
+		// validator, so the handler could no longer tell "the model asked
+		// for the whole file" from "the model asked for 1..end" — and
+		// those two must stay different, because only the second gets a
+		// header. Absent is the whole-file case; present is a range.
+		"start_line": tools.IntSchema(
+			"从第几行开始（1 起，含这一行）。不传表示从第 1 行开始",
+			tools.Minimum(1)),
+		"end_line": tools.IntSchema(
+			"读到第几行（1 起，含这一行）。不传表示读到文件末尾",
+			tools.Minimum(1)),
+	}
+	description := "读取指定文件的内容（按 UTF-8 解码）。不传 start_line / end_line 就是整个文件；传了就只返回那一段" +
+		"（行号从 1 开始，含首含尾，越界会夹到文件边界并说明）。文件不存在、路径指向目录、或超出工作区都会报错。\n" +
+		"看大文件时给区间：grep 已经把行号给了你，只读那一段比整读省得多，也省得绕到 shell 去。\n" +
+		outlineGuidance()
+	// No Default on outline: absent has to stay distinguishable from false, for the
+	// same reason the bounds have none. And outline=true is mutually exclusive with
+	// the bounds — see readFile.
+	properties["outline"] = tools.BoolSchema(outlineParameterDescription())
 	return []tools.Tool{
 		{
 			Name: "read_file",
 			// The range parameters have to be documented where the model reads
 			// them, because the choice they enable — read the interval, not the
 			// file — is the one it has to make before calling.
-			Description: "读取指定文件的内容（按 UTF-8 解码）。不传 start_line / end_line 就是整个文件；传了就只返回那一段" +
-				"（行号从 1 开始，含首含尾，越界会夹到文件边界并说明）。文件不存在、路径指向目录、或超出工作区都会报错。\n" +
-				"看大文件时给区间：grep 已经把行号给了你，只读那一段比整读省得多，也省得绕到 shell 去。",
-			Risk: security.RiskLow,
-			Schema: tools.ObjectSchema(map[string]any{
-				"path": tools.StringSchema("文件路径", tools.MinLength(1)),
-				// No Default on either bound. A default would be applied by the
-				// validator, so the handler could no longer tell "the model asked
-				// for the whole file" from "the model asked for 1..end" — and
-				// those two must stay different, because only the second gets a
-				// header. Absent is the whole-file case; present is a range.
-				"start_line": tools.IntSchema(
-					"从第几行开始（1 起，含这一行）。不传表示从第 1 行开始",
-					tools.Minimum(1)),
-				"end_line": tools.IntSchema(
-					"读到第几行（1 起，含这一行）。不传表示读到文件末尾",
-					tools.Minimum(1)),
-			}, "path"),
+			Description: description,
+			Risk:        security.RiskLow,
+			Schema:      tools.ObjectSchema(properties, "path"),
 			Handler: func(ctx context.Context, args map[string]any) (tools.Result, error) {
 				return readFile(workspace, args)
 			},
@@ -162,6 +179,34 @@ func readFile(workspace *tools.Workspace, args map[string]any) (tools.Result, er
 	//     grep the file, then read the interval.
 	//   - over it, with bounds: stream. Memory holds the interval and a line
 	//     counter, never the file.
+	//
+	// outline is checked before the ceiling because it is the one request whose
+	// answer is *smaller* than the file by construction: a skeleton of a 100MB
+	// generated file is a few KB, and without this ordering that file would be
+	// told to grep and pick intervals, which is exactly what the skeleton exists
+	// to avoid. The extractor still needs the text in memory, so the ceiling
+	// that applies to it is its own, and it is stated rather than silent.
+	if wantsOutline(args) {
+		if info.Size() > maxOutlineBytes {
+			return tools.TextResult(fmt.Sprintf(
+				"文件太大："+path+"（%s），超过生成骨架的上限 %s。\n"+
+					"先用 grep 定位要看的行，再带 start_line / end_line 只读那一段。",
+				content.HumanSize(int(info.Size())), content.HumanSize(maxOutlineBytes))), nil
+		}
+		if hasBounds(args) {
+			return tools.TextResult("outline 和 start_line / end_line 不能同时用：" +
+				"要骨架就只传 outline=true，要读某一段就只传区间。这次没有返回内容。"), nil
+		}
+		raw, readErr := os.ReadFile(target)
+		if readErr != nil {
+			return tools.TextResult("无法读取：" + path + "（" + readErr.Error() + "）"), nil
+		}
+		if !utf8.Valid(raw) {
+			return tools.TextResult("不是 UTF-8 文本，读不了：" + path), nil
+		}
+		return readOutline(path, string(raw)), nil
+	}
+
 	if info.Size() > maxWholeReadBytes {
 		if !hasBounds(args) {
 			return tools.TextResult(fmt.Sprintf(
