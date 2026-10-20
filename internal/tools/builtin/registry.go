@@ -77,6 +77,11 @@ func CreateRegistry(assembly Assembly) (*Result, error) {
 			return nil, err
 		}
 	}
+	// git_snapshot is read-only and workspace-bound like read_file: repo_path goes
+	// through SafePath, so it never observes a repository outside the workspace.
+	if err := registry.Register(NewGitSnapshot(assembly.Workspace)); err != nil {
+		return nil, err
+	}
 	// present is the fifth file-facing tool and the only one that touches nothing:
 	// it declares paths the other tools already wrote. It is registered on its own
 	// rather than inside `NewFileTools` because those four share a shape — resolve,
