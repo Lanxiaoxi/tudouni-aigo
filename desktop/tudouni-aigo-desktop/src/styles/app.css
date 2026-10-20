@@ -1422,7 +1422,9 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
 .composer .cp-send.is-stop {
   border-radius: 8px;
   background: var(--accent-active);
-  color: var(--fg-on-accent);
+  /* White, not `--fg-on-accent` (which is dark green in the light theme): the
+     square should match the send arrow, a white glyph on the accent fill. */
+  color: #ffffff;
 }
 
 .composer .cp-send.is-stop:hover {
