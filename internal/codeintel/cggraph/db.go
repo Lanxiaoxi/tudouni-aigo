@@ -16,6 +16,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 )
 
 // DB is the index database.
@@ -28,11 +30,18 @@ type DB struct {
 const DefaultDBName = "graph.db"
 
 // IndexDirName is the directory, relative to a workspace root, that holds the
-// index. It is deliberately NOT `.tudouni/`: that path is the control plane
-// (permissions, sessions, logs), and the index is a rebuildable cache rather than
-// something whose integrity decides whether a run can be trusted. Keeping them
-// apart means wiping the index can never take the permission policy with it.
-const IndexDirName = ".tudouni-index"
+// index.
+//
+// It sits **inside** the workspace's state directory (`<workspace>/.tudouni/index`)
+// rather than beside it, because one workspace means one directory to ignore, to
+// back up or to delete — a second dot-directory at the repository root was a thing
+// people had to learn about, and every one of them had to remember to ignore it.
+//
+// It is a **subdirectory** rather than a sibling of the state files so that wiping
+// the index can never take the permission policy, the sessions or the logs with it:
+// the index is a rebuildable cache, and `rm -rf .tudouni/index` is a sentence
+// somebody should be able to say without checking what else lives there.
+const IndexDirName = paths.RuntimeDirName + "/index"
 
 // Open opens or creates the index under `workspaceRoot`.
 func Open(workspaceRoot string) (*DB, error) {

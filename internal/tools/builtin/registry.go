@@ -3,6 +3,7 @@ package builtin
 import (
 	"fmt"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
@@ -37,6 +38,21 @@ type Assembly struct {
 	SkillLoader *skills.Loader
 	// SkillMetadata is the session metadata the loaded-skill list is bound to.
 	SkillMetadata map[string]any
+
+	// CodeIntel is the workspace's index handle, and the pair below it is the answer
+	// to "should the model have a code-intelligence tool at all".
+	//
+	// Refresher is built by the runtime rather than here because the same instance has
+	// to serve the panel's init/sync: two refreshers over one index would be two mutexes
+	// pretending to serialize one write path.
+	//
+	// CodeIntelEnabled is the person's permission, from the workspace's
+	// `<workspace>/.tudouni/codeintel/config.json`. It is **separate** from "the index
+	// exists" on purpose — see internal/codeintel's config.go for the two states that
+	// distinction makes expressible. When it is false the tool is not even built, so a
+	// workspace that never asked for code intelligence pays nothing for it.
+	CodeIntel        *codeintel.Refresher
+	CodeIntelEnabled bool
 
 	// Extra holds the tools built by the assembly layer — background jobs, the
 	// network tools, the skill loader. They live elsewhere because they own
@@ -125,15 +141,18 @@ func CreateRegistry(assembly Assembly) (*Result, error) {
 		result.Missing = append(result.Missing, "grep")
 	}
 
-	// The code index is built by a separate CLI and is optional: without it there is
-	// nothing to explore, so the tool is absent rather than answering "no index" every
-	// time it is offered. See internal/codeintel.
-	if codeExplore, ok := NewCodeExplore(assembly.Workspace); ok {
-		if err := registry.Register(codeExplore); err != nil {
-			return nil, err
+	// The code index is optional twice over: the person has to turn the capability on,
+	// and an index has to exist. Either being false means no tool, and only the second
+	// of the two is worth a notice — "you have not enabled this" is a setting, not a
+	// missing piece. See internal/codeintel.
+	if assembly.CodeIntelEnabled {
+		if codeExplore, ok := NewCodeExplore(assembly.Workspace, assembly.CodeIntel); ok {
+			if err := registry.Register(codeExplore); err != nil {
+				return nil, err
+			}
+		} else {
+			result.Missing = append(result.Missing, CodeExploreToolName)
 		}
-	} else {
-		result.Missing = append(result.Missing, "code_explore")
 	}
 
 	if assembly.SkillLoader != nil {

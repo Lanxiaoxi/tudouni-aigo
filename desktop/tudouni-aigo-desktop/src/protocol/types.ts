@@ -45,8 +45,20 @@ export const ENVELOPE_VERSION = 1;
  * proposals waiting for review. Additive — a runtime below 8 simply never
  * sends the key, and a badge that reads "absent" as zero would hide a queue
  * the runtime is holding, so the badge gates on this number.
+ *
+ * **9** adds the workspace's code index: `codeintel_action` inbound, the
+ * `codeintel` kind on the `ui` channel, and a `codeintel` group on
+ * `ui(state)`. Two shapes are this number's own design:
+ *
+ *   - `init` / `sync` **answer immediately** and the build narrates itself
+ *     through pushed `ui(codeintel)` messages carrying `progress`. A reply that
+ *     waited for a multi-minute pass would block the connection that is drawing
+ *     the progress.
+ *   - `enabled` and `indexed` are **separate facts** — a person reaches both
+ *     mismatched states (built then switched off; switched on but never built),
+ *     and one boolean could not express either.
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 /* ============================================================
    Shared vocabulary
@@ -531,6 +543,110 @@ export interface UiMemoryMsg {
   problem?: string;
 }
 
+/* ============================================================
+   The code index
+   ============================================================ */
+
+/** How far the index is behind the working tree.
+ *
+ *  `count` is the sum and is what a badge shows; the three parts are what the
+ *  panel's sentence names, because "12 modified" and "3 deleted" mean different
+ *  things — one is a working tree that moved, the other is files the index still
+ *  believes exist. */
+export interface CodeIntelStaleness {
+  added: number;
+  changed: number;
+  removed: number;
+  checked: number;
+  count: number;
+}
+
+/** One deliberate build this session ran. In memory only on the runtime side:
+ *  it describes what that process did, and a saved copy would let a window open
+ *  with a claim about a build somebody has since closed. */
+export interface CodeIntelRun {
+  full: boolean;
+  ok: boolean;
+  files: number;
+  nodes: number;
+  edges: number;
+  unresolved: number;
+  problem: string;
+  at: string;
+}
+
+/** A build in flight. */
+export interface CodeIntelProgress {
+  phase: string;
+  done: number;
+  total: number;
+}
+
+/** `ui(codeintel)`'s `codeintel` object: the whole panel, in one message.
+ *
+ *  **`enabled` and `indexed` are two facts, not one.** `enabled` is the person's
+ *  permission (the switch, from `.tudouni/codeintel/config.json`); `indexed` is
+ *  whether a database exists. Both mismatched states are reachable, and the panel
+ *  draws each of them with its own sentence.
+ *
+ *  `parser` is about the **installation**, not the index: false means this build
+ *  carries no `cg-parse` for this platform, so an existing index can be queried
+ *  but nothing can rebuild it. */
+export interface CodeIntelSnapshot {
+  workspace: string;
+  enabled: boolean;
+  indexed: boolean;
+  /** Where the database lives, relative to the workspace. */
+  path: string;
+  size_bytes: number;
+  files: number;
+  nodes: number;
+  edges: number;
+  unresolved: number;
+  pending: number;
+  ambiguous_edges: number;
+  /** Files that produced no symbols at all — the coverage hole the panel shows
+   *  by language, because a language whose files all land here is a parser gap. */
+  deferred: number;
+  /** Files the grammar rejected but the line scanner could read: symbols, no
+   *  call graph. A different fact from `deferred` and never merged with it. */
+  heuristic: number;
+  deferred_by_language: Record<string, number>;
+  heuristic_by_language: Record<string, number>;
+  stale: CodeIntelStaleness;
+  /** RFC 3339, absent when the index has never been built. */
+  indexed_at?: string;
+  parser: boolean;
+  building: boolean;
+  /** Present only while `building`. */
+  progress?: CodeIntelProgress;
+  last?: CodeIntelRun;
+  /** Why the counts could not be read. Empty is the normal state, including for
+   *  "there is no index yet" — that is a state, not an error. */
+  problem: string;
+}
+
+/** `ui(codeintel)`.
+ *
+ *  One kind for the whole panel **and** for a build's progress, so a front end has
+ *  one shape to keep right rather than two. A refusal arrives here too, as
+ *  `problem` beside the snapshot, for the same reason `ui(memory)` carries one:
+ *  the transcript is behind the panel that asked. */
+export interface UiCodeIntelMsg {
+  v: number;
+  t: 'ui';
+  kind: 'codeintel';
+  codeintel?: CodeIntelSnapshot;
+  problem?: string;
+}
+
+/** The verbs a `codeintel_action` message accepts.
+ *
+ *  `status` is one verb rather than its own message kind: the panel asks for the
+ *  snapshot on open and after every action anyway, so a separate request kind would
+ *  always produce the same reply as its siblings'. */
+export type CodeIntelActionKind = 'status' | 'config' | 'init' | 'sync';
+
 /**
  * One terminal, as the runtime reports it.
  *
@@ -811,6 +927,19 @@ export interface UiStateMsg {
    *  "absent" must not be read as zero: the runtime is holding a queue the
    *  front end has no way of counting. */
   memory_pending?: number;
+  /** The code index, in three booleans. Protocol 9.
+   *
+   *  Counts stay on `ui(codeintel)`: this rides on every tool result, and the
+   *  workbench row needs only enough to decide whether to draw and whether to
+   *  badge. `enabled` is the switch, `indexed` is whether a database exists —
+   *  two facts, both reachable mismatched, so neither can be derived from the
+   *  other. Absent on a runtime below 9, which must read as "this build cannot
+   *  say" rather than as "off". */
+  codeintel?: {
+    enabled: boolean;
+    indexed: boolean;
+    building: boolean;
+  };
 }
 
 /** `ui(status).status` — grouped on purpose; the screen spans four layers. */
@@ -1035,7 +1164,8 @@ export type UiMsg =
   | UiTerminalCreatedMsg
   | UiTerminalOutputMsg
   | UiTerminalExitMsg
-  | UiMemoryMsg;
+  | UiMemoryMsg
+  | UiCodeIntelMsg;
 
 /* ---------------- the rest ---------------- */
 
@@ -1264,6 +1394,23 @@ export type FrontendMsg =
       entry_id?: string;
       reason?: string;
       config?: Partial<MemoryConfig>;
+    }
+  /** One verb on the workspace's code index.
+   *
+   *  `status` reads; `config` writes the enable switch; `init` rebuilds from
+   *  scratch and `sync` tops up. `init` and `sync` **answer immediately** — the
+   *  build narrates itself through pushed `ui(codeintel)` messages — so the reply
+   *  is an acknowledgement plus the panel's state as it was before the pass began,
+   *  and `building` in that snapshot is what a front end draws.
+   *
+   *  These are the person's verbs: the model cannot spend somebody else's
+   *  afternoon on an index build. */
+  | {
+      v: number;
+      t: 'codeintel_action';
+      action: CodeIntelActionKind;
+      /** `config` only. */
+      enabled?: boolean;
     }
   | { v: number; t: 'mcp'; action: McpAction; servers: string[] }
   /** List one directory level. An **empty** path is the workspace root — the

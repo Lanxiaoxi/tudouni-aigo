@@ -487,6 +487,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 	case InMCP:
 		s.handleMCP(message)
 
+	case InCodeIntel:
+		s.handleCodeIntel(message)
+
 	case InGoal:
 		s.handleGoal(message)
 
@@ -856,6 +859,25 @@ func (s *Server) notice(level, code, text string) {
 // build does not recognise produces. Inventing a message for it would be a line
 // the front end cannot parse.
 func (s *Server) SendTerminalEvent(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	envelope := map[string]any{"v": VERSION, "t": OutUI}
+	for key, value := range payload {
+		envelope[key] = value
+	}
+	s.Send(envelope)
+}
+
+// SendCodeIntelEvent is the code index's equivalent of SendTerminalEvent.
+//
+// A separate method rather than a shared one because the two are called from different
+// goroutines and routed by different hooks; the body is the same envelope and that is the
+// only thing they share. See RuntimeHooks.OnCodeIntelEvent.
+//
+// Called from the build's own goroutine, so the same rule applies: never block, and let
+// `Send` swallow a write failure.
+func (s *Server) SendCodeIntelEvent(payload map[string]any) {
 	if payload == nil {
 		return
 	}

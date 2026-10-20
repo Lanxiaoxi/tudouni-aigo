@@ -57,7 +57,10 @@ debug.log
 
 # The Python project this was rewritten from, kept on disk as reference material.
 tudouni-ai/
-# The code index this project's cg tool builds for a workspace.
+# The code index's **old** location (before 6.18, where it moved to `.tudouni/index`
+# and is ignored with the rest of that directory). Kept so a workspace indexed by an
+# older build does not offer 50MB of dead cache to a `git add -A`; delete the directory
+# itself whenever it is convenient.
 .tudouni-index/
 
 # A locally built cg binary.

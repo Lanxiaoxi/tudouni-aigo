@@ -256,6 +256,17 @@ func stageTarget(root string, target release.Target, layout release.Layout) erro
 		return fmt.Errorf("the vendored ripgrep for %s is missing (%s) — vendor it before shipping this platform: %w",
 			target.Triple, sourceRg, err)
 	}
+	// The code-index parser travels with the package, so **code intelligence works
+	// offline and on a remote host**: `install_remote_runtime` uploads the same archive
+	// over SFTP, which means a platform whose parser is not vendored here ships a feature
+	// that only ever answers "this index cannot be rebuilt". Failing the build is the
+	// honest outcome, and `internal/release/release_test.go`'s pending list is where a
+	// platform says why it has none yet.
+	sourceCg := filepath.Join(root, "tools", "vendor", "cg", target.Triple, target.CgName())
+	if err := copyFile(sourceCg, layout.CgParser, 0o755); err != nil {
+		return fmt.Errorf("the vendored code-index parser for %s is missing (%s) — vendor it before shipping this platform: %w",
+			target.Triple, sourceCg, err)
+	}
 	for _, name := range []string{"install.ps1", "install.sh", "README.txt"} {
 		mode := os.FileMode(0o644)
 		if name == "install.sh" {

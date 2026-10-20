@@ -409,6 +409,11 @@ func openRuntime(booted runtime.Booted, sessionID string,
 		// front ends leave it nil, because they have nowhere to draw a byte
 		// stream — the terminals still run and are still listed.
 		OnTerminalEvent: hooks.OnTerminalEvent,
+		// An index build outlives the message that started it, so its progress and
+		// its outcome take the same route as terminal output: a hook the protocol
+		// layer supplies, nil for the in-process front ends. Those still build — the
+		// panel is a desktop surface, and nothing here is refused for want of a hook.
+		OnCodeIntelEvent: hooks.OnCodeIntelEvent,
 		// Where a login's instructions go. Nil for the in-process front ends, which
 		// is a real answer rather than a gap: those own a terminal, so the runtime's
 		// own stderr is the right place and the sentence is printed there. Under

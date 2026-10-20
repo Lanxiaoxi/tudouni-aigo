@@ -1,6 +1,6 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Archive, ArchiveRestore, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
+import { Archive, ArchiveRestore, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -472,6 +472,26 @@ export function WorkspaceSidebar() {
       disabled: blocked || !hasSession,
       badge: memoryPending > 0 ? { value: memoryPending, tone: 'attention' } : undefined,
       run: () => openPanel('memory'),
+    },
+    {
+      key: 'codeintel',
+      group: 'workspace',
+      // The workspace's own surface, next to Memory: its subject is *this directory's*
+      // code index, and what it configures outlives every conversation — the same
+      // reasoning as Memory one row above.
+      label: t('lb.codeintel'),
+      hint: t('lb.codeintelHint'),
+      icon: <Network size={14} />,
+      // A live session, like Files / Terminal / Memory: the index is per workspace but
+      // the code that builds it is the runtime, and there is one of those per open
+      // conversation. Opening it with no session would draw a panel that cannot ask
+      // anybody anything.
+      disabled: blocked || !hasSession,
+      // **No badge, deliberately.** The obvious one is "stale", and staleness is a stat
+      // walk over every indexed file — cheap once, wasteful on every state snapshot,
+      // which is what a badge needs. The panel answers that question when it is opened,
+      // and `building` is only worth a spinner where the progress is drawn.
+      run: () => openPanel('codeintel'),
     },
     {
       key: 'tasks',

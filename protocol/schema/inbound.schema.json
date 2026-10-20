@@ -591,5 +591,28 @@
       }
     },
     "required": ["v", "t", "action"]
+  },
+  "codeintel_action": {
+    "summary": "对工作区代码索引的一次操作。**回答永远是 ui(codeintel) 的全量快照**，成功失败都发；`init` / `sync` 只是受理，构建本身靠推送的同类消息汇报进度。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "codeintel_action"},
+      "action": {
+        "type": "string",
+        "enum": ["status", "config", "init", "sync"],
+        "doc": [
+          "status 只读，什么都不改，是面板打开时要的那一份；",
+          "config 写 `enabled` —— **人的许可**，和「磁盘上有没有索引」是两件事；",
+          "init 从零重建（会先清库），sync 只补增量。这两个都**立刻回答**，",
+          "因为一次全量构建在大仓库上要几分钟，一条等它的回复会把连接上所有别的消息（包括它自己正在汇报的进度）堵住。",
+          "这四个动词都是**人的**：模型不能替别人花掉一个下午。"
+        ]
+      },
+      "enabled": {
+        "type": "boolean",
+        "doc": "action=config 时必填。true = 从下一轮开始把 code_explore 放进工具集；false = 拿掉它，磁盘上的索引不动。"
+      }
+    },
+    "required": ["v", "t", "action"]
   }
 }

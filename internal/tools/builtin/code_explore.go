@@ -41,6 +41,14 @@ import (
 // codeExplore limits. Each bounds one axis of the worst case, because a generous default on a
 // large symbol is what turns one tool call into a wall of text that stays in the window.
 const (
+	// CodeExploreToolName is the model-facing name.
+	//
+	// A constant rather than a literal because three places spell it and they have to
+	// agree: this tool's registration, the runtime's live un-registration when the
+	// switch goes off, and the registry's `Missing` entry that the start-up notice
+	// names. A rename that missed one of the three would leave the model with a tool
+	// that is in the schema and not in the registry.
+	CodeExploreToolName = "code_explore"
 	// CODE_EXPLORE_MAX_FILES is how many files may contribute source by default.
 	CODE_EXPLORE_MAX_FILES = 12
 	// CODE_EXPLORE_MAX_FILES_CAP bounds what the model may ask for.
@@ -84,27 +92,29 @@ func CgParserBinary() (string, bool) {
 
 // NewCodeExplore builds the tool, or reports false when this workspace has no index.
 //
-// Not registering is the right default: a tool that can only ever answer "there is no index"
-// costs the model a schema in every request and a round trip to learn nothing. The registry
-// records the absence in its notice instead, so the capability is visibly missing rather than
-// silently broken.
-func NewCodeExplore(workspace *tools.Workspace) (tools.Tool, bool) {
-	if workspace == nil {
+// Not registering is the right default: a tool that can only ever answer "there is no
+// index" costs the model a schema in every request and a round trip to learn nothing. The
+// registry records the absence in its notice instead, so the capability is visibly missing
+// rather than silently broken.
+//
+// `refresher` is **passed in** rather than built here, because the runtime owns one per
+// workspace: the panel's init/sync and this tool's inline freshness check must serialize
+// on the same mutex, or two of them can rebuild the same index inside one process. Nil
+// means the caller has no index handle, which is also "no tool".
+func NewCodeExplore(workspace *tools.Workspace, refresher *codeintel.Refresher) (tools.Tool, bool) {
+	if workspace == nil || refresher == nil {
 		return tools.Tool{}, false
 	}
 	root := workspace.Root()
-	dbPath := filepath.Join(root, cggraph.IndexDirName, cggraph.DefaultDBName)
+	dbPath := filepath.Join(root, filepath.FromSlash(cggraph.IndexDirName), cggraph.DefaultDBName)
 	if info, err := os.Stat(dbPath); err != nil || info.IsDir() {
 		return tools.Tool{}, false
 	}
-	// One refresher per tool instance, so parallel queries serialize on its mutex instead of
-	// each starting a rebuild. The parser binary is optional: without it the index can still be
-	// queried, it just cannot be brought up to date.
-	parserPath, _ := CgParserBinary()
-	refresher := codeintel.New(root, parserPath)
+	// The parser binary is optional here: without it the index can still be queried, it
+	// just cannot be brought up to date, and the tool answers with a warning about that.
 
 	return tools.Tool{
-		Name: "code_explore",
+		Name: CodeExploreToolName,
 		Description: "Find definitions and the code around them in ONE call: returns the " +
 			"verbatim source of matching symbols with line numbers (treat what is shown as " +
 			"already read — do not re-open those files), plus who calls them and what they " +
@@ -158,7 +168,7 @@ func runCodeExplore(ctx context.Context, refresher *codeintel.Refresher, argumen
 		// A database that cannot be opened is a broken index, which is different from an
 		// absent one (that is handled at registration). Say which.
 		return tools.Result{}, fmt.Errorf("code_explore: cannot open the index at %s: %w",
-			filepath.Join(root, cggraph.IndexDirName, cggraph.DefaultDBName), err)
+			filepath.Join(root, filepath.FromSlash(cggraph.IndexDirName), cggraph.DefaultDBName), err)
 	}
 	defer db.Close()
 

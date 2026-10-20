@@ -123,7 +123,7 @@ type Layout struct {
 	Target     Target
 	Binary     string
 	PromptsDir string
-	RgBinary string
+	RgBinary   string
 	// CgParser is the code-index parser. Unlike ripgrep it is not needed for the program
 	// to work: without it the index can still be queried, it just cannot be rebuilt, and
 	// `code_explore` reports that instead of silently answering from a stale index. It is

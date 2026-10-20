@@ -42,6 +42,11 @@ const (
 	Unavailable
 	// Failed means a rebuild was attempted and errored.
 	Failed
+	// Busy means another update — this process's panel action, or another session's
+	// runtime — is writing the index right now, so this call neither rebuilt nor was
+	// able to look. It is **not** an error: the caller answers from the index it has,
+	// with a sentence saying why that answer may be behind.
+	Busy
 )
 
 // String renders the state for a log line.
@@ -57,6 +62,8 @@ func (s State) String() string {
 		return "unavailable"
 	case Failed:
 		return "failed"
+	case Busy:
+		return "busy"
 	}
 	return "unknown"
 }
@@ -87,10 +94,13 @@ const DefaultMaxInline = 20
 
 // Refresher keeps one workspace's index fresh.
 //
-// One instance per workspace, shared by every caller: the mutex is what keeps two parallel tool
-// calls from rebuilding the index at the same time. Queries stay read-only, so a tool that uses
-// this can still be declared parallel-safe 鈥?the write happens here, serialized, and never
-// contends on the database.
+// One instance per workspace **per process**, shared by every caller: `mu` is what keeps
+// two parallel tool calls from rebuilding the index at the same time. It is not enough on
+// its own — one desktop window runs one runtime child per conversation, so two of these
+// can sit over one index — which is why every write path also takes the cross-process
+// claim in lock.go. Queries stay read-only, so a tool that uses this can still be declared
+// parallel-safe: the writes happen here, serialized twice, and never contend on the
+// database.
 type Refresher struct {
 	root       string
 	parserPath string
@@ -120,19 +130,40 @@ func (r *Refresher) SetMaxInline(files int) {
 
 // EnsureFresh compares the index against the working tree and rebuilds if it is behind.
 //
-// Safe for concurrent use: calls serialize on a mutex, so the second of two parallel queries
-// waits for one rebuild instead of starting a second. It is also idempotent and cheap when
-// clean, which is what makes it reasonable to call before every query.
+// Safe for concurrent use, and it **never waits**: both locks are tried rather than
+// taken. A query that blocks for minutes behind somebody else's rebuild is worse than
+// an answer that says "the index is being updated" — the model can act on the second
+// and cannot act on the first. The deliberate path (`Rebuild`) is where waiting is the
+// right behaviour, because a person is watching a progress line there.
 func (r *Refresher) EnsureFresh(ctx context.Context) (report Report, err error) {
 	started := time.Now()
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	// Named returns, not a local: a deferred assignment to a local would land on the copy that
 	// has already been returned, leaving Elapsed permanently zero.
 	report = Report{State: Current}
 	defer func() { report.Elapsed = time.Since(started) }()
+
+	if !r.mu.TryLock() {
+		report.State = Busy
+		report.Detail = "this session is updating the index right now, so the answer below may be behind"
+		return report, nil
+	}
+	defer r.mu.Unlock()
+
+	// The cross-process claim, same rule: try once, never wait. A failed claim is not
+	// an error and not proof of staleness — it is "somebody else owns the tree".
+	lock, lockErr := Acquire(r.root, 0)
+	if lockErr != nil {
+		report.State = Busy
+		if holder := Holder(r.root); holder != "" {
+			report.Detail = "another session (pid " + holder +
+				") is updating the index right now, so the answer below may be behind"
+		} else {
+			report.Detail = "another session is updating the index right now, so the answer below may be behind"
+		}
+		return report, nil
+	}
+	defer lock.Release()
 
 	if detail, missing := r.indexMissing(); missing {
 		report.State = Unavailable

@@ -18,6 +18,7 @@ import {
 } from './panels';
 import { LearnPanel } from './LearnPanel';
 import { MemoryPanel } from './MemoryPanel';
+import { CodeIntelPanel } from './CodeIntelPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ConfigPanel } from './ConfigPanel';
 import { TaskPanel } from './TaskPanel';
@@ -65,7 +66,7 @@ export function PanelHost() {
             panel === 'config' || panel === 'tasks' || panel === 'learn' ? ' dialog-wide' : ''
           }${panel === 'files' ? ' dialog-files' : ''}${
             panel === 'memory' ? ' dialog-memory' : ''
-          }`}
+          }${panel === 'codeintel' ? ' dialog-memory' : ''}`}
           aria-label={t('topbar.commands')}
         >
           {panel === 'commands' ? <CommandPalette /> : null}
@@ -86,6 +87,7 @@ export function PanelHost() {
           {panel === 'learn' ? <LearnPanel /> : null}
           {panel === 'tasks' ? <TaskPanel /> : null}
           {panel === 'memory' ? <MemoryPanel /> : null}
+          {panel === 'codeintel' ? <CodeIntelPanel /> : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

@@ -74,7 +74,26 @@ const VERSION = 1
 // the panel is open. A front end that draws the badge gates it on this number:
 // a runtime below 8 never sends the key, and a badge that read "absent" as
 // zero would hide a queue the runtime is holding.
-const PROTOCOL = 8
+//
+// 9 adds the workspace's code index: `codeintel_action` inbound, a `codeintel`
+// kind on the `ui` channel carrying the workbench panel's whole snapshot, and a
+// `codeintel` group on `ui(state)` saying only whether the capability is enabled,
+// whether an index exists and whether a build is running.
+//
+// Like 6, this is purely additive and a front end that knows none of it simply
+// never asks. Two shapes are worth noting because they are this number's own
+// design rather than a repetition of the memory one:
+//
+//   - **A build answers immediately.** `init` and `sync` start a background pass
+//     and reply `started`; progress arrives as `ui(codeintel)` messages carrying a
+//     `progress` object. A protocol whose reply waited for a multi-minute build
+//     would block every other message on the connection, including the ones
+//     drawing the progress it was waiting for.
+//   - **`enabled` and "an index exists" are separate facts.** They travel as two
+//     keys on both the panel snapshot and `ui(state)` because a person reaches
+//     both mismatched states — built-but-turned-off, and turned-on-but-never-built
+//     — and a single boolean could not express either.
+const PROTOCOL = 9
 
 // Message keys used by every envelope.
 const (
@@ -96,21 +115,21 @@ const (
 	// fresh id, and opens the copy. The front end names the reply by its text
 	// and by the number of user rows it drew above it (see the store's `Fork`
 	// for why the two facts are needed at once).
-	InSessionFork = "session_fork"
-	InInterrupt          = "interrupt"
-	InSetAutopilot       = "set_autopilot"
-	InSetModel           = "set_model"
-	InSetThinking        = "set_thinking"
-	InSetEffort          = "set_effort"
-	InStatus             = "status"
-	InTools              = "tools"
-	InMCP                = "mcp"
-	InCompact            = "compact"
-	InContext            = "context"
-	InSkills             = "skills"
-	InGoal               = "goal"
-	InRefreshState       = "refresh_state"
-	InShutdown           = "shutdown"
+	InSessionFork  = "session_fork"
+	InInterrupt    = "interrupt"
+	InSetAutopilot = "set_autopilot"
+	InSetModel     = "set_model"
+	InSetThinking  = "set_thinking"
+	InSetEffort    = "set_effort"
+	InStatus       = "status"
+	InTools        = "tools"
+	InMCP          = "mcp"
+	InCompact      = "compact"
+	InContext      = "context"
+	InSkills       = "skills"
+	InGoal         = "goal"
+	InRefreshState = "refresh_state"
+	InShutdown     = "shutdown"
 
 	// Files. Workspace-scoped and read-only in this phase; `file_write` and the
 	// rest are deliberately absent rather than declared and unimplemented.
@@ -148,6 +167,16 @@ const (
 	// vocabularies.
 	InMemoryList   = "memory_list"
 	InMemoryAction = "memory_action"
+
+	// The workspace's code index. **One verb**, unlike memory's two: `status` is one of
+	// this message's actions rather than its own kind, because the panel asks for the
+	// snapshot on open and after every action anyway — two inbound messages that always
+	// produce the same outbound one would be one message with two spellings.
+	//
+	// `init` and `sync` are here and not tools because building an index is a decision
+	// about the person's machine (time, disk, CPU), which is the same rule as the memory
+	// verbs: the model cannot spend somebody else's afternoon.
+	InCodeIntel = "codeintel_action"
 )
 
 // Message kinds travelling runtime -> front end.
@@ -220,6 +249,16 @@ const (
 	// notice alone. The panel is a modal layer over the transcript, so a notice lands
 	// behind the thing that is covering it — the trap the files panel hit first.
 	UIMemory = "memory"
+
+	// The workspace's code index: the panel's whole snapshot, and the progress of a
+	// build in flight.
+	//
+	// One kind for both, with `progress` present only while a build runs, because the
+	// alternative — a second kind for progress — would make a front end handle two
+	// shapes of one panel and keep them in step. A refusal carries `problem` beside the
+	// snapshot, for the reason the memory panel carries it: the transcript is behind the
+	// panel that is asking.
+	UICodeIntel = "codeintel"
 )
 
 // Terminal statuses. The runtime is the only source of truth for these; a front
@@ -306,6 +345,25 @@ const (
 // MemoryActions is the accepted list, for the error message that names them.
 var MemoryActions = []string{MemoryPublish, MemoryReject, MemoryDeprecate, MemoryRebuild, MemoryConfig}
 
+// Actions a `codeintel_action` message accepts.
+//
+// The spellings live here for the same reason the memory ones do: the wire's vocabulary
+// is this package's business, and a constant that aliased a storage package's string
+// would move the day somebody renamed a field.
+const (
+	// CodeIntelStatus reads the panel's snapshot. It changes nothing.
+	CodeIntelStatus = "status"
+	// CodeIntelConfig writes the enable switch.
+	CodeIntelConfig = "config"
+	// CodeIntelInit builds the index from scratch.
+	CodeIntelInit = "init"
+	// CodeIntelSync brings an existing index up to date.
+	CodeIntelSync = "sync"
+)
+
+// CodeIntelActions is the accepted list, for the error message that names them.
+var CodeIntelActions = []string{CodeIntelStatus, CodeIntelConfig, CodeIntelInit, CodeIntelSync}
+
 // Answers a front end may return for a question. The third value the runtime
 // can produce — `unavailable`, nobody to ask — is never sent by a front end.
 const (
@@ -366,6 +424,11 @@ var RequiredKeys = map[string][]string{
 	// `action` is the verb; the rest of the message is that verb's arguments and is
 	// validated by the runtime, which is the side that knows what publishing needs.
 	InMemoryAction: {"v", "t", "action"},
+
+	// `action` is the verb and the arguments are that verb's. `status` takes none, and
+	// `config` carries `enabled` — validated by the runtime for the same reason the
+	// memory verbs are: it is the side that knows what a switch needs.
+	InCodeIntel: {"v", "t", "action"},
 }
 
 // TerminalDefaults are the size a terminal is created with when the client does

@@ -27,6 +27,8 @@
 import { create } from 'zustand';
 import { conversationView } from '@/conversationView';
 import type {
+  CodeIntelActionKind,
+  CodeIntelSnapshot,
   FileEntry,
   FrontendMsg,
   MemoryActionKind,
@@ -226,7 +228,12 @@ export type PanelKind =
    * waiting to be reviewed. A panel rather than a view because its subject is
    * the workspace, not the conversation — it opens from the same drawer as
    * Config and Tasks, and what it edits outlives every session. */
-  | 'memory';
+  | 'memory'
+  /* The code index: whether the model may use it, whether one exists, and the
+   * two buttons that make one. A panel for the same reason Memory is — its
+   * subject is the workspace rather than the conversation, and what it configures
+   * outlives every session. */
+  | 'codeintel';
 
 /* `ssh` sits with the workspace-capability blocks (jobs, mcp): it is about
  * things running in the workspace, not about this turn's conversation. */
@@ -915,6 +922,26 @@ export interface SessionRuntime {
    */
   memoryProblem: string | null;
 
+  /* ---------------- the code index ----------------
+   *
+   * The panel's whole subject, in one snapshot, per session for the same reason
+   * `memory` is: the runtime that answered is per session, and two conversations
+   * in two workspaces have two unrelated indexes.
+   *
+   * `null` means "not asked yet" — the panel draws its loading state — which is a
+   * different statement from a snapshot whose `indexed` is false.
+   */
+  codeintel: CodeIntelSnapshot | null;
+  /**
+   * Why the last `codeintel_action` did **not** take effect, verbatim.
+   *
+   * Here rather than left to the notice stream for the reason `memoryProblem`
+   * exists: the panel is a modal layer over the transcript, so a failed init would
+   * be printed behind the panel that asked for it. Cleared by the next successful
+   * snapshot, because by then it describes a request that has been superseded.
+   */
+  codeintelProblem: string | null;
+
   /* ---------------- this session's own input state ---------------- */
   draft: string;
   history: string[];
@@ -1092,6 +1119,8 @@ export function createSessionBucket(
     fileView: null,
     memory: null,
     memoryProblem: null,
+    codeintel: null,
+    codeintelProblem: null,
     draft: '',
     history: [],
     historyCursor: null,
@@ -2019,6 +2048,29 @@ export interface AppStore {
    * itself — it redraws from the runtime's answer.
    */
   memoryAction(action: MemoryActionKind, args?: MemoryActionArgs): void;
+
+  /* ---------------- the code index ---------------- */
+
+  /**
+   * Ask for the panel's whole snapshot (`ui(codeintel)`).
+   *
+   * One request for everything — the switch, whether an index exists, the counts,
+   * how far behind it is and any build in flight — because they all describe one
+   * index and a panel assembled from several replies could draw a file count from a
+   * build that had already been replaced.
+   */
+  requestCodeIntel(): void;
+  /**
+   * Perform one verb on the index.
+   *
+   * `status` and `config` answer with a fresh snapshot; `init` and `sync`
+   * **acknowledge immediately** and the build narrates itself through pushed
+   * `ui(codeintel)` messages. That is why nothing here sets an optimistic
+   * "building" flag: the runtime's own snapshot is the only source for it, and a
+   * guessed one would show a progress bar for a pass that had already failed to
+   * start.
+   */
+  codeIntelAction(action: CodeIntelActionKind, args?: { enabled?: boolean }): void;
 
   /* ---------------- the workspace: terminals ---------------- */
 
@@ -4693,6 +4745,46 @@ export const useApp = create<AppStore>((set, get) => {
               });
               break;
             }
+            case 'codeintel': {
+              // **The snapshot replaces, never merges** — the same rule the memory
+              // panel follows, and for the same reason: the runtime is the only
+              // source of truth about what the index holds, and a front end that
+              // unioned the new answer with its own copy would keep drawing a file
+              // count from a build that has since been replaced.
+              //
+              // Two kinds of message land here and both carry this shape: the answer
+              // to a `codeintel_action`, and a **pushed** message from a build in
+              // flight (progress, and the outcome when it ends). That is why the
+              // branch does not distinguish them — the payload says everything the
+              // panel needs, including whether a build is still running.
+              //
+              // `problem` arrives beside the snapshot rather than instead of it: a
+              // refused action has to say what failed *and* still draw the state it
+              // failed in.
+              const snapshot = msg.codeintel;
+              patchWith(key, (live) => ({
+                ...(snapshot && typeof snapshot === 'object'
+                  ? { codeintel: snapshot as CodeIntelSnapshot }
+                  : {}),
+                // The switch is also carried on `ui(state)`; this keeps the workbench
+                // row and any badge in step with the panel's own answer instead of
+                // waiting for the next tool result to arrive.
+                uiState:
+                  snapshot && typeof snapshot === 'object' && live.uiState
+                    ? {
+                        ...live.uiState,
+                        codeintel: {
+                          enabled: snapshot.enabled,
+                          indexed: snapshot.indexed,
+                          building: snapshot.building,
+                        },
+                      }
+                    : live.uiState,
+                codeintelProblem:
+                  typeof msg.problem === 'string' && msg.problem !== '' ? msg.problem : null,
+              }));
+              break;
+            }
             case 'file_read': {
               // **Two destinations, one answer.** The body goes into the
               // transcript as a block — that is where a file read belongs in
@@ -5290,6 +5382,12 @@ export const useApp = create<AppStore>((set, get) => {
         // not something every turn needs to redraw.
         get().requestMemory();
       }
+      if (p === 'codeintel') {
+        // Same rule as memory: the counts are the panel's own snapshot. The switch is
+        // also on `ui(state)`, but "how far behind is it" is not, and that is the
+        // question the panel exists to answer.
+        get().requestCodeIntel();
+      }
     },
 
     closePanel() {
@@ -5817,6 +5915,25 @@ export const useApp = create<AppStore>((set, get) => {
       // what publishing takes, and a second check here would be a second answer that
       // eventually disagrees with it.
       sendTo(key, { v: 1, t: 'memory_action', action, ...(args ?? {}) });
+    },
+
+    requestCodeIntel() {
+      const key = get().activeKey;
+      if (key === null) return;
+      // No loading flag, for the same reason `requestMemory` has none: the panel draws
+      // `codeintel === null` as its loading state, and a second boolean saying the same
+      // thing is a second thing to get out of step.
+      sendTo(key, { v: 1, t: 'codeintel_action', action: 'status' });
+    },
+
+    codeIntelAction(action, args) {
+      const key = get().activeKey;
+      if (key === null) return;
+      // The previous refusal is cleared here rather than on the answer: a new press
+      // supersedes it, and leaving it up would show a stale reason over a panel whose
+      // state may already be fine.
+      patch(key, { codeintelProblem: null });
+      sendTo(key, { v: 1, t: 'codeintel_action', action, ...(args ?? {}) });
     },
 
     /* ==========================================================

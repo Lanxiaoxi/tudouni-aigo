@@ -100,18 +100,33 @@ func TestOutputBudgetReportsOvershoot(t *testing.T) {
 // TestNewCodeExploreAbsentWithoutIndex is the registration rule: a tool that can only answer
 // "there is no index" costs a schema in every request and a round trip to learn nothing.
 func TestNewCodeExploreAbsentWithoutIndex(t *testing.T) {
-	workspace, err := tools.NewWorkspace(t.TempDir())
+	root := t.TempDir()
+	workspace, err := tools.NewWorkspace(root)
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	if _, ok := NewCodeExplore(workspace); ok {
+	if _, ok := NewCodeExplore(workspace, codeintel.New(root, "")); ok {
 		t.Error("code_explore registered for a workspace with no index")
+	}
+}
+
+// TestNewCodeExploreAbsentWithoutARefresher pins the other half of the registration rule:
+// the runtime owns the refresher, so a caller that forgot to hand one over gets no tool
+// rather than a second one built quietly behind its back.
+func TestNewCodeExploreAbsentWithoutARefresher(t *testing.T) {
+	root := t.TempDir()
+	workspace, err := tools.NewWorkspace(root)
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	if _, ok := NewCodeExplore(workspace, nil); ok {
+		t.Error("code_explore registered with no refresher")
 	}
 }
 
 // TestNewCodeExploreRejectsNilWorkspace covers the assembly path where there is no workspace.
 func TestNewCodeExploreRejectsNilWorkspace(t *testing.T) {
-	if _, ok := NewCodeExplore(nil); ok {
+	if _, ok := NewCodeExplore(nil, codeintel.New(t.TempDir(), "")); ok {
 		t.Error("code_explore registered with a nil workspace")
 	}
 }

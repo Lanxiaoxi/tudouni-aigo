@@ -44,6 +44,19 @@ type RuntimeHooks struct {
 	// nowhere to draw them looks like. The terminals still run and can still be
 	// listed; only the byte stream has no reader.
 	OnTerminalEvent func(payload map[string]any)
+	// OnCodeIntelEvent carries one code-index event to the front end as the body of a
+	// `ui` message — the same contract as OnTerminalEvent, and a separate hook because
+	// the two have different producers and different lifetimes: a shell outlives a
+	// session and an index build belongs to one workspace, so one field serving both
+	// would send one of them to a connection that is no longer the right one.
+	//
+	// This is where a build's progress and its outcome arrive. `codeintel_action`
+	// answers immediately by design, so without this hook a build would be invisible
+	// from the moment it started until the panel was reopened.
+	//
+	// Nil means nobody is listening: the build still runs and the index is still
+	// written; only the progress has no reader.
+	OnCodeIntelEvent func(payload map[string]any)
 	// Report is where an instruction a person has to **act on** goes when it is
 	// produced **while a session is already running**: today, the device code and
 	// the verification URI of the managed-token login (`--ericai`).
@@ -147,6 +160,10 @@ func Main(opener RuntimeOpener, summaries func(includeArchived bool) []map[strin
 			// connection, which is exactly the pairing `RuntimeHooks.OnTerminalEvent`
 			// exists to express.
 			OnTerminalEvent: server.SendTerminalEvent,
+			// A build's progress, same transport and the same hook shape: the build
+			// outlives the reply that started it, so it cannot answer on the reply's
+			// message. See RuntimeHooks.OnCodeIntelEvent.
+			OnCodeIntelEvent: server.SendCodeIntelEvent,
 			// Same reasoning, and the same failure without it: this mode's stderr is
 			// drained by the front end (see Client.Start), so an instruction written
 			// there reaches nobody. See RuntimeHooks.Report.

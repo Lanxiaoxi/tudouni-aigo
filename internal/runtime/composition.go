@@ -14,6 +14,8 @@ import (
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel/cggraph"
 	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/files"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
@@ -211,11 +213,11 @@ func SessionSummaries(store *state.SessionStore, limit int, includeArchived bool
 	out := make([]map[string]any, 0, len(entries))
 	for _, item := range entries {
 		row := map[string]any{
-			"session_id": item.id,
-			"messages":   0,
-			"steps":      0,
-			"todos":      "",
-			"preview":    "",
+			"session_id":  item.id,
+			"messages":    0,
+			"steps":       0,
+			"todos":       "",
+			"preview":     "",
 			"modified_at": nil,
 			// Always stated, like every other field here: a front end drawing an
 			// archive filter needs the flag on every row, and "absent" would be a
@@ -310,6 +312,12 @@ type Options struct {
 	// byte stream. The terminals still run and are still listed; only the stream
 	// has no reader.
 	OnTerminalEvent func(payload map[string]any)
+	// OnCodeIntelEvent carries one code-index event to the front end — a build's
+	// progress and its outcome. See protocol.RuntimeHooks.OnCodeIntelEvent.
+	//
+	// Nil is the ordinary case for an in-process front end: the build still runs and
+	// the index is still written; only the progress has no reader.
+	OnCodeIntelEvent func(payload map[string]any)
 }
 
 // Runtime is one assembled session.
@@ -435,6 +443,18 @@ type Runtime struct {
 	// onTerminalEvent is where a terminal's events go. It is kept as a field so
 	// that `Close` can unhook it — see the sink it installs in OpenRuntime.
 	onTerminalEvent func(payload map[string]any)
+	// onCodeIntelEvent is where an index build's progress and completion go, on the
+	// same terms: nil means nobody is listening, which is true of the REPL and means
+	// the build still runs but reports nowhere.
+	//
+	// It is a **separate field from onTerminalEvent** even though both end up as a
+	// `ui` body: the two are written by different goroutines and un-hooked at
+	// different moments, and one field serving two producers is how a session switch
+	// ends up sending one of them to the previous connection.
+	onCodeIntelEvent func(payload map[string]any)
+	// CodeIntel is this workspace's index handle and its panel state. Nil only in
+	// tests that build a Runtime by hand.
+	CodeIntel *codeIntelState
 }
 
 // PreflightCheck reports what the user has to fix before anything can run.
@@ -563,10 +583,10 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		// the root a second time: two resolutions of one root are two objects that
 		// agree today and are free to stop agreeing tomorrow, and the day they
 		// disagree one door is guarded and the other is not.
-		Files:     files.NewServiceFromWorkspace(workspace),
-		Terminals: options.Booted.Terminals,
-		SSH:       options.Booted.SSH,
-		mcpNames:  mcpNames,
+		Files:      files.NewServiceFromWorkspace(workspace),
+		Terminals:  options.Booted.Terminals,
+		SSH:        options.Booted.SSH,
+		mcpNames:   mcpNames,
 		httpClient: &http.Client{Timeout: 120 * time.Second},
 		startedAt:  time.Now(),
 		report:     options.Report,
@@ -691,16 +711,31 @@ func OpenRuntime(options Options) (*Runtime, error) {
 			i18n.T("notice.web.no_key", "path", paths.ExampleConfigPath())))
 	}
 
+	// The code index's handle, built here rather than inside the registry because it is
+	// shared: the `code_explore` tool's inline freshness check and the panel's init/sync
+	// must serialize on **one** mutex and one cross-process claim. Two refreshers over
+	// one index would be two locks pretending to guard one write path.
+	//
+	// The parser binary is optional, and its absence is not an error: an index built
+	// earlier can still be queried, it just cannot be brought up to date — a state the
+	// panel shows and `code_explore` warns about. See internal/codeintel.
+	parserPath, _ := builtin.CgParserBinary()
+	refresher := codeintel.New(workspace.Root(), parserPath)
+	codeIntelEnabled := codeintel.Enabled(workspace.Root())
+	runtimeValue.CodeIntel = newCodeIntelState(workspace, refresher, codeIntelEnabled)
+
 	registry, err := builtin.CreateRegistry(builtin.Assembly{
-		Workspace:     workspace,
-		TodoMetadata:  session.Metadata,
-		Questioner:    questionerOf(options.Channels),
-		HasJobs:       true,
-		HasWebFetch:   hasFetch,
-		HasWebSearch:  hasSearch,
-		SkillLoader:   skillLoader,
-		SkillMetadata: session.Metadata,
-		Extra:         extra,
+		Workspace:        workspace,
+		TodoMetadata:     session.Metadata,
+		Questioner:       questionerOf(options.Channels),
+		HasJobs:          true,
+		HasWebFetch:      hasFetch,
+		HasWebSearch:     hasSearch,
+		SkillLoader:      skillLoader,
+		SkillMetadata:    session.Metadata,
+		CodeIntel:        refresher,
+		CodeIntelEnabled: codeIntelEnabled,
+		Extra:            extra,
 	})
 	if err != nil {
 		jobs.Close()
@@ -792,20 +827,30 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		runtimeValue.notices = append(runtimeValue.notices, notice("info", "mcp", line))
 	}
 
-	for range registry.Missing {
-		// **The two branches have to stay separate.** "This platform is not
-		// supported" and "it is supported but the file is gone" are different
-		// problems with different remedies — one needs a line of code, the other
-		// needs one command. Merging them into "the engine is missing" sends the
-		// first person off to re-run a fetch script, and the script cannot possibly
-		// fix it. That is the worst kind of wrong answer: it costs an afternoon and
-		// the problem is exactly where it was.
-		if triple, ok := hostTriple(); ok {
-			runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
-				i18n.T("notice.grep.missing_binary", "triple", triple)))
-		} else {
-			runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
-				i18n.T("notice.grep.unsupported_platform", "platform", runtime.GOOS+"/"+runtime.GOARCH)))
+	for _, missing := range registry.Missing {
+		// **Switch on the name.** This used to ignore it and always emit the grep
+		// sentence, which was invisible while grep was the only tool that could land
+		// here — and became a lie the moment `code_explore` joined it: a workspace with
+		// code intelligence turned on and no index yet would have been told its ripgrep
+		// build was missing, sending the person to re-vendor a binary that was fine.
+		//
+		// The two branches inside grep stay separate for the original reason: "this
+		// platform is not supported" and "it is supported but the file is gone" are
+		// different problems with different remedies — one needs a line of code, the
+		// other needs one command.
+		switch missing {
+		case builtin.CodeExploreToolName:
+			runtimeValue.notices = append(runtimeValue.notices, notice("warn", "codeintel",
+				i18n.T("notice.codeintel.no_index",
+					"path", filepath.ToSlash(cggraph.IndexDirName+"/"+cggraph.DefaultDBName))))
+		default:
+			if triple, ok := hostTriple(); ok {
+				runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
+					i18n.T("notice.grep.missing_binary", "triple", triple)))
+			} else {
+				runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
+					i18n.T("notice.grep.unsupported_platform", "platform", runtime.GOOS+"/"+runtime.GOARCH)))
+			}
 		}
 	}
 
@@ -976,6 +1021,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	})
 	runtimeValue.OnEventHook = options.OnEventHook
 	runtimeValue.onTerminalEvent = options.OnTerminalEvent
+	runtimeValue.onCodeIntelEvent = options.OnCodeIntelEvent
 
 	// The terminal manager is process-scoped, so its sink has to be **pointed at
 	// this runtime's connection** rather than built with it. That is the whole
@@ -1830,6 +1876,11 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 		// rides on every tool result and parsing every proposal there would make
 		// the review queue the workspace's hottest file.
 		"memory_pending": r.memoryPending(),
+		// The code index, in three booleans: is the capability on, does an index
+		// exist, is a build running. Counts stay on `ui(codeintel)` — this rides on
+		// every tool result and the workbench only needs enough to decide whether to
+		// draw the row at all and whether to badge it.
+		"codeintel": r.codeIntelFlags(),
 		// Always present, in both the "there is one" and "there is not" shapes: a
 		// front end with two cases to draw has two places to get the empty one
 		// wrong.

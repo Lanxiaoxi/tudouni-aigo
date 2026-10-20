@@ -1555,6 +1555,62 @@ export const en = {
   'panel.memory.op.deprecate': 'retires {id}',
   'panel.memory.noTriggers': 'no triggers',
   'panel.memory.problem': 'The last change did not take effect',
+
+  /* ---------------- code intelligence ----------------
+   *
+   * Two facts are named separately throughout, because they are separate: `enabled` is
+   * the person's permission and `indexed` is whether a database exists. Every sentence
+   * below that could confuse them says which one it means. */
+  'lb.codeintel': 'Code intelligence',
+  'lb.codeintelHint': 'The workspace index: whether the model may use it, and whether it exists',
+  'panel.codeintel.title': 'Code intelligence',
+  'panel.codeintel.note': 'This workspace’s code index',
+  'panel.codeintel.noSession': 'Open a session in this workspace to manage its code index.',
+  'panel.codeintel.problem': 'The last request did not take effect',
+  'panel.codeintel.state': 'The index',
+  'panel.codeintel.permission': 'Permission',
+  'panel.codeintel.on': 'on',
+  'panel.codeintel.off': 'off',
+  'panel.codeintel.enable': 'Let the model use this index',
+  'panel.codeintel.enableHint':
+    'Adds code_explore to the tool set from the next turn. Turning it off removes the tool and leaves the index on disk untouched.',
+  'panel.codeintel.sync': 'Sync',
+  'panel.codeintel.init': 'Initialize',
+  'panel.codeintel.initAgain': 'Rebuild from scratch',
+  'panel.codeintel.initConfirm': 'Press again to rebuild',
+  'panel.codeintel.noParser':
+    'This installation carries no index parser for this platform, so the index cannot be built or updated here.',
+  'panel.codeintel.noCancel':
+    'A build writes the index in place, so it cannot be cancelled — stopping it would leave a half-updated graph instead of the previous one.',
+  'panel.codeintel.starting': 'starting',
+  'panel.codeintel.coverage': 'Coverage',
+  'panel.codeintel.deferred':
+    '{n} file(s) produced no symbols at all ({languages}) — they are invisible to every query.',
+  'panel.codeintel.heuristic':
+    '{n} file(s) were read without a grammar ({languages}): names and locations are reliable, call edges are absent.',
+  'panel.codeintel.lastRun': 'Last run',
+  'panel.codeintel.lastNone': 'No build has run in this session.',
+  'panel.codeintel.lastInit': 'Full rebuild',
+  'panel.codeintel.lastSync': 'Sync',
+  'panel.codeintel.lastOk': '{files} files · {nodes} nodes · {edges} edges',
+  'panel.codeintel.files': 'files',
+  'panel.codeintel.nodes': 'symbols',
+  'panel.codeintel.edges': 'edges',
+  'panel.codeintel.unresolved': 'unresolved',
+  'panel.codeintel.built': 'built {when}',
+  'panel.codeintel.fresh': 'up to date — {n} files checked',
+  'panel.codeintel.stale':
+    'behind the working tree: {count} file(s) ({changed} modified, {added} added, {removed} deleted). Answers may be stale until you sync.',
+  'panel.codeintel.notIndexed': 'No index yet',
+  'panel.codeintel.notIndexedHint':
+    'Nothing has been indexed for this workspace. Initialize builds {path}; the first pass takes a moment on a large tree.',
+  'panel.codeintel.situation.enabledIndexed': 'The model has code_explore, and it is reading this index.',
+  'panel.codeintel.situation.enabledNoIndex':
+    'Enabled, but there is no index to search yet — press Initialize, and the tool appears when the build finishes.',
+  'panel.codeintel.situation.disabledIndexed':
+    'An index exists and nothing is using it. Turn the switch on to give the model code_explore.',
+  'panel.codeintel.situation.disabledNoIndex':
+    'Off, and nothing has been indexed. Turning it on does not build anything by itself.',
 } as const;
 
 export type TKey = keyof typeof en;

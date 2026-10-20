@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
@@ -26,7 +27,10 @@ func TestCodeExploreAgainstIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspace: %v", err)
 	}
-	tool, ok := NewCodeExplore(workspace)
+	// The refresher is the runtime's, not the tool's — built the same way the
+	// composition does when it hands one to both the panel and the tool.
+	parserPath, _ := CgParserBinary()
+	tool, ok := NewCodeExplore(workspace, codeintel.New(root, parserPath))
 	if !ok {
 		t.Fatalf("no index found under %s", root)
 	}

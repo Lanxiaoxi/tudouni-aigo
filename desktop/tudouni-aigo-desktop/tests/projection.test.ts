@@ -176,7 +176,9 @@ test('the envelope version is the one hard failure point', () => {
   // exactly why `protocol` is separate from `v` in the first place. 7 adds
   // `session_fork` inbound. 8 adds `memory_pending` to the `ui(state)`
   // snapshot so the workbench's Memory badge moves without the panel being open.
-  assert.equal(PROTOCOL_VERSION, 8);
+  // 9 adds the workspace's code index: `codeintel_action` inbound, the
+  // `codeintel` kind on the `ui` channel, and three booleans on `ui(state)`.
+  assert.equal(PROTOCOL_VERSION, 9);
 
   // Decoding an `init` from a **3** runtime still works: the field is documented
   // as survivable, and the capture in `tests/fixtures/opening.jsonl` is one, so

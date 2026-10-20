@@ -11,6 +11,7 @@ import type {
 } from '@/protocol/types';
 import { useApp, useSessionField } from '@/state/store';
 import { EmptyState } from '@/components/ui/kit';
+import { SwitchRow } from '@/components/ui/SwitchRow';
 import { formatRelative } from '@/utils/format';
 import { PanelBody, PanelShell } from './PanelShell';
 
@@ -335,40 +336,6 @@ const DEFAULTS: MemoryConfig = {
   entry_chars: 600,
   note_chars: 2400,
 };
-
-function SwitchRow({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  // A `role="switch"` button rather than a styled checkbox: the two states are one
-  // element's own attribute, and nothing has to keep a hidden input in sync with a
-  // drawn knob. It is the same control the task editor uses, at the same size.
-  return (
-    <div className="wm-switch">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-label={label}
-        className={`tk-switch${checked ? ' is-on' : ''}`}
-        onClick={() => onChange(!checked)}
-      >
-        <span className="tk-switch-knob" />
-      </button>
-      <span className="wm-switch-text">
-        <span className="wm-switch-label">{label}</span>
-        <span className="wm-switch-hint">{hint}</span>
-      </span>
-    </div>
-  );
-}
 
 function NumberRow({
   label,
