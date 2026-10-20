@@ -218,6 +218,46 @@
   color: var(--success);
 }
 
+/* The reply's two buttons sit side by side: copy, then fork. The group is a
+   flex row of the same 22px squares the copy button already is, so the
+   hover-reveal rule above reaches both through `.entry-copy` and the fork
+   carries an identical one. */
+.e-answer-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.entry-fork {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  /* Same hidden-until-hover rule as the copy button: the affordance is noise
+     while the reader is not reading the row, and the row's `:hover` also
+     covers the button itself, so a hovered button never disappears under
+     the cursor before it can be clicked. */
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+
+.e-answer-row:has(.e-answer:hover) .entry-fork,
+.entry-fork:hover {
+  opacity: 1;
+}
+
+.entry-fork:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
 /* ---------------- 3. 模型步 ---------------- */
 .e-model {
   display: flex;

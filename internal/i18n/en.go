@@ -931,6 +931,8 @@ var catalog = map[string]string{
 	"channels.session.close_failed":   "error closing the previous session's runtime: {problem}",
 	"channels.session.delete_failed":  "[session] could not delete {name} (nothing was removed): {problem}",
 	"channels.session.deleted":        "[session] deleted {name}.",
+	"channels.session.fork_failed":    "[session] could not fork from {name} (nothing was created): {problem}",
+	"channels.session.forked":         "[session] forked a new session from {name}. It is open now.",
 	"channels.session.archive_failed": "[session] could not archive {name} (nothing was changed): {problem}",
 	"channels.session.archived":       "[session] archived {name}. It is out of the list; un-archive it from the session picker.",
 	"channels.session.unarchived":     "[session] un-archived {name}.",
@@ -1152,5 +1154,7 @@ var catalog = map[string]string{
 	"store.missing_file":     "session file does not exist: {path}",
 	"store.delete_child":     "session {name} belongs to a delegated agent and cannot be deleted on its own; delete its parent session instead.",
 	"store.archive_child":    "session {name} belongs to a delegated agent and cannot be archived on its own; archive its parent session instead.",
+	"store.fork_child":       "session {name} belongs to a delegated agent and cannot be forked on its own; fork its parent session instead.",
+	"store.fork_no_match":    "the reply was not found in session {name}; its on-disk history does not carry it.",
 	"session.prompt_missing": "the system prompt file does not exist: {file}\nit is not an optional file — the agent sends it to the model on every turn.",
 }

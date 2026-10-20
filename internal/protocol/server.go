@@ -107,6 +107,11 @@ type Bootstrap struct {
 	// caller wired with a deleter but no archiver should be told archiving is
 	// unavailable rather than have it silently do nothing.
 	ArchiveSession func(id string, archived bool) error
+	// ForkSession copies one saved session up to a chosen reply, under a fresh id,
+	// and returns the new id. A nil hook refuses, like the others: a front end that
+	// sends the message to a runtime that cannot fork gets a notice, not a copy
+	// made from nothing.
+	ForkSession func(id, reply string, userBefore int) (string, error)
 	// Factory builds a runtime for a session id. A nil factory refuses to switch.
 	Factory Factory
 	// Autopilot is the process-level switch; a new runtime is assembled with it.
@@ -401,6 +406,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 
 	case InSessionArchive:
 		s.archiveSession(message)
+
+	case InSessionFork:
+		s.forkSession(message)
 
 	case InSetAutopilot:
 		on, _ := Bool(message, "on")
@@ -1310,6 +1318,19 @@ func (s *Server) switchSession(message map[string]any) {
 	}
 
 	s.Attach(next)
+	s.resetTurnState()
+	s.emitOpening()
+}
+
+// resetTurnState releases everything a finished or abandoned turn left behind.
+//
+// A session switch ends whatever turn was running, so its context is released
+// here for the same reason the flag is cleared: the next turn must not inherit
+// it. Switching sessions while a turn is in flight is the one path where the
+// old turn's cancellation has no other owner. Called from every path that
+// mounts a runtime the previous one is not running — the switch, a delete of
+// the mounted session, and a fork that opens its copy.
+func (s *Server) resetTurnState() {
 	s.pending.abandonAll()
 
 	s.mu.Lock()
@@ -1317,17 +1338,11 @@ func (s *Server) switchSession(message map[string]any) {
 	s.answer = ""
 	s.lastRunID = ""
 	s.lastStep = 0
-	// A session switch ends whatever turn was running, so its context is released
-	// here for the same reason the flag is cleared: the next turn must not inherit
-	// it. Switching sessions while a turn is in flight is the one path where the
-	// old turn's cancellation has no other owner.
 	if s.turnCancel != nil {
 		s.turnCancel()
 		s.turnCtx, s.turnCancel = nil, nil
 	}
 	s.mu.Unlock()
-
-	s.emitOpening()
 }
 
 // deleteSession removes one saved session file.
@@ -1391,21 +1406,7 @@ func (s *Server) deleteSession(message map[string]any) {
 			warn("%s", i18n.T("channels.session.close_failed", "problem", err.Error()))
 		}
 		s.Attach(next)
-		s.pending.abandonAll()
-
-		s.mu.Lock()
-		s.stop = false
-		s.answer = ""
-		s.lastRunID = ""
-		s.lastStep = 0
-		// See the session switch above: the running turn's context has no other
-		// owner once the runtime it belonged to has been replaced.
-		if s.turnCancel != nil {
-			s.turnCancel()
-			s.turnCtx, s.turnCancel = nil, nil
-		}
-		s.mu.Unlock()
-
+		s.resetTurnState()
 		s.emitOpening()
 	} else {
 		// Not the mounted session: the picker just needs the new list. Sent even
@@ -1415,6 +1416,111 @@ func (s *Server) deleteSession(message map[string]any) {
 	}
 
 	s.notice("info", "session", i18n.T("channels.session.deleted", "name", sessionID))
+}
+
+// forkSession copies the named session up to a chosen reply and opens the
+// copy.
+//
+// The front end names the reply by its text and by the number of user rows it
+// drew above it; the store matches and cuts on the turn boundary the reply
+// ends (`SessionStore.Fork`). The copy is a new conversation and it is what
+// gets mounted: a fork is "continue from here", and "continue the original"
+// stays possible because the source file is never touched — the copy is a
+// second file, and the source remains in the list.
+//
+// `user_before` absent means "no tie-break", not zero: a count of zero is a
+// real answer (the first reply of the conversation), and conflating the two
+// would let a missing field pick the wrong copy of a repeated reply.
+//
+// The copy is opened before the old runtime is closed, the same order
+// `switchSession` keeps: an assembly failure must not lose what the person is
+// reading. The new session's id travels on the opening triple, so the front
+// end does not need — and cannot cache — the id from any other message.
+func (s *Server) forkSession(message map[string]any) {
+	raw, present := message["session_id"]
+	sessionID := ""
+	if present && raw != nil {
+		text, ok := raw.(string)
+		if !ok {
+			s.notice("warn", "session", i18n.T("channels.session.needs_string"))
+			return
+		}
+		sessionID = text
+	}
+	reply, ok := String(message, "reply")
+	if !ok || reply == "" {
+		s.notice("warn", "session", i18n.T("channels.session.fork_failed",
+			"name", sessionID, "problem", "the reply to fork from was not given"))
+		return
+	}
+	// Absent is -1 (no tie-break), never 0: see the note on the handler.
+	userBefore := -1
+	if value, present := Int(message, "user_before"); present {
+		userBefore = value
+	}
+
+	if s.bootstrap.ForkSession == nil {
+		// Fail-closed, like a nil Factory or deleter: a runtime wired without a
+		// forker refuses rather than guessing at a copy.
+		s.notice("warn", "session", i18n.T("channels.session.fork_failed",
+			"name", sessionID, "problem", "this runtime cannot fork sessions"))
+		return
+	}
+	if s.bootstrap.Factory == nil {
+		s.notice("warn", "session", i18n.T("channels.session.fork_failed",
+			"name", sessionID, "problem", "this runtime cannot open a session"))
+		return
+	}
+
+	// The reply's turn has to be on disk before the copy can include it: the
+	// front end draws the answer the moment it streams, but the store only sees
+	// it after the turn's last checkpoint. Joining also keeps the file whole
+	// while it is read — a turn mid-step would be a half line.
+	s.joinTurn()
+
+	newID, err := s.bootstrap.ForkSession(sessionID, reply, userBefore)
+	if err != nil {
+		s.notice("warn", "session", i18n.T("channels.session.fork_failed",
+			"name", sessionID, "problem", err.Error()))
+		return
+	}
+
+	// The copy is a new conversation, and whether it takes the screen depends on
+	// whether the source is the conversation on screen. Forking the **mounted**
+	// session opens the copy — that is the fork button's whole point ("continue
+	// from here"). Forking any other session only adds a row to the list and
+	// leaves the on-screen conversation alone, the same `wasCurrent` rule
+	// `deleteSession` keeps. In practice the button sits in the active transcript,
+	// so the source is the mounted session and this branch is the one taken.
+	previous := s.current()
+	wasCurrent := previous != nil && previous.SessionID() == sessionID
+
+	if wasCurrent {
+		next, err := s.bootstrap.Factory(newID)
+		if err != nil {
+			// The copy exists on disk either way — it shows up in the session
+			// list — and the front end stays on what it was reading, which is
+			// what a failed open must look like (see switchSession's rule).
+			s.notice("warn", "session", i18n.T("channels.session.fork_failed",
+				"name", sessionID,
+				"problem", "the copy was made but could not be opened: "+err.Error()))
+			s.sendSessions()
+			return
+		}
+		if err := previous.Close(); err != nil {
+			warn("%s", i18n.T("channels.session.close_failed", "problem", err.Error()))
+		}
+		s.Attach(next)
+		s.resetTurnState()
+		s.emitOpening()
+	}
+
+	// The list is re-sent on both paths: the fork adds a row the front end did
+	// not draw, and it is the list that has to show it. On the wasCurrent path
+	// the opening triple already refreshed the transcript, but not the list.
+	s.sendSessions()
+
+	s.notice("info", "session", i18n.T("channels.session.forked", "name", sessionID))
 }
 
 // OnEvent forwards one audit record.

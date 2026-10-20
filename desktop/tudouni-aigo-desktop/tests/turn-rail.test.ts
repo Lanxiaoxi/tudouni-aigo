@@ -59,7 +59,7 @@ function user(text: string, id?: string): Entry {
 }
 
 function answer(text: string, runId = 'r'): Entry {
-  return { kind: 'answer', id: next('answer'), runId, text };
+  return { kind: 'answer', id: next('answer'), runId, text, userBefore: 0 };
 }
 
 /** A model step and a tool row: rows that must contribute no marks. */

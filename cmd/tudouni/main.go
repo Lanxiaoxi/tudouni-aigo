@@ -194,6 +194,8 @@ func run(argv []string) int {
 			return booted.Store.Delete(id)
 		}, func(id string, archived bool) error {
 			return booted.Store.Archive(id, archived)
+		}, func(id, reply string, userBefore int) (string, error) {
+			return booted.Store.Fork(id, reply, userBefore)
 		}, opts.session, opts.autopilot, opts.stream, opts.debug)
 	}
 

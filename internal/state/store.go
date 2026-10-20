@@ -197,6 +197,121 @@ func (s *SessionStore) Archive(id string, archived bool) error {
 	return s.Save(session)
 }
 
+// Fork copies one saved session up to a chosen reply, under a fresh id, and
+// returns the new id.
+//
+// It is the "start a new conversation from this reply" behind a front end's
+// fork button. The front end names the reply by its **text**, and `userBefore`
+// — the number of user rows it drew above it — breaks the tie when the model
+// produced the same reply more than once. Text is the locator because it is
+// the one fact a front end can always state about the row it drew; the count
+// is a disambiguator only, because it is exact only until the runtime inserts
+// a change note the front end never echoed as a row.
+//
+// The cut lands on the **end of the matched message's turn**, not on the
+// message itself: a reply is an assistant message, and an assistant that made
+// tool calls is followed by their results — cutting on the message would leave
+// `tool_calls` without results in the fork, and the next request the fork
+// sends is refused. The end of a turn is the next user-role message (the
+// agent appends user prompts before the model speaks), so the copy always
+// ends on a boundary where the message list is consistent.
+//
+// Matching runs from the end, so a fork lands on the newest copy when nothing
+// breaks the tie.
+//
+// The caller must be sure no turn is running when it asks: the copy reads the
+// file, and a turn's last messages reach it only at the turn's checkpoint.
+// The protocol layer joins the turn before calling.
+//
+// The copy keeps the source's system message and metadata — the same prompt,
+// the same model choice — but never its archived flag: a fork is a new, active
+// conversation, and archiving would hide it from the default list.
+func (s *SessionStore) Fork(id, reply string, userBefore int) (string, error) {
+	if IsChildSessionID(id) {
+		return "", fmt.Errorf("%s", missingKey("store.fork_child", "name", id))
+	}
+	source, err := s.Load(id)
+	if err != nil {
+		return "", err
+	}
+
+	// Newest first, for the reason in the header. Any assistant message that
+	// carries the text is a candidate — a final reply or a mid-turn one.
+	candidates := make([]int, 0, 1)
+	for index := len(source.Messages) - 1; index >= 0; index-- {
+		message := source.Messages[index]
+		role, _ := message["role"].(string)
+		if role != "assistant" {
+			continue
+		}
+		text, ok := MessageText(message)
+		if ok && text == reply {
+			candidates = append(candidates, index)
+		}
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("%s", missingKey("store.fork_no_match", "name", id))
+	}
+
+	matched := candidates[0]
+	if len(candidates) > 1 && userBefore >= 0 {
+		for _, index := range candidates {
+			if userRowsBefore(source.Messages, index) == userBefore {
+				matched = index
+				break
+			}
+		}
+	}
+
+	// The turn the matched message belongs to runs up to the next user-role
+	// message; everything between is assistant work and tool results.
+	cut := matched
+	for index := cut + 1; index < len(source.Messages); index++ {
+		role, _ := source.Messages[index]["role"].(string)
+		if role == "user" {
+			break
+		}
+		cut = index
+	}
+
+	newID := s.NewSessionID()
+	forked := NewEmptySession(newID)
+	forked.Messages = append([]map[string]any(nil), source.Messages[:cut+1]...)
+	for key, value := range source.Metadata {
+		if key == ArchivedKey {
+			continue
+		}
+		forked.Metadata[key] = value
+	}
+	forked.CreatedAt = float64(time.Now().Unix())
+	if err := s.Save(forked); err != nil {
+		return "", err
+	}
+	return newID, nil
+}
+
+// userRowsBefore counts the user rows the desktop transcript draws above the
+// message at index — user role, non-empty text, and that is all. It is the
+// same rule `projectHistory` in the desktop's `adapt.ts` rebuilds from: the
+// rebuild reads only `role` and `content`, so a runtime note (a user-role
+// message the runtime inserted itself) draws as a row there and counts here.
+// A count that excluded notes would disagree with the row list on exactly the
+// sessions the disambiguation is needed for (a model changed along the way).
+func userRowsBefore(messages []map[string]any, index int) int {
+	count := 0
+	for _, message := range messages[:index] {
+		role, _ := message["role"].(string)
+		if role != "user" {
+			continue
+		}
+		if text, ok := MessageText(message); !ok || text == "" {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 // ListIDs returns the ids of every session file, sorted.
 //
 // It includes delegated subagents. A caller that is offering sessions for a

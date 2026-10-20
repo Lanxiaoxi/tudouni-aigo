@@ -133,7 +133,7 @@ test('the searched surfaces are the four the design named', () => {
 /** One entry of each kind, minimal but complete. */
 const ENTRIES: Record<string, Entry> = {
   user: { kind: 'user', id: 'u1', text: 'the question', atMs: 0 },
-  answer: { kind: 'answer', id: 'a1', runId: 'r', text: 'the **find** layer' },
+  answer: { kind: 'answer', id: 'a1', runId: 'r', text: 'the **find** layer', userBefore: 1 },
   stream: { kind: 'stream', id: 's1', runId: 'r', step: 1, text: 'live body', streaming: true },
   reason: { kind: 'reason', id: 'r1', runId: 'r', step: 1, text: 'thinking', streaming: false },
 };

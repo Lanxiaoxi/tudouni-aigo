@@ -238,6 +238,11 @@ export const en = {
   /** Copy button under the model's reply (`EntryView.tsx`, `AnswerEntry`). */
   'entry.answerCopy': 'Copy reply',
   'entry.answerCopied': 'Copied',
+  /** Fork button beside the copy button under the model's reply: starts a new
+   *  session that continues from this reply (`EntryView.tsx`, `AnswerEntry`).
+   *  The runtime copies the conversation up to the end of the reply's turn,
+   *  under a fresh id, and opens the copy. */
+  'entry.fork': 'Fork from here',
   'entry.assistant': 'model',
   'entry.model': 'model call',
   'entry.modelRetry': 'retry · waiting {ms}ms',

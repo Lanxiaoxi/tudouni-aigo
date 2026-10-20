@@ -113,6 +113,7 @@ func StartAuth(runtime Runtime) {
 // being told.
 func Main(opener RuntimeOpener, summaries func(includeArchived bool) []map[string]any,
 	deleter func(id string) error, archiver func(id string, archived bool) error,
+	forker func(id, reply string, userBefore int) (string, error),
 	initialSession string, autopilot, stream, debug bool) int {
 
 	transport := OpenStdio()
@@ -120,6 +121,7 @@ func Main(opener RuntimeOpener, summaries func(includeArchived bool) []map[strin
 		SessionSummaries: summaries,
 		DeleteSession:    deleter,
 		ArchiveSession:   archiver,
+		ForkSession:      forker,
 		Autopilot:        autopilot,
 		Stream:           stream,
 		Debug:            debug,

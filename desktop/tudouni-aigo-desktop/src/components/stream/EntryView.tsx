@@ -10,6 +10,7 @@ import {
   CircleAlert,
   Copy,
   FileCheck,
+  GitFork,
   Info,
   Layers,
   Minus,
@@ -332,27 +333,83 @@ function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
 
 /* ---------------- 2b. model reply ---------------- */
 
+/**
+ * The fork affordance beside the reply's copy button: "start a new
+ * conversation that continues from this reply."
+ *
+ * It names the reply by its own text plus `userBefore`, the number of user
+ * rows drawn above it. Those two facts are what this row can state about
+ * itself — the runtime's `Fork` matches on them and cuts on the turn
+ * boundary the reply ends, so a mid-turn reply forks to the end of that
+ * turn rather than leaving `tool_calls` without results.
+ *
+ * There is deliberately no optimistic UI: the screen changes when the
+ * runtime's opening triple lands (the fork mounts its copy), and a refused
+ * fork leaves the transcript exactly as it was, with the reason on the
+ * notice line. That is the same no-optimistic-update rule the session
+ * list's delete and archive keep.
+ *
+ * **Gated on the runtime's protocol number.** `session_fork` is a protocol
+ * 7 message, and a runtime below it answers an unknown inbound message with
+ * nothing at all — a silent no-op. A button that does that is a promise the
+ * runtime behind it cannot keep (a remote workspace may run an older binary),
+ * so the control is only drawn once the handshake says 7 or better.
+ */
+function ForkButton({
+  text,
+  userBefore,
+  label,
+}: {
+  text: string;
+  userBefore: number;
+  label: string;
+}) {
+  const forkSession = useApp((s) => s.forkSession);
+  // The number the runtime reported at handshake; 0 until it lands, which
+  // gates the button off during the boot gap for free.
+  const protocol = useSessionField((rt) => rt.session?.protocol ?? 0, 0);
+  if (protocol < 7) return null;
+  return (
+    <button
+      type="button"
+      className="entry-fork"
+      aria-label={label}
+      title={label}
+      onClick={() => forkSession(text, userBefore)}
+    >
+      <GitFork size={13} />
+    </button>
+  );
+}
+
 function AnswerEntry({ entry }: { entry: Extract<Entry, { kind: 'answer' }> }) {
   const t = useT();
   return (
     // The mirror of the user's row, on the other side and without a bubble: the
-    // reply, then its copy button **under** it, flush with the text's own left
+    // reply, then its buttons **under** it, flush with the text's own left
     // edge.
     //
     // `data-entry` stays on `.e-answer`, which is the find layer's
     // `.e-answer .md` container (`find/matches.ts`): a hit is found as an offset
     // into a row's text, and the only honest way back to a live `Text` node is an
-    // attribute this front end writes down itself. The button is a sibling, so it
-    // is outside the searched text.
+    // attribute this front end writes down itself. The buttons are siblings, so
+    // they are outside the searched text.
     <div className="e-answer-row">
       <div className="e-answer" data-entry={entry.id}>
         <Markdown text={entry.text} />
       </div>
-      <CopyButton
-        text={entry.text}
-        copyLabel={t('entry.answerCopy')}
-        copiedLabel={t('entry.answerCopied')}
-      />
+      <span className="e-answer-actions">
+        <CopyButton
+          text={entry.text}
+          copyLabel={t('entry.answerCopy')}
+          copiedLabel={t('entry.answerCopied')}
+        />
+        <ForkButton
+          text={entry.text}
+          userBefore={entry.userBefore}
+          label={t('entry.fork')}
+        />
+      </span>
     </div>
   );
 }

@@ -31,8 +31,17 @@ export const ENVELOPE_VERSION = 1;
  * **5** adds the last turn's wall-time breakdown to `ui(status)`: a `timing`
  * group beside `counters` and `usage`. Additive again — a front end that does
  * not know the key simply never reads it.
+ *
+ * **6** adds workspace memory: `memory_list` / `memory_action` inbound, and one
+ * more `ui` kind (`memory`).
+ *
+ * **7** adds `session_fork` inbound: copy a saved session up to a chosen
+ * reply, under a fresh id, and open the copy. A front end that draws a fork
+ * control gates it on this number: a runtime below 7 would silently ignore the
+ * message, and a button that answers with nothing is a promise the runtime
+ * behind it cannot keep.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 7;
 
 /* ============================================================
    Shared vocabulary
@@ -1197,6 +1206,19 @@ export type FrontendMsg =
    *  race the runtime cannot see, so **this front end gates the action** on "no
    *  live child holds this id". */
   | { v: number; t: 'session_archive'; session_id: string; archived: boolean }
+  /** Fork one saved session at one of its replies: the runtime copies the
+   *  conversation up to the end of that reply's turn, under a fresh id, and
+   *  mounts the copy.
+   *
+   *  The reply is named by `reply` (its exact text) plus `user_before`, the
+   *  number of user rows the front end drew above it. The two facts together are
+   *  what a front end can state about the row it drew: the text locates the
+   *  message (it may repeat, so the count breaks the tie), and the count is
+   *  exact only until the runtime inserts a change note the front end never
+   *  echoed. The cut lands on the **turn boundary** after the reply — the
+   *  store's `Fork` owns that rule — so the copy never carries `tool_calls`
+   *  without their results. */
+  | { v: number; t: 'session_fork'; session_id: string; reply: string; user_before: number }
   | { v: number; t: 'interrupt' }
   | { v: number; t: 'set_autopilot'; on: boolean }
   | { v: number; t: 'set_model'; model: string }

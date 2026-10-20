@@ -58,7 +58,14 @@ const VERSION = 1
 // a front end that knows neither simply never asks, and one that does not know the
 // `memory` kind ignores it — nothing about a session's behaviour depends on the panel
 // being drawn.
-const PROTOCOL = 6
+//
+// 7 adds `session_fork` inbound: copy a saved session up to a chosen reply,
+// under a fresh id, and open the copy. An older front end simply never sends
+// the message, and nothing about a session's behaviour depends on it. A front
+// end that draws a fork control gates it on this number: a runtime below 7
+// would silently ignore the message, and a button that answers with nothing is
+// a promise the runtime behind it cannot keep.
+const PROTOCOL = 7
 
 // Message keys used by every envelope.
 const (
@@ -76,6 +83,11 @@ const (
 	InSessionList        = "session_list"
 	InSessionDelete      = "session_delete"
 	InSessionArchive     = "session_archive"
+	// InSessionFork copies the mounted session up to a chosen reply, under a
+	// fresh id, and opens the copy. The front end names the reply by its text
+	// and by the number of user rows it drew above it (see the store's `Fork`
+	// for why the two facts are needed at once).
+	InSessionFork = "session_fork"
 	InInterrupt          = "interrupt"
 	InSetAutopilot       = "set_autopilot"
 	InSetModel           = "set_model"
@@ -307,6 +319,7 @@ var RequiredKeys = map[string][]string{
 	InQuestionResponse:   {"v", "t", "id", "status"},
 	InSessionSwitch:      {"v", "t"},
 	InSessionList:        {"v", "t"},
+	InSessionFork:        {"v", "t", "session_id", "reply"},
 	InInterrupt:          {"v", "t"},
 	InSetAutopilot:       {"v", "t", "on"},
 	InSetModel:           {"v", "t", "model"},

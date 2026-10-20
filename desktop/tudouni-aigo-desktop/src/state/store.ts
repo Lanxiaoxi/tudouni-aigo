@@ -1942,6 +1942,19 @@ export interface AppStore {
    * are quiesced. Any *other* writer is still refused here.
    */
   archiveSession(id: string, archived: boolean, via?: string): void;
+  /**
+   * Fork the active session at one of its replies: the runtime copies the
+   * conversation up to the end of that reply's turn, under a fresh id, and
+   * mounts the copy (the opening triple lands like a fresh session).
+   *
+   * The reply is named by its exact text plus `userBefore`, the number of
+   * user rows the transcript draws above it. The runtime's `Fork` owns the
+   * matching and the turn-boundary cut; no optimistic UI — the screen changes
+   * when the runtime's `init`/`session_load` arrive, so a refused fork (a
+   * reply the on-disk history does not carry) leaves the transcript exactly
+   * as it was.
+   */
+  forkSession(reply: string, userBefore: number): void;
   setAutopilot(on: boolean): void;
   chooseModel(model: string): void;
   chooseEffort(effort: string): void;
@@ -4336,12 +4349,26 @@ export const useApp = create<AppStore>((set, get) => {
         case 'session_load': {
           const history = projectHistory(msg.messages);
           // Rebuild the transcript from the stored messages. Only the two roles a
-          // transcript row can draw are rendered.
-          const rebuilt: Entry[] = history.map((row) =>
-            row.role === 'user'
-              ? { kind: 'user', id: nextId('user'), text: row.text, atMs: 0 }
-              : { kind: 'answer', id: nextId('answer'), runId: 'history', text: row.text },
-          );
+          // transcript row can draw are rendered. The user count walks with the
+          // rebuild: each answer's `userBefore` is how many prompts it sits
+          // below in **this** row list, which is the runtime's `Fork` tiebreak
+          // for a reply the model produced more than once.
+          const rebuilt: Entry[] = [];
+          let userRows = 0;
+          for (const row of history) {
+            if (row.role === 'user') {
+              userRows += 1;
+              rebuilt.push({ kind: 'user', id: nextId('user'), text: row.text, atMs: 0 });
+            } else {
+              rebuilt.push({
+                kind: 'answer',
+                id: nextId('answer'),
+                runId: 'history',
+                text: row.text,
+                userBefore: userRows,
+              });
+            }
+          }
           // The turns this rebuild already accounts for. The stored message list
           // carries no turn boundary, so the rebuilt stream has no `turn` head to
           // read a number from — without this the first message sent after
@@ -5517,6 +5544,26 @@ export const useApp = create<AppStore>((set, get) => {
       // runtime's next `sessions`. The filter's effect (a newly archived row
       // leaving an `active`-only list) is the runtime's to apply, before its cap.
       sendTo(key, { v: 1, t: 'session_archive', session_id: id, archived });
+    },
+
+    forkSession(reply, userBefore) {
+      const s = get();
+      const key = s.activeKey;
+      if (key === null) return;
+      const sessionId = s.sessions[key]?.sessionId;
+      // The id arrives with the handshake, not with the first message: before
+      // `init` the runtime has not named the conversation, and a fork without
+      // a source is a copy of nothing.
+      if (sessionId === null || sessionId === '') return;
+      // A turn running would end mid-fork: the runtime joins it before it
+      // copies, so the request is safe to file now, but a turn in flight is
+      // also a transcript that is still changing — the `userBefore` count it
+      // was named from is no longer true, and a fork from a mid-answer row
+      // would cut a turn in half. The button is not drawn while a turn runs;
+      // this is the same fact checked here, because a click that beats the
+      // redraw would otherwise race the answer.
+      if (s.sessions[key]?.activeRunId !== null) return;
+      sendTo(key, { v: 1, t: 'session_fork', session_id: sessionId, reply, user_before: userBefore });
     },
 
     setAutopilot(on) {

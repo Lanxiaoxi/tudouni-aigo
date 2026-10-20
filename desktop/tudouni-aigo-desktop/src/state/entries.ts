@@ -259,8 +259,12 @@ export type Entry =
       text: string;
       streaming: boolean;
     }
-  /** 10. Answer block — the final body */
-  | { kind: 'answer'; id: string; runId: string; text: string }
+  /** 10. Answer block — the final body.
+   *  `userBefore` is how many user rows the transcript drew above this one,
+   *  counted once at creation: it is the runtime's `Fork` tiebreak for a reply
+   *  the model produced more than once, and counting it per render would scan
+   *  the whole transcript on every streamed chunk. */
+  | { kind: 'answer'; id: string; runId: string; text: string; userBefore: number }
   /** 11. Streaming body — presentation only, not the final answer */
   | {
       kind: 'stream';
@@ -1145,7 +1149,14 @@ export function applyFinalAnswer(entries: Entry[], runId: string, answer: string
     return entry;
   });
   if (!hasAnswer) return settled;
-  return [...settled, { kind: 'answer', id: nextId('answer'), runId, text: answer }];
+  // The user rows above this reply, in the transcript as drawn: the fork's
+  // tiebreak. `cleaned` already excludes this run's streamed body, and a
+  // `user` row is a prompt by construction, so the count is the row list.
+  const userBefore = settled.reduce((n, e) => (e.kind === 'user' ? n + 1 : n), 0);
+  return [
+    ...settled,
+    { kind: 'answer', id: nextId('answer'), runId, text: answer, userBefore },
+  ];
 }
 
 /**
