@@ -2,6 +2,7 @@ package builtin
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -302,5 +303,186 @@ func TestARangePastTheEndOfATrailingNewlineFile(t *testing.T) {
 	}
 	if !strings.Contains(got, "1-2") {
 		t.Fatalf("the interval was not clamped to two lines:\n%q", got)
+	}
+}
+
+// --- The size ceilings. They live on the read_file and edit_file handlers,
+// and the files involved are over maxWholeReadBytes, which newReadWorkspace's
+// small-file helper is not built for.
+
+// bigBody builds text just over maxWholeReadBytes, one deterministic line per
+// repeat. The line count is derived from the body's own length, never from a
+// remembered width — counting that width by eye is how the first version of
+// these tests got the expected totals wrong.
+func bigBody(t *testing.T) (body string, lines int) {
+	t.Helper()
+	unit := "x0123456789abcd\n"
+	if len(unit) != 16 {
+		t.Fatalf("the unit's width changed: %d bytes", len(unit))
+	}
+	count := maxWholeReadBytes/len(unit) + 1
+	return strings.Repeat(unit, count), count
+}
+
+// bigWorkspace makes a workspace holding one file just over the whole-read
+// ceiling and returns both the read_file and the edit_file tools.
+func bigWorkspace(t *testing.T, name, body string) (*tools.Workspace, tools.Tool, tools.Tool) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := tools.NewWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read, edit tools.Tool
+	for _, tool := range NewFileTools(workspace) {
+		switch tool.Name {
+		case "read_file":
+			read = tool
+		case "edit_file":
+			edit = tool
+		}
+	}
+	if read.Name == "" || edit.Name == "" {
+		t.Fatal("read_file and edit_file are not registered")
+	}
+	return workspace, read, edit
+}
+
+// TestAWholeReadOverTheCeilingIsRefusedWithTheWayOut: the refusal is the
+// whole point of the ceiling, and the message has to hand the model the one
+// path that does work — grep, then a bounded read. A bare "too big" sends the
+// model retrying the same call.
+func TestAWholeReadOverTheCeilingIsRefusedWithTheWayOut(t *testing.T) {
+	body, _ := bigBody(t)
+	_, read, _ := bigWorkspace(t, "big.txt", body)
+
+	got := call(t, read, map[string]any{"path": "big.txt"})
+
+	if strings.Contains(got, "x0123456789abcd") {
+		t.Fatalf("an over-ceiling whole read returned body:\n%q", got)
+	}
+	if !strings.Contains(got, "grep") {
+		t.Errorf("the refusal does not point at grep:\n%q", got)
+	}
+	if !strings.Contains(got, "start_line") {
+		t.Errorf("the refusal does not point at a bounded read:\n%q", got)
+	}
+}
+
+// TestARangedReadOfABigFileStreams: the file is too big to hold, but the
+// interval the model asked for is small, and that is exactly the case the
+// streaming path exists for. The content, the header's interval, and the
+// file's true line count all have to come out right — the count is the part
+// only a pass over the whole file can know.
+func TestARangedReadOfABigFileStreams(t *testing.T) {
+	body, lines := bigBody(t)
+	_, read, _ := bigWorkspace(t, "big.txt", body)
+
+	got := call(t, read, map[string]any{"path": "big.txt", "start_line": lines - 2, "end_line": lines})
+
+	for _, want := range []string{
+		"x0123456789abcd",                 // the content itself
+		fmt.Sprintf("第 %d-%d 行", lines-2, lines),
+		fmt.Sprintf("共 %d 行", lines),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the streamed read is missing %q:\n%q", want, got)
+		}
+	}
+	// Only three lines are in the answer, not the whole file.
+	if count := strings.Count(got, "x0123456789abcd"); count != 3 {
+		t.Errorf("the interval returned %d lines, want 3:\n%q", count, got)
+	}
+}
+
+// TestASingleLineFileCannotEscapeTheRangeCap: a 17MB file with no newline is
+// one line, so start_line=1, end_line=1 asks for the whole file inside a
+// range read. The cap has to refuse it — this is the hole the cap exists to
+// close, and a pass that collects everything first would fail by returning
+// 17MB.
+func TestASingleLineFileCannotEscapeTheRangeCap(t *testing.T) {
+	body := strings.Repeat("y", maxWholeReadBytes+1024)
+	_, read, _ := bigWorkspace(t, "oneline.txt", body)
+
+	got := call(t, read, map[string]any{"path": "oneline.txt", "start_line": 1, "end_line": 1})
+
+	if strings.Contains(got, "y") {
+		t.Fatalf("an over-cap interval returned body:\n%q", got)
+	}
+	if !strings.Contains(got, "区间上限") {
+		t.Errorf("the refusal does not name the interval cap:\n%q", got)
+	}
+}
+
+// TestASmallIntervalInASingleLineFileStillReads: the cap refuses the whole
+// line, not ranges of lines. A two-line file whose first line is huge must
+// still answer a read of the second line — the common "skip the minified blob
+// and read the manifest" shape.
+func TestASmallIntervalInASingleLineFileStillReads(t *testing.T) {
+	body := strings.Repeat("y", maxWholeReadBytes+1024) + "\nmanifest line\n"
+	_, read, _ := bigWorkspace(t, "oneline.txt", body)
+
+	got := call(t, read, map[string]any{"path": "oneline.txt", "start_line": 2, "end_line": 2})
+
+	if !strings.Contains(got, "manifest line") {
+		t.Fatalf("the small interval was not returned:\n%q", got)
+	}
+	if !strings.Contains(got, "共 2 行") {
+		t.Errorf("the total is wrong for a one-huge-line file:\n%q", got)
+	}
+}
+
+// TestACRLFBigFileKeepsGrepNumbering: the streamed pass must count lines the
+// way readRange's splitter does — a "\r" stays inside the line it belongs to
+// and never becomes a line of its own, or every line number the model copies
+// from grep is off by as much as the file has lines.
+func TestACRLFBigFileKeepsGrepNumbering(t *testing.T) {
+	unit := "x0123456789abcd\r\n"
+	if len(unit) != 17 {
+		t.Fatalf("the unit's width changed: %d bytes", len(unit))
+	}
+	count := maxWholeReadBytes/len(unit) + 1
+	body := strings.Repeat(unit, count)
+	_, read, _ := bigWorkspace(t, "bigcrlf.txt", body)
+
+	got := call(t, read, map[string]any{"path": "bigcrlf.txt", "start_line": 5, "end_line": 6})
+
+	if !strings.Contains(got, "x0123456789abcd\r\nx0123456789abcd\r\n") {
+		t.Fatalf("the CRLF lines lost their own endings:\n%q", got)
+	}
+	if !strings.Contains(got, fmt.Sprintf("共 %d 行", count)) {
+		t.Errorf("a CRLF file was counted the wrong number of lines:\n%q", got)
+	}
+}
+
+// TestAnEditOfABigFileIsRefused: an edit must hold the full text to replace
+// in it, so the ceiling applies with no streaming escape — and the refusal
+// says why, so the model does not retry with different old_string values.
+func TestAnEditOfABigFileIsRefused(t *testing.T) {
+	body, _ := bigBody(t)
+	workspace, _, edit := bigWorkspace(t, "big.txt", body)
+
+	validated, err := tools.Validate(edit.Parameters(), map[string]any{
+		"path":       "big.txt",
+		"old_string": "x0123456789abcd",
+		"new_string": "z0123456789abcd",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := edit.Execute(context.Background(), validated)
+	if err != nil {
+		t.Fatalf("the refusal came back as an error: %v", err)
+	}
+	if !strings.Contains(result.Text, "编辑上限") {
+		t.Fatalf("the edit refusal does not name the ceiling:\n%q", result.Text)
+	}
+	// The file is untouched.
+	raw, _ := os.ReadFile(filepath.Join(workspace.Root(), "big.txt"))
+	if string(raw) != body {
+		t.Fatal("a refused edit modified the file")
 	}
 }

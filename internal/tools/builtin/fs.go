@@ -5,6 +5,7 @@
 package builtin
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -12,9 +13,29 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/content"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
+
+// Two memory ceilings for read_file, both chosen from measured history rather
+// than from where the disk gets slow (an 8MB read takes ~15ms — speed was
+// never the problem; it is what a read does to memory and to the context).
+//
+// maxWholeReadBytes: the size a whole-file read may hold. The answer becomes
+// an artifact at full level, which has to fit inside a model window; 16MB is
+// about a million characters, so only a 1M-window model can actually consume
+// a read this big, and everything smaller stays exactly as it was. Measured:
+// a 60MB whole read allocates ~360MB of heap for the bytes plus the string
+// copy.
+const maxWholeReadBytes = 16 * 1024 * 1024
+
+// maxRangeBytes: the largest single interval a ranged read may return. Real
+// ranged reads top out around 130KB in the measured history, so this is a
+// fuse, not a fitting parameter: it keeps "start_line=1 on a 100MB
+// single-line file" — where the whole file IS the requested line — at a few
+// MB of memory instead of the file's size.
+const maxRangeBytes = 5 * 1024 * 1024
 
 // NewFileTools builds the four file-system tools, all bound to the same workspace.
 //
@@ -132,6 +153,25 @@ func readFile(workspace *tools.Workspace, args map[string]any) (tools.Result, er
 	if info.IsDir() {
 		return tools.TextResult("不是文件：" + path + "（要列目录里的东西用 list_files）"), nil
 	}
+
+	// The branch is on the size measured before anything is read:
+	//
+	//   - within maxWholeReadBytes: read whole, exactly as before — both the
+	//     whole-file and the ranged form are byte-identical to the old path.
+	//   - over it, no bounds: refuse, and point at the only path that works:
+	//     grep the file, then read the interval.
+	//   - over it, with bounds: stream. Memory holds the interval and a line
+	//     counter, never the file.
+	if info.Size() > maxWholeReadBytes {
+		if !hasBounds(args) {
+			return tools.TextResult(fmt.Sprintf(
+				"文件太大："+path+"（%s），超过整读上限 %s。\n"+
+					"先用 grep 定位要看的行，再带 start_line / end_line 只读那一段。",
+				content.HumanSize(int(info.Size())), content.HumanSize(maxWholeReadBytes))), nil
+		}
+		return scanRange(target, path, args)
+	}
+
 	raw, readErr := os.ReadFile(target)
 	if readErr != nil {
 		return tools.TextResult("无法读取：" + path + "（" + readErr.Error() + "）"), nil
@@ -145,6 +185,146 @@ func readFile(workspace *tools.Workspace, args map[string]any) (tools.Result, er
 		return tools.TextResult(text), nil
 	}
 	return readRange(path, text, args), nil
+}
+
+// scanRange reads one line interval out of a file too big to hold, without
+// ever holding more than the interval plus a counter.
+//
+// One sequential pass does what a whole read used to do: it counts every
+// line (so the header can say the file's true length, the way readRange does)
+// and collects lines [start, end], stopping collection as soon as the
+// interval is complete.
+//
+// The pass is block-based on purpose. `bufio.Reader`'s byte-at-a-time API
+// allocates on every call, and a single-line file — the shape this ceiling
+// exists for, 100MB with no '\n' — turns that into hundreds of megabytes of
+// allocations. `Read` + `bytes.IndexByte` keeps memory flat for any input.
+//
+// Line semantics are readRange's, not reinvented: the same "\n"-only split
+// with each line keeping its own terminator, so a CRLF file's numbering
+// agrees with grep's and the bytes returned are joinable back into the file.
+// The collected bytes are the only part checked for UTF-8 — that is all the
+// model will ever see — and the cap maxRangeBytes trips before the interval
+// is returned: without it, start_line=1 on a 100MB single-line file would
+// hand back 100MB.
+func scanRange(target, path string, args map[string]any) (tools.Result, error) {
+	start, end := int64(1), int64(1<<62) // unbounded end means "to the file's end"
+	if value, ok := args["start_line"].(int); ok {
+		start = int64(value)
+	}
+	if value, ok := args["end_line"].(int); ok {
+		end = int64(value)
+	}
+
+	f, openErr := os.Open(target)
+	if openErr != nil {
+		return tools.TextResult("无法读取：" + path + "（" + openErr.Error() + "）"), nil
+	}
+	defer f.Close()
+
+	var collected []byte
+	var total int64
+	overCap := false
+	sawAny := false
+	endedWithBreak := true
+	buf := make([]byte, 256*1024)
+
+	// Keeps the pass's memory flat: once the interval has grown past
+	// maxRangeBytes nothing more is collected, because the answer is a
+	// refusal either way — a 100MB single line stays at ~5MB of memory.
+	collect := func(fragment []byte) {
+		if overCap {
+			return
+		}
+		collected = append(collected, fragment...)
+		if int64(len(collected)) > maxRangeBytes {
+			overCap = true
+		}
+	}
+
+	for {
+		n, readErr := f.Read(buf)
+		if n > 0 {
+			sawAny = true
+			rest := buf[:n]
+			for len(rest) > 0 {
+				at := bytes.IndexByte(rest, '\n')
+				if at < 0 {
+					// No break in this block: the in-progress line, number
+					// total+1, continues into it.
+					if total+1 >= start && total+1 <= end {
+						collect(rest)
+					}
+					break
+				}
+				if total+1 >= start && total+1 <= end {
+					collect(rest[:at+1]) // the break stays with its line
+				}
+				total++
+				rest = rest[at+1:]
+			}
+			// The count runs to the end of the file, not to the interval: the
+			// header promises "共 N 行", and the same pass reads those bytes
+			// for no allocation. Collection has already stopped once the
+			// interval is complete.
+			endedWithBreak = len(rest) == 0
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	// A file with no trailing newline: the unterminated tail is still a line,
+	// and readRange's splitter counts it, so the totals must agree.
+	if sawAny && !endedWithBreak {
+		total++
+	}
+
+	if total == 0 {
+		return tools.Result{
+			Text:  "文件是空的：" + path + "（0 行）",
+			Audit: map[string]any{"total_lines": 0},
+		}, nil
+	}
+	if start > total {
+		return tools.Result{
+			Text: fmt.Sprintf("%s 只有 %d 行，从第 %d 行开始读不到内容 —— 这次没有返回任何行。"+
+				"想要末尾几行就把 start_line 调小。", path, total, start),
+			Audit: map[string]any{"total_lines": total},
+		}, nil
+	}
+	if end > total {
+		end = total
+	}
+	if end < start {
+		return tools.Result{
+			Text: fmt.Sprintf("%s 的第 %d-%d 行没有内容（文件共 %d 行）：end_line 不能小于 start_line。",
+				path, start, end, total),
+			Audit: map[string]any{"total_lines": total},
+		}, nil
+	}
+	if overCap {
+		return tools.Result{
+			Text: fmt.Sprintf("%s 的第 %d-%d 行太大（超过区间上限 %s），这次没有返回内容。把区间缩小再读。",
+				path, start, end, content.HumanSize(maxRangeBytes)),
+			Audit: map[string]any{"total_lines": total},
+		}, nil
+	}
+	text := string(collected)
+	if !utf8.Valid(collected) {
+		return tools.Result{
+			Text:  fmt.Sprintf("%s 的第 %d-%d 行不是 UTF-8 文本，读不了。", path, start, end),
+			Audit: map[string]any{"total_lines": total},
+		}, nil
+	}
+	head := fmt.Sprintf("[%s：第 %d-%d 行（共 %d 行）]", path, start, end, total)
+	return tools.Result{
+		Text: head + "\n" + text,
+		Audit: map[string]any{
+			"start_line":  int(start),
+			"end_line":    int(end),
+			"total_lines": int(total),
+		},
+	}, nil
 }
 
 // hasBounds reports whether either bound was supplied.
@@ -304,6 +484,15 @@ func editFile(workspace *tools.Workspace, args map[string]any) (tools.Result, er
 	}
 	if info.IsDir() {
 		return tools.TextResult("不是文件：" + path + "（要列目录里的东西用 list_files）"), nil
+	}
+	// The same ceiling as read_file's whole read: an edit must hold the file's
+	// full text to do its replace, and there is no streamed form of "modify".
+	// The refusal says so — the model cannot fix a size by choosing better
+	// arguments, but it can tell the user.
+	if info.Size() > maxWholeReadBytes {
+		return tools.TextResult(fmt.Sprintf(
+			"文件太大："+path+"（%s），超过编辑上限 %s。edit_file 需要持有全文，改不了这么大的文件；请用户拆小或用别的工具处理。",
+			content.HumanSize(int(info.Size())), content.HumanSize(maxWholeReadBytes))), nil
 	}
 	raw, readErr := os.ReadFile(target)
 	if readErr != nil {
