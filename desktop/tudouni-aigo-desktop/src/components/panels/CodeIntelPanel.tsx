@@ -267,7 +267,10 @@ function IndexFacts({ snapshot }: { snapshot: CodeIntelSnapshot }) {
           </>
         ) : null}
       </div>
-      <StalenessLine snapshot={snapshot} />
+      {/* Not while a pass is running: the graph is mid-write, so the comparison
+        * can only say "N files added" — which is the opposite of the progress
+        * bar's message. The runtime omits the counts for the same reason. */}
+      {snapshot.building ? null : <StalenessLine snapshot={snapshot} />}
       {snapshot.problem !== '' ? (
         <div className="ci-warn">
           <AlertTriangle size={13} />

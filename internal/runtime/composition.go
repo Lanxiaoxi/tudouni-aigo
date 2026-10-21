@@ -1752,6 +1752,12 @@ func (r *Runtime) MarkStop() {}
 // returns the body — which is a plain string whenever nothing was attached, so a
 // session that never used the feature sends exactly what it always sent.
 func (r *Runtime) RunTurn(ctx context.Context, text string) (string, error) {
+	// The code-intelligence switch is a workspace fact stored in a file, and this
+	// process may not be the one that flipped it. Reconcile before the agent builds
+	// the turn's tool schema, or a second window keeps a tool set the person has
+	// already turned off (or misses one they turned on).
+	r.refreshCodeIntelPermission()
+
 	// [memory] The turn-start retrieval happens **before** the agent runs, so the first
 	// request of the turn already carries what this workspace knows. It is the only
 	// trigger that sees the person's own words rather than an error, and that is where a

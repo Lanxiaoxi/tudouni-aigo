@@ -46,7 +46,7 @@ func (r NodeRow) Flags() uint16 { return binary.LittleEndian.Uint16(r.b[2:]) }
 // The tri-state matters: `nil` means the extractor did not report the flag, and
 // `false` means it reported false. Collapsing them would make "this Go method's
 // export status is unknown" indistinguishable from "it is unexported", and Go
-// resolution depends on that difference 鈥?the kernel does not set isExported for
+// resolution depends on that difference — the kernel does not set isExported for
 // methods at all.
 func (r NodeRow) BoolFlag(pair uint16) *bool {
 	flags := r.Flags()

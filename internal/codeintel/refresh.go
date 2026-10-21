@@ -3,7 +3,7 @@
 // The index itself lives in internal/codeintel/cggraph; this package is the piece that decides
 // *when* to rebuild it, which turns out to be a design question rather than a scheduling one.
 //
-// The tempting answer 鈥?rebuild after the tools that write files 鈥?does not work. An agent
+// The tempting answer — rebuild after the tools that write files — does not work. An agent
 // edits code through more paths than any tool list can enumerate: a shell command (`echo > f`,
 // `sed -i`, a Python script), `git checkout`, a code generator, a subagent, a background job
 // that finishes later, an MCP server, or the person themself in an editor. Watching writes is
@@ -16,6 +16,7 @@ package codeintel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,7 +72,7 @@ func (s State) String() string {
 // Report is the outcome of one EnsureFresh call.
 type Report struct {
 	State State
-	// Files is the number of files that had diverged (Synced/StaleTooLarge) 鈥?not the number
+	// Files is the number of files that had diverged (Synced/StaleTooLarge) — not the number
 	// of files indexed, which is a property of the tree, not of this call.
 	Files int
 	// Added, Changed and Removed break that down.
@@ -154,6 +155,13 @@ func (r *Refresher) EnsureFresh(ctx context.Context) (report Report, err error) 
 	// an error and not proof of staleness — it is "somebody else owns the tree".
 	lock, lockErr := Acquire(r.root, 0)
 	if lockErr != nil {
+		// A real IO error is not "somebody else is building": reporting it as Busy
+		// sends the reader to wait for a session that does not exist.
+		if !errors.Is(lockErr, ErrLocked) {
+			report.State = Failed
+			report.Detail = "could not claim the index: " + lockErr.Error()
+			return report, nil
+		}
 		report.State = Busy
 		if holder := Holder(r.root); holder != "" {
 			report.Detail = "another session (pid " + holder +
@@ -164,6 +172,8 @@ func (r *Refresher) EnsureFresh(ctx context.Context) (report Report, err error) 
 		return report, nil
 	}
 	defer lock.Release()
+	stopKeepAlive := lock.KeepAlive(time.Minute)
+	defer stopKeepAlive()
 
 	if detail, missing := r.indexMissing(); missing {
 		report.State = Unavailable
@@ -245,7 +255,7 @@ func (r *Refresher) rebuild(ctx context.Context, db *cggraph.DB) error {
 
 // CheckOnly reports the divergence without rebuilding anything.
 //
-// For a caller that wants to display freshness without mutating the index 鈥?a status command,
+// For a caller that wants to display freshness without mutating the index — a status command,
 // or a tool that would rather always answer immediately.
 func (r *Refresher) CheckOnly(ctx context.Context) (Report, error) {
 	started := time.Now()

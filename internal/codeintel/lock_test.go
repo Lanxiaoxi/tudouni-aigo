@@ -150,6 +150,71 @@ func TestWaitingIsBounded(t *testing.T) {
 	}
 }
 
+// TestReleaseDoesNotRemoveAnotherHoldersClaim: a build that outlived LockStaleAfter has
+// already lost the claim. Its Release must not delete the file the next process wrote,
+// or a third process would be let in while the second is still writing.
+func TestReleaseDoesNotRemoveAnotherHoldersClaim(t *testing.T) {
+	root := t.TempDir()
+	held, err := Acquire(root, 0)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	// What a takeover leaves behind: a different pid and a different token.
+	replacement := "999999\n" + strconv.FormatInt(time.Now().UnixNano(), 10) + "\nsomeone-else\n"
+	if err := os.WriteFile(LockPath(root), []byte(replacement), 0o644); err != nil {
+		t.Fatalf("replace claim: %v", err)
+	}
+
+	held.Release()
+	raw, err := os.ReadFile(LockPath(root))
+	if err != nil {
+		t.Fatalf("Release removed another holder's claim: %v", err)
+	}
+	if !strings.Contains(string(raw), "someone-else") {
+		t.Fatalf("the claim changed under Release: %q", raw)
+	}
+}
+
+// TestKeepAliveRefreshesTheClaim: without a heartbeat, LockStaleAfter is also the
+// maximum length of a legitimate full pass, and the next process takes over a build
+// that is still running.
+func TestKeepAliveRefreshesTheClaim(t *testing.T) {
+	root := t.TempDir()
+	held, err := Acquire(root, 0)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	stop := held.KeepAlive(20 * time.Millisecond)
+	// Reverse defer order: stop the heartbeat before Release, as the callers do.
+	defer held.Release()
+	defer stop()
+
+	before := claimTimestamp(t, root)
+	time.Sleep(300 * time.Millisecond)
+	after := claimTimestamp(t, root)
+	if !after.After(before) {
+		t.Fatalf("claim timestamp did not advance: %v then %v", before, after)
+	}
+}
+
+func claimTimestamp(t *testing.T, root string) time.Time {
+	t.Helper()
+	raw, err := os.ReadFile(LockPath(root))
+	if err != nil {
+		t.Fatalf("read claim: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("claim has no timestamp: %q", raw)
+	}
+	nanos, err := strconv.ParseInt(strings.TrimSpace(lines[1]), 10, 64)
+	if err != nil {
+		t.Fatalf("claim timestamp does not parse: %q", lines[1])
+	}
+	return time.Unix(0, nanos)
+}
+
 // TestLockPathIsInsideTheIndex keeps the claim next to the thing it guards: a lock beside
 // the workspace root would be one more file to ignore.
 func TestLockPathIsInsideTheIndex(t *testing.T) {

@@ -15,8 +15,8 @@ func (c *fakeClock) read() float64        { return c.now }
 // TestTheBoardForgetsADelegationWhenItEnds is the property the badge depends on.
 //
 // Every other panel in this program keeps finished work visible because somebody
-// still has to collect it. A delegation has nobody to collect it 鈥?its answer went
-// back to the parent as a tool result, which the transcript already shows 鈥?so a
+// still has to collect it. A delegation has nobody to collect it — its answer went
+// back to the parent as a tool result, which the transcript already shows — so a
 // row that stayed would be a second, worse copy of something already on screen,
 // and it would claim work was in flight when it was over.
 func TestTheBoardForgetsADelegationWhenItEnds(t *testing.T) {

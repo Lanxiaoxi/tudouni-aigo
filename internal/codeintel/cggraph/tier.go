@@ -2,7 +2,7 @@ package cggraph
 
 // The language tier: the per-language rules a resolver needs.
 //
-// Everything language-neutral lives in resolve.go 鈥?batch loading, candidate lookup,
+// Everything language-neutral lives in resolve.go — batch loading, candidate lookup,
 // scoring, edge writing, the function_ref discipline. What differs between languages is
 // a small, fixed set of questions, and they are the whole of this interface:
 //
@@ -16,7 +16,7 @@ package cggraph
 // own resolver had three of them hard-coded as `== "go"` before this file existed.
 //
 // A tier is allowed to be incomplete. The resolver's contract for an unimplemented rule
-// is the PERMISSIVE answer 鈥?`Visible` returns true, `ReceiverType` returns "" 鈥?because
+// is the PERMISSIVE answer — `Visible` returns true, `ReceiverType` returns "" — because
 // a resolver that refuses everything resolves nothing, while a permissive one still has
 // scoring and the ambiguous marking to fall back on. What a tier must never do is return
 // a confident wrong answer.
@@ -39,7 +39,7 @@ type LanguageTier interface {
 	// Narrow restricts candidates using what the referencing file imports.
 	//
 	// Returns the narrowed set and whether narrowing applied. `applied` is separate
-	// from "the set got smaller" because a rule can legitimately narrow to nothing 鈥?a
+	// from "the set got smaller" because a rule can legitimately narrow to nothing — a
 	// qualified reference to a package outside the tree has no answer, and that must be
 	// reported as unresolved rather than patched with a global name match.
 	Narrow(ref *pendingRef, imports map[string]Import, candidates []Candidate) (narrowed []Candidate, applied bool)
@@ -51,8 +51,8 @@ type LanguageTier interface {
 	// per-type path is unavailable, so the caller falls back to unique-or-drop.
 	ReceiverType(ref *pendingRef, file *sourceFile) string
 
-	// IsBuiltin reports whether a name is predeclared by the language 鈥?`len`, `nil`,
-	// `print` 鈥?and therefore cannot name a project definition.
+	// IsBuiltin reports whether a name is predeclared by the language — `len`, `nil`,
+	// `print` — and therefore cannot name a project definition.
 	IsBuiltin(name string) bool
 }
 

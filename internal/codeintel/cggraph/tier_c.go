@@ -4,7 +4,7 @@ package cggraph
 //
 // C and C++ are the hardest pair in scope, and the reason is structural rather than
 // incidental: there is no module system. A program is a set of translation units, and
-// what one unit sees of another is decided by the preprocessor 鈥?`#include` splices
+// what one unit sees of another is decided by the preprocessor — `#include` splices
 // another file's text in place. Without running the preprocessor, "what is visible here"
 // has no exact answer.
 //
@@ -21,7 +21,7 @@ package cggraph
 //     the tier reads the declaration line rather than any usage.
 //
 // The rule this prevents, in the reference implementation's own words: on a 2,109-file
-// betaflight tree, 145 cross-file calls resolved onto a `static` in another `.c` 鈥?a
+// betaflight tree, 145 cross-file calls resolved onto a `static` in another `.c` — a
 // function that file's unit defines for itself, which no other unit can name.
 //
 // NOT implemented, and why each needs the preprocessor or a parser:
@@ -46,8 +46,8 @@ import (
 
 // cTier implements LanguageTier for C and C++.
 //
-// One implementation for both because the rule that matters 鈥?translation-unit locality
-// 鈥?is C's, and C++ inherits it unchanged. The differences (namespaces, templates,
+// One implementation for both because the rule that matters — translation-unit locality
+// — is C's, and C++ inherits it unchanged. The differences (namespaces, templates,
 // classes) are exactly the parts that need a parser, so they are not attempted.
 type cTier struct {
 	language string
@@ -90,7 +90,7 @@ func (t *cTier) Visible(candidate *Candidate, ref *pendingRef) bool {
 	}
 
 	// A `static` function is this unit's alone, unless the referencing file includes the
-	// defining file 鈥?the hiredis pattern, where `async.c` includes `dict.c`.
+	// defining file — the hiredis pattern, where `async.c` includes `dict.c`.
 	if candidate.Kind == "function" && cFunctionIsStatic(candidate) {
 		return cIncludesFile(ref.FromFileName, candidate.FilePath)
 	}
@@ -115,8 +115,8 @@ func (t *cTier) Visible(candidate *Candidate, ref *pendingRef) bool {
 
 // Narrow restricts candidates using the file's `#include` directives.
 //
-// C has no import table in the extracted graph 鈥?a `#include` is a preprocessor directive,
-// not a binding 鈥?so this tier reads the directives from the source. A qualifier in C++
+// C has no import table in the extracted graph — a `#include` is a preprocessor directive,
+// not a binding — so this tier reads the directives from the source. A qualifier in C++
 // (`ns::Name`, `Class::method`) is narrowed to the namespace or class it names; a plain C
 // reference has no qualifier and is never narrowed here.
 func (t *cTier) Narrow(ref *pendingRef, imports map[string]Import, candidates []Candidate) ([]Candidate, bool) {
@@ -139,14 +139,14 @@ func (t *cTier) Narrow(ref *pendingRef, imports map[string]Import, candidates []
 		}
 	}
 	if len(narrowed) == 0 {
-		// The qualifier names something this tree does not declare under that name 鈥?a
+		// The qualifier names something this tree does not declare under that name — a
 		// standard-library or third-party symbol.
 		return candidates, false
 	}
 	return narrowed, true
 }
 
-// ReceiverType returns "" 鈥?C/C++ receiver inference needs a parser.
+// ReceiverType returns "" — C/C++ receiver inference needs a parser.
 func (t *cTier) ReceiverType(ref *pendingRef, file *sourceFile) string { return "" }
 
 // IsBuiltin applies the C/C++ standard-library-name rule.
@@ -326,7 +326,7 @@ func cBraceDelta(line string) int {
 // cStdlibNames are the C/C++ standard-library names in scope everywhere.
 //
 // A reference to one is never a project definition. The list keeps the names that appear
-// as bare references and whose collision with a project symbol is plausible 鈥?the C
+// as bare references and whose collision with a project symbol is plausible — the C
 // library's functions, and the C++ standard library's most-used types.
 var cStdlibNames = map[string]bool{
 	// C library functions.

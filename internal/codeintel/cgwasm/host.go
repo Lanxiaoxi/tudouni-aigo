@@ -4,7 +4,7 @@
 // Why a fallback exists at all: the kernel parses 20 languages in compiled code and its
 // output is byte-identical to the reference engine, but when a file's parse tree contains
 // errors it hands the file back with a `defer:` message instead of guessing. Macro-heavy C
-// is the case that hits this constantly 鈥?uthash's `uthash.h` is almost entirely macros, and
+// is the case that hits this constantly — uthash's `uthash.h` is almost entirely macros, and
 // the kernel declines 45 of that project's 119 files. The WASM build of tree-sitter has a
 // recovery mode that the native one does not, so this package is that recovery path.
 //
@@ -93,8 +93,8 @@ const nodeFields = 5
 //
 // The fields are the ones extraction needs: where the node starts and ends, and what kind
 // it is. `Type` is resolved through the language's symbol table rather than read as a
-// string pointer, because tree-sitter's wasm build exposes only `ts_node_symbol_wasm` 鈥?the
-// symbol id 鈥?plus the language-level name lookup.
+// string pointer, because tree-sitter's wasm build exposes only `ts_node_symbol_wasm` — the
+// symbol id — plus the language-level name lookup.
 type Node struct {
 	ID        uint32
 	StartByte uint32

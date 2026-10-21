@@ -182,6 +182,9 @@ func (r *Runtime) StartGoalRound(ctx context.Context, round protocol.GoalRound) 
 		return "", false, nil
 	}
 	r.recordGoalRound(admitted, reservation.Round())
+	// Autonomous rounds assemble their own request, so they need the same
+	// workspace-permission reconciliation a person-initiated turn gets in RunTurn.
+	r.refreshCodeIntelPermission()
 	answer, err := r.Agent.RunMessages(ctx, reservation.Messages())
 	return answer, true, err
 }

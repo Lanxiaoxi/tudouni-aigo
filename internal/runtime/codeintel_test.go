@@ -154,6 +154,45 @@ func TestThePanelSeparatesTheTwoFacts(t *testing.T) {
 	}
 }
 
+// TestThePanelNoticesAnotherSessionsPermissionChange: the switch is a file, so a second
+// window can flip it while this process is running. The panel is where a person checks
+// what the model can see, so it must not answer from a value read at startup.
+func TestThePanelNoticesAnotherSessionsPermissionChange(t *testing.T) {
+	root := t.TempDir()
+	putIndex(t, root)
+	runtimeValue := codeIntelRuntime(t, root, false)
+
+	// Another session turns it on.
+	if _, err := codeintel.SetEnabled(root, true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	panel, err := runtimeValue.CodeIntelPanel()
+	if err != nil {
+		t.Fatalf("panel after another session enabled it: %v", err)
+	}
+	if enabled, _ := panel["enabled"].(bool); !enabled {
+		t.Fatal("enabled = false after another session wrote true")
+	}
+	if !hasCodeExplore(runtimeValue) {
+		t.Fatal("the switch is on and an index exists, but the tool was not registered")
+	}
+
+	// And off again.
+	if _, err := codeintel.SetEnabled(root, false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	panel, err = runtimeValue.CodeIntelPanel()
+	if err != nil {
+		t.Fatalf("panel after another session disabled it: %v", err)
+	}
+	if enabled, _ := panel["enabled"].(bool); enabled {
+		t.Fatal("enabled = true after another session wrote false")
+	}
+	if hasCodeExplore(runtimeValue) {
+		t.Fatal("the switch is off, but the tool is still registered")
+	}
+}
+
 // TestTheStateSnapshotCarriesThreeBooleans: `ui(state)` is what a badge can afford, so it
 // carries the flags and none of the counts.
 func TestTheStateSnapshotCarriesThreeBooleans(t *testing.T) {

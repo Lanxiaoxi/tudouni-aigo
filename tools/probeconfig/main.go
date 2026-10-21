@@ -48,7 +48,7 @@ func main() {
 		}
 
 		// The route is built the way `routeOf` builds it, including the session id
-		// and the raw configured headers 鈥?the placeholder is left in place so that
+		// and the raw configured headers — the placeholder is left in place so that
 		// the substitution under test is the program's, not this tool's.
 		chosen := provider.Models[0].ID
 		adapter, err := model.New(model.Options{

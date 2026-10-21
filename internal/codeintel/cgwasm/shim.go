@@ -15,13 +15,13 @@ package cgwasm
 //	env.memory               (min 512, max 32768 pages)
 //	env.__indirect_function_table (funcref, min 30)
 //
-// wazero's host-module builder exports functions only 鈥?no memory, no globals, no tables.
+// wazero's host-module builder exports functions only — no memory, no globals, no tables.
 // So `env` cannot be a host module, and this file builds it as real WASM instead:
 //
 //	host (wazero)   the Go callbacks
-//	  鈫?import
+//	  → import
 //	env (here)      memory + table + layout globals, re-exporting the callbacks
-//	  鈫?import
+//	  → import
 //	tree-sitter.wasm
 //
 // The layout values are computed from the parser's own data segments: `__heap_base` must sit

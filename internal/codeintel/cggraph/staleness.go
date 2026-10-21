@@ -4,7 +4,7 @@ package cggraph
 //
 // This exists because a stale answer is worse than no answer. An agent that edits a file and
 // immediately asks where a symbol is used will get the graph from before its edit, and nothing
-// in that result says so 閳?the model then treats a stale fact as a current one. The check is
+// in that result says so — the model then treats a stale fact as a current one. The check is
 // deliberately cheap (stat only, never reading contents) so it can run before every query.
 //
 // The official tool solves the same problem with a live file-system watcher and a staleness
@@ -29,7 +29,8 @@ type Staleness struct {
 	Added int
 	// Checked counts indexed files examined.
 	Checked int
-	// IndexedAt is when the index last finished a run.
+	// IndexedAt is when the index's rows were last written. A no-change sync
+	// writes nothing, so this is the last pass that actually changed the graph.
 	IndexedAt time.Time
 }
 
@@ -65,7 +66,7 @@ func (s Staleness) Summarise() string {
 
 // CheckStaleness compares the indexed files against the tree.
 //
-// Cost is one stat per indexed file plus one directory walk, with no file contents read 閳?on
+// Cost is one stat per indexed file plus one directory walk, with no file contents read — on
 // the order of milliseconds for a few thousand files, which is why every query can afford it.
 //
 // A missing database or a never-built index reports not-stale: there is nothing to be stale
@@ -120,11 +121,16 @@ func (d *DB) CheckStaleness(ctx context.Context, root string) (Staleness, error)
 	return result, nil
 }
 
-// lastIndexedAt reads the newest file row's timestamp as a stand-in for "when was this built".
+// lastIndexedAt is when this index's contents were last written by a pass.
+//
+// `indexed_at`, not `modified_at`: the latter is the source file's own mtime, so a
+// repository whose files were last touched years ago would report that the index
+// was built years ago the moment it finished. They are different questions and the
+// panel asks this one.
 func (d *DB) lastIndexedAt(ctx context.Context) (time.Time, error) {
 	var stamp int64
 	err := d.sql.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(modified_at), 0) FROM files`).Scan(&stamp)
+		`SELECT COALESCE(MAX(indexed_at), 0) FROM files`).Scan(&stamp)
 	if err != nil {
 		return time.Time{}, err
 	}

@@ -20,7 +20,7 @@ import (
 // one reason, and it is the only reason this file has a lazy DLL proc at all: that
 // helper's `lpValue` is an `unsafe.Pointer`, and the value this call needs is an
 // opaque kernel handle rather than a pointer to anything. See launchProcess for
-// what goes wrong when the address of a local is passed instead 鈥?the shell dies
+// what goes wrong when the address of a local is passed instead — the shell dies
 // with STATUS_DLL_INIT_FAILED, which is a failure with no diagnostic of its own.
 var procUpdateAttribute = windows.NewLazySystemDLL("kernel32.dll").
 	NewProc("UpdateProcThreadAttribute")
@@ -28,8 +28,8 @@ var procUpdateAttribute = windows.NewLazySystemDLL("kernel32.dll").
 // windowsProcess is one Windows terminal: a shell started on a pseudo console
 // (ConPTY).
 //
-// **ConPTY, not pipes.** The obvious Windows implementation 鈥?`cmd.StdinPipe()`
-// plus a `conhost` 鈥?cannot be a terminal: a pipe has no line discipline, no
+// **ConPTY, not pipes.** The obvious Windows implementation — `cmd.StdinPipe()`
+// plus a `conhost` — cannot be a terminal: a pipe has no line discipline, no
 // window size and no console, so `isatty` is false, PowerShell runs in
 // non-interactive mode, and every full-screen program either refuses to start or
 // draws into nothing. ConPTY is the operating system's own answer to "a terminal
@@ -38,13 +38,13 @@ var procUpdateAttribute = windows.NewLazySystemDLL("kernel32.dll").
 //
 // The handle dance is the fiddly part and every step of it earns its place:
 //
-//	pipe A  ptyIn (read end, given to the console)  鈫? ourIn (we write input here)
-//	pipe B  ourOut (we read output here)            鈫? ptyOut (given to the console)
+//	pipe A  ptyIn (read end, given to the console)  →  ourIn (we write input here)
+//	pipe B  ourOut (we read output here)            →  ptyOut (given to the console)
 //
 // `ptyIn` and `ptyOut` are handed to `CreatePseudoConsole` and **closed in this
 // process straight afterwards**. Closing them is not tidiness: the console host
 // holds its own references, and leaving our copies of the *output write end* open
-// would mean `ourOut` never sees end of stream 鈥?the read would block forever
+// would mean `ourOut` never sees end of stream — the read would block forever
 // after the shell died, and the terminal would never report that it ended. That
 // is the single most common way a hand-written ConPTY leaks a goroutine per
 // shell.
@@ -90,7 +90,7 @@ func spawnPTY(spec spawnSpec) (ptyProcess, error) {
 	}
 	// Our own ends must not be inherited: a child holding our write end of the
 	// input pipe would keep it alive past our close, and the shell would never
-	// see end of input 鈥?a `exit` that does not work, with nothing on screen to
+	// see end of input — a `exit` that does not work, with nothing on screen to
 	// explain it.
 	_ = windows.SetHandleInformation(ourIn, windows.HANDLE_FLAG_INHERIT, 0)
 	_ = windows.SetHandleInformation(ourOut, windows.HANDLE_FLAG_INHERIT, 0)
@@ -119,7 +119,7 @@ func spawnPTY(spec spawnSpec) (ptyProcess, error) {
 
 	process, thread, pid, err := launchProcess(spec, console)
 	// The console host keeps its own references to the two ends it was given, so
-	// ours go now 鈥?see the type comment for why the output write end in
+	// ours go now — see the type comment for why the output write end in
 	// particular must not stay open.
 	windows.CloseHandle(ptyIn)
 	windows.CloseHandle(ptyOut)
@@ -140,7 +140,7 @@ func spawnPTY(spec spawnSpec) (ptyProcess, error) {
 	}
 	// A job object per terminal, so that ending it takes the whole tree with it.
 	// `taskkill /T` is the fallback, but a job is atomic and needs no child
-	// process of its own 鈥?see Kill.
+	// process of its own — see Kill.
 	proc.job = createKillOnCloseJob(process)
 	return proc, nil
 }
@@ -151,7 +151,7 @@ func spawnPTY(spec spawnSpec) (ptyProcess, error) {
 // the only way to attach one at creation: a process either has a console from the
 // moment it starts or never does, and there is no API to attach one afterwards.
 // That is also why `CreateProcess` is called directly rather than through
-// `os/exec` 鈥?`exec.Cmd` has no place to put an attribute list.
+// `os/exec` — `exec.Cmd` has no place to put an attribute list.
 func launchProcess(spec spawnSpec, console windows.Handle) (process, thread windows.Handle, pid uint32, err error) {
 	attributes, err := windows.NewProcThreadAttributeList(1)
 	if err != nil {
@@ -164,7 +164,7 @@ func launchProcess(spec spawnSpec, console windows.Handle) (process, thread wind
 	//
 	// `UpdateProcThreadAttribute` is reached through the DLL procs directly rather
 	// than through x/sys's `ProcThreadAttributeListContainer.Update`, because that
-	// helper takes an `unsafe.Pointer` for `lpValue` 鈥?so the natural spelling at
+	// helper takes an `unsafe.Pointer` for `lpValue` — so the natural spelling at
 	// the call site is `&console`, the address of a local. The kernel wants the
 	// HPCON itself, and an address is a valid-looking pointer that makes
 	// `CreateProcess` fail with STATUS_DLL_INIT_FAILED (0xC0000142): the shell is
@@ -172,7 +172,7 @@ func launchProcess(spec spawnSpec, console windows.Handle) (process, thread wind
 	// cmd.exe, both ways, before this was written.
 	//
 	// The conversion through `uintptr` is what `go vet` flags as a possibly
-	// misused pointer 鈥?correctly, in general. Here it is exactly right: the value
+	// misused pointer — correctly, in general. Here it is exactly right: the value
 	// is an opaque kernel handle, not a Go pointer, and there is no memory for a
 	// collector to move.
 	ret, _, callErr := procUpdateAttribute.Call(
@@ -208,14 +208,14 @@ func launchProcess(spec spawnSpec, console windows.Handle) (process, thread wind
 	//
 	// Without the flag the child inherits **this process's** standard handles, so
 	// a shell started from a terminal writes straight to that terminal and the
-	// pseudoconsole relays nothing 鈥?measured: `cmd /c echo` printed to the test's
+	// pseudoconsole relays nothing — measured: `cmd /c echo` printed to the test's
 	// own console while the console pipe carried only conhost's 16-byte VT init.
 	// The flag is what makes the console host supply the handles instead.
 	//
 	// Left null because that is what "let the console supply them" means here: the
 	// pseudoconsole's own ends are the right values and this process never holds
 	// them (its copies of `ptyIn` / `ptyOut` are closed as soon as the console
-	// exists 鈥?see spawnPTY). Pointing the fields at handles we kept would be
+	// exists — see spawnPTY). Pointing the fields at handles we kept would be
 	// pointing them at the wrong end of the right pipe.
 	//
 	// **`EXTENDED_STARTUPINFO_PRESENT` is deliberately not set here.** It is a
@@ -227,7 +227,7 @@ func launchProcess(spec spawnSpec, console windows.Handle) (process, thread wind
 	var info windows.ProcessInformation
 	// `CreateProcess` takes a `*StartupInfo`; an extended one is the same memory
 	// with the attribute list appended, and the embedded `StartupInfo` is that
-	// struct's first field 鈥?which is what makes this cast correct rather than
+	// struct's first field — which is what makes this cast correct rather than
 	// merely conventional.
 	//
 	// `bInheritHandles` is false, and that is not an oversight: the console host
@@ -283,12 +283,12 @@ func environmentBlock(entries []string) (*uint16, error) {
 
 // createKillOnCloseJob puts a process in a job object that ends it.
 //
-// **Why a job rather than just `taskkill /T`.** `shell 鈫?npm 鈫?node` is the
+// **Why a job rather than just `taskkill /T`.** `shell → npm → node` is the
 // ordinary shape of a command, and `TerminateJobObject` ends every process in the
 // job in one call with no chance of a race, no second process to spawn, and no
 // window in which a newly forked child escapes. The job is also
 // kill-on-close, so a *runtime* that dies without running `Close` still takes its
-// terminals down with it 鈥?the same guarantee the background-job board gives, for
+// terminals down with it — the same guarantee the background-job board gives, for
 // the same reason.
 //
 // A failure is not fatal: `Kill` falls back to `taskkill /T`, which is less
@@ -335,8 +335,8 @@ func (p *windowsProcess) Resize(cols, rows int) error {
 
 // Kill ends the shell and every process it started.
 //
-// The job object is tried first 鈥?it is one call and it cannot miss a
-// grandchild 鈥?and `taskkill /T` is the fallback for a machine where a job could
+// The job object is tried first — it is one call and it cannot miss a
+// grandchild — and `taskkill /T` is the fallback for a machine where a job could
 // not be created. `TerminateProcess` on the handle is the last resort, and it is
 // explicitly worse: it reaches the shell only, which is exactly the leftover
 // `node` holding the port that this function exists to prevent.

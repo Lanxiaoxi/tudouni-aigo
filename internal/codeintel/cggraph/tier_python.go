@@ -4,7 +4,7 @@ package cggraph
 //
 // Rules ported from CodeGraph's Python handling:
 //
-//	import-resolver.ts  findPythonModuleFile      dotted module 鈫?file
+//	import-resolver.ts  findPythonModuleFile      dotted module → file
 //	import-resolver.ts  extractPythonImports      the import table's shape
 //	name-matcher.ts     pythonLocalType / pythonMembers / pythonRefClass
 //	                    (receiver-typed method resolution)
@@ -18,7 +18,7 @@ package cggraph
 //  3. **Underscore prefix is private by convention**, and the reference implementation
 //     honours it for cross-module binding.
 //  4. **`self.m` resolves on the enclosing class**, which requires knowing which class
-//     a reference sits inside 鈥?decided by line range.
+//     a reference sits inside — decided by line range.
 //
 // Python is the second tier on purpose: its rule set is the smallest of the languages in
 // scope (22 language branches in the reference's name-matcher, against Go's 46), so it is
@@ -98,12 +98,12 @@ func pythonSameModule(a, b string) bool {
 //
 // Python's import forms, and what each means for a qualified reference:
 //
-//	import a.b.c          binds `a`          鈫?`a.b.c.X` is reachable through it
-//	from a.b import c     binds `c`          鈫?`c` and `c.X` are reachable
+//	import a.b.c          binds `a`          → `a.b.c.X` is reachable through it
+//	from a.b import c     binds `c`          → `c` and `c.X` are reachable
 //	from . import c       binds `c` (relative)
 //
 // The distinction that matters: a reference `c.X` where `c` is bound by `from a.b
-// import c` means "the thing named c, then a member of it" 鈥?and `c` may be a module or
+// import c` means "the thing named c, then a member of it" — and `c` may be a module or
 // a class. Without a richer binding model the tier keeps both readings available by
 // narrowing on the import's TARGET path rather than on the local name alone.
 func (t *pythonTier) Narrow(ref *pendingRef, imports map[string]Import, candidates []Candidate) ([]Candidate, bool) {
@@ -132,7 +132,7 @@ func (t *pythonTier) Narrow(ref *pendingRef, imports map[string]Import, candidat
 	if dir == "" {
 		// A relative import (`.`, `..`) has no fixed path to match against, and a
 		// stdlib or third-party module has no directory in this tree. Either way, no
-		// narrowing is possible 鈥?and returning "narrowed to nothing" would claim the
+		// narrowing is possible — and returning "narrowed to nothing" would claim the
 		// reference cannot resolve, which is wrong for a relative import.
 		return candidates, false
 	}
@@ -148,8 +148,8 @@ func (t *pythonTier) Narrow(ref *pendingRef, imports map[string]Import, candidat
 
 // pythonModuleDir turns a dotted module path into a repository-relative directory prefix.
 //
-//	`app.api.routes` 鈫?`app/api/routes`
-//	`app.api`        鈫?`app/api`
+//	`app.api.routes` → `app/api/routes`
+//	`app.api`        → `app/api`
 //
 // A leading dot means a relative import, which has no fixed prefix. An absolute import
 // naming a third-party package (`requests`) also has no directory here; the caller
@@ -189,7 +189,7 @@ func pythonInModuleDir(filePath, moduleDir string) bool {
 //
 // This is the one receiver inference Python needs and the one that pays: `self.foo()`
 // inside a class must resolve on that class, and there is exactly one enclosing class at
-// any line 鈥?the reference implementation finds it by line range
+// any line — the reference implementation finds it by line range
 // (`startLine <= ref.line && endLine >= ref.line`, innermost win).
 //
 // A receiver other than `self`/`cls` is not inferred. `x.foo()` needs the type of `x`,

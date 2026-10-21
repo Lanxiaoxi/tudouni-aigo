@@ -3,8 +3,8 @@ package cgwasm
 // Rewriting the parser module so it owns its memory and function table.
 //
 // The problem this solves: tree-sitter.wasm IMPORTS `env.memory` and
-// `env.__indirect_function_table`. A shim can supply both 鈥?it is a real wasm module, so it
-// can define them 鈥?but wazero does not apply the parser's ACTIVE ELEMENT SEGMENT to a table
+// `env.__indirect_function_table`. A shim can supply both — it is a real wasm module, so it
+// can define them — but wazero does not apply the parser's ACTIVE ELEMENT SEGMENT to a table
 // it imported. The table is created empty, the element segment that should fill slots 0..29
 // is dropped, and the first indirect call fails with "invalid table access". wazero v1.12
 // exposes no Table API (`// TODO: Table` in api/wasm.go), so there is no way to fill it from

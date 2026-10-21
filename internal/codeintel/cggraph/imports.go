@@ -12,7 +12,7 @@ package cggraph
 // The rule is narrow and exact:
 //
 //	the reference is `qualifier.Name` AND the file imports a package bound to
-//	`qualifier`  鈫? the only candidates are that package's exported definitions
+//	`qualifier`  →  the only candidates are that package's exported definitions
 //
 // Everything else passes through untouched. A `qualifier` that is a local variable
 // (`server.Start`) must NOT be treated as a package, which is why an import list is
@@ -32,7 +32,7 @@ type Import struct {
 	// `github.com/example/project/internal/tools`).
 	Path string
 	// Alias is the identifier the file binds it to. Empty means "the default", which
-	// Go derives from the path's last segment 鈥?except for a major-version suffix
+	// Go derives from the path's last segment — except for a major-version suffix
 	// (`/v2`), which it ignores.
 	Alias string
 	// DotImport means `. "path"`: every exported name is in scope unqualified.
@@ -79,7 +79,7 @@ func isMajorVersionSegment(segment string) bool {
 // ParseImportSpec turns an import node's name and signature into an Import.
 //
 // The extractor stores an import node with the path as its name and, when the source
-// carried one, the whole spec as its signature 鈥?`ctxwin "github.com/鈥?context"`,
+// carried one, the whole spec as its signature — `ctxwin "github.com/…/context"`,
 // `. "embed"`, `_ "net/http/pprof"`. Parsing the signature is what recovers an alias;
 // the name alone cannot.
 func ParseImportSpec(name, signature string) Import {
@@ -112,7 +112,7 @@ func ParseImportSpec(name, signature string) Import {
 	default:
 		imported.Alias = prefix
 	}
-	// The quoted text is the authoritative path 鈥?it is what the compiler sees, while
+	// The quoted text is the authoritative path — it is what the compiler sees, while
 	// the node's name is the extractor's rendering of it.
 	if end := strings.LastIndexAny(spec[quote+1:], "\"`"); end >= 0 {
 		if quoted := strings.TrimSpace(spec[quote+1 : quote+1+end]); quoted != "" {
@@ -169,7 +169,7 @@ func (r *Resolver) importsForFile(ctx context.Context, filePath string) (map[str
 // different namespaces: `github.com/x/y/internal/tools` is the directory
 // `<root>/internal/tools`. When the import path cannot be mapped onto any indexed
 // directory the result is an empty candidate set, and the caller records the
-// reference as unresolved rather than falling back to a global name match 鈥?a
+// reference as unresolved rather than falling back to a global name match — a
 // qualified reference to a package this tree does not contain has no correct answer,
 // and a name match would manufacture a wrong one.
 func narrowToImport(
@@ -219,7 +219,7 @@ func narrowToImport(
 //
 // Matching is done on the path's tail rather than its head because the index stores
 // absolute file paths: comparing `internal/tools` against
-// `C:\鈥internal\tools` needs the same separator-normalised suffix on both sides.
+// `C:\…\internal\tools` needs the same separator-normalised suffix on both sides.
 func importPathToDir(importPath, repoPrefix string) string {
 	importPath = strings.TrimSpace(importPath)
 	if importPath == "" {

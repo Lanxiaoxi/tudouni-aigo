@@ -39,8 +39,9 @@ import (
 // The indexer reports per batch, which on a large tree is hundreds of times a second.
 // A message per report would make the panel's progress the busiest channel on the wire
 // for something a person reads at a glance — so a phase change always sends (it is the
-// news) and within a phase at most this often.
-const codeIntelProgressEvery = 200 * time.Millisecond
+// news) and within a phase at most this often. Each of these messages also reads the
+// whole graph's counts, so twice a second is already more than the bar needs.
+const codeIntelProgressEvery = 500 * time.Millisecond
 
 // codeIntelRun is the last deliberate build this session ran, for the panel's "last
 // run" line.
@@ -70,6 +71,13 @@ type codeIntelState struct {
 	done     int
 	total    int
 	last     *codeIntelRun
+
+	// The config file's mtime as of the last read. `enabled` is a cache of a file
+	// other processes write (one runtime child per conversation), so the cache has
+	// to notice when somebody else replaced it.
+	configSeen bool
+	configMod  time.Time
+	configSize int64
 }
 
 // newCodeIntelState builds the handle.
@@ -78,7 +86,25 @@ type codeIntelState struct {
 // earlier is still queryable, and the panel says the index cannot be updated rather
 // than pretending there is no index.
 func newCodeIntelState(workspace *tools.Workspace, refresher *codeintel.Refresher, enabled bool) *codeIntelState {
-	return &codeIntelState{workspace: workspace, refresher: refresher, enabled: enabled}
+	state := &codeIntelState{workspace: workspace, refresher: refresher, enabled: enabled}
+	// `enabled` was read from this file a moment ago. Seeding the stamp is what makes
+	// the first refresh a no-op instead of a second read that could disagree with the
+	// value the caller just used to decide whether to register the tool.
+	state.configSeen = true
+	if workspace != nil {
+		state.configMod, state.configSize = configStamp(workspace.Root())
+	}
+	return state
+}
+
+// configStamp is the identity of the config file as of now. A missing file is the
+// zero pair, which is also what a refresh should see until somebody creates one.
+func configStamp(root string) (time.Time, int64) {
+	info, err := os.Stat(codeintel.ConfigPath(root))
+	if err != nil {
+		return time.Time{}, 0
+	}
+	return info.ModTime(), info.Size()
 }
 
 // Root is the workspace this index belongs to.
@@ -122,6 +148,40 @@ func (s *codeIntelState) setEnabled(on bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.enabled = on
+}
+
+// refreshEnabled re-reads config.json when another process has replaced it.
+//
+// The file is the shared fact, not this field: two conversations on one workspace
+// are two runtime processes, and the switch is workspace-scoped. Without this, the
+// second window keeps showing the old state — and, worse, keeps the model's tool
+// set at the old state — until that session is restarted.
+//
+// Returns whether the value changed, so the caller can reconcile the registry. The
+// read is guarded by the file's mtime and size, so the common case is one stat.
+func (s *codeIntelState) refreshEnabled() bool {
+	if s == nil {
+		return false
+	}
+	root := s.Root()
+	if root == "" {
+		return false
+	}
+	mod, size := configStamp(root)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.configSeen && mod.Equal(s.configMod) && size == s.configSize {
+		return false
+	}
+	s.configSeen = true
+	s.configMod, s.configSize = mod, size
+	on := codeintel.Enabled(root)
+	if on == s.enabled {
+		return false
+	}
+	s.enabled = on
+	return true
 }
 
 // beginBuild claims the build slot, reporting false when one is already running.
@@ -177,15 +237,6 @@ type buildSummary struct {
 
 // snapshot is everything the panel draws, in one message.
 func (s *codeIntelState) snapshot(ctx context.Context) map[string]any {
-	root := ""
-	index := codeintel.IndexSnapshot{}
-	if s != nil {
-		root = s.Root()
-		if s.refresher != nil {
-			index = s.refresher.Snapshot(ctx)
-		}
-	}
-
 	var enabled, building bool
 	var phase string
 	var done, total int
@@ -194,6 +245,18 @@ func (s *codeIntelState) snapshot(ctx context.Context) map[string]any {
 		s.mu.Lock()
 		enabled, building, phase, done, total, last = s.enabled, s.building, s.phase, s.done, s.total, s.last
 		s.mu.Unlock()
+	}
+
+	root := ""
+	index := codeintel.IndexSnapshot{}
+	if s != nil {
+		root = s.Root()
+		if s.refresher != nil {
+			// While a pass is running the comparison can only describe the
+			// half-written graph, and the walk is the expensive part of a message
+			// sent twice a second. The panel shows progress instead.
+			index = s.refresher.Snapshot(ctx, codeintel.SnapshotOptions{SkipStaleness: building})
+		}
 	}
 
 	payload := map[string]any{
@@ -267,6 +330,10 @@ func (r *Runtime) CodeIntelPanel() (map[string]any, error) {
 	if r.CodeIntel == nil {
 		return nil, fmt.Errorf("this runtime has no code index")
 	}
+	// Opening the panel is also the point at which another window's permission
+	// change becomes visible here. Reconciling the registry is what makes the
+	// switch workspace-scoped rather than session-scoped.
+	r.refreshCodeIntelPermission()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return r.CodeIntel.snapshot(ctx), nil
@@ -280,6 +347,9 @@ func (r *Runtime) codeIntelFlags() map[string]any {
 	if r.CodeIntel == nil {
 		return map[string]any{"enabled": false, "indexed": false, "building": false}
 	}
+	// A stat per ui(state), which is the same cost indexPresent already pays; the
+	// badge must not show a permission this process no longer has.
+	r.CodeIntel.refreshEnabled()
 	r.CodeIntel.mu.Lock()
 	enabled, building := r.CodeIntel.enabled, r.CodeIntel.building
 	r.CodeIntel.mu.Unlock()
@@ -380,6 +450,23 @@ func (r *Runtime) applyCodeIntelTool() error {
 		return fmt.Errorf("could not register %s: %w", builtin.CodeExploreToolName, err)
 	}
 	return nil
+}
+
+// refreshCodeIntelPermission notices a config.json written by another session.
+//
+// Called at turn start as well as from the panel: the tool set has to match the
+// workspace's permission before the turn's first request is assembled, not only
+// when somebody happens to have the panel open.
+func (r *Runtime) refreshCodeIntelPermission() {
+	if r == nil || r.CodeIntel == nil || r.Tools == nil {
+		return
+	}
+	if !r.CodeIntel.refreshEnabled() {
+		return
+	}
+	if err := r.applyCodeIntelTool(); err != nil {
+		warn("%s", err)
+	}
 }
 
 // startCodeIntelBuild runs one build in the background.

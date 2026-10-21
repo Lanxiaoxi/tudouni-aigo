@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel/cggraph"
@@ -54,8 +55,17 @@ const (
 var ErrLocked = errors.New("another session is updating this workspace's code index")
 
 // Lock is one held claim on a workspace's index.
+//
+// `token` is what makes Release and the heartbeat safe. A claim older than
+// LockStaleAfter is deliberately taken over, so by the time a slow (or stalled)
+// holder finishes, the file may belong to somebody else. Removing it on the
+// strength of "I called Acquire once" would then hand a third process the lock
+// while the second is still writing.
 type Lock struct {
-	path string
+	path  string
+	token string
+
+	mu   sync.Mutex
 	held bool
 }
 
@@ -85,9 +95,12 @@ func Acquire(root string, wait time.Duration) (*Lock, error) {
 		if err == nil {
 			// The claim's own bytes are for the *next* reader, not for this one:
 			// a lock nobody can attribute is a lock somebody deletes by hand.
-			fmt.Fprintf(file, "%d\n%d\n", os.Getpid(), time.Now().UnixNano())
+			// The third line is this claim's identity; it survives the timestamp
+			// updates a long build makes.
+			token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+			fmt.Fprintf(file, "%d\n%d\n%s\n", os.Getpid(), time.Now().UnixNano(), token)
 			file.Close()
-			return &Lock{path: path, held: true}, nil
+			return &Lock{path: path, token: token, held: true}, nil
 		}
 		if !os.IsExist(err) {
 			return nil, fmt.Errorf("codeintel: claim %s: %w", path, err)
@@ -143,12 +156,87 @@ func staleLock(path string) bool {
 //
 // Idempotent: a second call does nothing, which matters because the callers release
 // in a `defer` that can run after a failed acquire path took the same `defer`.
+//
+// It removes the file only when the bytes still carry this claim's token. A holder
+// whose build outlived LockStaleAfter has already lost the claim, and deleting the
+// new holder's file would let a third process in.
 func (l *Lock) Release() {
-	if l == nil || !l.held {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.held {
 		return
 	}
 	l.held = false
-	os.Remove(l.path)
+	if l.owns() {
+		os.Remove(l.path)
+	}
+}
+
+// KeepAlive updates the claim while a long build runs.
+//
+// Without this, LockStaleAfter (15 minutes) is also the maximum length of a
+// legitimate full pass: past it, the next process treats a live build as a dead
+// one and writes alongside it. One minute is far below the takeover threshold and
+// costs two file operations per minute.
+//
+// The returned stop function must run before Release. Callers get that order by
+// deferring Release first and stop second.
+func (l *Lock) KeepAlive(every time.Duration) (stop func()) {
+	if l == nil || every <= 0 {
+		return func() {}
+	}
+	l.mu.Lock()
+	held := l.held
+	l.mu.Unlock()
+	if !held {
+		return func() {}
+	}
+
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				l.touch()
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
+}
+
+// touch rewrites the claim with a fresh timestamp, but only if it is still ours.
+func (l *Lock) touch() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.held || !l.owns() {
+		return
+	}
+	raw := fmt.Sprintf("%d\n%d\n%s\n", os.Getpid(), time.Now().UnixNano(), l.token)
+	temp := l.path + "." + l.token + ".tmp"
+	if err := os.WriteFile(temp, []byte(raw), 0o644); err != nil {
+		return
+	}
+	if err := os.Rename(temp, l.path); err != nil {
+		os.Remove(temp)
+	}
+}
+
+// owns reports whether the file on disk is this claim. Callers hold l.mu.
+func (l *Lock) owns() bool {
+	raw, err := os.ReadFile(l.path)
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	return len(lines) >= 3 && strings.TrimSpace(lines[2]) == l.token
 }
 
 // Holder is who claims the index, for a message that has to name them.

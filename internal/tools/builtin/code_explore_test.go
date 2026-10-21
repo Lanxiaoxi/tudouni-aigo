@@ -97,6 +97,31 @@ func TestOutputBudgetReportsOvershoot(t *testing.T) {
 	}
 }
 
+// TestTruncateLineKeepsRunesIntact: a byte slice at the limit can split a multi-byte
+// character, and the model would then read a replacement glyph where the source had
+// an identifier.
+func TestTruncateLineKeepsRunesIntact(t *testing.T) {
+	got := truncateLine("汉字汉字", 2)
+	if got != "汉字 …" {
+		t.Errorf("truncateLine = %q, want two whole characters and an ellipsis", got)
+	}
+	if got := truncateLine("short", 10); got != "short" {
+		t.Errorf("truncateLine shortened a line under the limit: %q", got)
+	}
+}
+
+// TestOutputBudgetCountsCharactersNotBytes: the budget is about how much the model has
+// to read, and a CJK identifier is three bytes per character. Charging bytes would stop
+// a Chinese query at a third of the length an English one gets.
+func TestOutputBudgetCountsCharactersNotBytes(t *testing.T) {
+	budget := &outputBudget{remaining: 10}
+	var builder strings.Builder
+	budget.write(&builder, "汉字")
+	if budget.remaining != 8 {
+		t.Errorf("remaining = %d, want 8 (two characters, six bytes)", budget.remaining)
+	}
+}
+
 // TestNewCodeExploreAbsentWithoutIndex is the registration rule: a tool that can only answer
 // "there is no index" costs a schema in every request and a round trip to learn nothing.
 func TestNewCodeExploreAbsentWithoutIndex(t *testing.T) {

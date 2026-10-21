@@ -161,8 +161,13 @@ func (d *DB) Stats() (Stats, error) {
 			return s, fmt.Errorf("cggraph: stats %q: %w", q.query, err)
 		}
 	}
-	if info, err := os.Stat(d.path); err == nil {
-		s.SizeBytes = info.Size()
+	// The main file alone understates a WAL database by whatever has not been
+	// checkpointed yet, which during and just after a build is most of the new
+	// nodes. The panel asks "how big is this" while it is being written.
+	for _, suffix := range []string{"", "-wal"} {
+		if info, err := os.Stat(d.path + suffix); err == nil {
+			s.SizeBytes += info.Size()
+		}
 	}
 	_ = d.sql.QueryRow("PRAGMA journal_mode").Scan(&s.Journal)
 

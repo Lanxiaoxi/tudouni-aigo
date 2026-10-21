@@ -3,7 +3,7 @@ package cggraph
 import "testing"
 
 // Tests for the Rust, Java, Kotlin and JS tiers. Each pins the rule that makes its
-// language's scoping different from Go's 鈥?the rules the neutral loop cannot know.
+// language's scoping different from Go's — the rules the neutral loop cannot know.
 
 // ---------------------------------------------------------------- Rust ----
 
@@ -84,12 +84,12 @@ impl Clone for Server {
 	if got := tier.ReceiverType(&pendingRef{Reference: Reference{
 		Name: "self.stop", FromLanguage: "rust", Line: 5,
 	}}, file); got != "Server" {
-		t.Errorf("self.stop 鈫?%q, want Server", got)
+		t.Errorf("self.stop → %q, want Server", got)
 	}
 	if got := tier.ReceiverType(&pendingRef{Reference: Reference{
 		Name: "self.other", FromLanguage: "rust", Line: 12,
 	}}, file); got != "Server" {
-		t.Errorf("self.other in `impl Clone for Server` 鈫?%q, want Server", got)
+		t.Errorf("self.other in `impl Clone for Server` → %q, want Server", got)
 	}
 }
 

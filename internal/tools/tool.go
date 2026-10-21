@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 )
@@ -200,7 +201,15 @@ type InvalidArgumentsError struct{ Msg string }
 func (e *InvalidArgumentsError) Error() string { return e.Msg }
 
 // Registry holds the tools available this run.
+//
+// The mutex is not optional. The set of tools is mutable at run time — an MCP
+// mount adds and removes a whole server's worth, and the code-intelligence switch
+// adds or removes one more — while the agent reads it from the goroutine that
+// runs the turn. Go maps do not tolerate one goroutine writing while another
+// reads, so without this a switch flipped during a turn is a process crash rather
+// than a tool set that changes on the next request.
 type Registry struct {
+	mu    sync.RWMutex
 	tools map[string]Tool
 	order []string
 }
@@ -224,6 +233,9 @@ func (r *Registry) Register(tool Tool) error {
 	if tool.ParallelSafe && tool.Interactive {
 		return fmt.Errorf("tool %s is declared both interactive and parallel_safe: a tool that asks the user can never run alongside others", tool.Name)
 	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, exists := r.tools[tool.Name]; exists {
 		return fmt.Errorf("tool %s is already registered", tool.Name)
 	}
@@ -246,6 +258,8 @@ func (r *Registry) MustRegister(tool Tool) {
 
 // Get looks a tool up.
 func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	tool, ok := r.tools[name]
 	return tool, ok
 }
@@ -268,6 +282,8 @@ func (r *Registry) Clone(exclude ...string) *Registry {
 		skip[name] = true
 	}
 	clone := NewRegistry()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	for _, name := range r.order {
 		if skip[name] {
 			continue
@@ -280,6 +296,8 @@ func (r *Registry) Clone(exclude ...string) *Registry {
 
 // Unregister removes one tool.
 func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.tools[name]; !ok {
 		return
 	}
@@ -293,6 +311,8 @@ func (r *Registry) Unregister(name string) {
 // `mcp__<server>__` prefix, so one call takes exactly that server's tools and
 // nothing else.
 func (r *Registry) UnregisterPrefix(prefix string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	changed := false
 	for name := range r.tools {
 		if strings.HasPrefix(name, prefix) {
@@ -307,6 +327,8 @@ func (r *Registry) UnregisterPrefix(prefix string) {
 
 // All returns the tools in name order.
 func (r *Registry) All() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]Tool, 0, len(r.order))
 	for _, name := range r.order {
 		out = append(out, r.tools[name])
@@ -315,10 +337,16 @@ func (r *Registry) All() []Tool {
 }
 
 // Names returns the tool names in order.
-func (r *Registry) Names() []string { return append([]string(nil), r.order...) }
+func (r *Registry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]string(nil), r.order...)
+}
 
 // Schemas returns the schemas handed to the model.
 func (r *Registry) Schemas() []map[string]any {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]map[string]any, 0, len(r.order))
 	for _, name := range r.order {
 		out = append(out, r.tools[name].OpenAISchema())
@@ -327,7 +355,11 @@ func (r *Registry) Schemas() []map[string]any {
 }
 
 // Len is how many tools are registered.
-func (r *Registry) Len() int { return len(r.tools) }
+func (r *Registry) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.tools)
+}
 
 func (r *Registry) reindex() {
 	r.order = r.order[:0]

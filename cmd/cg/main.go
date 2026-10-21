@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel/cggraph"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel/cgparse"
 )
@@ -156,6 +157,18 @@ func cmdIndex(args []string, full bool) error {
 	if err != nil {
 		return err
 	}
+	// The lock is the same one the desktop runtime takes. Indexing from the CLI
+	// while a window is mid-pass used to be two writers and one SQLite file, which
+	// the 5s busy timeout does not cover on a large tree: the loser failed halfway
+	// through with "database is locked".
+	lock, err := codeintel.Acquire(root, codeintel.RebuildLockWait)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	stopKeepAlive := lock.KeepAlive(time.Minute)
+	defer stopKeepAlive()
+
 	db, err := openIndex(root)
 	if err != nil {
 		return err

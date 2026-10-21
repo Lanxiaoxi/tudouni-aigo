@@ -18,7 +18,7 @@ package cggraph
 //
 // The recorded tie is the more valuable half. A wrong edge that says "these two
 // symbols are unrelated" is a worse error than one that says "A probably calls B,
-// but four same-named Bs exist" 鈥?the second is actionable, the first is a silent
+// but four same-named Bs exist" — the second is actionable, the first is a silent
 // falsehood.
 
 import (
@@ -61,7 +61,7 @@ const (
 	ScoreKindForInstantiate = 25
 
 	// ScoreKindForDecorator is added for a decorator landing on a function, and
-	// ScoreClassForDecorator for one landing on a class or interface 鈥?class
+	// ScoreClassForDecorator for one landing on a class or interface — class
 	// decorators are legal in Python and Java, hence the smaller bonus.
 	ScoreKindForDecorator  = 25
 	ScoreClassForDecorator = 15
@@ -217,7 +217,7 @@ type Selection struct {
 	// Score is the winner's score.
 	Score float64
 	// Tied lists every candidate that scored the same as the winner, sorted by ID.
-	// A single-element list means the choice was unambiguous 鈥?including this field
+	// A single-element list means the choice was unambiguous — including this field
 	// in the edge's metadata is what lets a consumer distinguish a certain edge from
 	// a plausible one.
 	Tied []Candidate
@@ -230,7 +230,7 @@ type Selection struct {
 // Select picks the best candidate.
 //
 // Ties are broken deterministically: same file first, then nearest start line, then
-// smallest id. That order is a judgement, not a reproduction 鈥?the reference
+// smallest id. That order is a judgement, not a reproduction — the reference
 // implementation has no rule here at all, which the measurement showed by failing
 // to match any of four plausible deterministic rules (best agreement 37%).
 //
@@ -260,10 +260,10 @@ func Select(ref *Reference, candidates []Candidate) Selection {
 	// Receiver narrowing, when the reference tells us its receiver's type.
 	//
 	// This is the check that makes Go method calls tractable. Without it every
-	// `err.Error()` is a contest between every `Error` method in the tree 鈥?398 of
+	// `err.Error()` is a contest between every `Error` method in the tree — 398 of
 	// them on this repository, all scoring the same because nothing in the scoring
 	// formula distinguishes them. Narrowing to the methods of the receiver's type
-	// turns that from a tie into an answer, or into no candidates 鈥?both better than
+	// turns that from a tie into an answer, or into no candidates — both better than
 	// a guess.
 	suppressed := 0
 	if ref.ReceiverType != "" {

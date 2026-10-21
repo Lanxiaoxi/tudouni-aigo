@@ -16,6 +16,7 @@ package security
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -46,13 +47,18 @@ var unsafeSubstrings = []string{"$(", "`", "${", ">", "<"}
 // rule applies to commands you run in the foreground but not to the ones you run
 // in the background. The symptom is "why is it asking me again", and the cause —
 // a missing line in a table — is visible in no output at all.
-var commandArguments = map[string]string{
-	"shell":            "command",
-	"shell_background": "command",
-}
+var (
+	commandArguments = map[string]string{
+		"shell":            "command",
+		"shell_background": "command",
+	}
+	commandArgumentsMu sync.RWMutex
+)
 
 // CommandParameter returns which parameter of this tool holds a command line.
 func CommandParameter(toolName string) (string, bool) {
+	commandArgumentsMu.RLock()
+	defer commandArgumentsMu.RUnlock()
 	name, ok := commandArguments[toolName]
 	return name, ok
 }
@@ -67,12 +73,16 @@ func RegisterCommandParameter(toolName, parameter string) {
 	if toolName == "" || parameter == "" {
 		return
 	}
+	commandArgumentsMu.Lock()
+	defer commandArgumentsMu.Unlock()
 	commandArguments[toolName] = parameter
 }
 
 // CommandOf returns the command line of one call, if there is one.
 func CommandOf(toolName string, arguments map[string]any) (string, bool) {
+	commandArgumentsMu.RLock()
 	parameter, ok := commandArguments[toolName]
+	commandArgumentsMu.RUnlock()
 	if !ok {
 		return "", false
 	}

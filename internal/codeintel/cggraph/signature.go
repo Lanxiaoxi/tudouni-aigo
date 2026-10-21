@@ -10,7 +10,7 @@ import (
 // Ported from CodeGraph's `goSignatureParts` / `goSignatureArity`
 // (src/resolution/callback-synthesizer.ts). Go requires an implementation's method
 // signature to equal the interface's, and the parameter and result counts are what the
-// stored signature text settles for certain 鈥?`Get(ctx, key, opts ...OpOption)` is no
+// stored signature text settles for certain — `Get(ctx, key, opts ...OpOption)` is no
 // `Get(id types.ID) Peer`.
 //
 // The extractor stores a signature as the parameter list's text followed by the
@@ -29,8 +29,8 @@ func goSignatureArity(signature string) (string, bool) {
 
 // goSignatureParts splits a Go signature into its parameter and result lists.
 //
-// A grouped declaration (`a, b int`) counts as the number of items it names 鈥?two, not
-// one 鈥?which is what `goListItems` gives by splitting on top-level commas.
+// A grouped declaration (`a, b int`) counts as the number of items it names — two, not
+// one — which is what `goListItems` gives by splitting on top-level commas.
 func goSignatureParts(signature string) (params, results []string, ok bool) {
 	sig := strings.TrimSpace(signature)
 	if sig == "" || sig[0] != '(' {

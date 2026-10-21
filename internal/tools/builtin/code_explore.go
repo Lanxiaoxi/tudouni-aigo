@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel/cggraph"
@@ -65,6 +66,10 @@ const (
 	CODE_EXPLORE_MAX_SOURCE_LINES = 120
 	// CODE_EXPLORE_MAX_OUTPUT_CHARS is the total budget.
 	CODE_EXPLORE_MAX_OUTPUT_CHARS = 32000
+	// CODE_EXPLORE_MAX_TERMS bounds one query. Each term is a separate symbol
+	// lookup, so an unbounded bag of words is both a slow query and an output
+	// that no budget can save.
+	CODE_EXPLORE_MAX_TERMS = 12
 	// CODE_EXPLORE_IMPACT_DEPTH is how far the blast radius walks.
 	CODE_EXPLORE_IMPACT_DEPTH = 2
 )
@@ -192,6 +197,11 @@ func runCodeExplore(ctx context.Context, refresher *codeintel.Refresher, argumen
 	}
 
 	terms := strings.Fields(query)
+	if len(terms) > CODE_EXPLORE_MAX_TERMS {
+		warnings = append(warnings, fmt.Sprintf(
+			"only the first %d of %d query terms were used", CODE_EXPLORE_MAX_TERMS, len(terms)))
+		terms = terms[:CODE_EXPLORE_MAX_TERMS]
+	}
 	source := &sourceReader{root: root, cache: map[string][]string{}}
 	budget := &outputBudget{remaining: CODE_EXPLORE_MAX_OUTPUT_CHARS}
 
@@ -205,8 +215,13 @@ func runCodeExplore(ctx context.Context, refresher *codeintel.Refresher, argumen
 	filesUsed := 0
 	seenFiles := map[string]bool{}
 	seenSymbols := map[string]bool{}
+	truncated := false
 
 	for _, term := range terms {
+		if budget.remaining <= 0 {
+			truncated = true
+			break
+		}
 		symbols, err := db.FindSymbols(ctx, term, CODE_EXPLORE_MAX_SYMBOLS)
 		if err != nil {
 			return tools.Result{}, fmt.Errorf("code_explore: look up %q: %w", term, err)
@@ -224,6 +239,10 @@ func runCodeExplore(ctx context.Context, refresher *codeintel.Refresher, argumen
 		}
 
 		for _, symbol := range symbols {
+			if budget.remaining <= 0 {
+				truncated = true
+				break
+			}
 			if seenSymbols[symbol.ID] {
 				continue
 			}
@@ -248,9 +267,9 @@ func runCodeExplore(ctx context.Context, refresher *codeintel.Refresher, argumen
 		fmt.Fprintln(writer, "(if these were added or renamed just now, the index is behind — "+
 			"re-run the indexer, or read the file directly)")
 	}
-	if budget.remaining < 0 {
-		fmt.Fprintf(writer, "\n[output truncated: %d characters over budget; narrow the query]\n",
-			-budget.remaining)
+	if truncated || budget.remaining < 0 {
+		fmt.Fprintf(writer, "\n[output stopped at the %d-character budget; narrow the query for the rest]\n",
+			CODE_EXPLORE_MAX_OUTPUT_CHARS)
 	}
 
 	return tools.Result{Text: writer.String()}, nil
@@ -286,6 +305,9 @@ func symbolsInFile(ctx context.Context, db *cggraph.DB, root, term string) ([]cg
 func renderSymbol(ctx context.Context, root string, writer *strings.Builder, db *cggraph.DB,
 	source *sourceReader, budget *outputBudget, symbol cggraph.Symbol, includeSource bool) {
 
+	if budget.remaining <= 0 {
+		return
+	}
 	where := fmt.Sprintf("%s:%d", relativePath(root, symbol.FilePath), symbol.StartLine)
 	if symbol.EndLine > symbol.StartLine {
 		where = fmt.Sprintf("%s:%d-%d", relativePath(root, symbol.FilePath), symbol.StartLine, symbol.EndLine)
@@ -322,6 +344,11 @@ func renderSymbol(ctx context.Context, root string, writer *strings.Builder, db 
 		}
 	}
 
+	if budget.remaining <= 0 {
+		fmt.Fprintln(writer)
+		return
+	}
+
 	// Callers: who would break if this changes.
 	callers, err := db.Callers(ctx, symbol.ID, CODE_EXPLORE_MAX_SITES)
 	if err == nil && countCallSites(callers) > 0 {
@@ -329,6 +356,11 @@ func renderSymbol(ctx context.Context, root string, writer *strings.Builder, db 
 		renderSites(ctx, root, writer, db, callers)
 	} else if err != nil {
 		fmt.Fprintf(writer, "callers: unavailable (%v)\n", err)
+	}
+
+	if budget.remaining <= 0 {
+		fmt.Fprintln(writer)
+		return
 	}
 
 	// Callees: what this depends on.
@@ -439,11 +471,14 @@ func formatNumbered(lines []string, start, end int) string {
 //
 // Generated or minified source defeats a per-file budget with a single line; the line number is
 // still the locator the model needs.
+//
+// The cut is by character, not byte: slicing a UTF-8 string at a byte offset can land
+// inside a rune and put an invalid sequence in the model's context.
 func truncateLine(text string, limit int) string {
-	if len(text) <= limit {
+	if utf8.RuneCountInString(text) <= limit {
 		return text
 	}
-	return text[:limit] + " …"
+	return string([]rune(text)[:limit]) + " …"
 }
 
 // outputBudget tracks the remaining character budget.
@@ -453,11 +488,15 @@ type outputBudget struct {
 
 // write appends text while charging it against the budget.
 //
-// Over-budget text is still written once — a truncated answer that silently stops mid-function
-// is worse than one that says it stopped — but the final notice reports the overshoot so the
-// model knows to narrow the query rather than assume completeness.
+// The budget is a stop sign between sections, not a guillotine inside one: a
+// function cut mid-line reads as if the code ended there. Callers check remaining
+// before each symbol and each way of listing call sites, so the last section may
+// overshoot by its own bounded size and the final notice says so.
+//
+// Characters, not bytes: the tool's budget is about what the model has to read,
+// and a run of CJK identifiers is three bytes per character.
 func (b *outputBudget) write(writer *strings.Builder, text string) {
-	b.remaining -= len(text)
+	b.remaining -= utf8.RuneCountInString(text)
 	writer.WriteString(text)
 }
 

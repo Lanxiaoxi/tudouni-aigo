@@ -33,10 +33,16 @@ type Symbol struct {
 
 // CallSite is one edge into or out of a symbol.
 type CallSite struct {
-	Kind       string
-	FilePath   string
-	Line       int
+	Kind     string
+	FilePath string
+	Line     int
+	// Symbol is the *other* endpoint's display name: the caller for Callers, the
+	// callee for Callees. NodeID is the same endpoint's stable id, which is what a
+	// second hop must follow. Names are not unique — two packages may each define
+	// Run — so traversing by Symbol would either stop at one hop (no id ever
+	// matches a name) or merge unrelated symbols.
 	Symbol     string
+	NodeID     string
 	Ambiguous  bool
 	Candidates []string
 }
@@ -51,21 +57,24 @@ func (d *DB) FindSymbols(ctx context.Context, name string, limit int) ([]Symbol,
 	if limit <= 0 {
 		limit = 20
 	}
+	// `%` and `_` are legal in identifiers (`fmt_Print`, `%` in a doc name), so a
+	// term has to be escaped before it becomes a pattern. Without this, `_` matches
+	// any character and a bare `%` matches every symbol in the index.
 	rows, err := d.sql.QueryContext(ctx, `
 		SELECT id, kind, name, qualified_name, file_path, language,
 		       start_line, end_line, COALESCE(signature, ''), COALESCE(docstring, ''), is_exported
 		FROM nodes
-		WHERE name = ? OR name LIKE ? OR qualified_name LIKE ?
+		WHERE name = ? OR name LIKE ? ESCAPE '\' OR qualified_name LIKE ? ESCAPE '\'
 		ORDER BY
 			CASE WHEN name = ? THEN 0
-			     WHEN name LIKE ? THEN 1
+			     WHEN name LIKE ? ESCAPE '\' THEN 1
 			     ELSE 2 END,
 			length(qualified_name),
 			file_path,
 			start_line
 		LIMIT ?`,
-		name, name+"%", "%"+name+"%",
-		name, name+"%",
+		name, likePrefix(name), likeContains(name),
+		name, likePrefix(name),
 		limit)
 	if err != nil {
 		return nil, fmt.Errorf("cggraph: find symbols: %w", err)
@@ -92,6 +101,18 @@ func (d *DB) FindSymbols(ctx context.Context, name string, limit int) ([]Symbol,
 	}
 	return out, rows.Err()
 }
+
+// escapeLike turns a search term into a literal LIKE operand. The backslash is
+// escaped first, or escaping `%` would produce a pattern whose own escape
+// character is then escaped again.
+func escapeLike(term string) string {
+	term = strings.ReplaceAll(term, `\`, `\\`)
+	term = strings.ReplaceAll(term, `%`, `\%`)
+	return strings.ReplaceAll(term, `_`, `\_`)
+}
+
+func likePrefix(term string) string   { return escapeLike(term) + "%" }
+func likeContains(term string) string { return "%" + escapeLike(term) + "%" }
 
 // SymbolByID loads one definition.
 func (d *DB) SymbolByID(ctx context.Context, id string) (Symbol, bool, error) {
@@ -125,7 +146,7 @@ func (d *DB) dbRow(ctx context.Context, id string, sym *Symbol, isExported *sql.
 // Callers returns the edges pointing at a symbol.
 func (d *DB) Callers(ctx context.Context, id string, limit int) ([]CallSite, error) {
 	return d.sites(ctx, `
-		SELECT e.kind, n.file_path, COALESCE(e.line, 0), n.name, e.metadata
+		SELECT e.kind, n.file_path, COALESCE(e.line, 0), n.name, n.id, e.metadata
 		FROM edges e
 		JOIN nodes n ON n.id = e.source
 		WHERE e.target = ?
@@ -136,7 +157,7 @@ func (d *DB) Callers(ctx context.Context, id string, limit int) ([]CallSite, err
 // Callees returns the edges leading out of a symbol.
 func (d *DB) Callees(ctx context.Context, id string, limit int) ([]CallSite, error) {
 	return d.sites(ctx, `
-		SELECT e.kind, n.file_path, COALESCE(e.line, 0), n.name, e.metadata
+		SELECT e.kind, n.file_path, COALESCE(e.line, 0), n.name, n.id, e.metadata
 		FROM edges e
 		JOIN nodes n ON n.id = e.target
 		WHERE e.source = ?
@@ -160,7 +181,7 @@ func (d *DB) sites(ctx context.Context, query, id string, limit int) ([]CallSite
 			site     CallSite
 			metadata sql.NullString
 		)
-		if err := rows.Scan(&site.Kind, &site.FilePath, &site.Line, &site.Symbol, &metadata); err != nil {
+		if err := rows.Scan(&site.Kind, &site.FilePath, &site.Line, &site.Symbol, &site.NodeID, &metadata); err != nil {
 			return nil, fmt.Errorf("cggraph: scan call site: %w", err)
 		}
 		if metadata.Valid && metadata.String != "" {
@@ -178,12 +199,25 @@ func (d *DB) sites(ctx context.Context, query, id string, limit int) ([]CallSite
 	return out, rows.Err()
 }
 
-// Impact returns every symbol reachable within `depth` hops along `calls` edges.
+// Impact returns every symbol reachable within `depth` hops along the dependency
+// edges that carry change: calls, references, instantiations, and the type
+// relations (extends / implements / overrides).
 //
 // Breadth-first with a depth cap, tracking the shortest depth each node was reached
 // at. Recording the shallowest depth is what keeps a node first reached by a long
 // path from stopping the search: expanding it only at that depth would hide the
 // nearer dependents the limit is supposed to include.
+//
+// Two details are load-bearing:
+//
+//   - the queue carries **ids**, not display names. A name only matches `nodes.name`
+//     inside its own definition, never `edges.target`, so a name-keyed second hop
+//     silently returns nothing and makes every impact "one hop deep" while claiming
+//     the requested depth.
+//   - `contains` and `imports` edges are not dependents. The file that contains a
+//     symbol would otherwise be reported as its first "caller", which is both wrong
+//     and, since it is an id the search cannot expand, enough to make the result
+//     look plausible while saying nothing.
 func (d *DB) Impact(ctx context.Context, id string, depth int) ([]CallSite, error) {
 	if depth <= 0 {
 		depth = 2
@@ -207,15 +241,32 @@ func (d *DB) Impact(ctx context.Context, id string, depth int) ([]CallSite, erro
 			return nil, err
 		}
 		for _, site := range callers {
-			if seenDepth, ok := seen[site.Symbol]; ok && seenDepth <= head.depth+1 {
+			if !impactEdge(site.Kind) || site.NodeID == "" {
 				continue
 			}
-			seen[site.Symbol] = head.depth + 1
+			if seenDepth, ok := seen[site.NodeID]; ok && seenDepth <= head.depth+1 {
+				continue
+			}
+			seen[site.NodeID] = head.depth + 1
 			out = append(out, site)
-			queue = append(queue, visit{id: site.Symbol, depth: head.depth + 1})
+			queue = append(queue, visit{id: site.NodeID, depth: head.depth + 1})
 		}
 	}
 	return out, nil
+}
+
+// impactEdge reports whether an incoming edge means "changing the target can break
+// the source". `contains` is the file→symbol relation and `imports` is file-level,
+// so neither is a dependent in the sense impact asks about. `extends`, `implements`
+// and `overrides` are: an interface change reaches every implementer even when
+// nobody calls the interface method directly.
+func impactEdge(kind string) bool {
+	switch kind {
+	case "calls", "references", "instantiates", "extends", "implements", "overrides":
+		return true
+	default:
+		return false
+	}
 }
 
 // NodeNamesForFile returns the definitions in one file, in line order.

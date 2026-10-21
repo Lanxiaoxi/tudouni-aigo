@@ -95,7 +95,7 @@ func appendDeferReason(reasons map[string]int, reason string) map[string]int {
 	return reasons
 }
 
-// skipDirs are never descended into.
+// skipDirs are never descended into, at any depth.
 //
 // The index is a cache of first-party source, not a mirror of the disk: a vendored
 // dependency tree or a build output directory would multiply the index size without
@@ -109,14 +109,24 @@ func appendDeferReason(reasons map[string]int, reason string) map[string]int {
 // minified-bundle check runs per file (`isBuildArtifact`) for the ones that live
 // somewhere unexpected.
 var skipDirs = map[string]bool{
-	".git": true, "node_modules": true, "dist": true, "build": true,
+	".git": true, "node_modules": true, "dist": true,
 	"vendor": true, ".tudouni": true, ".tudouni-index": true, ".codegraph": true,
 	"target": true, ".next": true, "__pycache__": true, ".venv": true,
 	"venv": true, ".workbuddy": true, ".tmp-gocache": true, ".tmp-outline-bench": true,
 	// Build and scratch directories that hold generated bundles.
 	".perf-build": true, ".test-build": true, ".tmp": true, ".cache": true,
-	"coverage": true, ".turbo": true, ".svelte-kit": true, ".nuxt": true,
-	"out": true, "release": true, "bundle": true, ".tauri-build": true,
+	".turbo": true, ".svelte-kit": true, ".nuxt": true, ".tauri-build": true,
+}
+
+// skipRootDirs are build-output names that are only skipped at the workspace root.
+//
+// They are ordinary package names too. `internal/release` and `tools/release` in
+// this repository are source, and a basename-only rule made them invisible to
+// every query. Build output with these names lives at the root (CMake's build/,
+// GoReleaser's dist/release) or inside an already-skipped directory such as
+// `target/`, so the narrower rule loses nothing.
+var skipRootDirs = map[string]bool{
+	"build": true, "out": true, "coverage": true, "bundle": true, "release": true,
 }
 
 // isBuildArtifact reports whether a file is generated or bundled source.
@@ -226,6 +236,15 @@ func Index(ctx context.Context, db *DB, opts IndexOptions) (IndexResult, error) 
 		result.FilesRemoved++
 	}
 
+	// The stat a pending file is recorded with must be the one taken **before** the
+	// parser read it. Taking a fresh stat afterwards would record the timestamp of a
+	// newer version of the file than the nodes describe, and the next sync's fast
+	// path would then treat the stale graph as up to date forever.
+	scanned := make(map[string]scannedFile, len(files))
+	for _, file := range files {
+		scanned[file.path] = file
+	}
+
 	var pending []cgparse.Reference
 	for _, file := range files {
 		if previous, ok := known[file.path]; ok && !opts.Full {
@@ -251,6 +270,15 @@ func Index(ctx context.Context, db *DB, opts IndexOptions) (IndexResult, error) 
 	}
 	report(opts.OnProgress, "changed", 0, len(pending))
 
+	// Hash before parsing, not after: the hash and the stat must describe the same
+	// bytes the parser is about to read. A hash taken afterwards can describe a
+	// newer version than the nodes, and the next sync's stat+hash fast path would
+	// then accept the stale graph as current.
+	hashes := make(map[string]string, len(pending))
+	for _, ref := range pending {
+		hashes[ref.Path] = hashOf(ref.Path)
+	}
+
 	// Names declared by the files about to be parsed. Resolution uses them to decide which
 	// historical failures are worth retrying — see ReopenRefsForNames.
 	declaredNames := make(map[string]struct{}, 256)
@@ -265,6 +293,7 @@ func Index(ctx context.Context, db *DB, opts IndexOptions) (IndexResult, error) 
 			return result, err
 		}
 		info := pending[index]
+		stat := scanned[info.Path]
 		if !one.OK {
 			// The kernel declined this file. For C and C++ that happens on files a compiler
 			// accepts — tree-sitter's grammar has gaps — so a line-based extractor tries
@@ -273,10 +302,10 @@ func Index(ctx context.Context, db *DB, opts IndexOptions) (IndexResult, error) 
 			if heuristic, applied := tryHeuristicExtraction(info); applied {
 				record := FileRecord{
 					Path:        info.Path,
-					ContentHash: hashOf(info.Path),
+					ContentHash: hashes[info.Path],
 					Language:    info.Language,
-					Size:        fileSize(info.Path),
-					ModifiedAt:  modTime(info.Path),
+					Size:        stat.size,
+					ModifiedAt:  stat.modifiedAt,
 					NodeCount:   len(heuristic.Nodes),
 					ParseError:  heuristicReason,
 				}
@@ -293,15 +322,17 @@ func Index(ctx context.Context, db *DB, opts IndexOptions) (IndexResult, error) 
 			result.FilesFailed++
 			result.DeferReasons = appendDeferReason(result.DeferReasons, one.Error)
 			// Recorded as a files row with the REAL content hash and the reason in
-			// parse_error, so the next run retries it and knows why. Padding the hash with
-			// a failure marker would make change detection see every broken file as
-			// changed on every run.
+			// parse_error, so the failure is visible and a changed file is retried.
+			// An *unchanged* file is not retried by sync: the fast path above skips
+			// it, which is why a parser upgrade needs a full rebuild to reach files
+			// the old parser declined. Padding the hash with a failure marker would
+			// make change detection see every broken file as changed on every run.
 			record := FileRecord{
 				Path:        info.Path,
-				ContentHash: hashOf(info.Path),
+				ContentHash: hashes[info.Path],
 				Language:    info.Language,
-				Size:        fileSize(info.Path),
-				ModifiedAt:  modTime(info.Path),
+				Size:        stat.size,
+				ModifiedAt:  stat.modifiedAt,
 				ParseError:  one.Error,
 			}
 			_ = db.WriteFile(ctx, record, nil, nil, nil)
@@ -316,10 +347,10 @@ func Index(ctx context.Context, db *DB, opts IndexOptions) (IndexResult, error) 
 		}
 		record := FileRecord{
 			Path:        info.Path,
-			ContentHash: hashOf(info.Path),
+			ContentHash: hashes[info.Path],
 			Language:    info.Language,
-			Size:        fileSize(info.Path),
-			ModifiedAt:  modTime(info.Path),
+			Size:        stat.size,
+			ModifiedAt:  stat.modifiedAt,
 			NodeCount:   len(nodes),
 		}
 		if err := db.WriteFile(ctx, record, nodes, edges, refs); err != nil {
@@ -420,6 +451,9 @@ func scanTree(root string) ([]scannedFile, error) {
 			if skipDirs[entry.Name()] {
 				return filepath.SkipDir
 			}
+			if skipRootDirs[entry.Name()] && path == filepath.Join(root, entry.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		language, ok := indexedExtensions[strings.ToLower(filepath.Ext(path))]
@@ -489,25 +523,6 @@ func hashOf(path string) string {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
-}
-
-func hashOfFailure(reason string) string {
-	sum := sha256.Sum256([]byte("failed:" + reason))
-	return "failed:" + hex.EncodeToString(sum[:8])
-}
-
-func fileSize(path string) int64 {
-	if info, err := os.Stat(path); err == nil {
-		return info.Size()
-	}
-	return 0
-}
-
-func modTime(path string) int64 {
-	if info, err := os.Stat(path); err == nil {
-		return info.ModTime().UnixMilli()
-	}
-	return 0
 }
 
 func report(onProgress func(string, int, int), phase string, done, total int) {

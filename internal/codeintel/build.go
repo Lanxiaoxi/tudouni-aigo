@@ -17,6 +17,7 @@ package codeintel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,7 +102,7 @@ func (r *Refresher) Rebuild(ctx context.Context, options BuildOptions) (cggraph.
 
 	lock, err := Acquire(r.root, RebuildLockWait)
 	if err != nil {
-		if err == ErrLocked {
+		if errors.Is(err, ErrLocked) {
 			if holder := Holder(r.root); holder != "" {
 				return result, fmt.Errorf("another session (pid %s) is updating this workspace's code index; try again when it finishes", holder)
 			}
@@ -110,6 +111,10 @@ func (r *Refresher) Rebuild(ctx context.Context, options BuildOptions) (cggraph.
 		return result, err
 	}
 	defer lock.Release()
+	// Order matters: stop the heartbeat before releasing, or a tick can rewrite
+	// the claim after Release has removed it. Deferred functions run in reverse.
+	stopKeepAlive := lock.KeepAlive(time.Minute)
+	defer stopKeepAlive()
 
 	return Build(ctx, r.root, r.parserPath, options)
 }
@@ -141,7 +146,8 @@ type IndexSnapshot struct {
 	DeferredByLanguage  map[string]int
 	HeuristicByLanguage map[string]int
 
-	// IndexedAt is when the last successful pass finished.
+	// IndexedAt is when the index's rows were last written by a pass. A no-change
+	// sync writes nothing, so this is the last pass that changed the graph.
 	IndexedAt time.Time
 
 	// Added, Changed and Removed are the divergence from the working tree.
@@ -156,14 +162,23 @@ type IndexSnapshot struct {
 // Stale reports whether the working tree has moved past the index.
 func (s IndexSnapshot) Stale() bool { return s.Added+s.Changed+s.Removed > 0 }
 
+// SnapshotOptions configures one Snapshot call.
+type SnapshotOptions struct {
+	// SkipStaleness omits the working-tree comparison. A build in progress has
+	// already emptied or half-written the graph, so the comparison would report
+	// every file as "added" — a warning drawn beside the progress bar that says
+	// the opposite of what the progress bar says. It is also the expensive half
+	// of this call (one walk plus one stat per indexed file) and the panel asks
+	// twice a second while it is building.
+	SkipStaleness bool
+}
+
 // Snapshot reads the index's facts, without building anything.
-func (r *Refresher) Snapshot(ctx context.Context) IndexSnapshot {
+func (r *Refresher) Snapshot(ctx context.Context, options SnapshotOptions) IndexSnapshot {
 	snapshot := IndexSnapshot{
 		Path: filepath.ToSlash(filepath.Join(cggraph.IndexDirName, cggraph.DefaultDBName)),
 	}
-	if detail, missing := r.indexMissing(); missing {
-		snapshot.Problem = ""
-		_ = detail
+	if _, missing := r.indexMissing(); missing {
 		return snapshot
 	}
 	snapshot.Indexed = true
@@ -192,6 +207,9 @@ func (r *Refresher) Snapshot(ctx context.Context) IndexSnapshot {
 	snapshot.DeferredByLanguage = stats.DeferredByLanguage
 	snapshot.HeuristicByLanguage = stats.HeuristicByLanguage
 
+	if options.SkipStaleness {
+		return snapshot
+	}
 	staleness, err := db.CheckStaleness(ctx, r.root)
 	if err != nil {
 		// A failed comparison is not proof of freshness; the counts stay zero and the
