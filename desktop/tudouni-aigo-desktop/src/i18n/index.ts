@@ -800,6 +800,18 @@ export const en = {
   /* The empty column's honest placeholder. Dashed, centred, one line: "eight
      ended sessions" reads as a state, bare emptiness does not. */
   'board.col.empty': 'Nothing here right now',
+  /* The Idle column's bulk close. **No count in the button's label**: the chip
+     beside it already says how many, and a number in the sentence would need a
+     plural rule this catalogue does not have ("Close all 1 idle sessions" — see
+     `panel.config.modelCount`). The dialog's title carries the count with the
+     `(s)` idiom instead. */
+  'board.col.closeIdle': 'Close every session in Idle',
+  'board.idleClose.title': 'Close {n} idle session(s)?',
+  'board.idleClose.subtitle':
+    'Their conversations are already saved and can be reopened. What is lost is what was never written down.',
+  'board.idleClose.warn':
+    'Unsaved drafts and pasted pictures in these sessions are discarded, and any shell still attached to one is ended.',
+  'board.idleClose.confirm': 'Close all',
 
   /* The card context menu: three words and the one sentence the menu owes — the
      reconcile step closes the session before it acts, so the archive row's

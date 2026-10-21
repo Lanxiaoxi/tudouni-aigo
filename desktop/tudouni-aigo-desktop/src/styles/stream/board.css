@@ -213,6 +213,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The Idle column's bulk close: the board's own header control in the same
+   `lb-icon` shell (22px, muted, same hover timing), which is what keeps it from
+   reading as a new species of control. Only the hover is its own — **muted until
+   hovered**, because the count beside it is the fact and this is the act: an
+   always-red X on a full column would read as an alarm rather than as a control,
+   and the column it lives on is the calmest one on the board. The destructive
+   pair is the same "the next press is real" language the card menu uses — except
+   that the press only raises a dialog here (see `IdleCloseConfirm`), so the
+   colour is orientation rather than a warning.
+
+   The compound selector outranks `.lb-icon:hover` on specificity rather than on
+   import order, which is a fact of the stylesheet split and not something to
+   rely on. */
+.board-col-close.lb-icon:hover:not(:disabled) {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
 /* The number is a **quantity**, the dot is the state. The redesign's board
    keeps the count in the rail's muted tag colour, the same as the left rail's
    quiet markers: a coloured dot beside a grey number still tells one fact, and

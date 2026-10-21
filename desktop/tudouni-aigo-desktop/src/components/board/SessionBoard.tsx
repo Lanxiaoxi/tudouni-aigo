@@ -10,6 +10,7 @@ import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { useTurnClock } from '@/hooks/useTurnClock';
 import { EmptyState, Progress, Tip } from '@/components/ui/kit';
+import { IdleCloseConfirm, type IdleCloseTarget } from '@/components/modals/IdleCloseConfirm';
 import { formatDuration, formatPercent, formatRelative, formatTokens, normPath } from '@/utils/format';
 
 /**
@@ -67,6 +68,19 @@ export function SessionBoard() {
   const setBoardOpen = useApp((s) => s.setBoardOpen);
   const focusSession = useApp((s) => s.focusSession);
   const activeKey = useApp((s) => s.activeKey);
+  const detachSession = useApp((s) => s.detachSession);
+
+  /**
+   * The Idle column's bulk-close prompt: the rows it was raised for, or null.
+   *
+   * **Board state, not store state.** The question is about this column's own
+   * cards, it is only meaningful while the board is open, and nothing else in
+   * the window has any use for the answer — putting it on `AppStore` would grow
+   * the contract every slice shares for a prompt nobody else can see. The
+   * *set* is stored rather than a boolean because the answer must be about the
+   * rows the person was shown: see `IdleCloseConfirm`.
+   */
+  const [idleClose, setIdleClose] = useState<IdleCloseTarget[] | null>(null);
 
   /**
    * The card context menu, open state.
@@ -371,6 +385,34 @@ export function SessionBoard() {
     (currentWorkspace.trim() === '' ||
       savedSessions[normPath(currentWorkspace)]?.listed !== true);
 
+  /**
+   * Close every session the prompt named.
+   *
+   * **Concurrent, not sequential.** `runtime_shutdown` waits for its own child
+   * (up to the bridge's shared 30s deadline), so a sequential loop would pay
+   * that wait once per session — and closing a dozen idle conversations is one
+   * act, not a dozen.
+   *
+   * The store half needs no batching: `detachSession` releases the pictures,
+   * unregisters the child, forgets its polling and drops its bucket **before
+   * its first `await`**, so mapping over the keys empties the column in one
+   * paint instead of N.
+   *
+   * Nothing here reaches for `killRuntime`. Idle is the only column this is
+   * offered on, which means no turn is in flight to interrupt — and a kill ends
+   * only the runtime's own process, leaving the shells and jobs under it
+   * orphaned.
+   */
+  function closeIdle(targets: IdleCloseTarget[]) {
+    // Cleared first: the first `detachSession` re-aims the focus, and a prompt
+    // left up over a board that has already changed would be asking about rows
+    // that are gone. The batch needs no error surface of its own — a child that
+    // fails to stop reports it through its own exit event, which is the same
+    // path every other close takes.
+    setIdleClose(null);
+    void Promise.all(targets.map((target) => detachSession(target.key)));
+  }
+
   return (
     <div className="board">
       <header className="board-head">
@@ -426,6 +468,34 @@ export function SessionBoard() {
                     on the board — the redesign keeps the state in the dot and
                     the chip in the rail's muted tag. */}
                 <span className="board-col-count">{column.cards.length}</span>
+                {/* **Idle is the one column that can be emptied in one act.**
+                    Every card on this board is a live child, and idle is the
+                    only state with no turn to interrupt — which is why this
+                    control exists here and nowhere else on the board.
+
+                    Offered only where it has something to act on: a button that
+                    closes nothing teaches people to ignore it. The click does
+                    not close anything either — it raises the confirmation, and
+                    that prompt carries the **snapshot** of what was on screen
+                    (`setIdleClose`), so a card that starts running between the
+                    two clicks cannot be closed under a sentence that never
+                    named it. */}
+                {column.id === 'idle' && column.cards.length > 0 ? (
+                  <Tip label={t('board.col.closeIdle')}>
+                    <button
+                      type="button"
+                      className="lb-icon board-col-close"
+                      aria-label={t('board.col.closeIdle')}
+                      onClick={() =>
+                        setIdleClose(
+                          column.cards.map((card) => ({ key: card.key, id: card.id })),
+                        )
+                      }
+                    >
+                      <X size={12} />
+                    </button>
+                  </Tip>
+                ) : null}
               </div>
               {/* **Creation order, never re-sorted by status.** The columns may
                   move a card between them — that is the board's whole value —
@@ -684,6 +754,16 @@ export function SessionBoard() {
           </div>
         </div>
       ) : null}
+
+      {/* The Idle column's bulk close. It lives inside the board rather than in
+          `App` because that is exactly how long the question is meaningful: the
+          set of rows it names belongs to this column, and a prompt with no board
+          behind it would be asking about nothing. */}
+      <IdleCloseConfirm
+        targets={idleClose}
+        onCancel={() => setIdleClose(null)}
+        onConfirm={closeIdle}
+      />
     </div>
   );
 }
