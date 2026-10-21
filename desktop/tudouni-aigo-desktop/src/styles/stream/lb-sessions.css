@@ -1,0 +1,526 @@
+
+
+/* The delete button sits beside the session button, revealed on hover — and
+   never hidden from the keyboard (`:focus-within`), because a control that only
+   a pointer can reach is a control half the keyboard's users cannot use. */
+.lb-session-wrap .lb-row-action {
+  flex: none;
+  align-self: center;
+  margin-right: var(--space-1);
+  opacity: 0;
+  color: var(--fg-faint);
+}
+
+.lb-session-wrap:hover .lb-row-action,
+.lb-session-wrap:focus-within .lb-row-action {
+  opacity: 1;
+}
+
+/* Armed: the second press will really delete, so the button says so — the
+   destructive colour, and the icon has already swapped to an X. Colour alone
+   never carries it: the tooltip, the aria-label and the icon all change too. */
+.lb-session-wrap .lb-row-action.is-armed {
+  opacity: 1;
+  color: var(--destructive);
+  background: var(--destructive-subtle);
+}
+
+/* The pair of row actions, **a column**: archive above delete — the reversible
+   one above the irreversible one, the same order the board's menu stacks them
+   in, so the two surfaces read one rule. The gap is a hair tighter than the
+   rail's normal rhythm because two 22px buttons stacked must not double the
+   row's air; the wrap's `align-items: stretch` is overridden here or the column
+   would stretch its children to each other's width. The reveal is the wrap's
+   own hover/focus-within rule (`.lb-session-wrap:hover .lb-row-action`), so the
+   pair appears and hides together, as one affordance.
+
+   **Absolute, because there is no band reserved for it.** As a flex item the
+   column took 26px of the row, and on a flat row that means every timestamp
+   stops 26px short of the right edge — the drift the redesign is removing. So
+   the column sits on the wrapper's edge instead, over the spot the time fades
+   out of on the same hover (`.lb-session-time`), and the row's width never
+   changes: nothing to give up, nothing to take back, no reflow.
+
+   `top: 50%`/`translateY(-50%)` centres the pair without `align-self`, which
+   only has meaning for a flex item. `right: 4px` keeps it clear of the
+   scrollbar's gutter and inside the row's own rounded corner.
+
+   **The transition is what makes the reveal a motion rather than a jump.**
+   `opacity` and `transform` only — the two properties `tokens.css` allows — so
+   the pair slides along its own axis and fades while the time fades out. */
+.lb-session-actions {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  transition: opacity var(--motion-base) var(--ease-standard);
+}
+
+.lb-session-actions > .lb-row-action {
+  flex: none;
+  /* The side-by-side rule's spacing reads wrong in a column: `margin-right`
+     was the gap between a button and nothing, and its `align-self: center`
+     would centre each button in the column instead of stacking them flush. */
+  margin-right: 0;
+  align-self: stretch;
+}
+
+/* ---------------- session status dots ---------------- */
+/*
+   What each dot means, and why the fourth colour exists, is in `SessionDot`.
+   Three things about the styling are deliberate:
+
+   - **Breathe only for a continuing condition.** `running` and `asking` are
+     states that last while something is happening (a turn in flight, a
+     person being waited on) — the same justification the status bar's own
+     `.is-working` has — so they reuse its `breathe` keyframes. `unseen` and
+     `broken` are settled states, and a change **into** them must not be
+     announced with a light: the colour alone changes, per component-states §7.
+   - **`flex: none`.** The dot must not be squeezed: the session id beside it is
+     the flexible cell, and a 6px circle shrunk to 2px is a mark nobody can read.
+   - **An optical nudge, not a layout one.** `margin-top: 1px` aligns the circle
+     with the x-height of the id beside it. It is on the dot rather than on the
+     row so the row's own baseline stays what the other rows use.
+*/
+.lb-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+/* Waiting on a person: a turn that will not move until somebody acts — a
+   continuing condition, so the dot breathes for as long as it waits. */
+.lb-dot.is-asking {
+  background: var(--warning);
+  animation: breathe 1.2s var(--ease-standard) infinite alternate;
+}
+
+/* Broken. Reserved for "you did not stop it and it failed" — `interrupted`,
+   `step_limit` and `empty` are blue, or pressing Esc three times would earn
+   three red dots. A settled state: the colour says it, and nothing moves. */
+.lb-dot.is-broken {
+  background: var(--destructive);
+}
+
+/* A turn is in flight: the same continuing condition the status bar's
+   `.is-working` breathes for. The **accent**, because this is the board's
+   Working colour too — one state, one green, on both surfaces. */
+.lb-dot.is-running {
+  background: var(--accent);
+  animation: breathe 1.2s var(--ease-standard) infinite alternate;
+}
+
+/* Finished, and nobody has looked. The state a three-colour scheme cannot
+   express, and the one that matters most with several sessions open. The
+   **teal end of the success family**, the board's Finished colour — the old
+   `--info` blue was the one cold mark left in a green rail. */
+.lb-dot.is-unseen {
+  background: var(--success);
+}
+
+/* ---------------- workspace attention badge ---------------- */
+
+/*
+   How many sessions in that workspace want a person. The session dots' answer at
+   a coarser grain, and it exists for what a dot cannot do: a dot in a workspace
+   nobody is looking at is invisible — which is exactly the case once two
+   workspaces are open, and the question "is anything waiting for me over there"
+   has no other place to be written.
+
+   `flex: none` for the same reason the MCP rail's action button pins it: a
+   `flex-shrink: 1` badge in a squeezed row collapses to an unreadable sliver
+   while still technically being on screen.
+*/
+.lb-attention {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ---------------- remote workspace connection badges (§5.1) ---------------- */
+
+.lb-connection {
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-caption);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.lb-connection-success {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.lb-connection-warning {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.lb-connection-destructive {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.lb-connection-neutral {
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+}
+
+/* ---------------- the rail's foot: the workbench ---------------- */
+
+/* The workbench is the rail's one object rather than its last seven rows: a
+   card cut into the bottom of the column, holding its own handle. Folded, the
+   card **is** the handle; open, the body above it carries the filter and the
+   seven destinations, and the session list above gives way.
+
+   The foot owns the outer padding and nothing else. Everything visual — the
+   line, the radius, the shadow — belongs to `.lb-workbench`, so the folded and
+   open states are one box changing height, not two different surfaces. */
+.lb-foot {
+  flex: none;
+  padding: 6px 8px 8px;
+  background: var(--lb-surface);
+}
+
+.lb-workbench {
+  overflow: hidden;
+  border: 1px solid var(--lb-line);
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: var(--lb-float);
+  transition:
+    transform var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out);
+}
+
+/* Folded, the card lifts as one object to meet the pointer. Open, it stays put:
+   a 380px card moving under the pointer while the person is aiming at a row is
+   motion for motion's sake. */
+.lb-workbench.is-collapsed:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--lb-float-hover);
+}
+
+/* The height animation. A drawer that is the same object folded and open has to
+   grow from one height to the other, and `grid-template-rows` is the only way
+   to do that without measuring. The curve runs slightly past its end, which is
+   what reads as the design's spring; the items are not in this transition — they
+   stagger over it. */
+.lb-workbench > .collapse {
+  transition: grid-template-rows 340ms cubic-bezier(0.22, 1.18, 0.36, 1);
+}
+
+/* The padding-free grid item — see the markup's comment for why the padded body
+   cannot be the item itself. */
+.lb-workbench-fold {
+  overflow: hidden;
+}
+
+.lb-workbench-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 8px 4px;
+}
+
+/* ---- the filter ---- */
+
+.lb-workbench-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 8px;
+  background: var(--lb-hover);
+  color: var(--fg-muted);
+}
+
+.lb-workbench-search-icon {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.lb-workbench-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11.5px;
+  color: var(--fg);
+}
+
+.lb-workbench-input::placeholder {
+  color: var(--fg-faint);
+}
+
+/* The global keyboard ring is a 2px box around the focused element; inside a
+   30px field that is a frame around the whole control, so the field's focus is
+   drawn on its container's hairline instead. */
+html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
+  box-shadow: none;
+}
+
+.lb-workbench-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+/* A legend, not a button: `Ctrl K` is handled globally and opens the command
+   palette, which is the surface that can jump anywhere in the window. */
+.lb-workbench-kbd {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+/* ---- the two groups ---- */
+
+.lb-workbench-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.lb-workbench-group + .lb-workbench-group {
+  margin-top: 6px;
+}
+
+/* The group label: the same 10px shelf-label role the rail's section heads
+   play, one step quieter — inside the drawer the rows are the subject. */
+.lb-workbench-group-label {
+  padding: 7px 8px 2px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--fg-faint);
+}
+
+.lb-workbench-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* A destination. It enters from 8px below and fades, one 40ms step after the
+   row before it (`--i` is the row's index in the whole drawer, not its group:
+   the two groups open as one sweep). The delays are listed only for `opacity`
+   and `transform`; a delay on `background-color` would make the pointer's own
+   hover lag behind its row. */
+.lb-workbench-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity 160ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+.lb-workbench:not(.is-collapsed) .lb-workbench-item {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0ms, 0ms, calc(var(--i, 0) * 40ms), calc(var(--i, 0) * 40ms);
+}
+
+/* Disabled rows are dimmed **only while the drawer is open**; the base rule is
+   the closed state, where the clip is what hides them. */
+.lb-workbench:not(.is-collapsed) .lb-workbench-item:disabled {
+  opacity: 0.4;
+}
+
+.lb-workbench-item:disabled {
+  cursor: not-allowed;
+}
+
+.lb-workbench-item:hover:not(:disabled) {
+  background: var(--lb-hover);
+  color: var(--fg);
+}
+
+/* The one row that names a view that is currently on screen. The capsule is the
+   same pale green the rail's current workspace and current session wear — one
+   selected state, stated once, in all three places. */
+.lb-workbench-item.is-active {
+  background: var(--lb-selected);
+  color: var(--fg);
+}
+
+.lb-workbench-item-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--fg-muted);
+}
+
+.lb-workbench-item:hover:not(:disabled) .lb-workbench-item-icon {
+  color: var(--fg-secondary);
+}
+
+.lb-workbench-item.is-active .lb-workbench-item-icon {
+  color: var(--accent-tint-text);
+}
+
+.lb-workbench-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A per-item count: running terminals (accent) or pending memory candidates
+   (warning). Omitted entirely when the count is zero, so the row reads as
+   "nothing to report here" rather than wearing a permanent grey 0. */
+.lb-workbench-item-badge {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lb-workbench-item-badge.is-attention {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.lb-workbench-empty {
+  padding: 10px 8px;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+/* ---- the handle ---- */
+
+.lb-workbench-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 48px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Open, the handle is the drawer's foot: a hairline is the seam between the
+   rows and the strip that folds them. */
+.lb-workbench:not(.is-collapsed) .lb-workbench-head {
+  border-top: 1px solid var(--lb-line);
+}
+
+/* The identification tile, folded: the workbench's own mark, dark in both
+   themes like the application mark it sits beside. */
+.lb-workbench-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--lb-mark-bg);
+  color: var(--lb-mark-fg);
+}
+
+/* The collapse square, open: pale green, one step quieter than the tile, and
+   the only affordance in the drawer that points *out* of it. */
+.lb-workbench-collapse {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--lb-tag);
+  color: var(--accent-tint-text);
+}
+
+.lb-workbench-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.lb-workbench .count {
+  background: var(--lb-tag);
+  color: var(--fg-muted);
+}
+
+/* The arrow at the folded card's end. It points **up** while the drawer is
+   closed (the body opens upward, out of the bottom of the rail), and it is the
+   handle's own affordance rather than a second button nested in the first. */
+.lb-workbench-caret {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--lb-tag);
+  color: var(--accent-tint-text);
+  transform: rotate(180deg);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.lb-workbench-head:hover .lb-workbench-caret {
+  background: var(--lb-selected);
+}

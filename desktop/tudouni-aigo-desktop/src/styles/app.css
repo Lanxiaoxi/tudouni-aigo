@@ -52,12 +52,6 @@
   letter-spacing: var(--tracking-label);
 }
 
-.titlebar .tb-sub {
-  font-family: var(--font-mono);
-  font-size: var(--text-caption);
-  color: var(--fg-faint);
-}
-
 .wincontrols {
   margin-left: auto;
   display: flex;
@@ -84,7 +78,7 @@
 
 .wc-close:hover {
   background: var(--destructive);
-  color: #ffffff;
+  color: var(--fg-on-solid);
 }
 
 /* ---------------- §1·1 顶部栏 ---------------- */
@@ -379,7 +373,7 @@
 
 @container sessionbar (max-width: 680px) {
   .sessionbar .sb-id,
-  .sessionbar .sb-model {
+.sessionbar .sb-model {
     display: inline-block;
     max-width: 14ch;
     overflow: hidden;
@@ -528,23 +522,6 @@
 .sessionbar .sb-board:disabled {
   opacity: 0.35;
   cursor: not-allowed;
-}
-
-/* The permission statement's dashed chip. Nowhere on this bar any more: the
-   statement lives where the rail it belongs to renders it — the collapsed
-   summary and the SettingsPanel — and a dashed edge outlived the row that
-   carried it. Kept for whichever surface borrows the shape next. */
-.perm-scope {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 20px;
-  padding: 0 7px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-xs);
-  font-size: var(--text-caption);
-  color: var(--fg-muted);
-  cursor: default;
 }
 
 /* ---------------- §1·5 折叠摘要行 ---------------- */
@@ -1466,7 +1443,7 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   background: var(--accent-active);
   /* White, not `--fg-on-accent` (which is dark green in the light theme): the
      square should match the send arrow, a white glyph on the accent fill. */
-  color: #ffffff;
+  color: var(--fg-on-solid);
 }
 
 .composer .cp-send.is-stop:hover {

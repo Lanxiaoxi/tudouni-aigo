@@ -1,0 +1,218 @@
+
+
+/* Each block is a **list card on the rail's plane**: the same near-white
+   surface, hairline and radius the left rail's rows and workbench card use.
+   The previous pass removed the card edge with the old grey palette; that was
+   one step too far — the sections read as an unbroken column of text with no
+   boundary between "Goal" and "Tasks". The border is the only layer the block
+   needs: no shadow, no second background shade. */
+.sb-block {
+  border: 1px solid var(--lb-line);
+  border-radius: 10px;
+  background: var(--bg-card);
+  overflow: hidden;
+  flex: none;
+}
+
+.sb-block-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px 6px 10px;
+  min-height: 30px;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.sb-block-head:hover {
+  background: var(--lb-hover);
+}
+
+/* The block label is the left rail's **shelf label**: 10.5px, sentence case,
+   `--fg-muted`. It used to be 13px/600 in the reading colour, which made six
+   section names compete with the facts under them; at this size the count at
+   the row's end is the thing that stands out, which is what it is for. */
+.sb-block-head .sbh-title {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--fg-muted);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The count is a pale tag, the same shape the left rail's rows use for their
+   quiet markers. Its two semantic variants keep their own colours. */
+.sb-block-head .count {
+  background: var(--lb-tag);
+  color: var(--fg-muted);
+}
+
+.sb-block-head .count.count-active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.sb-block-head .count.count-attention {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.sb-block-body {
+  padding: 2px 6px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sb-empty {
+  padding: 4px 8px 8px;
+}
+
+.sb-empty .se-title {
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+.sb-empty .se-hint {
+  margin-top: 2px;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.sb-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row-h-compact);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.sb-row.is-clickable {
+  cursor: pointer;
+}
+
+.sb-row.is-clickable:hover {
+  background: var(--lb-hover);
+}
+
+/* 名字是主信息：保底 9ch，不许被右侧明细挤没。
+   明细（时长/退出码）允许收缩 + 省略，完整文本走 title 兜底。 */
+.sb-row .sbr-main {
+  flex: 1 1 auto;
+  min-width: 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-row .sbr-aside {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-row.is-uncollected {
+  color: var(--fg);
+}
+
+.sb-row.is-uncollected .sbr-aside {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.sb-row.is-done .sbr-main {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-faint);
+}
+
+/* The rail MCP row's load/unload control.
+   `flex: none` is load-bearing, not tidiness: `.btn` is `flex-shrink: 1` by
+   default, so without it the button is the first thing the row squeezes once the
+   name and the state badge have taken their space — measured at 13–16px instead
+   of 22px, i.e. a control that is still on screen but no longer clickable. The
+   row has no room to give, so the button keeps its size and the name is what
+   gives way (`.sbr-main` already ellipsises).
+   It also never hides: the left rail reveals its row actions on hover, but that
+   rule has a focus-within half for a reason — a control only a pointer can reach
+   is one half the keyboard cannot use. Here it is a named action on a row that
+   already exists, so it simply stays visible. */
+.sb-row .mcp-act {
+  flex: none;
+  padding: 0 var(--space-2);
+  color: var(--fg-muted);
+}
+
+.sb-row .mcp-act:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.sb-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 6px 6px;
+}
+
+.sb-goal {
+  padding: 2px 6px 6px;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+}
+
+/* The rail's own ghost buttons take the rail's hover wash, not the shell's
+   neutral `--bg-muted`: the two rails use one green-grey for the pointer, and a
+   third grey inside a block would be the inconsistency this change removes. */
+.sidebar-inner .btn-ghost:hover:not(:disabled) {
+  background: var(--lb-hover);
+}
+
+/* Neutral badges are the rail's tag colour too. The tinted ones (running,
+   waiting, failed, info) keep their semantic colours on purpose — those are
+   states, not surfaces, and the left rail has no equivalent to recolour. */
+.sidebar-inner .badge-neutral {
+  background: var(--lb-tag);
+}
+
+.sidebar-inner .badge-outline {
+  border-color: var(--lb-line);
+}
+
+/* The objective is shown in full: the rail scrolls and the tail of a long
+   sentence is exactly where "what is this goal, precisely" usually lives. The
+   -webkit line clamp that used to sit here belonged to a different surface — a
+   fixed-height column that had to clip (see the TUI's `railMaxRows`) — and
+   carried over by momentum. No ellipsis, no cap: the block grows downward. */
+.sb-goal .sg-text {
+  color: var(--fg-secondary);
+  word-break: break-word;
+}
+
+.sb-goal .sg-meta {
+  margin-top: var(--space-1);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sb-goal .sg-blocked {
+  margin-top: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--warning);
+}

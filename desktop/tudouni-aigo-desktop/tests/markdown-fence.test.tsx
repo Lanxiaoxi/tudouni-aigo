@@ -20,6 +20,7 @@
  */
 
 import { test } from 'node:test';
+import { streamCss as readStreamCss } from './stream-css';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -132,10 +133,7 @@ test('an untagged fence is drawn without the bar', () => {
 
 /* ---------------- the stylesheet's half ---------------- */
 
-const streamCss = readFileSync(
-  resolve(process.cwd(), 'src', 'styles', 'stream.css'),
-  'utf8',
-);
+const streamCss = readStreamCss();
 
 /** One rule body, by its exact selector line. */
 function ruleBody(selector: string): string {

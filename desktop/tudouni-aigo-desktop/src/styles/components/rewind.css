@@ -1,0 +1,422 @@
+
+
+/* ============================================================
+   The add-remote-workspace wizard
+   ============================================================
+   Three steps, one question each. The layout rules that matter:
+
+   - the step rail is **outside** the scrolling body, so "which step am I on"
+     cannot be scrolled away by a long directory list — the same rule the two
+     rails' heads follow;
+   - the host list and the directory list are the only scrollable regions, each
+     with a bounded height, so a host with two hundred directories does not push
+     the button that completes the flow off the dialog;
+   - every row is a full-width button, because the whole row is the target —
+     and never a `<div onClick>`, so it is reachable by Tab and announced as a
+     choice. */
+
+.rw-dialog {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.rw-steps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.rw-step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* The connector between steps: a rule, not an arrow glyph — it reads at any
+   width and does not depend on a font having the character. */
+.rw-step + .rw-step::before {
+  content: '';
+  width: 14px;
+  height: 1px;
+  background: var(--border-strong);
+  margin-right: var(--space-1);
+}
+
+.rw-step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* The step's own name. It is the part that identifies the step, so it is the
+   part that must never be clipped — the number beside it is a position, not a
+   label, and a rail reading "1 · 2 · 3" would say nothing about what is being
+   asked. */
+.rw-step-name {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rw-step.is-current {
+  color: var(--fg);
+}
+
+.rw-step.is-current .rw-step-no {
+  border-color: var(--accent-border-strong);
+  background: var(--accent-subtle);
+  color: var(--accent-tint-text);
+}
+
+.rw-step.is-done {
+  color: var(--fg-muted);
+}
+
+.rw-step.is-done .rw-step-no {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+  color: var(--accent-tint-text);
+}
+
+/* ---- 1. hosts ---- */
+
+.rw-hosts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 260px;
+  overflow: auto;
+  margin-bottom: var(--space-2);
+}
+
+.rw-host,
+.rw-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.rw-host:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--bg-secondary);
+}
+
+.rw-host.is-selected {
+  border-color: var(--accent-border-strong);
+  background: var(--accent-subtle);
+}
+
+/* A host the file marks unselectable is still *listed* — dropping it would be
+   the form answering "do you still want this host?" on the person's behalf —
+   but it is visibly not a choice, and its tooltip carries the parser's own
+   reason. */
+.rw-host.is-refused {
+  opacity: 0.6;
+}
+
+.rw-target {
+  border-color: var(--border-strong);
+  background: var(--bg-secondary);
+}
+
+.rw-host-icon {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.rw-host-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.rw-host-name {
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.rw-host-addr {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw-host-check {
+  flex: none;
+  color: var(--accent-tint-text);
+  opacity: 0;
+}
+
+.rw-host.is-selected .rw-host-check {
+  opacity: 1;
+}
+
+.rw-host-tag {
+  flex: none;
+  font-size: 10px;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
+  border: 1px dashed var(--warning-border);
+  color: var(--warning);
+}
+
+/* ---- the "add a new host" disclosure ---- */
+
+.rw-new {
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--space-3);
+}
+
+.rw-new > summary {
+  cursor: pointer;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  list-style: none;
+}
+
+.rw-new > summary::-webkit-details-marker {
+  display: none;
+}
+
+.rw-new > summary::before {
+  content: '+';
+  display: inline-block;
+  width: 14px;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+}
+
+.rw-new[open] > summary::before {
+  content: '−';
+}
+
+.rw-new[open] > summary {
+  margin-bottom: var(--space-2);
+}
+
+.rw-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2) var(--space-3);
+}
+
+.rw-field {
+  display: block;
+  margin-top: var(--space-2);
+  min-width: 0;
+}
+
+.rw-field.is-narrow {
+  grid-column: span 1;
+}
+
+.rw-field .input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.rw-field textarea.input {
+  height: auto;
+  min-height: 46px;
+  padding: var(--space-2) var(--control-pad-x);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.rw-actions {
+  display: flex;
+  margin-top: var(--space-3);
+}
+
+/* The block about to be appended to somebody's own ssh config, shown verbatim.
+   Monospace and pre-wrapped: it is a file's contents, not prose, and a line that
+   reflowed would read as a different line than the one being written. */
+.rw-preview {
+  margin-top: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.rw-preview-label {
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.rw-preview-body {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-code);
+  color: var(--fg-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.rw-preview-path {
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+/* ---- shared notes ---- */
+
+.rw-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.rw-note svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.rw-note.is-bad {
+  color: var(--destructive);
+}
+
+.rw-note.is-warn {
+  color: var(--warning);
+}
+
+.rw-note.is-ok {
+  color: var(--success);
+}
+
+.rw-caption {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ---- 3. the far end's facts ---- */
+
+.rw-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.rw-facts .fact {
+  gap: var(--space-1);
+}
+
+.rw-facts .fact.is-warn {
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+
+/* ---- the directory browser ---- */
+
+.rw-browse {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.rw-browse-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+/* The path is the breadcrumb, and it can be long: it ellipsises from the right
+   so the **end** — the directory you are actually in — stays readable, which is
+   the half a plain `text-overflow` would hide. */
+.rw-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rw-dirs {
+  max-height: 220px;
+  overflow: auto;
+}
+
+.rw-dir {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) var(--space-3);
+  background: transparent;
+  text-align: left;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+}
+
+.rw-dir:hover:not(:disabled) {
+  background: var(--accent-subtle);
+  color: var(--fg);
+}
+
+.rw-dir-icon {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.rw-dir-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The new-folder row is **inside** the browse box, at its foot: creating a
+   directory is an act on the directory on screen, and putting it anywhere else
+   would make "where does this land" a question. */
+.rw-newdir {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.rw-newdir .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+}

@@ -1,0 +1,143 @@
+
+
+/* ---------------- §10 终端 / Diff / 日志 ---------------- */
+.terminal {
+  background: var(--terminal-bg);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: var(--leading-code);
+  color: var(--terminal-fg);
+  overflow: auto;
+  white-space: pre;
+  /* 滚动条统一走 .scroll-fade（悬停浮现），见 global.css。 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.terminal:hover,
+.terminal:active {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.terminal::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.terminal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.terminal:hover::-webkit-scrollbar-thumb,
+.terminal:active::-webkit-scrollbar-thumb {
+  opacity: 1;
+}
+
+.terminal::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-strong, var(--scrollbar-thumb));
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.terminal::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.tl-dim {
+  color: var(--term-dim);
+}
+
+/* ---------------- 键位提示 ---------------- */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 17px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* ---------------- 进度条 ---------------- */
+.progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-muted);
+  overflow: hidden;
+  flex: 1 1 auto;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width var(--motion-base) var(--ease-out);
+}
+
+.progress-fill.is-warn {
+  background: var(--warning);
+}
+
+.progress-fill.is-danger {
+  background: var(--destructive);
+}
+
+/* ============================================================
+   The configuration panel
+   ============================================================
+
+   A form over two files, and three rules shape what follows.
+
+   **It is wider than every other dialog.** `.dialog` is 640px because the other
+   panels carry one column of rows; this one holds labelled fields in pairs, and
+   two 280px inputs inside a 640px box would put the label of the second one
+   under the first one's value. The width is capped the same way — a vw subtract,
+   so the window can still be made narrow.
+
+   **Problems are listed above the fields, not under them.** The list can be
+   longer than the screen, and the first question after a refused save is "what
+   do I fix" — which is exactly what scrolling to the bottom would lose.
+
+   **Routes and MCP servers are lists of rows, and one row opens one editor** —
+   the task panel's shape, and its vocabulary (`.tk-head`, `.tk-chips`, `.tk-list`,
+   `.tk-row`, `.tk-menu`, `.tk-editor`, `.tk-section`, `.tk-subcard`). What is left
+   in this section is what is *only* true of these two files: their paths and the
+   problems that can make one unwritable, the field grid, and the status line in
+   the footer. The card classes this section used to carry (`.cfg-card*`,
+   `.cfg-models*`, `.cfg-model*`) are gone with the stacked-cards layout they
+   described. */
+
+.dialog-wide {
+  width: min(860px, calc(100vw - 48px));
+}
+
+/* 文件浏览器：**稳定的高度**，不是"由内容决定"。
+ *
+ * `.dialog` 只有 `max-height`，所以面板高度跟着内容走 —— 一个 10 项的工作区
+ * 目录会让面板缩到 10 行高，于是面板下面露出右侧栏（"Session runtime"），
+ * 看起来像两半拼在一起：上半是面板，下半是另一个不相干的东西。列表长短本身
+ * 是正常信息，但它不该改变窗口的骨架。
+ *
+ * 用 `height` 而不是 `min-height`：只有固定高度才能让 `.dialog-body`（`flex:
+ * 1 1 auto` + `overflow: auto`）真的滚动，而不是把整个面板撑高。`max-height`
+ * 仍然由 `.dialog` 的规则兜住，所以矮窗口下不会溢出屏幕。 */
+.dialog.dialog-files {
+  height: min(560px, calc(100vh - 96px));
+}

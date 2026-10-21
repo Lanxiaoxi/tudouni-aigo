@@ -35,6 +35,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
+import { streamCss as readStreamCss } from './stream-css';
 
 // Resolved from the project root, not from `import.meta.url`: the tests are
 // bundled into `.test-build/` before they run, so a path relative to this module
@@ -42,7 +43,7 @@ import { test } from 'node:test';
 const cssPath = resolve(process.cwd(), 'src', 'styles', 'app.css');
 const css = readFileSync(cssPath, 'utf8');
 const streamCssPath = resolve(process.cwd(), 'src', 'styles', 'stream.css');
-const streamCss = readFileSync(streamCssPath, 'utf8');
+const streamCss = readStreamCss();
 const globalCssPath = resolve(process.cwd(), 'src', 'styles', 'global.css');
 const globalCss = readFileSync(globalCssPath, 'utf8');
 

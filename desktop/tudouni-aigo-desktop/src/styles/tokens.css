@@ -200,6 +200,10 @@
   --warning-border: rgba(245, 158, 11, 0.45);  /* 看板卡片「等你回答」的描边，配对 accent-border */
   --destructive:   #F0565C;  --destructive-subtle: rgba(240, 86, 92, 0.14);
   --success:       #2DD4BF;  --success-subtle: rgba(45, 212, 191, 0.14);
+  /* The scrim behind a dialog. Heavier than the light theme's: the wash that
+     separates a dialog from the pale canvas is nearly invisible on a near-black
+     one, so the dark theme needs more of it, not less. */
+  --overlay-scrim: rgba(2, 6, 23, 0.5);
 
   --ring:          rgba(52, 211, 153, 0.50);
   --focus-ring:    0 0 0 2px var(--bg), 0 0 0 4px var(--ring);
@@ -251,6 +255,31 @@
      puts a 12px-offset / 26px-blur drop under a surface half that tall, and the
      chip reads as smudged rather than lifted. Same geometry, quartered. */
   --shadow-chip-hover:  0 3px 10px -2px rgba(0, 0, 0, 0.40), 0 1px 2px rgba(0, 0, 0, 0.30);
+
+  /* ---------- 固定深色层（不随主题翻转） ----------
+   * Everything below is painted on a surface that is dark in both themes: the
+   * terminal, a code block, the image lightbox. Keeping these here rather than
+   * in the two theme blocks is the statement that they are not theme colours —
+   * a light-theme override would make a code block's chrome disagree with its
+   * own background. `--fg-on-solid` is the same idea for white text on a
+   * saturated fill (primary button, destructive button, running step icon). */
+  --fg-on-solid: #FFFFFF;
+  --term-dim: #64748B;
+  --term-line: rgba(255, 255, 255, 0.07);
+  --term-hover: rgba(255, 255, 255, 0.08);
+  --lightbox-scrim: rgba(0, 0, 0, 0.86);
+  --lightbox-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  --lightbox-close-bg: rgba(0, 0, 0, 0.5);
+  --lightbox-close-bg-hover: rgba(0, 0, 0, 0.75);
+  --shadow-thumb: 0 1px 2px rgba(2, 6, 23, 0.18);
+  --shadow-knob: 0 1px 2px rgba(2, 6, 23, 0.25);
+  /* The medium-risk call border: one step lighter than `--warning-border`, and
+     deliberately fixed rather than following the theme's amber. */
+  --warning-border-soft: rgba(245, 158, 11, 0.4);
+  /* Two syntax colours with no ANSI counterpart; the rest of the highlight
+     theme reuses `--term-*` so code and terminal never drift apart. */
+  --code-comment: #6B7484;
+  --code-number: #D19A66;
 }
 
 /* ============================================================
@@ -324,6 +353,7 @@
   --warning-border: rgba(166, 99, 20, 0.40);  /* 看板卡片「等你回答」的描边，配对 accent-border */
   --destructive:   #DC3D43;  --destructive-subtle: #FCE9EA;
   --success:       #0E9384;  --success-subtle: #E4F5F1;
+  --overlay-scrim: rgba(2, 6, 23, 0.35);
 
   --ring:          rgba(5, 150, 105, 0.45);
   --focus-ring:    0 0 0 2px var(--bg), 0 0 0 4px var(--ring);

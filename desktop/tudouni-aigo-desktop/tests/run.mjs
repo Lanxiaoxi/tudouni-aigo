@@ -29,6 +29,10 @@ const outDir = resolve(root, '.test-build');
  */
 const SUITES = [
   'projection.test.ts',
+  // The factory seam: `createAppStore()` is what makes a second, independent
+  // store possible in a test. Two stores, two states — a singleton cannot say
+  // that about itself.
+  'store-factory.test.ts',
   'contract.test.ts',
   'paste.test.ts',
   'workspace.test.ts',

@@ -1,0 +1,361 @@
+
+
+/* ---------------- 2. 用户输入 ---------------- */
+/* Row: the bubble on the right and the copy button **under** it, both flush right
+   (`EntryView.tsx`, `UserEntry`). The row, not the bubble, owns the alignment, so
+   the button can sit below the bubble instead of on top of it. */
+.e-user-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.e-user {
+  max-width: 78%;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-lg);
+  background: var(--accent-subtle);
+  font-size: var(--text-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* Same entrance as the step card: the bubble mounts once per prompt, so the
+     stable key runs the animation a single time instead of on re-renders. */
+  animation: step-slide-in var(--motion-base) var(--ease-out) 1;
+}
+
+/* Copy affordance below the row it belongs to — the user's bubble (`UserEntry`)
+   and the model's reply (`AnswerEntry`) share it. The row owns the alignment
+   (`align-items`), so this is only the button itself. */
+.entry-copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  /* Hidden until its row's content is hovered (`.e-user` / `.e-answer`): the
+     affordance is noise when the reader is not reading the row, and the row's
+     `:hover` also covers the button itself, so a hovered button never disappears
+     under the cursor before it can be clicked. */
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+
+/* `:has()` (not a sibling combinator): the button is a sibling of the bubble,
+   and the answer's content is nested — a selector cannot reach "the content,
+   or any of its descendants". Chromium (the webview) supports `:has`. */
+.e-user-row:has(.e-user:hover) .entry-copy,
+.e-answer-row:has(.e-answer:hover) .entry-copy,
+.entry-copy:hover,
+/* A successful copy must stay visible for its check to be seen. */
+.entry-copy.is-copied {
+  opacity: 1;
+}
+
+.entry-copy:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* The check swap after a successful copy. */
+.entry-copy.is-copied {
+  color: var(--success);
+}
+
+/* The reply's two buttons sit side by side: copy, then fork. The group is a
+   flex row of the same 22px squares the copy button already is, so the
+   hover-reveal rule above reaches both through `.entry-copy` and the fork
+   carries an identical one. */
+.e-answer-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.entry-fork {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  /* Same hidden-until-hover rule as the copy button: the affordance is noise
+     while the reader is not reading the row, and the row's `:hover` also
+     covers the button itself, so a hovered button never disappears under
+     the cursor before it can be clicked. */
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+
+.e-answer-row:has(.e-answer:hover) .entry-fork,
+.entry-fork:hover {
+  opacity: 1;
+}
+
+.entry-fork:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* ---------------- 3. 模型步 ---------------- */
+.e-model {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 0;
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+.e-model .em-rail {
+  width: 2px;
+  align-self: stretch;
+  background: var(--border);
+  border-radius: 1px;
+  flex: none;
+}
+
+.e-model.is-retry {
+  color: var(--warning);
+}
+
+.e-model .em-retry {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+/* ---------------- 3. 模型步（分块后的面板，见 `streamBlocks.ts`）--------
+   一个 step 的行件——调用记录、工具、权限、批次、拒绝——被拉进同一张
+   卡片：头部条承载调用自身的数字，卡内放这次调用"做过的事"。散开时代的
+   `.e-model` 行不再是悬浮在流里的一条；重试行（`retry`）不进块，继续用
+   `.e-model` 单独成行。 */
+.e-step {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  /* The design's `.mc-card` — the one shape it lifts off the transcript — is
+     this card. Nothing else in the stream takes a shadow, so the lift keeps
+     meaning "this is a step you can open" rather than "this is a box". */
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  /* Slide up from below on first appearance instead of popping in. The card's
+     stable React key means the animation runs once — when the step block is
+     first mounted — not on every streamed chunk that re-renders it. */
+  animation: step-slide-in var(--motion-base) var(--ease-out) 1;
+}
+
+@keyframes step-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The head bar. 面板的第一行：调用名在左、数字在右——数字读在一眼处，
+   名字读在两眼处，和 redesign 卡片头的布局次序一致。
+
+   **It is the card's own surface, not a band across it.** The reference's
+   `.mc-head` has no background and no separator: the head sits on the white
+   card and is separated from the rows below by spacing alone. Ours was
+   `--bg-secondary` (the old rail grey) — a rail's colour used as a fill inside
+   a white card — and with the same fill on the collapse pill and on every
+   permission row, one card carried three grey slabs. That was the grey-on-white
+   clash: the colour of a rail used as a fill for content. */
+.e-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row-h);
+  padding: 5px var(--space-3) 4px;
+  /* A pale wash across the head. This row had `--bg-secondary` — the old rail
+     grey, inside a white card — and what was wrong with it was the colour, not
+     the idea of the head having a surface: that grey read as a slab of the
+     sidebar dropped into the card. This is the accent's own wash, so the head
+     belongs to the card it is on. It carries no `border-bottom`: the fill is
+     what separates the head from the rows, and doing both draws a line the
+     reference does not have. */
+  background: var(--accent-subtle);
+}
+
+.e-step-icon {
+  /* A pale green badge rather than a bare glyph: a rounded square with the
+     accent's pale fill and its dark green for the icon, which is the same
+     treatment the rail's primary action wears. `flex: none` stays — the metrics
+     beside it are the flexible cell and must not squash the mark.
+
+     **18px, not 22px.** 22 was the rail's *control* size (`.lb-icon`), and this
+     mark is not a control: it is a label for the card's head, and at control
+     size it read as the loudest thing in the head — as big as the "New session"
+     button's own icon, on a bar whose actual content is the figures on the
+     right. The head's `min-height` is what sets the bar's height, so shrinking
+     the badge lowers nothing; it only stops the mark competing with the title
+     beside it. The glyph inside follows it (`StreamView`, 11px). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-tint);
+  color: var(--accent-tint-text);
+}
+
+.e-step-title {
+  flex: none;
+  font-size: var(--text-compact);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+.e-step-metrics {
+  margin-left: auto;
+  flex: none;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The card's work rows. 行自身保留原有形状（折叠、徽章、hover），只是从
+   "散开的一条"变为"卡内一行"。 */
+.e-step-rows {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* 卡内的工具行不再自带上边框和圆角——那是它作为悬浮行时的边缘——块内
+   用分隔线分开每行。 */
+.e-step-rows .e-tool {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.e-step-rows .e-tool + .e-tool {
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* An in-flight step says so twice: the metrics carry the accent, and the icon's
+   badge goes **solid** — the pale tint is the resting state, so filling it in is
+   the one mark this card gains while a call is in flight (the same
+   continuing-condition carve-out the board's working dot holds).
+
+   The head's wash is not available as a signal any more: it is pale green in
+   every step now, so a second shade of the same colour there would say nothing.
+   `is-elevated` below overrides the card's edge, so a risky call keeps its
+   warning/destructive border. */
+.e-step.is-running {
+  border-color: var(--accent-border);
+}
+
+.e-step.is-running .e-step-icon {
+  background: var(--accent-grad);
+  color: var(--fg-on-solid);
+}
+
+/* 进行中的头部图标：换成 Loader 并旋转，复用 global.css 的 `spin`——
+   和侧栏 todo 列表 in_progress 行（`.sb-spinner`）同一个动效，「正在执行」
+   这一个持续条件用旋转表达；调用结束后图标换回 Sparkles，动画随之消失。 */
+.e-step-spinner {
+  animation: spin 1.4s linear infinite;
+  transform-origin: center;
+}
+
+.e-step.is-running .e-step-metrics {
+  color: var(--accent);
+}
+
+/* 风险等级抬升的调用：卡片边沿带 warning / destructive 的细色，与工具行
+   自身的 is-medium / is-high 同色对——卡片是行所在的壳，壳的边沿和行的
+   边沿说同一件事，而不是两种说法。 */
+.e-step.is-elevated {
+  border-color: var(--warning-border);
+}
+
+.e-step.is-elevated.has-high {
+  border-color: var(--destructive);
+}
+
+/* ---------------- 4. 工具调用 ---------------- */
+.e-tool {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.e-tool .et-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  min-height: var(--row-h);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.e-tool .et-head:hover {
+  background: var(--bg-muted);
+}
+
+.e-tool .et-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-compact);
+  font-weight: 500;
+  color: var(--fg);
+  flex: none;
+}
+
+.e-tool .et-params {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.e-tool.is-medium {
+  border-color: var(--warning-border-soft);
+}
+
+.e-tool.is-high {
+  border-color: var(--destructive);
+}
+
+/* A call that declared deliverables. Its cards are the result, so the row that
+   holds them is lifted to the accent the way a set goal is in the rail: this is
+   the turn's product, not its plumbing, and it has to be findable while scanning
+   a transcript full of ordinary tool rows. */
+.e-tool.has-deliverables {
+  border-color: var(--accent-border);
+}

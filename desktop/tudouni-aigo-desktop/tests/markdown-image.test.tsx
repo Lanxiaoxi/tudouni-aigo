@@ -24,6 +24,7 @@
  */
 
 import { test } from 'node:test';
+import { streamCss as readStreamCss } from './stream-css';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -101,10 +102,7 @@ test('an image with neither destination nor alt draws nothing at all', () => {
  * `stream-layout.test.ts`: a stylesheet has no behaviour to observe in Node, and
  * a rule deleted in a refactor is invisible to every other test.
  */
-const streamCss = readFileSync(
-  resolve(import.meta.dirname, '../src/styles/stream.css'),
-  'utf8',
-);
+const streamCss = readStreamCss();
 
 test('the picture rule caps width, so one screenshot cannot fill the column', () => {
   // Without this, a generated picture is drawn at its intrinsic pixel size and

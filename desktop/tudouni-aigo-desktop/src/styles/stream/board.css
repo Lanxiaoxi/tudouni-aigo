@@ -1,0 +1,609 @@
+
+
+@keyframes board-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.board-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--lb-line);
+  flex: 0 0 auto;
+}
+
+.board-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* The open-session count, right after the title. Every card on this board is a
+   live child process, and this number says how many of them there are — the one
+   fact the title alone cannot carry. Same chip as the column heads' counts,
+   minus the `margin-left: auto` (it sits beside the title, not at the head's
+   far edge: it counts the whole board, not one column). */
+.board-title-count {
+  margin-left: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-weight: 400;
+  color: var(--fg-muted);
+  background: var(--lb-surface);
+  border: 1px solid var(--lb-line);
+  border-radius: 99px;
+  padding: 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The subtitle states the board's scope, which is the one thing a person can
+   otherwise get wrong about it: it is the **workspace's** sessions, and most of
+   them are idle because only open ones have a state at all. */
+.board-sub {
+  margin: 2px 0 0;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.board-loading {
+  padding: var(--space-4);
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+/* Four columns, horizontally scrolling rather than squeezing. A board whose
+   columns shrink to slivers is unreadable, and the window's minimum width
+   (`tauri.conf.json`, 960) already leaves room for all four at a usable size. */
+/* **Equal column heights.** A column that shrank to fit its shortest content
+   (or an empty placeholder) broke the board's silhouette: the four panels are
+   one row of the layout, so they stretch to fill the shared height and read
+   as four lanes, not four boxes of different sizes. */
+.board-cols {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-5);
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lb-line) transparent;
+}
+
+/* **The columns are slots on the board's plane.** The board takes the left
+   rail's surface (`--lb-surface`) and each lane its hover tint (`--lb-hover`);
+   the cards sit back on the surface as near-white panels. That is the whole
+   layer model of the redesign — no third grey, no white card floating on a
+   grey well. */
+.board-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 0;
+  min-width: 230px;
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  background: var(--lb-hover);
+  /* The stretch above gives every lane exactly one viewport of height, so a
+     busy column's cards are taller than it is. The lane had no overflow of its
+     own, and the cards then spilled out past the panel's bottom edge — still
+     scrollable content of `.board-cols`, so they scrolled with the whole board
+     while never being inside any lane. Each lane scrolls its own cards instead. */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lb-line) transparent;
+}
+
+/* The board's two scrollers take the rails' 3px thumb: in a 230px lane a 4px
+   bar in a 10px gutter is a second column of ink. Same geometry as
+   `.lb-scroll` / `.sidebar-inner`. */
+.board-cols::-webkit-scrollbar,
+.board-col::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.board-cols::-webkit-scrollbar-thumb,
+.board-col::-webkit-scrollbar-thumb {
+  background: var(--lb-line);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.board-cols::-webkit-scrollbar-thumb:hover,
+.board-col::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.board-cols::-webkit-scrollbar-track,
+.board-cols::-webkit-scrollbar-corner,
+.board-col::-webkit-scrollbar-track,
+.board-col::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.board-col-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-2);
+}
+
+/* The column's own status dot — the rail's palette, drawn even for Idle
+   (see `BoardColDot` for why it is not the rail's component). Running breathes,
+   because "a turn is in flight" is a continuing condition, the same carve-out
+   the status bar's own dot holds; Needs you is steady amber, which is also
+   what the *card* is edged with, so the column that wants a person reads
+   before any card in it has been read. */
+.board-col-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.board-col-dot.is-running {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+  animation: board-breathe 2.4s ease-in-out infinite;
+}
+
+.board-col-dot.is-asking {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-subtle);
+}
+
+/* Finished. The rail's `is-unseen` used to be blue (`--info`); on a green board
+   that was the one cold mark in the whole panel. It is now the **teal end of
+   the success family** (`--success`), which still reads as a different green
+   from Working's accent — the two columns stay one glance apart without
+   introducing a colour from outside the rail's palette. */
+.board-col-dot.is-unseen {
+  background: var(--success);
+}
+
+.board-col-dot.is-idle {
+  background: var(--fg-faint);
+}
+
+@keyframes board-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.board-col-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* The count is a fact, not a badge: an idle column with forty cards and a
+   "needs you" column with one are both told the same way, and the number is
+   what makes the difference legible without reading every card. Pushed to the
+   head's far edge — it is a property of the column, not of the title. */
+.board-col-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  background: var(--lb-surface);
+  border: 1px solid var(--lb-line);
+  border-radius: 99px;
+  padding: 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The number is a **quantity**, the dot is the state. The redesign's board
+   keeps the count in the rail's muted tag colour, the same as the left rail's
+   quiet markers: a coloured dot beside a grey number still tells one fact, and
+   a quiet "0" in the amber or teal column no longer becomes the loudest mark on
+   the board. The board's own total (`board-title-count`) is the same chip. */
+
+.board-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  padding: var(--space-3);
+  border: 1px solid var(--lb-line);
+  border-radius: var(--radius-md);
+  /* The raised surface above the column's hover tint — the same two tokens the
+     left rail uses for its plane and its wash, in that order. */
+  background: var(--lb-surface);
+  box-shadow: var(--shadow-card);
+  text-align: left;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.board-card:hover {
+  border-color: var(--accent-tint-border);
+  /* A one-pixel lift and the faintest shadow on the palette's own tone — no
+     scale, no glow. The tokens carry the lift, so both themes read it; the
+     hard-coded dark shadow that used to sit here read as a smudge under a card
+     that is white in the light theme. */
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* The session on screen: **a green edge two pixels wide.**
+ *
+ * It used to be a one-pixel `--lb-selected-line` hairline — the rail's pale
+ * capsule colour, which is right for a selected row and nearly invisible around
+ * a card on the lane's tinted wash, especially in the light theme. The edge is
+ * now `--accent-border` (the same "this one is current" green the terminal tabs
+ * use) and twice as thick, which is what makes it readable at a glance.
+ *
+ * It is still an edge and nothing else — no wash, no inset ring: the board is
+ * the surface, the lane is the wash, and the card you are in is the card with
+ * the green border. The padding gives back the pixel the wider border takes on
+ * each side, so selecting a card does not resize it. */
+.board-card.is-current {
+  border-width: 2px;
+  border-color: var(--accent-border);
+  padding: calc(var(--space-3) - 1px);
+  background: var(--lb-surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-card);
+}
+
+.board-card.is-current:hover {
+  border-color: var(--accent-border);
+  background: var(--lb-surface);
+  box-shadow: var(--shadow-card-hover);
+}
+
+.board-card .board-card-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.board-card .board-card-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+
+.board-card.is-current .board-card-id {
+  color: var(--fg-muted);
+}
+
+/* One flag, at the top row's far edge. The two tones are the dot palette's
+   own: amber for "this card wants you", the accent pair for "newest, never
+   spoken to". Never both at once — see the TSX for the precedence. */
+.board-card-flag {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 99px;
+}
+
+.board-card-flag.is-asking {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.board-card-flag.is-new {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+/* Two lines, like the rail's row: a preview is a reminder of which conversation
+   this is, not the conversation. */
+.board-card .board-card-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--text-compact);
+  line-height: var(--leading-body);
+  color: var(--fg);
+  word-break: break-word;
+  margin-bottom: var(--space-1);
+}
+
+.board-card.is-current .board-card-preview {
+  color: var(--fg);
+}
+
+/* The two shapes of the progress row. With the tally on hand it is a flex row:
+   the kit's bar flexes to the card's width and the n/m count sits fixed at its
+   right, which is the one place a fraction reads as a fraction. Without the
+   tally it degrades to the runtime's own sentence — one clipped line, the full
+   text in `title`, and a wrapped progress line would make a two-line card
+   three. */
+.board-card-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-bottom: var(--space-1);
+}
+
+.board-card-progress > .progress {
+  min-width: 0;
+}
+
+.board-card-progress-count {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.board-card-progress-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+/* The foot, on two rows: the model chip gets its own line above the counts +
+   time row. Cramming all three into one row left every part truncated — the
+   chip ate the middle (`max-width: 60%`), the counts collapsed to "54…", and
+   the three time values fought for what was left. A chip on its own row has
+   room for the full provider/model, and the numbers row stays scannable. */
+.board-card-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+  margin-top: auto;
+  min-width: 0;
+}
+
+/* The counts · time row under the chip: numbers left, relative time pushed to
+   the card's right edge. */
+.board-card .board-card-meta,
+.board-card .board-card-time {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.board-card .board-card-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A **running** card's time is the turn's elapsed time rather than "xx ago" —
+   the same number the status bar draws. It is marked so because the two readings
+   look identical while meaning different things: a live stopwatch counting up,
+   versus a fixed stamp of when the file last changed. Without a mark, a card
+   being watched would appear to be "modified 4m ago" and growing, which reads as
+   a bug rather than as work in progress.
+
+   The accent, and nothing else: no colour change on the value itself, because a
+   number that is both counting and coloured reads as an alarm. */
+.board-card .board-card-time.is-turn {
+  color: var(--accent-tint-text);
+}
+
+.board-card .board-card-meta > .board-card-meta-counts {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The model chip and the context ring share one row: the chip sits left (it can
+   grow and truncate) and the ring pins to the row's right edge. Before the ring
+   the chip was the foot's only child and kept its own line. */
+.board-card-modelrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.board-card .board-card-model {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  background: var(--lb-tag);
+  border-radius: 5px;
+  padding: 1px 6px;
+}
+
+/* The context-usage ring + percentage, at the model row's right edge. The arc
+   inherits `currentColor` from this wrapper, so the one class (`is-danger`) is
+   what flips the whole mark from muted to the destructive red when the window
+   is nearly full. A neutral track reads "measuring", never a second accent. */
+.board-card .board-card-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-muted);
+}
+
+.board-card .board-card-ctx.is-danger {
+  color: var(--destructive);
+}
+
+/* A card in flight wears the theme's pale green on the arc: the working state
+   already owns the accent family (the column head's dot, the progress bar),
+   and the muted grey read as "measuring" — the one colour that says nothing
+   about a card doing something. `--accent-tint-text` is the bright-green
+   text token both themes keep for the accent family, so the ring follows the
+   theme switch. `is-danger` keeps winning: a nearly full window is not
+   working-green. */
+.board-card.is-running .board-card-ctx:not(.is-danger) .board-card-ctx-arc {
+  stroke: var(--accent-tint-text);
+}
+
+.board-card .board-card-ctx-ring {
+  display: block;
+  flex: none;
+}
+
+.board-card .board-card-ctx-track {
+  stroke: var(--lb-line);
+}
+
+.board-card .board-card-ctx-arc {
+  stroke: currentColor;
+  transition: stroke-dashoffset var(--motion-base) var(--ease-out);
+}
+
+.board-card .board-card-ctx-pct {
+  font-size: 10px;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.board-card .board-card-time {
+  margin-left: auto;
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- the card's context menu ---------------- */
+/*
+   Hand-rolled rather than a Radix popover: the board is a *view*, not inside
+   any dialog namespace, and a context menu wants coordinates rather than an
+   anchor. The scrim is the "click elsewhere" mechanism and nothing else — it
+   draws nothing, so the board itself never dims behind its own menu.
+
+   The stack (`--z-popover`, the same layer the overlay surfaces use) is above
+   the board and below the modal layer, which keeps the visible-prompt-first
+   rule honest in the pointer dimension too: a modal drawn over the board sits
+   over this menu as well.
+*/
+.board-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-popover);
+}
+
+.board-menu {
+  position: fixed;
+  min-width: 200px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  display: flex;
+  flex-direction: column;
+}
+
+.board-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.board-menu-item:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* Delete keeps the rail's own idiom for "the next press is real": the
+   destructive pair, the icon already swapped to an X, and the label changed
+   with it — colour is never the only signal. */
+.board-menu-item.is-destructive {
+  color: var(--destructive);
+}
+
+.board-menu-item.is-destructive:hover,
+.board-menu-item.is-destructive.is-armed {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+/* The empty column: dashed, centred, honest. A blank column reads as a
+   rendering bug; a dashed panel says "this state exists, it is just empty". */
+.board-col-empty {
+  border: 1px dashed var(--lb-line);
+  border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* The card that is waiting on a person. The dot has already moved it into
+   Needs you; this row is what says the click on the card is also the way to
+   answer — the prompt itself is deliberately held unrendered while the board
+   is up (`selectModalVisible`), so without this line the card would read like
+   any other. Warning colours, the same pair the amber dot uses.
+
+   The edge says it; the inset amber bar that used to sit inside the card was a
+   second mark for the same fact. The flag on the top row keeps the words. */
+.board-card.is-asking {
+  border-color: var(--warning-border);
+  box-shadow: var(--shadow-card);
+}
+
+.board-card.is-asking:hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+.board-card-nudge {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.board-card.is-current .board-card-nudge {
+  color: var(--warning);
+}

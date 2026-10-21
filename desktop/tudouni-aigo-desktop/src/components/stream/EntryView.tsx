@@ -439,7 +439,7 @@ function ModelEntry({ entry }: { entry: Extract<Entry, { kind: 'model' }> }) {
       <Sparkles size={12} />
       <span>{t('entry.model')}</span>
       <span className="grow" />
-      <span className="eh-metrics">
+      <span>
         {hasMetrics
           ? t('entry.modelMetrics', {
               ms: formatDuration(entry.durationMs),
@@ -523,7 +523,7 @@ function ToolEntry({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
         ) : null}
 
         {entry.result ? (
-          <span className="eh-metrics">
+          <span>
             {t('entry.toolDuration', { ms: formatDuration(entry.result.durationMs) })}
             {entry.result.exitCode !== null
               ? ` · ${t('entry.toolExit', { n: entry.result.exitCode })}`

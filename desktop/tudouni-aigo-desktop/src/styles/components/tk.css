@@ -1,0 +1,690 @@
+
+
+/* ---------------- Task templates ----------------
+ *
+ * Three surfaces, one dialog: the shelf, the history and the editor. The
+ * vocabulary below is `.tk-*`, and it began as this panel's own: almost none
+ * of these shapes existed anywhere else in the app: a row with a fixed action
+ * slot at its right edge, a filter chip strip, a two-column form with a tinted
+ * side card. It is now the dialog's shared vocabulary for those shapes: the
+ * configuration panel's routes and MCP servers are lists of these rows and
+ * editors of these sections, and Learn this workspace is one of these editors.
+ * Neither of them keeps a second word for a row or for a section.
+ *
+ * What is shared with the rest of the app is shared on purpose: the fields are
+ * `.cfg-input` / `.cfg-textarea` / `.cfg-label`, the footer is `.dialog-foot`,
+ * the buttons are `.btn`, and the badges are `.badge`. A second vocabulary for a
+ * field or a card is how a panel starts reading as a different application.
+ *
+ * **The action slot never moves.** Per the design's states sheet, the right
+ * edge is reserved at the height of a control whether it holds Run, Edit, a
+ * progress bar or nothing at all, which is why `.tk-row-actions` has a
+ * `min-height` and the row's primary action is *hidden* at rest rather than
+ * unmounted. On hover the row tints and that action appears in place, so the
+ * row's text does not reflow under the cursor.
+ * See `.tk-row:hover .tk-row-cta`.
+ */
+
+.tk-head {
+  /* The header's controls are a single row in the design, and they must not
+     wrap onto the title's line: `align-items: center` with the title block
+     taking the grow, then the four controls at their natural widths. */
+  align-items: center;
+  padding-bottom: var(--space-3);
+}
+
+.tk-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* The search field. The design puts it on a tinted fill with no visible border
+   at rest and an accent ring on focus — the app's own `.input` chrome (a
+   strong border at rest) is for form fields, and this is a filter beside a
+   title. */
+.tk-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 220px;
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.tk-search:focus-within {
+  background: var(--bg-elevated);
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+.tk-search-icon {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.tk-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  background: transparent;
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.tk-search-input::placeholder {
+  color: var(--fg-faint);
+}
+
+/* The filter strip. A track with the active chip floating on it: the chip's
+   own white fill and shadow are what say "this is the current one", so the
+   active state never has to also change the text weight and reflow the row. */
+.tk-filters {
+  flex: none;
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+.tk-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}
+
+.tk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.tk-chip:hover {
+  color: var(--fg);
+}
+
+.tk-chip.is-on {
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-weight: 500;
+  box-shadow: var(--shadow-chip-hover);
+}
+
+/* The count keeps its own muted value in both states: the chip's job is to say
+   which filter is on, and a number that changed colour with it would read as a
+   second, competing statement. */
+.tk-chip-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--fg-muted);
+}
+
+/* The list container: one bordered, rounded surface holding every row, with
+   hairlines *between* the rows rather than a card each. That is the design's
+   shape, and it is also what keeps a long list from reading as a stack of
+   unrelated objects. */
+.tk-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.tk-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+/* No hairline above the first row of a group: either the container's own
+   border is already there (the shelf), or a day band is (the history), and two
+   lines 1px apart read as a double edge. `>` so this reaches the row inside a
+   day group as well as a direct child. */
+.tk-row:first-child,
+.tk-day + .tk-row,
+.tk-list > div > .tk-row:first-child {
+  border-top: none;
+}
+
+.tk-row:hover {
+  background: var(--bg-muted);
+}
+
+/* The leading mark: the same square icon tile every row carries, tinted with
+   the accent's own wash. It is the row's identity, not a control. */
+.tk-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-tint-border);
+  color: var(--accent-tint-text);
+}
+
+.tk-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tk-row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* The name is a button — clicking it opens the editor — but it must read as
+   the row's title and not as a control: no padding, no background, and an
+   underline only on hover, which is the one affordance that costs no layout. */
+.tk-row-name {
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.tk-row-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A history row's name is not a control: the row's action is the Open button,
+   and a second clickable target inside one row is a coin flip. */
+.tk-row-name.is-static {
+  cursor: default;
+}
+
+.tk-row-name.is-static:hover {
+  text-decoration: none;
+}
+
+.tk-row-desc {
+  margin-top: 2px;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.tk-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-meta-item svg {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+/* The last run's verdict, in the meta line. Destructive ink, faint icon
+   colour — a fact reported, not an alarm raised: the row is still runnable and
+   the template is not what failed. */
+.tk-meta-failed {
+  color: var(--destructive);
+}
+
+/* The counterpart in the warning colour: a fact that is not a failure but that
+   somebody should see without opening the row. Today it is one thing — a route
+   whose TLS certificate is not verified — which is why it is amber rather than
+   red: the route works, and what it costs is a guarantee. */
+.tk-meta-warn {
+  color: var(--warning);
+}
+
+/* **The fixed action slot.** Reserved at the height of a control whether or
+   not anything is in it, so putting Run on screen at hover cannot move the
+   row — see the section comment above. */
+.tk-row-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-h);
+}
+
+/* The row's primary action — Run on a task, Edit on a route or an MCP server.
+   Present at rest and hidden by opacity, not unmounted: an element that
+   appears on hover and takes up space where it appears is the layout shift
+   this whole slot exists to prevent. `visibility` rather than `display` so it
+   is not read out by assistive tech while it is invisible, and the row's
+   `:focus-within` is the keyboard's half of the same reveal. */
+.tk-row-cta {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    visibility var(--motion-fast) var(--ease-out);
+}
+
+.tk-row:hover .tk-row-cta,
+.tk-row:focus-within .tk-row-cta {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* A disabled task keeps the Run slot empty on every state: the design says Run
+   is hidden, and a disabled button that still appeared on hover would be a
+   control that asks to be pressed and refuses. (`TaskRow` does not render it.) */
+
+.tk-row.is-disabled .tk-row-name,
+.tk-row.is-disabled .tk-row-desc,
+.tk-row.is-disabled .tk-row-meta,
+.tk-row.is-disabled .tk-mark {
+  opacity: 0.55;
+}
+
+/* The running state's slot: an indeterminate bar and a label. The bar is
+   indeterminate because a run's own length is unknowable — the runtime reports
+   no fraction — and a determinate-looking bar that never moves is worse than
+   none. `--accent` for the fill so it reads as this app's work, not a load. */
+.tk-running {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.tk-bar {
+  position: relative;
+  display: block;
+  width: 84px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-muted);
+  overflow: hidden;
+}
+
+.tk-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: tk-bar-slide 1.4s var(--ease-standard) infinite;
+}
+
+@keyframes tk-bar-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+/* Honouring the motion preference is not optional here: this loop never ends
+   while a run is in flight, which is exactly the class of animation the
+   preference exists to switch off. The label still says what is happening. */
+@media (prefers-reduced-motion: reduce) {
+  .tk-bar-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
+.tk-running-label {
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+}
+
+/* The overflow trigger sits at the row's outer edge and stays quiet until the
+   row is hovered — the design's "idle: only the overflow menu shows" state. */
+.tk-more {
+  color: var(--fg-faint);
+}
+
+.tk-row:hover .tk-more,
+.tk-row:focus-within .tk-more {
+  color: var(--fg-muted);
+}
+
+/* ---------------- History rows ---------------- */
+
+.tk-run-row {
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+/* The verdict dot. Three states, and the two settled ones are the design's own
+   semantic pair: success is the accent's green, failure the destructive red.
+   `running` is a hollow ring rather than a third colour — it is the absence of
+   a verdict, and a colour would claim one. */
+.tk-run-dot {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+}
+
+.tk-run-dot.is-ok {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.tk-run-dot.is-failed {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.tk-run-dot.is-running {
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  animation: spin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tk-run-dot.is-running {
+    animation: none;
+  }
+}
+
+/* Retry: the accent wash, not the primary gradient. It is a run *again* of a
+   finished run, which is a secondary act — and a screen where every failed row
+   wore the filled primary would have no primary left. */
+.tk-retry {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-weight: 500;
+  border-color: transparent;
+}
+
+.tk-retry:hover:not(:disabled) {
+  background: var(--accent-tint);
+  color: var(--accent-tint-text);
+}
+
+/* The day header inside the list: a tinted band, matching the design's
+   "TODAY / 2 runs" strip. It is a separator with a label, not a row. */
+.tk-day {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tk-list > .tk-day:first-child {
+  border-top: none;
+}
+
+.tk-day-label {
+  font-size: var(--text-caption);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--fg-muted);
+}
+
+.tk-day-count {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* ---------------- Empty and problem states ---------------- */
+
+.tk-blank {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-10) var(--space-4);
+  text-align: center;
+}
+
+.tk-blank-icon {
+  color: var(--fg-faint);
+}
+
+.tk-blank-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+.tk-blank-hint {
+  max-width: 42ch;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.tk-problem {
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-md);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: var(--text-compact);
+}
+
+/* ---------------- The overflow menu ---------------- */
+
+.tk-menu {
+  /* The popover rung, which is **above** the dialog this menu opens from — see
+     `--z-popover` in `tokens.css` for the measurement that made that so. */
+  z-index: var(--z-popover);
+  min-width: 200px;
+  max-width: 360px;
+  padding: var(--space-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  animation: reveal var(--motion-fast) var(--ease-out) 1;
+}
+
+.tk-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  text-align: left;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.tk-menu-item svg {
+  flex: none;
+}
+
+/* The tick's column, held open on the rows that have no tick — see the
+   workspace picker: a list of options where the labels start at two different
+   x positions reads as two lists. */
+.tk-menu-gap {
+  flex: none;
+  width: 13px;
+}
+
+.tk-menu-item:hover,
+.tk-menu-item[data-highlighted] {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.tk-menu-item.is-on {
+  color: var(--fg);
+}
+
+.tk-menu-item.is-destructive {
+  color: var(--destructive);
+}
+
+.tk-menu-item.is-destructive:hover,
+.tk-menu-item.is-destructive.is-armed {
+  background: var(--destructive-subtle);
+}
+
+/* A menu entry that cannot act — "Move up" on the first row. Dimmed rather
+   than removed: the row's order is one of the things the menu is for, and an
+   item that vanishes at the top of the list reads as a different menu. */
+.tk-menu-item:disabled {
+  color: var(--fg-faint);
+  cursor: not-allowed;
+}
+
+.tk-menu-item:disabled:hover {
+  background: transparent;
+  color: var(--fg-faint);
+}
+
+.tk-menu-label {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--fg-faint);
+}
+
+/* The model catalogue can be long, so this menu is the one that scrolls. It
+   gets a ceiling rather than a computed height: the panel behind it is already
+   bounded, and a menu that grew to its content would run off the window. */
+.tk-menu:has(.tk-menu-item-hint) {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* One row of a catalogue: the name yields, the route stays whole. `provider`
+   is how two identically-named models are told apart, so it is never the part
+   that gets truncated. */
+.tk-menu-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-menu-item-hint {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+}
+
+/* The free-text escape hatch inside the model menu. */
+.tk-menu-typed {
+  padding: var(--space-1) var(--space-1) var(--space-2);
+}
+
+.tk-menu-empty {
+  padding: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* ---------------- The editor ---------------- */
+
+/* Two columns, split by a hairline: what the run says on the left, where it
+   says it on the right. The right column is a *card* — tinted, bordered,
+   rounded — because those three fields are not part of the prompt, and the
+   design separates them for exactly that reason. */
+.tk-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.tk-editor-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tk-editor-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+
+.tk-side-title {
+  font-size: var(--text-compact);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+/* The prompt is the payload, so it gets the tallest box in the panel. */
+.tk-prompt {
+  min-height: 150px;
+  resize: vertical;
+}
+
+.tk-field-hint {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.tk-field-error {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--destructive);
+}

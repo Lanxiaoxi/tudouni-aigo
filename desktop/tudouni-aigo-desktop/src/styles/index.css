@@ -1,0 +1,40 @@
+/**
+ * The stylesheet entry point. Imports only.
+ *
+ * The order is the load order the app had when it was six files, and it is the
+ * cascade contract: tokens before global, global before components, components
+ * before the app shell, the shell before the stream. Every file under
+ * `components/` and `stream/` is a contiguous slice of the old
+ * `components.css` / `stream.css`, imported in the old order, so splitting
+ * them moved no rule across another.
+ */
+@import './fonts.css';
+@import './tokens.css';
+@import './global.css';
+
+@import './components/controls.css';
+@import './components/overlays.css';
+@import './components/palette.css';
+@import './components/settings.css';
+@import './components/tk.css';
+@import './components/tk-workbench.css';
+@import './components/terminal.css';
+@import './components/config.css';
+@import './components/rewind.css';
+@import './components/workspace.css';
+@import './components/codeintel.css';
+
+@import './app.css';
+
+@import './stream/turn.css';
+@import './stream/e.css';
+@import './stream/blocks.css';
+@import './stream/markdown.css';
+@import './stream/inline.css';
+@import './stream/sidebar.css';
+@import './stream/lb.css';
+@import './stream/lb-sessions.css';
+@import './stream/terminal.css';
+@import './stream/stream.css';
+@import './stream/turn-rail.css';
+@import './stream/board.css';

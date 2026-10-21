@@ -1,0 +1,163 @@
+
+
+/* ---------------- 12. 附加 / 系统行 ---------------- */
+.e-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px 0;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.e-note .en-text {
+  min-width: 0;
+}
+
+.e-note.is-degraded {
+  color: var(--warning);
+}
+
+.e-note.is-compacted {
+  color: var(--info);
+}
+
+.e-note.is-image {
+  color: var(--fg-muted);
+}
+
+/* A notice that says something is wrong has to be findable while scrolling past a
+   cluster of ordinary ones. Both colours are the ones the design system already
+   gives these meanings (`component-states.md`: 等待/警告 `--warning`,
+   错误 `--destructive`); the tone also picks the icon, so colour is never the only
+   signal. */
+.e-note.is-warn {
+  color: var(--warning);
+}
+
+.e-note.is-error {
+  color: var(--destructive);
+}
+
+/* ---------------- §5 流内大屏文本块 ---------------- */
+.inblock {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.inblock-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.inblock-head .ibh-title {
+  font-size: var(--text-h2);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+.inblock-head .ibh-close {
+  margin-left: auto;
+}
+
+.inblock-body {
+  padding: var(--space-3);
+  max-height: 420px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px var(--space-4);
+  font-size: var(--text-compact);
+}
+
+.kv dt {
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
+.kv dd {
+  color: var(--fg-secondary);
+  min-width: 0;
+  word-break: break-all;
+}
+
+/* ============================================================
+   §3 侧栏 5 区块
+   ============================================================ */
+
+/* The right rail's own head: "Session runtime". The same band as the left
+   head — 42px, no separator — so the two rails read as the frame around one
+   transcript. Its title is the left rail's brand typography (13.5 / 600 / sans),
+   one rank above the block labels below it. */
+.rb-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 42px;
+  padding: 0 12px;
+}
+
+.rb-head .rb-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.sidebar-inner {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The right rail's scrollbar, the left rail's: a 3px rounded thumb in the
+   rail's own line colour. In a 268px rail a 4px bar in a 10px gutter reads
+   as a second column of ink. */
+.sidebar-inner {
+  scrollbar-width: thin;
+  scrollbar-color: var(--lb-line) transparent;
+}
+
+.sidebar-inner::-webkit-scrollbar {
+  width: 7px;
+}
+
+.sidebar-inner::-webkit-scrollbar-thumb {
+  background: var(--lb-line);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.sidebar-inner::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.sidebar-inner::-webkit-scrollbar-track,
+.sidebar-inner::-webkit-scrollbar-corner {
+  background: transparent;
+}

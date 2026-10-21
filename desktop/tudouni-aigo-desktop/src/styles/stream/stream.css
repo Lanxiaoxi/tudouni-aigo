@@ -1,0 +1,143 @@
+
+
+/* ============================================================
+   回合导航栏 · Turn rail
+   ------------------------------------------------------------
+   正文右边一条竖栏，一轮对话一根横线，点一下跳过去，悬停看这一轮的
+   提问与回答（`TurnRail.tsx` 是绘制那一半，`turnRail.ts` 是纯规则那一半）。
+
+   **它是一列，不是浮层。** 这一条是整个设计里唯一不能改的决定：正文是
+   `.stream-inner` 居中、`max-width: 980px`，所以宽窗下右侧本来就有一条空白
+   gutter，把横线浮在那条 gutter 里是最省事的做法 —— 也是错的。gutter 的宽度
+   取决于窗口有多宽、两条侧栏是不是展开、右栏被拖到多宽；1440px、两条侧栏都
+   开着的时候正文列只有 928px，gutter 只剩 **5px**，横线就压在文字上面。做成
+   flex 的一列之后，任何宽度下都不可能压到文字：代价是正文少 36px，换来的是
+   不需要断点、不需要 `:has`、也不需要假设侧栏今天有多宽。
+
+   实测（`scripts/turn-rail-check.mjs`，1440×900、两条侧栏展开、60 轮对话）：
+   正文列 928px，`stream-inner` 882px，文字右缘 x=1106，导航栏一列占
+   x∈[1136,1172]，文字到横线的间距 **30px**。把这一列改回
+   `position:absolute; right:12px; width:28px` 的浮层、在同一个会话上再量一次：
+   正文列因为让出了这一列而变宽 36px、文字右缘挪到 x=1142，而横线占
+   x∈[1132,1160] —— **仍然重叠 10px**。两个数是一起量的，因为浮层方案下正文
+   宽度本身会变；重叠量随窗口变窄、侧栏展开而增大，这正是「不能靠 gutter」的
+   意思。 */
+.stream-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* ---------------- 会话内搜索 (`Ctrl+F`) ----------------
+ *
+ * 搜索栏是正文上方**自己的一行**，不是浮在正文上的浮层。理由和导航栏占用车道
+ * 一样（见 `.turn-rail` 上方那段量测）：正文是这个窗口里唯一不能被盖住的表面，
+ * 而读者正在找的那一行就在下面。占一行只让正文矮 32px，浮层会盖住答案本身。
+ *
+ * 正文行和它对齐：两者左右内边距一致，所以输入框的左边和正文文字的左边在同一条
+ * 竖线上 —— 它读起来是这一列的一部分，而不是另一条工具条。 */
+.find-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  /* 与 `.stream-inner` 的横向内边距一致（980px 居中列 + space-5），否则窄窗和
+     宽窗下输入框的起始位置会和正文差一个 `(100% - 980px) / 2`。 */
+  padding: 0 max(var(--space-5), calc((100% - 980px) / 2 + var(--space-5)));
+  border-bottom: 1px solid var(--border-subtle);
+  background: none;
+}
+
+.find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-2);
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  /* `.input` 的紧凑版（components.css §2）：同样是透明底 + `--border-strong`
+     描边 + 圆角，聚焦时换成 accent 描边和 focus ring。这里不套 `.input` 那个
+     wrapper，因为它是给"标签 + 控件"用的，而这一行里的控件就是输入框本身。 */
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.find-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.find-input:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+.find-count {
+  flex: none;
+  /* 定宽 + 右对齐：命中数在打字时会从 `9 of 12` 变成 `10 of 12`，栏里的按钮
+     不能跟着左右抖。 */
+  min-width: 68px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* 命中高亮走 CSS Custom Highlight API（`find/engine.ts`），**不改 DOM** —— 那正是
+   它能和 `memo` 过的行列表共存的原因。两个注册名必须与引擎里的常量一致。
+ *
+ * 全部命中用中性暖色，当前命中用 accent：前者是"这里有"，后者是"你在这里"，
+ * 所以它们的对比度刻意不同（实测过：同色时读者看不出当前位置）。
+ *
+ * `color: inherit` 是必要的，不是多余的：`::highlight` 的默认前景色会覆盖原色，
+ * 于是代码块里高亮的 `--hljs` 语法颜色会被抹成正文色。 */
+::highlight(find-match) {
+  background-color: var(--warning-subtle);
+  color: inherit;
+}
+
+::highlight(find-current) {
+  background-color: var(--accent-tint);
+  color: inherit;
+}
+
+/* 正文在这一行里的位置。
+ *
+ * `min-width: 0` 是承重的，而且是这次改动**新引入**的需要：此前
+ * `.stream-scroll` 是纵向 flex 容器唯一的孩子，交叉轴上自动拉伸，宽度不可能
+ * 被内容顶开；变成横向 flex item 之后它的自动最小尺寸是内容的 **min-content**
+ * 宽度，于是一个没有断点的长 token（base64、没有空格的路径）会把正文顶宽、
+ * 把导航栏挤出屏幕。写在 stream.css 而不是 app.css，是为了让「为什么需要」
+ * 和声明待在一起。 */
+.stream-body > .stream-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 跳转落点留一点余量：`scrollIntoView( {block:'start'})` 会把回合头贴到正文
+   顶边，而正文上方没有任何粘性栏，贴边读起来像是被切了一半。
+ *
+ * 数值来自 `turnRail.ts` 的 `LANDING_PX`（`StreamView` 写在 `--rail-landing`
+ * 上），**不能在这里另写一个常量**：`HEADING_BAND_PX` 是由它推出来的，落点
+ * 一旦跑到自己的判定带外面，点第 k 轮却会高亮第 k-1 轮。 */
+.stream-inner > [data-anchor] {
+  scroll-margin-top: var(--rail-landing, 0px);
+}
+
+/* 回合过程段的聚合器（`.turn-run`）反过来**不能**跳过布局，这一点和正文里其它
+   每一行相反。
+
+   `content-visibility: auto` 会给离屏元素一个估算高度（`auto 120px`），而它收起
+   时的真实高度是 0：一个折叠过的回合滚出屏幕、再滚回来，就会先凭空占住 120px
+   （或者上一次展开时记住的几千像素），滚动条和「跳到底」的落点都会跟着说谎。
+   它里面的行照旧各自跳过——跳过是为了 `scrollTop = scrollHeight` 那次全量布局，
+   而收起的聚合器里本来就没有要排的东西。 */
+.stream-inner > .turn-run {
+  content-visibility: visible;
+}

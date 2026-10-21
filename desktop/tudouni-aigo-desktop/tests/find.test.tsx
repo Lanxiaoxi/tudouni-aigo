@@ -27,6 +27,7 @@
  */
 
 import { test } from 'node:test';
+import { streamCss as readStreamCss } from './stream-css';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -213,7 +214,7 @@ test('stream.css styles both highlight registries', () => {
   // `process.cwd()`, like `markdown-fence.test.tsx`: the suite is bundled into
   // `.test-build/`, so a path relative to the bundle would be a path relative to
   // nothing. The runner's cwd is the project root.
-  const css = readFileSync(resolve(process.cwd(), 'src', 'styles', 'stream.css'), 'utf8');
+  const css = readStreamCss();
   for (const name of ['find-match', 'find-current']) {
     assert.match(
       css,

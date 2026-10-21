@@ -1,0 +1,257 @@
+
+
+/* The dialog is `min(1000px, 100vw - 48px)`, so below ~900px the two columns stop
+   fitting: the label and the stepper would meet in the middle. Stack them instead
+   — the settings first, the corpus under them. Measured on the viewport because
+   that is the only width available to a media query; the dialog's own width is
+   derived from it. */
+@media (max-width: 900px) {
+  .wm {
+    grid-template-columns: minmax(0, 1fr);
+    /* **Two rows, and both must be declared.** Only the first row is covered by
+       the rule above; a second one would be implicit and therefore `auto`, which
+       is content height — with the panel capped by `.dialog`'s `max-height` and
+       the body's `overflow: hidden`, the lower half would then be clipped rather
+       than scrollable. Stacked, the two halves split the height and each scrolls
+       on its own. */
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+}
+
+
+/* ============================================================
+   Code intelligence — the index facts, the build's progress, and
+   the one sentence that says which of the four states you are in.
+   ============================================================ */
+
+/* The four counts, one row. `auto-fit` rather than four equal columns: the panel is
+   also drawn at the memory dialog's 1000px, and four fixed cells would leave the
+   numbers marooned in the middle at narrower widths. */
+.ci-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.ci-facts-empty {
+  display: block;
+  margin-top: var(--space-3);
+}
+
+.ci-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}
+
+.ci-fact-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  color: var(--fg);
+}
+
+.ci-fact-label {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.ci-fact-line {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* Where it lives and how big it is — one quiet line, because it is reference rather
+   than news. The path is the long part, so it is the part that truncates. */
+.ci-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.ci-meta-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+}
+
+.ci-meta-dot {
+  color: var(--border-strong);
+}
+
+/* "up to date" and "behind by N" share a shape so the change reads as a change of
+   state rather than of layout. */
+.ci-fresh,
+.ci-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-caption);
+  line-height: var(--leading-body);
+}
+
+.ci-fresh {
+  background: var(--success-subtle);
+  color: var(--fg);
+}
+
+.ci-warn {
+  background: var(--warning-subtle);
+  border-left: 2px solid var(--warning);
+  color: var(--fg);
+}
+
+.ci-warn svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--warning);
+}
+
+.ci-fresh-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--success);
+}
+
+/* The build in flight. The track is always drawn, so the bar's appearance is the
+   only thing that changes when a build starts. */
+.ci-progress {
+  margin-top: var(--space-4);
+}
+
+.ci-progress-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 6px;
+  font-size: var(--text-caption);
+}
+
+.ci-progress-phase {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.ci-progress-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+.ci-progress-track {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-muted);
+}
+
+.ci-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 160ms linear;
+}
+
+/* No total: an indeterminate shimmer rather than a bar frozen at 0%, which reads as
+   "nothing is happening" for the whole pass. */
+.ci-progress-track:not(:has(.ci-progress-bar[style])) .ci-progress-bar {
+  width: 35%;
+  animation: ci-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes ci-indeterminate {
+  0% { margin-left: -35%; }
+  100% { margin-left: 100%; }
+}
+
+/* The two verbs, at the foot of the left column: the primary is the one the current
+   state is missing (initialize when there is no index), and the destructive one is
+   only ever a rebuild of something that already exists. */
+.ci-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ci-hint {
+  margin: 0;
+  font-size: var(--text-caption);
+  line-height: var(--leading-body);
+  color: var(--fg-faint);
+}
+
+.ci-state-hint {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  color: var(--fg-muted);
+}
+
+.ci-side-head {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.ci-last {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ci-last-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+}
+
+.ci-last-ok {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.ci-last-bad {
+  font-weight: 600;
+  color: var(--destructive);
+}
+
+.ci-last-when {
+  color: var(--fg-faint);
+}
+
+.ci-last-body {
+  font-size: var(--text-caption);
+  line-height: var(--leading-body);
+  color: var(--fg-muted);
+}

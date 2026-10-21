@@ -14,6 +14,8 @@
     "check:window": "node scripts/window-controls-check.mjs",
     "check:close-notify": "node scripts/close-notify-check.mjs",
     "audit:css": "node scripts/class-audit.mjs",
+    "check:size": "node scripts/check-size.mjs",
+    "check:tokens": "node scripts/check-css-tokens.mjs",
     "runtime:stage": "node scripts/stage-runtime.mjs",
     "runtime:stage-remote": "node scripts/stage-remote-packages.mjs",
     "version:bump": "node scripts/bump-version.mjs",

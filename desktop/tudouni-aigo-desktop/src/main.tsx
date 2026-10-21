@@ -3,12 +3,7 @@ import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 
 // Style assembly order matters: fonts -> tokens -> global -> components -> shell -> stream.
-import '@/styles/fonts.css';
-import '@/styles/tokens.css';
-import '@/styles/global.css';
-import '@/styles/components.css';
-import '@/styles/app.css';
-import '@/styles/stream.css';
+import '@/styles/index.css';
 
 import { App } from './App';
 import { applyDelta } from '@/state/entries';

@@ -1,0 +1,502 @@
+/* ============================================================
+   tudouni-aigo · 组件层
+   逐条对应 docs/component-states.md，节号即文档节号。
+   行为约定：过渡只走 background-color / border-color / color / opacity / transform；
+   无 spinner；无滚动驱动动画；hover 不用阴影（阴影只给浮层）。
+   ============================================================ */
+
+/* ---------------- §0 应用标识 ---------------- */
+/**
+ * The application mark, in every place the window draws one: the title bar, the
+ * left rail's header, the first screen and the start-up phase.
+ *
+ * It is the rabbit icon itself — `Logo.tsx` imports the same PNG
+ * `tauri.conf.json` bundles — so there is no colour here to keep in step with a
+ * theme. That is the point: the three marks used to be separate green squares
+ * drawn from `--accent`, and when the icon became the rabbit they were left
+ * behind, which is a drift no token can prevent. See `Logo.tsx`.
+ *
+ * `border-radius: 16%` is **measured against that file, not chosen**. The PNG is
+ * a rounded square drawn on an opaque black page, so its corner pixels are solid
+ * black: at 0% the mark wears four black corners, which on the light theme reads
+ * as a black box around the rabbit. The icon's own corner radius is 14.06% of
+ * the edge (fitted to the black/field boundary: 18.00px at 128px), so a clip of
+ * 16% removes the whole black corner with margin and cuts no gold pixel at any
+ * size the mark is drawn at. Larger values buy nothing: the black is already
+ * gone, and the clip starts eating the field, which shows as a light notch on
+ * the corners.
+ *
+ * Percentages rather than pixels because the mark is drawn at 14, 20, 26 and
+ * 30px, and the radius has to scale with it — a fixed 5px is correct at 30px and
+ * half the icon at 14px.
+ */
+.app-mark {
+  border-radius: 16%;
+  flex: none;
+  /* The mark is never a control, and a text cursor over it is a lie. */
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* ---------------- §0 基础按钮 ---------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: var(--text-compact);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.btn svg {
+  flex: none;
+}
+
+.btn-compact {
+  height: var(--control-h-compact);
+  font-size: var(--text-caption);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* Primary —— 一屏最多 1 个。设计稿形态：emerald 渐变实底 + 白字 + 彩色投影 */
+.btn-primary {
+  background: var(--accent-grad);
+  color: var(--fg-on-solid); /* 渐变两端（#059669/#047857 及暗色对应档）上白字对比度稳定，不随 --fg-on-accent 翻转 */
+  font-weight: 600;
+  box-shadow: var(--shadow-accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.btn-primary:active:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+/* Secondary */
+.btn-secondary {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.btn-secondary:active:not(:disabled) {
+  filter: brightness(0.85);
+}
+
+/* Ghost */
+.btn-ghost {
+  background: transparent;
+  color: var(--fg-secondary);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.btn-ghost:active:not(:disabled) {
+  filter: brightness(0.85);
+}
+
+/* Destructive */
+.btn-destructive {
+  background: var(--destructive);
+  color: var(--fg-on-solid);
+  font-weight: 600;
+}
+
+.btn-destructive:hover:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+.btn-destructive:active:not(:disabled) {
+  filter: brightness(0.8);
+}
+
+.btn-outline {
+  background: transparent;
+  color: var(--fg-secondary);
+  border-color: var(--border-strong);
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--fg);
+  border-color: var(--fg-faint);
+}
+
+.btn-icon {
+  width: var(--control-h);
+  padding: 0;
+  color: var(--fg-muted);
+}
+
+.btn-icon:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+/* Disabled —— 保持 token 文字色，靠透明度，不吃 hover */
+.btn:disabled,
+.btn[data-disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 处理态：原地禁用 + 文字替换，三点呼吸（不用 spinner） */
+.btn-busy {
+  pointer-events: none;
+}
+
+.dots {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: dots-breathe var(--motion-slow) var(--ease-out) infinite alternate;
+}
+
+.dots i:nth-child(2) {
+  animation-delay: 90ms;
+}
+
+.dots i:nth-child(3) {
+  animation-delay: 180ms;
+}
+
+@keyframes dots-breathe {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ---------------- §2 输入框 ---------------- */
+.input {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg);
+  font-size: var(--text-body);
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+:root[data-theme='light'] .input {
+  background: var(--bg-secondary);
+}
+
+.input:focus-within,
+.input:focus {
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+.input input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  background: transparent;
+  font-size: var(--text-body);
+}
+
+.input input::placeholder,
+.input::placeholder {
+  color: var(--fg-faint);
+}
+
+/* ---------------- §4 列表行 / 树节点 ---------------- */
+.list {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+}
+
+.list-empty {
+  padding: var(--space-4) var(--space-2);
+  text-align: center;
+}
+
+.list-empty .le-title {
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+.list-empty .le-hint {
+  margin-top: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+table.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-compact);
+}
+
+table.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--bg-secondary);
+  text-align: left;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--fg-muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+table.table tbody td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+table.table tbody tr:hover {
+  background: var(--bg-muted);
+}
+
+:root[data-theme='light'] table.table tbody tr:nth-child(even) {
+  background: var(--bg-secondary);
+}
+
+table.table td.num,
+table.table th.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+table.table td.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.radio-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row-h);
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  /* Radix RadioGroupItem 渲染成 <button>，浏览器默认 text-align:center，
+     会把右侧说明文字顶到中间 —— 显式压回左对齐 */
+  text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.radio-item:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.radio-item[data-state='checked'] {
+  color: var(--fg);
+}
+
+.radio-outer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.radio-item[data-state='checked'] .radio-outer {
+  border-color: var(--accent);
+}
+
+.radio-inner {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: scale(0);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.radio-item[data-state='checked'] .radio-inner {
+  transform: scale(1);
+}
+
+/* ---------------- §7 Badge / 状态点 ---------------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-caption);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.badge-success {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.badge-warning {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.badge-destructive {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.badge-info {
+  background: var(--info-subtle);
+  color: var(--info);
+}
+
+.badge-neutral {
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+}
+
+.badge-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+
+/* 计数角标 */
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.count-attention {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+/* 该块有内容、值得留意（如 goal 已设置的轮次计数）：从 muted 灰升到 accent。
+   与 .count-attention 是两种语义——attention 是「需要你处理」，active 只是
+   「这里有东西在跑」，所以各占一个状态色，不共用 warning。 */
+.count-active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+/* Panel tab strip — the library's two views. A tab is a view switch, not an
+   action, so it wears `outline`-style chrome (border + label) rather than the
+   primary button's fill; the on state is the accent underline alone, which is
+   the same "current item" language the rail's rows use. */
+.panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 2px solid transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+.panel-tab:hover {
+  color: var(--fg);
+}
+
+.panel-tab.is-on {
+  border-bottom-color: var(--accent);
+  color: var(--fg);
+}
+
+/* 只读事实标签（禁画成控件） */
+.fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  cursor: default;
+  user-select: text;
+}
+
+.fact-mono {
+  font-family: var(--font-mono);
+}

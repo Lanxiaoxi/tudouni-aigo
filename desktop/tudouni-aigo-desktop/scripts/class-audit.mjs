@@ -32,22 +32,148 @@ const files = walk(srcDir);
 
 /* ---- class names used in TSX ---- */
 const used = new Map(); // name -> [file:line]
+
+/**
+ * Static class names inside one className expression.
+ *
+ * A plain `className="a b"` is easy; the hard cases are the ones this audit
+ * used to miss entirely: a template literal with a condition
+ * (`` `dialog${x ? ' cmdk' : ''}` ``) and a ternary in braces
+ * (`{ok ? 'ci-last-ok' : 'ci-last-bad'}`). Both apply a real class, so both are
+ * read here — otherwise the class looks dead and someone deletes its styling.
+ */
+function classNamesIn(expression) {
+  const names = new Set();
+  const addList = (text) => {
+    for (const token of text.split(/\s+/)) {
+      if (!token || !/^[a-zA-Z][\w-]*$/.test(token)) continue;
+      names.add(token);
+    }
+  };
+
+  // i points at a quote/template/expression start; returns the index after it.
+  function scanTemplate(i) {
+    i++; // `
+    let text = '';
+    while (i < expression.length) {
+      const c = expression[i];
+      if (c === '\\') { text += expression[i + 1] ?? ''; i += 2; continue; }
+      if (c === '`') { addList(text); return i + 1; }
+      if (c === '$' && expression[i + 1] === '{') {
+        addList(text);
+        text = '';
+        i = scanCode(i + 2);
+        continue;
+      }
+      text += c;
+      i++;
+    }
+    addList(text);
+    return i;
+  }
+
+  function scanString(i) {
+    const quote = expression[i];
+    i++;
+    let text = '';
+    while (i < expression.length) {
+      const c = expression[i];
+      if (c === '\\') { text += expression[i + 1] ?? ''; i += 2; continue; }
+      if (c === quote) break;
+      text += c;
+      i++;
+    }
+    addList(text);
+    return i + 1;
+  }
+
+  // Inside `${...}`: a literal after `?`, `:` or `&&` is a class branch. A
+  // literal on the right of `===` is a value being compared, not a class.
+  function scanCode(i, start) {
+    let depth = 1;
+    while (i < expression.length) {
+      const c = expression[i];
+      if (c === '`') { i = scanTemplate(i); continue; }
+      if (c === '"' || c === "'") {
+        let j = i - 1;
+        while (j >= 0 && /\s/.test(expression[j])) j--;
+        const branch = j >= 0 && '?:&'.includes(expression[j]);
+        const whole = /^\s*$/.test(expression.slice(start, i));
+        i = branch || whole ? scanString(i) : skipString(i);
+        continue;
+      }
+      if (c === '{') { depth++; i = scanCode(i + 1, i + 1); continue; }
+      if (c === '}') { depth--; i++; if (depth === 0) return i; continue; }
+      i++;
+    }
+    return i;
+  }
+
+  function skipString(i) {
+    const quote = expression[i];
+    i++;
+    while (i < expression.length) {
+      if (expression[i] === '\\') i += 2;
+      else if (expression[i] === quote) return i + 1;
+      else i++;
+    }
+    return i;
+  }
+
+  let i = 0;
+  while (i < expression.length) {
+    const c = expression[i];
+    if (c === '`') i = scanTemplate(i);
+    else if (c === '"' || c === "'") i = scanString(i);
+    else if (c === '{') i = scanCode(i + 1, i + 1);
+    else i++;
+  }
+  return names;
+}
+
+/** Find the end of a `{...}` expression, counting nesting and skipping strings. */
+function braceEnd(text, open) {
+  let depth = 1;
+  let quote = null;
+  for (let i = open + 1; i < text.length; i++) {
+    const c = text[i];
+    if (quote !== null) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return text.length;
+}
+
 for (const file of files.filter((f) => f.endsWith('.tsx'))) {
   const text = readFileSync(file, 'utf8');
-  const lines = text.split('\n');
-  lines.forEach((line, i) => {
-    // className="a b c" and className={`a b ${x}`}
-    for (const m of line.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
-      const raw = m[1] ?? m[2] ?? '';
-      // Drop ${...} interpolations: they are computed and cannot be audited here.
-      const cleaned = raw.replace(/\$\{[^}]*\}/g, ' ');
-      for (const name of cleaned.split(/\s+/)) {
-        if (!name || name.includes('$')) continue;
-        if (!used.has(name)) used.set(name, []);
-        used.get(name).push(`${file.replace(root + '\\', '').replace(/\\/g, '/')}:${i + 1}`);
-      }
+  const lineAt = (index) => text.slice(0, index).split('\n').length;
+  const record = (names, index) => {
+    for (const name of names) {
+      if (!used.has(name)) used.set(name, []);
+      used.get(name).push(`${file.replace(root + '\\', '').replace(/\\/g, '/')}:${lineAt(index)}`);
     }
-  });
+  };
+  for (const m of text.matchAll(/className\s*=\s*/g)) {
+    const start = m.index + m[0].length;
+    const c = text[start];
+    if (c === '"' || c === "'") {
+      const end = text.indexOf(c, start + 1);
+      record(classNamesIn(text.slice(start, end + 1)), start);
+    } else if (c === '{') {
+      const end = braceEnd(text, start);
+      record(classNamesIn(text.slice(start, end + 1)), start);
+    }
+  }
+  // Classes applied from code rather than from JSX.
+  for (const m of text.matchAll(/(?:classList\.(?:add|remove|toggle)|querySelector(?:All)?|closest|matches)\(\s*(['"`])([^'"`]+)\1/g)) {
+    record(classNamesIn(m[2]), m.index);
+  }
 }
 
 /* ---- class selectors defined in CSS ---- */
@@ -64,6 +190,12 @@ const ALLOWED = new Map([
   ['app', 'the shell root; styled via .app in app.css'],
   ['scroll', 'a behaviour class; the scrollbar styling targets .scroll'],
   ['reveal', 'entrance transition hook'],
+  // These two are real gaps, not exceptions to the rule: the markup was written
+  // but the rule never was, and the old audit could not see either because both
+  // sit inside a ternary. Recorded in docs/tech-debt/baseline.md so the next CSS
+  // pass fixes the look rather than deleting the name.
+  ['checkbox-box', 'used by QuestionModal multi-select; no rule yet (baseline gap)'],
+  ['btn-danger', 'used by CodeIntelPanel armed state; no rule yet (baseline gap)'],
 ]);
 
 const missing = [];

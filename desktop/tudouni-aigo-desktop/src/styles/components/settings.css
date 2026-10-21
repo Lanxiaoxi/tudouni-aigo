@@ -1,0 +1,408 @@
+
+
+/* ---------------- §11 设置面板（启动参数） ----------------
+
+   One group, and it is a start-up group: `--ericai` and `--max-steps` are read
+   while the runtime is being assembled, so applying one restarts the child. Every
+   rule below is in service of that being legible rather than surprising:
+   the value in force is stated separately from the draft, and the confirmation is
+   inline (component-states.md §danger: a destructive confirm is a popover, not a
+   modal — the two modals belong to questions the runtime is waiting on). */
+
+.set-hint {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+.set-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.set-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.set-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.set-desc {
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-secondary);
+  word-break: break-word;
+}
+
+/* The switch. Deliberately **not** `.st-toggle`: that shape is defined as
+   `.statusbar .st-toggle`, so borrowing the name would produce a button with no
+   rule at all — and the class audit cannot see it, because the name *is* defined
+   somewhere in the stylesheet. */
+.set-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.set-toggle:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.set-toggle.is-on {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.set-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.set-control {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 96px;
+}
+
+.set-input {
+  width: 100%;
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.set-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.set-input.is-invalid {
+  border-color: var(--destructive);
+}
+
+.set-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.set-error {
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--destructive);
+  word-break: break-word;
+}
+
+/* What is actually on the command line right now. Mono, and never merged into
+   the controls above: a remembered value must not read as "this is on". */
+.set-running {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  font-size: var(--text-caption);
+}
+
+.set-running dt {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.set-running dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--fg-secondary);
+  word-break: break-all;
+}
+
+.set-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.set-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--warning);
+}
+
+/* The confirmation, inline. Its own surface and its own border, because it
+   replaces the actions row: there is exactly one thing to decide here. */
+.set-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+}
+
+.set-confirm-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.set-confirm-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cmdk-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  font-size: var(--text-compact);
+  color: var(--fg-faint);
+}
+
+/* ============================================================
+   The minimize-or-close prompt
+   ============================================================
+
+   Two choices as two **full-width rows** rather than a pair of buttons in the
+   footer, and that is the one deliberate departure from every other dialog here.
+   A footer with two buttons side by side reads as a form to fill in and submit;
+   these are two different outcomes, each with a sentence explaining it, and the
+   row shape is what lets the explanation sit beside the word instead of in a
+   tooltip nobody opens.
+
+   `close-choice-danger` is the only destructive-looking one. It is not styled
+   with a filled red button — that is what an irrecoverable action gets, and this
+   one is a graceful shutdown that lets the current turn finish. The colour is on
+   the icon, which is where the eye already is, and the `--destructive-subtle`
+   background matches the approval modal's high-risk header. */
+
+.close-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.close-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.close-choice:hover {
+  border-color: var(--border-strong);
+}
+
+.close-choice-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--fg-secondary);
+}
+
+.close-choice-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* The icon carries the colour; the row's own surface stays neutral, so the two
+   choices read as equally available. */
+.close-choice-danger .close-choice-icon {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+/* The "remember this answer" row. Named for the close prompt because that is
+   where it first appeared; `scripts/close-notify-check.mjs` drives that dialog
+   by `.close-remember`, so the config-sync prompt gets a second selector on the
+   same rules rather than the rules being renamed out from under the script. */
+.close-remember,
+.cfgsync-remember {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+
+.close-remember input,
+.cfgsync-remember input {
+  flex: none;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.close-remember-text,
+.cfgsync-remember-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* ---- the settings row's three-way choice ----
+   A segmented control on one row: the labels alone name the choice, and each
+   one's sentence lives in its tooltip instead of on screen. The old boxed
+   radios spent most of a 233px rail-width panel describing themselves. */
+.set-choice {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.set-choice-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+/* The screen-reader-only radio stays focusable inside the segment; visually the
+   segment itself is the control, so the native dot is hidden and selection is
+   drawn with the accent border and fill. */
+.set-choice-item input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.set-choice-item:hover {
+  background: var(--bg-muted);
+}
+
+.set-choice-item[data-state='checked'] {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+
+.set-choice-text {
+  font-size: var(--text-compact);
+  line-height: var(--leading-tight);
+  color: var(--fg-secondary);
+}
+
+.set-choice-item[data-state='checked'] .set-choice-text {
+  color: var(--fg);
+}
+
+/* ---------------- §12 学习面板（Learn workspace） ----------------
+
+   The learning run's configuration form.
+
+   **It is the task editor's shape, because it is the same kind of screen.** A
+   form holding two kinds of content: what you decide (the scope, the deliverable
+   types, the focus) and what is *true* of the run (which workspace it studies,
+   how many sessions that comes to, the model it inherits). The left column holds
+   the first and the tinted side card the second, exactly as `TaskEditor`
+   separates "what the run says" from "where it says it". It used to be five
+   stacked blocks, which made every fact look like one more field.
+
+   **The parts are the app's.** A section is `.tk-section`; the three exclusive
+   options are `.tk-choice` rows, which is the same radio list the MCP transport
+   is chosen from; a tick box is `.cfg-check`, the textarea `.cfg-textarea`, the
+   workspace path `.cfg-path-row`, and something wrong a `.cfg-problem`. What is
+   left here is the one thing this panel owns: four file names on a wrapped row. */
+
+/* The folder glyph on the workspace row. A flex item inside
+   `.cfg-path-row`, so it must not shrink and must not be pushed onto its
+   own line by a long path — the ellipsis on `.cfg-path` is what yields. */
+.learn-workspace-ic {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+/* ---- deliverables ----
+   Four short type names on one wrapped row. `.cfg-check` draws each one, so
+   a ticked box in this panel is the same mark as a ticked box in Config —
+   and the checkbox is a real, focusable, screen-readable one rather than a
+   hidden input behind a painted chip. The chip shape was prettier and it
+   was not a checkbox: it hid a 1px input under a label, so the keyboard
+   could reach it but nothing ever showed that it had.
+   No margin of its own: it is a `.tk-section`'s body, and the section's own
+   gap is the rhythm. */
+.learn-deliverables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+}
+
+/* The type names are file names, so they are mono — the same treatment the
+   configuration panel gives a path or a model id. `min-width: 0` with the
+   ellipsis covers a narrow dialog; the names are short today. */
+.learn-deliverables .cfg-check span {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

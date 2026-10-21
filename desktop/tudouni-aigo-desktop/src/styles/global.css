@@ -393,10 +393,6 @@ body.is-resizing {
   color: var(--fg-muted);
 }
 
-.compact {
-  font-size: var(--text-compact);
-}
-
 .strong {
   font-weight: 600;
 }
@@ -421,12 +417,6 @@ body.is-resizing {
   gap: var(--space-2);
 }
 
-.row-top {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-}
-
 .col {
   display: flex;
   flex-direction: column;
@@ -435,10 +425,6 @@ body.is-resizing {
 .grow {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-.nowrap {
-  white-space: nowrap;
 }
 
 .sr-only {
@@ -458,12 +444,6 @@ body.is-resizing {
   height: 14px;
   background: var(--border);
   flex: none;
-}
-
-.sep-v {
-  height: 1px;
-  background: var(--border-subtle);
-  width: 100%;
 }
 
 /* 内容收缩 / 展开的轻量过渡：只用 opacity，不动布局 */
@@ -556,8 +536,8 @@ body.is-resizing {
 
 @media (prefers-reduced-motion: reduce) {
   *,
-  *::before,
-  *::after {
+*::before,
+*::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
@@ -565,7 +545,7 @@ body.is-resizing {
   /* 收缩/展开在减弱动效下直接到位：过渡已被上面归零，这里把「收起」写成
      毫不含糊的零高度，免得某个时长常量将来被改大后它又慢慢动起来。 */
   .collapse,
-  .collapse.is-collapsed {
+.collapse.is-collapsed {
     transition: none !important;
   }
 }

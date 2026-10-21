@@ -1,0 +1,248 @@
+
+
+.cfg-problems {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+  /* A refusal is not the thing that gives when the panel runs out of room — it
+     is `flex: none` so the `.wm` grid below it takes the remaining height
+     instead of the banner being squashed. */
+  flex: none;
+}
+
+/* A non-blocking problem is a warning — the kind the runtime reports and then
+   starts anyway (`catalog.problem.no_models`). The blocking class is the same
+   shape in the colour that means "the save button is off". */
+.cfg-problem {
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--warning-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-secondary);
+}
+
+.cfg-problem.is-blocking {
+  border-left-color: var(--destructive);
+  background: var(--destructive-subtle);
+}
+
+.cfg-path-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+}
+
+/* `min-width: 0` is what lets the ellipsis happen at all: a flex item defaults to
+   its content's width, so without it a long path pushes the reveal button off
+   the row instead of being clipped. */
+.cfg-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfg-file-problem {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--destructive);
+  border-radius: var(--radius-sm);
+  background: var(--destructive-subtle);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-secondary);
+  word-break: break-word;
+}
+
+/* ---- one field, and the shapes fields are built from ---- */
+
+/* A fold control heading a section — today, a route's model list. It is a button
+   **around the label**, not a click on the whole head: the head also carries the
+   add button, and a wrapper that took the click would fire on its presses too (a
+   button inside a button is not markup a browser accepts, either). It takes the
+   row, so the label stays at the left edge and the count rides with it — see
+   `.tk-section-head .cfg-fold`. */
+.cfg-fold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cfg-fold:hover .caret {
+  color: var(--fg);
+}
+
+/* Two columns, and they stack when the dialog is narrow. `auto-fit` with a
+   minimum is what does it: a media query would need the dialog's own width,
+   which is not the viewport's, and would be wrong the moment the window is
+   resized across the threshold with the panel open. */
+.cfg-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.cfg-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.cfg-label {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+/* The asterisk on a field whose emptiness refuses the save.
+   Amber rather than the danger red: a box nobody has typed in yet is not an
+   error, and this panel does draw its errors in red — the blocking problems, at
+   the top of the body, on the way to a disabled Save — so a second red down here
+   would read as one of those. */
+.cfg-required {
+  margin-left: 2px;
+  color: var(--warning);
+}
+
+/* The counterpart marker: a field the save does **not** require.
+   A chip rather than parenthetical prose in the label, because it is the same
+   statement as `.cfg-required` — one glance at the label answers "will this
+   refuse my save" — and "(optional)" set as text reads as part of the name. */
+.cfg-optional {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  margin-left: var(--space-1);
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.cfg-hint {
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+  word-break: break-word;
+}
+
+.cfg-input,
+.cfg-textarea {
+  width: 100%;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-family: var(--font-sans);
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.cfg-input {
+  height: var(--control-h-compact);
+}
+
+/* `.mono` sets the family for text; a control needs it on itself, because the
+   font-family a form element inherits is the browser's, not the page's. */
+.cfg-input.mono,
+.cfg-textarea.mono {
+  font-family: var(--font-mono);
+}
+
+.cfg-textarea {
+  padding: var(--space-2);
+  line-height: var(--leading-tight);
+  resize: vertical;
+}
+
+.cfg-input::placeholder,
+.cfg-textarea::placeholder {
+  color: var(--fg-faint);
+}
+
+.cfg-input:focus,
+.cfg-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.cfg-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+
+.cfg-check input {
+  flex: none;
+  accent-color: var(--accent);
+}
+
+/* The delete buttons inside a sub-card. Destructive only on hover: a column of
+   red icons reads as a warning about the panel rather than as controls. */
+.cfg-danger:hover:not(:disabled) {
+  color: var(--destructive);
+}
+
+/* ---- the save row, and the sentence that has to be said ---- */
+
+.cfg-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-caption);
+}
+
+.cfg-status-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--success);
+}
+
+/* The refusal from Rust, verbatim. It is the authority on why nothing was
+   written, so it is shown as it arrived rather than rephrased here — and it can
+   be a whole sentence plus a path, which is why it wraps rather than clips. */
+.cfg-status-error {
+  color: var(--destructive);
+  word-break: break-word;
+}
+
+.cfg-status-pending {
+  color: var(--warning);
+}
+
+/* The one sentence that has to be said somewhere: when the file takes effect. At
+   the foot of every surface, because it only matters *after* somebody has
+   understood what they are looking at. */
+.cfg-takes-effect {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}

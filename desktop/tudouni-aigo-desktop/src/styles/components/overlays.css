@@ -1,0 +1,351 @@
+
+
+/* 风险等级标记 */
+.risk {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+}
+
+.risk-low {
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+}
+
+.risk-medium {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.risk-high {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+/* Tooltip（hover 延迟 400ms 由 Radix delayDuration 控制） */
+.tooltip {
+  z-index: var(--z-tooltip);
+  max-width: 280px;
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  background: var(--bg-inverse);
+  color: var(--bg);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  box-shadow: var(--shadow-overlay);
+}
+
+.tooltip[data-state='delayed-open'] {
+  animation: reveal var(--motion-fast) var(--ease-out) 1;
+}
+
+/* ---------------- §9 对话框 / 命令面板 ---------------- */
+.overlay-mask {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  background: var(--overlay-scrim);
+  backdrop-filter: blur(2px);
+}
+
+.overlay-mask[data-state='open'] {
+  animation: reveal var(--motion-base) var(--ease-out) 1;
+}
+
+.overlay-mask[data-state='closed'] {
+  animation: reveal var(--motion-fast) var(--ease-in) reverse 1;
+}
+
+.dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: var(--z-dialog);
+  width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.dialog[data-state='open'] {
+  animation: dialog-in var(--motion-base) var(--ease-out) 1;
+}
+
+.dialog[data-state='closed'] {
+  animation: dialog-out var(--motion-fast) var(--ease-in) 1;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+
+@keyframes dialog-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 8px));
+  }
+}
+
+/* ---------------- 连接 toast（远程工作区打开中） ----------------
+ *
+ * A status, not a notification: it has no action and no close control, so it
+ * wears no dialog chrome — just a pill on the window's overlay layer. Above
+ * dialogs on purpose (`--z-toast`): a dialog covering it would say "nothing is
+ * happening" over a dial that is mid-flight. Bottom-centred: the workspace
+ * rows it refers to live in the left rail, and it sits at the top of the window,
+ * just under the top bar, so it is the first thing read. */
+.connecting-toast {
+  position: fixed;
+  top: 78px; /* 36px title bar + 42px top bar — just under the chrome strip */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 6px var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  pointer-events: none; /* nothing to click; do not steal hover from what is under it */
+  animation: reveal var(--motion-base) var(--ease-out) 1;
+}
+
+.connecting-toast .ct-icon {
+  color: var(--info);
+  flex: none;
+}
+
+/* ---------------- 最小化问题胶囊（question modal 的最小化） ----------------
+ *
+ * The pill that says "you put a question aside, here is the way back".
+ * Bottom-centred above the status bar rather than top-centred like the
+ * connecting toast: the reading the minimize exists for is the transcript
+ * above, and the pill must be found at the bottom of the eye's travel,
+ * not at the top of it. `--z-toast` on purpose, beside the connecting
+ * toast — the two can be up at once (a question in one workspace, a
+ * remote open in another), and the toast layer is the layer both belong
+ * to. Unlike the connecting toast this one is **clickable**, so it takes
+ * pointer events. */
+.qmp {
+  position: fixed;
+  bottom: 34px; /* 26px status bar + an 8px lift */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 6px var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  animation: reveal var(--motion-base) var(--ease-out) 1;
+}
+
+.qmp:hover {
+  border-color: var(--info);
+}
+
+.qmp .qmp-icon {
+  color: var(--info);
+  flex: none;
+}
+
+.qmp .qmp-text {
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+/* The conversation that asked, in the pill's own caption: several sessions
+   open, the pill would otherwise say a question waits without saying whose. */
+.qmp .qmp-origin {
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.connecting-toast .ct-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  flex: none;
+}
+
+.dialog-title {
+  font-size: var(--text-h1);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.dialog-desc {
+  margin-top: 2px;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.dialog-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+/* Turn-time panel: the split beneath the status bar's turn total.
+   The total on top, then one bar per bucket — the bar is the split made
+   visible, its width the bucket's share of the turn. */
+.timing-panel {
+  /* Wide enough for the longest bucket label (at --text-compact); shared by
+     every row so the bars all start at the same x position. */
+  --timing-label-w: 5em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+
+.timing-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--text-body);
+  font-weight: 600;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.timing-total .mono {
+  font-size: var(--text-body);
+  color: var(--fg-primary);
+}
+
+.timing-row {
+  /* The label column is sized by the panel, not by each row: `max-content`
+     here would let every row pick its own width, and the bars would start at
+     different x positions (short "tools" label, long "model" label). */
+  display: grid;
+  grid-template-columns: var(--timing-label-w) 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-compact);
+}
+
+.timing-label {
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.timing-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.timing-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent-grad);
+}
+
+.timing-value {
+  color: var(--fg-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.timing-note {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  padding-top: var(--space-1);
+}
+
+.dialog-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+/* 命令面板：输入框顶置 */
+.cmdk {
+  align-self: flex-start;
+  top: 12vh;
+  transform: translateX(-50%);
+  max-height: min(560px, 72vh);
+}
+
+.cmdk[data-state='open'] {
+  animation: cmdk-in var(--motion-base) var(--ease-out) 1;
+}
+
+.cmdk[data-state='closed'] {
+  animation: cmdk-out var(--motion-fast) var(--ease-in) 1;
+}

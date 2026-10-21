@@ -1,0 +1,252 @@
+
+
+/* 聚合器里面的行，拿到和正文其它行一模一样的跳过规则（`app.css` 的
+   `.stream-inner > *` 够不到它们了）。同一个声明、同一个数值，理由也同一份：
+   见 `app.css` 里那条规则和 `tests/stream-layout.test.ts`。 */
+.turn-rows > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
+/* 跳转期间把 `content-visibility` 关掉。
+ *
+ * `app.css` 给正文每一行都加了 `content-visibility: auto`，为的是让一个 chunk
+ * 的布局成本不随历史长度增长；代价是**没上过屏的行只有一个估算高度**，于是
+ * 文档比实际矮，`scrollIntoView` 跳到远处的回合会在当前底部被夹住 ——
+ * `turn-rail-check.mjs` 在 60 轮会话上量到，点最后一根横线，回合头停在顶边下方
+ * **15,561px**，正文根本没动。
+ *
+ * 所以跳转时先把这些行还原成真实布局，量完再放开。放开不会把刚才那次布局丢掉：
+ * `contain-intrinsic-size` 里的 `auto` 关键字就是「记住这一行第一次渲染时的真实
+ * 高度」，这正是它存在的原因，所以这一次的代价每个会话只付一次，而且付在点击
+ * 上，不在流式路径上。
+ *
+ * 类名由 `TurnRail.tsx` 的 `onJump` 加/去，整个开关发生在同一帧内、绘制之前，
+ * 所以看不到闪动。 */
+.stream-scroll.is-landing .stream-inner > * {
+  content-visibility: visible;
+}
+
+/* 回合聚合成器里面的行同理：它们不在 `.stream-inner` 的直接子项里，选择器够不到，
+   所以跳转时要把它们一并放开，否则点最后一根横线只量到一遍估算高度。 */
+.stream-scroll.is-landing .turn-rows > * {
+  content-visibility: visible;
+}
+
+.turn-rail {
+  --rail-lane: 36px;
+  /* 悬停卡的最大高度，同时是它的 clamp 上界 —— 两个数字必须一致，所以只有
+     一个来源。 */
+  --rail-preview-h: 100px;
+  flex: 0 0 auto;
+  width: var(--rail-lane);
+  min-height: 0;
+  padding-block: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  /* 竖栏本身占满整列高，里面的横线组按内容高居中：短会话里它待在中间，长会话
+     里它撑到 max-height 并在自己内部滚动。 */
+  justify-content: center;
+  position: relative;
+}
+
+.turn-rail-scroll {
+  /* `flex: 0 1 auto` + `min-height: 0` 而不是 `max-height: 100%`：父元素高度是
+     自动的，百分比 max-height 对它解析不出结果（浏览器按 `none` 处理）。让
+     flex 收缩去做这件事，窗口矮的时候横线组跟着变矮并滚动，不会溢出。 */
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.turn-rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 还有横线在视线之外的那一端，留下 24px 的渐隐。用 mask 而不是盖一层渐变，
+   所以不占额外元素、也没有层级要对。 */
+.turn-rail-scroll.is-top {
+  mask-image: linear-gradient(transparent 0, black 24px 100%);
+}
+
+.turn-rail-scroll.is-bottom {
+  mask-image: linear-gradient(black 0 calc(100% - 24px), transparent 100%);
+}
+
+.turn-rail-scroll.is-top.is-bottom {
+  mask-image: linear-gradient(transparent 0, black 24px calc(100% - 24px), transparent 100%);
+}
+
+.turn-rail-marks {
+  position: relative;
+}
+
+.turn-rail-mark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  cursor: pointer;
+}
+
+/* 那根横线。
+ *
+ * 右对齐、并且以右端为变换原点：三种状态（常态、悬停、当前）只是同一个右端点
+ * 上 `scaleX` 不同，所以一排横线里改变某一条不会把旁边的推动一格。这也是
+ * DeepSeek Harness 里那条导航栏的做法，抄的是这条几何而不是它的具体数值。 */
+.turn-rail-mark::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: 20px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+  transform: translateY(-50%) scaleX(0.55);
+  transform-origin: 100% 50%;
+  transition:
+    transform var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.turn-rail-mark.is-preview::before {
+  background: var(--fg-muted);
+  transform: translateY(-50%) scaleX(0.85);
+}
+
+.turn-rail-mark.is-active::before {
+  background: var(--fg);
+  transform: translateY(-50%) scaleX(1);
+}
+
+/* 键盘焦点：换色**并且**变长。两条一起才是合格的焦点指示 —— 只用颜色就是在
+   要求使用者分辨 `--border` 和 `--accent`，而那正是 `SessionDot` 里写明不许
+   的做法。（全局的 `prefers-reduced-motion` 块已经把 transition 归零，所以
+   这里不需要再来一遍。） */
+.turn-rail-mark:focus-visible {
+  outline: none;
+}
+
+.turn-rail-mark:focus-visible::before {
+  background: var(--accent);
+  transform: translateY(-50%) scaleX(1);
+}
+
+/* 正在跑的那一轮：呼吸。
+ *
+ * `component-states.md` §0 禁止用呼吸动画表达状态翻转，并且给「有回合在飞」
+ * 留了唯一的例外 —— 它是持续状态，不是翻转。同一条理由写在 `SessionDot.tsx`
+ * 里。颜色和 `aria-busy` 也各自携带同一件事，所以动画从来不是唯一信号。 */
+.turn-rail-mark.is-running::before {
+  animation: rail-mark-busy calc(var(--motion-slow) * 2) ease-in-out infinite;
+}
+
+@keyframes rail-mark-busy {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* 悬停 / 聚焦时的那张卡。 */
+.turn-rail-preview {
+  position: absolute;
+  right: calc(100% + var(--space-2));
+  width: min(320px, 40vw);
+  max-height: var(--rail-preview-h);
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  color: var(--fg);
+  pointer-events: none;
+  overflow: hidden;
+  z-index: var(--z-popover);
+  /* 跟着横线走，但整张卡必须留在栏内：`clamp` 的三段就是「不许越过上端、跟着
+     中心、不许越过下端」。`100%` 解析的是 `.turn-rail` 的高度。
+   *
+   * `--rail-preview-centre` 必须是**栏**的坐标，不是横线组所在滚动容器的坐标：
+   * `top` 相对 `.turn-rail`（本卡的包含块）解析，而横线在 `.turn-rail-scroll`
+   * 里，两者差着滚动容器相对栏顶的那段偏移 —— 它由 `TurnRail.tsx` 的
+   * `railOffset` 补进来。漏掉它的后果不是「偏一点」：那段偏移就是栏居中后剩下
+   * 的余量，会话越短越大，于是 `clamp` 会把整张卡按在最顶上。 */
+  top: clamp(
+    0px,
+    calc(var(--rail-preview-centre) - var(--rail-preview-h) / 2),
+    calc(100% - var(--rail-preview-h))
+  );
+  transition: top var(--motion-fast) var(--ease-standard);
+  animation: rail-preview-in var(--motion-fast) var(--ease-standard);
+}
+
+.turn-rail-prompt,
+.turn-rail-response {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.turn-rail-prompt {
+  font-size: var(--text-body);
+  font-weight: 600;
+  -webkit-line-clamp: 1;
+}
+
+.turn-rail-response {
+  margin-top: var(--space-1);
+  font-size: var(--text-compact);
+  line-height: var(--leading-body);
+  color: var(--fg-muted);
+  -webkit-line-clamp: 3;
+}
+
+@keyframes rail-preview-in {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+}
+
+/* ============================================================
+   The session board (`SessionBoard`).
+   It replaces the transcript's column while it is open — a
+   seventh occupant of `conversationView`, not a dialog — so it is
+   a full-height flex column with one scrolling region, exactly
+   like `.term-view` above.
+   ============================================================ */
+
+.board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  /* The left rail's plane, and the column slots take its hover tint — the two
+     tokens the redesign falls out of. The board used to be a grey canvas with
+     grey wells; that was a third palette beside the two rails. */
+  background: var(--lb-surface);
+  /**
+   * The board is conditionally mounted, so without this it would appear in a
+   * single frame — while the right rail is *still sliding away* next to it
+   * (its `width` transition runs on), and two unrelated events read as one
+   * jump. The slide from the left is timed to the rail's own
+   * `--motion-base` / `--ease-standard` (global.css, `.app-rail`), so the
+   * board's arrival finishes where the rail's departure ends. It only ever
+   * plays on open — `boardOpen` is never persisted, the component is unmounted
+   * on close, and there is no exit animation: the old view simply returns.
+   * `prefers-reduced-motion` zeroes the duration globally (global.css).
+   */
+  animation: board-in var(--motion-base) var(--ease-standard) 1;
+}

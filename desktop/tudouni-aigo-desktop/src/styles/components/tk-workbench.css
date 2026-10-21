@@ -1,0 +1,385 @@
+
+
+/* The error ring is the focus ring's own geometry in the destructive colour:
+   the same "this control is the subject" statement, saying something else. */
+.cfg-input.is-error,
+.cfg-textarea.is-error {
+  border-color: var(--destructive);
+}
+
+.cfg-input.is-error:focus,
+.cfg-textarea.is-error:focus {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--destructive-subtle);
+}
+
+/* The workspace control: a select-shaped button, because its menu is the
+   popover below — the choice is three refs, which is more than an `option`
+   list can carry once one of them has to name a remote host. */
+.tk-ws {
+  display: flex;
+  flex-direction: column;
+}
+
+.tk-select {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 var(--control-pad-x);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-size: var(--text-compact);
+  text-align: left;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.tk-select:hover {
+  border-color: var(--fg-faint);
+}
+
+.tk-select:focus-visible {
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.tk-select-icon {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.tk-select-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tk-select-caret {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+/* The Enabled switch: the design's pill toggle. A real `role="switch"` button
+   rather than a styled checkbox, so the two states are one element's own
+   attribute and nothing has to keep a hidden input in sync with a drawn knob. */
+.tk-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tk-switch {
+  flex: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background-color var(--motion-base) var(--ease-out);
+}
+
+.tk-switch.is-on {
+  background: var(--accent);
+}
+
+.tk-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--fg-on-solid);
+  box-shadow: var(--shadow-knob);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.tk-switch.is-on .tk-switch-knob {
+  transform: translateX(14px);
+}
+
+.tk-switch:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.tk-toggle-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tk-toggle-label {
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+/* The footer's left slot: what Esc does. Muted, because it is a fact about the
+   dialog rather than a control. */
+.tk-discard {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* ---- the parts every editor is built from ----
+
+   Four shapes, and they are shared on purpose: the task editor, a route's
+   editor, an MCP server's editor and the learning form all compose these. When
+   a panel needs "a group of fields", "a short exclusive choice", "a nested field
+   group" or "a fact in the side card", it comes here — inventing a fifth
+   vocabulary for any of them is how two panels in the same dialog start looking
+   like two applications. */
+
+/* A labelled group of fields inside a column: the head is a label, an optional
+   count and whatever acts on the group (a fold, an add button); the body is the
+   fields. Sections are separated by a hairline, which is what makes a form of
+   eleven fields readable as four subjects. */
+.tk-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.tk-section + .tk-section {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tk-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 22px;
+}
+
+/* A fold control that heads a section takes the row, so the label stays at the
+   left edge and the count rides with it however long the label is. */
+.tk-section-head .cfg-fold {
+  flex: 1 1 auto;
+}
+
+.tk-section-label {
+  flex: none;
+  font-size: var(--text-h2);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+/* A vertical radio list: one exclusive choice per row, the chosen one tinted.
+   The rows are joined by a shared hairline (`margin-top: -1px`) so the group
+   reads as one control rather than as N unrelated settings, and the chosen row
+   is lifted over its neighbour so its accent border is not clipped in half. */
+.tk-choice {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tk-choice-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  margin-top: -1px;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.tk-choice-row:first-child {
+  margin-top: 0;
+  border-top-left-radius: var(--radius-md);
+  border-top-right-radius: var(--radius-md);
+}
+
+.tk-choice-row:last-child {
+  border-bottom-left-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+}
+
+.tk-choice-row:hover {
+  background: var(--bg-muted);
+}
+
+.tk-choice-row:has(input:checked) {
+  position: relative;
+  z-index: 1;
+  border-color: var(--accent-tint-border);
+  background: var(--accent-tint);
+}
+
+.tk-choice-row:has(input:checked) .tk-choice-text {
+  color: var(--fg);
+}
+
+.tk-choice-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The chosen option's own parameter. **Disabled until its option is the chosen
+   one** — an input that accepts a value the form is not using is a control that
+   lies about having an effect. Clicking it still selects the row, because the
+   whole row is the label. */
+.tk-choice-num {
+  width: 64px;
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  text-align: center;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.tk-choice-num::placeholder {
+  color: var(--fg-faint);
+}
+
+.tk-choice-num:disabled {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--fg-faint);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Focus is the ring every other control in the app draws, and the ring is
+   the *only* focus mark: the two rules it replaces painted a green border
+   on click, which is the mistake `global.css` documents. */
+.tk-choice-num:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* The preview count. Fixed width so the rows' numbers line up in a column —
+   they are the same kind of fact in the same place, n times. */
+.tk-choice-count {
+  flex: none;
+  width: 28px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+}
+
+.tk-choice-row:has(input:checked) .tk-choice-count {
+  color: var(--accent-tint-text);
+}
+
+/* A nested field group inside an editor — one model of a route. It sits on the
+   window's own background rather than the card's, so a list of them reads as
+   the *contents* of the section they are in. */
+.tk-subcards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tk-subcard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+/* A sub-card's own field grid pairs up sooner than a top-level one: its column
+   is already inset by the editor's, and two 240px fields do not fit the ~490px
+   that leaves — so without this a model's id and label stack, and one model
+   costs a screenful. */
+.tk-subcard .cfg-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.tk-subcard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+}
+
+/* The side card's `label: value` rows. The value is right-aligned and mono:
+   they are numbers and yes/no answers, and a column of them should be readable
+   down its right edge. */
+.tk-side-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tk-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+}
+
+.tk-fact-label {
+  color: var(--fg-muted);
+}
+
+.tk-fact-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-secondary);
+  text-align: right;
+}
+
+/* "no" on a route that cannot be selected is the one answer in the card that is
+   worth a colour: it is the difference between a route in the file and a route
+   the /model list will offer. */
+.tk-fact-value.is-negative {
+  color: var(--warning);
+}
+
+.tk-fact-value.is-muted {
+  color: var(--fg-faint);
+}
+
+/* A path row inside the side card: the card's own gap already spaces its
+   children, so the row's bottom margin would double it. */
+.tk-editor-side .cfg-path-row {
+  margin-bottom: 0;
+}
+
+/* A narrow window: the editor's second column folds under the first rather
+   than being squeezed, since its fields are the ones that lose meaning first
+   when a workspace path is cut to four characters. */
+@media (max-width: 760px) {
+  .tk-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tk-search {
+    width: 150px;
+  }
+}

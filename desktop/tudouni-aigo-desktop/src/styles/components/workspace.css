@@ -1,0 +1,760 @@
+
+
+/* ============================================================
+   Workspace memory
+   ============================================================
+   Two columns: how recall behaves on the left, what the workspace knows on the
+   right. Four rules shape what follows.
+
+   **It is wider than every other dialog.** The right column is a card holding a
+   sentence-long title, a meta line and two buttons; at 860px the left column's
+   "label · 1–10 · stepper" row starts colliding with it. 1000px is the design's
+   own proportion, capped by the window the same way `.dialog-wide` is.
+
+   **A switch row's rule indents past the toggle.** It starts where the text
+   starts, so the toggles read as one column and the rules as the text's. It is a
+   pseudo-element on the row rather than a border on the text block, because that
+   block is vertically centred and a border would move with it.
+
+   **The right column is one card that fills its height.** The queue and the
+   record are the same subject — "what this workspace believes" — so they share
+   one surface, and the index line is pinned to its foot. A card that ended
+   wherever the last row happened to end would read as two unrelated lists.
+
+   **Nothing in here is a new vocabulary.** The toggle is `.tk-switch` (the task
+   editor's), the buttons are `.btn`, the fields are `.cfg-input`, the problem
+   banner is `.cfg-problem`. What is added is the layout of this panel, and the
+   three controls the other panels do not have: a stepper, a slider, and the
+   review card.
+
+   **And the columns scroll, not the panel.** With the body left to scroll
+   itself, one scrollbar for the whole surface ran down the panel's edge — the
+   thumb spanned the head and the settings, which reads as "this window scrolls"
+   rather than "this list scrolls", and the card beside it was merely as tall as
+   its last row, so its footer pinned with `margin-top: auto` was never actually
+   at a foot. Handing the height to the two columns (below) is what fixes both.
+   `.dialog-files` is the same decision for a single column.
+
+   It rides its own class rather than `dialog-memory` because that width rung is
+   shared with the code intelligence panel, whose columns carry no `scroll`: for
+   it, the flex rules here are inert and it keeps growing with its content as it
+   always did. And there is **no fixed height** — `.dialog`'s own `max-height`
+   caps the dialog, `flex-shrink` squeezes the body to fit, and a short panel
+   still stops at its content. */
+
+.dialog-memory {
+  width: min(1000px, calc(100vw - 48px));
+}
+
+/* A column that hands its height to the grid rather than scrolling itself.
+   `overflow: hidden` is what makes the handover real — without it the grid would
+   be free to be as tall as its content and the body would scroll anyway. The
+   refusal banner above the grid is `flex: none`, so it takes its own line and the
+   grid gets what is left. */
+.dialog-split .dialog-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.wm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  /* **`minmax(0, 1fr)` and not the default `auto`.** An auto row's base size is
+     its content, so a corpus taller than the panel would grow the row past the
+     container — the columns would then be exactly as tall as their content, no
+     item would overflow, and the *body*'s `overflow: hidden` would silently clip
+     the rest. Capping the row at the container's height is what makes the column
+     the thing that overflows, and therefore the thing that scrolls. */
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--space-8);
+  align-items: stretch;
+  /* The panel's height rather than its content's, so each column gets the whole
+     of it and can be the thing that scrolls — see `.dialog-split`. */
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The left column's own rule, under the panel's description: the settings are a
+   page, and a page needs a top edge. The card does not take it — it is a card.
+   The save row follows the settings in the normal flow rather than being pinned
+   to the column's foot: the settings and the Save that applies them are one
+   thing, and a Save stranded at the column's bottom is a button away from the
+   field that was just changed. It carries `scroll` because the two columns are
+   one height now (`dialog-split`): whichever of them is taller than the panel
+   has to give, and it must not be the card, whose own lists are the long half. */
+.wm-main {
+  min-width: 0;
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.wm-legend {
+  margin-bottom: var(--space-1);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.wm-legend-gap {
+  margin-top: var(--space-6);
+}
+
+.wm-group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- behavior: one switch, one sentence ---- */
+
+.wm-switch {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  column-gap: var(--space-4);
+  align-items: center;
+  padding: 10px 0;
+}
+
+/* Right after the toggle's own column: 34px of control + the 16px gap. */
+.wm-switch + .wm-switch::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50px;
+  right: 0;
+  border-top: 1px solid var(--border);
+}
+
+/* The shared switch carries a 1px top offset for a top-aligned row; here the row
+   is centred on a two-line block, so the offset would make the knob look low. */
+.wm-switch .tk-switch {
+  margin-top: 0;
+}
+
+.wm-switch-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wm-switch-label {
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--fg);
+}
+
+.wm-switch-hint {
+  font-size: var(--text-compact);
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
+/* ---- recall tuning: label, the range it may take, the control ---- */
+
+.wm-num {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 10px 0;
+}
+
+.wm-num + .wm-num {
+  border-top: 1px solid var(--border);
+}
+
+.wm-num-label {
+  font-size: var(--text-body);
+  color: var(--fg);
+}
+
+/* "1–10" beside the stepper. Muted and small on purpose: it is a description of
+   the field, not a second label. */
+.wm-num-range {
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
+/* The stepper is a box, not three buttons: the two ends are actions and the
+   middle is the value, and a box is the only shape that says "one control". */
+.wm-stepper {
+  display: grid;
+  grid-template-columns: 30px 54px 30px;
+  align-items: center;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.wm-stepper:focus-within {
+  border-color: var(--accent);
+}
+
+.wm-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.wm-step:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.wm-step:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* A number field wearing the value's clothes: the spinners are removed (`appearance`
+   plus the WebKit pseudo-elements) because the two buttons beside it already are the
+   step controls, and a third pair of arrows inside a 54px cell is noise. */
+.wm-step-value {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.wm-step-value::-webkit-outer-spin-button,
+.wm-step-value::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.wm-step-value:focus {
+  outline: none;
+}
+
+/* ---- the relevance floor: a slider, because it is a dial and not a count ---- */
+
+.wm-slider-row {
+  grid-template-columns: auto auto minmax(80px, 1fr) auto;
+}
+
+.wm-slider {
+  width: 100%;
+  min-width: 0;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* The filled half of the track. A range input's track is a pseudo-element, so the
+   fill cannot be an element: it is a gradient stop, and `--wm-fill` is the one
+   number the component computes. */
+.wm-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0 var(--wm-fill),
+    var(--bg-muted) var(--wm-fill) 100%
+  );
+}
+
+.wm-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border: 2px solid var(--accent);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-thumb);
+}
+
+.wm-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-muted);
+}
+
+.wm-slider::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.wm-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--accent);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+}
+
+.wm-slider:focus-visible {
+  outline: none;
+}
+
+.wm-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--focus-ring);
+}
+
+.wm-slider-value {
+  min-width: 2ch;
+  font-size: var(--text-body);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--fg);
+}
+
+/* ---- the save row ---- */
+
+.wm-save {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+
+.wm-save-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* Unsaved typing is the one thing in this row that is not a status: it is a
+   warning that what is on screen is not what the runtime is using. */
+.wm-save-note.is-dirty {
+  color: var(--warning);
+}
+
+/* ---- files that could not be read ---- */
+
+.wm-unreadable {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-5);
+}
+
+.wm-unreadable-line {
+  font-size: var(--text-caption);
+  line-height: 1.4;
+  color: var(--warning);
+  word-break: break-word;
+}
+
+/* ---- the card: the review queue and the record ---- */
+
+/* A **nested face**, not a raised one: `--bg-muted` is the token for exactly
+   that, and it is the only choice that survives both themes — in the dark theme
+   one rung *up* from the dialog's surface is lighter, so a card painted with
+   `--bg-secondary` (one rung down) vanished into it, and a card has to be a
+   surface in both themes or the right column stops existing at night. No border:
+   the fill is the edge, the way it is in the design. */
+.wm-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-muted);
+}
+
+/* **The card absorbs the overflow; its lists scroll.** `.wm` gives this column
+   the panel's whole height, so a corpus taller than the card has to be dealt
+   with here — and the thing that must not give is the index line at the foot
+   (see `.wm-side-body`). Scoped to the split panel: the code intelligence panel
+   wears the same card at the same width but no `scroll`, and it grows with its
+   content, so clipping it here would cut off its last run. */
+.dialog-split .wm-side {
+  overflow: hidden;
+}
+
+/* The scrolling half of the card: the review queue and the record. `flex: 1 1
+   auto` with `min-height: 0` is what lets it be shorter than its content — a
+   flex item's default `min-height: auto` would refuse to shrink and push the
+   index line out of the card instead. It is a flex column itself so the empty
+   state below can stretch and centre, as it did when the card was the scroller. */
+.wm-side-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.wm-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.wm-side-head-gap {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.wm-side-title {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.wm-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.wm-side-empty {
+  padding: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* ---- one proposal ---- */
+
+.wm-cand {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+}
+
+.wm-cand + .wm-cand {
+  border-top: 1px solid var(--border);
+}
+
+/* The title is the biggest text in the card on purpose: it is the thing the
+   queue is scanned by, and it is what a person decides on. */
+.wm-cand-title {
+  font-size: var(--text-h1);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.wm-cand-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.wm-cand-time {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* What approving it would do. Clipped rather than wrapped: the op is one fact and
+   the buttons below it are two more, and a meta line that wrapped would push them
+   apart for the longest id in the corpus. */
+.wm-cand-op {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.wm-cand-op::before {
+  content: '·';
+  margin-right: var(--space-2);
+  color: var(--fg-faint);
+}
+
+.wm-read {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.wm-read:hover {
+  color: var(--fg);
+}
+
+.wm-read-caret {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.wm-read-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.wm-cand-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* Two buttons, and the pair is taller than a toolbar's: this is the decision the
+   card exists for, and the design gives it the weight of a primary action. */
+.wm-cand-actions .btn {
+  height: 30px;
+  padding: 0 var(--space-4);
+}
+
+/* "Discard" is the second of the two and must not read as a third option: filled
+   with the elevated surface it looks like the card's own button, which is what a
+   "no" beside a green "yes" should look like. */
+.wm-btn-soft {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+.wm-btn-soft:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.wm-cand-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.wm-trigger {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+}
+
+/* The body being approved. It scrolls and it is capped, because one memory can be
+   long and the queue must not let one record push the rest off the card. */
+.wm-body {
+  margin: 0;
+  padding: var(--space-2);
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+}
+
+/* ---- one memory on record ---- */
+
+.wm-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: var(--space-3) 0;
+}
+
+.wm-entry + .wm-entry {
+  border-top: 1px solid var(--border);
+}
+
+.wm-entry-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.wm-entry-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+/* Evidence, not content type. It is the one thing that changes how much a reader
+   should trust the row, so it gets a colour — and the sentence that explains the
+   three words is on hover rather than in the card. */
+.wm-conf {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.wm-conf-verified {
+  color: var(--success);
+}
+
+.wm-conf-observed {
+  color: var(--fg-muted);
+}
+
+.wm-conf-inferred {
+  color: var(--warning);
+}
+
+.wm-entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.wm-entry-meta > span + span::before {
+  content: '·';
+  margin-right: var(--space-2);
+  color: var(--fg-faint);
+}
+
+.wm-entry-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.wm-tag {
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-elevated);
+}
+
+.wm-entry-triggers {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+/* Retiring a record: a quiet button until it is the thing being aimed at, because
+   a column of red delete controls reads as a warning about the panel rather than
+   as a set of controls. */
+.wm-action {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  height: 20px;
+  margin-left: -6px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.wm-action:hover {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
+.wm-arm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.wm-arm-reason {
+  width: 100%;
+  height: 26px;
+}
+
+.wm-arm-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ---- the card's own empty state ---- */
+
+.wm-on-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+}
+
+.wm-on-icon {
+  color: var(--fg-faint);
+}
+
+.wm-on-title {
+  font-size: var(--text-h1);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+.wm-on-hint {
+  max-width: 240px;
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  color: var(--fg-faint);
+}
+
+/* Pinned to the card's foot: the index is a fact about the whole corpus, and it
+   reads as a footer, not as a row of the list above it.
+
+   It is *outside* the card's scroller (`.wm-side-body`), so "pinned" is now a
+   structural fact rather than a sticky trick: the rows scroll in the wrapper
+   above and this line never moves. `margin-top: auto` is what puts it on the
+   floor when the corpus is shorter than the card — without it the line would
+   ride up under the last memory, which is where a row of the list would be. */
+.wm-index {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  color: var(--fg-faint);
+}

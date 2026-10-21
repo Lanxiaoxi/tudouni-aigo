@@ -1,0 +1,252 @@
+
+
+@keyframes cmdk-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes cmdk-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+
+.cmdk-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cmdk-head input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: var(--text-body);
+  color: var(--fg);
+}
+
+.cmdk-head input::placeholder {
+  color: var(--fg-faint);
+}
+
+.cmdk-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-1);
+}
+
+.cmdk-group {
+  padding: 6px 8px 2px;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+/* Primary group head: the section the person is looking at, with an optional
+   `?` icon. One shade stronger than `.cmdk-group` — the sub-groups use the
+   plain `.cmdk-group` rule, which reads as secondary. */
+.panel-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 6px 8px 2px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+}
+
+/* `?` icon that carries the sentence the row itself cannot hold.
+   cursor: help, not pointer — there is no click action, only hover/focus. */
+.info-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: help;
+  border-radius: var(--radius-xs);
+  flex: none;
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+.info-ic:hover {
+  color: var(--fg-secondary);
+  background: var(--bg-muted);
+}
+.info-ic:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: 1px;
+}
+
+/* First line of a skill row: name + digest, baseline-aligned. */
+.skill-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.cmdk-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.cmdk-item[data-active='true'] {
+  background: var(--accent-subtle);
+  color: var(--fg);
+}
+
+.cmdk-item .cmd-name {
+  font-family: var(--font-mono);
+  color: var(--fg);
+  flex: none;
+}
+
+.cmdk-item .cmd-desc {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmdk-item .cmd-hint {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  flex: none;
+}
+
+/* ---------------- 加号菜单（PlusMenu） ----------------
+   锚在输入框左下角 `+` 上的 popover，内部以「页」切换根菜单与子菜单。
+   表面同 dialog：elevated 底 + strong 边 + modal 阴影，宽度收窄成菜单。 */
+.plus-menu {
+  z-index: var(--z-dialog);
+  width: 240px;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+/* The sidebar's add-workspace menu only carries two short labels; the
+   shared 240px width reads as a menu with more room than it uses. */
+.lb-plus-menu {
+  width: 120px;
+}
+
+.plus-menu-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-1);
+}
+
+.plus-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.plus-item:hover:not(:disabled),
+.plus-item:focus-visible {
+  background: var(--accent-subtle);
+  color: var(--fg);
+}
+
+.plus-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 子页的返回行：贴列表头、弱化，读作路径而非动作。 */
+.plus-item-back {
+  color: var(--fg-faint);
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: 0;
+  margin-bottom: var(--space-1);
+  padding-bottom: 8px;
+}
+
+.plus-item-back:hover:not(:disabled) {
+  background: transparent;
+  color: var(--fg);
+}
+
+.plus-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plus-item-hint {
+  flex: none;
+  color: var(--fg-faint);
+  font-size: var(--text-caption);
+}
+
+/* 子页头部的「已加载」小标：同 Badge 的语义，但尺寸贴菜单行。 */
+.plus-item-badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+}
+
+.plus-menu-empty {
+  padding: var(--space-3);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  text-align: center;
+}

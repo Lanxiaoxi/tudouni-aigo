@@ -1,0 +1,682 @@
+
+
+/* ============================================================
+   §3b 左侧栏：工作区与会话
+   The left rail. Same density and row height as the right one, so the two read
+   as a pair of rails around the transcript rather than as two designs.
+
+   Two layout rules here are load-bearing:
+     - every row that shows a path or an id has `min-width: 0` on the flexible
+       cell, so a long name ellipsises instead of pushing the action button out
+       of the rail (the same failure the window controls had);
+     - the head and the "new session" button are `flex: none`, and only the two
+       sections scroll. A scrolling header would let the workspace list push the
+       rail's own identity off the top.
+   ============================================================ */
+/* The head is the rail's name, and it carries **no control** — the rail is
+   folded from the session bar's leading toggle, which survives its own press.
+   Its height still matches `.rb-head` exactly, so the two heads keep drawing
+   one horizontal band across the window. The separator under it is gone: on the
+   redesign's flat plane the head and the list are the same surface, and a
+   hairline there was just the top edge of the first card. */
+.lb-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 42px;
+  padding: 0 12px;
+}
+
+/* The mark is drawn a step larger than the window's copy (the title bar uses
+   14–20px) and clipped a little harder: at this size it is the rail's identity,
+   not a decorative bullet. 8px is the design's own tile radius. */
+.lb-head .app-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.lb-head .lb-brand {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.lb-new {
+  flex: none;
+  padding: 2px 10px 10px;
+}
+
+/* The rail's primary action: the redesign's pale green bar — no border, no
+   lift, no shadow. It reads as the one control at the top of the rail because
+   it is the only filled surface there, not because it is the loudest thing in
+   the window. 36px tall so the label's optical centre sits on the row's own
+   line, centred rather than left-aligned: a full-width bar with a leading icon
+   reads as a field, and a field is the wrong promise for "start something". */
+.lb-new-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 10px;
+  background: var(--lb-selected);
+  color: var(--accent-tint-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.lb-new-btn:hover:not(:disabled) {
+  background: var(--lb-selected-line);
+}
+
+.lb-new-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The one icon-button shape in the rail: a real 24px target, and a visible
+   disabled state, because most of these are inert while a prompt is up. */
+.lb-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.lb-icon:hover:not(:disabled) {
+  background: var(--lb-hover);
+  color: var(--fg);
+}
+
+.lb-icon:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.lb-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* The rail's own scrollbar, narrowed to a rounded 3px hairline that takes the
+   rail's border colour: in a 244px rail a 4px bar in a 10px gutter reads as a
+   second column of ink beside the rows it is scrolling. */
+.lb-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--lb-line) transparent;
+}
+
+.lb-scroll::-webkit-scrollbar {
+  width: 7px;
+}
+
+.lb-scroll::-webkit-scrollbar-thumb {
+  background: var(--lb-line);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.lb-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.lb-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lb-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* The fold content of the two left-rail lists (workspaces, sessions).
+   `.collapse` (global.css) already transitions the **height** —
+   grid-template-rows 1fr -> 0fr — but the rows inside merely get clipped,
+   which reads as a block popping in and out. This gives the content itself
+   direction:
+     - expanding: it starts shifted **up** behind the section head and slides
+       down into place as the box opens from the top — the block arrives
+       from top to bottom;
+     - collapsing: it drifts **down** while the box closes from the bottom —
+       the bottom stays visible the longest and the top is the first to go,
+       so the block leaves bottom-up.
+   Both halves ride `transform` + `opacity`, the allowed properties, timed on
+   the same `--motion-base` / `--ease-standard` the height uses, so the drift
+   and the clip arrive together — a faster fade would look like the content
+   ghosting ahead of its own box. `transform: none` (not `translateY(0)`) in
+   the open state so it stops creating a stacking context once the motion is
+   over. */
+.lb-fold-inner {
+  opacity: 1;
+  transform: none;
+  transition:
+    transform var(--motion-base) var(--ease-standard),
+    opacity var(--motion-base) var(--ease-standard);
+}
+
+.collapse.is-collapsed > .lb-fold-inner {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.lb-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lb-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 0 4px;
+  min-height: 22px;
+}
+
+/* The head is itself the fold toggle. It is a button whose only chrome is the
+   caret, so the whole row presses without drawing a second control. */
+.lb-section-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--radius-xs);
+}
+
+.lb-section-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The section name: **10.5px, sentence case, no tracking.**
+   It used to be an 11px all-caps label with letter-spacing, which read as an OS
+   status bar and pulled harder than the actual rows under it. At this size and
+   weight it is a quiet shelf label — present, readable, and no longer competing
+   with the action icon at the end of the same row (which is 22px, not 24). */
+.lb-section-head .lb-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--fg-muted);
+}
+
+/* Flat rows, not cards: the gutter between two rows is the whitespace their own
+   padding already draws, so a gap here is a seam, not a shelf. */
+.lb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The group of conversations that are open but have no file yet, above the saved
+   list. It needs its own rule for one thing the shared row styles cannot know:
+   it has to read as a **separate group** from the saved list below it, or the two
+   look like one list in which some rows are missing their message count. The
+   separation is a margin rather than a heading — a heading for one or two rows
+   costs more height than the rows do, and this rail is the narrow one. */
+.lb-live-rows {
+  margin-bottom: var(--space-2);
+}
+
+/* The one control this rail has when no workspace is listed, drawn as a named
+   button rather than the section head's bare icon. It is `.btn .btn-outline
+   .btn-block` and needs a rule of its own for the two things the shared button
+   classes cannot know: it sits in the empty state's flow rather than in a form,
+   and it must not look clickable while a session is blocked.
+
+   `npm run audit:css` exists because of a case exactly like this one — a
+   `className` with no rule renders, it just lands wrong, and only a screenshot
+   shows it. This class was that case, so the audit was red until this rule. */
+.lb-empty-add {
+  margin: var(--space-2) var(--space-2) 0;
+  width: auto;
+}
+
+.lb-empty-add:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------------- workspace rows ---------------- */
+
+/* One flat row on the rail's plane.
+   The row used to be a **white card** with a transparent 1px border that turned
+   green for the current workspace, plus a green shadow. That gave every
+   workspace two rectangles (the rail's grey frame and the card), and it made
+   "current" and "hover" two edges competing for the same idea. The redesign
+   removes the card: a row is transparent at rest, takes a neutral wash under
+   the pointer, and the current workspace takes the one pale green capsule the
+   whole rail uses for "you are here". */
+.lb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 8px;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--fg-secondary);
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.lb-row:hover {
+  background: var(--lb-hover);
+}
+
+.lb-row.is-current {
+  background: var(--lb-selected);
+  color: var(--fg);
+}
+
+.lb-row .lb-row-icon {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.lb-row.is-current .lb-row-icon {
+  color: var(--accent-tint-text);
+}
+
+.lb-row-main {
+  flex: 1 1 auto;
+  /* The flexible cell: without this the name refuses to shrink and the action
+     button is pushed past the rail's edge. */
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  font-size: 12.5px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lb-row-main:disabled {
+  cursor: default;
+}
+
+.lb-row-main .lb-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+}
+
+/* "current" is a **word**, not a second pill. The capsule already says which
+   row it is; a badge would be the third signal for one fact. The accent text is
+   the same green the capsule is made of, so the two read as one state. */
+.lb-row .lb-current {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent-tint-text);
+}
+
+/* The "Remote" tag: the design's quiet grey-green chip. No border — a hairline
+   inside a row that already has a capsule in some states is ink for no fact. */
+.lb-remote-tag {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--lb-tag);
+  color: var(--fg-muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+/* The "not installed" marker: the same badge shape as `.lb-remote-tag`, in
+   the warning tone, because this is a state that asks for an action (the
+   always-visible download button at the row's end), not a neutral label. */
+.lb-not-installed-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--warning-border);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
+/* Revealed on hover, like `.list-row .list-actions` — but never hidden from the
+   keyboard, and never the only way to reach the action. */
+.lb-row .lb-row-action {
+  opacity: 0;
+}
+
+.lb-row:hover .lb-row-action,
+.lb-row:focus-within .lb-row-action {
+  opacity: 1;
+}
+
+/* The install action on a row that has no binary path yet: always visible,
+   because a hover-only affordance is how the install feature went unnoticed
+   — a merged list row that looks like every other row does not advertise a
+   button nobody knows is there. The marker is on the remote row's button
+   itself, so it cannot leak onto local rows' actions. */
+.lb-row .lb-row-action.is-always-visible {
+  opacity: 1;
+}
+
+/* ---------------- the refusal of a directory ---------------- */
+
+.lb-refusal {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin: 0 var(--space-1) var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--destructive-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--destructive-subtle);
+}
+
+.lb-refusal .lb-refusal-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--destructive);
+  word-break: break-word;
+}
+
+.lb-note {
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  font-size: var(--text-compact);
+  color: var(--fg-faint);
+}
+
+/* ---------------- the session list's empty state ---------------- */
+
+/* The design's empty panel: a quiet green-tinted box that says what is missing
+   and puts the way forward inside itself. The old state was two lines of text,
+   with "New session" left at the top of the rail, away from the section it
+   fills — the exact dead end the panel is for. */
+.lb-empty-sessions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 2px;
+  padding: 18px 12px 14px;
+  border: 1px solid var(--lb-line);
+  border-radius: 12px;
+  background: var(--accent-subtle);
+  text-align: center;
+}
+
+.lb-empty-sessions .lbes-icon {
+  color: var(--fg-muted);
+}
+
+.lb-empty-sessions .lbes-title {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-secondary);
+}
+
+.lb-empty-sessions .lbes-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--fg-faint);
+}
+
+.lb-empty-sessions .lbes-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  margin-top: 6px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 7px;
+  background: var(--lb-selected);
+  color: var(--accent-tint-text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.lb-empty-sessions .lbes-action:hover:not(:disabled) {
+  background: var(--lb-selected-line);
+}
+
+.lb-empty-sessions .lbes-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---------------- session rows ---------------- */
+
+/* The row is a wrapper (the session row + the two per-row actions beside it).
+   The **row** owns the surface and the hover, not the wrapper: a wrapper that
+   painted too would draw a second rectangle around the row's rounded one.
+
+   **The actions are positioned against this box, not laid out inside it.** As a
+   flex item the column took 26px of the row, so the session row was 26px
+   narrower than the workspace row above it and the two lists had different
+   right edges. `position: relative` here is what lets the column be anchored to
+   the row's edge instead of shrinking the row. */
+.lb-session-wrap {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+}
+
+.lb-session-wrap .lb-session {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* A saved row wears the actions; a live row (`lb-live-rows`) has none at all.
+   The actions are **not** given a reserved band. Reserving one would stop every
+   row's time 34px short of the edge, which is exactly the drift the flat row is
+   trying to remove: the time belongs on the row's right edge, in line with the
+   workspace rows' tags. On hover the buttons take that spot and the time fades
+   out under them (below), so nothing reflows and no control covers a fact. */
+
+/* Hover/focus on a row with actions: the actions appear and the time steps
+   aside. Only the time — the title keeps every column it had. */
+.lb-session-wrap:has(.lb-session-actions):hover .lb-session-time,
+.lb-session-wrap:has(.lb-session-actions):focus-within .lb-session-time {
+  opacity: 0;
+}
+
+/* The current row's actions are hidden at rest and must not take the pointer
+   while invisible — they are archive and delete, and a click on a control nobody
+   can see is a click nobody meant. Idle rows keep their own (older) behaviour;
+   this rule is about the row that is `disabled` because it is already open. */
+.lb-session-wrap:has(.lb-session.is-current) .lb-session-actions {
+  pointer-events: none;
+}
+
+.lb-session-wrap:has(.lb-session.is-current):hover .lb-session-actions,
+.lb-session-wrap:has(.lb-session.is-current):focus-within .lb-session-actions {
+  pointer-events: auto;
+}
+
+/* The pointer's answer: a neutral wash on the same plane.
+   It used to be `--accent-subtle` plus an accent hairline plus a 1px lift and a
+   shadow — four marks for "the pointer is here", on a row that was already a
+   white card. With the cards gone there is nothing to lift off, and the accent
+   now means exactly one thing in this rail: **the row you are in**. The current
+   row is `disabled` and keeps its capsule under the pointer. */
+.lb-session-wrap:hover .lb-session:not(.is-current):not(:disabled) {
+  background: var(--lb-hover);
+}
+
+/* A session row: **two lines, flat at rest**.
+   It used to be a white card with a 2px-clamped topic, a progress line and an
+   id/time line — three lines of equal weight, so a 244px rail fit four of them.
+   The redesign spends the third line on breathing room: 6px of padding above
+   and below a 17px title and a 15px meta line is 45px, and six rows now fit
+   where four did. The id and time moved where they belong (id into the
+   tooltip/accessible name, time onto the title's right edge). */
+.lb-session {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.lb-session:disabled {
+  cursor: default;
+}
+
+/* Current session = **one** signal: the pale green capsule. There is no edge,
+   no ring and no shadow any more; those were a second and third mark for the
+   same fact, and in the rail's flat layer they made the current row look like a
+   small panel floating above the list rather than the row you are in. */
+.lb-session.is-current {
+  background: var(--lb-selected);
+  color: var(--fg);
+}
+
+.lb-session .lb-session-top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The topic is the row's title: one line, ellipsised, at the reading colour.
+   It is no longer a two-line clamp — that window is what pushed the row to
+   three lines and halved the number of conversations that fit. */
+.lb-session .lb-session-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 17px;
+  color: var(--fg);
+}
+
+.lb-session.is-current .lb-session-preview {
+  font-weight: 600;
+}
+
+/* The time, on the title's line and at its right edge — the row's headline
+   pair. The current row's turns the accent: that is the single second signal
+   the design allows a selected row, and it costs no extra glyph or pill. */
+.lb-session .lb-session-time {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+.lb-session.is-current .lb-session-time {
+  color: var(--accent-tint-text);
+  font-weight: 600;
+}
+
+/* The second line: what the runtime counted, plus the learning tag when one is
+   in play. It is one line and never wraps — a second wrapped line is exactly
+   the third line the redesign removes. */
+.lb-session .lb-session-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--fg-faint);
+}
+
+/* The runtime's own id. It is still on the row (a screen reader reads it, and
+   `title` puts it under the pointer) but it is no longer painted: the design
+   asks for two lines, and an id is a footnote you go looking for, not the row's
+   third heading. `.sr-only` does the hiding; this rule gives the class the mono
+   face its content would wear if it were visible. */
+.lb-session .lb-session-id {
+  font-family: var(--font-mono);
+}
+
+/* The learning-run tag: a small inline chip on the meta line. Same shape as the
+   remote row's tag, accent-family text, because a learning run is a fact about
+   *this* workspace. */
+.lb-session .lb-session-learning {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--lb-tag);
+  color: var(--accent-tint-text);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+/* The refine-run tag: the learning tag's shape, a warmer tint, because the
+   two are different kinds of special run and a person reading the rail at a
+   glance should be able to tell them apart without the hover tooltip. */
+.lb-session .lb-session-refine {
+  background: var(--warning-subtle, var(--lb-tag));
+  color: var(--warning, var(--accent-tint-text));
+}

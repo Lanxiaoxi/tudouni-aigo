@@ -1,0 +1,117 @@
+/* ============================================================
+   tudouni-aigo · 会话流条目 + 侧栏区块
+   对应 desktop-ui-spec.md §2（12 类条目 + quiet 形态）、
+   §3（侧栏 5 区块）、§5（流内大屏文本块）。
+   ============================================================ */
+
+/* ---------------- §2 流条目公共 ---------------- */
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* 序号 */
+.seq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  flex: none;
+}
+
+/* 折叠箭头：旋转走 `--motion-base`，与被它控制的收起/展开同步。
+   `--motion-fast` 会明显快于高度过渡，看起来像箭头先动、内容后到。
+
+   方向约定：chevron 默认朝右、`caret-open` 朝下，即「朝被折叠内容的一侧」。
+   工作台抽屉的箭头不在这个体系里——它画在自己的把手上，收起时朝上、展开时
+   朝下（`.lb-workbench-caret` / `.lb-workbench-collapse`），因为抽屉是从
+   栏底往上开的，方向相反。 */
+.caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-xs);
+  color: var(--fg-faint);
+  flex: none;
+  cursor: pointer;
+  transition:
+    transform var(--motion-base) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.caret:hover {
+  background: var(--bg-muted);
+  color: var(--fg-secondary);
+}
+
+.caret-open {
+  transform: rotate(90deg);
+}
+
+/* ---------------- 1. 回合头 ---------------- */
+.turn-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-compact);
+}
+
+.turn-head .th-num {
+  font-family: var(--font-mono);
+  font-size: var(--text-compact);
+  font-weight: 600;
+  color: var(--fg-secondary);
+  letter-spacing: var(--tracking-label);
+}
+
+.turn-head .th-step {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* 回合头左边的折叠键：整轮的回答就靠它收成一行。
+
+   `.caret` 已经给了尺寸、圆角、悬停底色和箭头旋转，这里只清掉 `<button>`
+   自带的盒模型——工具行（`.et-head`）和思考块头（`.er-head`）上的箭头跟它
+   必须是同一个东西，否则同一个正文里三个「能点开的地方」会长成三种样子。 */
+.turn-head .th-fold {
+  padding: 0;
+}
+
+/* 一轮的过程段（折叠的部分）：折叠容器（`.collapse`）里那一层，行件的容器。
+
+   `.stream-inner` 是「一行一块」的 flex 列，行距来自它的 `gap`。过程行整体搬进
+   聚合器之后，它们不再是它的直接子项，所以节奏要在这里重建一遍——12px 是
+   `--space-3`，和 `.stream-inner` 的 `gap` 同源，改一处就得改另一处。 */
+.turn-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* 收起时把这个（高度为 0 的）子项占掉的两份行距收回一份。
+
+   flex 列的 `gap` 不会因为子项高度为 0 就消失：不收的话，折叠后回合头和回答
+   之间会空出 24px，恰好是「收起了中间过程」最不该有的那道缝。两边各让半份，
+   合计仍是一份 12px。只在收起时生效，展开时的排版和这个功能出现之前一模一样。 */
+.turn-run.is-collapsed {
+  margin-block: calc(var(--space-3) / -2);
+}
