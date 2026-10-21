@@ -143,6 +143,41 @@ if (-not $needRemoteStage) {
             $needRemoteStage = $true
         }
     }
+    if (-not $needRemoteStage) {
+        # A name that matches VERSION is not proof of freshness: dist/ can be
+        # rebuilt under the same version (the version only moves when the Go
+        # source does, but a fixed source still yields a new archive), leaving
+        # a same-named older archive staged — which then ships in the installer
+        # without a word. Name checks are cheap, so run them first; only then
+        # hash the staged archive and compare it to dist/'s same-named copy.
+        # The .sha256 sidecar must agree with the archive it sits beside:
+        # stage-remote-packages.mjs rewrites it on every restage, so a mismatch
+        # is a broken staging either way.
+        $distZips = if (Test-Path $dist) { Get-ChildItem $dist -Filter '*.zip' -ErrorAction SilentlyContinue } else { @() }
+        foreach ($triple in $remoteTriples) {
+            $expected = "tudouni-aigo-$version-$triple.zip"
+            $stagedZip = Join-Path $remoteStaged $expected
+            $distZip = $distZips | Where-Object { $_.Name -eq $expected }
+            if (-not $distZip) {
+                Write-Host "remote-packages/ cannot be verified: $expected is not in dist/ - restaging"
+                $needRemoteStage = $true
+                break
+            }
+            $stagedHash = (Get-FileHash $stagedZip -Algorithm SHA256).Hash.ToLower()
+            $distHash = (Get-FileHash $distZip.FullName -Algorithm SHA256).Hash.ToLower()
+            if ($stagedHash -ne $distHash) {
+                Write-Host "remote-packages/$expected differs from dist/ (sha256 $stagedHash vs $distHash) - restaging"
+                $needRemoteStage = $true
+                break
+            }
+            $sidecar = Join-Path $remoteStaged "$expected.sha256"
+            if (-not (Test-Path $sidecar) -or (Get-Content $sidecar -Raw) -notmatch [regex]::Escape($stagedHash)) {
+                Write-Host "remote-packages/$expected.sha256 is missing or does not match the archive - restaging"
+                $needRemoteStage = $true
+                break
+            }
+        }
+    }
 }
 
 if ($needRemoteStage) {
