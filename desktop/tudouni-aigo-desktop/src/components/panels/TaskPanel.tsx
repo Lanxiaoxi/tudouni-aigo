@@ -17,6 +17,7 @@ import {
   SquareTerminal,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react';
 import {
   activeRuntime,
@@ -425,6 +426,11 @@ function TaskRow({
             {task.name.trim() === '' ? t('panel.task.unnamed') : task.name}
           </button>
           {!task.enabled ? <span className="badge badge-neutral">{t('panel.task.disabled')}</span> : null}
+          {task.autopilot === true ? (
+            <span className="badge badge-neutral" title={t('panel.task.field.autopilotHint')}>
+              {t('panel.task.autopilotBadge')}
+            </span>
+          ) : null}
           {label === null ? (
             <span className="badge badge-warning">{t('panel.task.workspaceMissing')}</span>
           ) : null}
@@ -484,6 +490,7 @@ function TaskRow({
           onEdit={onEdit}
           onDuplicate={onDuplicate}
           onToggleEnabled={() => upsertTask({ ...task, enabled: !task.enabled })}
+          onToggleAutopilot={() => upsertTask({ ...task, autopilot: task.autopilot !== true })}
           onDelete={() => deleteTask(task.id)}
         />
       </div>
@@ -500,12 +507,14 @@ function TaskMenu({
   onEdit,
   onDuplicate,
   onToggleEnabled,
+  onToggleAutopilot,
   onDelete,
 }: {
   enabled: boolean;
   onEdit: () => void;
   onDuplicate: () => void;
   onToggleEnabled: () => void;
+  onToggleAutopilot: () => void;
   onDelete: () => void;
 }) {
   const t = useT();
@@ -558,6 +567,10 @@ function TaskMenu({
           <button type="button" role="menuitem" className="tk-menu-item" onClick={() => { onToggleEnabled(); close(); }}>
             {enabled ? <X size={13} /> : <Check size={13} />}
             {enabled ? t('panel.task.disable') : t('panel.task.enable')}
+          </button>
+          <button type="button" role="menuitem" className="tk-menu-item" onClick={() => { onToggleAutopilot(); close(); }}>
+            <Zap size={13} />
+            {t('panel.task.autopilotMenu')}
           </button>
           <button
             type="button"
@@ -1091,6 +1104,23 @@ function TaskEditor({
               <ModelPicker value={draft.model} onChange={(model) => setDraft({ ...draft, model })} />
               <span className="tk-field-hint">{t('panel.task.field.modelHint')}</span>
             </label>
+
+            <div className="tk-toggle-row">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={draft.autopilot === true}
+                aria-label={t('panel.task.field.autopilot')}
+                className={`tk-switch${draft.autopilot === true ? ' is-on' : ''}`}
+                onClick={() => setDraft({ ...draft, autopilot: draft.autopilot !== true })}
+              >
+                <span className="tk-switch-knob" />
+              </button>
+              <span className="tk-toggle-text">
+                <span className="tk-toggle-label">{t('panel.task.field.autopilot')}</span>
+                <span className="tk-field-hint">{t('panel.task.field.autopilotHint')}</span>
+              </span>
+            </div>
 
             <div className="tk-toggle-row">
               <button

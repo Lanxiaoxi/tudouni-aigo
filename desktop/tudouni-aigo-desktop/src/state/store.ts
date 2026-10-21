@@ -4176,6 +4176,10 @@ export const useApp = create<AppStore>((set, get) => {
         taskName: task.name,
         model: task.model,
         workspaceLabel,
+        // The same frozen fact as the name and the model: what *was* sent into
+        // the session, so a run of a template whose switch has since changed
+        // still shows how it was started.
+        autopilot: task.autopilot === true,
       };
       set((state) => ({
         taskRuns: [...state.taskRuns, link].slice(-TASK_RUNS_MAX),
@@ -4186,6 +4190,14 @@ export const useApp = create<AppStore>((set, get) => {
       // panel sends, once the child can receive it. Not a new protocol field.
       const model = task.model.trim();
       const applyModel = model === '' ? null : () => sendTo(key, { v: 1, t: 'set_model', model });
+
+      // The autopilot switch, when the template wants one: the same
+      // `set_autopilot` the status bar sends — but filed *before* the prompt,
+      // because the prompt is the run and a run that is already working is
+      // one the switch may not reach. A template without the field (saved by
+      // an older build) sends nothing and keeps its old behaviour.
+      const wantAutopilot = task.autopilot === true;
+      const applyAutopilot = wantAutopilot ? () => sendTo(key, { v: 1, t: 'set_autopilot', on: true }) : null;
 
       // The prompt, as the session's first message — the same two-step
       // (`wait for ready`, then speak) `startLearning` established, for the
@@ -4200,6 +4212,7 @@ export const useApp = create<AppStore>((set, get) => {
           if (Date.now() >= deadline) return;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
+        applyAutopilot?.();
         applyModel?.();
         const active = get().activeKey;
         if (active !== key) {

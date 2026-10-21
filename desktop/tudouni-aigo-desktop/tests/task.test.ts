@@ -21,6 +21,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { createSessionBucket, useApp } from '@/state/store';
+import { registerRuntime, unregisterRuntime } from '@/runtime/bus';
 import {
   canRunTask,
   emptyTask,
@@ -62,11 +63,22 @@ test('a disabled task is not runnable even when complete', () => {
   assert.equal(canRunTask(task), false);
 });
 
+test('a fresh task defaults to autopilot on — a task is an automated run', () => {
+  const task = emptyTask(1_000);
+  assert.equal(task.autopilot, true);
+});
+
 test('the guards drop malformed localStorage records instead of trusting them', () => {
   assert.equal(isValidTask({ id: 'task-1', name: '', description: '', prompt: '', workspace: { kind: 'active' }, model: '', enabled: true, createdAtMs: 1, updatedAtMs: 1 }), true);
   assert.equal(isValidTask({ id: 'task-2', workspace: { kind: 'nonsense' }, model: '', enabled: true, createdAtMs: 1, updatedAtMs: 1, name: '', description: '', prompt: '' }), false);
   assert.equal(isValidTask({ id: '', workspace: { kind: 'active' }, model: '', enabled: true, createdAtMs: 1, updatedAtMs: 1, name: '', description: '', prompt: '' }), false);
   assert.equal(isValidTask(null), false);
+  // An absent `autopilot` is the pre-field shape and is kept; a present one
+  // that is not a boolean is malformed and dropped.
+  assert.equal(isValidTask({ id: 'task-3', name: '', description: '', prompt: '', workspace: { kind: 'active' }, model: '', enabled: true, createdAtMs: 1, updatedAtMs: 1, autopilot: true }), true);
+  assert.equal(isValidTask({ id: 'task-4', name: '', description: '', prompt: '', workspace: { kind: 'active' }, model: '', enabled: true, createdAtMs: 1, updatedAtMs: 1, autopilot: 'yes' }), false);
+  assert.equal(isValidTaskRun({ taskId: 't', sessionId: 's', sessionKey: 'k', startedAtMs: 1, taskName: 'n', model: 'm', workspaceLabel: 'w', autopilot: true }), true);
+  assert.equal(isValidTaskRun({ taskId: 't', sessionId: 's', sessionKey: 'k', startedAtMs: 1, taskName: 'n', model: 'm', workspaceLabel: 'w', autopilot: 1 }), false);
 
   assert.equal(
     isValidTaskRun({ taskId: 't', sessionId: 's', sessionKey: 'k', startedAtMs: 1, taskName: 'n', model: 'm', workspaceLabel: 'w' }),
@@ -207,6 +219,72 @@ test('a run in the active local workspace spawns locally, opens a new bucket, an
   assert.equal(link.workspaceLabel, 'C:/work');
   assert.equal(link.sessionId, '', 'the id waits for the handshake');
   assert.equal(link.taskName, 'nightly', 'the link froze the task name at start time');
+  assert.equal(link.autopilot, true, 'the link froze the template\u2019s autopilot too');
+});
+
+/**
+ * A run's own outbound messages, once the child is ready: the store's prompt
+ * is filed on a background pass (wait for ready, then speak), so these tests
+ * register a real registry handle for the run's key, mark the bucket ready,
+ * and let that pass run before asserting what went out the door.
+ */
+async function waitForPrompt(key: string): Promise<Record<string, unknown>[]> {
+  const out: Record<string, unknown>[] = [];
+  registerRuntime({ key, send: (m) => out.push(m as unknown as Record<string, unknown>), subscribe: () => () => undefined, dispose: () => undefined });
+  useApp.setState((s) => ({ sessions: { ...s.sessions, [key]: { ...s.sessions[key], ready: true } } }));
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    if (out.some((m) => m.t === 'user_message')) break;
+    if (Date.now() >= deadline) throw new Error('the run never sent its prompt');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return out;
+}
+
+test('a run of an autopilot task turns the session on before the prompt goes out', async () => {
+  localScreen();
+  useApp.setState({ tasks: [makeTask()], taskRuns: [] });
+
+  const key = await useApp.getState().runTask(useApp.getState().tasks[0]?.id ?? '');
+  assert.ok(key);
+  const out = await waitForPrompt(key);
+
+  const atSwitch = out.findIndex((m) => m.t === 'set_autopilot');
+  const atPrompt = out.findIndex((m) => m.t === 'user_message');
+  assert.notEqual(atSwitch, -1, 'the switch is sent');
+  assert.equal(out[atSwitch].on, true, 'on, not off');
+  assert.ok(atSwitch < atPrompt, 'and it lands before the run, which is the whole point');
+
+  assert.equal(useApp.getState().taskRuns[0]?.autopilot, true, 'the link recorded it');
+  unregisterRuntime(key);
+});
+
+test('a run of a task with autopilot off sends no switch', async () => {
+  localScreen();
+  useApp.setState({ tasks: [makeTask({ autopilot: false })], taskRuns: [] });
+
+  const key = await useApp.getState().runTask(useApp.getState().tasks[0]?.id ?? '');
+  assert.ok(key);
+  const out = await waitForPrompt(key);
+
+  assert.equal(out.some((m) => m.t === 'set_autopilot'), false, 'off means nothing is sent, not an off switch');
+  assert.equal(useApp.getState().taskRuns[0]?.autopilot, false, 'the link recorded it');
+  unregisterRuntime(key);
+});
+
+test('a run of a template saved before the field existed keeps the old behaviour', async () => {
+  localScreen();
+  const legacy = makeTask();
+  delete legacy.autopilot;
+  useApp.setState({ tasks: [legacy], taskRuns: [] });
+
+  const key = await useApp.getState().runTask(useApp.getState().tasks[0]?.id ?? '');
+  assert.ok(key);
+  const out = await waitForPrompt(key);
+
+  assert.equal(out.some((m) => m.t === 'set_autopilot'), false, 'an absent field is not on');
+  assert.equal(useApp.getState().taskRuns[0]?.autopilot, false, 'and the link freezes it as off');
+  unregisterRuntime(key);
 });
 
 test('a run with an explicit local workspace passes that path to the local spawn', async () => {

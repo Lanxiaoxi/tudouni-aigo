@@ -36,6 +36,15 @@ export interface Task {
   /** Whether the template accepts runs at all. A disabled task stays editable
    *  and keeps its history; it only refuses new runs. */
   enabled: boolean;
+  /** Whether a run opens its session in autopilot (auto-approve, no questions).
+   *  A task is an automated run by design, so this is the point: without it a
+   *  run stops at the first approval nobody is sitting at to answer.
+   *
+   *  Optional, not required: a template persisted before this field existed
+   *  reads as "not set" and a run behaves exactly as it did then — the
+   *  session's default (off). A freshly created one is on. The editor always
+   *  writes it back, so the field converges after the first save. */
+  autopilot?: boolean;
   createdAtMs: number;
   updatedAtMs: number;
 }
@@ -54,6 +63,10 @@ export interface TaskRunLink {
   taskName: string;
   model: string;
   workspaceLabel: string;
+  /** Whether the run's session was opened in autopilot. The same frozen fact as
+   *  `taskName` and `model`: the template is editable, and History reflects
+   *  what *was*. Absent on a link saved before the field existed. */
+  autopilot?: boolean;
   /**
    * How the run ended, written once by `noteTaskRunOutcome`.
    *
@@ -213,6 +226,10 @@ export function emptyTask(nowMs: number): Task {
     workspace: { kind: 'active' },
     model: '',
     enabled: true,
+    // On by default: a task is an automated run, and a run that stops at the
+    // first approval is not one. (An old template without the field is a
+    // different thing — that one keeps its old behaviour.)
+    autopilot: true,
     createdAtMs: nowMs,
     updatedAtMs: nowMs,
   };
@@ -239,6 +256,9 @@ export function isValidTask(value: unknown): value is Task {
   } else {
     return false;
   }
+  // `autopilot` is optional (pre-field records keep their old behaviour), but a
+  // *present* value that is not a boolean is malformed and drops the record.
+  if (v.autopilot !== undefined && typeof v.autopilot !== 'boolean') return false;
   return typeof v.model === 'string' && typeof v.createdAtMs === 'number' && typeof v.updatedAtMs === 'number';
 }
 
@@ -257,6 +277,7 @@ export function isValidTaskRun(value: unknown): value is TaskRunLink {
   const v = value as Record<string, unknown>;
   if (v.outcome !== undefined && v.outcome !== 'ok' && v.outcome !== 'failed') return false;
   if (v.durationMs !== undefined && typeof v.durationMs !== 'number') return false;
+  if (v.autopilot !== undefined && typeof v.autopilot !== 'boolean') return false;
   return (
     typeof v.taskId === 'string' &&
     typeof v.sessionId === 'string' &&

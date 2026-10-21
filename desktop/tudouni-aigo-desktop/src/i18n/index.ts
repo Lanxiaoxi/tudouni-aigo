@@ -488,6 +488,14 @@ export const en = {
   'panel.task.modelNoCatalogue': 'No catalogue yet — open a session, or type a name.',
   'panel.task.field.enabled': 'Enabled',
   'panel.task.field.enabledHint': 'Show Run in the task list.',
+  /* The run's own approval mode: a task is an automated run, so its switch
+     defaults to on — without it the run stops at the first approval nobody
+     is sitting at to answer. Old templates without the field keep their old
+     behaviour (the session default, off). */
+  'panel.task.field.autopilot': 'Autopilot',
+  'panel.task.field.autopilotHint': 'The run auto-approves tool calls and skips questions, so it can finish unattended.',
+  'panel.task.autopilotBadge': 'autopilot',
+  'panel.task.autopilotMenu': 'Toggle autopilot for this task',
   'panel.task.wsActive': 'The workspace on screen',
   'panel.task.wsLocal': 'A saved local folder',
   'panel.task.wsRemote': 'A saved remote workspace',
