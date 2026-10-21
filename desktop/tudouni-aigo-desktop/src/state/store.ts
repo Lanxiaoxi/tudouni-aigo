@@ -272,8 +272,10 @@ export type ModalState = ModalEntry | null;
  * the source of truth.
  */
 export type ComposerNotice =
-  /** Paths dropped from outside the workspace, or with no workspace at all. */
+  /** Paths that were inserted but sit outside the workspace: the file tools
+   *  will not read them directly, so the model has to go through shell. */
   | { code: 'drop-outside'; names: string[]; tone: 'warn' }
+  /** Paths that were inserted with no workspace open: nothing can be checked. */
   | { code: 'drop-no-workspace'; names: string[]; tone: 'warn' }
   /** A paste refused before anything was written. */
   | { code: 'paste-no-workspace'; tone: 'warn' }

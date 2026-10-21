@@ -31,11 +31,11 @@ import { useClipboardPaste } from '@/hooks/useClipboardPaste';
  * the menu gave it company.
  *
  * There is **no hint line below the box**. The key hint and the transient
- * statements share the filled box's toolbar: a refused drop, a blocked runtime,
- * a drag in progress, the sentence a running turn's stop button deserves. Those
- * are statements, not standing hints, so they are still said — a drop refusal
- * especially, since a path the runtime cannot resolve sits in the sentence
- * looking exactly like one that worked.
+ * statements share the filled box's toolbar: a drop heads-up, a blocked
+ * runtime, a drag in progress, the sentence a running turn's stop button
+ * deserves. Those are statements, not standing hints, so they are still said —
+ * a drop heads-up especially, since a path the file tools cannot resolve sits
+ * in the sentence looking exactly like one that would be read.
  *
  * Keys follow the capability list. This layer is the only place allowed to carry
  * emacs-style bindings:
@@ -49,11 +49,11 @@ import { useClipboardPaste } from '@/hooks/useClipboardPaste';
  *
  * Images are attached by **writing their path into the sentence** — that is the
  * only channel that exists. The runtime recognises a path in the text itself;
- * there is no upload command and no markup. So a drop inserts the path (and,
- * outside the workspace, says why it will not work) rather than trying to ship
- * bytes down a channel that is not there. The drop handler itself lives in
- * `hooks/useFileDrop.ts`, at the window level, because a drop can land anywhere
- * in the window and not only on this box.
+ * there is no upload command and no markup. So a drop inserts the path — always,
+ * even outside the workspace, where the file tools will not read it directly —
+ * rather than trying to ship bytes down a channel that is not there. The drop
+ * handler itself lives in `hooks/useFileDrop.ts`, at the window level, because
+ * a drop can land anywhere in the window and not only on this box.
  */
 export function Composer() {
   const t = useT();

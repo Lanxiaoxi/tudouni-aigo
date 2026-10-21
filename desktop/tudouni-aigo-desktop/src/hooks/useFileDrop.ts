@@ -18,6 +18,12 @@ import { isHosted } from '@/runtime/tauri';
  * A drop has exactly one effect: the path goes into the sentence. That is the
  * runtime's only image channel (`internal/runtime/images.go` scans the text for
  * path-shaped words) — there is no upload command and no markup to use instead.
+ *
+ * **Every path is inserted, inside or outside the workspace.** The file tools
+ * refuse an outside path at `SafePath`, but that is the model's problem, not the
+ * composer's: the model can still reach the file through `shell`, which is the
+ * channel that carries the approval gate. The outside paths only earn a notice —
+ * a heads-up that the direct read will not work, not a refusal of the path itself.
  */
 export function useFileDrop(): void {
   useEffect(() => {
@@ -52,21 +58,22 @@ export function useFileDrop(): void {
           // child can answer.
           const rt = activeRuntime(s);
           const workspace = rt?.session?.workspace ?? rt?.workspace ?? '';
-          const { accepted, rejected, unknownWorkspace } = partitionDrop(paths, workspace);
+          const { inserted, outside, unknownWorkspace } = partitionDrop(paths, workspace);
 
-          if (accepted.length > 0) {
-            s.setDraft(appendPaths(rt?.draft ?? '', accepted));
+          if (inserted.length > 0) {
+            s.setDraft(appendPaths(rt?.draft ?? '', inserted));
           }
-          if (rejected.length > 0) {
-            // Said out loud rather than dropped: a path the runtime cannot
-            // resolve would sit in the sentence looking like it worked, and the
-            // reader would believe their file had been sent.
+          if (outside.length > 0) {
+            // A heads-up, not a refusal: the path is in the sentence, but the
+            // file tools will not read it — the model would have to go through
+            // shell (which asks), and a picture channel would swallow it
+            // silently. The reader deserves the line.
             s.setComposerNotice(
               unknownWorkspace
-                ? { code: 'drop-no-workspace', names: rejected, tone: 'warn' }
-                : { code: 'drop-outside', names: rejected, tone: 'warn' },
+                ? { code: 'drop-no-workspace', names: outside, tone: 'warn' }
+                : { code: 'drop-outside', names: outside, tone: 'warn' },
             );
-          } else if (accepted.length > 0) {
+          } else if (inserted.length > 0) {
             s.setComposerNotice(null);
           }
         });

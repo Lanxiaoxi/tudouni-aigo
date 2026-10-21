@@ -7,10 +7,13 @@
  * resolves, and attaches it. There is no upload command and no markup, so a drop
  * can only ever do one thing — put the path into the sentence.
  *
- * Why "inside the workspace" is checked here at all: the file tools' boundary is
- * the workspace (`paths.WorkspaceDir()`), so a path outside it is one the runtime
- * cannot resolve. Inserting it would put a word in the sentence that quietly does
- * nothing, and the reader would believe their file was sent.
+ * Every path is inserted, inside or outside the workspace. The outside ones are
+ * **flagged, not refused**: a path outside the workspace is still text the model
+ * can use — the file tools (`SafePath`) refuse it, but the model can reach it
+ * through `shell`, which goes through the approval gate. Refusing the drop
+ * outright would throw away a path the user deliberately put here, and the
+ * runtime's own picture channel would have swallowed it silently anyway — the
+ * flag exists so the reader knows the direct read will not work.
  */
 
 /** The workspace boundary, as the file tools understand it. */
@@ -22,11 +25,9 @@ function normalize(path: string): string {
  * Is `path` the workspace itself, or under it?
  *
  * Case-insensitive because this app ships for windows/amd64 and linux/amd64, and
- * the Windows filesystem is case-insensitive — refusing `C:\Work\a.png` when the
- * workspace is `c:\work` would be a false rejection of a file the runtime can
- * read perfectly well. The cost of the loose direction is bounded: a path that
- * slips through is inserted as *text*, and the runtime treats an unresolvable
- * word as a word (`images.go`: it is "a word in a sentence until it resolves").
+ * the Windows filesystem is case-insensitive — flagging `C:\Work\a.png` when the
+ * workspace is `c:\work` would be a false warning about a file the runtime can
+ * read perfectly well.
  */
 export function isInsideWorkspace(path: string, workspace: string): boolean {
   const w = normalize(workspace);
@@ -39,29 +40,25 @@ export function isInsideWorkspace(path: string, workspace: string): boolean {
 }
 
 export interface DropOutcome {
-  /** Paths the runtime can resolve from this workspace, in drop order. */
-  accepted: string[];
-  /** Paths it cannot, kept so the reason can name them. */
-  rejected: string[];
+  /** All dropped paths, in drop order. */
+  inserted: string[];
+  /** The ones outside the workspace, kept so the notice can name them. */
+  outside: string[];
   /** True when there was no workspace to compare against. */
   unknownWorkspace: boolean;
 }
 
 export function partitionDrop(paths: string[], workspace: string): DropOutcome {
-  const accepted: string[] = [];
-  const rejected: string[] = [];
+  const inserted = [...paths];
   if (normalize(workspace) === '') {
-    return { accepted, rejected: paths, unknownWorkspace: true };
+    return { inserted, outside: paths, unknownWorkspace: true };
   }
-  for (const path of paths) {
-    if (isInsideWorkspace(path, workspace)) accepted.push(path);
-    else rejected.push(path);
-  }
-  return { accepted, rejected, unknownWorkspace: false };
+  const outside = paths.filter((path) => !isInsideWorkspace(path, workspace));
+  return { inserted, outside, unknownWorkspace: false };
 }
 
 /**
- * Add the accepted paths to the draft.
+ * Add the dropped paths to the draft.
  *
  * Appended rather than inserted at the caret: the textarea holds the caret and
  * this runs from an event that has no access to it, and a path is a complete

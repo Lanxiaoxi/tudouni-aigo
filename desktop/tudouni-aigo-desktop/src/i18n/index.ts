@@ -1355,9 +1355,14 @@ export const en = {
      half, and the reason the hint area is not blank while a turn runs. */
   'composer.hint.streaming': 'Streaming… Esc to stop',
   'composer.hint.modal': 'The runtime is blocked by a modal — answer it to continue',
-  'composer.dropHint': 'Drop a file to insert its path, or drop it in the workspace — pictures are attached by naming their path',
-  'composer.dropOutside': 'not in this workspace, so the runtime could not read it: {names}',
-  'composer.dropNoWorkspace': 'no workspace yet, so nothing can be checked: {names}',
+  'composer.dropHint': 'Drop a file to insert its path — pictures are attached by naming their path',
+  /** A heads-up, not a refusal: the paths are in the sentence, but the file
+   *  tools refuse them at SafePath, so the model would reach them through
+   *  shell (which asks). */
+  'composer.dropOutside':
+    'inserted, but outside this workspace — the file tools cannot read it directly, the model would go through shell: {names}',
+  'composer.dropNoWorkspace':
+    'inserted, but no workspace is open, so nothing can be checked: {names}',
   /** The row of pasted pictures above the input. Its accessible name, not a
    *  visible heading: the chips are self-explanatory beside the box. */
   'composer.images': 'Pasted pictures',

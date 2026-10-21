@@ -115,7 +115,7 @@ test('a text field is recognised as a typing target', () => {
    dropped paths
    ============================================================ */
 
-test('a dropped path is only accepted from inside the workspace', () => {
+test('a dropped path is flagged when it sits outside the workspace', () => {
   const ws = 'C:\\work\\proj';
 
   // Inside, both separators, and the workspace itself.
@@ -124,8 +124,8 @@ test('a dropped path is only accepted from inside the workspace', () => {
   assert.equal(isInsideWorkspace('C:\\work\\proj\\docs\\a.png', ws), true);
   assert.equal(isInsideWorkspace(ws, ws), true);
 
-  // Windows filesystems are case-insensitive, so refusing a different case would
-  // be a false rejection of a file the runtime can read.
+  // Windows filesystems are case-insensitive, so flagging a different case would
+  // be a false warning about a file the runtime can read.
   assert.equal(isInsideWorkspace('c:\\WORK\\proj\\a.png', ws), true);
 
   // Outside: a sibling directory, the parent, and a path that merely starts
@@ -136,18 +136,19 @@ test('a dropped path is only accepted from inside the workspace', () => {
   assert.equal(isInsideWorkspace('D:\\a.png', ws), false);
 });
 
-test('a drop is partitioned, and a workspace-less drop is refused outright', () => {
+test('a drop is partitioned, and a workspace-less drop flags everything', () => {
   const ws = '/home/u/proj';
   const out = partitionDrop(['/home/u/proj/a.png', '/tmp/b.png'], ws);
-  assert.deepEqual(out.accepted, ['/home/u/proj/a.png']);
-  assert.deepEqual(out.rejected, ['/tmp/b.png']);
+  // Every path is inserted; the outside ones only earn the notice.
+  assert.deepEqual(out.inserted, ['/home/u/proj/a.png', '/tmp/b.png']);
+  assert.deepEqual(out.outside, ['/tmp/b.png']);
   assert.equal(out.unknownWorkspace, false);
 
-  // No workspace yet: nothing can be checked, so nothing is inserted. Inserting
-  // anyway would put a word in the sentence that the runtime cannot resolve.
+  // No workspace yet: everything is still inserted, but nothing can be
+  // checked, so every path is named in the notice.
   const none = partitionDrop(['/home/u/proj/a.png'], '');
-  assert.deepEqual(none.accepted, []);
-  assert.deepEqual(none.rejected, ['/home/u/proj/a.png']);
+  assert.deepEqual(none.inserted, ['/home/u/proj/a.png']);
+  assert.deepEqual(none.outside, ['/home/u/proj/a.png']);
   assert.equal(none.unknownWorkspace, true);
 });
 
@@ -160,7 +161,7 @@ test('an inserted path stays a separate word', () => {
   // Trailing whitespace means the caret is already at a word boundary.
   assert.equal(appendPaths('look at this ', ['a.png']), 'look at this a.png ');
   assert.equal(appendPaths('x', ['a.png', 'b.png']), 'x a.png b.png ');
-  // Nothing accepted changes nothing.
+  // An empty list changes nothing.
   assert.equal(appendPaths('unchanged', []), 'unchanged');
 });
 
