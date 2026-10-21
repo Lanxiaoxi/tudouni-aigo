@@ -847,5 +847,11 @@ export function frontMessageText(
       return t('note.term.endedCode', { id: message.id, code: message.exitCode });
     case 'terminalDetached':
       return t('note.term.detached', { id: message.id });
+    case 'refineApplied':
+      // Zero is the honest outcome of an answer that named nothing
+      // recognisable, and it gets its own sentence: "1 applied" with zero
+      // chosen would be a report the transcript contradicts.
+      if (message.applied === 0) return t('note.refine.appliedNone');
+      return t('note.refine.applied', { n: message.applied });
   }
 }

@@ -16,6 +16,7 @@ import {
   Sparkles,
   SquareTerminal,
   Trash2,
+  Wand2,
   X,
   Zap,
 } from 'lucide-react';
@@ -34,16 +35,20 @@ import { baseName, formatClock, formatDuration } from '@/utils/format';
 import {
   canRunTask,
   emptyTask,
+  refineAvailability,
+  refineRunScope,
+  REFINE_LAST_N,
   runDay,
   taskProblems,
   taskRunOutcome,
   workspaceRefLabel,
   type RunDay,
+  type RunScope,
   type Task,
   type TaskRunLink,
   type TaskWorkspaceRef,
 } from '@/task/tasks';
-import { PanelInfo, Tip } from '@/components/ui/kit';
+import { Info, PanelInfo, Tip } from '@/components/ui/kit';
 import { PanelBody } from './PanelShell';
 
 /**
@@ -108,8 +113,12 @@ export function TaskPanel() {
    */
   const [surface, setSurface] = useState<'list' | 'history'>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
+  // The refine form's own surface, like the editor's: it holds the scope
+  // choice and the focus, and its Start is the only door into `refineTask`.
+  const [refineId, setRefineId] = useState<string | null>(null);
 
   const editing = editingId !== null ? (tasks.find((row) => row.id === editingId) ?? null) : null;
+  const refining = refineId !== null ? (tasks.find((row) => row.id === refineId) ?? null) : null;
 
   const localPaths = useMemo(() => {
     const set = new Set(workspaces);
@@ -175,6 +184,17 @@ export function TaskPanel() {
     );
   }
 
+  if (refining !== null) {
+    return (
+      <RefineDialog
+        key={refining.id}
+        task={refining}
+        links={taskRuns.filter((row) => row.taskId === refining.id)}
+        onBack={() => setRefineId(null)}
+      />
+    );
+  }
+
   if (surface === 'history') {
     return <TaskHistory links={taskRuns} onBack={() => setSurface('list')} onClear={clearTaskRuns} />;
   }
@@ -189,6 +209,7 @@ export function TaskPanel() {
       onDuplicate={duplicate}
       onHistory={() => setSurface('history')}
       onRun={runTask}
+      onRefine={(id) => setRefineId(id)}
     />
   );
 }
@@ -208,6 +229,7 @@ function TaskShelf({
   onDuplicate,
   onHistory,
   onRun,
+  onRefine,
 }: {
   tasks: Task[];
   links: TaskRunLink[];
@@ -219,12 +241,16 @@ function TaskShelf({
   /** Resolves to the child key the run landed in, or `null` when nothing was
    *  started — the store's own contract, which the row's error line reads. */
   onRun: (id: string) => Promise<string | null>;
+  onRefine: (id: string) => void;
 }) {
   const t = useT();
   const [filter, setFilter] = useState<ShelfFilter>('all');
   const [query, setQuery] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+
+  const workspace = useApp(activeWorkspaceOf);
+  const screenIsRemote = useApp((s) => s.activeKey !== null && s.sessions[s.activeKey]?.remoteWorkspaceId !== null);
 
   // Whether this window has anywhere at all to run a template. Used only to
   // disable Run with a reason: the store refuses an unresolvable ref silently,
@@ -342,6 +368,10 @@ function TaskShelf({
                       : null;
               const runs = links.filter((row) => row.taskId === task.id);
               const busy = busyId === task.id;
+              // Refine's gate, resolved the same way the store resolves it:
+              // one function, so the tooltip the person reads and the refusal
+              // the action would make cannot disagree about why.
+              const refine = refineAvailability(task, runs, workspace, screenIsRemote);
               return (
                 <TaskRow
                   key={task.id}
@@ -351,6 +381,7 @@ function TaskShelf({
                   busy={busy}
                   runnable={runnable}
                   blocked={blocked}
+                  refineReason={refine.ok ? null : refine.reason}
                   onRun={() => {
                     setProblem(null);
                     setBusyId(task.id);
@@ -365,6 +396,7 @@ function TaskShelf({
                   }}
                   onEdit={() => onEdit(task.id)}
                   onDuplicate={() => onDuplicate(task)}
+                  onRefine={() => onRefine(task.id)}
                 />
               );
             })}
@@ -383,9 +415,11 @@ function TaskRow({
   busy,
   runnable,
   blocked,
+  refineReason,
   onRun,
   onEdit,
   onDuplicate,
+  onRefine,
 }: {
   task: Task;
   label: string | null;
@@ -393,9 +427,12 @@ function TaskRow({
   busy: boolean;
   runnable: boolean;
   blocked: string | null;
+  /** Why Refine is refused for this row, or `null` when it is offered. */
+  refineReason: 'no-runs' | 'remote' | 'other-workspace' | null;
   onRun: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
+  onRefine: () => void;
 }) {
   const t = useT();
   const deleteTask = useApp((s) => s.deleteTask);
@@ -487,8 +524,10 @@ function TaskRow({
 
         <TaskMenu
           enabled={task.enabled}
+          refineReason={refineReason}
           onEdit={onEdit}
           onDuplicate={onDuplicate}
+          onRefine={onRefine}
           onToggleEnabled={() => upsertTask({ ...task, enabled: !task.enabled })}
           onToggleAutopilot={() => upsertTask({ ...task, autopilot: task.autopilot !== true })}
           onDelete={() => deleteTask(task.id)}
@@ -504,15 +543,20 @@ function TaskRow({
 
 function TaskMenu({
   enabled,
+  refineReason,
   onEdit,
   onDuplicate,
+  onRefine,
   onToggleEnabled,
   onToggleAutopilot,
   onDelete,
 }: {
   enabled: boolean;
+  /** Why Refine is refused for this row, or `null` when it is offered. */
+  refineReason: 'no-runs' | 'remote' | 'other-workspace' | null;
   onEdit: () => void;
   onDuplicate: () => void;
+  onRefine: () => void;
   onToggleEnabled: () => void;
   onToggleAutopilot: () => void;
   onDelete: () => void;
@@ -534,6 +578,17 @@ function TaskMenu({
     setOpen(false);
     requestAnimationFrame(() => triggerRef.current?.focus());
   }
+
+  /** The sentence a disabled Refine stands behind: the reason for the
+   *  refusal is the tooltip's job, next to the control it explains. */
+  const refineBlocked =
+    refineReason === 'no-runs'
+      ? t('panel.task.refine.noRuns')
+      : refineReason === 'remote'
+        ? t('panel.task.refine.remote')
+        : refineReason === 'other-workspace'
+          ? t('panel.task.refine.otherWorkspace')
+          : null;
 
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
@@ -564,6 +619,21 @@ function TaskMenu({
             <Copy size={13} />
             {t('panel.task.copy')}
           </button>
+          {/* Refine sits with the template's own actions, before the
+              enable/autopilot toggles: it acts on the task, not on the run.
+              Disabled with its own tooltip when its gate says so. */}
+          <Tip label={refineBlocked ?? t('panel.task.refineHint')}>
+            <button
+              type="button"
+              role="menuitem"
+              className="tk-menu-item"
+              disabled={refineReason !== null}
+              onClick={() => { onRefine(); close(); }}
+            >
+              <Wand2 size={13} />
+              {t('panel.task.refine')}
+            </button>
+          </Tip>
           <button type="button" role="menuitem" className="tk-menu-item" onClick={() => { onToggleEnabled(); close(); }}>
             {enabled ? <X size={13} /> : <Check size={13} />}
             {enabled ? t('panel.task.disable') : t('panel.task.enable')}
@@ -1401,4 +1471,186 @@ function ModelPicker({ value, onChange }: { value: string; onChange: (model: str
 function TaskInfo() {
   const t = useT();
   return <PanelInfo label={t('panel.task.about')} />;
+}
+
+/* ============================================================
+   Refine: the one task's runs, compared, into a candidate prompt.
+   ============================================================ */
+
+/**
+ * The refine form for one task.
+ *
+ * The same kind of screen as `LearnPanel` — a form whose submit becomes a
+ * new session's first message — but shorter, because the run's facts are
+ * fixed by the task itself: the workspace is the one on screen (checked by
+ * `refineAvailability` before this surface is even offered), the model is
+ * inherited, and there is exactly one kind of candidate. What the person
+ * decides is only the **evidence scope**: which of the task's finished runs
+ * the agent compares, and where to look.
+ *
+ * The counts beside the options come from `refineRunScope` applied to this
+ * task's links — the same arithmetic the store runs when it builds the
+ * message — so the number a person reads and the list the agent is given
+ * cannot disagree.
+ *
+ * **Start closes the whole panel.** The new session is what the person
+ * wants to watch next, and a form left open over the screen that is about
+ * to change is a form that hides the change — the same order LearnPanel's
+ * submit uses (close first, then start).
+ */
+function RefineDialog({
+  task,
+  links,
+  onBack,
+}: {
+  task: Task;
+  links: TaskRunLink[];
+  onBack: () => void;
+}) {
+  const t = useT();
+  const refineTask = useApp((s) => s.refineTask);
+  const closePanel = useApp((s) => s.closePanel);
+
+  // The first version offers two ranges and pins N = 10, the design's own:
+  // "all" (grouped by prompt version by the agent) and "the recent 10".
+  const [scopeMode, setScopeMode] = useState<'all' | 'last'>('last');
+  const [failedOnly, setFailedOnly] = useState(false);
+  const [objectives, setObjectives] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const scope: RunScope = scopeMode === 'all' ? { kind: 'all' } : { kind: 'last', n: REFINE_LAST_N };
+
+  /** How many finished runs the current settings would put in scope — the
+   *  same arithmetic the message is built with, over the same links. */
+  const inScope = useMemo(
+    () => refineRunScope(links, scope, failedOnly).length,
+    [links, scopeMode, failedOnly],
+  );
+  const settled = useMemo(() => links.filter((row) => row.outcome !== undefined).length, [links]);
+
+  const canStart = inScope > 0 && !busy;
+
+  const blocker: string | null =
+    settled === 0
+      ? t('panel.task.refine.noRuns')
+      : inScope === 0
+        ? t('panel.task.refine.noneInScope')
+        : null;
+
+  function start() {
+    if (!canStart) return;
+    // The order is the point: the form closes first, so the screen that
+    // appears when the new session starts is not covered by the form that
+    // produced it.
+    closePanel();
+    setBusy(true);
+    void refineTask(task.id, scope, failedOnly, objectives).finally(() => setBusy(false));
+  }
+
+  return (
+    <>
+      <div className="dialog-head tk-head">
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          aria-label={t('panel.task.historyBack')}
+          title={t('panel.task.historyBack')}
+          onClick={onBack}
+        >
+          <ArrowLeft size={15} />
+        </button>
+        <div className="grow">
+          <DialogPrimitive.Title className="dialog-title tk-title">
+            {t('panel.task.refine.title', { name: task.name })}
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="dialog-desc">
+            {t('panel.task.refine.note')}
+          </DialogPrimitive.Description>
+        </div>
+      </div>
+
+      <PanelBody>
+        <div className="tk-section">
+          <div className="tk-section-head">
+            <span className="tk-section-label">{t('panel.task.refine.scope')}</span>
+            <Info label={t('panel.task.refine.scope.hint')} />
+          </div>
+          {/* One row per option, full width: the label names the choice and the
+              count on the right is the preview — "this scope compares N runs".
+              `.tk-choice` is the same radio list LearnPanel's scope uses. */}
+          <div className="tk-choice" role="radiogroup" aria-label={t('panel.task.refine.scope')}>
+            <label className="tk-choice-row">
+              <input
+                type="radio"
+                name="refine-scope"
+                checked={scopeMode === 'all'}
+                onChange={() => setScopeMode('all')}
+              />
+              <span className="tk-choice-text">{t('panel.task.refine.scope.all')}</span>
+              <span className="tk-choice-count">{inScope}</span>
+            </label>
+            <label className="tk-choice-row">
+              <input
+                type="radio"
+                name="refine-scope"
+                checked={scopeMode === 'last'}
+                onChange={() => setScopeMode('last')}
+              />
+              <span className="tk-choice-text">{t('panel.task.refine.scope.last')}</span>
+              <input
+                className="tk-choice-num"
+                inputMode="numeric"
+                readOnly
+                value={REFINE_LAST_N}
+                aria-label={t('panel.task.refine.scope.last')}
+              />
+              <span className="tk-choice-count">
+                {scopeMode === 'last' ? inScope : '—'}
+              </span>
+            </label>
+          </div>
+
+          <label className="cfg-check">
+            <input
+              type="checkbox"
+              checked={failedOnly}
+              onChange={() => setFailedOnly(!failedOnly)}
+              aria-label={t('panel.task.refine.scope.failedOnly')}
+            />
+            <span>{t('panel.task.refine.scope.failedOnly')}</span>
+          </label>
+        </div>
+
+        <div className="tk-section">
+          <div className="tk-section-head">
+            <span className="tk-section-label">{t('panel.task.refine.objectives')}</span>
+          </div>
+          <textarea
+            className="cfg-textarea"
+            rows={3}
+            value={objectives}
+            onChange={(e) => setObjectives(e.target.value)}
+            placeholder={t('panel.task.refine.objectives.placeholder')}
+          />
+        </div>
+      </PanelBody>
+
+      <div className="dialog-foot">
+        <span className="cfg-status">
+          {blocker !== null ? (
+            <span className="cfg-status-error" role="alert">
+              {blocker}
+            </span>
+          ) : null}
+        </span>
+        <span className="grow" />
+        <button type="button" className="btn btn-outline" onClick={onBack}>
+          {t('common.cancel')}
+        </button>
+        <button type="button" className="btn btn-primary" disabled={!canStart} onClick={start}>
+          {t('panel.task.refine.start')}
+        </button>
+      </div>
+    </>
+  );
 }

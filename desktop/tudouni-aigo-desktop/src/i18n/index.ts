@@ -391,6 +391,8 @@ export const en = {
   'panel.learn.modelNote': 'The run uses this workspace\u2019s current model and settings.',
   'lb.sessionLearning': 'learning run',
   'lb.sessionLearningHint': 'This session was started from Learn workspace: it is studying the workspace\u2019s history.',
+  'lb.sessionRefine': 'refine run',
+  'lb.sessionRefineHint': 'This session was started from a task\u2019s Refine: it is comparing the task\u2019s runs to improve its prompt.',
   /* Task templates: the rail's entry and the panel's copy. A task is the
      desktop's own repeatable session launcher — configure a prompt, a
      workspace and an optional model once, then Run opens a new session and
@@ -503,6 +505,30 @@ export const en = {
   'panel.task.save': 'Save task',
   'panel.task.error.name': 'A task needs a name.',
   'panel.task.error.prompt': 'A task needs a prompt.',
+  /* Refine — a task's own run history, compared run against run, is the
+     evidence; the only candidate it may produce is a replacement for that
+     task's prompt. The copy mirrors the panel's existing voice: the reason
+     for a disabled control sits in the tooltip next to the control itself,
+     and the form's fields are the same nouns the prompt the run will be
+     told carries. */
+  'panel.task.refine': 'Refine',
+  'panel.task.refineHint': 'Refine: compare this task\u2019s runs and propose an improved prompt',
+  'panel.task.refine.noRuns': 'This task has no finished run yet \u2014 there is nothing to compare.',
+  'panel.task.refine.remote': 'This task runs on a remote workspace; its sessions are not on this machine.',
+  'panel.task.refine.otherWorkspace': 'This task is bound to a different workspace \u2014 open it first.',
+  'panel.task.refine.title': 'Refine \u201c{name}\u201d',
+  'panel.task.refine.note': 'Starts a new session that compares this task\u2019s finished runs. Its answer is a candidate new prompt, applied only when you pick it.',
+  'panel.task.refine.scope': 'Runs to compare',
+  'panel.task.refine.scope.hint': 'Runs are grouped by the prompt frozen at run time, so a prompt the task has since changed is compared under the version it was.',
+  'panel.task.refine.scope.all': 'All finished runs',
+  'panel.task.refine.scope.last': 'Most recent finished runs',
+  'panel.task.refine.scope.failedOnly': 'Only the failed runs (plus the newest success as the reference)',
+  'panel.task.refine.objectives': 'Focus (optional)',
+  'panel.task.refine.objectives.placeholder': 'e.g. focus on the login step, the ranking table, the export format\u2026',
+  'panel.task.refine.start': 'Start refine',
+  'panel.task.refine.noneInScope': 'No finished run falls in this range.',
+  'note.refine.applied': 'Refine applied: {n} candidate prompt written to the task.',
+  'note.refine.appliedNone': 'Refine answer received: none of the candidates were recognised, so the task was left as it is.',
   'lb.show': 'Show the workspace sidebar',
   'rail.drag': 'Drag to resize the sidebar. Double-click to reset it.',
   'lb.foldSessions': 'Fold the session list',

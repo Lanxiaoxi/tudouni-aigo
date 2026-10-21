@@ -153,6 +153,12 @@ const SUITES = [
   // design's "no fake success" rule 鈥?a link only when a new bucket landed,
   // history surviving a deleted template, ids back-filled from `init`).
   'task.test.ts',
+  // Task refine: the scope over a task's own runs (settled only, newest
+  // first, the failed-only variant keeping one ok reference), the gate that
+  // keeps remote tasks and other workspaces out, and the prompt's reader —
+  // the marked candidate blocks read back, and the question's answer read
+  // back to candidate numbers. All pure: no window, no child.
+  'refine.test.ts',
   // The markdown answer's language bar. The tag is not an attribute anywhere in
   // the tree `react-markdown` builds 鈥?it is a class on the inner `<code>` 鈥?so
   // the reading is a claim about a third-party renderer's output. It is asserted

@@ -220,6 +220,7 @@ test('a run in the active local workspace spawns locally, opens a new bucket, an
   assert.equal(link.sessionId, '', 'the id waits for the handshake');
   assert.equal(link.taskName, 'nightly', 'the link froze the task name at start time');
   assert.equal(link.autopilot, true, 'the link froze the template\u2019s autopilot too');
+  assert.equal(link.prompt, 'build everything', 'the link froze the prompt text too — the refine feature\u2019s ground');
 });
 
 /**
@@ -615,4 +616,177 @@ test('the day headers follow the calendar, not the elapsed hours', () => {
   // forty minutes ago and belongs to *yesterday*.
   const justAfterMidnight = at(2026, 4, 20, 0);
   assert.equal(runDay(at(2026, 4, 19, 23), justAfterMidnight), 'yesterday');
+});
+
+/* ============================================================
+   Refine: the store's half — a new ordinary session, and the
+   front end's half — the candidate applied on the answer.
+   ============================================================ */
+
+function settleRun(taskId: string, patch: Partial<TaskRunLink> = {}): TaskRunLink {
+  return {
+    taskId,
+    sessionId: '20260101-080000',
+    sessionKey: 'k-run',
+    startedAtMs: 1,
+    taskName: 'nightly',
+    model: '',
+    workspaceLabel: 'C:/work',
+    outcome: 'ok',
+    ...patch,
+  };
+}
+
+test('refineTask starts a new session, marks it, and sends the refine prompt as its first message', async () => {
+  localScreen();
+  useApp.setState({ tasks: [makeTask()], taskRuns: [] });
+  const taskId = useApp.getState().tasks[0]?.id ?? '';
+  useApp.setState({
+    taskRuns: [
+      settleRun(taskId, { outcome: 'ok', prompt: 'old prompt' }),
+      settleRun(taskId, { startedAtMs: 2, outcome: 'failed', sessionId: '20260101-090000' }),
+    ],
+  });
+
+  const before = new Set(useApp.getState().order);
+  const pending = useApp.getState().refineTask(taskId, { kind: 'all' }, false, 'focus on the login step');
+  // Let the attach land, then answer the handshake the loop is waiting on.
+  for (;;) {
+    const s = useApp.getState();
+    const fresh = s.order.find((key) => !before.has(key));
+    if (fresh !== undefined) {
+      useApp.setState((st) => ({
+        sessions: { ...st.sessions, [fresh]: { ...st.sessions[fresh], ready: true } },
+      }));
+      break;
+    }
+    if (Date.now() > 5_000) throw new Error('refineTask never opened a session');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const key = await pending;
+  assert.ok(key, 'a refine run that opened a session returns its key');
+  assert.equal(localCalls.length, 1, 'the local spawn is the open path');
+
+  const s = useApp.getState();
+  const bucket = s.sessions[key];
+  assert.equal(bucket.refineTaskId, taskId, 'the bucket is marked as this task\u2019s refine run');
+  const spoken = bucket.entries.filter((row) => row.kind === 'user');
+  assert.equal(spoken.length, 1, 'one message out');
+  const text = spoken[0].text;
+  assert.ok(text.includes('You are starting a task refinement.'));
+  assert.ok(text.includes('prompt: old prompt'), 'the snapshot is in the prompt');
+  assert.ok(text.includes('prompt: (not recorded)'), 'the link without one is labelled, not guessed');
+  assert.ok(text.includes('focus on the login step'));
+});
+
+test('refineTask is refused by its own gate, and records nothing', async () => {
+  localScreen();
+  useApp.setState({ tasks: [makeTask()], taskRuns: [] });
+  const taskId = useApp.getState().tasks[0]?.id ?? '';
+
+  // No finished run at all.
+  useApp.setState({ taskRuns: [settleRun(taskId, { outcome: undefined as never })] });
+  assert.equal(await useApp.getState().refineTask(taskId, { kind: 'all' }, false, ''), null);
+
+  // A remote-bound task, on a local screen.
+  useApp.setState({
+    tasks: [makeTask({ workspace: { kind: 'remote', id: 'rw-1' } })],
+    taskRuns: [settleRun(taskId)],
+  });
+  assert.equal(await useApp.getState().refineTask(taskId, { kind: 'all' }, false, ''), null);
+
+  // A local task bound to a workspace that is not the screen's.
+  useApp.setState({
+    tasks: [makeTask({ workspace: { kind: 'local', path: 'D:/other' } })],
+    taskRuns: [settleRun(taskId)],
+  });
+  assert.equal(await useApp.getState().refineTask(taskId, { kind: 'all' }, false, ''), null);
+
+  assert.equal(useApp.getState().taskRuns.length, 1, 'the seed link is the only one — nothing was started');
+  assert.equal(useApp.getState().order.length, 1, 'no new bucket');
+});
+
+test('a refine answer applies the chosen candidate to the task — created stays, updated moves', () => {
+  localScreen();
+  const task = makeTask();
+  useApp.setState({ tasks: [task], taskRuns: [], modal: null, pendingModals: [] });
+
+  const key = 'k-refine';
+  const bucket = liveBucket(key, 'C:/work', null);
+  bucket.refineTaskId = task.id;
+  // What a `run_finished` carrying the report would have left behind.
+  bucket.refineCandidates = ['the improved prompt'];
+  useApp.setState((s) => ({
+    sessions: { ...s.sessions, [key]: bucket },
+    order: [...s.order, key],
+    activeKey: key,
+    modal: {
+      kind: 'question',
+      key,
+      req: { v: 1, t: 'question_request', id: 'q-1', question: 'apply?', header: '', options: [], multi_select: false },
+    },
+  }));
+
+  const createdAt = task.createdAtMs;
+  const before = Date.now();
+  useApp.getState().answerQuestion('answered', 'Apply candidate 1: replace the task prompt');
+
+  const s = useApp.getState();
+  assert.equal(s.tasks[0]?.prompt, 'the improved prompt', 'the chosen candidate is on the task');
+  assert.equal(s.tasks[0]?.createdAtMs, createdAt, 'the task\u2019s birth is not rewritten');
+  assert.ok((s.tasks[0]?.updatedAtMs ?? 0) >= before, 'its update time moves');
+  assert.equal(s.modal, null, 'the question is answered and gone');
+});
+
+test('a refine answer of \u201cnone\u201d leaves the task untouched, and still says so', () => {
+  localScreen();
+  const task = makeTask();
+  useApp.setState({ tasks: [task], taskRuns: [], modal: null, pendingModals: [] });
+
+  const key = 'k-refine-none';
+  const bucket = liveBucket(key, 'C:/work', null);
+  bucket.refineTaskId = task.id;
+  bucket.refineCandidates = ['the improved prompt'];
+  useApp.setState((s) => ({
+    sessions: { ...s.sessions, [key]: bucket },
+    order: [...s.order, key],
+    activeKey: key,
+    modal: {
+      kind: 'question',
+      key,
+      req: { v: 1, t: 'question_request', id: 'q-2', question: 'apply?', header: '', options: [], multi_select: false },
+    },
+  }));
+
+  useApp.getState().answerQuestion('answered', 'Apply none of them');
+
+  const s = useApp.getState();
+  assert.equal(s.tasks[0]?.prompt, task.prompt, 'nothing was applied');
+  assert.equal(s.tasks[0]?.updatedAtMs, task.updatedAtMs, 'and not even a write');
+});
+
+test('a question that is not a refine\u2019s touches no task at all', () => {
+  localScreen();
+  const task = makeTask();
+  useApp.setState({ tasks: [task], taskRuns: [], modal: null, pendingModals: [] });
+
+  const key = 'k-plain';
+  const bucket = liveBucket(key, 'C:/work', null);
+  useApp.setState((s) => ({
+    sessions: { ...s.sessions, [key]: bucket },
+    order: [...s.order, key],
+    activeKey: key,
+    modal: {
+      kind: 'question',
+      key,
+      req: { v: 1, t: 'question_request', id: 'q-3', question: 'apply?', header: '', options: [], multi_select: false },
+    },
+  }));
+
+  const before = task.updatedAtMs;
+  useApp.getState().answerQuestion('answered', 'Apply candidate 1: replace the task prompt');
+
+  const s = useApp.getState();
+  assert.equal(s.tasks[0]?.prompt, task.prompt, 'an ordinary session\u2019s answer is not a refine delivery');
+  assert.equal(s.tasks[0]?.updatedAtMs, before);
 });

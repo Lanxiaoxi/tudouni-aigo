@@ -2594,6 +2594,14 @@
   line-height: 1.35;
 }
 
+/* The refine-run tag: the learning tag's shape, a warmer tint, because the
+   two are different kinds of special run and a person reading the rail at a
+   glance should be able to tell them apart without the hover tooltip. */
+.lb-session .lb-session-refine {
+  background: var(--warning-subtle, var(--lb-tag));
+  color: var(--warning, var(--accent-tint-text));
+}
+
 /* The delete button sits beside the session button, revealed on hover — and
    never hidden from the keyboard (`:focus-within`), because a control that only
    a pointer can reach is a control half the keyboard's users cannot use. */

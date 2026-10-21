@@ -271,7 +271,7 @@ export function WorkspaceSidebar() {
   const currentRemoteWorkspaceId = rt?.remoteWorkspaceId ?? null;
 
   /**
-   * The sessions that were started as workspace-learning runs.
+   * The sessions that were started as workspace-learning or task-refine runs.
    *
    * **Two lookups, because the rail asks the question two ways.** A learning
    * run is keyed by the bridge's child key in the "open now" group and by the
@@ -287,24 +287,37 @@ export function WorkspaceSidebar() {
    *
    * Kept as one compact subscription so the two sets are computed from a
    * single pass and cannot disagree about which sessions are learning runs.
+   * Refine marks ride on the same pass (the `refineTaskId` flag), so the two
+   * kinds of special run are read from the same facts.
    */
   const learningMarks = useApp((s) => {
     const keys: string[] = [];
     const ids: string[] = [];
+    const refineKeys: string[] = [];
+    const refineIds: string[] = [];
     for (const key of s.order) {
       const bucket = s.sessions[key];
-      if (bucket?.learning && bucket.sessionId !== null && bucket.sessionId !== '') {
+      if ((bucket?.learning || bucket?.refineTaskId !== null) && bucket.sessionId !== null && bucket.sessionId !== '') {
         keys.push(key);
         ids.push(bucket.sessionId);
+        if (bucket.refineTaskId !== null) {
+          refineKeys.push(key);
+          refineIds.push(bucket.sessionId);
+        }
       }
     }
-    return `${keys.join('\u0001')}\u0002${ids.join('\u0001')}`;
+    return `${keys.join('\u0001')}\u0002${ids.join('\u0001')}\u0003${refineKeys.join('\u0001')}\u0004${refineIds.join('\u0001')}`;
   });
-  const { keys: learningKeys, ids: learningIds } = useMemo(() => {
-    const [keyPart = '', idPart = ''] = learningMarks.split('\u0002');
+  const { keys: learningKeys, ids: learningIds, refineKeys, refineIds } = useMemo(() => {
+    const [keyPart = '', rkPart = '', ridPart = ''] = learningMarks.split('\u0003');
+    // `keyPart` is itself `keys \u0002 ids`: the first two halves, then the
+    // two refine halves.
+    const [k = '', i = ''] = keyPart.split('\u0002');
     return {
-      keys: new Set(keyPart === '' ? [] : keyPart.split('\u0001')),
-      ids: new Set(idPart === '' ? [] : idPart.split('\u0001')),
+      keys: new Set(k === '' ? [] : k.split('\u0001')),
+      ids: new Set(i === '' ? [] : i.split('\u0001')),
+      refineKeys: new Set(rkPart === '' ? [] : rkPart.split('\u0001')),
+      refineIds: new Set(ridPart === '' ? [] : ridPart.split('\u0001')),
     };
   }, [learningMarks]);
 
@@ -913,7 +926,11 @@ export function WorkspaceSidebar() {
                           </span>
                           <span className="lb-session-meta">
                             {t('lb.sessionOpen')}
-                            {learningKeys.has(row.key) ? (
+                            {refineKeys.has(row.key) ? (
+                              <span className="lb-session-learning lb-session-refine" title={t('lb.sessionRefineHint')}>
+                                {t('lb.sessionRefine')}
+                              </span>
+                            ) : learningKeys.has(row.key) ? (
                               <span className="lb-session-learning" title={t('lb.sessionLearningHint')}>
                                 {t('lb.sessionLearning')}
                               </span>
@@ -1005,7 +1022,11 @@ export function WorkspaceSidebar() {
                             {' · '}
                             {t('panel.resume.steps', { n: item.steps })}
                             {item.todos ? ` · ${item.todos}` : ''}
-                            {learningIds.has(item.id) ? (
+                            {refineIds.has(item.id) ? (
+                              <span className="lb-session-learning lb-session-refine" title={t('lb.sessionRefineHint')}>
+                                {t('lb.sessionRefine')}
+                              </span>
+                            ) : learningIds.has(item.id) ? (
                               <span className="lb-session-learning" title={t('lb.sessionLearningHint')}>
                                 {t('lb.sessionLearning')}
                               </span>

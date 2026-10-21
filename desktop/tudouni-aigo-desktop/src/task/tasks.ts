@@ -14,6 +14,8 @@
  * persistence layer" — is answered there, and nowhere else.
  */
 
+import { samePath } from '@/utils/format';
+
 /** Where a task runs: the workspace on screen, a bookmarked local directory,
  *  or a saved remote workspace. */
 export type TaskWorkspaceRef =
@@ -85,6 +87,15 @@ export interface TaskRunLink {
    * only while the child exists, and History outlives the child.
    */
   durationMs?: number;
+  /** A frozen copy of the task's prompt at Run time. The task is editable;
+   *  history reflects what *was*, the same reason as `taskName` and `model`.
+   *
+   *  Optional for the same reason `outcome` and `durationMs` are: a link
+   *  persisted before this field existed is a perfectly good link, and a
+   *  refine prompt labels those runs `prompt: (not recorded)` rather than the
+   *  panel dropping them. A *present* value that is not a string is malformed
+   *  and drops the record. */
+  prompt?: string;
 }
 
 /**
@@ -278,6 +289,7 @@ export function isValidTaskRun(value: unknown): value is TaskRunLink {
   if (v.outcome !== undefined && v.outcome !== 'ok' && v.outcome !== 'failed') return false;
   if (v.durationMs !== undefined && typeof v.durationMs !== 'number') return false;
   if (v.autopilot !== undefined && typeof v.autopilot !== 'boolean') return false;
+  if (v.prompt !== undefined && typeof v.prompt !== 'string') return false;
   return (
     typeof v.taskId === 'string' &&
     typeof v.sessionId === 'string' &&
@@ -327,4 +339,115 @@ export function taskProblemText(task: Task, missingName: string, missingPrompt: 
   if (missing.includes('name')) return missingName;
   if (missing.includes('prompt')) return missingPrompt;
   return null;
+}
+
+/* ============================================================
+   Refine: the run scope, and what makes it available
+   ============================================================ */
+
+/**
+ * Which of a task's runs a refine run may study.
+ *
+ * `firstVersion` pins N = 10 for the first version, exactly as the design
+ * does: "all" is the only other range offered, and a number field would be
+ * a knob nobody asked for.
+ */
+export type RunScope = { kind: 'all' } | { kind: 'last'; n: number };
+
+export const REFINE_LAST_N = 10;
+
+/**
+ * A run, as the refine prompt lists it.
+ *
+ * Everything here is read off the link — the frozen snapshot, the recorded
+ * verdict, the session file's path — so the prompt and the panel cannot
+ * describe one run two ways.
+ */
+export interface RefineRunRef {
+  taskName: string;
+  model: string;
+  workspaceLabel: string;
+  startedAtMs: number;
+  /** The recorded verdict — a refine run only sees settled runs, so this is
+   *  never null. */
+  outcome: TaskRunOutcome;
+  durationMs: number | null;
+  /** The frozen prompt at run time, or null when the link predates the
+   *  field — rendered as `prompt: (not recorded)`, never as a guess. */
+  prompt: string | null;
+  /** The session's JSONL, workspace-relative, or null while no id is known. */
+  sessionFile: string | null;
+}
+
+/**
+ * Apply the chosen scope to a task's run links.
+ *
+ * **Only settled runs are eligible.** A run without a verdict has nothing to
+ * compare — "still running" is a state, not an outcome, and the panel's
+ * availability gate says so before the scope is ever chosen.
+ *
+ * **The failed-only scope keeps one ok run as the reference.** "What broke"
+ * is only visible against "how it went right": failed runs alone cannot tell
+ * a detour from the usual route, so the newest successful run stays in
+ * scope as the contrast (the design's own rule).
+ */
+export function refineRunScope(
+  links: TaskRunLink[],
+  scope: RunScope,
+  failedOnly: boolean,
+): RefineRunRef[] {
+  // Newest first, in every scope: the prompt lists runs in the order the
+  // person's history draws them, and "last N" is a trim of that same order
+  // rather than a second sort that could disagree with it.
+  const settled = links
+    .filter((link) => link.outcome === 'ok' || link.outcome === 'failed')
+    .sort((a, b) => b.startedAtMs - a.startedAtMs);
+  let picked = scope.kind === 'all' ? settled : settled.slice(0, scope.n);
+  if (failedOnly) {
+    const failed = picked.filter((link) => link.outcome === 'failed');
+    // The list is newest first, so the first ok is the reference run —
+    // "how it went right", the contrast "what broke" is only visible against.
+    const reference = picked.find((link) => link.outcome === 'ok') ?? null;
+    picked = reference !== null ? [reference, ...failed] : failed;
+  }
+  return picked.map((link) => ({
+    taskName: link.taskName,
+    model: link.model,
+    workspaceLabel: link.workspaceLabel,
+    startedAtMs: link.startedAtMs,
+    outcome: link.outcome as TaskRunOutcome,
+    durationMs: link.durationMs ?? null,
+    prompt: link.prompt ?? null,
+    sessionFile: link.sessionId === '' ? null : `.tudouni/sessions/${link.sessionId}.jsonl`,
+  }));
+}
+
+/**
+ * Whether Refine may be offered for a task, and if not, which rule stopped it.
+ *
+ * The reasons are ordered so the first one drawn is the one that must be
+ * fixed first: no finished run is a fact about the task's own history; a
+ * remote task's session files are on another machine the agent cannot read
+ * (first version: refused, not supported); and a task bound to a workspace
+ * that is not on screen would make `.tudouni/sessions/` someone else's, so
+ * the comparison would study the wrong directory.
+ */
+export function refineAvailability(
+  task: Task,
+  links: TaskRunLink[],
+  activeWorkspace: string,
+  screenIsRemote: boolean,
+): { ok: boolean; reason: 'no-runs' | 'remote' | 'other-workspace' | null } {
+  const settled = links.some((link) => link.outcome === 'ok' || link.outcome === 'failed');
+  if (!settled) return { ok: false, reason: 'no-runs' };
+  // Remote in either direction: a task whose ref names a saved remote
+  // workspace, or one whose `active` target happens to be a remote screen —
+  // in both cases the session files live on another machine this version does
+  // not study.
+  if (task.workspace.kind === 'remote' || screenIsRemote) return { ok: false, reason: 'remote' };
+  const onScreen =
+    activeWorkspace !== '' &&
+    (task.workspace.kind === 'active' || samePath(task.workspace.path, activeWorkspace));
+  if (!onScreen) return { ok: false, reason: 'other-workspace' };
+  return { ok: true, reason: null };
 }

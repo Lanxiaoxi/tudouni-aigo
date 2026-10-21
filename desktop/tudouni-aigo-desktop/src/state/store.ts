@@ -105,14 +105,22 @@ import {
   type LearnScope,
 } from '@/learn/template';
 import {
+  buildRefineMessage,
+  extractRefinePrompts,
+  refineSelectedNumbers,
+} from '@/learn/refineTemplate';
+import {
   canRunTask,
   isValidTask,
   isValidTaskRun,
   outcomeOfChildExit,
   outcomeOfTurnStatus,
+  refineAvailability,
+  refineRunScope,
   type Task,
   type TaskRunLink,
   type TaskRunOutcome,
+  type RunScope,
 } from '@/task/tasks';
 import {
   registerRuntime,
@@ -657,6 +665,29 @@ export interface SessionRuntime {
    * the session is treated.
    */
   learning: boolean;
+  /**
+   * This session was started as a task-refine run, and which task it refines.
+   *
+   * The same local fact as `learning`: a refine run is an ordinary session,
+   * and the only thing that tells it apart is what its first message was. The
+   * task id goes with the flag because the candidate is applied by the front
+   * end on the question's answer — and that application is only valid for
+   * **this** session and **this** task, so both halves of the rule live on
+   * the bucket rather than being re-derived at answer time.
+   */
+  refineTaskId: string | null;
+  /**
+   * The candidate prompts this session's last finished turn delivered,
+   * extracted from the report the model wrote — `null` until the refine run
+   * has produced one, `[]` when it produced none.
+   *
+   * Held on the bucket rather than re-read from the transcript at answer
+   * time: the transcript is rebuilt by every `session_load` (which rewrites
+   * the entries wholesale), and the question's answer can land long after a
+   * later turn has moved the stream on. The extraction runs once, when the
+   * turn that carries the report finishes.
+   */
+  refineCandidates: string[] | null;
   /** A local fact: has this session been spoken to. "Never spoken" and "idle"
    *  are two different labels in the status bar. */
   hasSpoken: boolean;
@@ -1076,6 +1107,8 @@ export function createSessionBucket(
     launch,
     session: null,
     learning: false,
+    refineTaskId: null,
+    refineCandidates: null,
     hasSpoken: false,
     lastTurnMs: null,
     liveCall: null,
@@ -1724,6 +1757,24 @@ export interface AppStore {
    * not started here — the panel says so instead.
    */
   startLearning(scope: LearnScope, deliverables: Deliverable[], objectives: string): Promise<void>;
+
+  /**
+   * Start a task-refine run for one task.
+   *
+   * A refine run is **an ordinary new session whose first message is the
+   * refine prompt** (see `src/learn/refineTemplate.ts`) built from the
+   * task's own run history — no new protocol, the same two-step `startLearning`
+   * established. The session's workspace must be the task's (its
+   * `.tudouni/sessions/` is the evidence), which the panel's availability
+   * gate (`refineAvailability`) has already checked; this re-checks only the
+   * half the store owns, and a `remote` target is refused here too, because
+   * the first version's session files live on another machine.
+   *
+   * The session's bucket carries `refineTaskId` — the front end's half of the
+   * delivery, since the candidate is applied by `upsertTask` on the question's
+   * answer, not by the agent.
+   */
+  refineTask(taskId: string, scope: RunScope, failedOnly: boolean, objectives: string): Promise<string | null>;
 
   /* ---------------- task templates ---------------- */
   /** Create a task with the given fields and persist it. Returns the new id. */
@@ -4074,6 +4125,73 @@ export const useApp = create<AppStore>((set, get) => {
       get().submitDraft();
     },
 
+    async refineTask(taskId, scope, failedOnly, objectives) {
+      const s = get();
+      const task = s.tasks.find((row) => row.id === taskId);
+      if (!task) return null;
+      const workspace = activeWorkspaceOf(s);
+      if (workspace === '') return null;
+      // The store's half of the panel's availability gate. The panel is the
+      // one that says *why*; this re-checks only the facts it owns — the task
+      // still exists, the screen still is its workspace, and the target is
+      // not remote (first version: the session files being read would be on
+      // the remote host, and this window's `.tudouni/sessions/` is not theirs).
+      const links = s.taskRuns.filter((row) => row.taskId === taskId);
+      const screenIsRemote =
+        s.activeKey !== null && s.sessions[s.activeKey]?.remoteWorkspaceId !== null;
+      if (!refineAvailability(task, links, workspace, screenIsRemote).ok) return null;
+      if (task.workspace.kind === 'local' && !samePath(task.workspace.path, workspace)) return null;
+
+      const text = buildRefineMessage({
+        taskName: task.name,
+        currentPrompt: task.prompt,
+        workspace,
+        scope,
+        failedOnly,
+        runs: refineRunScope(links, scope, failedOnly),
+        objectives,
+      });
+
+      // A new local child in the workspace on screen — the same open as
+      // `startLearning`, and the only one this action knows: refine never
+      // dials remote, because its evidence is the local session files.
+      const key = await get().attachSession({});
+      if (key === null) return null;
+      // The front end's half of the delivery. The candidate is applied by
+      // `upsertTask` on the question's answer, and the answer is read back
+      // out of *this* session's transcript against *this* task — both halves
+      // of that rule live on the bucket here.
+      patchWith(key, () => ({ refineTaskId: taskId }));
+
+      // The prompt goes out as the session's first `user_message`, waiting on
+      // the handshake for exactly the reason `startLearning` waits: the
+      // `session_load` right behind `init` would wipe what is written before
+      // it lands, and a child that never answers has a problem row of its own.
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        const current = get().sessions[key];
+        if (current?.ready) break;
+        if (current === undefined) return null;
+        if (Date.now() >= deadline) return null;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const active = get().activeKey;
+      if (active !== key) {
+        patchWith(key, (bucket) => ({
+          entries: [...bucket.entries, { kind: 'user', id: nextId('user'), text, atMs: Date.now() }],
+          draft: '',
+          history: [...bucket.history, text].slice(-100),
+          historyCursor: null,
+          hasSpoken: true,
+        }));
+        sendTo(key, { v: 1, t: 'user_message', text });
+        return key;
+      }
+      get().setDraft(text);
+      get().submitDraft();
+      return key;
+    },
+
     /* ==========================================================
        Task templates
        ========================================================== */
@@ -4180,6 +4298,11 @@ export const useApp = create<AppStore>((set, get) => {
         // the session, so a run of a template whose switch has since changed
         // still shows how it was started.
         autopilot: task.autopilot === true,
+        // The prompt itself, frozen unconditionally: prompts are short, and a
+        // diff check would be an optimisation nobody could see. It is what
+        // makes "which runs ran under which prompt" answerable — the whole
+        // ground of the refine feature.
+        prompt: task.prompt,
       };
       set((state) => ({
         taskRuns: [...state.taskRuns, link].slice(-TASK_RUNS_MAX),
@@ -4973,6 +5096,7 @@ export const useApp = create<AppStore>((set, get) => {
             }
             case 'run_finished': {
               const runId = msg.run_id;
+              const answer = typeof msg.answer === 'string' ? msg.answer : '';
               // The two `run_finished` messages are not ordered, so pairing is by
               // run id alone. A mismatch against a *different* finished run is
               // dropped; anything else is this session's answer.
@@ -4991,13 +5115,17 @@ export const useApp = create<AppStore>((set, get) => {
                 // missing or non-string `answer` would blank the whole window
                 // instead of dropping a line. A missing answer is simply absent:
                 // `applyFinalAnswer` keeps the streamed body in that case.
-                entries: applyFinalAnswer(
-                  bucket.entries,
-                  runId,
-                  typeof msg.answer === 'string' ? msg.answer : '',
-                ),
+                entries: applyFinalAnswer(bucket.entries, runId, answer),
                 activeRunId: null,
                 lastRunId: runId,
+                // A refine run's report is the turn that carries the candidate
+                // blocks, and this finish is the moment they are read out of it:
+                // the question's answer applies against the extracted list, not
+                // the transcript — every `session_load` rebuilds the entries, and
+                // a later turn has moved the stream on by the time a person picks.
+                ...(bucket.refineTaskId !== null && answer !== ''
+                  ? { refineCandidates: extractRefinePrompts(answer) }
+                  : {}),
                 // The turn is over. If nobody is looking at this session, that
                 // is the fact the blue dot exists to report — a background
                 // session that finished is not running, not asking and not
@@ -5688,6 +5816,45 @@ export const useApp = create<AppStore>((set, get) => {
         status,
         text: status === 'skipped' ? '' : text,
       });
+      // The refine delivery: when the question came out of a refine run, the
+      // person's choice is applied here, by the front end. The agent never
+      // touches `aigo.prefs` (it cannot — that is this window's persistence),
+      // so the selected candidate's text, read back out of the report this
+      // session delivered, is the only copy that ever lands on the task.
+      // `createdAtMs` is the task's birth and survives; `updatedAtMs` moves.
+      if (status === 'answered' && text.trim() !== '') {
+        const bucket = get().sessions[m.key];
+        const taskId = bucket?.refineTaskId ?? null;
+        const candidates = bucket?.refineCandidates;
+        if (taskId !== null && candidates !== null && candidates.length > 0) {
+          const task = get().tasks.find((row) => row.id === taskId);
+          if (task !== undefined) {
+            const chosen = refineSelectedNumbers(text, candidates.length);
+            const applied = chosen.filter((n) => candidates[n - 1] !== undefined);
+            if (applied.length > 0) {
+              const newPrompt = candidates[applied[applied.length - 1] - 1];
+              get().upsertTask({ ...task, prompt: newPrompt });
+            }
+            // The report either way: it is the one line that says what the
+            // choice did. Zero is "the answer named nothing recognisable",
+            // which is a fact the transcript should carry rather than an
+            // application that silently did not happen.
+            patchWith(m.key, (b) => ({
+              entries: [
+                ...b.entries,
+                {
+                  kind: 'note' as const,
+                  id: nextId('note'),
+                  tone: 'info' as const,
+                  code: 'refineApplied',
+                  text: '',
+                  message: { code: 'refineApplied' as const, taskId, applied: applied.length },
+                },
+              ],
+            }));
+          }
+        }
+      }
     },
 
     minimizeQuestion() {

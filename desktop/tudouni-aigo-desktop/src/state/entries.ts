@@ -131,7 +131,15 @@ export type FrontMessage =
    *  Said **only for a running shell**, because that is the case where "it is
    *  still running" is news. Leaving an ended one needs no sentence: the row in
    *  the panel still reports how it ended. */
-  | { code: 'terminalDetached'; id: string };
+  | { code: 'terminalDetached'; id: string }
+  /** A refine candidate was applied to its task.
+   *
+   *  `applied` is the number of candidates written; the sentence is this
+   *  window's own report of what the front end did with the person's choice —
+   *  the agent never touches `aigo.prefs`, so without this line the
+   *  transcript would say the person picked and nothing would ever say it
+   *  landed. */
+  | { code: 'refineApplied'; taskId: string; applied: number };
 
 /** A system line. Used as a named type by callers that hold notes outside the
  *  stream (the handshake's own notices, which outlive a `session_load`). */
