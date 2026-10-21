@@ -43,12 +43,12 @@ CSS 仍然是两个 4,500+ 行的文件。
 
 | 守卫 | 命令 | 当前模式 |
 |---|---|---|
-| 文件体积 | `npm run check:size` | fail（阈值 = 当前值，只降不升） |
 | 颜色字面量 | `npm run check:tokens` | **fail**（阶段 1 已清零，直接上线） |
 | 死类 | `npm run audit:css` | 现为 PASS；未引用类 40 |
 
-阈值表在 `scripts/check-size.mjs` 的 `FILES` / `DEFAULTS`。每阶段结束把对应文件
-的预算下调到新行数。
+**文件体积守卫已移除**（`scripts/check-size.mjs` 与其 `npm run check:size` 一并删除）。
+拆分本身仍然成立，但行数不再作为合入条件：大文件由维护者自行判断何时重构，
+而不是由一条只降不升的阈值拦在提交前。
 
 ## 3. 阶段 1 记录（CSS 拆分与清理）
 
@@ -208,7 +208,7 @@ const placeholderKey = `starting-${startingSeq}`;
 | 最大 state 文件（非接口） | 8,064 | **951** |
 | `AppStore` 接口 | 在 store.ts 内 | 1,246（独立类型文件） |
 | 测试 | 582 | **584**（+2 工厂接缝） |
-| typecheck / test / audit:css / check:size / check:tokens | PASS | PASS |
+| typecheck / test / audit:css / check:tokens | PASS | PASS |
 | render-check | PASS | PASS |
 | 截图像素差 | — | 深色 22 px / 浅色 53 px（同一处抗锯齿区，max Δ8） |
 
@@ -230,7 +230,6 @@ cd desktop/tudouni-aigo-desktop
 npm run typecheck
 npm run test
 npm run audit:css
-npm run check:size
 node scripts/check-css-tokens.mjs --fail
 
 # 视觉回归（需要 dev server 与 headless Chrome，见 §1）
