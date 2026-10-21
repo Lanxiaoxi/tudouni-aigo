@@ -408,7 +408,7 @@ export function SessionBoard() {
       ) : cards.length === 0 ? (
         <EmptyState title={t('board.empty.title')} hint={t('board.empty.hint')} />
       ) : (
-        <div className="board-cols scroll">
+        <div className="board-cols scroll-fade">
           {columns.map((column) => (
             <section key={column.id} className="board-col" aria-label={t(column.title)}>
               <div className="board-col-head">

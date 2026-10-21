@@ -2829,6 +2829,47 @@ table.table td.mono {
   color: var(--terminal-fg);
   overflow: auto;
   white-space: pre;
+  /* 滚动条统一走 .scroll-fade（悬停浮现），见 global.css。 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.terminal:hover,
+.terminal:active {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.terminal::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.terminal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.terminal:hover::-webkit-scrollbar-thumb,
+.terminal:active::-webkit-scrollbar-thumb {
+  opacity: 1;
+}
+
+.terminal::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-strong, var(--scrollbar-thumb));
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.terminal::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .tl-green {

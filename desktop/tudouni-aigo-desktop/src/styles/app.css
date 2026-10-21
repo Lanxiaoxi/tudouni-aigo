@@ -634,6 +634,7 @@
   overflow-x: hidden;
 }
 
+/* 滚动条统一走 .scroll-fade（悬停浮现，见 global.css），在 JSX 里挂类。 */
 .stream-inner {
   max-width: 980px;
   margin: 0 auto;
@@ -1131,7 +1132,48 @@ html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
   height: 40px;
   margin-bottom: 6px;
   overflow-y: auto;
+  /* 两行输入框里的滚动条也走悬停浮现，与全局一致（.scroll-fade 是双类选择器，
+     这里用同特异性写法覆盖，不占 JSX）。 */
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.composer .cp-box.is-filled .cp-input:hover,
+.composer .cp-box.is-filled .cp-input:active {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.composer .cp-box.is-filled .cp-input::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.composer .cp-box.is-filled .cp-input::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.composer .cp-box.is-filled .cp-input::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.composer .cp-box.is-filled .cp-input:hover::-webkit-scrollbar-thumb,
+.composer .cp-box.is-filled .cp-input:active::-webkit-scrollbar-thumb {
+  opacity: 1;
+}
+
+.composer .cp-box.is-filled .cp-input::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-strong, var(--scrollbar-thumb));
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.composer .cp-box.is-filled .cp-input::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .composer textarea::placeholder {

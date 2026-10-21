@@ -76,7 +76,7 @@ export function CommandPalette() {
         </DialogPrimitive.Close>
       </div>
 
-      <div className="cmdk-list scroll">
+      <div className="cmdk-list scroll-fade">
         {rows.length === 0 ? (
           <div className="cmdk-empty">{t('panel.commands.empty')}</div>
         ) : (

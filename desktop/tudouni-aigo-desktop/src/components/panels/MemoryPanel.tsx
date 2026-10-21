@@ -137,7 +137,7 @@ export function MemoryPanel() {
           <EmptyState title={t('panel.memory.loading')} />
         ) : (
           <div className="wm">
-            <div className="wm-main scroll">
+            <div className="wm-main scroll-fade">
               <div className="wm-legend">{t('panel.memory.behavior')}</div>
               <div className="wm-group">
                 <SwitchRow
@@ -254,7 +254,7 @@ export function MemoryPanel() {
                 * Putting `scroll` on the card itself (or on the panel's body, as
                 * before) gave one scrollbar for the whole surface and scrolled
                 * that fact away with the rows it was describing. */}
-              <div className="wm-side-body scroll">
+              <div className="wm-side-body scroll-fade">
                 <div className="wm-side-head">
                   <span className="wm-side-title">{t('panel.memory.review')}</span>
                   <span className="wm-pill">{candidates.length}</span>
@@ -502,7 +502,7 @@ function CandidateItem({
 
       {open ? (
         <>
-          <pre className="wm-body">{candidate.body}</pre>
+          <pre className="wm-body scroll-fade">{candidate.body}</pre>
           <div className="wm-cand-detail">
             <span
               className={`wm-conf wm-conf-${candidate.confidence}`}

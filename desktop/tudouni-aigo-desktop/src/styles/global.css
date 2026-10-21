@@ -92,29 +92,54 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
 }
 
 /* ---------- 滚动条 ---------- */
-.scroll {
-  overflow: auto;
+/* .scroll-fade：悬停浮现。平时滚动条完全隐藏（不占布局），鼠标进入或按下
+   拖动时才淡入，离开后淡出（Mac 风格）。6px 圆角滑块，走
+   `--scrollbar-thumb`，滑块自身 hover 再加深。挂到滚动容器上即可，容器
+   自身的 `overflow` 不用动。`::-webkit-scrollbar` 走 webkit 分支（Chromium
+   桌面端），`scrollbar-color` 是标准属性兜底（Firefox 等）。
+   选择器故意写成双类（0,2,0 特异性）：同一元素上还带着各自的具体类
+   （.lb-scroll / .sidebar-inner 这类 rail 专用细线），双类才能让浮现规则
+   稳定赢过那些单类规则，且不受 CSS 加载顺序影响。 */
+.scroll-fade.scroll-fade {
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.scroll-fade.scroll-fade:hover,
+.scroll-fade.scroll-fade:active {
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
-.scroll::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+.scroll-fade.scroll-fade::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
 }
 
-.scroll::-webkit-scrollbar-track {
+.scroll-fade.scroll-fade::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.scroll::-webkit-scrollbar-thumb {
+.scroll-fade.scroll-fade::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border: 3px solid transparent;
   background-clip: content-box;
   border-radius: 999px;
+  opacity: 0;
+  transition: opacity var(--motion-fast, 0.15s) ease;
 }
 
-.scroll::-webkit-scrollbar-corner {
+.scroll-fade.scroll-fade:hover::-webkit-scrollbar-thumb,
+.scroll-fade.scroll-fade:active::-webkit-scrollbar-thumb {
+  opacity: 1;
+}
+
+.scroll-fade.scroll-fade::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-strong, var(--scrollbar-thumb));
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.scroll-fade.scroll-fade::-webkit-scrollbar-corner {
   background: transparent;
 }
 

@@ -101,7 +101,7 @@ export function PermissionModal() {
                 <RiskTag level={req.risk} />
               </div>
 
-              <div className="dialog-body scroll">
+              <div className="dialog-body scroll-fade">
                 {/* Tool / origin / call id — read-only facts, not controls. */}
                 <div
                   className="row"

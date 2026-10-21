@@ -100,7 +100,7 @@ export function CloseConfirm() {
             <span className="caption muted">{t('close.sessions', { n: sessionCount })}</span>
           </div>
 
-          <div className="dialog-body scroll">
+          <div className="dialog-body scroll-fade">
             <div className="close-choices">
               <button
                 type="button"

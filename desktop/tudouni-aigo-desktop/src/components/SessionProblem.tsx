@@ -42,7 +42,7 @@ export function SessionProblem() {
   const tail = stderrTail.slice(-20);
 
   return (
-    <div className="startup-problem" role="alert">
+    <div className="startup-problem scroll-fade" role="alert">
       <div className="sp-head">
         <TriangleAlert size={14} />
         <h2>{t('problem.title')}</h2>
@@ -77,7 +77,7 @@ export function SessionProblem() {
       {tail.length > 0 ? (
         <>
           <div className="sp-tail-label">{t('startup.stderr')}</div>
-          <pre className="terminal mono sp-tail">{tail.join('\n')}</pre>
+          <pre className="terminal mono sp-tail scroll-fade">{tail.join('\n')}</pre>
         </>
       ) : null}
     </div>

@@ -131,7 +131,7 @@ function RootPage({
   onCommands: () => void;
 }) {
   return (
-    <div className="plus-menu-list">
+    <div className="plus-menu-list scroll-fade">
       <button type="button" className="plus-item" onClick={onFile}>
         <Paperclip size={15} />
         <span className="plus-item-label">{t('plus.file')}</span>
@@ -172,7 +172,7 @@ function FilePage({ t, onBack, onDone }: { t: T; onBack: () => void; onDone: () 
   return (
     <div>
       <MenuBack label={t('plus.file')} onBack={onBack} />
-      <div className="plus-menu-list">
+      <div className="plus-menu-list scroll-fade">
         <button
           type="button"
           className="plus-item"
@@ -246,7 +246,7 @@ function SkillsPage({
   return (
     <div>
       <MenuBack label={t('plus.skills')} onBack={onBack} />
-      <div className="plus-menu-list">
+      <div className="plus-menu-list scroll-fade">
         {rows.length === 0 ? (
           <div className="plus-menu-empty">{t('panel.skills.empty')}</div>
         ) : (

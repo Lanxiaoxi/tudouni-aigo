@@ -45,11 +45,11 @@ export class ErrorBoundary extends Component<Props, State> {
     if (!error) return this.props.children;
 
     return (
-      <div className="crash" role="alert">
+      <div className="crash scroll-fade" role="alert">
         <div className="crash-head">The interface failed to render</div>
         {/* The message verbatim: it names the component and the field, which is
             the only thing that makes this actionable. */}
-        <pre className="terminal mono crash-detail">{error.stack ?? error.message}</pre>
+        <pre className="terminal mono crash-detail scroll-fade">{error.stack ?? error.message}</pre>
         <div className="crash-actions">
           {/* A reload restarts the runtime in a fresh session, so this is
               offered as a last resort rather than as the obvious button. */}

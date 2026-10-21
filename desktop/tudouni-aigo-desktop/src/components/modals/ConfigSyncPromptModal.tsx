@@ -109,7 +109,7 @@ export function ConfigSyncPromptModal() {
             </div>
           </div>
 
-          <div className="dialog-body scroll">
+          <div className="dialog-body scroll-fade">
             <p className="caption">{reason}</p>
             <p className="caption muted">
               {prompt?.localText === null ? t('cfgsync.noLocal') : t('cfgsync.hasLocal')}

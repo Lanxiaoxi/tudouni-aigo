@@ -1675,8 +1675,8 @@
 }
 
 /* The right rail's scrollbar, the left rail's: a 3px rounded thumb in the
-   rail's own line colour. The shared `.scroll` thumb is a 4px bar in a 10px
-   gutter, which in a 268px rail reads as a second column of ink. */
+   rail's own line colour. In a 268px rail a 4px bar in a 10px gutter reads
+   as a second column of ink. */
 .sidebar-inner {
   scrollbar-width: thin;
   scrollbar-color: var(--lb-line) transparent;
@@ -2051,9 +2051,8 @@
 }
 
 /* The rail's own scrollbar, narrowed to a rounded 3px hairline that takes the
-   rail's border colour. The shared `.scroll` thumb is a 4px bar inside a 10px
-   gutter plus 3px of transparent border — readable on a transcript, but in a
-   244px rail it is a second column of ink beside the rows it is scrolling. */
+   rail's border colour: in a 244px rail a 4px bar in a 10px gutter reads as a
+   second column of ink beside the rows it is scrolling. */
 .lb-scroll {
   scrollbar-width: thin;
   scrollbar-color: var(--lb-line) transparent;
@@ -3442,6 +3441,47 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   padding: var(--space-2) var(--space-4) var(--space-4);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-secondary);
+  /* 滚动条统一走 .scroll-fade（悬停浮现），见 global.css。 */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.files-view:hover,
+.files-view:active {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.files-view::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.files-view::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.files-view::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.files-view:hover::-webkit-scrollbar-thumb,
+.files-view:active::-webkit-scrollbar-thumb {
+  opacity: 1;
+}
+
+.files-view::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-strong, var(--scrollbar-thumb));
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.files-view::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .files-view-head {
@@ -4001,9 +4041,9 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   scrollbar-color: var(--lb-line) transparent;
 }
 
-/* The board's two scrollers take the rails' 3px thumb: the shared `.scroll`
-   thumb is a 4px bar in a 10px gutter, which in a 230px lane is a second column
-   of ink. Same geometry as `.lb-scroll` / `.sidebar-inner`. */
+/* The board's two scrollers take the rails' 3px thumb: in a 230px lane a 4px
+   bar in a 10px gutter is a second column of ink. Same geometry as
+   `.lb-scroll` / `.sidebar-inner`. */
 .board-cols::-webkit-scrollbar,
 .board-col::-webkit-scrollbar {
   width: 7px;

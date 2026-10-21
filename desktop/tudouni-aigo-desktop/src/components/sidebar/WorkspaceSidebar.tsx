@@ -578,7 +578,7 @@ export function WorkspaceSidebar() {
         </Tip>
       </div>
 
-      <div className="lb-scroll scroll">
+      <div className="lb-scroll scroll-fade">
         {/* ---------------- workspaces ---------------- */}
         <section className="lb-section">
           {/* The session list's fold, applied to the workspace list: the head
@@ -1292,7 +1292,7 @@ function AddWorkspaceMenu({
           aria-label={t('lb.addWorkspace')}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          <div className="plus-menu-list">
+          <div className="plus-menu-list scroll-fade">
             {/* **Each item closes the menu, and that is not cosmetic.** The
                 composer's own plus menu does the same (see `PlusMenu`'s
                 `close()`), for a reason that shows up here worse than there:

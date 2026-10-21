@@ -438,7 +438,7 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
   return (
     <div className="term-pane-wrap">
       <div
-        className="term-pane scroll"
+        className="term-pane scroll-fade"
         ref={ref}
         tabIndex={0}
         role="log"

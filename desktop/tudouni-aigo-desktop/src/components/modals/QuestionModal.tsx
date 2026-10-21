@@ -173,7 +173,7 @@ export function QuestionModal() {
                 </div>
               ) : null}
 
-              <div className="dialog-body scroll">
+              <div className="dialog-body scroll-fade">
                 <p style={{ fontSize: 'var(--text-body)', marginBottom: 'var(--space-3)' }}>
                   {req.question}
                 </p>

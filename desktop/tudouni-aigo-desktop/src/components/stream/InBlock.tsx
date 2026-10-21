@@ -56,7 +56,7 @@ export function InBlock({ entry }: { entry: Extract<Entry, { kind: 'block' }> })
         </button>
       </header>
 
-      <div className="inblock-body">
+      <div className="inblock-body scroll-fade">
         {entry.block === 'status' ? <StatusBlock p={entry.payload as UiStatusMsg} /> : null}
         {entry.block === 'tools' ? <ToolsBlock p={entry.payload as UiToolsMsg} /> : null}
         {entry.block === 'context' ? <ContextBlock p={entry.payload as UiContextMsg} /> : null}
@@ -108,7 +108,7 @@ function FileBlock({ p }: { p: UiFileReadMsg }) {
         </div>
       ) : null}
 
-      <pre className="file-view mono">{content}</pre>
+      <pre className="file-view mono scroll-fade">{content}</pre>
     </>
   );
 }

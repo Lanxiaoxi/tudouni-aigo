@@ -231,6 +231,7 @@
   --term-ansi-14:  #7FD3DE;  /* bright cyan */
   --term-ansi-15:  #FFFFFF;  /* bright white */
   --scrollbar-thumb: #3A424D;
+  --scrollbar-thumb-strong: #4E5866;  /* 悬停加深的滑块色（.scroll-fade / .terminal / .files-view 共用） */
 
   /* ---------- 装饰层（光晕 / 渐变主按钮 / 卡片浮起） ---------- */
   --accent-grad:   linear-gradient(180deg, #10B981 0%, #059669 100%);
@@ -332,6 +333,7 @@
      follow the theme's `--fg` — it is paired with `--terminal-bg` above. */
   --terminal-fg:   #e2e8f0;
   --scrollbar-thumb: #C7D1C4;
+  --scrollbar-thumb-strong: #A9BBA5;  /* 悬停加深的滑块色（.scroll-fade / .terminal / .files-view 共用） */
 
   /* 浅色下阴影整体减淡（浮层不再沿用深色的重投影） */
   --shadow-overlay: 0 8px 24px rgba(23, 26, 31, 0.14), 0 2px 6px rgba(23, 26, 31, 0.08);

@@ -754,7 +754,7 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
           legible rather than looking like the text vanished. */}
       <div className={`collapse${open ? '' : ' is-collapsed'}`} inert={!open}>
         <div>
-          <div className="e-reason-body">{entry.text}</div>
+          <div className="e-reason-body scroll-fade">{entry.text}</div>
         </div>
       </div>
     </div>

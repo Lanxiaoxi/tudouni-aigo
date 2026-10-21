@@ -451,7 +451,7 @@ export function AddRemoteWorkspaceModal({
             })}
           </ol>
 
-          <div className="dialog-body scroll">
+          <div className="dialog-body scroll-fade">
             {/* ---------------- 1. the host ---------------- */}
             {step === 'host' && (
               <>
@@ -465,7 +465,7 @@ export function AddRemoteWorkspaceModal({
                         is already configured — picking one is the whole point
                         of reading the file. */}
                     {sshConfig.hosts.length > 0 ? (
-                      <div className="rw-hosts" role="radiogroup" aria-label={t('rw.host.list')}>
+                      <div className="rw-hosts scroll-fade" role="radiogroup" aria-label={t('rw.host.list')}>
                         {sshConfig.hosts.map((entry) => {
                           const refused = entry.refused !== null;
                           return (
@@ -712,7 +712,7 @@ export function AddRemoteWorkspaceModal({
                     {browsing ? <BusyDots /> : null}
                   </div>
 
-                  <div className="rw-dirs scroll">
+                  <div className="rw-dirs scroll-fade">
                     {probe.entries.length === 0 ? (
                       <p className="rw-caption caption muted">{t('rw.noSubdirs')}</p>
                     ) : (

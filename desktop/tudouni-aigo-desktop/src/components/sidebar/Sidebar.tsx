@@ -80,7 +80,7 @@ export function Sidebar() {
   return (
     <aside className="app-sidebar">
       <RailHead />
-      <div className="sidebar-inner scroll">
+      <div className="sidebar-inner scroll-fade">
         {/* 1 · Goal. The count badge stays muted grey while the block is empty
             ("0" beside "No goal" would just say the same thing twice in a
             louder voice), and takes the accent as soon as a goal is set — a

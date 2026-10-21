@@ -153,7 +153,7 @@ export function PanelShell({
 
 /** 面板内容区（可滚） */
 export function PanelBody({ children }: { children: ReactNode }) {
-  return <div className="dialog-body scroll">{children}</div>;
+  return <div className="dialog-body scroll-fade">{children}</div>;
 }
 
 /** 一行列表项。标记当前项、右侧提示与序号 */

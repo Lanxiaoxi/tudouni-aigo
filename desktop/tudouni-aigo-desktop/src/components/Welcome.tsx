@@ -69,7 +69,7 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
   while (slots.length < MAX_RECENT) slots.push(null);
 
   return (
-    <div className="welcome scroll">
+    <div className="welcome scroll-fade">
       <div className="welcome-inner">
         {/* 1 · identity */}
         <section className="welcome-id">

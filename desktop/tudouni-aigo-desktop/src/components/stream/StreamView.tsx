@@ -207,7 +207,7 @@ export function StreamView() {
         style={{ '--rail-landing': `${LANDING_PX}px` } as CSSProperties}
       >
         <div
-          className="stream-scroll scroll"
+          className="stream-scroll scroll-fade"
           ref={scrollRef}
           onScroll={onScroll}
           onKeyDown={onKeyDown}
