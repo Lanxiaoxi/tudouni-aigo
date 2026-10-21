@@ -72,12 +72,13 @@ if (!exact) {
 
 const binaryName = process.platform === 'win32' ? 'tudouni-aigo.exe' : 'tudouni-aigo';
 
-/** Everything the runtime needs to be a package root, plus the vendored rg. */
+/** Everything the runtime needs to be a package root, plus the vendored rg and cg-parse. */
 const required = [
   binaryName,
   'prompts',
   'config.example.json',
   join('tools', 'vendor', 'rg', triple, process.platform === 'win32' ? 'rg.exe' : 'rg'),
+  join('tools', 'vendor', 'cg', triple, process.platform === 'win32' ? 'cg-parse.exe' : 'cg-parse'),
 ];
 
 for (const item of required) {
