@@ -1,9 +1,15 @@
 import { useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { Check, MessageCircleQuestion, SkipForward } from 'lucide-react';
-import { selectModalOrigin, selectModalVisible, selectQueuedModals, useApp } from '@/state/store';
+import { Check, MessageCircleQuestion, Minus, SkipForward } from 'lucide-react';
+import {
+  selectModalOrigin,
+  selectModalVisible,
+  selectQueuedModals,
+  selectQuestionMinimized,
+  useApp,
+} from '@/state/store';
 import { useT } from '@/i18n/useT';
-import { Badge } from '@/components/ui/kit';
+import { Badge, Tip } from '@/components/ui/kit';
 import { isTypingTarget } from '@/hooks/useListKeys';
 
 /**
@@ -19,6 +25,12 @@ import { isTypingTarget } from '@/hooks/useListKeys';
  *     "I did not decide", so Skip is its own button and Esc resolves to it.
  *   - Numeric keys 1–9 pick the corresponding option.
  *   - It blocks until a person answers: no auto-skip, no timeout, no guess.
+ *   - **Minimize hides, it does not answer.** The foot's minimize button takes
+ *     the overlay away so the reply above the prompt can be read; the runtime
+ *     keeps waiting on the same id and the queue keeps the request. Nothing is
+ *     sent, and `selectModalVisible` deliberately stays true while it is set
+ *     (see its comment) — the composer's blocked state is the deadlock guard,
+ *     and the minimized pill beside the status bar is the way back.
  */
 export function QuestionModal() {
   const t = useT();
@@ -35,16 +47,25 @@ export function QuestionModal() {
   // unrendered (see `selectModalVisible`) until the click on its card surfaces
   // it. The queue keeps it alive; nobody answers it from here.
   const visible = useApp(selectModalVisible);
+  // The person's own hold, on top of the two `selectModalVisible` already
+  // knows. It un-draws the prompt without touching the queue or the blocked
+  // state — the overlay is what covers the reply, not the blocking.
+  const minimized = useApp(selectQuestionMinimized);
 
-  const open = visible && modal?.kind === 'question';
-  const req = open ? modal.req : null;
+  const open = visible && !minimized && modal?.kind === 'question';
+  // The request in the drawn slot, regardless of the minimize: the draft below
+  // keys off **it** rather than off what is drawn, so a minimize (which only
+  // un-draws) does not read as a new question and wipe the selection and the
+  // free text. Restoring must find the draft the person had.
+  const slotReq = visible && modal?.kind === 'question' ? modal.req : null;
+  const req = open ? slotReq : null;
 
   const [selected, setSelected] = useState<string[]>([]);
   const [text, setText] = useState('');
 
   // Every question is a fresh decision, so the draft is cleared when the
-  // question changes.
-  const reqId = req?.id ?? null;
+  // question changes — the slot's request, not the draw, is the question.
+  const reqId = slotReq?.id ?? null;
   const [lastId, setLastId] = useState<string | null>(null);
   if (reqId !== lastId) {
     setLastId(reqId);
@@ -73,6 +94,14 @@ export function QuestionModal() {
       answer('answered', selected.join(', '));
       return;
     }
+  }
+
+  // **Hides the overlay, nothing else.** No answer is sent — the runtime keeps
+  // waiting on this id, the queue keeps the request, and the draft above is
+  // left intact (minimizing is not a decision). The transcript underneath is
+  // the whole reason the button exists.
+  function minimize() {
+    useApp.getState().minimizeQuestion();
   }
 
   return (
@@ -263,6 +292,18 @@ export function QuestionModal() {
                         : t('q.freeTextPriority')}
                 </span>
                 <span className="grow" />
+
+                <Tip label={t('q.minimizeHint')} side="top">
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => minimize()}
+                    aria-label={t('q.minimize')}
+                  >
+                    <Minus size={12} />
+                    {t('q.minimize')}
+                  </button>
+                </Tip>
 
                 <button
                   type="button"

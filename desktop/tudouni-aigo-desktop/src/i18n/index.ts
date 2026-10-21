@@ -1285,6 +1285,16 @@ export const en = {
   'q.freeText': 'Free text',
   'q.freeTextPlaceholder': 'Type your answer…',
   'q.skip': 'Skip',
+  /** The minimize in the question modal's foot. It only hides the prompt —
+   *  the runtime keeps waiting on the same id — so the tooltip says what
+   *  stays, not what goes away. */
+  'q.minimize': 'Minimize',
+  'q.minimizeHint':
+    'Hide the prompt and read the reply above. The runtime keeps waiting — nothing is answered.',
+  /* The restore pill's label, beside the status bar while a question is
+     minimized. It names the act (bring the prompt back), not the state —
+     the person can see the state; what they need is the button. */
+  'q.minimized.restore': 'Question minimized — click to restore',
   'q.submit': 'Submit',
   'q.freeTextPriority': 'Free text wins over the selection',
   'q.noOptions': 'No preset options — answer in free text.',

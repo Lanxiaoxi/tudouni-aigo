@@ -35,6 +35,7 @@ import { SessionBoard } from '@/components/board/SessionBoard';
 import { PanelHost } from '@/components/panels/PanelHost';
 import { PermissionModal } from '@/components/modals/PermissionModal';
 import { QuestionModal } from '@/components/modals/QuestionModal';
+import { QuestionMinimizedPill } from '@/components/modals/QuestionMinimizedPill';
 import { CloseConfirm } from '@/components/modals/CloseConfirm';
 import { ConfigSyncPromptModal } from '@/components/modals/ConfigSyncPromptModal';
 import { ConnectingToast } from '@/components/ConnectingToast';
@@ -296,6 +297,10 @@ export function App() {
       <PanelHost />
       <PermissionModal />
       <QuestionModal />
+      {/* The way back from a minimized question. Its own overlay beside the
+          modals, because a minimized prompt is a state the modal itself no
+          longer draws — see the component. */}
+      <QuestionMinimizedPill />
       {/* The remote-open status: window-level, because the wait belongs to the
           *open* — and its first stretch (config check, install) has no session
           on screen at all. It says nothing a modal needs to block, so it sits

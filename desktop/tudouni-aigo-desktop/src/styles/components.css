@@ -957,6 +957,61 @@ table.table td.mono {
   flex: none;
 }
 
+/* ---------------- 最小化问题胶囊（question modal 的最小化） ----------------
+ *
+ * The pill that says "you put a question aside, here is the way back".
+ * Bottom-centred above the status bar rather than top-centred like the
+ * connecting toast: the reading the minimize exists for is the transcript
+ * above, and the pill must be found at the bottom of the eye's travel,
+ * not at the top of it. `--z-toast` on purpose, beside the connecting
+ * toast — the two can be up at once (a question in one workspace, a
+ * remote open in another), and the toast layer is the layer both belong
+ * to. Unlike the connecting toast this one is **clickable**, so it takes
+ * pointer events. */
+.qmp {
+  position: fixed;
+  bottom: 34px; /* 26px status bar + an 8px lift */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 6px var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  animation: reveal var(--motion-base) var(--ease-out) 1;
+}
+
+.qmp:hover {
+  border-color: var(--info);
+}
+
+.qmp .qmp-icon {
+  color: var(--info);
+  flex: none;
+}
+
+.qmp .qmp-text {
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+/* The conversation that asked, in the pill's own caption: several sessions
+   open, the pill would otherwise say a question waits without saying whose. */
+.qmp .qmp-origin {
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .connecting-toast .ct-text {
   white-space: nowrap;
   overflow: hidden;

@@ -1287,6 +1287,36 @@ export interface AppStore {
    */
   closePrompt: boolean;
   /**
+   * The id of the question modal that was put aside by its own minimize
+   * button, or `null` when none is.
+   *
+   * The third state a drawn request can be in, besides the two holds
+   * `selectModalVisible` already knows (another session's, or the board's).
+   * The difference is who chose it: this one is the person's own act, so it
+   * gets its own named way back (the minimized pill) rather than a session
+   * switch or a card click.
+   *
+   * **Hiding the render only; nothing else changes.** The queue still holds
+   * the request, and `selectModalVisible` deliberately keeps reading it as
+   * visible: the composer stays blocked, and that is a guard rather than a
+   * gap. While the question is up its own turn is mid-flight (the model is
+   * waiting on `ask_user`'s answer), so a message sent over it would sit
+   * behind `joinTurn` forever — a deadlock the runtime cannot time out.
+   * What the person actually wants here is the reply above the prompt, and
+   * the transcript is readable the moment the overlay is gone, input or not.
+   *
+   * **The id rather than a flag, on purpose.** A request leaves the drawn
+   * slot by being answered, by the session switching, or by the child dying —
+   * none of those go through the actions that would remember to clear a
+   * boolean. Keying the minimize to the request's own id means the flag
+   * clears itself: the next question has a different id and therefore draws
+   * normally, and there is nothing to remember to reset.
+   *
+   * **Not persisted**, like `closePrompt` and `boardOpen`: "I looked away
+   * from this prompt" is a moment, not a setting.
+   */
+  questionMinimizedId: string | null;
+  /**
    * Whether the session board is the conversation column's occupant.
    *
    * The board answers "what is every session in this workspace doing right
@@ -1950,6 +1980,16 @@ export interface AppStore {
 
   answerPermission(decision: PermissionDecision): void;
   answerQuestion(status: QuestionStatus, text: string): void;
+  /**
+   * Put the drawn question modal aside without answering it.
+   *
+   * Only a question can be minimized, and only when it is actually drawn:
+   * a held request is already not on screen, and the approval modal is a
+   * decision the person made to read in full — see its own header.
+   */
+  minimizeQuestion(): void;
+  /** Bring the minimized question modal back. No-op when it is not minimized. */
+  restoreQuestion(): void;
 
   requestSessionList(): void;
   /** Delete one saved session. The list updates when the runtime's next
@@ -2674,7 +2714,18 @@ function enqueueModal(s: AppStore, entry: ModalEntry): Partial<AppStore> {
 function drainModal(s: AppStore): Partial<AppStore> {
   if (s.modal === null) return {};
   const rest = s.pendingModals.filter((entry) => entry !== s.modal);
-  return { pendingModals: rest, modal: headForActive(rest, s.activeKey) };
+  return {
+    pendingModals: rest,
+    modal: headForActive(rest, s.activeKey),
+    // The request that was minimized has left the drawn slot (answered, the
+    // child died, the session closed), so its minimize mark goes with it.
+    // The id-keying makes this a belt rather than the braces — a fresh
+    // question has a different id and would draw normally anyway — but it
+    // keeps the field honest: it never names a request that no longer exists.
+    ...(s.modal.kind === 'question' && s.modal.req.id === s.questionMinimizedId
+      ? { questionMinimizedId: null }
+      : {}),
+  };
 }
 
 /**
@@ -3474,6 +3525,7 @@ export const useApp = create<AppStore>((set, get) => {
     filePick: false,
     fileFocus: false,
     closePrompt: false,
+    questionMinimizedId: null,
     boardOpen: false,
     // The desktop's steady state: archived sessions are hidden, so archiving
     // frees one of the runtime's fifty slots. See `SessionFilter`.
@@ -5625,6 +5677,36 @@ export const useApp = create<AppStore>((set, get) => {
       });
     },
 
+    minimizeQuestion() {
+      const m = get().modal;
+      // Only a drawn question can be put aside. A permission request is a
+      // decision to read in full (see its own header), and a held request is
+      // already off screen — minimizing it would be a gesture with no effect.
+      if (!m || m.kind !== 'question' || !selectModalVisible(get())) return;
+      // No message goes out: the runtime keeps waiting on this id, and the
+      // queue keeps holding the request. The render is the only thing that
+      // moves. See the field's comment for why `selectModalVisible` is
+      // deliberately left unchanged.
+      set({ questionMinimizedId: m.req.id });
+    },
+
+    restoreQuestion() {
+      const s = get();
+      if (s.questionMinimizedId === null) return;
+      const m = s.modal;
+      // Still minimized and still the one in the drawn slot: bring it back.
+      if (m && m.kind === 'question' && m.req.id === s.questionMinimizedId) {
+        set({ questionMinimizedId: null });
+        return;
+      }
+      // The request moved on (answered, switched, the child died): nothing to
+      // restore, so the mark goes. Id-keying makes this unreachable in
+      // practice — those paths already clear it — but the pill must never
+      // point at a request that is not on screen, and this is the last place
+      // to guarantee that.
+      set({ questionMinimizedId: null });
+    },
+
     /* ==========================================================
        Session list and per-session settings
        ========================================================== */
@@ -7712,6 +7794,30 @@ export function selectModalVisible(s: AppStore): boolean {
     hasConversation: (rt?.entries ?? []).some((entry) => entry.kind !== 'note'),
   });
   return view !== 'board';
+}
+
+/**
+ * Whether the question modal in the drawn slot is currently **put aside by
+ * its own minimize** — the third state, on top of `selectModalVisible`.
+ *
+ * It asks of two things, and both have to hold: the mark is set, and the
+ * marked request is still the one in the drawn slot **and still drawn**.
+ * The second half is what keeps the restore pill honest — the mark is keyed
+ * to a request id, and a request can leave the drawn slot by being answered,
+ * by the session switching, or by the child dying. Any of those means the
+ * pill would name a question nobody can see, and clicking it would restore
+ * nothing.
+ *
+ * **`selectModalVisible` is not changed on purpose** (see the field's
+ * comment): while a question is up, its own turn is mid-flight, so the
+ * composer and the other surfaces stay blocked. The minimize hides the
+ * overlay only — the transcript underneath is the whole point of it.
+ */
+export function selectQuestionMinimized(s: AppStore): boolean {
+  if (s.questionMinimizedId === null) return false;
+  if (s.modal === null || s.modal.kind !== 'question') return false;
+  if (s.modal.req.id !== s.questionMinimizedId) return false;
+  return selectModalVisible(s);
 }
 
 /** How many sessions are running a turn right now. A window-level summary. */

@@ -1784,6 +1784,7 @@ function resetStore(): void {
     activeKey: KEY,
     modal: null,
     pendingModals: [],
+    questionMinimizedId: null,
     panel: null,
   });
 }
@@ -2334,6 +2335,93 @@ test('answering a question distinguishes skip from an answer', () => {
   // A skip carries an empty string: it is not an answer, and it must not look
   // like one.
   assert.equal(skip.text, '');
+});
+
+test('minimizing a question hides it without answering it, and it comes back', () => {
+  // The act that motivated the button: the agent analysed, answered, and
+  // asked — the person wants the reply above the prompt, not to decide yet.
+  // Minimizing must therefore change exactly one thing: the overlay. The
+  // queue keeps the request, nothing is sent to the child, and the blocked
+  // state stays, because the turn is mid-flight and a message sent over it
+  // would sit behind `joinTurn` forever.
+  const sent = captureOutbound();
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'question_request',
+    id: 'q-min-1',
+    question: 'which one?',
+    header: 'pick',
+    options: ['first', 'second'],
+    multi_select: false,
+  } as never);
+  assert.equal(selectModalVisible(useApp.getState()), true, 'drawn before the minimize');
+
+  useApp.getState().minimizeQuestion();
+  assert.equal(useApp.getState().questionMinimizedId, 'q-min-1', 'the mark names the request');
+  assert.equal(useApp.getState().modal?.kind, 'question', 'the request is still in the slot');
+  assert.equal(useApp.getState().pendingModals.length, 1, 'the queue still holds it');
+  assert.equal(selectModalVisible(useApp.getState()), true, 'and it is still blocking');
+  assert.deepEqual(sent, [], 'and nothing was sent to the child');
+
+  // The way back: restoring puts the prompt over the transcript again.
+  useApp.getState().restoreQuestion();
+  assert.equal(useApp.getState().questionMinimizedId, null);
+  assert.equal(useApp.getState().modal?.kind, 'question');
+  assert.equal(selectModalVisible(useApp.getState()), true);
+
+  // Answering after a minimize is still an answer to the same id.
+  useApp.getState().minimizeQuestion();
+  useApp.getState().answerQuestion('skipped', '');
+  const skip = sent[0] as Extract<FrontendMsg, { t: 'question_response' }>;
+  assert.equal(skip.id, 'q-min-1');
+  assert.equal(skip.status, 'skipped');
+  assert.equal(useApp.getState().modal, null, 'answered: the slot is clear');
+  assert.equal(
+    useApp.getState().questionMinimizedId,
+    null,
+    'and the minimize mark goes with the request',
+  );
+});
+
+test('a second question arrives un-minimized even while the first is put aside', () => {
+  // The id-keying half: the person minimizes a question and never gets to it
+  // again, because the answer comes from a new one. The next request has a
+  // different id, so the mark cannot leak into it — a boolean here would have
+  // needed somebody to remember to clear it on a path nobody owns.
+  resetStore();
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'question_request',
+    id: 'q-a',
+    question: 'a?',
+    header: '',
+    options: [],
+    multi_select: false,
+  } as never);
+  useApp.getState().minimizeQuestion();
+  assert.equal(useApp.getState().questionMinimizedId, 'q-a');
+
+  useApp.getState().applyRuntimeMessage(KEY, {
+    v: 1,
+    t: 'question_request',
+    id: 'q-b',
+    question: 'b?',
+    header: '',
+    options: [],
+    multi_select: false,
+  } as never);
+  // The drawn slot re-aims at the session's first *unanswered* request — which
+  // is still `q-a`, so `q-b` sits behind it. The mark is on `q-a`, and the
+  // slot still holds `q-a`, so the minimized question stays put aside while
+  // the queue behind it grows; answering it brings up `q-b` un-minimized.
+  assert.equal((useApp.getState().modal as { req: { id: string } })?.req.id, 'q-a');
+  assert.equal(useApp.getState().questionMinimizedId, 'q-a', 'the mark follows its own request');
+  useApp.getState().answerQuestion('skipped', '');
+  assert.equal((useApp.getState().modal as { req: { id: string } })?.req.id, 'q-b', 'the next one draws');
+  assert.equal(useApp.getState().questionMinimizedId, null, 'and it is not minimized');
 });
 
 test('the store never writes a runtime fact on its own', () => {
