@@ -2995,6 +2995,10 @@ table.table td.mono {
   flex-direction: column;
   gap: var(--space-1);
   margin-bottom: var(--space-3);
+  /* A refusal is not the thing that gives when the panel runs out of room — it
+     is `flex: none` so the `.wm` grid below it takes the remaining height
+     instead of the banner being squashed. */
+  flex: none;
 }
 
 /* A non-blocking problem is a warning — the kind the runtime reports and then
@@ -3679,27 +3683,65 @@ table.table td.mono {
    editor's), the buttons are `.btn`, the fields are `.cfg-input`, the problem
    banner is `.cfg-problem`. What is added is the layout of this panel, and the
    three controls the other panels do not have: a stepper, a slider, and the
-   review card. */
+   review card.
+
+   **And the columns scroll, not the panel.** With the body left to scroll
+   itself, one scrollbar for the whole surface ran down the panel's edge — the
+   thumb spanned the head and the settings, which reads as "this window scrolls"
+   rather than "this list scrolls", and the card beside it was merely as tall as
+   its last row, so its footer pinned with `margin-top: auto` was never actually
+   at a foot. Handing the height to the two columns (below) is what fixes both.
+   `.dialog-files` is the same decision for a single column.
+
+   It rides its own class rather than `dialog-memory` because that width rung is
+   shared with the code intelligence panel, whose columns carry no `scroll`: for
+   it, the flex rules here are inert and it keeps growing with its content as it
+   always did. And there is **no fixed height** — `.dialog`'s own `max-height`
+   caps the dialog, `flex-shrink` squeezes the body to fit, and a short panel
+   still stops at its content. */
 
 .dialog-memory {
   width: min(1000px, calc(100vw - 48px));
 }
 
+/* A column that hands its height to the grid rather than scrolling itself.
+   `overflow: hidden` is what makes the handover real — without it the grid would
+   be free to be as tall as its content and the body would scroll anyway. The
+   refusal banner above the grid is `flex: none`, so it takes its own line and the
+   grid gets what is left. */
+.dialog-split .dialog-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .wm {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
+  /* **`minmax(0, 1fr)` and not the default `auto`.** An auto row's base size is
+     its content, so a corpus taller than the panel would grow the row past the
+     container — the columns would then be exactly as tall as their content, no
+     item would overflow, and the *body*'s `overflow: hidden` would silently clip
+     the rest. Capping the row at the container's height is what makes the column
+     the thing that overflows, and therefore the thing that scrolls. */
+  grid-template-rows: minmax(0, 1fr);
   gap: var(--space-8);
   align-items: stretch;
+  /* The panel's height rather than its content's, so each column gets the whole
+     of it and can be the thing that scrolls — see `.dialog-split`. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* The left column's own rule, under the panel's description: the settings are a
    page, and a page needs a top edge. The card does not take it — it is a card.
    The save row follows the settings in the normal flow rather than being pinned
-   to the column's foot: the card can grow a great deal taller (a queue of ten
-   proposals), and a footer pinned to *its* bottom would put Save several screens
-   away from the field that was just changed. When the settings are the taller
-   half — the ordinary case, and the design's own — the two bottoms coincide
-   anyway. */
+   to the column's foot: the settings and the Save that applies them are one
+   thing, and a Save stranded at the column's bottom is a button away from the
+   field that was just changed. It carries `scroll` because the two columns are
+   one height now (`dialog-split`): whichever of them is taller than the panel
+   has to give, and it must not be the card, whose own lists are the long half. */
 .wm-main {
   min-width: 0;
   padding-top: var(--space-5);
@@ -3992,6 +4034,29 @@ table.table td.mono {
   padding: var(--space-4);
   border-radius: var(--radius-lg);
   background: var(--bg-muted);
+}
+
+/* **The card absorbs the overflow; its lists scroll.** `.wm` gives this column
+   the panel's whole height, so a corpus taller than the card has to be dealt
+   with here — and the thing that must not give is the index line at the foot
+   (see `.wm-side-body`). Scoped to the split panel: the code intelligence panel
+   wears the same card at the same width but no `scroll`, and it grows with its
+   content, so clipping it here would cut off its last run. */
+.dialog-split .wm-side {
+  overflow: hidden;
+}
+
+/* The scrolling half of the card: the review queue and the record. `flex: 1 1
+   auto` with `min-height: 0` is what lets it be shorter than its content — a
+   flex item's default `min-height: auto` would refuse to shrink and push the
+   index line out of the card instead. It is a flex column itself so the empty
+   state below can stretch and centre, as it did when the card was the scroller. */
+.wm-side-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .wm-side-head {
@@ -4336,7 +4401,13 @@ table.table td.mono {
 }
 
 /* Pinned to the card's foot: the index is a fact about the whole corpus, and it
-   reads as a footer, not as a row of the list above it. */
+   reads as a footer, not as a row of the list above it.
+
+   It is *outside* the card's scroller (`.wm-side-body`), so "pinned" is now a
+   structural fact rather than a sticky trick: the rows scroll in the wrapper
+   above and this line never moves. `margin-top: auto` is what puts it on the
+   floor when the corpus is shorter than the card — without it the line would
+   ride up under the last memory, which is where a row of the list would be. */
 .wm-index {
   margin-top: auto;
   padding-top: var(--space-3);
@@ -4354,6 +4425,13 @@ table.table td.mono {
 @media (max-width: 900px) {
   .wm {
     grid-template-columns: minmax(0, 1fr);
+    /* **Two rows, and both must be declared.** Only the first row is covered by
+       the rule above; a second one would be implicit and therefore `auto`, which
+       is content height — with the panel capped by `.dialog`'s `max-height` and
+       the body's `overflow: hidden`, the lower half would then be clipped rather
+       than scrollable. Stacked, the two halves split the height and each scrolls
+       on its own. */
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
     gap: var(--space-4);
   }
 }

@@ -137,7 +137,7 @@ export function MemoryPanel() {
           <EmptyState title={t('panel.memory.loading')} />
         ) : (
           <div className="wm">
-            <div className="wm-main">
+            <div className="wm-main scroll">
               <div className="wm-legend">{t('panel.memory.behavior')}</div>
               <div className="wm-group">
                 <SwitchRow
@@ -245,51 +245,62 @@ export function MemoryPanel() {
             </div>
 
             <aside className="wm-side">
-              <div className="wm-side-head">
-                <span className="wm-side-title">{t('panel.memory.review')}</span>
-                <span className="wm-pill">{candidates.length}</span>
-              </div>
-              {candidates.length === 0 ? (
-                <div className="wm-side-empty">{t('panel.memory.reviewEmpty')}</div>
-              ) : (
-                candidates.map((candidate) => (
-                  <CandidateItem
-                    key={candidate.id}
-                    candidate={candidate}
-                    open={reading === candidate.id}
-                    onToggle={() => setReading(reading === candidate.id ? null : candidate.id)}
-                    onApprove={() => memoryAction('publish', { proposal_id: candidate.id })}
-                    onDiscard={() => memoryAction('reject', { proposal_id: candidate.id })}
-                  />
-                ))
-              )}
-
-              <div className="wm-side-head wm-side-head-gap">
-                <span className="wm-side-title">{t('panel.memory.recorded')}</span>
-                <span className="wm-pill">{entries.length}</span>
-              </div>
-              {entries.length === 0 ? (
-                <div className="wm-on-empty">
-                  <Inbox size={26} className="wm-on-icon" aria-hidden />
-                  <div className="wm-on-title">{t('panel.memory.empty')}</div>
-                  <div className="wm-on-hint">{t('panel.memory.emptyHint')}</div>
+              {/* **The lists scroll; the card does not.** The panel is a definite
+                * height now (`.dialog-split`), so when the corpus is longer than
+                * the space something has to give — and it must not be the index
+                * line, which is a fact about the whole corpus and reads as the
+                * card's footer. Hence the wrapper: it is the scroller, and the
+                * index line sits outside it, on the card's floor, always in view.
+                * Putting `scroll` on the card itself (or on the panel's body, as
+                * before) gave one scrollbar for the whole surface and scrolled
+                * that fact away with the rows it was describing. */}
+              <div className="wm-side-body scroll">
+                <div className="wm-side-head">
+                  <span className="wm-side-title">{t('panel.memory.review')}</span>
+                  <span className="wm-pill">{candidates.length}</span>
                 </div>
-              ) : (
-                entries.map((entry) => (
-                  <EntryItem
-                    key={entry.id}
-                    entry={entry}
-                    armed={armed?.id === entry.id ? armed : null}
-                    onArm={() => setArmed({ id: entry.id, reason: '' })}
-                    onConfirm={(reason) => {
-                      memoryAction('deprecate', { entry_id: entry.id, reason });
-                      setArmed(null);
-                    }}
-                    onCancel={() => setArmed(null)}
-                    onReason={(reason) => setArmed({ id: entry.id, reason })}
-                  />
-                ))
-              )}
+                {candidates.length === 0 ? (
+                  <div className="wm-side-empty">{t('panel.memory.reviewEmpty')}</div>
+                ) : (
+                  candidates.map((candidate) => (
+                    <CandidateItem
+                      key={candidate.id}
+                      candidate={candidate}
+                      open={reading === candidate.id}
+                      onToggle={() => setReading(reading === candidate.id ? null : candidate.id)}
+                      onApprove={() => memoryAction('publish', { proposal_id: candidate.id })}
+                      onDiscard={() => memoryAction('reject', { proposal_id: candidate.id })}
+                    />
+                  ))
+                )}
+
+                <div className="wm-side-head wm-side-head-gap">
+                  <span className="wm-side-title">{t('panel.memory.recorded')}</span>
+                  <span className="wm-pill">{entries.length}</span>
+                </div>
+                {entries.length === 0 ? (
+                  <div className="wm-on-empty">
+                    <Inbox size={26} className="wm-on-icon" aria-hidden />
+                    <div className="wm-on-title">{t('panel.memory.empty')}</div>
+                    <div className="wm-on-hint">{t('panel.memory.emptyHint')}</div>
+                  </div>
+                ) : (
+                  entries.map((entry) => (
+                    <EntryItem
+                      key={entry.id}
+                      entry={entry}
+                      armed={armed?.id === entry.id ? armed : null}
+                      onArm={() => setArmed({ id: entry.id, reason: '' })}
+                      onConfirm={(reason) => {
+                        memoryAction('deprecate', { entry_id: entry.id, reason });
+                        setArmed(null);
+                      }}
+                      onCancel={() => setArmed(null)}
+                      onReason={(reason) => setArmed({ id: entry.id, reason })}
+                    />
+                  ))
+                )}
+              </div>
 
               <IndexLine index={snapshot.index} />
             </aside>
