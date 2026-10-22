@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
 import { activeRuntime, NO_ENTRIES, NO_NOTES, useApp } from '@/state/store';
@@ -134,6 +134,25 @@ export function App() {
     hasConversation,
   });
 
+  // The hand-off half of the board's card exit: a card press focuses its
+  // session *under the board*, the board closes when the card's exit ends
+  // (`SessionBoard`), and this is the moment the column comes back — so the
+  // whole conversation column rises in over the stream one time. The flag is
+  // cleared by the animation's own end (`.app-conversation`'s
+  // `onAnimationEnd`), so it costs one re-render on the way out. **The board is
+  // the only source:** sidebar switches keep `.app-conversation` mounted and
+  // merely swap the transcript, and animating those would flash a full-column
+  // fade on an ordinary row click. The stream is freshly mounted when the board
+  // closes, so there is nothing to distinguish a board return from a plain
+  // boot-up that never saw a board — and a boot-up plays the same rise, which
+  // is right: it is a view arrival either way.
+  const [streamLift, setStreamLift] = useState(false);
+  const prevView = useRef(view);
+  useEffect(() => {
+    if (prevView.current === 'board' && view === 'stream') setStreamLift(true);
+    prevView.current = view;
+  }, [view]);
+
   // The sidebar has two independent off-switches: the person's preference, and
   // the stylesheet's 1024px rule — which is why the summary row cannot be driven
   // by the preference alone. When the CSS hides the sidebar, the summary must
@@ -216,7 +235,20 @@ export function App() {
               window-wide bar read all four columns as one session's. Its width
               follows `.app-conversation`, so the two sidebars reach the top of
               this row; the facts they would have shown are theirs to draw. */}
-          <div className="app-conversation">
+          <div
+            className={`app-conversation${streamLift ? ' is-lifting' : ''}`}
+            // The rise is one play, so the class must come off when the
+            // animation ends or a later return from the board would find no
+            // animation left to run (a class that is already applied does not
+            // restart). The event is the animation's own, not a timer — and
+            // `animationend` **bubbles**, so the name check is what keeps a
+            // one-shot animation playing somewhere in the transcript (a step
+            // sliding in, the fold row revealing) from clearing the class
+            // mid-rise and popping the column back to its final frame.
+            onAnimationEnd={(e) => {
+              if (streamLift && e.animationName === 'stream-rise') setStreamLift(false);
+            }}
+          >
             <SessionBar canFind={showsTranscript(view)} />
             {/* The summary row stands in for the right rail once it is folded,
                 so it is drawn **under the session bar and inside the

@@ -206,6 +206,29 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
   overflow: hidden;
 }
 
+/* The hand-off half of the session board's card exit (App.tsx, `streamLift`):
+   the pressed card shrank away (`card-exit`, board.css), the board lifted, and
+   the column comes back — rising 8px with a fade, the window's own entrance
+   vocabulary (`--motion-base` + `--ease-out`, the same pair as `board-in`).
+   One-shot, `transform`/`opacity` only, so it composites and never reflows the
+   rails beside it. The class is removed by the animation's own end event, and
+   `prefers-reduced-motion` needs no case: the global rule (below) zeroes the
+   duration and the column lands in one frame. */
+.app-conversation.is-lifting {
+  animation: stream-rise var(--motion-base) var(--ease-out) 1;
+}
+
+@keyframes stream-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .app-sidebar {
   /* A **definite** width, taken from the wrapper's variable so there is exactly
      one number per rail. The rail is a plain block now, not a flex item: it is

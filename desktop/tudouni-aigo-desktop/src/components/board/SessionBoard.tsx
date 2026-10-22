@@ -71,6 +71,63 @@ export function SessionBoard() {
   const detachSession = useApp((s) => s.detachSession);
 
   /**
+   * The card the board is leaving through, and whether its exit is still playing.
+   *
+   * Clicking a card is the board's second exit — the one with a destination —
+   * so the board is the **only** path whose close waits: the pressed card first
+   * plays its `card-exit` (a 120ms shrink-and-fade, exit vocabulary), and the
+   * board closes when the animation ends. `focusSession` runs immediately, so
+   * the stream is already built when the board lifts and the column's entrance
+   * (`App.tsx`, `streamLift`) plays on top of it — card goes, conversation rises.
+   *
+   * Esc, the close control and the tray path all keep their instant close: they
+   * have no destination to hand off to, and a 120ms delay on a plain close is
+   * lag, not motion. The second click during the exit is a no-op by
+   * construction (`leaving` is already non-null), and the timer below is
+   * harmless: unmounting the board on close drops it before it can double the
+   * close.
+   */
+  const [leaving, setLeaving] = useState<string | null>(null);
+
+  // The exit's end is the close: the pressed card's `card-exit` finishes, the
+  // board goes down, and the stream's entrance plays over the already-focused
+  // conversation. A card that was re-parented mid-exit by a status change is a
+  // fresh node whose animation never started, so its end never comes — which
+  // is why the timeout below still exists. `prefers-reduced-motion` shortens
+  // the duration to a single frame (global.css) but the event still fires, so
+  // there is nothing to special-case.
+  useEffect(() => {
+    if (leaving === null) return;
+    const el = cardEls.current.get(leaving);
+    if (el === undefined) {
+      // The card's node is already gone (its column emptied while it shrank):
+      // nothing to wait for.
+      setBoardOpen(false);
+      setLeaving(null);
+      return;
+    }
+    const done = (ev: AnimationEvent) => {
+      if (ev.target !== el || ev.animationName !== 'card-exit') return;
+      el.removeEventListener('animationend', done);
+      clearTimeout(fallback);
+      setBoardOpen(false);
+      setLeaving(null);
+    };
+    el.addEventListener('animationend', done);
+    // The fallback is the animation's own duration plus the slack a second
+    // frame can take, so it only runs when the event truly never will.
+    const fallback = window.setTimeout(() => {
+      el.removeEventListener('animationend', done);
+      setBoardOpen(false);
+      setLeaving(null);
+    }, 200);
+    return () => {
+      el.removeEventListener('animationend', done);
+      clearTimeout(fallback);
+    };
+  }, [leaving, setBoardOpen]);
+
+  /**
    * The Idle column's bulk-close prompt: the rows it was raised for, or null.
    *
    * **Board state, not store state.** The question is about this column's own
@@ -537,16 +594,23 @@ export function SessionBoard() {
                       if (el === null) cardEls.current.delete(card.key);
                       else cardEls.current.set(card.key, el);
                     }}
-                    className={`board-card${isCurrent ? ' is-current' : ''}${isAsking ? ' is-asking' : ''}${card.status === 'running' ? ' is-running' : ''}`}
+                    className={`board-card${isCurrent ? ' is-current' : ''}${isAsking ? ' is-asking' : ''}${card.status === 'running' ? ' is-running' : ''}${card.key === leaving ? ' is-leaving' : ''}`}
                     aria-current={isCurrent ? 'true' : undefined}
                     // Clicking a card is the board's second exit and the more
                     // useful one: it focuses that conversation's chat and closes
                     // the board. Focusing also clears that session's `unseen`,
                     // which is exactly the natural end of "it finished and I had
                     // not looked" — see `focusSession`.
+                    //
+                    // The close is the **card's** act, not the click's: the
+                    // pressed card plays its exit first (`leaving`), and the
+                    // board follows it — see the effect above. The other paths
+                    // (Esc, the close control) still drop the board instantly,
+                    // because they have no destination to hand off to.
                     onClick={() => {
+                      if (leaving !== null) return;
                       focusSession(card.key);
-                      setBoardOpen(false);
+                      setLeaving(card.key);
                     }}
                     // The card's third exit is a right-click: archive and
                     // delete, on the card itself. Offered only when the card
@@ -556,6 +620,9 @@ export function SessionBoard() {
                     // simply stays).
                     onContextMenu={(e) => {
                       if (card.id === null) return;
+                      // No menu over a board that is already closing: it would
+                      // open on a surface that will not be here in 120ms.
+                      if (leaving !== null) return;
                       e.preventDefault();
                       // Clamped so the menu never opens off the window edge:
                       // ~the menu's own footprint in each axis.
