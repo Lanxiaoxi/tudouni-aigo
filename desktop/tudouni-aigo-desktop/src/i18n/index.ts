@@ -176,7 +176,7 @@ export const en = {
    *  the three lines below are the tooltip, one fact per line. */
   'status.resources': 'CPU {cpu} · {mem}',
   'status.resourcesCpu': 'CPU: shell {shellCpu} · runtimes {runtimesCpu} of the machine',
-  'status.resourcesMem': 'Memory: shell {shellMem} · runtimes {runtimesMem}',
+  'status.resourcesMem': 'Memory: shell {shellMem} · runtimes {runtimesMem} · webview {webviewMem}',
   'status.resourcesSystem': 'System memory in use: {systemUsed} of {systemTotal}',
   'status.audit': 'audit log',
   'status.runtimeGone': 'Runtime exited (code {code})',

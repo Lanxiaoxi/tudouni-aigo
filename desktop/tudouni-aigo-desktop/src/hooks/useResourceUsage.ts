@@ -13,6 +13,10 @@ export interface ResourceUsageView {
   shellMem: number;
   runtimesCpu: number;
   runtimesMem: number;
+  /** The WebView2 processes that render the window: not shell children, so
+   *  the host samples them by their user-data-dir. Zero off Windows, where
+   *  the shell process already accounts for the webview. */
+  webviewMem: number;
   systemMemUsed: number;
   systemMemTotal: number;
 }

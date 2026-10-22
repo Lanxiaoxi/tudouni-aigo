@@ -3316,6 +3316,12 @@ struct ResourceUsage {
     runtimes_cpu: f64,
     /// Their memory summed.
     runtimes_mem: u64,
+    /// The WebView2 processes that render this window (manager, GPU, network,
+    /// storage, the render process) summed. They are **not** shell children —
+    /// WVR creates them out-of-process — so the pid scan above never saw them,
+    /// and a figure that omitted them understated the application by the size
+    /// of the whole UI.
+    webview_mem: u64,
     /// Memory in use by the whole system, in bytes.
     system_mem_used: u64,
     /// Total physical memory, in bytes.
@@ -3376,9 +3382,71 @@ fn resource_usage(app: AppHandle) -> Result<ResourceUsage, String> {
         shell_mem: own.1,
         runtimes_cpu,
         runtimes_mem,
+        webview_mem: webview_processes(&system),
         system_mem_used: system.used_memory(),
         system_mem_total: system.total_memory(),
     })
+}
+
+/// The memory held by the WebView2 processes that render this window.
+///
+/// Those processes are **not in the bridge's child list**: the WebView2
+/// runtime spawns its manager itself (as a child of this process), and its
+/// GPU, network, storage and render processes descend from the manager — so a
+/// sum that stopped at the shell and its runtimes understates the application
+/// by the whole UI, the very processes the task manager's WebView2 group
+/// shows.
+///
+/// Identification is by **process tree**, not by name alone: every WebView2
+/// app on the machine runs processes named `msedgewebview2.exe`, and only the
+/// ones descended from this shell are ours. Walking down from our pid rather
+/// than matching a command-line marker is also what sysinfo 0.33 allows —
+/// it dropped `cmdline()`, and the tree is the fact it still reports.
+///
+/// CPU is deliberately left out: the render process's CPU *is* the UI's, and
+/// "how busy is this application" already reads from the shell.
+#[cfg(windows)]
+fn webview_processes(system: &System) -> u64 {
+    let own = std::process::id();
+    // Every process in this shell's subtree, at any depth: the manager is
+    // level one, the utility and render processes level two.
+    let mut subtree: HashSet<u32> = HashSet::new();
+    let mut frontier: Vec<u32> = vec![own];
+    while let Some(parent) = frontier.pop() {
+        for (pid, process) in system.processes() {
+            let cur = pid.as_u32();
+            if cur == own {
+                continue;
+            }
+            let is_child = process
+                .parent()
+                .is_some_and(|par| par.as_u32() == parent);
+            if !is_child {
+                continue;
+            }
+            if subtree.insert(cur) {
+                frontier.push(cur);
+            }
+        }
+    }
+
+    let mut mem: u64 = 0;
+    for (pid, process) in system.processes() {
+        if !subtree.contains(&pid.as_u32()) {
+            continue;
+        }
+        if process.name().to_string_lossy().to_lowercase().contains("webview2") {
+            mem += process.memory();
+        }
+    }
+    mem
+}
+
+// No WebView2 off Windows: the webview is the platform's own toolkit and the
+// shell process already accounts for it.
+#[cfg(not(windows))]
+fn webview_processes(_system: &System) -> u64 {
+    0
 }
 
 /* ============================================================

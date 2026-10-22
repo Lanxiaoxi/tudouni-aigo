@@ -255,6 +255,7 @@ export function StatusBar() {
                 {t('status.resourcesMem', {
                   shellMem: formatBytes(resources.shellMem),
                   runtimesMem: formatBytes(resources.runtimesMem),
+                  webviewMem: formatBytes(resources.webviewMem),
                 })}
                 <br />
                 {t('status.resourcesSystem', {
@@ -269,7 +270,11 @@ export function StatusBar() {
               <span className="st-metric">
                 {t('status.resources', {
                   cpu: formatCpu(resources.shellCpu + resources.runtimesCpu),
-                  mem: formatBytes(resources.shellMem + resources.runtimesMem),
+                  // The webview has no CPU of its own on this line: its render
+                  // process is the UI, and the shell is the application.
+                  mem: formatBytes(
+                    resources.shellMem + resources.runtimesMem + resources.webviewMem,
+                  ),
                 })}
               </span>
             </span>
