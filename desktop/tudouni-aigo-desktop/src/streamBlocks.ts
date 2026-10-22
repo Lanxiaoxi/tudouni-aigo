@@ -213,6 +213,90 @@ export function blockKey(block: StreamBlock): string {
 }
 
 /* ============================================================
+   Simple quiet mode's step status
+   ============================================================ */
+
+/** The one line a simple-quiet step head says, computed from the block. */
+export interface SimpleStepStatus {
+  /**
+   * `executing` while the step's work is not all settled; `done` when it is;
+   * `denied` when every tool that arrived was refused — the state "Done"
+   * must never claim, because no work ran.
+   */
+  state: 'executing' | 'done' | 'denied';
+  /** The tool names the step ran (or is running), arrival order, de-duplicated. */
+  names: string[];
+  /** Deliverables a settled call declared: the turn's result, so they are
+   *  carried here and survive the rows being hidden. */
+  deliverables: Deliverable[];
+}
+
+/**
+ * What the step card's head line says under **simple** quiet mode.
+ *
+ * The rule the head lives or dies by: **the absence of tool rows is itself
+ * the in-flight state.** The runtime emits a step's `model_call` record
+ * *before* that step's tool events (see the wire note at the top of this
+ * file), so the moment a card materialises its tools are still on their way.
+ * Drawing "Completed" on a card that has no work is the bug this function
+ * exists to keep out of the renderer — the first version of the simple head
+ * settled exactly there, and the fix cannot be a rendering branch because a
+ * branch nobody asserts will drift again.
+ *
+ * Both row shapes are read: quiet mode rolls consecutive tool rows into a
+ * group *before* the partition runs, so under it the tools ride inside
+ * `row.entries` and a scan that only reads `entry` rows counts none of them
+ * — the card would sit on "Executing …" for the whole turn.
+ */
+export function simpleStepStatus(
+  block: Extract<StreamBlock, { kind: 'step' }>,
+): SimpleStepStatus {
+  const toolEntries: Extract<Entry, { kind: 'tool' }>[] = [];
+  for (const row of block.rows) {
+    if (row.kind === 'entry' && row.entry.kind === 'tool') toolEntries.push(row.entry);
+    else if (row.kind === 'quiet') {
+      for (const entry of row.entries) {
+        if (entry.kind === 'tool') toolEntries.push(entry);
+      }
+    }
+  }
+
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const deliverables: Deliverable[] = [];
+  let settledRan = 0;
+  let settledDenied = 0;
+  let unsettled = 0;
+  for (const entry of toolEntries) {
+    if (!seen.has(entry.tool)) {
+      seen.add(entry.tool);
+      names.push(entry.tool);
+    }
+    const result = entry.result;
+    if (result === null) {
+      unsettled += 1;
+      continue;
+    }
+    if (result.status === 'denied') {
+      settledDenied += 1;
+    } else {
+      // A settled call that was not refused: it ran, whatever it returned.
+      settledRan += 1;
+    }
+    const declared = result.deliverables;
+    if (declared) deliverables.push(...declared);
+  }
+
+  if (block.running || unsettled > 0 || toolEntries.length === 0) {
+    return { state: 'executing', names, deliverables };
+  }
+  if (settledRan === 0) {
+    return { state: 'denied', names, deliverables };
+  }
+  return { state: 'done', names, deliverables };
+}
+
+/* ============================================================
    Turn sections — a turn head and the body it folds
    ============================================================ */
 

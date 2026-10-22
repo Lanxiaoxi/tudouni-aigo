@@ -12,6 +12,7 @@ import { TurnRail } from './TurnRail';
 import { MIN_RAIL_TURNS, turnRail, LANDING_PX } from '@/turnRail';
 import {
   blockKey,
+  simpleStepStatus,
   streamBlocks,
   streamSections,
   type StreamBlock,
@@ -19,7 +20,7 @@ import {
   type StreamSection,
 } from '@/streamBlocks';
 import { formatDuration, formatTokens, tokPerSecond } from '@/utils/format';
-import type { Deliverable, Entry } from '@/state/entries';
+import type { Entry } from '@/state/entries';
 
 /**
  * §1·3 Main area / §2 the session stream.
@@ -387,28 +388,25 @@ function StepBlock({ block }: { block: Extract<StreamBlock, { kind: 'step' }> })
       figures, no rows. What the head says is what the person asked for:
       "Executing grep, shell, edit_file" while the work is in flight,
       "Done: grep, shell, edit_file" once it is over, and never the token
-      counts the normal head carries. The tools are walked from the rows in
-      arrival order, a name at most once each (a retried call names its tool
-      twice), and a call that declared a deliverable keeps its cards — a
-      declaration is the turn's result, and simple mode must not be the place
-      it goes missing. */
+      counts the normal head carries. */
   if (quiet === 'simple') {
-    const names: string[] = [];
-    const seen = new Set<string>();
-    const deliverables: Deliverable[] = [];
-    let unfinished = false;
-    for (const row of block.rows) {
-      if (row.kind !== 'entry') continue;
-      if (row.entry.kind !== 'tool') continue;
-      if (!seen.has(row.entry.tool)) {
-        seen.add(row.entry.tool);
-        names.push(row.entry.tool);
-      }
-      if (row.entry.result === null) unfinished = true;
-      const declared = row.entry.result?.deliverables;
-      if (declared) deliverables.push(...declared);
+    const status = simpleStepStatus(block);
+    let statusText: string;
+    if (status.state === 'executing') {
+      statusText = t('entry.simpleStepExecuting', {
+        tools: status.names.length > 0 ? status.names.join(', ') : '…',
+      });
+    } else if (status.state === 'denied') {
+      // Tools arrived but none of them ran: every call was refused. "Done"
+      // would claim work that the runtime decided against.
+      statusText = t('entry.toolResultDenied');
+    } else if (status.names.length > 0) {
+      statusText = t('entry.simpleStepDone', { tools: status.names.join(', ') });
+    } else {
+      statusText = t('entry.simpleStepDonePlain');
     }
-    const executing = block.running || unfinished;
+    const executing = status.state === 'executing';
+    const deliverables = status.deliverables;
     return (
       <section
         className={`e-step${block.running ? ' is-running' : ''}${
@@ -422,13 +420,7 @@ function StepBlock({ block }: { block: Extract<StreamBlock, { kind: 'step' }> })
             <Sparkles size={11} className="e-step-icon" />
           )}
           <span className="e-step-title">{t('entry.model')}</span>
-          <span className="e-step-metrics">
-            {executing
-              ? t('entry.simpleStepExecuting', { tools: names.length > 0 ? names.join(', ') : '…' })
-              : names.length > 0
-                ? t('entry.simpleStepDone', { tools: names.join(', ') })
-                : t('entry.simpleStepDonePlain')}
-          </span>
+          <span className="e-step-metrics">{statusText}</span>
         </header>
         {deliverables.length > 0 ? <DeliverableCards files={deliverables} /> : null}
       </section>

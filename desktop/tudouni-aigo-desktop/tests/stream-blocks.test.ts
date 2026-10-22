@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { applyDelta, applyFinalAnswer, reduceEvent, type Entry, type LooseEvent } from '@/state/entries';
-import { streamBlocks, type StreamRow } from '@/streamBlocks';
+import { simpleStepStatus, streamBlocks, type StreamBlock, type StreamRow } from '@/streamBlocks';
 
 /* ============================================================
    helpers
@@ -268,4 +268,125 @@ test('quiet rollups ride inside their call block; orphans stay loose', () => {
   ]);
   assert.equal(orphanOnly.length, 1);
   assert.equal(orphanOnly[0].kind, 'entry');
+});
+
+/* ============================================================
+   simple quiet mode's step status
+   ============================================================ */
+
+/** A step block built directly: `simpleStepStatus` reads only `rows`/`running`. */
+function stepBlock(rows: StreamRow[], running = false): Extract<StreamBlock, { kind: 'step' }> {
+  return { kind: 'step', key: 'step-test', rows, metrics: NO_BLOCK_METRICS, running };
+}
+
+const NO_BLOCK_METRICS = {
+  durationMs: null,
+  inputTokens: null,
+  cachedTokens: null,
+  completionTokens: null,
+};
+
+function toolEntry(
+  id: string,
+  tool: string,
+  result: null | { status: string; deliverables?: { path: string; description: string }[] },
+): Entry {
+  return {
+    kind: 'tool',
+    id,
+    runId: 'r1',
+    step: 0,
+    index: 0,
+    callId: `c-${id}`,
+    tool,
+    arguments: '{}',
+    risk: 'low',
+    parallelSafe: false,
+    interactive: false,
+    external: false,
+    result,
+  };
+}
+
+test('a fresh card with no work rows yet is executing, never completed', () => {
+  // The wire order: a step's `model_call` record lands *before* its tool
+  // events, and the record already carries a duration, so `running` is false
+  // the moment the block is a card. The first version of the simple head
+  // settled exactly here and drew "Completed" over a call whose tools had not
+  // even arrived — the screenshot bug this suite exists to keep out.
+  const status = simpleStepStatus(stepBlock([{ kind: 'entry', key: 'perm-1', entry: {
+    kind: 'perm', id: 'perm-1', runId: 'r1', step: 0, tool: 'shell', risk: null,
+    decision: 'allow', outcome: 'auto', waitedMs: null, rule: null, remembered: [],
+  } as Entry }], false));
+  assert.equal(status.state, 'executing');
+  assert.deepEqual(status.names, []);
+});
+
+test('an unsettled tool keeps the step executing and names it', () => {
+  const status = simpleStepStatus(
+    stepBlock([
+      { kind: 'entry', key: 't1', entry: toolEntry('t1', 'shell', null) },
+      { kind: 'entry', key: 't2', entry: toolEntry('t2', 'grep', null) },
+    ], true),
+  );
+  assert.equal(status.state, 'executing');
+  assert.deepEqual(status.names, ['shell', 'grep']);
+});
+
+test('a settled step is done and names the tools in arrival order, de-duplicated', () => {
+  const status = simpleStepStatus(
+    stepBlock([
+      { kind: 'entry', key: 't1', entry: toolEntry('t1', 'grep', { status: 'ok' }) },
+      { kind: 'entry', key: 't2', entry: toolEntry('t2', 'grep', { status: 'ok' }) },
+      { kind: 'entry', key: 't3', entry: toolEntry('t3', 'edit_file', { status: 'error' }) },
+    ]),
+  );
+  assert.equal(status.state, 'done');
+  // `error` still **ran**: done counts calls that executed, whatever they
+  // returned — the badge in normal mode is where the failure is spelled out.
+  assert.deepEqual(status.names, ['grep', 'edit_file']);
+});
+
+test('tools inside a quiet group are read, not missed', () => {
+  // Quiet mode rolls consecutive tool rows into a group before the partition
+  // runs. A scan that only read `entry` rows would count no tools and the
+  // card would sit on "Executing …" for the whole turn.
+  const status = simpleStepStatus(
+    stepBlock([
+      {
+        kind: 'quiet',
+        key: 'quiet-t1',
+        entries: [toolEntry('t1', 'shell', { status: 'ok' }), toolEntry('t2', 'edit_file', { status: 'ok' })],
+      },
+    ]),
+  );
+  assert.equal(status.state, 'done');
+  assert.deepEqual(status.names, ['shell', 'edit_file']);
+});
+
+test('a step whose every tool was refused is denied, not done', () => {
+  const status = simpleStepStatus(
+    stepBlock([
+      { kind: 'entry', key: 't1', entry: toolEntry('t1', 'shell', { status: 'denied' }) },
+    ]),
+  );
+  assert.equal(status.state, 'denied');
+});
+
+test('deliverables ride out of a hidden body', () => {
+  const status = simpleStepStatus(
+    stepBlock([
+      {
+        kind: 'entry',
+        key: 't1',
+        entry: toolEntry('t1', 'present', {
+          status: 'ok',
+          deliverables: [{ path: 'out/chart.png', description: '' }],
+        }),
+      },
+    ]),
+  );
+  assert.equal(status.state, 'done');
+  assert.equal(status.deliverables.length, 1);
+  assert.equal(status.deliverables[0].path, 'out/chart.png');
 });
