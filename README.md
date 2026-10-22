@@ -138,6 +138,66 @@ and the Responses shape take `Authorization: Bearer <key>`; the Messages shape t
 one thing here that fails in a way that names the wrong cause — the endpoint answers
 "Missing API key" while the key is sitting in the request.
 
+## Drawing pictures
+
+`vision` is the **input** side — a picture goes in, text and tool calls come out.
+`generate_image` is the **output** side — text goes in, a picture comes out. They are
+orthogonal, and they are joined the way any other capability is joined: as a tool.
+
+The route is a **top-level section**, not an entry in `providers[].models[]`:
+
+```jsonc
+{
+  "image_generation": {
+    "provider": "openai",
+    "model": "gpt-image-1"
+  }
+}
+```
+
+`provider` names a chat route to inherit the key and the endpoint from, so **one key
+is written once**. `model` is required and is never inherited — the chat route's model
+is a different model. Write `base_url` / `api_key` / `headers` here to override what
+was inherited, which is what you want when the generation endpoint is not the chat
+endpoint: some gateways serve only one of the two, and an inherited `base_url` then
+answers 404 for `/images/generations`. The error message names the URL that was
+actually used, so that 404 is a report rather than a mystery.
+
+`api_style` defaults to `openai-images` (`POST base_url/images/generations`), the only
+dialect in this build.
+
+Leave the section out and `generate_image` is **not registered** — the capability is
+simply not there, and one startup line says so. It is not in `/model` either, and
+that is deliberate: `providers[].models[]` is a list of models that may be *chosen as
+the conversation model*, and a picture model in that list would be selectable and then
+fail every chat request.
+
+**The picture is a file, not a message.** It lands in the workspace as
+`out/poster.png`, so it can be shown with `![](out/poster.png)`, declared with
+`present`, opened with the system viewer, and found again in a later session. Three
+numbers, all different, because they answer three different questions:
+
+| | value | question |
+| --- | --- | --- |
+| `MaxGeneratedImageBytes` | 20MB | may this file be written into the workspace? |
+| `content.MaxImageBytes` | 5MB | may this picture go into a request? |
+| the desktop's inline limit | 5MB | may it be drawn inside the window? |
+
+A picture between the two sizes is legal: it is written, it opens, and it simply
+cannot be shown inline or handed to the model.
+
+The tool asks for `prompt` and `path` (and an optional `orientation` of `square`,
+`landscape` or `portrait` — never a ratio, because the endpoints offer three sizes and
+nothing else). It is **medium risk**, so it asks for approval once per call: every
+call costs money on your account. It generates **at most four pictures per turn**,
+which is a budget and not a style preference — the step ceiling is 120, and for a
+tool where every call costs money that is no ceiling at all.
+
+When the conversation model can see pictures, the tool hands the bytes back to it, so
+the model can look at what it drew and redraw it. When it cannot, the bytes are not
+returned — the model would store an artifact and be handed a sentence saying "this
+model cannot see pictures", which is money spent to produce a sentence.
+
 Three tools check a configuration without starting a session. They answer three
 different questions, which is why there are three:
 
@@ -300,9 +360,10 @@ Both capabilities are also inside the agent's reach already: the file tools and
 `read_file`, `write_file`, `edit_file`, `list_files`, `present`, `shell`, `grep`,
 `get_current_time`, `ask_user`, `todo_write`; `shell_background`, `job_output`,
 `job_list`, `job_kill` for work that outlives one step; `web_search` and
-`fetch_web`; `load_skill`; and `subagent`, which hands a self-contained task to a
-fresh agent. The registry sorts by name, so the schema the model sees is stable
-between runs and a diff of two sessions means something.
+`fetch_web`; `load_skill`; `generate_image`, when an image route is configured; and
+`subagent`, which hands a self-contained task to a fresh agent. The registry sorts by
+name, so the schema the model sees is stable between runs and a diff of two sessions
+means something.
 
 `present` is the one file tool that reads nothing and writes nothing: it declares
 files that are already there as the turn's result, and the front end draws a card
@@ -314,10 +375,11 @@ rather than becoming a way to get a person to open something the agent may not
 touch.
 
 A tool is **absent from the schema, never present and broken**. `grep` without a
-vendored ripgrep for the platform, `web_search` without a key, `load_skill` in a
-workspace with no skills — each one is left out and the startup notice says why.
-A tool the model can see but that can only answer "not configured" costs a round
-trip every time it is tried, and teaches it that tools lie.
+vendored ripgrep for the platform, `web_search` without a key, `generate_image`
+without an image route, `load_skill` in a workspace with no skills — each one is left
+out and the startup notice says why. A tool the model can see but that can only answer
+"not configured" costs a round trip every time it is tried, and teaches it that tools
+lie.
 
 **A tool declares its own risk** (low/medium/high) and the registry refuses to
 build without one, because a missing level would silently land on low. Only low
@@ -393,6 +455,7 @@ internal/protocol/    the JSONL contract: codec, server, client, transport
 internal/runtime/     assembly: config, permissions, notices, the runtime itself
 internal/agent/       the loop: model call, tools, model call, until answered
 internal/model/       the one place that knows what a completion looks like
+internal/imagegen/    the same for pictures: the generation route and its dialects
 internal/tools/       the tool framework, the workspace boundary, the builtins
 internal/security/    policy, gate, command rules, the approval memory
 internal/state/       session store, model catalogue, counters, goals

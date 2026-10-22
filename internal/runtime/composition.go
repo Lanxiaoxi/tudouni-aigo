@@ -259,6 +259,26 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	codeIntelEnabled := codeintel.Enabled(workspace.Root())
 	runtimeValue.CodeIntel = newCodeIntelState(workspace, refresher, codeIntelEnabled)
 
+	// The image-generation route. It is **optional**, and its absence is a
+	// normal state rather than a problem: the capability was never promised,
+	// so a machine without it is not broken. The tool is simply not
+	// registered, and one info notice says so.
+	//
+	// The client is built here rather than inside the registry because it owns
+	// an HTTP client and a route, and the registry has no business knowing
+	// about either — the same reason the network tools are built here.
+	imageClient, err := runtimeValue.buildImageClient(catalog)
+	if err != nil {
+		jobs.Close()
+		return nil, err
+	}
+
+	// The turn's id, for the picture counter. It is filled in once the agent
+	// exists, which is why it is a holder rather than a method call: the
+	// registry is built before the agent, because the registry's tools are
+	// the agent's tools.
+	runIDHolder := &runIDHolder{}
+
 	registry, err := builtin.CreateRegistry(builtin.Assembly{
 		Workspace:        workspace,
 		TodoMetadata:     session.Metadata,
@@ -270,7 +290,26 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		SkillMetadata:    session.Metadata,
 		CodeIntel:        refresher,
 		CodeIntelEnabled: codeIntelEnabled,
-		Extra:            extra,
+		ImageGen:         imageClient,
+		// The vision gate. It is a **function**, not a bool, for the same
+		// reason the agent's own copy is: the model can be switched
+		// mid-session, and a bool captured here would answer for the model
+		// this session started on.
+		Vision: runtimeValue.modelVision,
+		// The turn's id, for the picture counter.
+		//
+		// It is a **holder** rather than the agent's own method, and the reason
+		// is the order assembly happens in: the agent is built after the
+		// registry, because the registry's tools are the agent's tools. So the
+		// value is fetched through a pointer that is filled in later — the same
+		// trick `artifactImages` uses for the picture loader, and for the same
+		// reason.
+		//
+		// Reading a nil agent would crash, so the holder reads a field rather
+		// than a method: a missing agent means "no turn has run yet", and the
+		// empty id is the honest answer for that.
+		RunID: runIDHolder.ID,
+		Extra: extra,
 	})
 	if err != nil {
 		jobs.Close()
@@ -378,6 +417,18 @@ func OpenRuntime(options Options) (*Runtime, error) {
 			runtimeValue.notices = append(runtimeValue.notices, notice("warn", "codeintel",
 				i18n.T("notice.codeintel.no_index",
 					"path", filepath.ToSlash(cggraph.IndexDirName+"/"+cggraph.DefaultDBName))))
+		case builtin.GenerateImageToolName:
+			// **Info, not a warning.** Image generation was never promised, so
+			// a machine without it is not broken — it is a machine where that
+			// capability is not present. `web_search` is a warning because
+			// people believe it can be used; this one was never on the table.
+			//
+			// And the case **has** to be here: without it this switch would fall
+			// through to the default branch and tell the user their ripgrep
+			// build was missing, which is a lie — the same trap `code_explore`
+			// fell into before it got its own case.
+			runtimeValue.notices = append(runtimeValue.notices, notice("info", "image",
+				i18n.T("notice.imagegen.unconfigured", "path", paths.ExampleConfigPath())))
 		default:
 			if triple, ok := hostTriple(); ok {
 				runtimeValue.notices = append(runtimeValue.notices, notice("warn", "grep",
@@ -554,6 +605,11 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		// sent to a model nobody promised could see, and the session keeps working.
 		Vision: runtimeValue.modelVision,
 	})
+	// The agent exists now, so the turn's id can be read through it. The
+	// holder is filled in **after** the agent is built, and it is read by the
+	// picture counter — which compares the id rather than being reset, so a
+	// turn that ends without anybody saying so still resets the count.
+	runIDHolder.agent = runtimeValue.Agent
 	runtimeValue.OnEventHook = options.OnEventHook
 	runtimeValue.onTerminalEvent = options.OnTerminalEvent
 	runtimeValue.onCodeIntelEvent = options.OnCodeIntelEvent

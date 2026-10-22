@@ -311,6 +311,17 @@ func (a *Agent) OfferedEffortLevels() []string {
 	return a.EffortLevels
 }
 
+// RunID is the identifier of the current turn.
+//
+// It is exported because a tool has to be able to tell one turn from another,
+// and the picture counter is the case in point: it counts its calls per turn by
+// **comparing** this value rather than by being reset, so that no turn can end
+// without the counter noticing. See `builtin.NewGenerateImage`.
+//
+// It is empty before the first turn runs, which is the honest answer: there is
+// no turn yet.
+func (a *Agent) RunID() string { return a.runID }
+
 // Run executes one turn and returns the answer.
 func (a *Agent) Run(ctx context.Context, userInput string) (string, error) {
 	return a.RunMessages(ctx, []map[string]any{{"role": "user", "content": userInput}})
@@ -968,9 +979,21 @@ func interruptedCallText(tool string) string {
 // withhold: a round could then start, redefine or resume a goal on its own
 // authority, because it had read a picture.
 func (a *Agent) imageMessage(batch []prepared) map[string]any {
-	var pictures []tools.ImageContent
+	type sourced struct {
+		picture tools.ImageContent
+		// source is the tool that produced this picture. It is the **call's**
+		// name rather than a fixed one, because there is more than one tool
+		// that can produce a picture now: `read_image` reads one and
+		// `generate_image` draws one. Hard-coding the reader's name made the
+		// audit say a generated picture had been "read", which is a lie in the
+		// one place somebody would go looking for it.
+		source string
+	}
+	var pictures []sourced
 	for index := range batch {
-		pictures = append(pictures, batch[index].images...)
+		for _, picture := range batch[index].images {
+			pictures = append(pictures, sourced{picture: picture, source: batch[index].call.Name})
+		}
 	}
 	if len(pictures) == 0 {
 		return nil
@@ -990,16 +1013,21 @@ func (a *Agent) imageMessage(batch []prepared) map[string]any {
 
 	body := content.Content{}
 	seen := map[string]bool{}
-	for _, picture := range pictures {
+	for _, item := range pictures {
+		picture := item.picture
+		source := item.source
+		if source == "" {
+			source = "read_image"
+		}
 		artifact, err := ctxwin.AttachImage(a.Context.Store, picture.Body, ctxwin.ArtifactSource{
-			Tool: "read_image",
+			Tool: source,
 			Path: picture.Path,
 		})
 		if err != nil {
 			// One picture that cannot be stored must not lose the others, and the
 			// model is told **which** one: a bare "it failed" sends it looking for a
 			// problem it cannot see.
-			a.reportToStderr(fmt.Sprintf("read_image could not store %s: %v", picture.Path, err))
+			a.reportToStderr(fmt.Sprintf("%s could not store %s: %v", source, picture.Path, err))
 			body = body.WithText(fmt.Sprintf("（%s 读到了，但没能存进上下文：%v）", picture.Name, err))
 			continue
 		}

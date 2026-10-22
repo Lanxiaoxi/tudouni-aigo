@@ -56,7 +56,13 @@ var topKeys = map[string]bool{
 	"providers": true,
 	"web":       true,
 	"ui":        true,
-	"$comment":  true,
+	// image_generation is the route that generates pictures. It is a **top-level**
+	// section rather than an entry in `providers[].models[]`, and the reason is
+	// that section is a list of models that may be *chosen as the conversation
+	// model*: putting `gpt-image-1` there would make it show up in `/model`,
+	// let it be picked, and then fail every single chat request.
+	"image_generation": true,
+	"$comment":         true,
 }
 
 // Error is raised when the configuration cannot be understood.
@@ -101,6 +107,13 @@ type UserConfig struct {
 	ProviderOrder []string
 	// Web is the raw `web` section, flattened to string values.
 	Web map[string]string
+	// ImageGeneration is the raw `image_generation` section.
+	//
+	// It is kept **uninterpreted**, exactly like `Providers`: the reading of
+	// these keys — which route to inherit from, which dialect to speak, what
+	// to override — is the state layer's business, and a second reader of the
+	// same map would be a second answer to "which endpoint generates pictures".
+	ImageGeneration map[string]any
 	// UI is the raw `ui` section. Retained only so UiLanguageIgnored can say
 	// whether it was present.
 	UI map[string]string
@@ -221,7 +234,7 @@ func Read(path string) (UserConfig, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		known := []string{"providers", "web", "ui"}
+		known := []string{"providers", "web", "ui", "image_generation"}
 		return UserConfig{}, errorf(
 			"%s has unknown top-level keys: %s\n  the ones it knows are: %s\n  (a misspelled key that silently does nothing is the worst kind of failure, so this stops here)",
 			target, strings.Join(unknown, ", "), strings.Join(known, ", "))
@@ -248,10 +261,21 @@ func Read(path string) (UserConfig, error) {
 		return UserConfig{}, err
 	}
 
+	imageGeneration := map[string]any{}
+	if value, ok := raw["image_generation"]; ok && value != nil {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return UserConfig{}, errorf(
+				"\"image_generation\" in %s must be an object (the route that generates pictures)", target)
+		}
+		imageGeneration = object
+	}
+
 	return UserConfig{
 		Path: target, Found: true,
 		Providers: providers, ProviderOrder: order, Web: web, UI: ui,
-		LegacyEnvPath: legacyEnvPath(),
+		ImageGeneration: imageGeneration,
+		LegacyEnvPath:   legacyEnvPath(),
 	}, nil
 }
 

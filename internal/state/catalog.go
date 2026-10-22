@@ -171,6 +171,17 @@ type Registry struct {
 	// Source is which file this catalogue came from. It is a fact, not
 	// decoration: it is the answer to "why did my edit not take effect".
 	Source string
+	// Image is the configured image-generation route.
+	//
+	// It is **not** one of the Providers and it does not take part in `Find()`:
+	// the providers are models that may be chosen as the conversation model,
+	// and an image model is not one of them. A picture model in that list
+	// would show up in `/model`, be selectable, and then fail every chat
+	// request.
+	//
+	// The zero value means "no image generation is configured", which is a
+	// normal state rather than a problem: the capability was never promised.
+	Image ImageRoute
 }
 
 // Provider looks up a route by name.
@@ -398,6 +409,19 @@ func Load(path string) (Registry, error) {
 	}
 
 	registry := Registry{Providers: providers, Problems: problems, Source: source}
+	// The image-generation route, read from the same file.
+	//
+	// It is read **after** the providers, because it inherits from them: a
+	// `provider` naming a chat route is resolved against the list built
+	// above. A section that cannot be understood is an error and stops the
+	// session — the same rule as a broken provider — because a silently
+	// ignored section is a tool that is not there for a reason nobody can
+	// see.
+	image, err := ParseImageRoute(cfg, registry)
+	if err != nil {
+		return Registry{}, err
+	}
+	registry.Image = image
 	if cfg.LegacyEnvPath != "" {
 		registry.Notes = append(registry.Notes, i18nText("notice.config.legacy_env",
 			"path", cfg.LegacyEnvPath, "config", source))

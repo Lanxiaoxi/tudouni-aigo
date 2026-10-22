@@ -50,7 +50,24 @@
     "  `none` is not a level: it means thinking off, which is /thinking, not /effort.",
     "",
     "web: the keys for web search. Leave them out and web_search is not registered",
-    "(fetch_web is unaffected; a missing key there is not an error)."
+    "(fetch_web is unaffected; a missing key there is not an error).",
+    "",
+    "image_generation: the route that draws pictures. Leave it out and generate_image",
+    "is not registered — the capability is simply not there, and nothing else changes.",
+    "",
+    "  provider: the chat route to inherit the key and the endpoint from, so one key",
+    "  is written once. The routes are the names under `providers`.",
+    "  model:    the image model (gpt-image-1 and the like). It is **never** inherited:",
+    "  the chat route's model is a different model.",
+    "  api_style: which wire protocol this endpoint speaks. Only one is implemented:",
+    "      openai-images   POST base_url/images/generations",
+    "  base_url / api_key / headers: write them here to override what was inherited.",
+    "  A generation endpoint is often not the chat endpoint — some gateways serve",
+    "  only one of the two — so an inherited base_url may answer 404 for",
+    "  /images/generations. The error message names the URL that was used.",
+    "",
+    "  The picture lands in the workspace as a real file (out/poster.png): it can be",
+    "  shown with ![](path), declared with present, and opened again later."
   ],
 
   "providers": {
@@ -89,5 +106,11 @@
 
   "web": {
     "tavily_api_key": ""
+  },
+
+  "image_generation": {
+    "$comment": "Uncomment and fill in to enable generate_image. Delete the whole section to turn it off.",
+    "provider": "deepseek",
+    "model": "gpt-image-1"
   }
 }

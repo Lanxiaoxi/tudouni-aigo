@@ -897,6 +897,14 @@ var catalog = map[string]string{
 	"catalog.problem.no_key":           "[model] route {route} has no API key ({where}), so its models cannot be selected — put an \"api_key\" **in that route**",
 	"catalog.problem.no_usable_route":  "[model] not a single usable route (every one is missing its key) — /model will show a list you cannot pick from",
 
+	// --- image generation --------------------------------------------------
+	"catalog.where.imagegen":             "image_generation in {file}",
+	"catalog.error.bad_image_style":      "{where} has an unknown api_style {style}; the image wire protocols are {styles}",
+	"catalog.error.imagegen_no_model":    "{where} is missing \"model\" (the image model name sent to the endpoint — it is never inherited from a chat route)",
+	"catalog.error.imagegen_no_base_url": "{where} is missing \"base_url\" (where the generation request goes) and does not name a \"provider\" to inherit it from",
+	"catalog.error.imagegen_no_provider": "{where} names provider {provider}, which is not a configured route; the routes are: {routes}",
+	"notice.imagegen.unconfigured":       "[image] no image-generation route is configured, so generate_image is not registered. To enable it, add an \"image_generation\" section to {path}: {\"provider\": \"<a chat route>\", \"model\": \"gpt-image-1\"}",
+
 	// --- configuration validation ------------------------------------------
 	"config.error.unknown_keys":         "{where} has unknown keys: {names}\n  the known ones are: {known}\n  (a misspelled key that silently does nothing is the worst kind of failure, so this stops here)",
 	"config.error.unknown_web_keys":     "the \"web\" section of {path} has unknown keys: {names}\n  the known ones are: {known}\n  (a misspelled key that silently does nothing is the worst kind of failure, so this stops here)",

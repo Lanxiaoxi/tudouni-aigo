@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/imagegen"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
@@ -53,6 +54,36 @@ type Assembly struct {
 	// workspace that never asked for code intelligence pays nothing for it.
 	CodeIntel        *codeintel.Refresher
 	CodeIntelEnabled bool
+
+	// ImageGen is the client that generates pictures. Nil means no image route
+	// is configured, and the tool is then **not registered at all** — the rule
+	// this program holds everywhere: a tool the model can see but that can
+	// only ever answer "not configured" costs a round trip every time it is
+	// tried, and teaches it that tools lie.
+	ImageGen *imagegen.Client
+	// Vision reports whether the model in use can be shown pictures. It is a
+	// **function** rather than a bool because the model can be switched
+	// mid-session, and a bool captured at assembly time would answer for the
+	// model this session started on.
+	//
+	// The generate_image tool reads it for one decision: whether to hand the
+	// picture back to the model in `Result.Images`. Without a vision model the
+	// bytes would be stored as an artifact and then refused by the renderer —
+	// money spent to produce a sentence saying "this model cannot see
+	// pictures".
+	//
+	// It is the **same fact** `agent.imagePolicy()` reads. One switch, two
+	// readers: a second switch would be a second answer to "can this model
+	// see", and the two would eventually disagree.
+	Vision func() bool
+	// RunID is the current turn's identifier.
+	//
+	// The generate_image tool counts its pictures per turn, and it counts them
+	// **by comparing this value** rather than by being reset: a tool that had
+	// to be told when a turn ended would need a reset nobody might call, and a
+	// counter that never resets refuses the fifth picture of every turn after
+	// the first. See the tool's own comment.
+	RunID func() string
 
 	// Extra holds the tools built by the assembly layer — background jobs, the
 	// network tools, the skill loader. They live elsewhere because they own
@@ -153,6 +184,25 @@ func CreateRegistry(assembly Assembly) (*Result, error) {
 		} else {
 			result.Missing = append(result.Missing, CodeExploreToolName)
 		}
+	}
+
+	// The picture generator. It is registered only when a route is configured,
+	// and the absence is reported as a **missing tool** rather than as a tool
+	// that answers "not configured" — the same rule as `web_search` without a
+	// key, and for the same reason: a tool the model can see but that can only
+	// ever fail costs a round trip every time it is tried.
+	//
+	// The notice that goes with it is **info**, not a warning: image
+	// generation was never promised, so a machine without it is not broken.
+	// It is a capability that is not here, and saying so in one line is enough.
+	if assembly.ImageGen != nil {
+		if err := registry.Register(NewGenerateImage(
+			assembly.Workspace, assembly.ImageGen, assembly.Vision, assembly.RunID,
+		)); err != nil {
+			return nil, err
+		}
+	} else {
+		result.Missing = append(result.Missing, GenerateImageToolName)
 	}
 
 	if assembly.SkillLoader != nil {
