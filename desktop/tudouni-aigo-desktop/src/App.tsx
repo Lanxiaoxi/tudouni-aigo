@@ -134,10 +134,11 @@ export function App() {
     hasConversation,
   });
 
-  // The hand-off half of the board's card exit: a card press focuses its
-  // session *under the board*, the board closes when the card's exit ends
-  // (`SessionBoard`), and this is the moment the column comes back — so the
-  // whole conversation column rises in over the stream one time. The flag is
+  // The destination side of the board's card press: a card press focuses its
+  // session *under the board* and closes the board instantly — the gesture is
+  // "open", so its motion plays here, on the arrival, not on the card. This is
+  // the moment the column comes back, and the whole conversation column rises
+  // in over the stream one time. The flag is
   // cleared by the animation's own end (`.app-conversation`'s
   // `onAnimationEnd`), so it costs one re-render on the way out. **The board is
   // the only source:** sidebar switches keep `.app-conversation` mounted and

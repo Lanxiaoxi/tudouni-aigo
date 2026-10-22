@@ -269,30 +269,7 @@
   box-shadow: var(--shadow-card-hover);
 }
 
-/* The pressed card's exit: shrink-and-fade, the window's own exit vocabulary
-   (`--motion-fast` + `--ease-in`, the pair every leaving surface already
-   uses). It plays *under* the board's close — the card goes first, the board
-   lifts a moment later, and the stream's rise (`stream-rise`, global.css)
-   starts on top of it. `pointer-events: none` because the click that started
-   this is still the click that ends it; nothing may hover, arm a context menu
-   or steal a second press from a card that is already leaving. `transform`
-   and `opacity` only, so it composites; the hover lift it replaces is an
-   animation target, and the animation wins while it runs. */
-.board-card.is-leaving {
-  pointer-events: none;
-  animation: card-exit var(--motion-fast) var(--ease-in) both;
-}
 
-@keyframes card-exit {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.97);
-  }
-}
 
 /* The session on screen: **a green edge two pixels wide.**
  *
