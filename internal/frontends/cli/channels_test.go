@@ -78,13 +78,39 @@ func TestAutopilotStillAnswersWithoutAReader(t *testing.T) {
 func TestSequentialQuestionsReadConsecutivePipedAnswers(t *testing.T) {
 	channels := Channels(false, strings.NewReader("甲\n乙\n"), &strings.Builder{})
 
-	first := channels.Questioner(protocol.AskUserArgs{Question: "第一个？"})
-	second := channels.Questioner(protocol.AskUserArgs{Question: "第二个？"})
+	// Two single-question batches: the old order the line REPL always saw.
+	first := channels.Questioner(protocol.AskUserBatchArgs{
+		Questions: []protocol.AskUserArgs{{Question: "第一个？"}},
+	})
+	second := channels.Questioner(protocol.AskUserBatchArgs{
+		Questions: []protocol.AskUserArgs{{Question: "第二个？"}},
+	})
 
-	if first.Status != protocol.AnswerAnswered || first.Text != "甲" {
-		t.Errorf("the first question got %+v, want 甲", first)
+	if first.Answers[0].Status != protocol.AnswerAnswered || first.Answers[0].Text != "甲" {
+		t.Errorf("the first question got %+v, want 甲", first.Answers[0])
 	}
-	if second.Status != protocol.AnswerAnswered || second.Text != "乙" {
-		t.Errorf("the second question got %+v, want 乙", second)
+	if second.Answers[0].Status != protocol.AnswerAnswered || second.Answers[0].Text != "乙" {
+		t.Errorf("the second question got %+v, want 乙", second.Answers[0])
+	}
+}
+
+// TestOneBatchReadsConsecutivePipedAnswers: a batch of two is the new wire order
+// — both prompts go out before either answer arrives — and the shared reader has
+// to keep the two piped lines matched to their questions.
+func TestOneBatchReadsConsecutivePipedAnswers(t *testing.T) {
+	channels := Channels(false, strings.NewReader("甲\n乙\n"), &strings.Builder{})
+
+	batch := channels.Questioner(protocol.AskUserBatchArgs{
+		Questions: []protocol.AskUserArgs{{Question: "第一个？"}, {Question: "第二个？"}},
+	})
+
+	if len(batch.Answers) != 2 {
+		t.Fatalf("the batch of two came back with %d answers, want 2", len(batch.Answers))
+	}
+	if batch.Answers[0].Status != protocol.AnswerAnswered || batch.Answers[0].Text != "甲" {
+		t.Errorf("the first question got %+v, want 甲", batch.Answers[0])
+	}
+	if batch.Answers[1].Status != protocol.AnswerAnswered || batch.Answers[1].Text != "乙" {
+		t.Errorf("the second question got %+v, want 乙", batch.Answers[1])
 	}
 }

@@ -1241,12 +1241,22 @@ func questionerOf(channels protocol.Channels) builtin.Questioner {
 		return nil
 	}
 	questioner := channels.Questioner
-	return func(args builtin.AskArgs) builtin.Answer {
-		answer := questioner(protocol.AskUserArgs{
-			Question: args.Question, Header: args.Header,
-			Options: args.Options, MultiSelect: args.MultiSelect,
-		})
-		return builtin.Answer{Text: answer.Text, Status: answer.Status, HumanWaitMs: answer.HumanWaitMs}
+	return func(questions []builtin.AskArgs) []builtin.Answer {
+		arguments := make([]protocol.AskUserArgs, len(questions))
+		for index, question := range questions {
+			arguments[index] = protocol.AskUserArgs{
+				Question: question.Question, Header: question.Header,
+				Options: question.Options, MultiSelect: question.MultiSelect,
+			}
+		}
+		result := questioner(protocol.AskUserBatchArgs{Questions: arguments})
+		answers := make([]builtin.Answer, len(result.Answers))
+		for index, answer := range result.Answers {
+			answers[index] = builtin.Answer{
+				Text: answer.Text, Status: answer.Status, HumanWaitMs: answer.HumanWaitMs,
+			}
+		}
+		return answers
 	}
 }
 

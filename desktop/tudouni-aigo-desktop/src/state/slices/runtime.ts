@@ -16,7 +16,7 @@ import { samePath } from '@/utils/format';
 import { quitApp } from '@/runtime/tauri';
 import { STDERR_TAIL } from '../types';
 import { persistPrefs } from '../prefs';
-import { enqueueModal, releaseModalsOf } from '../modalQueue';
+import { enqueueModal, questionBatchOf, releaseModalsOf } from '../modalQueue';
 import { throttled, wakePolling } from '../polling';
 import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEndedNote } from '../terminal';
 import { runtimeOf } from '../appView';
@@ -871,7 +871,10 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRun
         }
 
         case 'question_request': {
-          set(enqueueModal(get(), { kind: 'question', key, req: msg }));
+          // One batch member. The rest of the batch is already on its way —
+          // the runtime sends them back to back — and `enqueueModal` merges
+          // the members into the one entry that holds the batch.
+          set(enqueueModal(get(), { kind: 'question', key, batch: questionBatchOf(msg) }));
           break;
         }
 

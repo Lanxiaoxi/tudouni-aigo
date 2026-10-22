@@ -179,7 +179,10 @@ test('the envelope version is the one hard failure point', () => {
   // snapshot so the workbench's Memory badge moves without the panel being open.
   // 9 adds the workspace's code index: `codeintel_action` inbound, the
   // `codeintel` kind on the `ui` channel, and three booleans on `ui(state)`.
-  assert.equal(PROTOCOL_VERSION, 9);
+  // 10 batches `ask_user`: `question_request` gains `batch_id` /
+  // `question_index` / `question_count`, and the runtime sends a batch's
+  // requests back to back before it waits.
+  assert.equal(PROTOCOL_VERSION, 10);
 
   // Decoding an `init` from a **3** runtime still works: the field is documented
   // as survivable, and the capture in `tests/fixtures/opening.jsonl` is one, so
@@ -2284,7 +2287,11 @@ test('switching away holds a prompt, and switching back draws it again', () => {
   );
 
   useApp.getState().focusSession(KEY);
-  assert.equal((useApp.getState().modal as { req: { id: string } })?.req.id, 'q1');
+  // A request without batch metadata is a batch of one, keyed to its own id.
+  assert.equal(
+    (useApp.getState().modal as { batch?: { batch_id: string } } | null)?.batch?.batch_id,
+    'q1',
+  );
   assert.equal(selectModalVisible(useApp.getState()), true);
 });
 
@@ -2329,7 +2336,7 @@ test('answering a question distinguishes skip from an answer', () => {
     multi_select: false,
   } as never);
 
-  useApp.getState().answerQuestion('skipped', 'ignored');
+  useApp.getState().answerQuestion(null);
   const skip = sent[0] as Extract<FrontendMsg, { t: 'question_response' }>;
   assert.equal(skip.status, 'skipped');
   // A skip carries an empty string: it is not an answer, and it must not look
@@ -2373,7 +2380,7 @@ test('minimizing a question hides it without answering it, and it comes back', (
 
   // Answering after a minimize is still an answer to the same id.
   useApp.getState().minimizeQuestion();
-  useApp.getState().answerQuestion('skipped', '');
+  useApp.getState().answerQuestion(null);
   const skip = sent[0] as Extract<FrontendMsg, { t: 'question_response' }>;
   assert.equal(skip.id, 'q-min-1');
   assert.equal(skip.status, 'skipped');
@@ -2417,10 +2424,18 @@ test('a second question arrives un-minimized even while the first is put aside',
   // is still `q-a`, so `q-b` sits behind it. The mark is on `q-a`, and the
   // slot still holds `q-a`, so the minimized question stays put aside while
   // the queue behind it grows; answering it brings up `q-b` un-minimized.
-  assert.equal((useApp.getState().modal as { req: { id: string } })?.req.id, 'q-a');
+  // A request without batch metadata is a batch of one, keyed to its own id.
+  assert.equal(
+    (useApp.getState().modal as { batch?: { batch_id: string } } | null)?.batch?.batch_id,
+    'q-a',
+  );
   assert.equal(useApp.getState().questionMinimizedId, 'q-a', 'the mark follows its own request');
-  useApp.getState().answerQuestion('skipped', '');
-  assert.equal((useApp.getState().modal as { req: { id: string } })?.req.id, 'q-b', 'the next one draws');
+  useApp.getState().answerQuestion(null);
+  assert.equal(
+    (useApp.getState().modal as { batch?: { batch_id: string } } | null)?.batch?.batch_id,
+    'q-b',
+    'the next one draws',
+  );
   assert.equal(useApp.getState().questionMinimizedId, null, 'and it is not minimized');
 });
 

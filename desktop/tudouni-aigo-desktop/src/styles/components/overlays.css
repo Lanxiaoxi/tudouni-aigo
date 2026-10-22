@@ -241,6 +241,67 @@
   color: var(--fg);
 }
 
+/* The page counter beside the question modal's title: "Question 2 of 3".
+   Lighter than the title, same row — it is the position, the title is the
+   thing being positioned. */
+.q-page-of {
+  font-size: var(--text-caption);
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+
+/* The question modal's navigation strip: one stop per question of the batch.
+   A tick column (like `tk-menu-item`) says answered; the plain number says
+   nothing chosen yet. It is the whole batch at a glance, above the page. */
+.qnav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  padding: 0 var(--space-4) var(--space-2);
+  overflow-x: auto;
+}
+
+.qnav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  min-height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-compact);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.qnav-item:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.qnav-item.is-on {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+/* Answered: the tick is the same column the model picker's options carry, so
+   "answered" and "picked an option" read as one visual language. */
+.qnav-item.is-answered {
+  color: var(--info);
+}
+
+.qnav-num {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .dialog-desc {
   margin-top: 2px;
   font-size: var(--text-caption);

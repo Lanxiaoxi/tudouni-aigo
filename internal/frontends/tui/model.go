@@ -148,7 +148,13 @@ type model struct {
 
 	pendingPermission map[string]any
 	pendingQuestion   map[string]any
-	questionInput     string
+	// pendingQuestions holds the questions of a batch that have already arrived
+	// but are not drawn yet. The runtime sends a batch's `question_request`s
+	// back to back and then waits on **all** of them, so overwriting
+	// pendingQuestion with the second request would lose the first id forever
+	// and hang the turn. The queue answers them one at a time, in order.
+	pendingQuestions []map[string]any
+	questionInput    string
 	// questionCursor is the highlighted option in the question panel. It exists
 	// because Enter takes the highlight: with no highlight, Enter would have to
 	// either guess or mean "skip", and "Enter skips" is the one thing the original
@@ -398,8 +404,16 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case questionAsked:
-		m.pendingQuestion = typed.request
-		m.questionInput = ""
+		// A batch arrives back to back, so a question may land while one is
+		// already drawn. Queue it rather than overwriting: the runtime waits
+		// on every id of the batch, and the one that is lost here is the turn
+		// that never finishes.
+		if m.pendingQuestion != nil {
+			m.pendingQuestions = append(m.pendingQuestions, typed.request)
+		} else {
+			m.pendingQuestion = typed.request
+			m.questionInput = ""
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -673,6 +687,7 @@ func (m *model) resetForSession() {
 	m.pendingUserInput = ""
 	m.pendingPermission = nil
 	m.pendingQuestion = nil
+	m.pendingQuestions = nil
 	m.questionInput = ""
 	m.overlay = overlay{}
 	m.recentSessions = nil

@@ -1325,12 +1325,20 @@ export const en = {
   /* ---------------- question modal ---------------- */
   'q.title': 'Waiting for your answer',
   'q.subtitle': 'The runtime is blocked here until you answer.',
+  /** The page counter beside the title, when the batch has more than one
+   *  question. It names the position and the total — the strip below is the
+   *  navigation, the counter is the position. */
+  'q.pageOf': 'Question {n} of {total}',
+  'q.prev': 'Previous question',
+  'q.next': 'Next question',
   'q.multi': 'multi-select',
   'q.single': 'single choice',
   'q.options': 'Options',
   'q.freeText': 'Free text',
   'q.freeTextPlaceholder': 'Type your answer…',
-  'q.skip': 'Skip',
+  /** The foot's skip, now that it skips the **whole batch**: the label has to
+   *  say so, because "Skip" alone reads as "this one". */
+  'q.skipAll': 'Skip all',
   /** The minimize in the question modal's foot. It only hides the prompt —
    *  the runtime keeps waiting on the same id — so the tooltip says what
    *  stays, not what goes away. */
@@ -1342,6 +1350,12 @@ export const en = {
      the person can see the state; what they need is the button. */
   'q.minimized.restore': 'Question minimized — click to restore',
   'q.submit': 'Submit',
+  /** The foot's hint while the batch has unanswered pages: submitting will
+   *  send them back as skipped questions, and that is said rather than
+   *  discovered after the fact. */
+  'q.unansweredSkipped': '{n} unanswered — they will be sent back as skipped',
+  /** The foot's hint once every page of the batch has an answer. */
+  'q.allAnswered': 'All questions answered',
   'q.freeTextPriority': 'Free text wins over the selection',
   'q.noOptions': 'No preset options — answer in free text.',
   'q.pickAtLeastOne': 'Pick an option, type an answer, or use “Skip”.',

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { Check, MessageCircleQuestion, Minus, SkipForward } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, MessageCircleQuestion, Minus, SkipForward } from 'lucide-react';
 import {
   selectModalOrigin,
   selectModalVisible,
@@ -15,30 +15,62 @@ import { isTypingTarget } from '@/hooks/useListKeys';
 /**
  * §6.2 The question modal — the second blocking modal.
  *
- * Hard constraints:
+ * One panel holds the whole batch: every question an `ask_user` call asked,
+ * drawn as pages with a navigation strip over them. The runtime sends the
+ * batch back to back and waits on every id of it, so answering is one act per
+ * batch — `answerQuestion` fans the per-page drafts out to one
+ * `question_response` per request id.
+ *
+ * Hard constraints (unchanged from the single-question panel):
  *   - Show the question, the header label, the options, and a free-text field.
- *   - `options` is a `string[]`: an **empty array means free-form**. There are no
- *     option ids and no `allow_free_text` / `allow_skip` flags — the protocol
- *     does not have them, so this view does not behave as if it did.
- *   - Free text wins over a selection: if there is text, the text is the answer.
- *   - **Skip is an independent action.** An empty submit must never stand in for
- *     "I did not decide", so Skip is its own button and Esc resolves to it.
- *   - Numeric keys 1–9 pick the corresponding option.
+ *   - `options` is a `string[]`: an **empty array means free-form**. There are
+ *     no option ids and no `allow_free_text` / `allow_skip` flags — the
+ *     protocol does not have them, so this view does not behave as if it did.
+ *   - Free text wins over a selection: if there is text, the text is the
+ *     answer.
+ *   - **Skip is explicit.** Esc skips the whole batch as one independent
+ *     action; an unanswered page is submitted as a skipped question — and the
+ *     footer says that, so "nothing happened" is never read as an answer.
+ *   - Numeric keys 1–9 pick the corresponding option of the page on screen;
+ *     `←`/`→` move between pages.
  *   - It blocks until a person answers: no auto-skip, no timeout, no guess.
  *   - **Minimize hides, it does not answer.** The foot's minimize button takes
  *     the overlay away so the reply above the prompt can be read; the runtime
- *     keeps waiting on the same id and the queue keeps the request. Nothing is
- *     sent, and `selectModalVisible` deliberately stays true while it is set
- *     (see its comment) — the composer's blocked state is the deadlock guard,
- *     and the minimized pill beside the status bar is the way back.
+ *     keeps waiting on the same ids and the queue keeps the request. Nothing
+ *     is sent, and `selectModalVisible` deliberately stays true while it is
+ *     set (see its comment) — the composer's blocked state is the deadlock
+ *     guard, and the minimized pill beside the status bar is the way back.
+ *
+ * **The dialog stays open for the whole batch.** That is what fixes the
+ * one-question-at-a-time flicker: switching pages changes the body, not the
+ * overlay, so Radix never unmounts and remounts the panel between questions
+ * (its close→open cycle was eating the second question's content).
  */
+
+/** One page's draft: the selection and the free text. Both are the person's,
+ *  kept until the batch is submitted — moving pages and minimizing never
+ *  clear them. */
+interface Draft {
+  selected: string[];
+  text: string;
+}
+
+/** What the draft becomes on the wire: free text wins, then the selection,
+ *  then `null` — an explicit "this one was skipped", never an empty string. */
+function answerOf(draft: Draft): string | null {
+  const text = draft.text.trim();
+  if (text !== '') return text;
+  if (draft.selected.length > 0) return draft.selected.join(', ');
+  return null;
+}
+
 export function QuestionModal() {
   const t = useT();
   const modal = useApp((s) => s.modal);
   const answer = useApp((s) => s.answerQuestion);
   // Same as the approval modal: with several conversations open, a question
-  // whose session is not named is a question about an unknown session — and the
-  // answer goes to whichever one asked, so knowing which is not cosmetic.
+  // whose session is not named is a question about an unknown session — and
+  // the answer goes to whichever one asked, so knowing which is not cosmetic.
   const origin = useApp((s) => (s.modal ? selectModalOrigin(s, s.modal.key) : ''));
   const queued = useApp(selectQueuedModals);
   // **Held is not the same as rendered.** The session board holds the
@@ -52,57 +84,77 @@ export function QuestionModal() {
   // state — the overlay is what covers the reply, not the blocking.
   const minimized = useApp(selectQuestionMinimized);
 
-  const open = visible && !minimized && modal?.kind === 'question';
-  // The request in the drawn slot, regardless of the minimize: the draft below
-  // keys off **it** rather than off what is drawn, so a minimize (which only
-  // un-draws) does not read as a new question and wipe the selection and the
+  // A half-arrived batch must not open: it would show a missing page and
+  // collect answers for questions the person has not seen.
+  const open =
+    visible && !minimized && modal?.kind === 'question' && modal.batch.ready;
+  // The batch in the drawn slot, regardless of the minimize: the drafts below
+  // key off **it** rather than off what is drawn, so a minimize (which only
+  // un-draws) does not read as a new batch and wipe the selections and the
   // free text. Restoring must find the draft the person had.
-  const slotReq = visible && modal?.kind === 'question' ? modal.req : null;
-  const req = open ? slotReq : null;
+  const slotBatch = visible && modal?.kind === 'question' ? modal.batch : null;
+  const batch = open ? slotBatch : null;
 
-  const [selected, setSelected] = useState<string[]>([]);
-  const [text, setText] = useState('');
+  const [page, setPage] = useState(0);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
 
-  // Every question is a fresh decision, so the draft is cleared when the
-  // question changes — the slot's request, not the draw, is the question.
-  const reqId = slotReq?.id ?? null;
-  const [lastId, setLastId] = useState<string | null>(null);
-  if (reqId !== lastId) {
-    setLastId(reqId);
-    setSelected([]);
-    setText('');
-  }
-
-  const options = req?.options ?? [];
-  const hasOptions = options.length > 0;
-  const canSubmit = text.trim() !== '' || selected.length > 0;
-
-  function toggle(option: string) {
-    setSelected((cur) =>
-      cur.includes(option) ? cur.filter((x) => x !== option) : [...cur, option],
+  // Every batch is a fresh decision, so the drafts are cleared when the
+  // batch changes — the slot's batch, not the draw, is the question.
+  const batchId = slotBatch?.batch_id ?? null;
+  const [lastBatchId, setLastBatchId] = useState<string | null>(null);
+  if (batchId !== lastBatchId) {
+    setLastBatchId(batchId);
+    setPage(0);
+    setDrafts(
+      slotBatch
+        ? slotBatch.questions.map(() => ({ selected: [], text: '' }))
+        : [],
     );
   }
 
+  const questions = batch?.questions ?? [];
+  const current = Math.min(page, Math.max(0, questions.length - 1));
+  const question = questions[current];
+  const draft = drafts[current] ?? { selected: [], text: '' };
+  const hasOptions = question ? question.options.length > 0 : false;
+
+  function patchDraft(patch: Partial<Draft>) {
+    setDrafts((cur) => cur.map((d, i) => (i === current ? { ...d, ...patch } : d)));
+  }
+
+  function toggle(option: string) {
+    if (!question) return;
+    const selected = draft.selected.includes(option)
+      ? draft.selected.filter((x) => x !== option)
+      : [...draft.selected, option];
+    patchDraft({ selected: question.multi_select ? selected : [option] });
+  }
+
+  /** The per-question state for the navigation strip: answered, or (with
+   *  nothing chosen) skipped-on-submit. Both are the person's explicit
+   *  decisions, so the strip draws them both. */
+  function navState(index: number): 'answered' | 'pending' {
+    return answerOf(drafts[index] ?? { selected: [], text: '' }) !== null
+      ? 'answered'
+      : 'pending';
+  }
+
   function submit() {
-    // Free text wins: if there is text, that is the answer.
-    if (text.trim() !== '') {
-      answer('answered', text.trim());
-      return;
-    }
-    if (selected.length > 0) {
-      // Options are plain strings — what goes back is the text, joined.
-      answer('answered', selected.join(', '));
-      return;
-    }
+    if (!batch) return;
+    // One array, in the batch's order: each entry is answered, or null —
+    // which the store sends back as a skipped question for that id.
+    answer(drafts.map((d) => answerOf(d)));
   }
 
   // **Hides the overlay, nothing else.** No answer is sent — the runtime keeps
-  // waiting on this id, the queue keeps the request, and the draft above is
+  // waiting on this id, the queue keeps the request, and the drafts above are
   // left intact (minimizing is not a decision). The transcript underneath is
   // the whole reason the button exists.
   function minimize() {
     useApp.getState().minimizeQuestion();
   }
+
+  const unanswered = drafts.filter((d) => answerOf(d) === null).length;
 
   return (
     <DialogPrimitive.Root open={open}>
@@ -117,24 +169,36 @@ export function QuestionModal() {
           onInteractOutside={(e) => e.preventDefault()}
           onEscapeKeyDown={(e) => {
             e.preventDefault();
-            answer('skipped', ''); // Skip is an independent action, not "nothing happened".
+            // Skip is an independent action, not "nothing happened": the whole
+            // batch goes back unanswered.
+            answer(null);
           }}
           onKeyDown={(e) => {
-            if (!req) return;
+            if (!question) return;
             // The free-text box is inside this content, so without this check a
             // `1` typed into "3 replicas please" would bubble up and select
             // option 1 instead of reaching the field.
             if (isTypingTarget(e.target)) return;
             if (/^[1-9]$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
-              const option = req.options[Number(e.key) - 1];
+              const option = question.options[Number(e.key) - 1];
               if (option === undefined) return;
               e.preventDefault();
-              if (req.multi_select) toggle(option);
-              else setSelected([option]);
+              if (question.multi_select) toggle(option);
+              else patchDraft({ selected: [option] });
+              return;
+            }
+            if (e.key === 'ArrowLeft' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              e.preventDefault();
+              setPage((p) => Math.max(0, p - 1));
+              return;
+            }
+            if (e.key === 'ArrowRight' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              e.preventDefault();
+              setPage((p) => Math.min(questions.length - 1, p + 1));
             }
           }}
         >
-          {req ? (
+          {batch && question ? (
             <>
               <div className="dialog-head">
                 <span
@@ -156,6 +220,12 @@ export function QuestionModal() {
                 <div className="grow">
                   <DialogPrimitive.Title className="dialog-title">
                     {t('q.title')}
+                    {questions.length > 1 ? (
+                      <span className="q-page-of">
+                        {' '}
+                        {t('q.pageOf', { n: current + 1, total: questions.length })}
+                      </span>
+                    ) : null}
                   </DialogPrimitive.Title>
                   <DialogPrimitive.Description className="dialog-desc">
                     {t('q.subtitle')}
@@ -164,13 +234,13 @@ export function QuestionModal() {
 
                 {/* The header is a label of at most 12 characters; an empty
                     string means there is none. */}
-                {req.header ? (
+                {question.header ? (
                   <Badge tone="neutral" dot={false}>
-                    {req.header}
+                    {question.header}
                   </Badge>
                 ) : null}
-                <Badge tone={req.multi_select ? 'info' : 'neutral'} dot={false}>
-                  {req.multi_select ? t('q.multi') : t('q.single')}
+                <Badge tone={question.multi_select ? 'info' : 'neutral'} dot={false}>
+                  {question.multi_select ? t('q.multi') : t('q.single')}
                 </Badge>
               </div>
 
@@ -202,52 +272,65 @@ export function QuestionModal() {
                 </div>
               ) : null}
 
+              {/* The navigation strip: one stop per question of the batch. A
+                  tick says answered; the plain number says nothing chosen yet
+                  (and the footer says that submits as a skip). It is the one
+                  place the person sees the whole batch at a glance. */}
+              {questions.length > 1 ? (
+                <div className="qnav" role="tablist" aria-label={t('q.pageOf', { n: current + 1, total: questions.length })}>
+                  {questions.map((q, i) =>
+                    // `ready` holds only when every slot is filled, so a null
+                    // page here would mean the batch opened early; draw nothing
+                    // for it rather than a phantom stop.
+                    q === null ? null : (
+                      <button
+                        key={q.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={i === current}
+                        aria-label={`${i + 1}${q.header ? ` ${q.header}` : ''}`}
+                        className={`qnav-item${i === current ? ' is-on' : ''}${navState(i) === 'answered' ? ' is-answered' : ''}`}
+                        onClick={() => setPage(i)}
+                      >
+                        <span className="qnav-num">{i + 1}</span>
+                        {navState(i) === 'answered' ? <Check size={11} /> : null}
+                      </button>
+                    ),
+                  )}
+                </div>
+              ) : null}
+
               <div className="dialog-body scroll-fade">
                 <p style={{ fontSize: 'var(--text-body)', marginBottom: 'var(--space-3)' }}>
-                  {req.question}
+                  {question.question}
                 </p>
 
                 {hasOptions ? (
                   <>
                     <div className="etb-label">{t('q.options')}</div>
+                    {/* The same row as the model picker: a tick column, the
+                        label, nothing else. `tk-menu-item` is flex with
+                        `width: 100%`, so it draws as a list row here without
+                        any of the popover chrome. */}
                     <div className="col" style={{ gap: 2, marginTop: 4 }}>
-                      {req.options.map((option, i) => {
-                        const checked = selected.includes(option);
+                      {question.options.map((option) => {
+                        const checked = draft.selected.includes(option);
                         return (
-                          <div
+                          <button
                             key={option}
-                            className="radio-item"
-                            role="button"
-                            tabIndex={0}
-                            data-state={checked ? 'checked' : 'unchecked'}
-                            onClick={() => (req.multi_select ? toggle(option) : setSelected([option]))}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                if (req.multi_select) toggle(option);
-                                else setSelected([option]);
-                              }
-                            }}
+                            type="button"
+                            role="option"
+                            aria-selected={checked}
+                            className={`tk-menu-item${checked ? ' is-on' : ''}`}
+                            onClick={() => toggle(option)}
                           >
-                            {/* Multi-select draws a checkbox; single choice draws
-                                a radio. Same primitive, different affordance. */}
-                            <span
-                              className={req.multi_select ? 'checkbox-box' : 'radio-outer'}
-                              aria-hidden
-                            >
-                              {checked ? (
-                                req.multi_select ? (
-                                  <Check size={11} />
-                                ) : (
-                                  <span className="radio-inner" />
-                                )
-                              ) : null}
-                            </span>
-                            <span className="seq">{i + 1}</span>
-                            <span className="grow">
-                              <span className="strong">{option}</span>
-                            </span>
-                          </div>
+                            {checked ? (
+                              <Check size={13} />
+                            ) : (
+                              <span className="tk-menu-gap" />
+                            )}
+                            <span className="tk-menu-item-label">{option}</span>
+                          </button>
                         );
                       })}
                     </div>
@@ -265,8 +348,8 @@ export function QuestionModal() {
                 </div>
                 <textarea
                   className="input"
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
+                  value={draft.text}
+                  onChange={(e) => patchDraft({ text: e.target.value })}
                   placeholder={t('q.freeTextPlaceholder')}
                   style={{
                     display: 'block',
@@ -283,15 +366,42 @@ export function QuestionModal() {
 
               <div className="dialog-foot">
                 <span className="caption faint">
-                  {text.trim() !== ''
+                  {draft.text.trim() !== ''
                     ? t('q.freeTextPriority')
-                    : selected.length > 0
-                      ? t('q.submit')
+                    : drafts.length > 1
+                      ? unanswered > 0
+                        ? t('q.unansweredSkipped', { n: unanswered })
+                        : t('q.allAnswered')
                       : hasOptions
                         ? t('q.pickAtLeastOne')
                         : t('q.freeTextPriority')}
                 </span>
                 <span className="grow" />
+
+                {/* Page arrows flank the foot's primary actions only; the
+                    navigation strip above is the primary way to move. */}
+                {questions.length > 1 ? (
+                  <span className="row" style={{ gap: 2 }}>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => setPage((p) => Math.max(0, p - 1))}
+                      disabled={current === 0}
+                      aria-label={t('q.prev')}
+                    >
+                      <ChevronLeft size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      onClick={() => setPage((p) => Math.min(questions.length - 1, p + 1))}
+                      disabled={current === questions.length - 1}
+                      aria-label={t('q.next')}
+                    >
+                      <ChevronRight size={13} />
+                    </button>
+                  </span>
+                ) : null}
 
                 <Tip label={t('q.minimizeHint')} side="top">
                   <button
@@ -308,10 +418,10 @@ export function QuestionModal() {
                 <button
                   type="button"
                   className="btn btn-outline"
-                  onClick={() => answer('skipped', '')}
+                  onClick={() => answer(null)}
                 >
                   <SkipForward size={12} />
-                  {t('q.skip')}
+                  {t('q.skipAll')}
                   <kbd className="kbd" style={{ marginLeft: 4 }}>
                     Esc
                   </kbd>
@@ -320,8 +430,7 @@ export function QuestionModal() {
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={submit}
-                  disabled={!canSubmit}
+                  onClick={() => submit()}
                 >
                   {t('q.submit')}
                 </button>

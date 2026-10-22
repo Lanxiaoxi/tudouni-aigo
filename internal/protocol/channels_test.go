@@ -82,11 +82,11 @@ func TestTheServersChannelsAskQuestionsOverTheProtocol(t *testing.T) {
 	output := &safeBuffer{}
 	server := NewServer(OpenStreams(answers, output), Bootstrap{})
 
-	done := make(chan Answer, 1)
+	done := make(chan AskUserBatchAnswer, 1)
 	go func() {
-		done <- server.Channels().Questioner(AskUserArgs{
+		done <- server.Channels().Questioner(AskUserBatchArgs{Questions: []AskUserArgs{{
 			Question: "which one?", Options: []string{"a", "b"},
-		})
+		}}})
 	}()
 
 	var request map[string]any
@@ -110,8 +110,11 @@ func TestTheServersChannelsAskQuestionsOverTheProtocol(t *testing.T) {
 
 	select {
 	case answer := <-done:
-		if answer.Status != QuestionAnswered || answer.Text != "the second one" {
-			t.Errorf("answer = %+v, want the text the front end sent", answer)
+		if len(answer.Answers) != 1 {
+			t.Fatalf("the batch of one came back with %d answers, want 1", len(answer.Answers))
+		}
+		if answer.Answers[0].Status != QuestionAnswered || answer.Answers[0].Text != "the second one" {
+			t.Errorf("answer = %+v, want the text the front end sent", answer.Answers[0])
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("the questioner never returned after the answer arrived")

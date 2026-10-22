@@ -6,11 +6,19 @@
  * arrival order **within** one session, and the fact that only the request of
  * the session on screen is drawn.
  *
+ * Questions arrive in batches: one `ask_user` call is a run of
+ * `question_request`s, all stamped with the batch's id and a position, and the
+ * runtime starts waiting only after the whole batch is on the wire. The queue
+ * therefore accumulates one entry per batch — the first member opens it, the
+ * rest merge in — and the modal draws the batch in one panel the moment every
+ * member is in. A half-arrived batch must not open the panel: it would show a
+ * missing page and collect an answer for a question nobody has seen.
+ *
  * Pure functions over `AppStore`: they return the patch, they do not call
  * `set`. Moved verbatim out of `store.ts`.
  */
-import type { AppStore, ModalEntry, ModalState } from './store';
-
+import type { AppStore, ModalEntry, ModalState, QuestionBatch } from './store';
+import type { QuestionRequestMsg } from '@/protocol/types';
 
 /* ============================================================
    The blocking-request queue
@@ -33,6 +41,38 @@ export function headForActive(pending: ModalEntry[], activeKey: string | null): 
 }
 
 /**
+ * The batch one request belongs to, as far as it is known on arrival.
+ *
+ * A request that predates batches (no `batch_id`) is a batch of one: ready the
+ * moment it lands. A batched request names its position and the batch's size,
+ * so the entry grows to fit. An index past the declared size is malformed and
+ * still kept — the runtime will wait on that id — with the batch growing to
+ * accommodate it, so the page is not lost.
+ */
+export function questionBatchOf(request: QuestionRequestMsg): QuestionBatch {
+  const count = Math.max(1, request.question_count ?? 1);
+  const index = Math.max(0, request.question_index ?? 0);
+  const questions: (QuestionRequestMsg | null)[] = new Array(Math.max(count, index + 1)).fill(null);
+  questions[index] = request;
+  return {
+    batch_id: request.batch_id ?? request.id,
+    questions,
+    ready: questions.every((member) => member !== null),
+  };
+}
+
+/** Merge one batch member into the entry that already holds its batch. */
+function absorbQuestion(batch: QuestionBatch, request: QuestionRequestMsg): QuestionBatch {
+  const index = Math.max(0, request.question_index ?? 0);
+  const questions = [...batch.questions];
+  // Pad with null, not the empty slot: `ready` is computed with
+  // `!== null`, and an undefined slot would read as "already in".
+  while (questions.length <= index) questions.push(null);
+  questions[index] = request;
+  return { ...batch, questions, ready: questions.every((member) => member !== null) };
+}
+
+/**
  * Add a request.
  *
  * The runtime blocks on the id it asked about and has no timeout, so a request
@@ -40,7 +80,38 @@ export function headForActive(pending: ModalEntry[], activeKey: string | null): 
  * discards an entry — the queue only ever loses one by having it answered.
  */
 export function enqueueModal(s: AppStore, entry: ModalEntry): Partial<AppStore> {
-  const pendingModals = [...s.pendingModals, entry];
+  let pendingModals = [...s.pendingModals];
+  if (entry.kind === 'question') {
+    // The rest of the batch lands right behind the first member: the runtime
+    // sends it back to back. Merge into the entry that already holds the batch
+    // rather than queueing a second one — two entries for one batch would draw
+    // the panel twice and answer two copies of the same questions.
+    const holder = pendingModals.find(
+      (existing): existing is Extract<ModalEntry, { kind: 'question' }> =>
+        existing.kind === 'question' &&
+        existing.key === entry.key &&
+        existing.batch.batch_id === entry.batch.batch_id,
+    );
+    if (holder !== undefined) {
+      // The member this request holds is at its own index, not at 0.
+      const newMember = entry.batch.questions.find(
+        (member): member is QuestionRequestMsg => member !== null,
+      );
+      if (newMember !== undefined) {
+        const absorbed: ModalEntry = {
+          kind: 'question',
+          key: entry.key,
+          batch: absorbQuestion(holder.batch, newMember),
+        };
+        pendingModals = pendingModals.map((existing) => (existing === holder ? absorbed : existing));
+      }
+    } else {
+      // No holder: the first member of a batch (or a solo request) — queue it.
+      pendingModals = [...pendingModals, entry];
+    }
+  } else {
+    pendingModals = [...pendingModals, entry];
+  }
   return {
     pendingModals,
     // **Recomputed, not "the first that landed".** A request from the session
@@ -77,7 +148,7 @@ export function drainModal(s: AppStore): Partial<AppStore> {
     // The id-keying makes this a belt rather than the braces — a fresh
     // question has a different id and would draw normally anyway — but it
     // keeps the field honest: it never names a request that no longer exists.
-    ...(s.modal.kind === 'question' && s.modal.req.id === s.questionMinimizedId
+    ...(s.modal.kind === 'question' && s.modal.batch.batch_id === s.questionMinimizedId
       ? { questionMinimizedId: null }
       : {}),
   };

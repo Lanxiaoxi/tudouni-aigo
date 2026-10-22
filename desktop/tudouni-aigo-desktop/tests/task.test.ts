@@ -723,13 +723,19 @@ test('a refine answer applies the chosen candidate to the task — created stays
     modal: {
       kind: 'question',
       key,
-      req: { v: 1, t: 'question_request', id: 'q-1', question: 'apply?', header: '', options: [], multi_select: false },
+      batch: {
+        batch_id: 'q-1',
+        questions: [
+          { v: 1, t: 'question_request', id: 'q-1', question: 'apply?', header: '', options: [], multi_select: false, batch_id: 'q-1', question_index: 0, question_count: 1 } as never,
+        ],
+        ready: true,
+      },
     },
   }));
 
   const createdAt = task.createdAtMs;
   const before = Date.now();
-  useApp.getState().answerQuestion('answered', 'Apply candidate 1: replace the task prompt');
+  useApp.getState().answerQuestion(['Apply candidate 1: replace the task prompt']);
 
   const s = useApp.getState();
   assert.equal(s.tasks[0]?.prompt, 'the improved prompt', 'the chosen candidate is on the task');
@@ -754,11 +760,17 @@ test('a refine answer of \u201cnone\u201d leaves the task untouched, and still s
     modal: {
       kind: 'question',
       key,
-      req: { v: 1, t: 'question_request', id: 'q-2', question: 'apply?', header: '', options: [], multi_select: false },
+      batch: {
+        batch_id: 'q-2',
+        questions: [
+          { v: 1, t: 'question_request', id: 'q-2', question: 'apply?', header: '', options: [], multi_select: false, batch_id: 'q-2', question_index: 0, question_count: 1 } as never,
+        ],
+        ready: true,
+      },
     },
   }));
 
-  useApp.getState().answerQuestion('answered', 'Apply none of them');
+  useApp.getState().answerQuestion(['Apply none of them']);
 
   const s = useApp.getState();
   assert.equal(s.tasks[0]?.prompt, task.prompt, 'nothing was applied');
@@ -779,12 +791,18 @@ test('a question that is not a refine\u2019s touches no task at all', () => {
     modal: {
       kind: 'question',
       key,
-      req: { v: 1, t: 'question_request', id: 'q-3', question: 'apply?', header: '', options: [], multi_select: false },
+      batch: {
+        batch_id: 'q-3',
+        questions: [
+          { v: 1, t: 'question_request', id: 'q-3', question: 'apply?', header: '', options: [], multi_select: false, batch_id: 'q-3', question_index: 0, question_count: 1 } as never,
+        ],
+        ready: true,
+      },
     },
   }));
 
   const before = task.updatedAtMs;
-  useApp.getState().answerQuestion('answered', 'Apply candidate 1: replace the task prompt');
+  useApp.getState().answerQuestion(['Apply candidate 1: replace the task prompt']);
 
   const s = useApp.getState();
   assert.equal(s.tasks[0]?.prompt, task.prompt, 'an ordinary session\u2019s answer is not a refine delivery');

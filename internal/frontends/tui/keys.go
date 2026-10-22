@@ -1416,10 +1416,18 @@ func (m model) handleQuestionKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	options, _ := request["options"].([]any)
 
 	finish := func(status, text string) (tea.Model, tea.Cmd) {
-		m.pendingQuestion = nil
+		m.client.AnswerQuestion(id, status, text)
+		// The batch continues: the next queued question takes the drawn slot,
+		// with a fresh input and cursor, until the queue runs out.
+		if len(m.pendingQuestions) > 0 {
+			next := m.pendingQuestions[0]
+			m.pendingQuestions = m.pendingQuestions[1:]
+			m.pendingQuestion = next
+		} else {
+			m.pendingQuestion = nil
+		}
 		m.questionInput = ""
 		m.questionCursor = 0
-		m.client.AnswerQuestion(id, status, text)
 		return m, nil
 	}
 	choose := func(index int) (tea.Model, tea.Cmd) {

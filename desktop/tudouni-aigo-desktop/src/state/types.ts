@@ -85,7 +85,39 @@ export type PanelKind =
  * things running in the workspace, not about this turn's conversation. */
 export type SidebarBlockKey = 'goal' | 'tasks' | 'skills' | 'jobs' | 'mcp' | 'ssh';
 
+/**
+ * Quiet mode for the transcript.
+ *
+ * Three states rather than a toggle, because the status bar's chip opens a
+ * menu rather than flipping: `normal` compresses every tool call into a
+ * one-line brief, `simple` goes further — the model call card is its own
+ * head line, one sentence naming the tools it ran, no figures — and `off`
+ * is the full detail the mode exists to switch away from.
+ */
+export type QuietMode = 'off' | 'normal' | 'simple';
+
 export const SIDEBAR_BLOCKS: SidebarBlockKey[] = ['goal', 'tasks', 'jobs', 'skills', 'mcp', 'ssh'];
+
+/**
+ * One `ask_user` call, accumulated from its `question_request`s.
+ *
+ * The runtime sends a batch's requests back to back and only then waits, so
+ * they land in `pendingModals` one by one; the first request of a batch opens
+ * the entry and the rest fill in `questions` (by `question_index`). `ready`
+ * says the whole batch is in — the modal draws a batch in one panel, and a
+ * half-arrived one must not open the panel with a missing page. A request
+ * whose sender predates batches (no `batch_id`) is a batch of one that is
+ * ready immediately.
+ */
+export interface QuestionBatch {
+  batch_id: string;
+  /**
+   * The batch's questions, in order. A `null` slot is a member that has not
+   * landed yet — `ready` holds only when every slot is filled.
+   */
+  questions: (QuestionRequestMsg | null)[];
+  ready: boolean;
+}
 
 /**
  * A blocking request, with the session it came from.
@@ -99,7 +131,7 @@ export const SIDEBAR_BLOCKS: SidebarBlockKey[] = ['goal', 'tasks', 'jobs', 'skil
  */
 export type ModalEntry =
   | { kind: 'permission'; key: string; req: PermissionRequestMsg }
-  | { kind: 'question'; key: string; req: QuestionRequestMsg };
+  | { kind: 'question'; key: string; batch: QuestionBatch };
 
 export type ModalState = ModalEntry | null;
 
@@ -849,13 +881,17 @@ export interface SessionRuntime {
    * Quiet mode for this session's stream.
    *
    * Per session, and that is a change from when it was one window preference. It
-   * says how *this conversation's* tool calls are drawn (collapsed to one line
-   * each), so it is a statement about the conversation rather than about the
-   * window — and it sits next to the autopilot toggle in the status bar, which is
-   * per session. Two identical-looking controls on one row, one of which changed
-   * with the session and one of which did not, was a trap.
+   * says how *this conversation's* work is drawn, so it is a statement about the
+   * conversation rather than about the window — and it sits next to the
+   * autopilot toggle in the status bar, which is per session. Two
+   * identical-looking controls on one row, one of which changed with the
+   * session and one of which did not, was a trap.
+   *
+   * `off` used to be the `false` half of a boolean; the chip is a menu now,
+   * not a toggle, so the two on-states are values of their own — see
+   * `QuietMode`.
    */
-  quiet: boolean;
+  quiet: QuietMode;
 }
 
 /**

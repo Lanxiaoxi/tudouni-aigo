@@ -25,8 +25,25 @@ type Channels struct {
 	MemoryFactory MemoryFactory
 }
 
-// Questioner is how the agent asks a person something.
-type Questioner func(args AskUserArgs) Answer
+// Questioner is how the agent asks a person something. One call may carry
+// several questions; they go out one wire message at a time and the answers
+// come back in the same order.
+type Questioner func(args AskUserBatchArgs) AskUserBatchAnswer
+
+// AskUserBatchArgs is a whole `ask_user` call: the questions in the order they
+// should be asked. The server stamps them onto the wire with a batch id (the
+// first question's id) and positions, so a front end can draw several of them
+// in one panel; one that knows nothing about batches still sees one question
+// per round trip, exactly as before.
+type AskUserBatchArgs struct {
+	Questions []AskUserArgs
+}
+
+// AskUserBatchAnswer is the result of a whole batch. Answers is parallel to
+// the questions; it holds an answer for every one of them.
+type AskUserBatchAnswer struct {
+	Answers []Answer
+}
 
 // AskUserArgs is one question.
 type AskUserArgs struct {
@@ -147,29 +164,64 @@ type questionAnswer struct {
 	text   string
 }
 
-// askUser opens a question and blocks on it.
-func (s *Server) askUser(args AskUserArgs) Answer {
-	entry := s.pending.open("q")
+// askUser opens a batch of questions and blocks on all of them.
+//
+// The wire stays one `question_request` per question — a front end that knows
+// nothing about batches still sees the exact same messages it always did —
+// but every request now carries the batch's id and position, and the answers
+// are folded back in order. A batch id of the empty string and a count of
+// zero is "one question by itself", which is what the old front ends read:
+// the two fields are simply extra, and `checkMessage` treats undeclared keys
+// as a note, not a failure.
+func (s *Server) askUser(args AskUserBatchArgs) AskUserBatchAnswer {
+	count := len(args.Questions)
+	if count == 0 {
+		// Nothing to ask, and nothing must panic: the batch id is derived from
+		// the first question's id.
+		return AskUserBatchAnswer{Answers: []Answer{}}
+	}
+	entries := make([]*waiter, 0, count)
+	for range args.Questions {
+		entries = append(entries, s.pending.open("q"))
+	}
+	// The batch id is the first question's id: every request of one batch
+	// carries it, and a front end that knows nothing about batches simply
+	// ignores the field. `question_count` is the batch's size, so the front
+	// end can tell a solo question (count 1) from one that has company.
+	batchID := entries[0].id
+	for index, question := range args.Questions {
+		options := question.Options
+		if options == nil {
+			options = []string{}
+		}
+		s.Send(map[string]any{
+			"v": VERSION, "t": OutQuestionRequest,
+			"id": entries[index].id, "question": question.Question, "header": question.Header,
+			"options": options, "multi_select": question.MultiSelect,
+			"batch_id": batchID, "question_index": index, "question_count": count,
+		})
+	}
 
-	options := args.Options
-	if options == nil {
-		options = []string{}
+	// All requests are out before any wait: a front end that draws several
+	// questions in one panel has to see the whole batch at once. Waiting for
+	// question N's answer before sending question N+1 would leave that panel
+	// permanently one question short. A front end that answers one at a time
+	// (the TUI) is unaffected — its requests simply arrive in order.
+	answers := make([]Answer, len(entries))
+	for index, entry := range entries {
+		raw, ok := s.pending.wait(entry)
+		if !ok {
+			answers[index] = Answer{Status: AnswerUnavailable}
+			continue
+		}
+		answer, ok := raw.(questionAnswer)
+		if !ok {
+			answers[index] = Answer{Status: AnswerUnavailable}
+			continue
+		}
+		answers[index] = Answer{Text: answer.text, Status: answer.status}
 	}
-	s.Send(map[string]any{
-		"v": VERSION, "t": OutQuestionRequest,
-		"id": entry.id, "question": args.Question, "header": args.Header,
-		"options": options, "multi_select": args.MultiSelect,
-	})
-
-	raw, ok := s.pending.wait(entry)
-	if !ok {
-		return Answer{Status: AnswerUnavailable}
-	}
-	answer, ok := raw.(questionAnswer)
-	if !ok {
-		return Answer{Status: AnswerUnavailable}
-	}
-	return Answer{Text: answer.text, Status: answer.status}
+	return AskUserBatchAnswer{Answers: answers}
 }
 
 // askPermission opens an approval request and blocks on it.

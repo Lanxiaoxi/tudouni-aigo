@@ -32,25 +32,40 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       sendTo(m.key, { v: 1, t: 'permission_response', id: m.req.id, decision });
     },
 
-    answerQuestion(status, text) {
+    answerQuestion(answers) {
       const m = get().modal;
       if (!m || m.kind !== 'question') return;
       set(drainModal(get()));
-      // `skipped` is an independent action, never an empty submit.
-      sendTo(m.key, {
-        v: 1,
-        t: 'question_response',
-        id: m.req.id,
-        status,
-        text: status === 'skipped' ? '' : text,
-      });
+      // **One response per request id.** The runtime opened one waiter per
+      // question and blocks on each of them, so a batch is answered by a batch:
+      // every id of it gets its own `question_response`, in order. `answers`
+      // is null when the person skipped the whole batch, and a null entry
+      // skips that one question — both are explicit, never an empty submit.
+      const members = m.batch.questions;
+      for (let index = 0; index < members.length; index++) {
+        const member = members[index];
+        if (member === null) continue; // never happens while ready, but the wire id is the contract
+        const text = answers === null ? '' : ((answers[index] ?? '').trim());
+        const status = answers === null || text === '' ? 'skipped' : 'answered';
+        sendTo(m.key, {
+          v: 1,
+          t: 'question_response',
+          id: member.id,
+          status,
+          text,
+        });
+      }
       // The refine delivery: when the question came out of a refine run, the
       // person's choice is applied here, by the front end. The agent never
       // touches `aigo.prefs` (it cannot — that is this window's persistence),
       // so the selected candidate's text, read back out of the report this
       // session delivered, is the only copy that ever lands on the task.
       // `createdAtMs` is the task's birth and survives; `updatedAtMs` moves.
-      if (status === 'answered' && text.trim() !== '') {
+      // A refine run asks exactly one question, so the batch's first member
+      // is the one the choice refers to.
+      const first = answers?.[0] ?? null;
+      if (first !== null && first.trim() !== '') {
+        const text = first;
         const bucket = get().sessions[m.key];
         const taskId = bucket?.refineTaskId ?? null;
         const candidates = bucket?.refineCandidates;
@@ -95,7 +110,9 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       // queue keeps holding the request. The render is the only thing that
       // moves. See the field's comment for why `selectModalVisible` is
       // deliberately left unchanged.
-      set({ questionMinimizedId: m.req.id });
+      // The mark keys to the **batch** id: minimize puts the whole panel
+      // aside, and restoring brings back every page of it.
+      set({ questionMinimizedId: m.batch.batch_id });
     },
 
     restoreQuestion() {
@@ -103,7 +120,7 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       if (s.questionMinimizedId === null) return;
       const m = s.modal;
       // Still minimized and still the one in the drawn slot: bring it back.
-      if (m && m.kind === 'question' && m.req.id === s.questionMinimizedId) {
+      if (m && m.kind === 'question' && m.batch.batch_id === s.questionMinimizedId) {
         set({ questionMinimizedId: null });
         return;
       }

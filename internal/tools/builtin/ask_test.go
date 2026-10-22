@@ -10,9 +10,13 @@ import (
 // question produced which answer, and records the questions in the order they were
 // actually asked.
 func recordingQuestioner(seen *[]AskArgs) Questioner {
-	return func(args AskArgs) Answer {
-		*seen = append(*seen, args)
-		return Answer{Text: "回答：" + args.Header, Status: Answered, HumanWaitMs: 10}
+	return func(questions []AskArgs) []Answer {
+		*seen = append(*seen, questions...)
+		answers := make([]Answer, len(questions))
+		for index, args := range questions {
+			answers[index] = Answer{Text: "回答：" + args.Header, Status: Answered, HumanWaitMs: 10}
+		}
+		return answers
 	}
 }
 
@@ -69,8 +73,12 @@ func TestAskUserAsksEveryQuestionInOrder(t *testing.T) {
 // its result must be word-for-word what it was before the tool learned to carry
 // several — nothing downstream should have to notice.
 func TestAskUserSingleQuestionKeepsTheOldWording(t *testing.T) {
-	tool := NewAskUser(func(AskArgs) Answer {
-		return Answer{Text: "第二个", Status: Answered}
+	tool := NewAskUser(func(questions []AskArgs) []Answer {
+		answers := make([]Answer, len(questions))
+		for index := range questions {
+			answers[index] = Answer{Text: "第二个", Status: Answered}
+		}
+		return answers
 	})
 
 	result, err := tool.Execute(context.Background(), map[string]any{
@@ -89,9 +97,9 @@ func TestAskUserSingleQuestionKeepsTheOldWording(t *testing.T) {
 // opinion".
 func TestAskUserEmptyQuestionsAsksNobody(t *testing.T) {
 	asked := 0
-	tool := NewAskUser(func(AskArgs) Answer {
-		asked++
-		return Answer{Status: Answered}
+	tool := NewAskUser(func(questions []AskArgs) []Answer {
+		asked += len(questions)
+		return make([]Answer, len(questions))
 	})
 
 	result, err := tool.Execute(context.Background(), map[string]any{"questions": []any{}})

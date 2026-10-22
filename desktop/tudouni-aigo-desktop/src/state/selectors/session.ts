@@ -735,7 +735,7 @@ export function selectModalVisible(s: AppStore): boolean {
 export function selectQuestionMinimized(s: AppStore): boolean {
   if (s.questionMinimizedId === null) return false;
   if (s.modal === null || s.modal.kind !== 'question') return false;
-  if (s.modal.req.id !== s.questionMinimizedId) return false;
+  if (s.modal.batch.batch_id !== s.questionMinimizedId) return false;
   return selectModalVisible(s);
 }
 

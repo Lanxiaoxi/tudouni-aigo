@@ -42,27 +42,38 @@ type Answer struct {
 	HumanWaitMs int
 }
 
-// Questioner is the channel: given a question, return an answer. The tool itself
-// never touches stdin or the terminal — that is the injected implementation's job.
-type Questioner func(args AskArgs) Answer
+// Questioner is the channel: given the call's whole batch of questions, return
+// one answer per question, in order. The tool itself never touches stdin or the
+// terminal — that is the injected implementation's job.
+//
+// The batch travels in one call, not one call per question, because the wire
+// underneath sends the batch's `question_request`s back to back: a front end
+// that draws them in one panel has to see the whole batch at once, and a
+// front end that cannot (the line REPL) simply answers them one after another
+// in the order they arrived.
+type Questioner func(questions []AskArgs) []Answer
 
 // unavailableQuestioner is the fallback when no channel was wired in (--autopilot,
 // stdin stolen, CI). It is deliberately not an empty string and not a "no opinion":
 // both would read as默许, and nobody actually answered.
-func unavailableQuestioner(args AskArgs) Answer {
-	return Answer{Text: "", Status: Unavailable, HumanWaitMs: 0}
+func unavailableQuestioner(questions []AskArgs) []Answer {
+	answers := make([]Answer, len(questions))
+	for range questions {
+		answers = append(answers, Answer{Text: "", Status: Unavailable, HumanWaitMs: 0})
+	}
+	return answers
 }
 
 // NewAskUser builds the ask_user tool. A nil questioner behaves like
 // unavailableQuestioner, so "configured to ask but no channel" fails the same way
 // as "not configured" — never toward allowing.
 //
-// One call may carry **several** questions. They are asked one after another over
-// the same channel — each still a single `question_request` a front end already
-// knows how to answer — and their answers come back together in one result. The
-// tool deliberately does not batch them into one wire message: the blocking
-// channel's whole contract is one request, one answer, and a person at a keyboard
-// answers one box at a time anyway.
+// One call may carry **several** questions. They go out as a batch — the wire
+// sends one `question_request` per question, back to back, each stamped with the
+// batch's id and position — and their answers come back together in one result.
+// A front end that reads the batch stamps draws the whole batch in one panel the
+// person moves through; one that does not (the line REPL, the TUI) simply sees
+// the requests in order and answers them one after another.
 func NewAskUser(questioner Questioner) tools.Tool {
 	return tools.Tool{
 		Name: "ask_user",
@@ -112,12 +123,22 @@ func askUser(questioner Questioner, args map[string]any) tools.Result {
 		channel = unavailableQuestioner
 	}
 
-	answers := make([]Answer, 0, len(questions))
+	// The whole batch goes out in one call: the wire sends the batch's
+	// `question_request`s back to back, and a front end that draws them in one
+	// panel has to see the whole batch at once. The answers come back parallel
+	// to the questions.
+	answers := channel(questions)
+	// A channel that comes back short has simply left some of them unanswered;
+	// pad with "nobody answered" rather than index off the end.
+	for len(answers) < len(questions) {
+		answers = append(answers, Answer{Status: Unavailable})
+	}
+	if len(answers) > len(questions) {
+		answers = answers[:len(questions)]
+	}
 	totalWait := 0
-	for _, asked := range questions {
-		answer := channel(asked)
+	for _, answer := range answers {
 		totalWait += answer.HumanWaitMs
-		answers = append(answers, answer)
 	}
 
 	return tools.Result{

@@ -93,7 +93,7 @@ const VERSION = 1
 //     keys on both the panel snapshot and `ui(state)` because a person reaches
 //     both mismatched states — built-but-turned-off, and turned-on-but-never-built
 //     — and a single boolean could not express either.
-const PROTOCOL = 9
+const PROTOCOL = 10
 
 // Message keys used by every envelope.
 const (

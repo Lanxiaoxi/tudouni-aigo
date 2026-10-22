@@ -194,6 +194,7 @@ func TestTheBlockingRequestsSatisfyTheirSchemas(t *testing.T) {
 		"v": VERSION, "t": OutQuestionRequest,
 		"id": "q1", "question": "which one?", "header": "",
 		"options": []any{"a", "b"}, "multi_select": false,
+		"batch_id": "q1", "question_index": 0, "question_count": 1,
 	}
 	checkMessage(t, schema["question_request"], question)
 

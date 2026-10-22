@@ -58,7 +58,7 @@ export const ENVELOPE_VERSION = 1;
  *     mismatched states (built then switched off; switched on but never built),
  *     and one boolean could not express either.
  */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 /* ============================================================
    Shared vocabulary
@@ -1275,6 +1275,16 @@ export interface QuestionRequestMsg {
   header: string;
   options: string[];
   multi_select: boolean;
+  /**
+   * Batch metadata. All `question_request`s of one `ask_user` call carry the
+   * same `batch_id` (the first question's id) and a 0-based `question_index`
+   * of the batch's size. The runtime sends the whole batch back to back and
+   * only then waits, so the front end groups them into one panel; `null`
+   * values mean the sender predates batches and the request stands alone.
+   */
+  batch_id: string | null;
+  question_index: number | null;
+  question_count: number | null;
 }
 
 /**

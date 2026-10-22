@@ -518,8 +518,12 @@
       "question": {"type": "string"},
       "header": {"type": "string", "doc": "不超过 12 字的标签，供界面显示；空串表示没有"},
       "options": {"type": "array", "items": {"type": "string"}, "doc": "空数组 = 让用户自由作答"},
-      "multi_select": {"type": "boolean"}
+      "multi_select": {"type": "boolean"},
+      "batch_id": {"type": "string", "nullable": true, "doc": "**一次 ask_user 调用的整批问题**用同一个 id 标记。runtime 把整批的 question_request 背靠背发完才开始等答案，所以同一 batch_id 的请求会连续到达——认识这个字段的前端把它们画进一个面板（导航条切换），不认识的前端忽略它，仍然一个一个回答，行为与旧版完全一致"},
+      "question_index": {"type": "integer", "nullable": true, "doc": "这条问题在批内的位置（0 起）。与 batch_id 一起用"},
+      "question_count": {"type": "integer", "nullable": true, "doc": "这批一共有几条问题。1 = 单题，字段照常显示"}
     },
-    "required": ["v", "t", "id", "question", "header", "options", "multi_select"]
+    "required": ["v", "t", "id", "question", "header", "options", "multi_select",
+                 "batch_id", "question_index", "question_count"]
   }
 }

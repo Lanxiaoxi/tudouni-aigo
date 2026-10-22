@@ -5,14 +5,14 @@
  * shares. It lives apart from the actions so a slice can be read — or tested —
  * without importing the store that assembles them.
  */
-import { type CodeIntelActionKind, type FrontendMsg, type MemoryActionKind, type PermissionDecision, type QuestionStatus, type RuntimeMsg } from '@/protocol/types';
+import { type CodeIntelActionKind, type FrontendMsg, type MemoryActionKind, type PermissionDecision, type RuntimeMsg } from '@/protocol/types';
 import { type BlockKind, type ToolFacts } from '@/state/entries';
 import { type Deliverable, type LearnScope } from '@/learn/template';
 import { type RunScope, type Task, type TaskRunLink, type TaskRunOutcome } from '@/task/tasks';
 import { type ClosePolicy } from '@/runtime/windowClose';
 import { type BridgeOptions } from '@/runtime/tauri';
 import { type ConfigSyncChoice } from '@/state/configSync';
-import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModalState, type PanelKind, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
+import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModalState, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
 
 
 export interface AppStore {
@@ -797,7 +797,17 @@ export interface AppStore {
    * view, which is what keeps a just-hidden row from reappearing.
    */
   setSessionFilter(filter: 'active' | 'all'): void;
-  setQuiet(q: boolean): void;
+  /**
+   * Set the transcript's quiet mode for the session on screen, and remember it
+   * so a fresh session starts from it. The status bar's menu calls this with
+   * the picked value.
+   */
+  setQuiet(q: QuietMode): void;
+  /**
+   * The keyboard path (`Ctrl+\`) and `/quiet`: the mode has no toggle — the
+   * chip is a menu now — so a bare press **cycles** off → normal → simple →
+   * off. A key that flipped a boolean is now a key that walks a list.
+   */
   toggleQuiet(): void;
   /** Raise the transcript's find bar (`Ctrl+F`) and put the keyboard in it. */
   openFind(): void;
@@ -849,7 +859,14 @@ export interface AppStore {
   removeBlock(id: string): void;
 
   answerPermission(decision: PermissionDecision): void;
-  answerQuestion(status: QuestionStatus, text: string): void;
+  /**
+   * Answer the drawn question batch. One entry per question of the batch, in
+   * the batch's order. A `null` entry skips that one question; `null` itself
+   * (no array at all) skips the whole batch — one independent action, never an
+   * empty submit. Every question gets its own `question_response`, because the
+   * runtime opened one waiter per id.
+   */
+  answerQuestion(answers: (string | null)[] | null): void;
   /**
    * Put the drawn question modal aside without answering it.
    *
