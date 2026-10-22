@@ -50,6 +50,16 @@ export const PopoverSurface = ({
     {children}
   </PanelSurfaceContext.Provider>
 );
+
+/** The surface a panel is drawn in.
+ *
+ *  Exported for panels that live **only inside the status bar's popover**
+ *  (the quiet-mode menu): a pick has to close *that* popover — the store's
+ *  `panel` is a different thing, and closing it from here would be a no-op
+ *  that leaves the menu up. */
+export function usePanelSurface(): PanelSurface {
+  return useContext(PanelSurfaceContext);
+}
 export function PanelShell({
   title,
   count,

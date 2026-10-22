@@ -37,7 +37,7 @@ export const COMMANDS: CommandDef[] = [
   { id: 'help', name: '/help', descKey: 'cmd.help.desc' },
   { id: 'skills', name: '/skills', descKey: 'cmd.skills.desc' },
   { id: 'autopilot', name: '/autopilot', descKey: 'cmd.autopilot.desc' },
-  { id: 'quiet', name: '/quiet', descKey: 'cmd.quiet.desc' },
+  { id: 'quiet', name: '/quiet', descKey: 'cmd.quiet.desc', takesArg: true, argHint: 'normal|simple|off' },
   { id: 'status', name: '/status', descKey: 'cmd.status.desc' },
   { id: 'tools', name: '/tools', descKey: 'cmd.tools.desc' },
   { id: 'context', name: '/context', descKey: 'cmd.context.desc' },
@@ -128,9 +128,27 @@ export function runCommand(id: string, arg?: string): void {
       s.setAutopilot(!(activeRuntime(s)?.uiState?.autopilot ?? false));
       break;
 
-    case 'quiet':
-      s.toggleQuiet();
+    case 'quiet': {
+      // With an argument the command names the state, like `/thinking on`;
+      // bare, it cycles. An unknown word is refused, not guessed: a command
+      // that silently picked the nearest mode would be a second, different
+      // spelling of `/quiet` that behaves like another one.
+      const mode = arg?.toLowerCase();
+      if (mode === 'normal' || mode === 'simple' || mode === 'off') {
+        s.setQuiet(mode);
+      } else if (arg !== undefined && arg !== '') {
+        // The refusal rides the composer notice, the channel every other
+        // command's refusal uses.
+        s.setComposerNotice({
+          code: 'quiet-unknown',
+          reason: `unknown quiet mode: ${arg} — use /quiet normal, /quiet simple or /quiet off (or /quiet to cycle)`,
+          tone: 'warn',
+        });
+      } else {
+        s.toggleQuiet();
+      }
       break;
+    }
 
     case 'status':
       s.requestBlock('status');

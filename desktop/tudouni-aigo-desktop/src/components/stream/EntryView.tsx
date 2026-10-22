@@ -700,7 +700,7 @@ function PermEntry({ entry }: { entry: Extract<Entry, { kind: 'perm' }> }) {
 
 function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
   const t = useT();
-  const quiet = useSessionField((rt) => rt.quiet, false);
+  const quiet = useSessionField((rt) => rt.quiet, 'off');
   const manual = useApp((s) => s.reasoningOpen[entry.id]);
   const toggle = useApp((s) => s.toggleReasoning);
   // While streaming it is forced open and updates live; once the stream stops it
@@ -718,7 +718,7 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
   // arrive line by line is the point. Under quiet, a person who *does* want to
   // read it still can — `Ctrl+T`, or a press on the head — because the manual
   // choice is consulted in both modes.
-  const open = quiet ? manual === true : entry.streaming ? true : manual === true;
+  const open = quiet !== 'off' ? manual === true : entry.streaming ? true : manual === true;
 
   return (
     // `data-entry` marks the **row**, not the body: the body is inside the fold

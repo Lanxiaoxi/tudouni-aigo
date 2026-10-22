@@ -2871,14 +2871,21 @@ test('quiet mode is a preference and survives protocol traffic', () => {
   captureOutbound();
   resetStore();
 
-  const before = rt().quiet;
+  // The chip is a menu, so `toggleQuiet` (the keyboard and `/quiet` path)
+  // **cycles** the three states rather than flipping a boolean.
+  useApp.getState().setQuiet('off');
   useApp.getState().toggleQuiet();
-  assert.equal(rt().quiet, !before);
+  assert.equal(rt().quiet, 'normal');
+  useApp.getState().toggleQuiet();
+  assert.equal(rt().quiet, 'simple');
+  useApp.getState().toggleQuiet();
+  assert.equal(rt().quiet, 'off');
 
+  useApp.getState().setQuiet('simple');
   useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'ui', kind: 'state', ...STATE_PAYLOAD } as never);
   // A snapshot refresh must not reach into presentation choices.
-  assert.equal(rt().quiet, !before);
-  useApp.getState().setQuiet(before);
+  assert.equal(rt().quiet, 'simple');
+  useApp.getState().setQuiet('off');
 });
 
 /* ============================================================

@@ -6,6 +6,7 @@
  */
 import type { StoreContext } from '../storeContext';
 import type { AppStore } from '../storeShape';
+import type { QuietMode } from '../types';
 import { nextId } from '@/state/entries';
 import { sendTo } from '@/runtime/bus';
 import { insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, type AttachedFile, type PastedImage } from '@/runtime/paste';
@@ -359,9 +360,15 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
     },
 
     toggleQuiet() {
+      // The chip is a menu now, so the keyboard and `/quiet` have no toggle to
+      // flip: a bare press **cycles** the three states (off → normal → simple),
+      // which keeps the key from becoming dead while still leaving the menu the
+      // one place a state can be *chosen*.
       const current = activeRuntime(get());
       if (!current) return;
-      get().setQuiet(!current.quiet);
+      const next: QuietMode =
+        current.quiet === 'off' ? 'normal' : current.quiet === 'normal' ? 'simple' : 'off';
+      get().setQuiet(next);
     },
 
     openFind() {

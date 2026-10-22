@@ -5,7 +5,7 @@
  * preferences module, and it is also the one place a new session's defaults are
  * written down.
  */
-import { LOCAL_CONNECTION_STATE, type LaunchArgs, type SessionRuntime } from './types';
+import { LOCAL_CONNECTION_STATE, type LaunchArgs, type QuietMode, type SessionRuntime } from './types';
 
 
 export function createSessionBucket(
@@ -87,12 +87,15 @@ export function createSessionBucket(
 }
 
 /** Quiet mode's starting value for a fresh session. A preference, read once. */
-function prefsQuietDefault(): boolean {
+function prefsQuietDefault(): QuietMode {
   try {
     const raw = localStorage.getItem('aigo.prefs');
-    if (!raw) return false;
-    return (JSON.parse(raw) as { quiet?: unknown }).quiet === true;
+    if (!raw) return 'off';
+    const quiet = (JSON.parse(raw) as { quiet?: unknown }).quiet;
+    // Same legacy rule as `prefs.ts`: a boolean record predates the three
+    // states, and its `true` meant the mode was on — that is `normal`.
+    return quiet === 'normal' || quiet === 'simple' ? quiet : quiet === true ? 'normal' : 'off';
   } catch {
-    return false;
+    return 'off';
   }
 }

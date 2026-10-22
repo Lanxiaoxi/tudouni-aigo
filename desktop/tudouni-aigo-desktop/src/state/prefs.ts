@@ -21,6 +21,7 @@ import {
 } from '@/task/tasks';
 import type {
   AppStore,
+  QuietMode,
   RemoteWorkspaceEntry,
   SshHostConfig,
   SidebarBlockKey,
@@ -70,7 +71,9 @@ export function clampRailWidth(px: number): number {
    ============================================================ */
 
 type Prefs = {
-  quiet: boolean;
+  /** Quiet mode as remembered. Reads a legacy `true`/`false` record from the
+   *  boolean era: `true` meant the mode was on, which is `normal`. */
+  quiet: QuietMode;
   sidebarVisible: boolean;
   leftbarVisible: boolean;
   /** The right rail's dragged width; `null` = the stylesheet's own default. */
@@ -186,7 +189,7 @@ function isValidRemoteWorkspace(value: unknown): value is RemoteWorkspaceEntry {
 
 function loadPrefs(): Prefs {
   const fallback: Prefs = {
-    quiet: false,
+    quiet: 'off',
     sidebarVisible: true,
     leftbarVisible: true,
     sidebarWidth: null,
@@ -226,8 +229,14 @@ function loadPrefs(): Prefs {
     const raw = localStorage.getItem('aigo.prefs');
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
+    // Read off the raw record: a legacy build persisted a **boolean** from
+    // when the mode was a toggle, and `Partial<Prefs>` would type the field
+    // as `QuietMode` and hide that the old value is not one of the three.
+    const quietRaw: unknown = (parsed as Record<string, unknown>).quiet;
     return {
-      quiet: parsed.quiet === true,
+      // `true` means the mode was on, which is `normal`. Anything else is `off`.
+      quiet:
+        quietRaw === 'normal' || quietRaw === 'simple' ? quietRaw : quietRaw === true ? 'normal' : 'off',
       sidebarVisible: parsed.sidebarVisible ?? fallback.sidebarVisible,
       leftbarVisible: parsed.leftbarVisible ?? fallback.leftbarVisible,
       // A number, or nothing. A non-number is not `NaN`-coerced and hoped for:
@@ -315,7 +324,7 @@ function loadPrefs(): Prefs {
 }
 
 
-export function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean }): void {
+export function persistPrefs(s: AppStore, quiet?: { key: string; value: QuietMode }): void {
   try {
     localStorage.setItem(
       'aigo.prefs',
@@ -323,7 +332,7 @@ export function persistPrefs(s: AppStore, quiet?: { key: string; value: boolean 
         // Quiet is per session now, so the remembered value is the active
         // session's — it is the one a person just changed, and it is what a
         // fresh session should start from.
-        quiet: quiet ? quiet.value : s.sessions[s.activeKey ?? '']?.quiet === true,
+        quiet: quiet ? quiet.value : s.sessions[s.activeKey ?? '']?.quiet ?? 'off',
         sidebarVisible: s.sidebarVisible,
         leftbarVisible: s.leftbarVisible,
         sidebarWidth: s.sidebarWidth,

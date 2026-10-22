@@ -285,6 +285,24 @@ export const en = {
   'entry.reasonLive': 'reasoning · {n} chars · live',
   'entry.quietRollup': '{n} tool calls collapsed',
   'entry.quietHint': 'switch to detail with /quiet',
+  /** Simple quiet mode's step head. The normal head carries figures
+   *  (duration, tokens, rate); simple is the one line a person actually
+   *  asked for — what the call is doing, named by its tools, and how it
+   *  ended. The list arrives pre-joined (de-duplicated, arrival order)
+   *  because this catalogue knows no plurals and no tool names. */
+  'entry.simpleStepExecuting': 'Executing {tools}',
+  'entry.simpleStepDone': 'Done: {tools}',
+  /** The settled step that ran no tools at all (the answer call): "Done: —"
+   *  would print a dash as a tool name, so it is its own word. */
+  'entry.simpleStepDonePlain': 'Completed',
+  /** The status bar's quiet menu: the three states a press picks from.
+   *  `normal` is the mode as it was before the menu existed; `simple`
+   *  drops the card to its head line; `off` is the full detail. */
+  'quiet.mode.normal': 'Normal',
+  'quiet.mode.simple': 'Simple',
+  'quiet.mode.off': 'Off',
+  'quiet.menu.note':
+    'Normal: one line per call · Simple: the call card shrinks to a single status line',
   'entry.showDetail': 'detail',
   'entry.params': 'params',
   'entry.builtin': 'built-in',
@@ -1449,6 +1467,8 @@ export const en = {
   'composer.pasteNoVision':
     'the model in use ({model}) cannot be shown pictures — this one is named in the sentence but will not be sent',
   'composer.pasteFailed': 'the picture could not be written: {reason}',
+  /** `/quiet` given a word that is not one of its three states. */
+  'composer.quietUnknown': '{reason}',
 
   /* ---------------- commands ---------------- */
   'cmd.new.desc': 'Start from a clean context',
@@ -1458,7 +1478,7 @@ export const en = {
   'cmd.help.desc': 'The full version of this table',
   'cmd.skills.desc': 'Includes skipped skills and why',
   'cmd.autopilot.desc': 'Run without asking for approval',
-  'cmd.quiet.desc': 'Collapse tool calls into a one-line brief',
+  'cmd.quiet.desc': 'Quiet mode: cycles off → normal → simple (or /quiet normal|simple|off)',
   'cmd.status.desc': 'Insert a status snapshot into the stream',
   'cmd.tools.desc': 'List tools, risk level, remembered rules',
   'cmd.context.desc': 'Token usage and the compaction ledger',
@@ -1484,7 +1504,7 @@ export const en = {
   'key.edit': 'Line start/end, delete word/line, word move',
   'key.pick': 'Confirm / close / numeric pick in a panel',
   'key.history': 'Browse input history',
-  'key.quiet': 'Toggle quiet mode',
+  'key.quiet': 'Cycle quiet mode (off / normal / simple)',
   'key.find': 'Find in this conversation',
 
   /* ---------------- misc ---------------- */

@@ -27,18 +27,20 @@ import {
 } from '@/state/store';
 import { useTurnClock } from '@/hooks/useTurnClock';
 import { useResourceUsage } from '@/hooks/useResourceUsage';
+import { useListKeys } from '@/hooks/useListKeys';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { Tip } from '@/components/ui/kit';
 import { formatBytes, formatCpu, formatDuration, formatPercent, formatTokens } from '@/utils/format';
 import type { Phase } from '@/runtime/adapt';
+import type { QuietMode } from '@/state/store';
 import {
   AuditPanel,
   ContextPanel,
   SubagentsPanel,
   TimingPanel,
 } from '@/components/panels/panels';
-import { PopoverSurface } from '@/components/panels/PanelShell';
+import { PanelBody, PanelRow, PanelShell, PopoverSurface, usePanelSurface } from '@/components/panels/PanelShell';
 
 /**
  * §1·6 The status bar.
@@ -143,7 +145,7 @@ export function StatusBar() {
   const session = useSessionField((rt) => rt.session, null);
   const snap = useSessionField((rt) => rt.uiState, null);
   const autopilot = useSessionField((rt) => rt.uiState?.autopilot ?? false, false);
-  const quiet = useSessionField((rt) => rt.quiet, false);
+  const quiet = useSessionField((rt) => rt.quiet, 'off');
   // The workspace's shells, and which one this session's view is attached to.
   // Both come from the session on screen for the reason stated above: with two
   // conversations open, a count that kept the first one's shells would be a
@@ -153,7 +155,7 @@ export function StatusBar() {
   const hasSpoken = useSessionField((rt) => rt.hasSpoken, false);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
   const setAutopilot = useApp((s) => s.setAutopilot);
-  const toggleQuiet = useApp((s) => s.toggleQuiet);
+  const setQuiet = useApp((s) => s.setQuiet);
   const toggleTerminalView = useApp((s) => s.toggleTerminalView);
 
   // The turn's elapsed time. The runtime sends no duration until a turn ends, so
@@ -290,17 +292,32 @@ export function StatusBar() {
           </button>
         </Tip>
 
-        <Tip label={t('status.quiet')}>
+        {/* Quiet is a **menu**, not a toggle: the chip lifts a popover with the
+            three states (normal / simple / off), and the row shows which one is
+            in force. The pressed state marks the whole cluster "on" — the two
+            modes are both quieter than the default, so the chip's own label is
+            the mode name, which is the state a glance needs. */}
+        <StatusPopover
+          label={t('status.quiet')}
+          content={<QuietModeMenu mode={quiet} onPick={setQuiet} />}
+        >
           <button
             type="button"
-            className={`st-toggle${quiet ? ' is-on' : ''}`}
-            onClick={toggleQuiet}
-            aria-pressed={quiet}
+            className={`st-toggle${quiet !== 'off' ? ' is-on' : ''}`}
+            aria-pressed={quiet !== 'off'}
           >
             <CircleSlash size={11} />
-            <span className="hide-b860">{t('status.quiet')}</span>
+            <span className="hide-b860">
+              {t(
+                quiet === 'normal'
+                  ? 'quiet.mode.normal'
+                  : quiet === 'simple'
+                    ? 'quiet.mode.simple'
+                    : 'status.quiet',
+              )}
+            </span>
           </button>
-        </Tip>
+        </StatusPopover>
 
         {/* **The terminals badge**, and it is where it is because that is where
             it was asked for: directly to the right of `quiet`. It answers the
@@ -523,6 +540,60 @@ export function StatusBar() {
  * Radix dialog primitives (which would throw outside a `Dialog.Root`) and so
  * the header's close button goes to this popover's open state.
  */
+/**
+ * The quiet chip's menu: the three states, one row each, in the order a bare
+ * `Ctrl+\` cycles them (normal → simple → off), with the current one marked.
+ *
+ * A `PanelShell` inside the status bar's popover — the same pair the jobs and
+ * subagents chips use — so the head, the rows and the keyboard behave like
+ * every other panel, and picking a row closes the popover through the
+ * popover's own open state rather than the store's `panel`.
+ */
+function QuietModeMenu({ mode, onPick }: { mode: QuietMode; onPick: (m: QuietMode) => void }) {
+  const t = useT();
+  const surface = usePanelSurface();
+  // The menu is drawn only while the popover is up (its content is mounted
+  // by Radix), so its own keys are always live — and closing is the
+  // popover's close, which `PopoverSurface` hands out for exactly this.
+  const close = surface.kind === 'popover' ? surface.close : () => useApp.getState().closePanel();
+  const options: { value: QuietMode; label: TKey }[] = [
+    { value: 'normal', label: 'quiet.mode.normal' },
+    { value: 'simple', label: 'quiet.mode.simple' },
+    { value: 'off', label: 'quiet.mode.off' },
+  ];
+  const { active, setActive } = useListKeys({
+    count: options.length,
+    onClose: close,
+    onPick: (i) => {
+      const option = options[i];
+      if (!option) return;
+      onPick(option.value);
+      close();
+    },
+  });
+  return (
+    <PanelShell title={t('status.quiet')} note={t('quiet.menu.note')}>
+      <PanelBody>
+        {options.map((option, i) => (
+          <PanelRow
+            key={option.value}
+            index={i + 1}
+            active={active === i}
+            selected={mode === option.value}
+            onHover={() => setActive(i)}
+            onPick={() => {
+              onPick(option.value);
+              close();
+            }}
+          >
+            {t(option.label)}
+          </PanelRow>
+        ))}
+      </PanelBody>
+    </PanelShell>
+  );
+}
+
 function StatusPopover({
   label,
   content,

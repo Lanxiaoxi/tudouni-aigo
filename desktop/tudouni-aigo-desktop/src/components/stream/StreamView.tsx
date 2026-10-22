@@ -2,10 +2,10 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import type { CSSProperties } from 'react';
 import { ArrowDown, Loader, Sparkles } from 'lucide-react';
 import { NO_ENTRIES, useApp, useSessionField } from '@/state/store';
+import { DeliverableCards } from './DeliverableCards';
 import { useT } from '@/i18n/useT';
 import { useFindInStream } from '@/find/useFindInStream';
 import { EntryView } from './EntryView';
-import { DeliverableCards } from './DeliverableCards';
 import { FindBar } from './FindBar';
 import { QuietGroup } from './QuietGroup';
 import { TurnRail } from './TurnRail';
@@ -19,7 +19,7 @@ import {
   type StreamSection,
 } from '@/streamBlocks';
 import { formatDuration, formatTokens, tokPerSecond } from '@/utils/format';
-import type { Entry } from '@/state/entries';
+import type { Deliverable, Entry } from '@/state/entries';
 
 /**
  * §1·3 Main area / §2 the session stream.
@@ -88,7 +88,7 @@ export function StreamView() {
   // mode is per session now: it says how *this conversation's* tool calls are
   // drawn, so switching conversations switching it is the point.
   const entries = useSessionField((rt) => rt.entries, NO_ENTRIES);
-  const quiet = useSessionField((rt) => rt.quiet, false);
+  const quiet = useSessionField((rt) => rt.quiet, 'off');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -111,7 +111,7 @@ export function StreamView() {
     if (find.open) setPinned(false);
   }, [find.open]);
 
-  const rows = useMemo(() => buildRows(entries, quiet), [entries, quiet]);
+  const rows = useMemo(() => buildRows(entries, quiet !== 'off'), [entries, quiet]);
   // The drawn rows, pulled tight into step panels. Same cadence as `rows`
   // above — one pass per change to `entries`, including every streamed chunk —
   // and the same saving rule applies: earlier blocks keep the same row objects,
@@ -364,6 +364,10 @@ function runKey(run: { kind: string; blocks: StreamBlock[] }): string {
 function StepBlock({ block }: { block: Extract<StreamBlock, { kind: 'step' }> }) {
   const t = useT();
   const m = block.metrics;
+  // Quiet mode is per session; the card is drawn from the transcript it
+  // belongs to, and this window draws one, so the active session's reading is
+  // the one the head must take.
+  const quiet = useSessionField((rt) => rt.quiet, 'off');
 
   // The card's edge follows its riskiest row: a MEDIUM or HIGH call is one a
   // person is meant to notice from across the transcript, and the row's own
@@ -377,6 +381,58 @@ function StepBlock({ block }: { block: Extract<StreamBlock, { kind: 'step' }> })
       break;
     }
     if (row.entry.risk === 'medium') elevated = 'has-medium';
+  }
+
+  /* Simple quiet mode: the card is **its head line and nothing else** — no
+      figures, no rows. What the head says is what the person asked for:
+      "Executing grep, shell, edit_file" while the work is in flight,
+      "Done: grep, shell, edit_file" once it is over, and never the token
+      counts the normal head carries. The tools are walked from the rows in
+      arrival order, a name at most once each (a retried call names its tool
+      twice), and a call that declared a deliverable keeps its cards — a
+      declaration is the turn's result, and simple mode must not be the place
+      it goes missing. */
+  if (quiet === 'simple') {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    const deliverables: Deliverable[] = [];
+    let unfinished = false;
+    for (const row of block.rows) {
+      if (row.kind !== 'entry') continue;
+      if (row.entry.kind !== 'tool') continue;
+      if (!seen.has(row.entry.tool)) {
+        seen.add(row.entry.tool);
+        names.push(row.entry.tool);
+      }
+      if (row.entry.result === null) unfinished = true;
+      const declared = row.entry.result?.deliverables;
+      if (declared) deliverables.push(...declared);
+    }
+    const executing = block.running || unfinished;
+    return (
+      <section
+        className={`e-step${block.running ? ' is-running' : ''}${
+          elevated !== '' ? ` is-elevated ${elevated}` : ''
+        }`}
+      >
+        <header className="e-step-head">
+          {executing ? (
+            <Loader size={11} className="e-step-icon e-step-spinner" aria-hidden />
+          ) : (
+            <Sparkles size={11} className="e-step-icon" />
+          )}
+          <span className="e-step-title">{t('entry.model')}</span>
+          <span className="e-step-metrics">
+            {executing
+              ? t('entry.simpleStepExecuting', { tools: names.length > 0 ? names.join(', ') : '…' })
+              : names.length > 0
+                ? t('entry.simpleStepDone', { tools: names.join(', ') })
+                : t('entry.simpleStepDonePlain')}
+          </span>
+        </header>
+        {deliverables.length > 0 ? <DeliverableCards files={deliverables} /> : null}
+      </section>
+    );
   }
 
   return (

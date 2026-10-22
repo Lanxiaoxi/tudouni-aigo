@@ -346,5 +346,7 @@ function noticeText(t: ReturnType<typeof useT>, notice: ComposerNotice): string 
       return t('composer.pasteNoVision', { model: notice.model });
     case 'paste-failed':
       return t('composer.pasteFailed', { reason: notice.reason });
+    case 'quiet-unknown':
+      return t('composer.quietUnknown', { reason: notice.reason });
   }
 }

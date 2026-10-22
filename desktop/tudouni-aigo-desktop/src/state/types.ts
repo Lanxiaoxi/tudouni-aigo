@@ -164,7 +164,9 @@ export type ComposerNotice =
    *  the turn still runs, exactly as the runtime's own `refused` row says. */
   | { code: 'paste-no-vision'; model: string; tone: 'info' }
   /** The bridge refused or failed to write it. The runtime's sentence, verbatim. */
-  | { code: 'paste-failed'; reason: string; tone: 'warn' };
+  | { code: 'paste-failed'; reason: string; tone: 'warn' }
+  /** `/quiet` was given a word that is not one of the three states. */
+  | { code: 'quiet-unknown'; reason: string; tone: 'warn' };
 
 /**
  * Why the window came up with nothing open.
