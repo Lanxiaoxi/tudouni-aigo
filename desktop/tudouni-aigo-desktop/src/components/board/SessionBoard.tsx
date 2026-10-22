@@ -461,13 +461,6 @@ export function SessionBoard() {
                     draws nothing for. */}
                 <BoardColDot status={column.statuses[0]} />
                 <span className="board-col-title">{t(column.title)}</span>
-                {/* The count is a **quantity**, not a second state mark: the dot
-                    beside it says which column this is, and the number says how
-                    many cards are in it. Colouring the chip with the dot's token
-                    made a quiet "0" in an amber or blue column the loudest thing
-                    on the board — the redesign keeps the state in the dot and
-                    the chip in the rail's muted tag. */}
-                <span className="board-col-count">{column.cards.length}</span>
                 {/* **Idle is the one column that can be emptied in one act.**
                     Every card on this board is a live child, and idle is the
                     only state with no turn to interrupt — which is why this
@@ -479,7 +472,12 @@ export function SessionBoard() {
                     that prompt carries the **snapshot** of what was on screen
                     (`setIdleClose`), so a card that starts running between the
                     two clicks cannot be closed under a sentence that never
-                    named it. */}
+                    named it.
+
+                    It sits just after the title, before the count: the count
+                    is the head's far-edge fact (`.board-col-count`'s
+                    `margin-left: auto`), and the close button next to it
+                    crowded the digit. */}
                 {column.id === 'idle' && column.cards.length > 0 ? (
                   <Tip label={t('board.col.closeIdle')}>
                     <button
@@ -496,6 +494,13 @@ export function SessionBoard() {
                     </button>
                   </Tip>
                 ) : null}
+                {/* The count is a **quantity**, not a second state mark: the dot
+                    beside it says which column this is, and the number says how
+                    many cards are in it. Colouring the chip with the dot's token
+                    made a quiet "0" in an amber or blue column the loudest thing
+                    on the board — the redesign keeps the state in the dot and
+                    the chip in the rail's muted tag. */}
+                <span className="board-col-count">{column.cards.length}</span>
               </div>
               {/* **Creation order, never re-sorted by status.** The columns may
                   move a card between them — that is the board's whole value —
