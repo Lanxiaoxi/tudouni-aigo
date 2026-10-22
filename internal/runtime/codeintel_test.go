@@ -218,3 +218,44 @@ func TestAnUnknownVerbIsRefused(t *testing.T) {
 		t.Fatal("an unknown verb was accepted")
 	}
 }
+
+// TestTheWarmupGateOnBothFacts: the warm-up runs only when the switch is on AND an index
+// exists — the same two facts the panel separates, and the same rule the tool's
+// registration follows. Off means the model will never see the tool, so warming it is
+// paid latency with no consumer; no index means the pass can only end in "unavailable".
+func TestTheWarmupGateOnBothFacts(t *testing.T) {
+	cases := []struct {
+		name    string
+		enabled bool
+		index   bool
+		want    bool
+	}{
+		{"off, no index", false, false, false},
+		{"off, index present", false, true, false},
+		{"on, no index", true, false, false},
+		{"on, index present", true, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.index {
+				putIndex(t, root)
+			}
+			runtimeValue := codeIntelRuntime(t, root, tc.enabled)
+			if got := runtimeValue.CodeIntel.shouldWarmup(); got != tc.want {
+				t.Fatalf("shouldWarmup = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWarmupIndexIsSafeOnBareRuntimes: a runtime built by hand has no index handle, and
+// the optional trigger must read that as "nothing to warm" rather than a special case —
+// the same contract StartupAuth's optional interface makes.
+func TestWarmupIndexIsSafeOnBareRuntimes(t *testing.T) {
+	var runtimeValue *Runtime
+	runtimeValue.WarmupIndex() // nil receiver: a panic here would break every front end
+
+	bare := &Runtime{SessionIDValue: "s", SessionValue: state.NewEmptySession("s")}
+	bare.WarmupIndex() // no CodeIntel handle at all
+}

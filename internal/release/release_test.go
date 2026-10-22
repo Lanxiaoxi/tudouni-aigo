@@ -14,11 +14,7 @@ import (
 // both the vendor directory and this map, so adding a platform still forces a decision; and an
 // entry here that later gets vendored fails too, so the list cannot quietly go stale. Every
 // entry states why, because "pending" with no reason is how a gap becomes permanent.
-var codeIndexParserPending = map[string]string{
-	"x86_64-unknown-linux-musl": "cross-compiling the parser needs a musl C toolchain " +
-		"(x86_64-linux-musl-gcc or zig), which this build machine does not have. " +
-		"Build it on a Linux host: cargo build --release --target x86_64-unknown-linux-musl --bin cg-parse",
-}
+var codeIndexParserPending = map[string]string{}
 
 // TestTargetsHaveAVendoredCodeIndexParser is the same rule as the ripgrep gate, for the second
 // vendored binary.

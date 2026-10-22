@@ -339,6 +339,45 @@ func (r *Runtime) CodeIntelPanel() (map[string]any, error) {
 	return r.CodeIntel.snapshot(ctx), nil
 }
 
+// WarmupIndex brings the index up to date in the background so the first
+// `code_explore` call of the session does not pay for it.
+//
+// Optional, in the same sense as StartupAuth: a runtime without an index
+// handle simply does not implement it, and the caller does not have to know.
+//
+// It is called once the opening is on the wire — never during assembly — for
+// exactly the reason StartAuth is: the pass can take seconds, and holding back
+// `init` for it would make a new session look dead. By the time it runs, the
+// front end is already drawing and the pass overlaps whatever the person is
+// reading and typing.
+//
+// Gated on the same two facts the panel separates: the switch is on and an
+// index exists. Off means the model will never see the tool, so warming it is
+// paid latency with no consumer; no index means `EnsureFresh` can only answer
+// "unavailable", which is a full staleness scan spent on a no-op.
+//
+// Deliberately silent on every outcome, and deliberately **not** recorded in
+// `last`: the panel's "last run" line describes a build a person pressed for,
+// and a warm-up the person never asked for would sit there claiming credit.
+// `EnsureFresh`'s own guarantees keep it bounded: the locks are tried, never
+// waited on, and a divergence above the inline budget is left alone.
+func (r *Runtime) WarmupIndex() {
+	if r == nil || r.CodeIntel == nil || r.CodeIntel.refresher == nil {
+		return
+	}
+	if !r.CodeIntel.shouldWarmup() {
+		return
+	}
+	r.CodeIntel.refresher.Warmup()
+}
+
+// shouldWarmup is the gate the warm-up has to pass: the same two facts the
+// panel separates, both true. Pulled out of WarmupIndex so the decision is
+// testable without a parser binary or a real index pass.
+func (s *codeIntelState) shouldWarmup() bool {
+	return s.Enabled() && s.indexPresent()
+}
+
 // codeIntelFlags is what every `ui(state)` carries: three booleans, no counts.
 //
 // Counts belong on the panel's own snapshot. This rides on every tool result, and a

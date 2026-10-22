@@ -77,8 +77,15 @@ func Channels(autopilot bool, in io.Reader, diag io.Writer) protocol.Channels {
 	// logs, so it is exactly the one that has to survive this.
 	reader := bufio.NewReader(in)
 	return protocol.Channels{
-		Questioner: func(args protocol.AskUserArgs) protocol.Answer {
-			return askOnTerminal(args, reader, diag)
+		// The line REPL cannot draw a batch in one panel, so it answers the
+		// batch's questions one after another in the order they arrived: the
+		// same shared reader, the same prompts.
+		Questioner: func(args protocol.AskUserBatchArgs) protocol.AskUserBatchAnswer {
+			answers := make([]protocol.Answer, len(args.Questions))
+			for index, question := range args.Questions {
+				answers[index] = askOnTerminal(question, reader, diag)
+			}
+			return protocol.AskUserBatchAnswer{Answers: answers}
 		},
 		AskerFactory: func(memory *security.Memory, trust security.TrustGroupLookup) security.AskFunc {
 			if autopilot {
@@ -249,6 +256,9 @@ func Run(options Options) int {
 		// is right: a switch built a new client holding whatever key the config had at
 		// that moment.
 		protocol.StartAuth(value)
+		// The index warm-up, same place and same reason: it returns at once and the
+		// pass overlaps whatever the person is about to type.
+		protocol.WarmupIndex(value)
 		return true
 	}
 	if !open(sessionID) {

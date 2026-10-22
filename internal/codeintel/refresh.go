@@ -224,6 +224,27 @@ func (r *Refresher) EnsureFresh(ctx context.Context) (report Report, err error) 
 	return report, nil
 }
 
+// Warmup brings the index up to date in the background, for a caller that wants
+// the next query to be fast without paying for it there.
+//
+// Fire-and-forget: the work runs on its own goroutine with its own context, so
+// a caller that goes away a second later does not kill a pass that is already
+// bounded by the inline budget. The report is discarded on purpose — the only
+// consumer of an EnsureFresh report is the model-facing warning line, and a
+// warm-up nobody asked about has no news to report.
+//
+// It does nothing when this build cannot rebuild: without the parser the pass
+// can only end in "unavailable", and paying a full staleness scan to learn that
+// would make the warm-up's own cost the worst case it exists to prevent.
+func (r *Refresher) Warmup() {
+	if r.parserPath == "" {
+		return
+	}
+	go func() {
+		_, _ = r.EnsureFresh(context.Background())
+	}()
+}
+
 // indexMissing reports whether this workspace has never been indexed.
 //
 // Checked before opening, because Open migrates and therefore creates the file: opening a

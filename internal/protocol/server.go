@@ -967,6 +967,13 @@ func (s *Server) emitOpening() {
 	// It runs for a session switch too, which is right: the switch built a new client
 	// holding whatever key the config had at that moment.
 	StartAuth(runtime)
+
+	// The code index's background warm-up, for the same reason the credential check
+	// is here rather than in the assembly: the pass can take seconds, and what it
+	// buys is the first code question not paying for the catch-up. It returns at
+	// once and works while the person reads and types, so it is the last thing the
+	// opening does — after the check that can block.
+	WarmupIndex(runtime)
 }
 
 func (s *Server) stateMessage(withCatalog bool) map[string]any {
@@ -1843,7 +1850,7 @@ func (s *Server) lastRun() string {
 // switch replace the runtime without rewiring the channels.
 func (s *Server) Channels() Channels {
 	return Channels{
-		Questioner: func(args AskUserArgs) Answer {
+		Questioner: func(args AskUserBatchArgs) AskUserBatchAnswer {
 			return s.askUser(args)
 		},
 		AskerFactory: func(memory *security.Memory, trust security.TrustGroupLookup) security.AskFunc {

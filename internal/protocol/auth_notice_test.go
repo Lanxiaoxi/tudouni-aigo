@@ -127,6 +127,49 @@ func TestTheCredentialCheckRunsAfterTheOpeningIsOnTheWire(t *testing.T) {
 	}
 }
 
+// indexWarmupRuntime records that the opening asked it to warm the code index,
+// and what had already crossed the wire at that moment.
+type indexWarmupRuntime struct {
+	stubRuntime
+	warmed  bool
+	sawInit bool
+	out     *strings.Builder
+}
+
+func (r *indexWarmupRuntime) WarmupIndex() {
+	r.warmed = true
+	r.sawInit = strings.Contains(r.out.String(), `"t":"init"`)
+}
+
+// TestTheIndexWarmupRunsAfterTheOpeningIsOnTheWire is the ordering rule the
+// warm-up exists under: never during assembly, because the pass can take
+// seconds and a new session must not look dead while it runs.
+func TestTheIndexWarmupRunsAfterTheOpeningIsOnTheWire(t *testing.T) {
+	var out strings.Builder
+	runtimeValue := &indexWarmupRuntime{out: &out}
+	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
+	server.Attach(runtimeValue)
+
+	server.emitOpening()
+
+	if !runtimeValue.warmed {
+		t.Fatal("the opening never asked the runtime to warm its code index")
+	}
+	if !runtimeValue.sawInit {
+		t.Error("the warm-up ran before `init` was sent: the handshake would be held back behind a background pass")
+	}
+}
+
+// TestAWarmuplessRuntimeIsStillFine — the method is optional, and a runtime
+// without an index must not be a special case anywhere below, on the same
+// terms as the credential check.
+func TestAWarmuplessRuntimeIsStillFine(t *testing.T) {
+	var out strings.Builder
+	server := NewServer(OpenStreams(strings.NewReader(""), &out), Bootstrap{})
+	server.Attach(&stubRuntime{})
+	server.emitOpening() // must not panic on a runtime that has no index at all
+}
+
 // TestAMidSessionInstructionTravelsAsACredentialNotice — the delivery path for the
 // other half: a login opened by the pre-request check, once the session is running.
 //

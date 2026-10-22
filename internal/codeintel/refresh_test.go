@@ -10,9 +10,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel/cggraph"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 )
 
 // seedIndex writes `body` to `rel` and records it as indexed with its real stat.
@@ -190,4 +193,98 @@ func TestStateRendering(t *testing.T) {
 			t.Errorf("state %d renders as unknown", state)
 		}
 	}
+}
+
+// TestWarmupWithoutParserDoesNothing pins the no-op: a build that cannot rebuild
+// must not even pay the staleness scan, so the warm-up's own cost never becomes
+// the latency it exists to prevent. The probe is the database file — a pass that
+// actually ran would have opened (and therefore created) it on its way to
+// "unavailable", so a missing file is proof nothing ran.
+func TestWarmupWithoutParserDoesNothing(t *testing.T) {
+	dir := t.TempDir()
+	refresher := New(dir, "")
+	refresher.Warmup()
+
+	// Warmup with no parser returns before starting a goroutine, so the check is
+	// a single stat after a short settle: if the pass had run it would have
+	// created the database, and it is not there.
+	time.Sleep(50 * time.Millisecond)
+	if _, err := os.Stat(filepath.Join(dir, cggraph.IndexDirName, cggraph.DefaultDBName)); err == nil {
+		t.Fatal("the warm-up touched the index database despite having no parser")
+	}
+}
+
+// TestWarmupRebuildsBehindIndex is the real pass, gated on the parser binary the
+// same way the decode tests are gated on theirs.
+func TestWarmupRebuildsBehindIndex(t *testing.T) {
+	binary := findCGBinary(t)
+	if binary == "" {
+		t.Skip("cg-parse not found")
+	}
+
+	dir := t.TempDir()
+	db, err := cggraph.Open(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	path := seedIndex(t, db, dir, "a.go", "package a\n")
+	db.Close()
+
+	// The divergence a warm-up is meant to catch: a file changed after the index
+	// was written.
+	if err := os.WriteFile(path, []byte("package a\n\nfunc Added() {}\n"), 0o644); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if report, err := New(dir, binary).CheckOnly(context.Background()); err != nil || report.Files != 1 {
+		t.Fatalf("setup: wanted exactly one divergent file, got %+v / %v", report, err)
+	}
+
+	refresher := New(dir, binary)
+	refresher.Warmup()
+
+	// Warmup is fire-and-forget, so poll until the pass has visibly finished:
+	// the divergence is gone.
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		report, err := refresher.CheckOnly(context.Background())
+		if err != nil {
+			t.Fatalf("CheckOnly: %v", err)
+		}
+		if report.Files == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the warm-up did not bring the index up to date (still %d divergent)", report.Files)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// findCGBinary locates the platform's parser binary, for a test that cannot
+// import the package that knows where it lives (that package imports this one's
+// tool, and the tool imports this one — a cycle).
+func findCGBinary(t *testing.T) string {
+	t.Helper()
+	if env := os.Getenv("CG_PARSE_BIN"); env != "" {
+		return env
+	}
+	triple := ""
+	switch {
+	case runtime.GOOS == "windows" && runtime.GOARCH == "amd64":
+		triple = "x86_64-pc-windows-msvc"
+	case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
+		triple = "x86_64-unknown-linux-musl"
+	}
+	if triple == "" {
+		return ""
+	}
+	name := "cg-parse"
+	if runtime.GOOS == "windows" {
+		name = "cg-parse.exe"
+	}
+	candidate := filepath.Join(paths.VendorCG(), triple, name)
+	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		return candidate
+	}
+	return ""
 }

@@ -117,6 +117,29 @@ func StartAuth(runtime Runtime) {
 	}
 }
 
+// IndexWarmer is what a runtime implements when it owns a code index and wants
+// it brought up to date while the session settles in.
+//
+// Optional, like AuthStartup: a runtime without an index does not implement
+// it, and nothing in this layer has to know what an index is.
+//
+// The call returns immediately and the work continues in the background, so
+// the ordering rule is the same one StartAuth exists for — after the opening
+// is on the wire, never during assembly — but the reason is milder: the pass
+// is bounded by seconds rather than a login timeout, and what it buys is the
+// first code question of the session not paying for the catch-up.
+type IndexWarmer interface {
+	WarmupIndex()
+}
+
+// WarmupIndex asks a runtime to warm its code index, and does nothing when it
+// does not have one. See IndexWarmer for when and why.
+func WarmupIndex(runtime Runtime) {
+	if warmer, ok := runtime.(IndexWarmer); ok {
+		warmer.WarmupIndex()
+	}
+}
+
 // Main is the entry point for `--runtime-stdio`: the mode a front end starts as a
 // child process.
 //
