@@ -179,7 +179,7 @@ func runCodeExplore(ctx context.Context, refresher *codeintel.Refresher, argumen
 
 	// Freshness first, so the banner precedes every conclusion drawn below.
 	var warnings []string
-	report, refreshErr := refresher.EnsureFresh(ctx)
+	report, refreshErr := refresher.EnsureFresh(ctx, codeintel.MaxInlineTool)
 	switch {
 	case refreshErr != nil:
 		warnings = append(warnings, "could not check whether the index is current: "+

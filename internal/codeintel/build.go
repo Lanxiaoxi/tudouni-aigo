@@ -4,8 +4,9 @@ package codeintel
 // `EnsureFresh` is not allowed to do.
 //
 // `EnsureFresh` decides *whether* to rebuild behind a query, and it is deliberately
-// timid: above `DefaultMaxInline` divergent files it reports instead of building, so a
-// question never blocks for minutes on somebody else's branch switch. Init and sync are
+// timid: above its inline budget (MaxInlineTool for a query, MaxInlineWarmup for the
+// session warm-up) divergent files it reports instead of building, so a question
+// never blocks for minutes on somebody else's branch switch. Init and sync are
 // the other half of that contract — a person has said "do it, I am waiting" — and they
 // differ from it in two ways that matter:
 //

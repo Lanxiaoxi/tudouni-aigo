@@ -59,7 +59,7 @@ func TestEnsureFreshCurrentDoesNothing(t *testing.T) {
 	// parserPath is deliberately wrong-but-present: if the implementation rebuilt anything, the
 	// exec would fail and the state would be Failed instead of Current.
 	refresher := New(dir, filepath.Join(dir, "does-not-exist"))
-	report, err := refresher.EnsureFresh(context.Background())
+	report, err := refresher.EnsureFresh(context.Background(), MaxInlineTool)
 	if err != nil {
 		t.Fatalf("EnsureFresh: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestEnsureFreshWithoutParserReportsUnavailable(t *testing.T) {
 		t.Fatalf("rewrite: %v", err)
 	}
 
-	report, err := New(dir, "").EnsureFresh(context.Background())
+	report, err := New(dir, "").EnsureFresh(context.Background(), MaxInlineTool)
 	if err != nil {
 		t.Fatalf("EnsureFresh: %v", err)
 	}
@@ -123,8 +123,7 @@ func TestEnsureFreshRefusesLargeDivergence(t *testing.T) {
 	}
 
 	refresher := New(dir, filepath.Join(dir, "does-not-exist"))
-	refresher.SetMaxInline(2)
-	report, err := refresher.EnsureFresh(context.Background())
+	report, err := refresher.EnsureFresh(context.Background(), 2)
 	if err != nil {
 		t.Fatalf("EnsureFresh: %v", err)
 	}
@@ -177,7 +176,7 @@ func TestCheckOnlyNeverWrites(t *testing.T) {
 // TestEnsureFreshWithoutIndex reports unavailable rather than panicking, so a workspace that was
 // never indexed still answers.
 func TestEnsureFreshWithoutIndex(t *testing.T) {
-	report, err := New(t.TempDir(), "").EnsureFresh(context.Background())
+	report, err := New(t.TempDir(), "").EnsureFresh(context.Background(), MaxInlineTool)
 	if err != nil {
 		t.Fatalf("EnsureFresh: %v", err)
 	}

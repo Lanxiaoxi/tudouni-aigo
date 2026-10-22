@@ -85,13 +85,24 @@ type Report struct {
 	Elapsed time.Duration
 }
 
-// DefaultMaxInline is how many divergent files may be rebuilt inside a query.
+// The inline rebuild budget is a latency budget, not a correctness one: an
+// incremental rebuild of a handful of files costs ~200ms, while a large
+// divergence means someone pulled a branch or a generator ran, and blocking a
+// query for ten seconds to find that out is worse than answering from a stale
+// index with a warning. Above the budget the caller is told, and a human or
+// the model decides.
 //
-// The number is a latency budget, not a correctness one. An incremental rebuild of a handful of
-// files costs ~200ms; a large divergence means someone pulled a branch or a generator ran, and
-// blocking a query for ten seconds to find that out is worse than answering from a stale index
-// with a warning. Above the budget the caller is told, and a human or the model decides.
-const DefaultMaxInline = 20
+// The two callers pay for the catch-up differently, so they carry different
+// budgets:
+//   - MaxInlineTool bounds what a query may wait for. The model is reading the
+//     answer, so the ceiling stays tight.
+//   - MaxInlineWarmup bounds the background pass at session open. Nobody is
+//     waiting on it — it overlaps reading and typing — so it may absorb a
+//     larger divergence on the way to making that first query free.
+const (
+	MaxInlineTool    = 15
+	MaxInlineWarmup  = 30
+)
 
 // Refresher keeps one workspace's index fresh.
 //
@@ -105,7 +116,6 @@ const DefaultMaxInline = 20
 type Refresher struct {
 	root       string
 	parserPath string
-	maxInline  int
 
 	mu sync.Mutex
 }
@@ -116,27 +126,25 @@ type Refresher struct {
 // reports Unavailable rather than failing. A development build without the parser binary must
 // still be able to query an index built earlier.
 func New(root, parserPath string) *Refresher {
-	return &Refresher{root: root, parserPath: parserPath, maxInline: DefaultMaxInline}
+	return &Refresher{root: root, parserPath: parserPath}
 }
 
 // Root is the workspace this refresher maintains.
 func (r *Refresher) Root() string { return r.root }
 
-// SetMaxInline overrides the inline rebuild budget, for a caller that would rather never block.
-func (r *Refresher) SetMaxInline(files int) {
-	if files > 0 {
-		r.maxInline = files
-	}
-}
-
-// EnsureFresh compares the index against the working tree and rebuilds if it is behind.
+// EnsureFresh compares the index against the working tree and rebuilds if it is
+// behind.
 //
 // Safe for concurrent use, and it **never waits**: both locks are tried rather than
 // taken. A query that blocks for minutes behind somebody else's rebuild is worse than
 // an answer that says "the index is being updated" — the model can act on the second
 // and cannot act on the first. The deliberate path (`Rebuild`) is where waiting is the
 // right behaviour, because a person is watching a progress line there.
-func (r *Refresher) EnsureFresh(ctx context.Context) (report Report, err error) {
+//
+// `maxInline` is this call's inline rebuild budget, supplied by the caller rather
+// than stored on the refresher because the two callers pay for the catch-up
+// differently: the tool's is MaxInlineTool, the warm-up's is MaxInlineWarmup.
+func (r *Refresher) EnsureFresh(ctx context.Context, maxInline int) (report Report, err error) {
 	started := time.Now()
 
 	// Named returns, not a local: a deferred assignment to a local would land on the copy that
@@ -208,10 +216,10 @@ func (r *Refresher) EnsureFresh(ctx context.Context) (report Report, err error) 
 		report.Detail = "the parser binary is not available in this build, so the index cannot be updated"
 		return report, nil
 	}
-	if report.Files > r.maxInline {
+	if report.Files > maxInline {
 		report.State = StaleTooLarge
 		report.Detail = fmt.Sprintf("%d files differ, above the %d-file inline rebuild budget",
-			report.Files, r.maxInline)
+			report.Files, maxInline)
 		return report, nil
 	}
 
@@ -241,7 +249,7 @@ func (r *Refresher) Warmup() {
 		return
 	}
 	go func() {
-		_, _ = r.EnsureFresh(context.Background())
+		_, _ = r.EnsureFresh(context.Background(), MaxInlineWarmup)
 	}()
 }
 
