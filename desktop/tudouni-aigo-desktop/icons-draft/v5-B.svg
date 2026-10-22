@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B2D23"/><stop offset="1" stop-color="#1F1712"/>
+    </linearGradient>
+    <linearGradient id="main" x1="340" y1="80" x2="760" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFB75A"/><stop offset="0.55" stop-color="#F98A1B"/><stop offset="1" stop-color="#EF7200"/>
+    </linearGradient>
+    <linearGradient id="dark" x1="160" y1="60" x2="520" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E97807"/><stop offset="1" stop-color="#D65F00"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="230" fill="url(#tile)"/>
+  <g>
+    <!-- ground shadow -->
+    <ellipse cx="545" cy="858" rx="265" ry="30" fill="#000000" opacity="0.3"/>
+
+    <!-- ears, drawn BEHIND the head so the bases tuck in cleanly -->
+    <!-- back ear: base extended deep into head/neck junction (no gap) -->
+    <path d="M 560 400
+             C 500 330 390 200 285 140
+             C 235 110 190 130 196 178
+             C 206 250 290 355 390 425
+             C 450 470 520 445 560 400 Z" fill="url(#dark)"/>
+    <!-- front ear -->
+    <path d="M 625 345
+             C 595 240 545 115 450 52
+             C 405 22 358 45 366 98
+             C 382 195 455 310 560 385
+             C 600 410 632 385 625 345 Z" fill="url(#main)"/>
+
+    <!-- body: settled back, haunch mass to the left, chest forward -->
+    <path d="M 585 425
+             C 480 455 400 525 362 625
+             C 330 715 330 800 372 845
+             C 398 872 440 872 478 866
+             L 660 866
+             C 715 860 738 815 732 760
+             C 722 675 695 590 662 520
+             C 645 482 628 445 605 432
+             C 598 428 592 425 585 425 Z" fill="url(#main)"/>
+
+    <!-- haunch (layer hint) -->
+    <ellipse cx="470" cy="715" rx="125" ry="130" fill="#FFC98A" opacity="0.28"/>
+    <!-- tail, tucked at the back bottom -->
+    <circle cx="318" cy="760" r="46" fill="#FFC98A"/>
+    <!-- front leg: upright -->
+    <rect x="585" y="555" width="74" height="310" rx="37" fill="#FFC98A"/>
+    <!-- front paw hint -->
+    <ellipse cx="622" cy="858" rx="52" ry="18" fill="#FFC98A" opacity="0.55"/>
+
+    <!-- head: compact, snout to the right, overlapping ear bases -->
+    <circle cx="640" cy="345" r="115" fill="url(#main)"/>
+    <ellipse cx="733" cy="400" rx="52" ry="42" fill="url(#main)"/>
+
+    <!-- rim along the new back-ear base edge -->
+    <path d="M 545 405 C 500 438 452 443 410 426" fill="none" stroke="#D65F00" stroke-width="10" stroke-linecap="round" opacity="0.35"/>
+
+    <!-- eye -->
+    <circle cx="688" cy="330" r="17" fill="#3A2208"/>
+    <!-- head highlight -->
+    <ellipse cx="600" cy="262" rx="56" ry="30" fill="#FFFFFF" opacity="0.14" transform="rotate(-24 600 262)"/>
+  </g>
+</svg>
