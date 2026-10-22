@@ -60,6 +60,9 @@ const KNOWN_STATE_VERSION: u64 = 1;
 const MAX_RESULTS: usize = 50;
 /// The leading bytes of an encoded `ctx` record. See the module comment.
 const CTX_PREFIX: &[u8] = b"{\"context\":";
+/// How many threads the file scans run on. A handful, not the machine's
+/// full count: this is a search a person is typing, not a batch job.
+const SEARCH_THREADS: usize = 4;
 /// How many characters of the folded text the snippet keeps on each side of
 /// the match: enough to say where it is, not enough to re-read the transcript.
 const SNIPPET_BEFORE: usize = 30;
@@ -102,38 +105,78 @@ pub fn search(workspace: &Path, query: &str) -> Result<Vec<SessionSearchHit>, St
         }
     };
 
-    let needle = query.to_lowercase();
-    let mut hits: Vec<SessionSearchHit> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        let Some(id) = name.strip_suffix(SUFFIX) else {
-            continue;
-        };
-        if id.starts_with(CHILD_PREFIX) || !valid_session_id(id) {
-            continue;
-        }
-
-        let modified_at = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64);
-
-        if let Some(snippet) = scan_file(&path, &needle) {
-            hits.push(SessionSearchHit {
-                session_id: id.to_string(),
-                snippet,
-                modified_at,
-            });
-        }
+    // The candidate files, collected first: the scans below run on a small
+    // pool of threads, and a file whose keyword is not in it has to be read to
+    // the end before it can be ruled out — one measured file is 52 MB, so a
+    // serial pass over a workspace with several large sessions takes seconds.
+    // Reading is embarrassingly parallel, and a few threads keep the pool
+    // small: this is a search a person is typing, not a batch job.
+    let candidates: Vec<(String, std::path::PathBuf, Option<i64>)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if path.is_dir() {
+                return None;
+            }
+            let name = path.file_name()?.to_str()?;
+            let id = name.strip_suffix(SUFFIX)?;
+            if id.starts_with(CHILD_PREFIX) || !valid_session_id(id) {
+                return None;
+            }
+            let modified_at = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64);
+            Some((id.to_string(), path, modified_at))
+        })
+        .collect();
+    if candidates.is_empty() {
+        return Ok(Vec::new());
     }
+
+    let needle = query.to_lowercase();
+    let threads = (candidates.len().min(SEARCH_THREADS)).max(1);
+    let chunk = (candidates.len() + threads - 1) / threads;
+    let mut hits: Vec<SessionSearchHit> = Vec::new();
+    std::thread::scope(|scope| {
+        // The pieces are owned copies, collected **before** the spawn: a `move`
+        // closure needs its data to outlive the iterator, and a borrowed slice
+        // does not. `needle` is borrowed, not moved — there are several threads
+        // and the String has one owner.
+        let pieces: Vec<Vec<(String, std::path::PathBuf, Option<i64>)>> = candidates
+            .chunks(chunk)
+            .filter(|part| !part.is_empty())
+            .map(|part| part.to_vec())
+            .collect();
+        let handles: Vec<_> = pieces
+            .into_iter()
+            .map(|part| {
+                // Cloned, not moved: several threads all need the query, and a
+                // `move` closure would take the String into the first thread
+                // only. The copy is the length of the word the person typed,
+                // at most `SEARCH_THREADS` times — noise.
+                let needle = needle.clone();
+                scope.spawn(move || {
+                    let mut found: Vec<SessionSearchHit> = Vec::new();
+                    for (id, path, modified_at) in &part {
+                        if let Some(snippet) = scan_file(&path, &needle) {
+                            found.push(SessionSearchHit {
+                                session_id: id.clone(),
+                                snippet,
+                                modified_at: *modified_at,
+                            });
+                        }
+                    }
+                    found
+                })
+            })
+            .collect();
+        for handle in handles {
+            hits.extend(handle.join().expect("the search scan panicked"));
+        }
+    });
 
     hits.sort_by(|a, b| b.modified_at.unwrap_or(0).cmp(&a.modified_at.unwrap_or(0)));
     hits.truncate(MAX_RESULTS);

@@ -2316,9 +2316,18 @@ fn config_write(patch: config_file::ConfigPatch) -> Result<config_file::ConfigDo
 /// with an empty list rather than an error — the front end debounces and only
 /// sends a real query, and refusing here would turn "nothing typed yet" into a
 /// red row in the rail.
+///
+/// **`async`, and that is load-bearing, not style.** A *synchronous* Tauri
+/// command runs on the **main thread**, and the window's event loop lives
+/// there: the scan is a read of every session file (one measured file is 52 MB,
+/// and a keyword that is not in a file means the whole file has to be read
+/// before it can be ruled out), so a sync command froze the entire window —
+/// no keys, no pointer, no repaint — until the scan finished. An async command
+/// runs off the main thread, and `spawn_blocking` moves the blocking read onto
+/// the blocking pool rather than an async worker.
 #[tauri::command]
-fn sessions_search(workspace: String, query: String) -> Result<Vec<session_search::SessionSearchHit>, String> {
-    let query = query.trim();
+async fn sessions_search(workspace: String, query: String) -> Result<Vec<session_search::SessionSearchHit>, String> {
+    let query = query.trim().to_string();
     if query.is_empty() {
         return Ok(Vec::new());
     }
@@ -2329,7 +2338,9 @@ fn sessions_search(workspace: String, query: String) -> Result<Vec<session_searc
         // not a fault worth surfacing as a red error.
         return Ok(Vec::new());
     }
-    session_search::search(&dir, query)
+    tauri::async_runtime::spawn_blocking(move || session_search::search(&dir, &query))
+        .await
+        .map_err(|err| err.to_string())?
 }
 
 /// One picture written into the workspace, as the front end needs it back.
