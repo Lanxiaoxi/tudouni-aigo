@@ -94,6 +94,11 @@ mod remote_probe;
 /// connection and for the boundary it applies.
 mod remote_files;
 
+/// Cross-session keyword search over one workspace's session files. The host
+/// process scans the files rather than a runtime child — see its module doc
+/// for the division of labour with `internal/state` and the rules it mirrors.
+mod session_search;
+
 /// How long a graceful shutdown is given before the child is killed.
 ///
 /// The Go client hard-codes the same 30 seconds inside `Close()`, and for the
@@ -2293,6 +2298,40 @@ fn config_write(patch: config_file::ConfigPatch) -> Result<config_file::ConfigDo
     config_file::write_document(patch)
 }
 
+/* ============================================================
+   Cross-session search
+   ============================================================ */
+
+/// Search the workspace's saved sessions for a keyword and hand back the hits.
+///
+/// **A host-side read, like `config_read`.** The session files belong to the
+/// workspace, and a runtime child answers only for the workspace it is itself
+/// running in — so a search that should span "the sessions I can see" is asked
+/// of the one process that is always present and belongs to no session. The
+/// scan is read-only and never touches a live child's write path: it stops at
+/// the first match in each file, and the rules it applies are the runtime's own
+/// (see `session_search`'s module doc).
+///
+/// The query is case-insensitive. An empty or whitespace query is answered
+/// with an empty list rather than an error — the front end debounces and only
+/// sends a real query, and refusing here would turn "nothing typed yet" into a
+/// red row in the rail.
+#[tauri::command]
+fn sessions_search(workspace: String, query: String) -> Result<Vec<session_search::SessionSearchHit>, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dir = PathBuf::from(workspace.trim());
+    if !dir.is_dir() {
+        // A workspace that is not a directory has no session store to read,
+        // and that is a normal state (the person has not opened anything),
+        // not a fault worth surfacing as a red error.
+        return Ok(Vec::new());
+    }
+    session_search::search(&dir, query)
+}
+
 /// One picture written into the workspace, as the front end needs it back.
 #[derive(Clone, Serialize)]
 struct StashedImage {
@@ -3537,6 +3576,7 @@ pub fn run() {
             create_remote_directory,
             config_read,
             config_write,
+            sessions_search,
             image_stash,
             inline_image,
             close_prompt_answer,

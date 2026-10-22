@@ -69,6 +69,81 @@
   align-self: stretch;
 }
 
+/* ---------------- cross-session search ---------------- */
+
+/* The search row: the same field shape as the workbench's (`.lb-workbench-
+   search`), one step narrower in type — it sits under a 22px section head,
+   not inside a card. It is a statement, not a filter: while a word is in, the
+   saved list below is hidden rather than narrowed, because a hit row and a
+   session row are two kinds of row. */
+.lb-session-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 2px 0 4px;
+  padding: 0 7px;
+  border-radius: 8px;
+  background: var(--lb-hover);
+  color: var(--fg-muted);
+}
+
+.lb-session-search-icon {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.lb-session-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11.5px;
+  color: var(--fg);
+}
+
+.lb-session-search-input::placeholder {
+  color: var(--fg-faint);
+}
+
+/* The same rule as the workbench field: the keyboard-mode ring around a 28px
+   field is a frame around the whole control, so focus draws on the container. */
+html[data-input-mode='keyboard'] .lb-session-search-input:focus-visible {
+  box-shadow: none;
+}
+
+.lb-session-search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent-border);
+}
+
+/* The head's search button while the row is open. The section's action icons
+   have no "pressed" state of their own, and the row's appearance alone is not
+   enough to read as "this button is what is open" — one quiet mark, the same
+   accent family the rail uses for "this is the one". */
+.lb-icon.is-active {
+  color: var(--accent-tint-text);
+}
+
+/* The hit row's second line: the matched text, folded to one line. The
+   `.lb-session-meta` shape is the row's existing one-line slot — the snippet
+   takes it, ellipsised, because a wrapped snippet is the third line the rail's
+   rows do not have. */
+.lb-session-snippet {
+  font-size: 11px;
+  color: var(--fg-secondary);
+}
+
+/* A note's hint line: the no-match state's second sentence, quieter than the
+   first. */
+.lb-note-hint {
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--fg-faint);
+}
+
 /* ---------------- session status dots ---------------- */
 /*
    What each dot means, and why the fourth colour exists, is in `SessionDot`.

@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { Archive, ArchiveRestore, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
 import {
@@ -18,7 +18,7 @@ import {
 } from '@/state/store';
 import { SessionDot } from '@/components/sidebar/SessionDot';
 import { useT } from '@/i18n/useT';
-import { checkWorkspace, chooseWorkspaceDirectory } from '@/runtime/tauri';
+import { checkWorkspace, chooseWorkspaceDirectory, searchSessions, type SessionSearchHit } from '@/runtime/tauri';
 import { Logo } from '@/components/ui/Logo';
 import { Count, EmptyState, Tip } from '@/components/ui/kit';
 import { baseName, formatRelative, samePath } from '@/utils/format';
@@ -264,6 +264,90 @@ export function WorkspaceSidebar() {
    * palette's `Ctrl K` keeps its own job and its own hint elsewhere.
    */
   const [navQuery, setNavQuery] = useState('');
+  /* ---- cross-session search (the button left of the refresh in the sessions
+     head) ----
+     The search is the host's, not a runtime child's: the saved list is the
+     workspace's files and a child only answers for the workspace it runs in,
+     so the button works in a workspace with nothing open. The results replace
+     the saved list while a query is in — a search hit is a different row kind
+     from a session row (it carries a snippet, not the runtime's preview), so
+     the two are not merged. */
+  const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
+  const [sessionQuery, setSessionQuery] = useState('');
+  const [sessionSearchHits, setSessionSearchHits] = useState<SessionSearchHit[] | null>(null);
+  const [sessionSearching, setSessionSearching] = useState(false);
+  const [sessionSearchFailed, setSessionSearchFailed] = useState(false);
+  const sessionSearchSeq = useRef(0);
+  const sessionSearchTimer = useRef<number | null>(null);
+  // The search row is opened by its button and stays open until closed —
+  // clearing the word keeps the field up, because "no match yet" is the state
+  // a person is typing their way out of. Opening it also opens the section,
+  // since the row lives inside the fold and a folded region is `inert`: a
+  // button that could not be seen or reached.
+  function toggleSessionSearch() {
+    if (blocked) return;
+    if (sessionSearchOpen) {
+      setSessionSearchOpen(false);
+      setSessionQuery('');
+      setSessionSearchHits(null);
+      setSessionSearching(false);
+      setSessionSearchFailed(false);
+      return;
+    }
+    if (sessionsCollapsed) toggleSessionsCollapsed();
+    setSessionSearchOpen(true);
+  }
+  const sessionSearchWorkspace = useApp(activeWorkspaceOf);
+  // The search is a query, not a listing: it is debounced (250ms) because it
+  // is sent per keystroke, and it is re-aimed at the workspace the saved list
+  // itself is read from — `activeWorkspaceOf`, the same key the list is filed
+  // under. A stale answer is dropped by sequence number: a scan of one file
+  // can take a moment, and an answer that lands after the query it belonged to
+  // was typed over would draw a list for a word nobody is looking for.
+  useEffect(() => {
+    if (!sessionSearchOpen) return;
+    const query = sessionQuery.trim();
+    if (query === '') {
+      setSessionSearchHits(null);
+      setSessionSearching(false);
+      setSessionSearchFailed(false);
+      return;
+    }
+    if (sessionSearchWorkspace === '') {
+      // A remote session's workspace is a path on another host, not a
+      // directory on this machine, and the search scans the local disk.
+      // Nothing to answer — and that is a different sentence than "no match".
+      setSessionSearchHits(null);
+      setSessionSearching(false);
+      setSessionSearchFailed(true);
+      return;
+    }
+    setSessionSearching(true);
+    setSessionSearchFailed(false);
+    const seq = ++sessionSearchSeq.current;
+    if (sessionSearchTimer.current !== null) window.clearTimeout(sessionSearchTimer.current);
+    sessionSearchTimer.current = window.setTimeout(() => {
+      void searchSessions(sessionSearchWorkspace, query).then((hits) => {
+        if (seq !== sessionSearchSeq.current) return;
+        setSessionSearching(false);
+        if (hits === null) {
+          // The host refused: the files could not be read at all. That is a
+          // failure of the search, not an empty answer — drawing "no match"
+          // would tell the person the word is absent when the truth is the
+          // files were never looked at.
+          setSessionSearchFailed(true);
+          return;
+        }
+        setSessionSearchHits(hits);
+      });
+    }, 250);
+  }, [sessionQuery, sessionSearchOpen, sessionSearchWorkspace]);
+  useEffect(() => {
+    return () => {
+      if (sessionSearchTimer.current !== null) window.clearTimeout(sessionSearchTimer.current);
+    };
+  }, []);
+  const sessionSearchActive = sessionSearchOpen && sessionQuery.trim() !== '';
   // Which saved remote workspace, if any, the active session belongs to —
   // the same "where am I" question `currentWorkspace` answers for the local
   // half, read from the session's own `remoteWorkspaceId` rather than
@@ -857,6 +941,18 @@ export function WorkspaceSidebar() {
                 {sessionsCollapsed ? t('lb.unfoldSessions') : t('lb.foldSessions')}
               </span>
             </button>
+            <Tip label={t('lb.searchSessions')}>
+              <button
+                type="button"
+                className={`lb-icon${sessionSearchOpen ? ' is-active' : ''}`}
+                aria-label={t('lb.searchSessions')}
+                aria-pressed={sessionSearchOpen}
+                disabled={blocked}
+                onClick={toggleSessionSearch}
+              >
+                <Search size={13} />
+              </button>
+            </Tip>
             <Tip label={t('lb.refreshSessions')}>
               <button
                 type="button"
@@ -869,6 +965,41 @@ export function WorkspaceSidebar() {
               </button>
             </Tip>
           </div>
+
+          {/* The cross-session search row. It is a query, not a listing: the
+              host scans the workspace's session files and the hits replace
+              the saved list while a word is in. The row itself is a
+              **statement** — the saved list below is hidden while a query is
+              in, not filtered, because a hit row and a session row are two
+              different kinds of row (a snippet is not the runtime's preview)
+              and drawing both would read as one list with two layouts. */}
+          {sessionSearchOpen ? (
+            <div className="lb-session-search">
+              <Search size={13} className="lb-session-search-icon" aria-hidden />
+              <input
+                className="lb-session-search-input"
+                value={sessionQuery}
+                autoFocus
+                onChange={(e) => setSessionQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') toggleSessionSearch();
+                }}
+                placeholder={t('lb.searchSessionsPlaceholder')}
+                aria-label={t('lb.searchSessionsPlaceholder')}
+                spellCheck={false}
+              />
+              {sessionQuery !== '' ? (
+                <button
+                  type="button"
+                  className="lb-icon"
+                  aria-label={t('lb.searchSessionsPlaceholder')}
+                  onClick={() => setSessionQuery('')}
+                >
+                  <X size={12} />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* Folded like the right rail's blocks: kept mounted, only the height
               changes, and `inert` keeps Tab out of what nobody can see. The list
@@ -899,7 +1030,7 @@ export function WorkspaceSidebar() {
                   conversation is `detachSession`, which is a different act from
                   erasing one. The row is still a way to switch to it, which is
                   what makes a second and third session reachable at all. */}
-              {liveOnly.length > 0 ? (
+              {liveOnly.length > 0 && !sessionSearchActive ? (
                 <div className="lb-rows lb-live-rows">
                   {liveOnly.map((row) => {
                     const isCurrent = row.key === activeKey;
@@ -943,7 +1074,55 @@ export function WorkspaceSidebar() {
                 </div>
               ) : null}
 
-              {!savedSessions.listed ? (
+              {sessionSearchActive ? (
+                /* The hits, or the state the answer is in. A hit row is the
+                   session's own id plus the line of evidence — the snippet —
+                   and nothing the runtime computed: `preview`, `messages` and
+                   `steps` have one owner (the runtime), and a hit row that
+                   re-cut them would disagree with the saved list about the
+                   same session. Clicking a row closes the search and opens
+                   the session through the ordinary door. */
+                sessionSearching ? (
+                  <div className="lb-note">{t('lb.searchSessionsLoading')}</div>
+                ) : sessionSearchFailed ? (
+                  <div className="lb-note">{t('lb.searchSessions.failed')}</div>
+                ) : (sessionSearchHits ?? []).length === 0 ? (
+                  <div className="lb-note">
+                    {t('lb.searchSessions.noMatch')}
+                    <div className="lb-note-hint">{t('lb.searchSessions.noMatchHint')}</div>
+                  </div>
+                ) : (
+                  <div className="lb-rows">
+                    {(sessionSearchHits ?? []).map((hit) => (
+                      <div key={hit.sessionId} className="lb-session-wrap">
+                        <button
+                          type="button"
+                          className="lb-session"
+                          title={hit.sessionId}
+                          aria-label={`${t('lb.searchSessions.open')}: ${hit.sessionId}`}
+                          disabled={blockedByBoard}
+                          onClick={() => {
+                            setSessionSearchOpen(false);
+                            setSessionQuery('');
+                            setSessionSearchHits(null);
+                            void openSession(hit.sessionId);
+                          }}
+                        >
+                          <span className="lb-session-top">
+                            <span className="lb-session-preview">{hit.sessionId}</span>
+                            <span className="lb-session-time">
+                              {hit.modifiedAt === null
+                                ? t('common.unknown')
+                                : formatRelative(hit.modifiedAt * 1000)}
+                            </span>
+                          </span>
+                          <span className="lb-session-meta lb-session-snippet">{hit.snippet}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : !savedSessions.listed ? (
                 <div className="lb-note">{t('common.loading')}</div>
               ) : savedSessions.active.length === 0 ? (
                 // Only when there is nothing open either: with a live row above,

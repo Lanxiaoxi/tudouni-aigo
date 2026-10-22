@@ -1467,6 +1467,38 @@ export async function readUserConfig(): Promise<ConfigDocument | null> {
   }
 }
 
+/** One cross-session search hit: the session and the line of evidence. */
+export interface SessionSearchHit {
+  /** The runtime's own session id — the same name the saved list carries. */
+  sessionId: string;
+  /** The matched message, folded and cut around the hit. The proof the row is there. */
+  snippet: string;
+  /** Epoch seconds, or null when the file's mtime could not be stated. */
+  modifiedAt: number | null;
+}
+
+/**
+ * Search the workspace's saved sessions for a keyword.
+ *
+ * **The host answers, not a runtime child.** The session files belong to the
+ * workspace, and a child only knows its own — so a search that spans "the
+ * sessions I can see" is asked of the host process, which is always present
+ * and belongs to no session. The scan is read-only and never needs a live
+ * child: that is what makes the button work in a workspace with nothing open.
+ *
+ * A failure is returned as `null` rather than thrown: the rail's job with it
+ * is to say nothing matched or that the search could not run, and an exception
+ * would land in an error boundary with nothing to say about which.
+ */
+export async function searchSessions(workspace: string, query: string): Promise<SessionSearchHit[] | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<SessionSearchHit[]>('sessions_search', { workspace, query });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Apply one save, and get the files back as they are **afterwards**.
  *

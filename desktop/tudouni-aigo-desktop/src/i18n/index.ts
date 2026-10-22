@@ -347,6 +347,21 @@ export const en = {
   'lb.newSessionHint': 'Start from a clean context',
   'lb.addWorkspace': 'Add a workspace…',
   'lb.refreshSessions': 'Re-read the session list',
+  /* The cross-session search: the button sits left of the refresh in the
+     Sessions head, and the results replace the list while a query is in.
+     The hint states what is searched, because the answer differs from the
+     runtime's own session list — the host scans the files, and tool output
+     is out of scope. */
+  'lb.searchSessions': 'Search sessions',
+  'lb.searchSessionsHint':
+    'Finds saved sessions whose conversation text contains the word — this workspace only.',
+  'lb.searchSessionsPlaceholder': 'Search saved sessions…',
+  'lb.searchSessionsLoading': 'Searching…',
+  'lb.searchSessions.noMatch': 'No session matches',
+  'lb.searchSessions.noMatchHint': 'Try a shorter word, or check the spelling.',
+  'lb.searchSessions.failed':
+    'The search could not run — the session files could not be read.',
+  'lb.searchSessions.open': 'Open this session',
   'lb.collapse': 'Hide this sidebar',
   'lb.settings': 'Settings',
   /* The configuration files, above Settings in the rail's foot. The tooltip
