@@ -8,8 +8,14 @@
 
 :root {
   /* ---------- 字体族（本地打包，见 fonts.css） ---------- */
-  --font-sans: "IBM Plex Sans", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Mono", "Consolas", "SF Mono", monospace;
+  /* "JetBrains Maple Mono" sits *after* IBM Plex Sans on purpose: font stacks
+     resolve per character, so latin text (covered by Plex) never touches it,
+     while Chinese — absent from Plex — lands on Maple's designed CJK glyphs
+     instead of the OS fallback. Same trick as --font-mono, per-script. */
+  --font-sans: "IBM Plex Sans", "JetBrains Maple Mono NR", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+  /* "JetBrains Maple Mono" (subset in fonts.css) carries the CJK glyphs;
+     "JetBrains Mono" stays as the fallback if that face fails to load. */
+  --font-mono: "JetBrains Maple Mono", "JetBrains Mono", "Cascadia Mono", "Consolas", "SF Mono", monospace;
   --font-feature-mono: "liga" 1, "calt" 1;  /* JetBrains Mono 连字 */
 
   /* ---------- 字阶（桌面端固定 px，不做 rem 缩放） ---------- */

@@ -18,3 +18,74 @@
 @import '@fontsource/jetbrains-mono/500.css';
 @import '@fontsource/jetbrains-mono/600.css';
 @import '@fontsource/jetbrains-mono/700.css';
+
+/* JetBrains Maple Mono — the CJK subset of the JetBrains Mono + Maple Mono
+   fusion (SpaceTimee/Fusion-JetBrainsMapleMono, OFL-1.1). Latin glyphs are
+   JetBrains Mono itself, so this sits first in --font-mono: English renders
+   identically, while Chinese/Japanese get designed CJK glyphs at a strict
+   2:1 monospace ratio instead of an implicit OS fallback. The subset keeps
+   the full CJK unified range plus common symbol blocks, with liga/calt. */
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-700.woff2') format('woff2');
+}
+
+/* Narrow-CJK variant (same fusion, CJK glyphs at ~0.88em instead of 1em).
+   Registered under a distinct alias: both variants share the internal name
+   "JetBrains Maple Mono", so two @font-face blocks with the same family and
+   weights would collide. The sans stack points at this alias — its latin
+   (Plex Sans covers it) never loads these faces, they exist only for the
+   CJK. The mono stack keeps the strict 2:1 (non-NR) variant: terminals and
+   code must not get narrower CJK. */
+@font-face {
+  font-family: "JetBrains Maple Mono NR";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-nr-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono NR";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-nr-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono NR";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-nr-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono NR";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-nr-700.woff2') format('woff2');
+}
