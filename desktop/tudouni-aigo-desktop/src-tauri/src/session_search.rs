@@ -253,7 +253,16 @@ fn scan_file(path: &Path, needle: &str) -> Option<String> {
         let Some(pos) = lower.find(needle) else {
             continue;
         };
-        return Some(snippet_around(&folded, pos, needle.len()));
+        // `find` answers a **byte** offset, and `snippet_around` cuts by
+        // `char`. Handing the byte offset over unchanged is what made a
+        // Chinese match panic the scan: `安装` is six bytes but two
+        // characters, so a keyword after a few Chinese characters had a byte
+        // offset far past its character index, and the slice's start could
+        // land beyond the end of the text. Convert here, where the two
+        // strings are both in hand, and let `snippet_around` do the clamping.
+        let start = lower[..pos].chars().count();
+        let len = lower[pos..pos + needle.len()].chars().count();
+        return Some(snippet_around(&folded, start, len));
     }
     None
 }
@@ -295,11 +304,18 @@ fn message_text(message: &serde_json::Map<String, Value>) -> String {
 
 /// Cut the folded text around the match: `SNIPPET_BEFORE` characters ahead,
 /// `SNIPPET_AFTER` behind, ellipses where the cut lands.
+///
+/// Both offsets are **character** offsets. `match_start` is clamped rather
+/// than trusted: the caller derives it from the lowercased copy, and a case
+/// fold that changes a character's length (`İ` lowers to two code points) can
+/// put it one past the end. A snippet is evidence, not a contract — the one
+/// thing it may never do is take the window down.
 fn snippet_around(folded: &str, match_start: usize, match_len: usize) -> String {
     let chars: Vec<char> = folded.chars().collect();
-    let end = (match_start + match_len).min(chars.len());
-    let begin = match_start.saturating_sub(SNIPPET_BEFORE);
-    let finish = (end + SNIPPET_AFTER).min(chars.len());
+    let start = match_start.min(chars.len());
+    let end = start.saturating_add(match_len).min(chars.len());
+    let begin = start.saturating_sub(SNIPPET_BEFORE);
+    let finish = end.saturating_add(SNIPPET_AFTER).min(chars.len());
     let mut out = String::new();
     if begin > 0 {
         out.push('…');
@@ -490,5 +506,43 @@ mod tests {
         assert!(snippet.starts_with('…'), "starts with ellipsis: {snippet}");
         assert!(snippet.ends_with('…'), "ends with ellipsis: {snippet}");
         assert!(snippet.contains("needle-abc"));
+    }
+
+    /// A Chinese match used to take the whole application down. `find` answers
+    /// a byte offset and the snippet cut by `char`, so this sentence — 44
+    /// characters, 132 bytes, the match at byte 114 — asked for
+    /// `chars[84..44]` and panicked. Release builds abort on panic, so the
+    /// window vanished instead of showing a snippet.
+    #[test]
+    fn a_chinese_match_does_not_panic_and_keeps_the_keyword() {
+        let ws = temp_workspace();
+        write_session(
+            &ws,
+            "20260101-120000",
+            &[r#"{"v":1,"type":"msg","message":{"role":"user","content":"这是一段很长的中文内容，用来测试关键字的截取是否会在多字节字符上崩溃。关键字安装在这里。"}}"#],
+        );
+        let hits = hits_for(&ws, "安装");
+        assert_eq!(hits.len(), 1);
+        let snippet = &hits[0].snippet;
+        assert!(snippet.contains("安装"), "snippet: {snippet}");
+        assert!(snippet.starts_with('…'), "starts with ellipsis: {snippet}");
+    }
+
+    /// The match at the very end of a Chinese message: both cut points are out
+    /// of the byte-count's depth, but there is nothing after the keyword, so
+    /// the snippet must end on it rather than on an empty slice.
+    #[test]
+    fn a_chinese_match_at_the_end_keeps_the_keyword() {
+        let ws = temp_workspace();
+        write_session(
+            &ws,
+            "20260101-120000",
+            &[r#"{"v":1,"type":"msg","message":{"role":"assistant","content":"这段回答先说明背景，再解释步骤，最后给出结论：请在终端里执行安装。"}}"#],
+        );
+        let hits = hits_for(&ws, "安装");
+        assert_eq!(hits.len(), 1);
+        let snippet = &hits[0].snippet;
+        assert!(snippet.contains("安装"), "snippet: {snippet}");
+        assert!(!snippet.ends_with('…'), "nothing follows the match: {snippet}");
     }
 }
