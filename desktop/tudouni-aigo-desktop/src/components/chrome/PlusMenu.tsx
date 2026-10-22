@@ -170,7 +170,7 @@ function FilePage({ t, onBack, onDone }: { t: T; onBack: () => void; onDone: () 
   const noWorkspace = (rt?.session?.workspace ?? rt?.workspace ?? '').trim() === '';
 
   return (
-    <div>
+    <div className="plus-menu-page">
       <MenuBack label={t('plus.file')} onBack={onBack} />
       <div className="plus-menu-list scroll-fade">
         <button
@@ -244,7 +244,7 @@ function SkillsPage({
   ];
 
   return (
-    <div>
+    <div className="plus-menu-page">
       <MenuBack label={t('plus.skills')} onBack={onBack} />
       <div className="plus-menu-list scroll-fade">
         {rows.length === 0 ? (

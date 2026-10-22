@@ -165,6 +165,22 @@
   overflow: hidden;
 }
 
+/* 子页（文件 / 技能）的一层容器。
+   **它不是装饰。** `.plus-menu` 是 `max-height: 320px` 的 flex 列，但子页原来是
+   一个裸 `<div>`：作为 flex 项它是 `min-height: auto`、`overflow: visible` 的
+   block，于是它和它里面的 `.plus-menu-list` 一起**按内容撑到 776px**，被外层
+   菜单的 `overflow: hidden` 直接裁掉 —— 列表自身永远没有溢出，`overflow: auto`
+   就永远不触发滚动，滚动条也就不存在（实测：list 的 scrollHeight 与 clientHeight
+   都是 776，`scrollTop = 500` 仍是 0，滚轮不动任何东西）。子页必须是这一列的
+   收缩容器：`min-height: 0` 让它被压到菜单的高度里，列表才有东西可滚。
+   见 tests/plus-menu-scroll.test.ts。 */
+.plus-menu-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* The sidebar's add-workspace menu only carries two short labels; the
    shared 240px width reads as a menu with more room than it uses. */
 .lb-plus-menu {

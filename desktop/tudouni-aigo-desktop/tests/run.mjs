@@ -182,6 +182,13 @@ const SUITES = [
   // the renderer had decided was detail. Both halves are pinned: that a card is
   // drawn, and that it is drawn even when the rollup line is collapsed.
   'quiet-deliverables.test.tsx',
+  // The plus menu's second page. The menu is a `max-height: 320px` flex column
+  // and the skills page used to be a bare `<div>`: as a flex item it sized itself
+  // to its content, so the list never overflowed, never scrolled, and the rows
+  // past the fold were unreachable — no scrollbar was the visible half of it.
+  // Both halves are read as text (the rule, and the markup that applies it),
+  // because a shrink container has no behaviour to observe in Node.
+  'plus-menu-scroll.test.ts',
   // Find in the conversation: where a match lands (a `Range` offset that is one
   // out puts the mark on the wrong word, and a match allowed to span a paragraph
   // break draws one mark across two paragraphs), case folding that keeps its
