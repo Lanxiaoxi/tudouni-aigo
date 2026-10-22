@@ -160,7 +160,23 @@ src/
     ui/                  primitives, markdown
   i18n/                  English only (see below)
   styles/                tokens -> components -> app -> stream
-src-tauri/src/lib.rs     the child processes, JSONL, exit codes, single instance
+src-tauri/src/
+  lib.rs                 wiring only: plugins, the command list, single instance
+  bridge.rs              the running children and the bytes they emit
+  launch.rs              start a local child: absolute binary, drained stderr
+  launch_remote.rs       the same over SSH
+  runtime_commands.rs    attach / send / listen / shutdown / kill / version / search
+  remote_commands.rs     install, remote config, ssh config, probe, browse
+  config_commands.rs     the configuration the desktop edits directly
+  image.rs               a workspace file as a data: URL (sniff + base64)
+  image_stash.rs         a pasted picture into local or remote staging
+  deliverable.rs         open a declared deliverable
+  system.rs              user name, prevent-sleep, resource usage
+  window_close.rs        the close prompt, its deadline, and every way out
+  window_theme.rs        the colour before CSS, checked against tokens.css
+  tray.rs                the tray icon and its menu
+  notify.rs              a toast, and the click
+  workspace_staging.rs   where a paste lives, and which dirs may start
 tests/                   projection tests + a real-binary end-to-end check
 ```
 

@@ -1,0 +1,366 @@
+//! The remote-workspace commands: install or upgrade the runtime over SFTP,
+//! check and write the far host's `config.json`, probe a host before the form
+//! asks anything, browse directories, and read or append the user's own
+//! `~/.ssh/config`.
+//!
+//! Each of these is a thin door — the rules live in `remote_install`,
+//! `remote_config`, `remote_probe`, and `ssh_config` respectively.
+
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
+
+use crate::launch_remote::resolve_remote_package;
+use crate::remote_config;
+use crate::remote_install;
+use crate::remote_probe;
+use crate::ssh_backend;
+use crate::ssh_config;
+
+/// Options for `install_remote_runtime`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallRemoteOptions {
+    host: String,
+    port: u16,
+    user: String,
+    #[serde(default)]
+    identity_files: Vec<String>,
+    password: Option<String>,
+    connect_timeout_ms: Option<u64>,
+    /// The version string this install should be recorded under
+    /// (`~/.tudouni/runtime/<version>/`) — the desktop app's own build
+    /// version, read from `app.package_info()` by the caller in the
+    /// WebView, not resolved here: this module has no reason to know its
+    /// own version string any more directly than that.
+    version: String,
+}
+
+/// One progress event the install flow emits as it runs each step, carried
+/// to the WebView as `remote-install://progress` — what
+/// `connection.phase = 'installing'` (§5.1 of the design) is drawn from.
+#[derive(Clone, Serialize)]
+struct InstallProgressPayload {
+    /// A caller-supplied id correlating a sequence of progress events with
+    /// the one `install_remote_runtime` call that produced them — a plain
+    /// counter rather than a `ChildKey`, since an install can happen before
+    /// any runtime process exists for the workspace it is about to make
+    /// usable.
+    request_id: String,
+    stage: String,
+    /// Set only during the `uploading` stage; `(0, 0)` otherwise.
+    uploaded_entries: usize,
+    total_entries: usize,
+}
+
+/// Installs or upgrades the Runtime on a remote host over SSH — the Remote
+/// Bootstrapper's one entry point from the front end (§3.5, §8).
+///
+/// This single command performs the whole sequence: detect the remote
+/// platform, pick the matching bundled archive, check whether this exact
+/// version is already current (skip entirely if so), upload into a fresh
+/// staging directory, then verify and atomically switch. Every step is
+/// reported through `remote-install://progress` as it starts, keyed by
+/// `request_id` so a front end tracking more than one install (unlikely,
+/// but not prevented) can tell them apart.
+///
+/// Returns the absolute path to the installed binary — through
+/// `CurrentLink`, exactly what a subsequent `runtime_attach_remote` should
+/// pass as `remote_binary` once this call succeeds. This command does not
+/// start the runtime itself: installing and connecting are two separate
+/// acts here, the same way `runtime_attach`/`resolve_binary` never install
+/// anything locally either.
+#[tauri::command]
+pub(crate) fn install_remote_runtime(
+    app: AppHandle,
+    request_id: String,
+    options: InstallRemoteOptions,
+) -> Result<String, String> {
+    let target = ssh_backend::SshTarget {
+        host: options.host,
+        port: options.port,
+        user: options.user,
+        identity_files: options.identity_files,
+        password: options.password,
+        connect_timeout: Duration::from_millis(options.connect_timeout_ms.filter(|&ms| ms > 0).unwrap_or(15_000)),
+    };
+
+    let session = remote_install::open_install_session(&target)
+        .map_err(|e| format!("could not connect to install the remote runtime: {e}"))?;
+
+    // Platform is detected once here (rather than inside install_or_upgrade
+    // alone) so the archive to upload can be chosen before staging begins —
+    // install_or_upgrade still re-detects internally for its own layout, but
+    // that second exec is cheap (two `uname` calls) next to a wrong binary
+    // discovered only after an upload.
+    let remote_target = remote_install::detect_remote_target(&session)
+        .map_err(|e| format!("could not identify the remote platform: {e}"))?;
+    let archive_path = resolve_remote_package(remote_target.triple)
+        .map_err(|e| format!("could not find the install package for this platform: {e}"))?;
+
+    let emit_stage = {
+        let app = app.clone();
+        let request_id = request_id.clone();
+        move |stage: remote_install::InstallStage| {
+            let stage_name = match stage {
+                remote_install::InstallStage::DetectingPlatform => "detecting_platform",
+                remote_install::InstallStage::CheckingExistingInstall => "checking_existing_install",
+                remote_install::InstallStage::PreparingStaging => "preparing_staging",
+                remote_install::InstallStage::Uploading => "uploading",
+                remote_install::InstallStage::VerifyingAndSwitching => "verifying_and_switching",
+                remote_install::InstallStage::Done => "done",
+            };
+            let _ = app.emit(
+                "remote-install://progress",
+                InstallProgressPayload {
+                    request_id: request_id.clone(),
+                    stage: stage_name.to_string(),
+                    uploaded_entries: 0,
+                    total_entries: 0,
+                },
+            );
+        }
+    };
+
+    let emit_progress = {
+        let app = app.clone();
+        let request_id = request_id.clone();
+        move |done: usize, total: usize| {
+            let _ = app.emit(
+                "remote-install://progress",
+                InstallProgressPayload {
+                    request_id: request_id.clone(),
+                    stage: "uploading".to_string(),
+                    uploaded_entries: done,
+                    total_entries: total,
+                },
+            );
+        }
+    };
+
+    remote_install::install_or_upgrade(&session, &archive_path, &options.version, emit_stage, emit_progress)
+        .map_err(|e| format!("could not install the remote runtime: {e}"))
+}
+
+/// Options shared by `check_remote_config` and `write_remote_config` — the
+/// SSH destination, nothing else. A separate, smaller struct from
+/// `InstallRemoteOptions` because a config-sync call carries no version and
+/// no runtime-specific fields.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteConfigTarget {
+    host: String,
+    port: u16,
+    user: String,
+    #[serde(default)]
+    identity_files: Vec<String>,
+    password: Option<String>,
+    connect_timeout_ms: Option<u64>,
+}
+
+impl RemoteConfigTarget {
+    fn into_ssh_target(self) -> ssh_backend::SshTarget {
+        ssh_backend::SshTarget {
+            host: self.host,
+            port: self.port,
+            user: self.user,
+            identity_files: self.identity_files,
+            password: self.password,
+            connect_timeout: Duration::from_millis(self.connect_timeout_ms.filter(|&ms| ms > 0).unwrap_or(15_000)),
+        }
+    }
+}
+
+/// What `check_remote_config` reports — the camelCase wire shape of
+/// `remote_config::RemoteConfigInspection`.
+#[derive(Serialize)]
+pub(crate) struct RemoteConfigStatusPayload {
+    status: String,
+    fingerprint: String,
+    error: Option<String>,
+}
+
+/// Reads and classifies the remote account's `~/.tudouni/config.json`
+/// (§9.3 of the design) — the Workspace Manager's one entry point for
+/// deciding what a `configPolicy` of `ask` should actually ask about.
+///
+/// Never writes anything. The returned fingerprint is what the front end
+/// compares against a stored baseline (§9.5) to decide whether this is a
+/// first sync, an ordinary continuation, or a conflict.
+#[tauri::command]
+pub(crate) fn check_remote_config(target: RemoteConfigTarget) -> Result<RemoteConfigStatusPayload, String> {
+    let ssh_target = target.into_ssh_target();
+    let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
+        .map_err(|e| format!("could not connect to check the remote configuration: {e}"))?;
+    let inspection = remote_config::check_remote_config(&session, &home)
+        .map_err(|e| format!("could not read the remote configuration: {e}"))?;
+    Ok(RemoteConfigStatusPayload {
+        status: inspection.status.as_str().to_string(),
+        fingerprint: inspection.fingerprint,
+        error: inspection.error,
+    })
+}
+
+/// Writes `contents` to the remote account's `~/.tudouni/config.json`
+/// safely (§9.6): a temp file, the existing file backed up, then an atomic
+/// SFTP rename into place. `contents` must already be the complete file —
+/// this command does not merge or validate it beyond what
+/// `remote_config::write_remote_config` itself does.
+///
+/// Returns the fingerprint of what was just written, so the caller can
+/// record it as the new sync baseline without a second round trip to read
+/// it back.
+#[tauri::command]
+pub(crate) fn write_remote_config(target: RemoteConfigTarget, contents: String) -> Result<String, String> {
+    let ssh_target = target.into_ssh_target();
+    let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
+        .map_err(|e| format!("could not connect to write the remote configuration: {e}"))?;
+    let bytes = contents.into_bytes();
+    remote_config::write_remote_config(&session, &home, &bytes)
+        .map_err(|e| format!("could not write the remote configuration: {e}"))?;
+    Ok(remote_config::fingerprint_hex(&bytes))
+}
+
+/// Read `~/.ssh/config` and hand back its concrete `Host` blocks, for the
+/// Add Remote Workspace form's host picker.
+///
+/// A local read of one file the user already maintains: no connection is
+/// attempted, and nothing here is a request the runtime is waiting on. The
+/// front end treats the answer as **prefill suggestions only** — every field
+/// the form fills from it is still editable and still validated at Save.
+///
+/// The refusal rules the Go side applies when it dials (`ProxyJump` and
+/// friends in `internal/ssh/config.go`'s `rejectedFields`) are applied here
+/// too, as a per-host `refused` flag: a block that names one of them is
+/// listed but marked unselectable, because the dial would fail the same way
+/// the Go side's own refusal describes. See `ssh_config`'s module doc for
+/// why that second copy of the rules exists at all.
+#[tauri::command]
+pub(crate) fn read_ssh_config() -> ssh_config::SshConfigDocument {
+    ssh_config::read_config()
+}
+
+/// What `append_ssh_host` is given: the alias to write and the block's fields.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppendSshHostOptions {
+    alias: String,
+    hostname: String,
+    port: u16,
+    user: String,
+    #[serde(default)]
+    identity_files: Vec<String>,
+}
+
+/// Add one `Host` block to the user's own `~/.ssh/config` and return the file's
+/// path.
+///
+/// This is what "configure a host here, since there is none" means in this
+/// application: `~/.ssh/config` is the one place a host is configured (the Go
+/// side reads the same file), so a host added through the wizard is written
+/// **there** rather than into a private list only this program can see — a
+/// private list would be a host the person cannot reach with `ssh` either.
+///
+/// **A password is never written.** `Password` is this project's own extension,
+/// not an OpenSSH keyword; writing it would break the person's own `ssh` with
+/// `Bad configuration option: password` on every connection. See
+/// `ssh_config::append_host`.
+#[tauri::command]
+pub(crate) fn append_ssh_host(options: AppendSshHostOptions) -> Result<String, String> {
+    ssh_config::append_host(
+        &options.alias,
+        &ssh_config::SshConfigHost {
+            alias: options.alias.clone(),
+            hostname: options.hostname,
+            port: options.port,
+            user: options.user,
+            identity_files: options.identity_files,
+            has_password: false,
+            refused: None,
+        },
+    )
+}
+
+/// Options for the three `remote_probe`-backed commands: the SSH destination
+/// and nothing else.
+///
+/// The same shape as [`RemoteConfigTarget`] and deliberately a distinct type
+/// rather than a reuse of it: the two are different questions asked of the same
+/// server, and one gaining a field the other has no business carrying is
+/// exactly the kind of drift a shared struct invites.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteProbeTarget {
+    host: String,
+    port: u16,
+    user: String,
+    #[serde(default)]
+    identity_files: Vec<String>,
+    password: Option<String>,
+    connect_timeout_ms: Option<u64>,
+}
+
+impl RemoteProbeTarget {
+    fn into_ssh_target(self) -> ssh_backend::SshTarget {
+        ssh_backend::SshTarget {
+            host: self.host,
+            port: self.port,
+            user: self.user,
+            identity_files: self.identity_files,
+            password: self.password,
+            connect_timeout: Duration::from_millis(
+                self.connect_timeout_ms.filter(|&ms| ms > 0).unwrap_or(15_000),
+            ),
+        }
+    }
+}
+
+/// Connect to a host and report what is on the other end: the account's home,
+/// its platform, whether the Runtime is installed (and at which version),
+/// whether it has a usable `config.json`, and the directories inside `path`.
+///
+/// This is the **first** step of adding a remote workspace — see
+/// `remote_probe`'s module doc for why the flow connects before asking the
+/// person anything. It writes nothing, installs nothing, and starts no session:
+/// the workspace it is asked about is read, never entered.
+///
+/// `path` omitted or empty means the account's home directory.
+#[tauri::command]
+pub(crate) fn probe_remote_host(
+    target: RemoteProbeTarget,
+    path: Option<String>,
+) -> Result<remote_probe::RemoteProbe, String> {
+    remote_probe::probe(&target.into_ssh_target(), path.as_deref())
+}
+
+/// List one directory on a host the wizard has already probed — the browser's
+/// "open a folder" and "up" clicks.
+///
+/// Unlike `probe_remote_host` it does not re-ask the host what it is: the
+/// platform, the runtime's state and the config's state were reported by the
+/// first probe and do not change while the person is choosing a directory.
+/// It makes only the calls a listing needs (over the cached connection when
+/// one exists), which is what makes a click in the browser feel like a listing
+/// rather than a reconnect. See `remote_probe`'s module doc.
+///
+/// `path` omitted or empty means the account's home directory.
+#[tauri::command]
+pub(crate) fn browse_remote_dir(
+    target: RemoteProbeTarget,
+    path: Option<String>,
+) -> Result<remote_probe::RemoteBrowse, String> {
+    remote_probe::browse(&target.into_ssh_target(), path.as_deref())
+}
+
+/// Create one directory on a remote host, for the wizard's "new folder".
+///
+/// A separate command from `probe_remote_host` on purpose: browsing a host must
+/// not be able to create anything on it, and the only way to guarantee that is
+/// for the two to be different calls.
+///
+/// Returns the directory's absolute path, which is what the caller then lists.
+#[tauri::command]
+pub(crate) fn create_remote_directory(target: RemoteProbeTarget, path: String) -> Result<String, String> {
+    remote_probe::create_directory(&target.into_ssh_target(), &path)
+}

@@ -404,7 +404,11 @@ pub fn sweep_remote_paste(target: &SshTarget, remote_workspace: &str, live: &[St
     let root = format!(
         "{}/{}",
         remote_workspace.trim().trim_end_matches('/'),
-        format!("{}/{}", crate::PASTE_DIR, crate::PASTE_SUBDIR)
+        format!(
+            "{}/{}",
+            crate::workspace_staging::PASTE_DIR,
+            crate::workspace_staging::PASTE_SUBDIR
+        )
     );
     let session = match dial_session(target) {
         Ok(session) => session,
