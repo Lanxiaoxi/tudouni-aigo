@@ -1005,8 +1005,7 @@
 }
 
 /* Filled: the input gets its own full-width line, the controls move under it.
-   The green edge is the design's "there is something to send" state — it is not
-   the keyboard's focus ring, which stays neutral and external (below). */
+   The green edge is the design's "there is something to send" state. */
 .composer .cp-box.is-filled {
   grid-template-areas:
     "trays trays trays"
@@ -1031,39 +1030,11 @@
   min-height: 96px;
 }
 
-/* A keyboard ring drawn **outside** the box, and nothing at all for a pointer.
-
-   The box used to wear a green border for as long as the caret was inside it,
-   which on a wide window drew a 980px green rectangle around the whole composer —
-   more attention than the thing you are typing into deserves, and it read as a
-   state the composer was *in* rather than as "the keyboard is here".
-
-   **`:focus-visible` cannot make that distinction here, and the first version of
-   this rule assumed it could.** Browsers deliberately match `:focus-visible` for a
-   `<textarea>` whenever it is focused, whatever the input got it there — the
-   caret always needs locating, so suppressing its indicator on a click was judged
-   worse than showing it. Measured, not guessed: with the caret in the box,
-   `matches(':focus-visible')` is `true` after a mousedown as well as after Tab.
-   So `:has(textarea:focus-visible)` lit the ring on a click, which is exactly
-   what it was written to prevent.
-
-   The modality now comes from `data-input-mode` on `<html>`, set by
-   `useInputModality` from capture-phase `pointerdown`/`keydown`. It is an
-   `outline` so the ring sits outside the box and moves no layout.
-
-   **The ring is neutral, not green.** It was `--accent-border`, which read as a
-   green frame around the third of the window you type into — the composer is the
-   largest control on screen, and colouring its frame the accent made the
-   act of clicking into it the loudest thing on the page. A grey ring still says
-   "the keyboard is here" and says nothing else; the accent is left for states
-   the app actually wants to point at. This is a deviation from the reference,
-   which has no composer focus ring at all: dropping the indication entirely
-   would take it away from keyboard users, who have no other way to see where
-   the caret went (the check in `render-check.mjs` holds that line). */
-html[data-input-mode='keyboard'] .composer .cp-box:has(textarea:focus-visible) {
-  outline: 2px solid var(--border-strong);
-  outline-offset: 2px;
-}
+/* The composer box draws **no** focus ring of its own — neither for a pointer
+   nor for the keyboard. The box is the largest control on screen, so a ring
+   around it frames a third of the window; the caret itself is the keyboard's
+   indication inside it. (The filled state's green border is a content state,
+   not a focus cue.) This is the reference design's own behaviour. */
 
 .composer .cp-box.is-blocked {
   opacity: 0.55;

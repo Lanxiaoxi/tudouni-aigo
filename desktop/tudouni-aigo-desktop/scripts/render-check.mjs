@@ -414,14 +414,16 @@ async function main() {
   if (C.placeholder !== 'Say something…') {
     throw new Error(`the empty placeholder still carries the key hint: "${C.placeholder}"`);
   }
-  // ---- the composer ring is for the keyboard only ----
+  // ---- the composer box wears no focus ring at all ----
   //
-  // The first version of this assertion measured the box's `borderColor`, which
-  // could never have caught the defect: the ring is drawn with `outline` (and, in
-  // an earlier revision, with a `box-shadow` on the textarea itself). So it has to
-  // measure all three surfaces, and it has to drive real input modalities —
-  // `ta.focus()` in script matches `:focus-visible` no matter what, which is
-  // precisely the confusion that produced the bug.
+  // The box is the largest control on screen; a ring around it would frame a
+  // third of the window, so it draws none — the caret is the keyboard's
+  // indication inside it. (This used to assert the opposite: that the keyboard
+  // must see a neutral outline. The rule changed on purpose.) The probe still
+  // measures all three surfaces (`outline` on the box, `box-shadow` on the box
+  // and the textarea) and still drives real input modalities — `ta.focus()` in
+  // script matches `:focus-visible` no matter what, so the modality distinction
+  // has to come from real events.
   //
   // Simulated pointer and key events are what set `data-input-mode`, so this also
   // covers the hook that distinguishes them.
@@ -446,7 +448,7 @@ async function main() {
     window.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     ta.focus();
     out.afterClick = read();
-    // 2. A keypress, then focus — the case that must show a ring.
+    // 2. A keypress, then focus — the box must stay ring-free here too.
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
     ta.blur();
     ta.focus();
@@ -465,33 +467,18 @@ async function main() {
   if (FR.afterClick.mode !== 'pointer') {
     throw new Error(`a pointer press did not set the pointer mode: ${FR.afterClick.mode}`);
   }
-  // The defect: a ring after a click.
-  if (!FR.afterClick.outlineIsNone || FR.afterClick.textareaShadow !== 'none') {
-    throw new Error(
-      `clicking into the composer still draws a ring (outline ${FR.afterClick.outline}, textarea shadow ${FR.afterClick.textareaShadow})`,
-    );
-  }
   if (FR.afterKey.mode !== 'keyboard') {
     throw new Error(`a keypress did not set the keyboard mode: ${FR.afterKey.mode}`);
   }
-  // Not the defect, but the accessibility half of it: the keyboard must still
-  // get an indication, or removing the ring for the mouse removed it for everyone.
-  if (FR.afterKey.outlineIsNone) {
-    throw new Error('the keyboard reaches the composer with no visible focus indication at all');
-  }
-  if (FR.backToPointer.outlineIsNone === false) {
-    throw new Error('the ring did not clear when the pointer was used again');
-  }
-  // And the ring is **neutral**, not the accent. It was `--accent-border`, which
-  // drew a green frame around the largest control on screen and made clicking
-  // into the composer the loudest thing on the page. Asserted as "not the
-  // accent" rather than "is this exact grey" so a future retune of the border
-  // token does not fail here — what must hold is that the focus ring is not
-  // wearing the accent, which is the thing the accent is reserved away from.
-  const ringIsAccent = (c) =>
-    typeof c === 'string' && (/rgba?\(5,\s*150,\s*105/.test(c) || /rgba?\(52,\s*211,\s*153/.test(c));
-  if (ringIsAccent(FR.afterKey.outline)) {
-    throw new Error(`the composer's focus ring is drawn in the accent colour: ${FR.afterKey.outline}`);
+  // No surface of the box may carry a focus ring, in either modality.
+  for (const [label, r] of Object.entries(FR)) {
+    if (!r) continue;
+    if (!r.outlineIsNone) {
+      throw new Error(`the composer box draws an outline after ${label}: ${r.outline}`);
+    }
+    if (r.textareaShadow !== 'none') {
+      throw new Error(`the composer textarea carries a shadow after ${label}: ${r.textareaShadow}`);
+    }
   }
 
   // ---- 1d. (moved) ----
