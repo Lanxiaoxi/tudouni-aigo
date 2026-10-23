@@ -88,12 +88,14 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 	// than left implicit. A child session that does not say which model produced
 	// it is a transcript somebody will later misattribute, and the resolution may
 	// have picked a route the configuration did not name explicitly.
-	state.StoreSelection(session.Metadata, state.Selection{
-		Provider: route.Name,
-		Model:    chosen,
-		Thinking: t.Thinking,
-		Effort:   t.Effort,
-	}, 0)
+	session.Meta().Write(func(metadata map[string]any) {
+		state.StoreSelection(metadata, state.Selection{
+			Provider: route.Name,
+			Model:    chosen,
+			Thinking: t.Thinking,
+			Effort:   t.Effort,
+		}, 0)
+	})
 
 	// Announced before the child runs rather than after, because the whole point
 	// is that the screen can say something while the work is happening. A board
@@ -117,7 +119,7 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 	// file — it is what removes a window where a checkpoint writes a child session
 	// carrying no ledger at all, during which the artifact references already in
 	// the message list would name nothing.
-	session.Context = manager.State
+	session.SetContext(manager.State)
 	childTools := t.toolsForChild()
 
 	// The run context. Foreground: the parent's, which is what makes a stop
@@ -167,7 +169,7 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 		// its own session, a step budget, and a per-child stop.
 		Autopilot: true,
 		Session:   session,
-		Model:     state.NewSessionModel(session.Metadata, chosen, route.Name),
+		Model:     state.NewSessionModelFor(session.Meta(), chosen, route.Name),
 		MaxSteps:  t.MaxSteps,
 		Debug:     t.Debug,
 		Clock:     t.Clock,
@@ -289,7 +291,7 @@ func (t *Tool) settle(session *state.Session, childID, label string, started tim
 		"stop_reason":  stopReason,
 		"answer_chars": len([]rune(answer)),
 		"steps":        session.StepCount(),
-		"messages":     len(session.Messages),
+		"messages":     session.MessageCount(),
 		"usage":        usage,
 	}))
 
@@ -336,7 +338,7 @@ func (t *Tool) newChildSession(childID string, depth int, label string) *state.S
 	// — which is the common case, and the one where the label is the only
 	// human-readable clue in the child's file about what it was asked.
 	for key, value := range ChildMetadata(t.Parent, depth, t.callLabel(label)) {
-		session.Metadata[key] = value
+		session.Meta().Write(func(metadata map[string]any) { metadata[key] = value })
 	}
 	// The scope declaration goes in before the task, because it is a property of
 	// this agent rather than a note about this task. A child that discovers the
@@ -367,7 +369,7 @@ func (t *Tool) childContext(session *state.Session, chat model.ChatModel) (*ctxw
 		// The checkpoint reads the Session, so the Session has to point at the
 		// live state. Same arrangement as the parent's, and for the same reason:
 		// a process killed mid-delegation still recovers to what really happened.
-		session.Context = current
+		session.SetContext(current)
 	})
 
 	return manager, ctxwin.DefaultProcessor()

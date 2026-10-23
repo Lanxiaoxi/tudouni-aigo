@@ -78,10 +78,10 @@ func TestAStopCancelsTheTurnItWasAimedAt(t *testing.T) {
 	}
 }
 
-// TestTheNextTurnGetsAFreshContext is the failure that a context stored on the server
-// would cause, and it is the same failure `ClearStop` already exists to prevent for
-// the flag: the runtime outlives the turn, so a cancelled context left on it stops
-// the *next* turn at its first safe point — with nothing on the wire to say why.
+// TestTheNextTurnGetsAFreshContext is the failure that a context stored on the
+// server would cause: the runtime outlives the turn, so a cancelled context left
+// on it stops the *next* turn at its first safe point — with nothing on the wire
+// to say why.
 func TestTheNextTurnGetsAFreshContext(t *testing.T) {
 	output := &safeBuffer{}
 	server := NewServer(OpenStreams(strings.NewReader(""), output), Bootstrap{})

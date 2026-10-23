@@ -24,7 +24,7 @@ func TestTheGoalReachesThePayloadTail(t *testing.T) {
 	}
 	// A task list as well, so the ordering between the two is asserted rather
 	// than assumed: the goal is what the plan is for, and it reads first.
-	if result := builtin.NewTodoBoard(metadata).Write(map[string]any{
+	if result := builtin.NewTodoBoard(session.Meta()).Write(map[string]any{
 		"todos": []any{map[string]any{"content": "复现断连", "status": builtin.InProgress}},
 	}); result.Text == "" {
 		t.Fatal("the task list was not written")
@@ -33,7 +33,7 @@ func TestTheGoalReachesThePayloadTail(t *testing.T) {
 	runtimeValue := &Runtime{
 		SessionIDValue: "s",
 		SessionValue:   session,
-		Goal:           builtin.NewGoalBoard(metadata, session, nil),
+		Goal:           builtin.NewGoalBoard(session.Meta(), session, nil),
 	}
 
 	note := runtimeValue.notes()
@@ -60,7 +60,7 @@ func TestASessionWithoutAGoalPaysNothing(t *testing.T) {
 	runtimeValue := &Runtime{
 		SessionIDValue: "s",
 		SessionValue:   &state.Session{SessionID: "s", Metadata: map[string]any{}},
-		Goal:           builtin.NewGoalBoard(map[string]any{}, nil, nil),
+		Goal:           builtin.NewGoalBoard(state.NewMeta(nil), nil, nil),
 	}
 	if note := runtimeValue.notes(); strings.Contains(note, "当前目标") {
 		t.Errorf("a session with no goal produced a goal block:\n%s", note)

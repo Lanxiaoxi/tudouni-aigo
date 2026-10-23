@@ -38,7 +38,7 @@ func autonomousTurn() *state.Session {
 
 func newTestBoard(session *state.Session) (*GoalBoard, *int) {
 	commits := 0
-	board := NewGoalBoard(session.Metadata, session, func() { commits++ })
+	board := NewGoalBoard(session.Meta(), session, func() { commits++ })
 	return board, &commits
 }
 
@@ -49,7 +49,7 @@ func TestCreateGoalNeedsAPerson(t *testing.T) {
 	if !strings.Contains(result.Text, "Only the user") {
 		t.Errorf("an autonomous round created a goal:\n%s", result.Text)
 	}
-	if _, ok := state.LoadGoal(board.Metadata); ok {
+	if _, ok := state.LoadGoal(board.meta.Snapshot()); ok {
 		t.Fatal("the refused create still wrote a goal")
 	}
 	if *commits != 0 {
@@ -249,7 +249,7 @@ func TestGoalChangesAreAudited(t *testing.T) {
 	// A session with no goal says so rather than reporting an empty one, and its
 	// audit fields say "no goal" rather than omitting the field — a reader that has
 	// to treat "absent" and "false" differently will get it wrong once.
-	empty := NewGoalBoard(map[string]any{}, humanTurn(), nil)
+	empty := NewGoalBoard(state.NewMeta(nil), humanTurn(), nil)
 	if empty.auditFields()["goal_present"] != false {
 		t.Error("a session with no goal reported one in its audit fields")
 	}
@@ -259,7 +259,7 @@ func TestGoalChangesAreAudited(t *testing.T) {
 // concurrently: two goal changes in one batch would each act on a revision the
 // other just moved.
 func TestGoalToolsAreRegisteredAsASet(t *testing.T) {
-	tools := NewGoalTools(map[string]any{}, humanTurn(), nil)
+	tools := NewGoalTools(state.NewMeta(nil), humanTurn(), nil)
 	names := map[string]bool{}
 	for _, tool := range tools.All {
 		names[tool.Name] = true
@@ -289,7 +289,7 @@ func TestGoalToolsAreRegisteredAsASet(t *testing.T) {
 }
 
 func TestGoalToolSchemasAreValid(t *testing.T) {
-	tools := NewGoalTools(map[string]any{}, humanTurn(), nil)
+	tools := NewGoalTools(state.NewMeta(nil), humanTurn(), nil)
 	for _, tool := range tools.All {
 		if tool.Schema == nil {
 			t.Errorf("%s has no schema", tool.Name)
@@ -353,7 +353,7 @@ func contains(values []string, want string) bool {
 
 func idOf(t *testing.T, board *GoalBoard) string {
 	t.Helper()
-	goal, ok := state.LoadGoal(board.Metadata)
+	goal, ok := state.LoadGoal(board.meta.Snapshot())
 	if !ok {
 		t.Fatal("no goal to read an id from")
 	}

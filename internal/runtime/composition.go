@@ -54,10 +54,11 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	}
 
 	session := options.Session
+	meta := session.Meta()
 	defaultProvider, _ := catalog.DefaultProvider()
 	defaultModel, _ := catalog.DefaultModel()
 
-	modelState := state.NewSessionModel(session.Metadata, defaultModel.ID, defaultProvider.Name)
+	modelState := state.NewSessionModelFor(meta, defaultModel.ID, defaultProvider.Name)
 	chosen, chosenProvider, err := resolveModel(modelState, catalog)
 	if err != nil {
 		return nil, err
@@ -197,6 +198,29 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	jobs, jobTools := builtin.NewJobs(workspace, session.SessionID)
 	runtimeValue.Jobs = jobs
 
+	// One rollback for every failure from here on, rather than a `jobs.Close()` on
+	// each error path.
+	//
+	// The paths differ, the obligation does not: a background-job board holds a
+	// directory this session owns, and a session that failed to assemble must not
+	// leave it behind. Written per branch, the cleanup is the thing a new step
+	// forgets to add — and the symptom is silent, because a leaked job directory
+	// looks exactly like a session that never ran a job.
+	//
+	// `assembled` is what keeps it from firing on success: the deferred function
+	// cannot tell a returned runtime from a returned error otherwise, and closing
+	// the board a working runtime is about to use would break the session it just
+	// built.
+	assembled := false
+	defer func() {
+		if assembled {
+			return
+		}
+		if err := jobs.Close(); err != nil {
+			warn("%s", i18n.T("close.jobs_failed", "problem", err.Error()))
+		}
+	}()
+
 	// Skills are scanned from disk, never from a path the model supplies. The
 	// user-level directories live outside the workspace, and write_file cannot
 	// reach them either, so for that half "only a person can change a skill" is
@@ -226,7 +250,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// waiting for the next step boundary: a goal change is a decision about what
 	// the session is for, and losing it to a Ctrl+C that lands a second later
 	// would leave the model and the file disagreeing about which job is running.
-	goalTools := builtin.NewGoalTools(session.Metadata, session, runtimeValue.checkpoint)
+	goalTools := builtin.NewGoalTools(meta, session, runtimeValue.checkpoint)
 	runtimeValue.Goal = goalTools.Board
 	extra = append(extra, goalTools.All...)
 
@@ -269,7 +293,6 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// about either — the same reason the network tools are built here.
 	imageClient, err := runtimeValue.buildImageClient(catalog)
 	if err != nil {
-		jobs.Close()
 		return nil, err
 	}
 
@@ -281,13 +304,13 @@ func OpenRuntime(options Options) (*Runtime, error) {
 
 	registry, err := builtin.CreateRegistry(builtin.Assembly{
 		Workspace:        workspace,
-		TodoMetadata:     session.Metadata,
+		TodoMetadata:     meta,
 		Questioner:       questionerOf(options.Channels),
 		HasJobs:          true,
 		HasWebFetch:      hasFetch,
 		HasWebSearch:     hasSearch,
 		SkillLoader:      skillLoader,
-		SkillMetadata:    session.Metadata,
+		SkillMetadata:    meta,
 		CodeIntel:        refresher,
 		CodeIntelEnabled: codeIntelEnabled,
 		ImageGen:         imageClient,
@@ -312,7 +335,6 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		Extra: extra,
 	})
 	if err != nil {
-		jobs.Close()
 		return nil, err
 	}
 	runtimeValue.Tools = registry.Tools
@@ -337,7 +359,6 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// the name present in the parent's registry to mean anything.
 	if collectTool, ok := subagent.BuildCollect(runtimeValue.Subagents); ok {
 		if err := registry.Tools.Register(collectTool); err != nil {
-			jobs.Close()
 			return nil, err
 		}
 	}
@@ -365,7 +386,6 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		Clock:         security.PerfClock,
 	}); ok {
 		if err := registry.Tools.Register(subagentTool); err != nil {
-			jobs.Close()
 			return nil, err
 		}
 		// Kept for SubagentStop: the runtime's own handle on the delegating
@@ -508,7 +528,6 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// a payload looks like).
 	ctxManager, processor, missingBodies, err := openContext(session, runtimeValue.Chat, catalog)
 	if err != nil {
-		jobs.Close()
 		return nil, err
 	}
 	runtimeValue.ContextValue = ctxManager
@@ -629,5 +648,9 @@ func OpenRuntime(options Options) (*Runtime, error) {
 			options.OnTerminalEvent(terminalEventPayload(event))
 		})
 	}
+
+	// Past this point the runtime is whole and the caller owns it, so the rollback
+	// above must not run.
+	assembled = true
 	return runtimeValue, nil
 }

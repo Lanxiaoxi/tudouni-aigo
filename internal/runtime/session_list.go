@@ -143,7 +143,9 @@ func SessionSummaries(store *state.SessionStore, limit int, includeArchived bool
 }
 
 func todoProgressLine(metadata map[string]any) string {
-	board := builtin.NewTodoBoard(metadata)
+	// The map comes from a saved session summary rather than a live session, so
+	// it has no lock of its own; a standalone guard is enough.
+	board := builtin.NewTodoBoard(state.NewMeta(metadata))
 	return board.ProgressLine()
 }
 

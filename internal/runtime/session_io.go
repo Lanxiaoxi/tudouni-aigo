@@ -40,7 +40,7 @@ func (r *Runtime) checkpoint() {
 	if r.Store == nil || r.SessionValue == nil {
 		return
 	}
-	r.SessionValue.Context = r.contextHandle()
+	r.SessionValue.SetContext(r.contextHandle())
 	if err := r.Store.Save(r.SessionValue); err != nil {
 		warn("%s", i18n.T("save.failed", "what", "saving the session", "problem", err.Error()))
 	}
@@ -114,7 +114,7 @@ func (r *Runtime) notes() string {
 	// round, and the tail sits outside the cached prefix anyway.
 	if r.Skills != nil {
 		catalog := r.Skills.Catalog()
-		if part := skills.CatalogPart(r.SessionValue.Metadata, catalog); part != "" {
+		if part := skills.CatalogPart(r.metaSnapshot(), catalog); part != "" {
 			parts = append(parts, part)
 		}
 		if note := r.Skills.Note(); note != "" {
@@ -132,14 +132,14 @@ func (r *Runtime) notes() string {
 	// goal tools write through, so the model cannot be told one thing here and
 	// another thing by get_goal.
 	if r.Goal != nil {
-		if goal, ok := state.LoadGoal(r.SessionValue.Metadata); ok {
+		if goal, ok := r.goal(); ok {
 			parts = append(parts, state.GoalText(goal, r.activation()))
 		}
 	}
 	// The task list the model maintains itself. It has to be here rather than left
 	// in the history: the whole point of the list is to be in front of the model
 	// when it decides what to do next, and the history holds N stale copies.
-	if note := builtin.NewTodoBoard(r.SessionValue.Metadata).Note(); note != "" {
+	if note := builtin.NewTodoBoard(r.meta()).Note(); note != "" {
 		parts = append(parts, note)
 	}
 	if r.Jobs != nil {
@@ -186,14 +186,8 @@ func (r *Runtime) Messages() []map[string]any {
 	if r.SessionValue == nil {
 		return []map[string]any{}
 	}
-	return r.SessionValue.Messages
+	return r.SessionValue.MessagesSnapshot()
 }
-
-// ClearStop implements protocol.Runtime.
-func (r *Runtime) ClearStop() {}
-
-// MarkStop implements the optional protocol.Runtime stopper.
-func (r *Runtime) MarkStop() {}
 
 // RunTurn implements protocol.Runtime.
 //

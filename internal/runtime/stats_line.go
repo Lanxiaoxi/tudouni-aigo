@@ -14,18 +14,24 @@ import (
 // One line, three facts, all of them counted from the audit log rather than tracked
 // separately: a running total in memory would be a second source for the same fact,
 // and the two would drift in a way nobody can see. It is the same log `--audit`
-// reads, so the two reports agree.
+// reads, so the two reports agree — literally: the sink folds each record into the
+// same counters `state.Summarize` uses, at the moment it is read, so the numbers
+// here and the ledger's cannot come from two different walks of the file.
 //
 // It is **deliberately cumulative** for tokens and steps, because that matches
 // "how much has this cost", which is what the reader is asking. The one exception is
 // the duration, and its label says so: "this turn" is a different question from
 // "this session", and mixing the two would make neither answerable.
 func (r *Runtime) StatsLine() string {
-	var events []map[string]any
+	var summary map[string]any
+	var turnMs int64
+	hasTurn := false
 	if r.Logs != nil {
-		events, _ = r.Logs.Read(r.SessionIDValue)
+		summary, _, _ = r.Logs.Summary(r.SessionIDValue)
+		turnMs, hasTurn = r.Logs.LastTurnMs(r.SessionIDValue)
+	} else {
+		summary = state.Summarize(nil)
 	}
-	summary := state.Summarize(events)
 	usage, _ := summary["usage"].(map[string]any)
 	prompt := intPtr(usage["prompt"])
 
@@ -64,8 +70,8 @@ func (r *Runtime) StatsLine() string {
 			}
 		}
 	}
-	if ms, ok := lastTurnMs(events); ok {
-		builder.WriteString(i18n.T("stats.turn", "value", msText(int(ms))))
+	if hasTurn {
+		builder.WriteString(i18n.T("stats.turn", "value", msText(int(turnMs))))
 	}
 	// Two facts about the context figure, both stated in the README: it is what the
 	// **last request** actually sent, not "now" (the next one adds this turn's answer
@@ -98,7 +104,7 @@ func deref(value *int) int {
 
 // ProgressLine implements protocol.Runtime.
 func (r *Runtime) ProgressLine() string {
-	return builtin.NewTodoBoard(r.SessionValue.Metadata).ProgressLine()
+	return builtin.NewTodoBoard(r.meta()).ProgressLine()
 }
 
 // JobsProgressLine implements protocol.Runtime: the human's one-line view of the
@@ -118,7 +124,7 @@ func (r *Runtime) JobsProgressLine() string {
 // sentence that would appear in every session that never had one. The `/goal`
 // command answers the question explicitly for anybody who asks it.
 func (r *Runtime) GoalLine() string {
-	goal, ok := state.LoadGoal(r.SessionValue.Metadata)
+	goal, ok := r.goal()
 	if !ok {
 		return ""
 	}
@@ -130,35 +136,6 @@ func (r *Runtime) GoalLine() string {
 		line += i18n.T("goal.line.disarmed")
 	}
 	return line
-}
-
-// lastTurnMs is the wall time of the most recent turn, and whether there is one.
-//
-// Paired **by run_id**, not taken as the last `run_finished` line: when a turn dies
-// before it finishes (Ctrl+C, a killed process) the last such line belongs to the
-// *previous* turn, and reporting it as "this turn" gives a number that is completely
-// unrelated and completely plausible.
-func lastTurnMs(events []map[string]any) (int64, bool) {
-	runID := ""
-	for _, event := range events {
-		if stringOf(event["kind"]) == "run_started" {
-			runID = stringOf(event["run_id"])
-		}
-	}
-	if runID == "" {
-		return 0, false
-	}
-	for index := len(events) - 1; index >= 0; index-- {
-		event := events[index]
-		if stringOf(event["kind"]) != "run_finished" || stringOf(event["run_id"]) != runID {
-			continue
-		}
-		if value := intPtr(event["duration_ms"]); value != nil {
-			return int64(*value), true
-		}
-		return 0, false
-	}
-	return 0, false
 }
 
 // msText is a duration as a person reads it. Kept in step with the audit report's

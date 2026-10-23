@@ -27,6 +27,20 @@ type mcpMount struct {
 	tools      []string
 }
 
+// mcpConfig is the server list last read from disk.
+func (r *Runtime) mcpConfig() []McpServerSpec {
+	r.cfgMu.RLock()
+	defer r.cfgMu.RUnlock()
+	return r.McpCfg
+}
+
+// setMcpConfig replaces the server list.
+func (r *Runtime) setMcpConfig(specs []McpServerSpec) {
+	r.cfgMu.Lock()
+	defer r.cfgMu.Unlock()
+	r.McpCfg = specs
+}
+
 // MCPMessage implements protocol.Runtime.
 //
 // It returns the panel data and the sentences to show. The two are separate because
@@ -42,9 +56,9 @@ func (r *Runtime) MCPMessage(action string, servers []string) (map[string]any, [
 	var notes []string
 	if err != nil {
 		notes = append(notes, i18n.T("mcp.host.reread_failed", "file", MCPFile(), "problem", err.Error()))
-		specs = r.McpCfg
+		specs = r.mcpConfig()
 	}
-	r.McpCfg = specs
+	r.setMcpConfig(specs)
 
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "", "list":

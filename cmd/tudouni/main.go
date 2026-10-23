@@ -595,7 +595,7 @@ func listSessions() int {
 			row.loaded = true
 			row.count = summary.Messages
 			row.steps = summary.Steps
-			if line := builtin.NewTodoBoard(summary.Metadata).ProgressLine(); line != "" {
+			if line := builtin.NewTodoBoard(state.NewMeta(summary.Metadata)).ProgressLine(); line != "" {
 				row.todos = i18n.T("sessions.list.todos", "line", line)
 			}
 		}
@@ -681,7 +681,7 @@ func showAudit(sessionID string, history bool) int {
 func printHistory(session *state.Session) {
 	fmt.Println(i18n.T("history.header",
 		"name", session.SessionID,
-		"messages", len(session.Messages),
+		"messages", session.MessageCount(),
 		"steps", session.StepCount()))
 	fmt.Println(strings.Repeat("-", 72))
 
@@ -691,7 +691,7 @@ func printHistory(session *state.Session) {
 		indexFailed = true
 	}
 
-	for index, message := range session.Messages {
+	for index, message := range session.MessagesSnapshot() {
 		role, _ := message["role"].(string)
 		// Read through `state.MessageText`, not through a type assertion on the body:
 		// an assertion yields "" for an array, and an array is what a message carrying

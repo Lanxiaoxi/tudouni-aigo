@@ -17,7 +17,7 @@ import (
 func skillPanelRuntime(t *testing.T, session *state.Session, skillRoot string) *Runtime {
 	t.Helper()
 	runtimeValue := statePanelRuntime(session)
-	runtimeValue.Skills = builtin.NewSkillBoard(session.Metadata, &skills.Loader{Roots: []string{skillRoot}})
+	runtimeValue.Skills = builtin.NewSkillBoard(session.Meta(), &skills.Loader{Roots: []string{skillRoot}})
 	return runtimeValue
 }
 
@@ -57,7 +57,7 @@ func TestTheStatePayloadCarriesSkillsLoadedThisSession(t *testing.T) {
 	}
 
 	session := state.NewEmptySession("s")
-	if result := builtin.NewSkillBoard(session.Metadata, &skills.Loader{Roots: []string{skillRoot}}).Call("pdf-extract", false); !okResult(result) {
+	if result := builtin.NewSkillBoard(session.Meta(), &skills.Loader{Roots: []string{skillRoot}}).Call("pdf-extract", false); !okResult(result) {
 		t.Fatalf("load_skill reported: %s", result.Text)
 	}
 

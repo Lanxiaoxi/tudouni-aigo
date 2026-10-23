@@ -38,7 +38,7 @@ import (
 // everything holding the same reference; persistence is the injected function's
 // job, which is the runtime's checkpoint.
 type GoalBoard struct {
-	Metadata map[string]any
+	meta *state.Meta
 	// Session is read for "was this turn started by a person". Nil means nobody
 	// can prove it, which the authorization treats as "not a person" — the safe
 	// direction.
@@ -51,8 +51,11 @@ type GoalBoard struct {
 }
 
 // NewGoalBoard builds a board over the live session metadata.
-func NewGoalBoard(metadata map[string]any, session *state.Session, commit func()) *GoalBoard {
-	return &GoalBoard{Metadata: metadata, Session: session, Commit: commit}
+func NewGoalBoard(meta *state.Meta, session *state.Session, commit func()) *GoalBoard {
+	if meta == nil {
+		meta = state.NewMeta(nil)
+	}
+	return &GoalBoard{meta: meta, Session: session, Commit: commit}
 }
 
 // GoalTools is the three goal tools plus the board they share.
@@ -66,8 +69,8 @@ type GoalTools struct {
 // The struct exists for its `Board` field: the runtime renders the payload tail
 // from the same object the tools write through, so "what the model is told" and
 // "what the tools report" cannot become two answers.
-func NewGoalTools(metadata map[string]any, session *state.Session, commit func()) GoalTools {
-	board := NewGoalBoard(metadata, session, commit)
+func NewGoalTools(meta *state.Meta, session *state.Session, commit func()) GoalTools {
+	board := NewGoalBoard(meta, session, commit)
 	return GoalTools{
 		Board: board,
 		All:   []tools.Tool{newGetGoal(board), newCreateGoal(board), newUpdateGoal(board)},
@@ -191,7 +194,9 @@ edit / pause / resume 只能在用户直接发起的轮次里调用；complete �
 // out why it was refused.
 func (b *GoalBoard) GetText() string {
 	turn := turnText(b.human())
-	goal, ok := state.LoadGoal(b.Metadata)
+	var goal state.Goal
+	var ok bool
+	b.meta.Read(func(metadata map[string]any) { goal, ok = state.LoadGoal(metadata) })
 	if !ok {
 		return i18n.T("goal.none", "turn", turn)
 	}
@@ -226,9 +231,13 @@ func (b *GoalBoard) Create(args map[string]any) tools.Result {
 	if !state.AuthorizedBy(state.GoalOpCreate, b.human()) {
 		return b.refusal(state.GoalErrNotHuman)
 	}
-	goal, err := state.CreateGoal(b.Metadata, state.GoalSpec{
-		Objective: stringOf(args["objective"]),
-		MaxRounds: intArg(args, "max_goal_rounds", 0),
+	var goal state.Goal
+	var err error
+	b.meta.Write(func(metadata map[string]any) {
+		goal, err = state.CreateGoal(metadata, state.GoalSpec{
+			Objective: stringOf(args["objective"]),
+			MaxRounds: intArg(args, "max_goal_rounds", 0),
+		})
 	})
 	if err != nil {
 		return b.refusalFrom(err)
@@ -258,14 +267,18 @@ func (b *GoalBoard) Update(args map[string]any) tools.Result {
 		return b.refusal(state.GoalErrNotHuman)
 	}
 
-	goal, err := state.ApplyGoalChange(b.Metadata,
-		stringOf(args["goal_id"]), intArg(args, "revision", 0),
-		state.GoalChange{
-			Op:          action,
-			Objective:   stringOf(args["objective"]),
-			MaxRounds:   intArg(args, "max_goal_rounds", 0),
-			BlockedText: stringOf(args["blocked_reason"]),
-		})
+	var goal state.Goal
+	var err error
+	b.meta.Write(func(metadata map[string]any) {
+		goal, err = state.ApplyGoalChange(metadata,
+			stringOf(args["goal_id"]), intArg(args, "revision", 0),
+			state.GoalChange{
+				Op:          action,
+				Objective:   stringOf(args["objective"]),
+				MaxRounds:   intArg(args, "max_goal_rounds", 0),
+				BlockedText: stringOf(args["blocked_reason"]),
+			})
+	})
 	if err != nil {
 		return b.refusalFrom(err)
 	}
@@ -319,7 +332,9 @@ func (b *GoalBoard) refusal(code string) tools.Result {
 // question the audit answers is "how much did this goal get used", and a count that
 // appears only in the final event is not an answer.
 func (b *GoalBoard) auditFields() map[string]any {
-	goal, ok := state.LoadGoal(b.Metadata)
+	var goal state.Goal
+	var ok bool
+	b.meta.Read(func(metadata map[string]any) { goal, ok = state.LoadGoal(metadata) })
 	if !ok {
 		return map[string]any{"goal_present": false}
 	}

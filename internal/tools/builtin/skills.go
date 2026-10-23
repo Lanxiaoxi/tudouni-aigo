@@ -8,6 +8,7 @@ import (
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
@@ -51,20 +52,20 @@ const skillDirectoryHint = ".tudouni/skills/<名字>/SKILL.md"
 // A nil map means "not attached to any session": loads are accepted and nobody sees
 // them.
 type SkillBoard struct {
-	metadata map[string]any
-	loader   *skills.Loader
-	catalog  skills.Catalog
+	meta    *state.Meta
+	loader  *skills.Loader
+	catalog skills.Catalog
 	// mu guards catalog: Catalog() writes it on rescan, and the parent's payload
 	// tail reads it at the same time a delegated subagent builds its request.
 	mu sync.Mutex
 }
 
 // NewSkillBoard builds a board over a session's metadata.
-func NewSkillBoard(metadata map[string]any, loader *skills.Loader) *SkillBoard {
-	if metadata == nil {
-		metadata = map[string]any{}
+func NewSkillBoard(meta *state.Meta, loader *skills.Loader) *SkillBoard {
+	if meta == nil {
+		meta = state.NewMeta(nil)
 	}
-	board := &SkillBoard{metadata: metadata, loader: loader}
+	board := &SkillBoard{meta: meta, loader: loader}
 	if loader != nil {
 		board.catalog = loader.Reload()
 	}
@@ -96,18 +97,30 @@ func (b *SkillBoard) Catalog() skills.Catalog {
 
 // Stored is the loaded-skill pointers (name plus digest, no body).
 func (b *SkillBoard) Stored() []skills.Entry {
-	return skills.LoadEntries(b.metadata)
+	var entries []skills.Entry
+	b.meta.Read(func(metadata map[string]any) { entries = skills.LoadEntries(metadata) })
+	return entries
 }
 
 // Note is the payload-tail block for the loaded skills. It is what makes a loaded
 // skill take effect on the next round.
+//
+// The catalog is read **before** the metadata lock is taken rather than inside the
+// closure. The two locks are unrelated and nothing orders them, so nesting them
+// here would be a deadlock waiting for a caller that took them the other way round;
+// keeping one per statement means there is no order to get wrong.
 func (b *SkillBoard) Note() string {
-	return skills.SkillNote(b.metadata, b.Catalog())
+	catalog := b.Catalog()
+	var note string
+	b.meta.Read(func(metadata map[string]any) { note = skills.SkillNote(metadata, catalog) })
+	return note
 }
 
 // ActiveLine is the one-line summary for a person.
 func (b *SkillBoard) ActiveLine() string {
-	return skills.ActiveLine(b.metadata)
+	var line string
+	b.meta.Read(func(metadata map[string]any) { line = skills.ActiveLine(metadata) })
+	return line
 }
 
 // Call is the tool handler: it dispatches on the arguments.
@@ -150,8 +163,11 @@ func (b *SkillBoard) List() tools.Result {
 
 // Unload clears the loaded set.
 func (b *SkillBoard) Unload() tools.Result {
-	before := skills.ActiveNames(b.metadata)
-	b.metadata[skills.SkillsKey] = []any{}
+	var before []string
+	b.meta.Write(func(metadata map[string]any) {
+		before = skills.ActiveNames(metadata)
+		metadata[skills.SkillsKey] = []any{}
+	})
 	if len(before) == 0 {
 		return tools.Result{Text: "本来就没有加载任何技能。", Audit: map[string]any{"skill_action": "unload"}}
 	}
@@ -190,7 +206,8 @@ func (b *SkillBoard) Load(name string) tools.Result {
 		}
 	}
 
-	active := skills.ActiveNames(b.metadata)
+	var active []string
+	b.meta.Read(func(metadata map[string]any) { active = skills.ActiveNames(metadata) })
 	for _, loaded := range active {
 		if loaded == name {
 			// Idempotent: say it is already in effect and **write nothing**. The
@@ -224,7 +241,10 @@ func (b *SkillBoard) Load(name string) tools.Result {
 		entries = append(entries, map[string]any{"name": entry.Name, "digest": entry.Digest})
 	}
 	entries = append(entries, map[string]any{"name": skill.Name, "digest": skill.Digest})
-	b.metadata[skills.SkillsKey] = entries
+	b.meta.Write(func(metadata map[string]any) { metadata[skills.SkillsKey] = entries })
+
+	var noteChars int
+	b.meta.Read(func(metadata map[string]any) { noteChars = skills.NoteChars(metadata, catalog) })
 
 	return tools.Result{
 		Text: fmt.Sprintf("已加载技能 %s。它的完整步骤会出现在此后每一轮对话的末尾，按它的步骤做，做完再回到你默认的做法。需要看它同目录下的其它文件时，用 read_file 读那个路径。",
@@ -238,7 +258,7 @@ func (b *SkillBoard) Load(name string) tools.Result {
 			// declared limits real".
 			"skill_chars":         skill.BodyChars(),
 			"skill_allowed_tools": strings.Join(skill.AllowedTools, ","),
-			"skill_note_chars":    skills.NoteChars(b.metadata, catalog),
+			"skill_note_chars":    noteChars,
 		},
 	}
 }

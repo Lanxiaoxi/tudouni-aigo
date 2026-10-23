@@ -210,7 +210,7 @@ func (d *Driver) Admit(reservation *Reservation) (state.Goal, bool) {
 		return state.Goal{}, false
 	}
 
-	current, ok := state.LoadGoal(d.rt.SessionValue.Metadata)
+	current, ok := d.rt.goal()
 	if !ok || current.ID != reservation.goalID || current.Revision != reservation.revision {
 		d.record(DecisionRefused, ReasonAdmissionFailed, reservation)
 		return state.Goal{}, false
@@ -223,7 +223,11 @@ func (d *Driver) Admit(reservation *Reservation) (state.Goal, bool) {
 	// Only now is the round spent. `AdmitGoalRound` also moves the revision, so an
 	// admission is itself a change that invalidates any later reservation taken
 	// against the old revision.
-	admitted, err := state.AdmitGoalRound(d.rt.SessionValue.Metadata, reservation.goalID, reservation.revision, reservation.round)
+	var admitted state.Goal
+	var err error
+	d.rt.SessionValue.Meta().Write(func(metadata map[string]any) {
+		admitted, err = state.AdmitGoalRound(metadata, reservation.goalID, reservation.revision, reservation.round)
+	})
 	if err != nil {
 		d.record(DecisionRefused, ReasonAdmissionFailed, reservation)
 		return state.Goal{}, false
@@ -244,7 +248,7 @@ func (d *Driver) Admit(reservation *Reservation) (state.Goal, bool) {
 // `get_goal` reports and what the payload tail says every round, and a flag that is
 // only ever cleared would report a session as ready to continue when it is not.
 func (d *Driver) advance(outcome error, stopped bool) (Decision, string) {
-	goal, ok := state.LoadGoal(d.rt.SessionValue.Metadata)
+	goal, ok := d.rt.goal()
 	if !ok {
 		return DecisionIdle, ""
 	}
@@ -347,7 +351,7 @@ func (d *Driver) reserve() *Reservation {
 	if d.pending != nil {
 		return nil
 	}
-	goal, ok := state.LoadGoal(d.rt.SessionValue.Metadata)
+	goal, ok := d.rt.goal()
 	if !ok || goal.Phase != state.PhaseActive {
 		return nil
 	}
@@ -394,7 +398,7 @@ func (d *Driver) record(decision Decision, reason string, reservation *Reservati
 	if reason != "" {
 		data["reason"] = reason
 	}
-	if goal, ok := state.LoadGoal(d.rt.SessionValue.Metadata); ok {
+	if goal, ok := d.rt.goal(); ok {
 		data["goal_id"] = goal.ID
 		data["goal_revision"] = goal.Revision
 		data["goal_phase"] = string(goal.Phase)

@@ -35,6 +35,9 @@
 - [startup-baseline.md](design/startup-baseline.md) — 桌面端启动耗时基线与白屏修复的实测对比。
 - [ericai-proxy.md](design/ericai-proxy.md) — EricAI 认证要代理、本地模型要直连的冲突调查与
   解法（`internal/proxy` 的 `NO_PROXY` 支持就是照方案 A 补上的）。
+- [architecture-review.md](design/architecture-review.md) — Go 运行时核心架构评审的**处置
+  记录**：哪些结论已落地、哪些有意没做、以及继续做时的顺序。动 `internal/runtime` /
+  `internal/protocol` / `internal/agent` 的并发或分层之前先读它。
 
 **还没做的方案，别当成现状读：**
 

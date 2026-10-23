@@ -389,6 +389,13 @@ func (s *SessionStore) Save(session *Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Snapshot first, under the session's lock, and write from the copy. Holding
+	// the lock across the file I/O would block every tool write for as long as the
+	// disk takes, and a save is exactly the moment a turn is appending.
+	messages := session.MessagesSnapshot()
+	metadata := session.Meta().Snapshot()
+	contextValue := session.contextValue()
+
 	path, err := s.Path(session.SessionID)
 	if err != nil {
 		return err
@@ -403,9 +410,9 @@ func (s *SessionStore) Save(session *Session) error {
 	// The store only appends. A session that suddenly has fewer messages than
 	// we already wrote is a bug upstream, and papering over it would corrupt
 	// the file quietly.
-	if len(session.Messages) < mark.messages {
+	if len(messages) < mark.messages {
 		return fmt.Errorf("%s", missingKey("store.shrunk",
-			"name", session.SessionID, "before", mark.messages, "after", len(session.Messages)))
+			"name", session.SessionID, "before", mark.messages, "after", len(messages)))
 	}
 
 	// O_RDWR as well as append: the tail of the file has to be read before
@@ -453,12 +460,12 @@ func (s *SessionStore) Save(session *Session) error {
 		mark.headSeen = true
 	}
 
-	metaKey := canonicalKey(session.Metadata)
+	metaKey := canonicalKey(metadata)
 	if !mark.headSeen || metaKey != mark.metaKey {
 		if err := write(map[string]any{
 			"v":        StateVersion,
 			"type":     RecordMeta,
-			"metadata": session.Metadata,
+			"metadata": metadata,
 		}); err != nil {
 			writer.Flush()
 			file.Close()
@@ -468,7 +475,7 @@ func (s *SessionStore) Save(session *Session) error {
 		mark.metaKey = metaKey
 	}
 
-	for _, message := range session.Messages[mark.messages:] {
+	for _, message := range messages[mark.messages:] {
 		if err := write(map[string]any{
 			"v":       StateVersion,
 			"type":    RecordMsg,
@@ -480,15 +487,15 @@ func (s *SessionStore) Save(session *Session) error {
 			return err
 		}
 	}
-	mark.messages = len(session.Messages)
+	mark.messages = len(messages)
 
-	if session.Context != nil {
-		ctxKey := canonicalKey(session.Context)
+	if contextValue != nil {
+		ctxKey := canonicalKey(contextValue)
 		if !mark.ctxSeen || ctxKey != mark.ctxKey {
 			if err := write(map[string]any{
 				"v":       StateVersion,
 				"type":    RecordCtx,
-				"context": session.Context,
+				"context": contextValue,
 			}); err != nil {
 				writer.Flush()
 				file.Close()

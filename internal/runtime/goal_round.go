@@ -80,7 +80,7 @@ func (r *Runtime) SetGoalArmed(on bool) {
 // continue is the authorization; the model noticing that and writing the goal down
 // is bookkeeping.
 func (r *Runtime) armFromTurn() {
-	goal, ok := state.LoadGoal(r.SessionValue.Metadata)
+	goal, ok := r.goal()
 	if !ok || goal.Phase != state.PhaseActive {
 		return
 	}
@@ -103,7 +103,7 @@ func (r *Runtime) ArmFromTurn() { r.armFromTurn() }
 // facts, and they need them from the same place the tools write, or the model and
 // the person would be looking at two different goals.
 func (r *Runtime) GoalPanel() map[string]any {
-	goal, ok := state.LoadGoal(r.SessionValue.Metadata)
+	goal, ok := r.goal()
 	if !ok {
 		return state.NoGoalSnapshot(r.activation())
 	}
@@ -116,7 +116,11 @@ func (r *Runtime) GoalPanel() map[string]any {
 // cannot disagree about what "paused" means: a paused goal is disarmed here rather
 // than left armed for the driver to refuse on some later turn.
 func (r *Runtime) GoalCommand(action string) (map[string]any, error) {
-	snapshot, err := state.GoalAction(r.SessionValue.Metadata, action, 0)
+	var snapshot map[string]any
+	var err error
+	r.SessionValue.Meta().Write(func(metadata map[string]any) {
+		snapshot, err = state.GoalAction(metadata, action, 0)
+	})
 	if err != nil {
 		return nil, err
 	}

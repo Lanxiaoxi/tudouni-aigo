@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
@@ -20,7 +21,7 @@ func buildRegistry(t *testing.T) *tools.Registry {
 
 	assembled, err := CreateRegistry(Assembly{
 		Workspace:    workspace,
-		TodoMetadata: map[string]any{},
+		TodoMetadata: state.NewMeta(nil),
 		HasJobs:      true,
 		HasWebFetch:  true,
 		HasWebSearch: true,

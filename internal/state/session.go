@@ -3,11 +3,19 @@ package state
 import (
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/prompts"
 )
 
 // Session is one conversation.
+//
+// Messages and Metadata are read and written from two goroutines at once: the
+// turn, and the protocol's read loop (`/status`, `/model`, `/goal`, and the panel
+// snapshot all run there). Metadata is additionally written by tool handlers,
+// some of which run in parallel. Both therefore go through the accessors below;
+// the fields stay exported because the session file's own load/save path is
+// single-owner and reads them directly.
 type Session struct {
 	SessionID string
 	Messages  []map[string]any
@@ -20,6 +28,9 @@ type Session struct {
 	// Resumed reports whether this session was loaded from disk. It is a
 	// property of this run, not of the file.
 	Resumed bool
+
+	// mu guards Messages and Metadata.
+	mu sync.RWMutex
 }
 
 // NewSession creates a session with a freshly built system message.
@@ -37,7 +48,9 @@ type Session struct {
 func NewSession(sessionID, workspace string) *Session {
 	session := NewEmptySession(sessionID)
 	message, report := buildSystemMessage(workspace, runtime.GOOS)
+	session.mu.Lock()
 	session.Messages = []map[string]any{message}
+	session.mu.Unlock()
 	if report.HasAnything() {
 		session.Metadata[AgentMDSessionKey] = AgentMDToBlock(report)
 	}
@@ -58,6 +71,8 @@ func NewEmptySession(sessionID string) *Session {
 // It is the number of model round trips the session has made, which is what the
 // interface shows as "steps".
 func (s *Session) StepCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	count := 0
 	for _, message := range s.Messages {
 		if role, _ := message["role"].(string); role == "assistant" {
@@ -69,7 +84,117 @@ func (s *Session) StepCount() int {
 
 // Append adds one message.
 func (s *Session) Append(message map[string]any) {
+	s.mu.Lock()
 	s.Messages = append(s.Messages, message)
+	s.mu.Unlock()
+}
+
+// MessagesSnapshot is the message list as one consistent slice value.
+//
+// The slice is copied, the messages are not: a caller that only reads them gets a
+// list nobody can append to underneath it. Writing through a message map is not
+// covered and is not done anywhere — a message is written once, before it is
+// appended.
+func (s *Session) MessagesSnapshot() []map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]map[string]any, len(s.Messages))
+	copy(out, s.Messages)
+	return out
+}
+
+// MessageCount is how many messages the session has.
+func (s *Session) MessageCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.Messages)
+}
+
+// SetContext records the serialisable handle of the context ledger.
+//
+// It is a method rather than a plain field assignment because a save can read it
+// on the protocol's read loop while the turn writes it.
+func (s *Session) SetContext(value any) {
+	s.mu.Lock()
+	s.Context = value
+	s.mu.Unlock()
+}
+
+// ContextHandle reads the context handle under the lock.
+//
+// The exported form is for the assembly layer, which has to decide whether a
+// saved ledger exists before it can build a manager. The unexported one is for
+// `Save`, which is in this package and reads it beside the other two snapshots.
+func (s *Session) ContextHandle() any { return s.contextValue() }
+
+func (s *Session) contextValue() any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Context
+}
+
+// Meta is the guarded handle on a metadata map.
+//
+// It is a separate value from the map because the map is handed to tool boards
+// that mutate it from their own goroutines; the handle is what they hold so every
+// write takes the same lock. The map's contents stay plain `map[string]any` so the
+// state package's own readers (`LoadGoal`, `LoadSelection`, …) need no change.
+//
+// The values are reached through a function rather than stored, because a session
+// load replaces the whole map; a stored reference would be a guard around the map
+// that was thrown away.
+type Meta struct {
+	mu     *sync.RWMutex
+	values func() map[string]any
+}
+
+// NewMeta guards a map that has no session behind it (tests, one-shot use).
+func NewMeta(values map[string]any) *Meta {
+	if values == nil {
+		values = map[string]any{}
+	}
+	mu := &sync.RWMutex{}
+	return &Meta{mu: mu, values: func() map[string]any { return values }}
+}
+
+// Meta returns the guarded handle for this session's metadata.
+func (s *Session) Meta() *Meta {
+	return &Meta{mu: &s.mu, values: func() map[string]any { return s.Metadata }}
+}
+
+// Snapshot is the metadata as one consistent map value.
+func (m *Meta) Snapshot() map[string]any {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	src := m.values()
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+// Read runs fn with the map under a read lock. fn must not write to it.
+func (m *Meta) Read(fn func(map[string]any)) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	fn(m.values())
+}
+
+// Write runs fn with the map under the write lock. fn must not call back into a
+// method that takes the same lock.
+func (m *Meta) Write(fn func(map[string]any)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	fn(m.values())
+}
+
+// Value reads one key.
+func (m *Meta) Value(key string) (any, bool) {
+	var value any
+	var ok bool
+	m.Read(func(values map[string]any) { value, ok = values[key] })
+	return value, ok
 }
 
 // UserInputs returns the text of every user message that came from a human.
@@ -78,6 +203,8 @@ func (s *Session) Append(message map[string]any) {
 // here on it is Y") rather than things the user typed; they carry a marker so
 // they can be told apart when something needs "what did the user actually ask".
 func (s *Session) UserInputs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []string
 	for _, message := range s.Messages {
 		role, _ := message["role"].(string)
@@ -164,6 +291,8 @@ func (o TurnOrigin) String() string {
 // goal tool call therefore answers `TurnOriginHuman`. That is correct: the person
 // asked, and the model is one step into answering.
 func (s *Session) TurnOrigin() TurnOrigin {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for index := len(s.Messages) - 1; index >= 0; index-- {
 		message := s.Messages[index]
 		role, _ := message["role"].(string)

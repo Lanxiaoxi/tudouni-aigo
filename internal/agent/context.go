@@ -121,7 +121,7 @@ func (a *Agent) Payload() []map[string]any {
 	// prompt: that is the first section of the request and the only part that
 	// reliably hits the prefix cache.
 	summary := a.summaryMessage()
-	view := a.foldedView(summary)
+	view, folded, summaryKey := a.foldedViewWithKey(summary)
 
 	// Every message goes through the renderer, and the ones this layer has nothing
 	// to say about come back **unchanged** — not copied, not normalised. That is
@@ -133,14 +133,19 @@ func (a *Agent) Payload() []map[string]any {
 	// level the budget decided), and a user message carrying a picture (the
 	// picture's level is decided the same way, and it may have degraded to a
 	// sentence since).
-	messages := make([]map[string]any, 0, len(view)+1)
-	for _, message := range view {
-		if renderer == nil {
-			messages = append(messages, message)
-			continue
-		}
-		messages = append(messages, renderer.RenderMessage(message))
-	}
+	//
+	// **The rendered list is carried between steps** (see cache.go): rendering a
+	// tool message reads its body out of the store and re-cuts it to the current
+	// level, and doing that for the whole history on every step made one turn
+	// quadratic in the length of the conversation. A step that only appended
+	// messages renders the new tail.
+	key := a.renderKeyFor(renderer, a.Session.MessageCount(), folded, summaryKey)
+	rendered, costs := a.cachedRender(renderer, view, key)
+
+	// `capacity == length` so that appending the note below copies instead of
+	// writing into the slot the cache's next extension will reuse.
+	messages := make([]map[string]any, len(rendered), len(rendered)+1)
+	copy(messages, rendered)
 
 	if renderer == nil {
 		if note != "" {
@@ -158,7 +163,7 @@ func (a *Agent) Payload() []map[string]any {
 	}
 	a.Context.SetNotes(notes)
 
-	fixed := a.FixedPayloadTokens()
+	fixed := a.fixedFrom(costs)
 	degraded := a.Context.Fit(renderer.RenderItem, fixed)
 	if len(degraded) > 0 {
 		changes := make([]any, 0, len(degraded))
@@ -186,7 +191,7 @@ func (a *Agent) Payload() []map[string]any {
 				"changes": changes,
 			}))
 	}
-	a.Session.Context = a.Context.State
+	a.Session.SetContext(a.Context.State)
 
 	if note != "" {
 		messages = append(messages, map[string]any{"role": "user", "content": note})
@@ -245,102 +250,40 @@ func (a *Agent) calibrate(usage *model.TokenUsage) {
 //   - **Over-estimating is safe.** It degrades slightly early; under-estimating
 //     fails the request outright.
 //
-// The cost is one linear scan per step, the same order as the item estimate —
-// which was already doing the same work, so no new order of magnitude appears.
+// ## What it costs
+//
+// One walk per **cached message**, not per message per step. The per-message cost
+// is computed once when the message is first rendered and kept beside the render
+// (see cache.go), and the calibration factor is applied at the end — so a step
+// that appends two tool results costs two messages, and a re-analysis of the same
+// history costs a sum over cached integers.
 func (a *Agent) FixedPayloadTokens() int {
 	if a.Context == nil {
 		return 0
 	}
-	budget := a.Context.Budget
-	total := 0
-
-	// The summary is counted where it appears, in the view below — not here as
-	// well. It used to be added on its own *and* counted by the loop, because
-	// `FoldedView` puts it in the list this function then walks; the fixed
-	// overhead came out one summary too large, so every compaction reported
-	// saving a couple of thousand tokens less than it did, and degradation
-	// started a rung early.
 	summary := a.summaryMessage()
+	view, folded, summaryKey := a.foldedViewWithKey(summary)
+	renderer := a.renderer()
+	key := a.renderKeyFor(renderer, a.Session.MessageCount(), folded, summaryKey)
+	_, costs := a.cachedRender(renderer, view, key)
+	return a.fixedFrom(costs)
+}
 
-	for _, message := range a.foldedView(summary) {
-		if message == nil {
-			continue
-		}
-		// **A body is read through `content.Parse`, never through a type
-		// assertion.** `message["content"].(string)` yields "" for an array, and an
-		// array is exactly what a message carrying a picture has — so the assertion
-		// counts an image (and the paragraph next to it) as **zero** tokens. The
-		// budget then believes a request fits when it does not, which is the
-		// dangerous direction, and the failure it produces is a 400 from the
-		// endpoint that reads like "context too long" with nothing visibly over.
-		body := content.Parse(message["content"])
-		text := body.TextOf()
-		// A picture is priced per picture rather than per character, and — the part
-		// that took a second pass — **only when the item estimate is not already
-		// pricing it.**
-		//
-		// An attached picture is in two places at once: a ledger item (so it can be
-		// degraded and evicted) and the message body (because that is where the model
-		// reads it). `EstimateItems` walks the ledger and prices what the item renders
-		// **at its current level**; counting the body's copy here as well would charge
-		// the session twice for one screenshot, and the second charge would be the
-		// original's — because this walk reads the **stored** message, whose part still
-		// names the full-size artifact however far the ladder has taken it. The result
-		// is a picture that looks twice as expensive as it is and never gets cheaper as
-		// it degrades, which is the opposite of what the ladder is for.
-		//
-		// This is the same rule the tool message below already follows — a reference is
-		// counted by the item estimate, and only an **unreferenced** body is counted in
-		// full — applied to the other kind of part that can be referred to.
-		//
-		// The residual, stated rather than hidden: an item the budget **evicted** is
-		// skipped by both walks, while the payload still carries the sentence saying it
-		// was evicted (a few dozen tokens). That is the existing behaviour for an
-		// evicted tool reference as well, and it is the one case where this estimate is
-		// a shade low rather than a shade high.
-		images := 0
-		for _, image := range body.Images() {
-			if a.Context.Item(image.ArtifactID) != nil {
-				continue
-			}
-			images += context.ImageRefCost(image)
-		}
-
-		// **The system prompt is skipped.** FoldedView brings it in (correctly —
-		// the payload must have it) and `Measure` counts it on its own, as the one
-		// part of the request that is neither an artifact nor a message. Counting
-		// it here as well makes `after` **larger** than `before` after a
-		// compaction, so "how much did that save" comes out negative every time.
-		if message["role"] == "system" {
-			continue
-		}
-		if message["role"] == "tool" {
-			// The message's own fixed overhead was counted by the item estimate;
-			// only the reference line is added here.
-			if context.ArtifactIDOf(message) != "" {
-				total += budget.Tokens(text)
-			} else {
-				total += context.MessageOverhead + budget.Tokens(text)
-			}
-			continue
-		}
-
-		total += context.MessageOverhead + images + budget.Tokens(text)
-		if calls, ok := message["tool_calls"].([]any); ok {
-			for _, entry := range calls {
-				call, ok := entry.(map[string]any)
-				if !ok {
-					continue
-				}
-				function, ok := call["function"].(map[string]any)
-				if !ok {
-					continue
-				}
-				name, _ := function["name"].(string)
-				arguments, _ := function["arguments"].(string)
-				total += budget.Tokens(name)
-				total += budget.Tokens(arguments)
-			}
+// fixedFrom applies the calibration factor to the cached per-message costs.
+//
+// The factor is applied here rather than stored with the costs because it is
+// re-learned from every response: folding it in would invalidate the whole cache
+// once per step, which is exactly the cost the cache exists to avoid.
+func (a *Agent) fixedFrom(costs []messageCost) int {
+	if a.Context == nil {
+		return 0
+	}
+	factor := a.Context.Budget.Factor()
+	total := 0
+	for _, cost := range costs {
+		total += cost.flat
+		if cost.scaled != 0 {
+			total += int(float64(cost.scaled) * factor)
 		}
 	}
 	return total
@@ -350,7 +293,12 @@ func (a *Agent) FixedPayloadTokens() int {
 
 // compactionState is how far this session was folded. Not compacted is `false`.
 func (a *Agent) compactionState() (context.Compaction, bool) {
-	return context.LoadCompaction(a.Session.Metadata)
+	var compaction context.Compaction
+	var ok bool
+	a.Session.Meta().Read(func(metadata map[string]any) {
+		compaction, ok = context.LoadCompaction(metadata)
+	})
+	return compaction, ok
 }
 
 // foldedView is every history message this request will look at: system prompt,
@@ -365,11 +313,21 @@ func (a *Agent) compactionState() (context.Compaction, bool) {
 // The summary is passed in rather than computed here: building it reads the
 // artifact store, and one of the two call sites already has the object in hand.
 func (a *Agent) foldedView(summary map[string]any) []map[string]any {
+	view, _, _ := a.foldedViewWithKey(summary)
+	return view
+}
+
+// foldedViewWithKey is `foldedView` and the two facts the render cache is keyed
+// on. They come from one place because they describe one decision: the boundary
+// the view was cut at, and which summary stands in for the folded stretch.
+func (a *Agent) foldedViewWithKey(summary map[string]any) ([]map[string]any, int, string) {
+	compaction, compacted := a.compactionState()
 	folded := 0
-	if state, ok := a.compactionState(); ok {
-		folded = state.FoldedMessages
+	if compacted {
+		folded = compaction.FoldedMessages
 	}
-	return context.FoldedView(a.Session.Messages, folded, summary)
+	messages := a.Session.MessagesSnapshot()
+	return context.FoldedView(messages, folded, summary), folded, a.summaryKey(compaction, compacted)
 }
 
 // summaryMessage is the message replacing the folded stretch. Not compacted, or
@@ -422,6 +380,7 @@ func (a *Agent) summaryMessage() map[string]any {
 // its two numbers rather than zeroes.
 func (a *Agent) Measure() int {
 	renderer := a.renderer()
+	messages := a.Session.MessagesSnapshot()
 	if a.Context == nil || renderer == nil {
 		// A bare estimate over the messages, and it goes through the same body
 		// parser as everything else: this path is what a session **without** a
@@ -429,7 +388,7 @@ func (a *Agent) Measure() int {
 		// one where a picture sits inline in history rather than behind a
 		// reference. A `.(string)` assertion here would report it as zero.
 		total := 0
-		for _, message := range a.Session.Messages {
+		for _, message := range messages {
 			body := content.Parse(message["content"])
 			total += context.EstimateTokens(body.TextOf())
 			for _, image := range body.Images() {
@@ -447,8 +406,8 @@ func (a *Agent) Measure() int {
 	//    summary, and the pictures a user message carries).
 	total += a.FixedPayloadTokens()
 	// 3) The system prompt: neither an artifact nor part of the fixed overhead.
-	if len(a.Session.Messages) > 0 && a.Session.Messages[0]["role"] == "system" {
-		system := content.Parse(a.Session.Messages[0]["content"]).TextOf()
+	if len(messages) > 0 && messages[0]["role"] == "system" {
+		system := content.Parse(messages[0]["content"]).TextOf()
 		total += context.MessageOverhead + budget.Tokens(system)
 	}
 	// 4) The trailing note (no overlap with the fixed overhead — it never enters
@@ -613,7 +572,7 @@ func (a *Agent) compact(step int, emit bool) map[string]any {
 	}
 
 	foldedBefore := a.foldedCount()
-	point := context.FoldPoint(a.Session.Messages, foldedBefore)
+	point := context.FoldPoint(a.Session.MessagesSnapshot(), foldedBefore)
 	if point <= foldedBefore {
 		return nil
 	}
@@ -666,7 +625,7 @@ func (a *Agent) compact(step int, emit bool) map[string]any {
 			Generation:     generation,
 			UpdatedAt:      float64(time.Now().UnixNano()) / 1e9,
 		}
-		context.StoreCompaction(a.Session.Metadata, updated)
+		a.Session.Meta().Write(func(metadata map[string]any) { context.StoreCompaction(metadata, updated) })
 		ok = true
 	}()
 	if !ok {
@@ -679,13 +638,14 @@ func (a *Agent) compact(step int, emit bool) map[string]any {
 
 	durationMs := int((a.Clock() - started) * 1000)
 	after := a.Measure()
+	messages := a.Session.MessageCount()
 
 	if emit {
 		a.emit(audit.Event(audit.KindContextCompacted, a.Session.SessionID, "", step,
 			map[string]any{
 				"folded":        point - foldedBefore,
 				"folded_total":  point,
-				"messages":      len(a.Session.Messages),
+				"messages":      messages,
 				"summary_id":    artifact.ID,
 				"summary_chars": artifact.Chars,
 				"generation":    updated.Generation,
@@ -705,7 +665,7 @@ func (a *Agent) compact(step int, emit bool) map[string]any {
 		// The history's total length travels with the result because the interface
 		// prints "folded 13 (13/26)". Without it the reader gets "13/0", which
 		// looks like "13 to fold, none folded" — the opposite of what happened.
-		"messages":    len(a.Session.Messages),
+		"messages":    messages,
 		"after":       after,
 		"duration_ms": durationMs,
 	}
@@ -726,7 +686,7 @@ func (a *Agent) digestPrompt(state context.Compaction, hadState bool, foldedBefo
 				"## 上一版的摘要（它概括的是更早的那一段历史，请在它的基础上接着往下写，不要丢掉里面的事实）\n\n"+previous)
 		}
 	}
-	skeleton := context.DigestMessages(a.Session.Messages, foldedBefore, &stop, context.DigestMaxChars)
+	skeleton := context.DigestMessages(a.Session.MessagesSnapshot(), foldedBefore, &stop, context.DigestMaxChars)
 	parts = append(parts, fmt.Sprintf("## 这一次要折进摘要的历史骨架（第 %d 到第 %d 条）\n\n%s",
 		foldedBefore+1, stop, skeleton))
 	return strings.Join(parts, "\n\n")
@@ -763,11 +723,12 @@ func (a *Agent) MarkContextMessages() {
 	if a.Context == nil {
 		return
 	}
-	for index, mark := range messageMarks(a.Session.Messages) {
-		if index >= len(a.Session.Messages) {
+	messages := a.Session.MessagesSnapshot()
+	for index, mark := range messageMarks(messages) {
+		if index >= len(messages) {
 			continue
 		}
-		artifactID := context.ArtifactIDOf(a.Session.Messages[index])
+		artifactID := context.ArtifactIDOf(messages[index])
 		if artifactID == "" {
 			// Not an artifact (the system prompt, or the first user message) —
 			// already un-evictable, so nothing to do.

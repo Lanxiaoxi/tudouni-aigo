@@ -657,6 +657,23 @@ func (m *Manager) notify() {
 	}
 }
 
+// Fingerprint is everything about the ledger that reaches the payload: each
+// item's id, its level, its band, whether it was evicted, and the window
+// parameters that decide how much of a body its level shows.
+//
+// It exists for callers that cache something derived from the ledger. The version
+// counter is *not* enough for them: it moves on every change, including ones that
+// do not reach the payload, and a cache keyed on it would be discarded for
+// nothing. It is also not *necessary*, because everything that does reach the
+// payload is in this string — so a cache keyed on the fingerprint is invalidated
+// by exactly the changes that would make its output wrong.
+func Fingerprint(state *ContextState) string {
+	if state == nil {
+		return ""
+	}
+	return fingerprint(state)
+}
+
 // fingerprint is the part of the state that affects rendering. It exists only to
 // answer "did anything change".
 //

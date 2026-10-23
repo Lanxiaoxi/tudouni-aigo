@@ -2,6 +2,7 @@ package state
 
 import (
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -180,23 +181,30 @@ func ChangeNotice(previous, selected string) map[string]any {
 // The thinking switch and effort are not part of "the model changed": they change
 // how a request on the same route thinks, so NoticeNeeded ignores them.
 type SessionModel struct {
-	metadata         map[string]any
+	meta             *Meta
 	fallback         string
 	fallbackProvider string
-	selection        *Selection
-	// effortChosen records that the effort came from someone asking for it,
-	// rather than from a default. The distinction is not in the selection: a
-	// level the user picked on purpose and a level filled in by the model's own
-	// default look identical once stored, and only the first one should survive
-	// a model switch that would otherwise adopt the new model's default.
+	// mu guards selection and effortChosen: `/model` writes them from the
+	// protocol's read loop while the turn reads them to build its request.
+	mu           sync.RWMutex
+	selection    *Selection
 	effortChosen bool
 }
 
 // NewSessionModel reads the session's choice, with the catalogue defaults as a
-// fallback.
+// fallback. The metadata is guarded by a lock of its own; callers that have a
+// session should use NewSessionModelFor so it shares the session's lock.
 func NewSessionModel(metadata map[string]any, fallback, fallbackProvider string) *SessionModel {
-	model := &SessionModel{metadata: metadata, fallback: fallback, fallbackProvider: fallbackProvider}
-	if selection, ok := LoadSelection(metadata); ok {
+	return NewSessionModelFor(NewMeta(metadata), fallback, fallbackProvider)
+}
+
+// NewSessionModelFor reads the session's choice through the session's own guard.
+func NewSessionModelFor(meta *Meta, fallback, fallbackProvider string) *SessionModel {
+	model := &SessionModel{meta: meta, fallback: fallback, fallbackProvider: fallbackProvider}
+	var selection Selection
+	var ok bool
+	meta.Read(func(metadata map[string]any) { selection, ok = LoadSelection(metadata) })
+	if ok {
 		model.selection = &selection
 		// A stored selection was made by someone, in this session or an earlier
 		// one; only the level it holds is remembered, so it counts as chosen.
@@ -212,6 +220,12 @@ func NewSessionModel(metadata map[string]any, fallback, fallbackProvider string)
 // point "what did I actually configure" has no answer. Window lookups go through
 // the catalogue, which does fold.
 func (s *SessionModel) Selected() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.selectedLocked()
+}
+
+func (s *SessionModel) selectedLocked() string {
 	if s.selection != nil && s.selection.Model != "" {
 		return s.selection.Model
 	}
@@ -220,6 +234,12 @@ func (s *SessionModel) Selected() string {
 
 // SelectedProvider is which route, empty meaning "not decided yet".
 func (s *SessionModel) SelectedProvider() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.selectedProviderLocked()
+}
+
+func (s *SessionModel) selectedProviderLocked() string {
 	if s.selection != nil && s.selection.Provider != "" {
 		return s.selection.Provider
 	}
@@ -228,6 +248,12 @@ func (s *SessionModel) SelectedProvider() string {
 
 // Thinking reports the thinking switch.
 func (s *SessionModel) Thinking() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.thinkingLocked()
+}
+
+func (s *SessionModel) thinkingLocked() bool {
 	if s.selection != nil {
 		return s.selection.Thinking
 	}
@@ -237,6 +263,12 @@ func (s *SessionModel) Thinking() bool {
 // Effort reports the thinking effort. It has a value even when thinking is off:
 // that is the user's intent for next time, not an error state.
 func (s *SessionModel) Effort() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.effortLocked()
+}
+
+func (s *SessionModel) effortLocked() string {
 	if s.selection != nil && s.selection.Effort != "" {
 		return s.selection.Effort
 	}
@@ -245,6 +277,8 @@ func (s *SessionModel) Effort() string {
 
 // SelectedSince is when the current choice was made.
 func (s *SessionModel) SelectedSince() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.selection != nil {
 		return s.selection.Since
 	}
@@ -253,12 +287,21 @@ func (s *SessionModel) SelectedSince() float64 {
 
 // LastUsed is the route name of the previous turn.
 func (s *SessionModel) LastUsed() string {
-	value, _ := s.metadata[LastUsedKey].(string)
+	var value string
+	s.meta.Read(func(metadata map[string]any) {
+		value, _ = metadata[LastUsedKey].(string)
+	})
 	return value
 }
 
 // RouteName is the current choice as "model on route".
 func (s *SessionModel) RouteName() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.routeNameLocked()
+}
+
+func (s *SessionModel) routeNameLocked() string {
 	fallback := s.fallback
 	if s.fallbackProvider != "" && s.fallback != "" {
 		fallback = s.fallbackProvider + "/" + s.fallback
@@ -269,37 +312,50 @@ func (s *SessionModel) RouteName() string {
 	return RouteName(s.selection, fallback)
 }
 
-func (s *SessionModel) current() Selection {
-	return Selection{
-		Provider: s.SelectedProvider(),
-		Model:    s.Selected(),
-		Thinking: s.Thinking(),
-		Effort:   s.Effort(),
-		Since:    s.SelectedSince(),
+func (s *SessionModel) currentLocked() Selection {
+	selection := Selection{
+		Provider: s.selectedProviderLocked(),
+		Model:    s.selectedLocked(),
+		Thinking: s.thinkingLocked(),
+		Effort:   s.effortLocked(),
 	}
+	if s.selection != nil {
+		selection.Since = s.selection.Since
+	}
+	return selection
 }
 
 // SelectRoute records the intent to use a model on a route. It does not touch
 // LastUsed — that is the turn's business.
 func (s *SessionModel) SelectRoute(provider, model string, now float64) Selection {
-	selection := StoreSelection(s.metadata, Selection{
-		Provider: provider, Model: model,
-		Thinking: s.Thinking(), Effort: s.Effort(),
-	}, now)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var selection Selection
+	s.meta.Write(func(metadata map[string]any) {
+		selection = StoreSelection(metadata, Selection{
+			Provider: provider, Model: model,
+			Thinking: s.thinkingLocked(), Effort: s.effortLocked(),
+		}, now)
+	})
 	s.selection = &selection
 	return selection
 }
 
 // SelectThinking changes only the switch; model and effort are preserved.
 func (s *SessionModel) SelectThinking(on bool, now float64) Selection {
-	current := s.current()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.currentLocked()
 	if now == 0 {
 		now = current.Since
 	}
-	selection := StoreSelection(s.metadata, Selection{
-		Provider: current.Provider, Model: current.Model,
-		Thinking: on, Effort: current.Effort,
-	}, now)
+	var selection Selection
+	s.meta.Write(func(metadata map[string]any) {
+		selection = StoreSelection(metadata, Selection{
+			Provider: current.Provider, Model: current.Model,
+			Thinking: on, Effort: current.Effort,
+		}, now)
+	})
 	s.selection = &selection
 	return selection
 }
@@ -307,20 +363,27 @@ func (s *SessionModel) SelectThinking(on bool, now float64) Selection {
 // EffortChosen reports whether the effort came from an explicit choice rather
 // than from a default.
 func (s *SessionModel) EffortChosen() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.effortChosen
 }
 
 // SelectEffort changes only the effort. It is recorded even while thinking is
 // off: the user's intent is "still this one when I turn it back on".
 func (s *SessionModel) SelectEffort(effort string, now float64) Selection {
-	current := s.current()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.currentLocked()
 	if now == 0 {
 		now = current.Since
 	}
-	selection := StoreSelection(s.metadata, Selection{
-		Provider: current.Provider, Model: current.Model,
-		Thinking: current.Thinking, Effort: effort,
-	}, now)
+	var selection Selection
+	s.meta.Write(func(metadata map[string]any) {
+		selection = StoreSelection(metadata, Selection{
+			Provider: current.Provider, Model: current.Model,
+			Thinking: current.Thinking, Effort: effort,
+		}, now)
+	})
 	s.selection = &selection
 	s.effortChosen = true
 	return selection
@@ -343,7 +406,10 @@ func (s *SessionModel) NoticeNeeded() bool {
 // even when the model fails. Recording it after the answer would make a failed
 // turn repeat the sentence on the next one.
 func (s *SessionModel) RecordUse() {
-	s.metadata[LastUsedKey] = s.RouteName()
+	s.mu.RLock()
+	route := s.routeNameLocked()
+	s.mu.RUnlock()
+	s.meta.Write(func(metadata map[string]any) { metadata[LastUsedKey] = route })
 }
 
 // Notice builds the message for the start of this turn.

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
@@ -38,18 +39,22 @@ type todoEntry struct {
 // TodoBoard binds the task list to a session's metadata. It touches nothing else —
 // no files, no control plane — which is why the tool is low risk and auto-approvable.
 type TodoBoard struct {
-	Metadata map[string]any
+	meta *state.Meta
 }
 
 // NewTodoBoard builds a board over the live session metadata.
-func NewTodoBoard(metadata map[string]any) *TodoBoard {
-	return &TodoBoard{Metadata: metadata}
+func NewTodoBoard(meta *state.Meta) *TodoBoard {
+	if meta == nil {
+		meta = state.NewMeta(nil)
+	}
+	return &TodoBoard{meta: meta}
 }
 
 // ProgressLine renders one line for humans: "2/5 done, now: write tests". No tasks
 // returns "" so the caller can skip the line entirely.
 func (b *TodoBoard) ProgressLine() string {
-	items := loadTodos(b.Metadata)
+	var items []todoEntry
+	b.meta.Read(func(metadata map[string]any) { items = loadTodos(metadata) })
 	if len(items) == 0 {
 		return ""
 	}
@@ -72,8 +77,8 @@ func (b *TodoBoard) ProgressLine() string {
 
 // NewTodo builds the todo_write tool. The whole list is replaced on every call, so
 // the model never has to keep the previous version in its head.
-func NewTodo(metadata map[string]any) tools.Tool {
-	board := NewTodoBoard(metadata)
+func NewTodo(meta *state.Meta) tools.Tool {
+	board := NewTodoBoard(meta)
 	return tools.Tool{
 		Name: "todo_write",
 		// The description warns against building lists for one-step or cosmetic work;
@@ -139,8 +144,8 @@ func (b *TodoBoard) Write(args map[string]any) tools.Result {
 			stored = append(stored, map[string]any{"content": it.Content, "status": it.Status})
 		}
 	}
-	if b.Metadata != nil {
-		b.Metadata[TodosKey] = stored
+	if b.meta != nil {
+		b.meta.Write(func(metadata map[string]any) { metadata[TodosKey] = stored })
 	}
 
 	return tools.Result{
@@ -299,10 +304,11 @@ func statusLabel(status string) string {
 // that changes every round must not be persisted, and must not dilute the derived
 // rule "one assistant message = one step".
 func (b *TodoBoard) Note() string {
-	if b == nil || b.Metadata == nil {
+	if b == nil || b.meta == nil {
 		return ""
 	}
-	items := loadTodos(b.Metadata)
+	var items []todoEntry
+	b.meta.Read(func(metadata map[string]any) { items = loadTodos(metadata) })
 	if len(items) == 0 {
 		return ""
 	}

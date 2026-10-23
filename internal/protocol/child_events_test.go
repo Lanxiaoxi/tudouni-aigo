@@ -360,7 +360,6 @@ type stubRuntime struct {
 func (*stubRuntime) RunTurn(context.Context, string) (string, error) { return "", nil }
 func (*stubRuntime) SessionID() string                  { return "parent" }
 func (*stubRuntime) Messages() []map[string]any         { return nil }
-func (*stubRuntime) ClearStop()                         {}
 func (*stubRuntime) InitFields() map[string]any         { return map[string]any{} }
 func (*stubRuntime) StateMessage(bool) map[string]any   { return map[string]any{} }
 func (*stubRuntime) StatusMessage() map[string]any      { return map[string]any{} }

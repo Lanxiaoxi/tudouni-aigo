@@ -129,7 +129,12 @@ func IsChildID(id string) bool {
 // child whose runtime options claim a deeper position is telling the truth about
 // a chain the file does not know about, and refusing that would under-count.
 func DepthOf(session *state.Session) int {
-	return max(DepthOfMetadata(session.Metadata), 0)
+	if session == nil {
+		return 0
+	}
+	var depth int
+	session.Meta().Read(func(metadata map[string]any) { depth = DepthOfMetadata(metadata) })
+	return depth
 }
 
 // DepthOfMetadata is DepthOf for a metadata map, for callers holding one but not

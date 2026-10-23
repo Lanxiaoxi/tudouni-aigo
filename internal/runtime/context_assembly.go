@@ -31,8 +31,8 @@ func openContext(session *state.Session, chat model.ChatModel, catalog state.Reg
 	missing := store.Load()
 
 	var restored *ctxwin.ContextState
-	if session.Context != nil {
-		saved, err := ctxwin.ContextStateFromJSON(session.Context)
+	if saved := session.ContextHandle(); saved != nil {
+		decoded, err := ctxwin.ContextStateFromJSON(saved)
 		if err != nil {
 			// A context record this version cannot read is reported and dropped.
 			// The artifacts are still on disk and the messages are still in
@@ -40,7 +40,7 @@ func openContext(session *state.Session, chat model.ChatModel, catalog state.Reg
 			// refusing to open at all.
 			warn("could not read the saved context state: %v", err)
 		} else {
-			restored = saved
+			restored = decoded
 		}
 	}
 
@@ -51,13 +51,13 @@ func openContext(session *state.Session, chat model.ChatModel, catalog state.Reg
 			// The checkpoint reads the Session, so the Session has to point at the
 			// live state. Doing this on every change rather than at the end of the
 			// turn is what makes a killed process recover to where it really was.
-			session.Context = current
+			session.SetContext(current)
 		})
 
 	// Legacy sessions: tool bodies are sitting in history as text. Hydrate
 	// collects them into the store and gives each a full-level item — which is
 	// what happened before, made explicit so it can be degraded later.
-	if _, err := manager.Hydrate(session.Messages, ctxwin.ZoneDynamic, 0); err != nil {
+	if _, err := manager.Hydrate(session.MessagesSnapshot(), ctxwin.ZoneDynamic, 0); err != nil {
 		return nil, nil, missing, err
 	}
 
@@ -128,8 +128,8 @@ func (r *Runtime) contextPayload() map[string]any {
 		"window":  r.modelWindow(),
 	}
 	if r.SessionValue != nil {
-		payload["messages"] = len(r.SessionValue.Messages)
-		if state, ok := ctxwin.LoadCompaction(r.SessionValue.Metadata); ok {
+		payload["messages"] = r.SessionValue.MessageCount()
+		if state, ok := ctxwin.LoadCompaction(r.metaSnapshot()); ok {
 			payload["active"] = state.Active()
 			payload["folded"] = state.FoldedMessages
 			payload["generation"] = state.Generation

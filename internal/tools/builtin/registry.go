@@ -6,6 +6,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/imagegen"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/skills"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 )
 
@@ -24,7 +25,7 @@ type Assembly struct {
 	Workspace *tools.Workspace
 	// TodoMetadata is the session metadata the task list is bound to. Nil means no
 	// task-list tool.
-	TodoMetadata map[string]any
+	TodoMetadata *state.Meta
 	// Questioner is how ask_user reaches a person. Nil means nobody to ask, which
 	// is a normal state, not an error.
 	Questioner Questioner
@@ -38,7 +39,7 @@ type Assembly struct {
 	// model a round trip for nothing.
 	SkillLoader *skills.Loader
 	// SkillMetadata is the session metadata the loaded-skill list is bound to.
-	SkillMetadata map[string]any
+	SkillMetadata *state.Meta
 
 	// CodeIntel is the workspace's index handle, and the pair below it is the answer
 	// to "should the model have a code-intelligence tool at all".

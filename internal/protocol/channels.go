@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"sync"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
@@ -143,12 +144,25 @@ func (t *pendingTable) abandonAll() {
 	}
 }
 
-// Wait blocks until the request is answered or the channel goes away.
-func (t *pendingTable) wait(entry *waiter) (any, bool) {
+// Wait blocks until the request is answered, the turn is cancelled, or the
+// channel goes away.
+//
+// The context matters: a stop while an approval or a question is on screen has
+// to release the turn. Without it the turn sits on `entry.done` until the front
+// end disappears, and Ctrl+C on the panel reads as a hang rather than a stop.
+func (t *pendingTable) wait(ctx context.Context, entry *waiter) (any, bool) {
 	if entry == nil {
 		return nil, false
 	}
-	<-entry.done
+	select {
+	case <-entry.done:
+	case <-ctx.Done():
+		// Nobody answered and nobody is going to: take the waiter out of the
+		// table so a late response is ignored instead of resolving an entry
+		// whose turn has already moved on.
+		t.drop(entry.id)
+		return nil, false
+	}
 	if entry.abandon || entry.answer == nil {
 		// No answer means "could not ask", never "the answer is empty". A front
 		// end that treats an empty string as "the user had no opinion" is exactly
@@ -156,6 +170,14 @@ func (t *pendingTable) wait(entry *waiter) (any, bool) {
 		return nil, false
 	}
 	return entry.answer, true
+}
+
+// drop removes one waiter without releasing it. It is the cancellation path;
+// `resolve` is the answered one.
+func (t *pendingTable) drop(id string) {
+	t.mu.Lock()
+	delete(t.waiters, id)
+	t.mu.Unlock()
 }
 
 // questionAnswer is a resolved question.
@@ -207,9 +229,10 @@ func (s *Server) askUser(args AskUserBatchArgs) AskUserBatchAnswer {
 	// question N's answer before sending question N+1 would leave that panel
 	// permanently one question short. A front end that answers one at a time
 	// (the TUI) is unaffected — its requests simply arrive in order.
+	ctx := s.turnContext()
 	answers := make([]Answer, len(entries))
 	for index, entry := range entries {
-		raw, ok := s.pending.wait(entry)
+		raw, ok := s.pending.wait(ctx, entry)
 		if !ok {
 			answers[index] = Answer{Status: AnswerUnavailable}
 			continue
@@ -286,7 +309,7 @@ func (s *Server) askPermission(memory *security.Memory, trust security.TrustGrou
 			"trust_all_hint":  trustAllHint,
 		})
 
-		raw, ok := s.pending.wait(entry)
+		raw, ok := s.pending.wait(s.turnContext(), entry)
 		if !ok {
 			// Nobody to ask. Fail closed: refusing is the only direction that
 			// cannot be wrong when the question was never delivered.

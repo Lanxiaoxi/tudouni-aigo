@@ -99,59 +99,80 @@ func LastTurnTime(events []map[string]any) (Timing, bool) {
 	return SummarizeTime(filtered), true
 }
 
+// timingCounts is the fold behind SummarizeTime.
+//
+// It exists so that "sum this run's durations" has one implementation for two
+// callers: a report that reads a whole log once, and a reader that keeps up with
+// an append-only one. Two implementations is how the status panel and `--audit`
+// would start disagreeing about the same turn.
+type timingCounts struct {
+	runMs      int
+	modelMs    int
+	waitedMs   int
+	humanMs    int
+	backoffMs  int
+	serialMs   int
+	parallelMs int
+	batchWall  int
+}
+
+// add folds one record in. Records of other kinds contribute nothing.
+func (c *timingCounts) add(event map[string]any) {
+	switch stringOf(event["kind"]) {
+	case KindRunFinished:
+		c.runMs += numberOf(event["duration_ms"])
+	case KindModelCall:
+		c.modelMs += numberOf(event["duration_ms"])
+		c.backoffMs += numberOf(event["backoff_ms"])
+	case KindToolResult:
+		// Counted for every result, parallel or not: the time a person spent
+		// answering is taken out of the tool figure wholesale, because the
+		// `ask_user` handler blocks on the human and that is not the tool being
+		// slow.
+		c.humanMs += numberOf(event["human_wait_ms"])
+		if truthyOf(event["parallel"]) {
+			c.parallelMs += numberOf(event["duration_ms"])
+		} else {
+			c.serialMs += numberOf(event["duration_ms"])
+		}
+	case KindToolBatch:
+		c.batchWall += numberOf(event["wall_ms"])
+	case KindPermission:
+		c.waitedMs += numberOf(event["waited_ms"])
+	}
+}
+
+// timing is the breakdown those counts describe.
+func (c timingCounts) timing() Timing {
+	// A parallel batch's per-call durations overlap, so their sum is "how long each
+	// tool took" while the batch's wall time is "how long the batch occupied the
+	// turn". An older log has no `tool_batch` events at all, both terms are zero, and
+	// the tool figure falls back to the plain sum — no old number changes.
+	toolMs := c.serialMs + c.batchWall - c.humanMs
+	if toolMs < 0 {
+		toolMs = 0
+	}
+	return Timing{
+		RunMs:     c.runMs,
+		ModelMs:   c.modelMs,
+		ToolMs:    toolMs,
+		WaitedMs:  c.waitedMs,
+		HumanMs:   c.humanMs,
+		BackoffMs: c.backoffMs,
+		SavedMs:   c.parallelMs - c.batchWall,
+	}
+}
+
 // SummarizeTime adds the durations up out of the events.
 //
 // It is deliberately the same shape as `state.Summarize`: no separate timer state
 // exists, because two records of one fact eventually disagree.
 func SummarizeTime(events []map[string]any) Timing {
-	total := func(kind, field string) int {
-		sum := 0
-		for _, event := range events {
-			if stringOf(event["kind"]) == kind {
-				sum += numberOf(event[field])
-			}
-		}
-		return sum
+	var counts timingCounts
+	for _, event := range events {
+		counts.add(event)
 	}
-	toolDurations := func(parallel bool) int {
-		sum := 0
-		for _, event := range events {
-			if stringOf(event["kind"]) != "tool_result" {
-				continue
-			}
-			if truthyOf(event["parallel"]) != parallel {
-				continue
-			}
-			sum += numberOf(event["duration_ms"])
-		}
-		return sum
-	}
-
-	// A parallel batch's per-call durations overlap, so their sum is "how long each
-	// tool took" while the batch's wall time is "how long the batch occupied the
-	// turn". An older log has no `tool_batch` events at all, both terms are zero, and
-	// the tool figure falls back to the plain sum — no old number changes.
-	batchSum := toolDurations(true)
-	batchWall := total("tool_batch", "wall_ms")
-
-	// Time a person spent answering a question is **taken out of** the tool time:
-	// `ask_user`'s handler blocks on the human, so without this subtraction "I read
-	// the question for 30 seconds" is reported as "this tool takes 30 seconds".
-	humanMs := total("tool_result", "human_wait_ms")
-	toolMs := toolDurations(false) + batchWall - humanMs
-	if toolMs < 0 {
-		toolMs = 0
-	}
-
-	return Timing{
-		RunMs:     total("run_finished", "duration_ms"),
-		ModelMs:   total("model_call", "duration_ms"),
-		ToolMs:    toolMs,
-		WaitedMs:  total("permission", "waited_ms"),
-		HumanMs:   humanMs,
-		BackoffMs: total("model_call", "backoff_ms"),
-		SavedMs:   batchSum - batchWall,
-	}
+	return counts.timing()
 }
 
 // Summarize renders the block that closes `--audit`.

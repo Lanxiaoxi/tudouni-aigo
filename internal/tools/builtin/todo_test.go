@@ -3,6 +3,8 @@ package builtin
 import (
 	"strings"
 	"testing"
+
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 )
 
 // TestTheTaskListReachesThePayloadTail mirrors the previous generation's
@@ -15,7 +17,7 @@ import (
 // of the model **when it decides what to do next**.
 func TestTheTaskListReachesThePayloadTail(t *testing.T) {
 	metadata := map[string]any{}
-	board := NewTodoBoard(metadata)
+	board := NewTodoBoard(state.NewMeta(metadata))
 	board.Write(map[string]any{
 		"todos": []any{
 			map[string]any{"content": "读一下现有实现", "status": Completed},
@@ -45,13 +47,13 @@ func TestTheTaskListReachesThePayloadTail(t *testing.T) {
 // TestAnEmptyListProducesNoBlock keeps the tail from carrying an empty heading:
 // "here is your task list, it is empty" costs tokens every round and says nothing.
 func TestAnEmptyListProducesNoBlock(t *testing.T) {
-	if note := NewTodoBoard(map[string]any{}).Note(); note != "" {
+	if note := NewTodoBoard(state.NewMeta(nil)).Note(); note != "" {
 		t.Errorf("an empty list produced a block:\n%s", note)
 	}
 	// The same after the model clears the list by marking everything completed: the
 	// stored list is emptied on purpose, so the block has to go away.
 	metadata := map[string]any{}
-	board := NewTodoBoard(metadata)
+	board := NewTodoBoard(state.NewMeta(metadata))
 	board.Write(map[string]any{
 		"todos": []any{map[string]any{"content": "only item", "status": Completed}},
 	})
@@ -65,7 +67,7 @@ func TestAnEmptyListProducesNoBlock(t *testing.T) {
 // = one step".
 func TestTheNoteNeverTouchesTheSessionMessages(t *testing.T) {
 	metadata := map[string]any{}
-	board := NewTodoBoard(metadata)
+	board := NewTodoBoard(state.NewMeta(metadata))
 	if _, present := metadata["messages"]; present {
 		t.Error("NewTodoBoard wrote a messages key")
 	}

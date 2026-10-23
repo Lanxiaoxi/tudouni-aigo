@@ -40,7 +40,6 @@ func (f *fakeRuntime) SetAutopilot(bool)                  {}
 func (f *fakeRuntime) SetModel(string) (bool, string)     { return true, "ok" }
 func (f *fakeRuntime) SetThinking(bool) (bool, string)    { return true, "ok" }
 func (f *fakeRuntime) SetEffort(string) (bool, string)    { return true, "ok" }
-func (f *fakeRuntime) ClearStop()                         {}
 func (f *fakeRuntime) Close() error                       { return nil }
 func (f *fakeRuntime) StatsLine() string                  { return f.stats }
 func (f *fakeRuntime) ProgressLine() string               { return f.todos }

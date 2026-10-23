@@ -136,8 +136,14 @@ func forgetReplayReasoning(baseURL, model string) {
 // the family this adapter belongs to and of the default it falls back to.
 type OpenAICompatible struct {
 	client *http.Client
-	route  Route
 
+	// mu guards route, thinking and effort. A turn reads them while it builds a
+	// request; `/model`, `/thinking` and `/effort` write them from the protocol's
+	// read loop, which runs concurrently with the turn. Without the lock the
+	// request can observe a half-written route — and on a route change that is a
+	// request going to the new endpoint on the old key, or the reverse.
+	mu     sync.RWMutex
+	route  Route
 	thinking bool
 	effort   string
 	// images fetches the bytes a picture part points at. It is how this package
@@ -208,26 +214,49 @@ func New(options Options) (*OpenAICompatible, error) {
 }
 
 // Route is the endpoint in use, as a value.
-func (m *OpenAICompatible) Route() Route { return m.route }
+func (m *OpenAICompatible) Route() Route {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.route
+}
 
 // SameEndpoint reports whether another route reaches the same endpoint.
-func (m *OpenAICompatible) SameEndpoint(other Route) bool { return m.route.sameEndpoint(other) }
+func (m *OpenAICompatible) SameEndpoint(other Route) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.route.sameEndpoint(other)
+}
 
 // ModelName is the model in use.
-func (m *OpenAICompatible) ModelName() string { return m.route.Model }
+func (m *OpenAICompatible) ModelName() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.route.Model
+}
 
 // ProviderName is the route in use.
-func (m *OpenAICompatible) ProviderName() string { return m.route.Name }
+func (m *OpenAICompatible) ProviderName() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.route.Name
+}
 
 // BaseURL is where requests go.
-func (m *OpenAICompatible) BaseURL() string { return m.route.BaseURL }
+func (m *OpenAICompatible) BaseURL() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.route.BaseURL
+}
 
 // SwitchModel changes the model for subsequent requests.
 func (m *OpenAICompatible) SwitchModel(name string) bool {
-	if strings.TrimSpace(name) == "" {
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return false
 	}
-	m.route.Model = strings.TrimSpace(name)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.route.Model = name
 	return true
 }
 
@@ -237,7 +266,11 @@ func (m *OpenAICompatible) SwitchModel(name string) bool {
 // "another route", which is the same test the previous generation made. The key is
 // the identifier that matters: two routes can share a base_url and differ only in
 // which tenant they bill.
-func (m *OpenAICompatible) apiKeyOf() string { return m.route.APIKey }
+func (m *OpenAICompatible) apiKeyOf() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.route.APIKey
+}
 
 // Install moves to another route: key, endpoint, model name and route name.
 //
@@ -256,6 +289,8 @@ func (m *OpenAICompatible) Install(route Route) bool {
 	if !next.usable() {
 		return false
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if next.Name == "" {
 		next.Name = m.route.Name
 	}
@@ -270,8 +305,21 @@ func (m *OpenAICompatible) Install(route Route) bool {
 
 // SetReasoning updates the two thinking knobs.
 func (m *OpenAICompatible) SetReasoning(thinking bool, effort string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.thinking = thinking
 	m.effort = effort
+}
+
+// snapshot is the route and the reasoning knobs as one consistent pair.
+//
+// One request reads them together for the reason the lock exists: switching the
+// route during a turn must not produce a request that mixes the two — the model of
+// one route with the endpoint of another.
+func (m *OpenAICompatible) snapshot() (Route, ReasoningKnobs) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.route, ReasoningKnobs{Thinking: m.thinking, Effort: m.effort}
 }
 
 // Complete runs one request, streaming when a sink is present.
@@ -287,23 +335,26 @@ func (m *OpenAICompatible) SetReasoning(thinking bool, effort string) {
 // comply, and an endpoint that requires the previous turn's thinking to be sent
 // back with the history. Each is tried once, remembered, and applied to the retry.
 func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[string]any, options CompleteOptions) (ModelResponse, error) {
-	promise := m.knobs()
 	attempted := map[string]bool{}
 
 	for {
+		// Read the route and the knobs together, once per attempt: a `/model`
+		// arriving between two attempts must produce a whole new route on the
+		// retry, not half of one.
+		route, promise := m.snapshot()
 		// The recorded state is consulted per attempt rather than per session: a
 		// refusal just remembered in this loop has to affect the retry below.
 		//
 		// The replay fact is read from the endpoint rather than kept on the
 		// adapter, because it is a fact about the endpoint and the adapter is
 		// rebuilt every time the route changes — see replayReasoningEndpoints.
-		promise.ReplayReasoning = replayReasoningFor(m.route.BaseURL, m.route.Model)
+		promise.ReplayReasoning = replayReasoningFor(route.BaseURL, route.Model)
 		knobs := promise
-		if !thinkingInstructionSupported(m.route.BaseURL, m.route.Model) {
+		if !thinkingInstructionSupported(route.BaseURL, route.Model) {
 			knobs = ReasoningKnobs{Thinking: false, Effort: promise.Effort, omit: true, ReplayReasoning: promise.ReplayReasoning}
 		}
 
-		response, err := m.completeOnce(options.Ctx, messages, tools, options.OnDelta, options.ShouldStop, knobs)
+		response, err := m.completeOnce(options.Ctx, route, messages, tools, options.OnDelta, options.ShouldStop, knobs)
 		if err == nil {
 			return response, nil
 		}
@@ -329,7 +380,7 @@ func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[strin
 		// looks like — the fact is learned here and the request goes again.
 		if isReasoningReplayRejection(err) && !attempted["reasoning_replay"] {
 			attempted["reasoning_replay"] = true
-			rememberReplayReasoningRequired(m.route.BaseURL, m.route.Model)
+			rememberReplayReasoningRequired(route.BaseURL, route.Model)
 			if options.OnAttemptStarted != nil {
 				options.OnAttemptStarted()
 			}
@@ -338,7 +389,7 @@ func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[strin
 
 		if isThinkingInstructionRejection(err) && !attempted["thinking"] {
 			attempted["thinking"] = true
-			rememberThinkingInstructionUnsupported(m.route.BaseURL, m.route.Model)
+			rememberThinkingInstructionUnsupported(route.BaseURL, route.Model)
 			if options.OnAttemptStarted != nil {
 				options.OnAttemptStarted()
 			}
@@ -352,7 +403,7 @@ func (m *OpenAICompatible) Complete(messages []map[string]any, tools []map[strin
 		// read as the model saying everything twice.
 		if isStreamOptionsRejection(err) && !attempted["stream_options"] {
 			attempted["stream_options"] = true
-			rememberStreamOptionsUnsupported(m.route.BaseURL, m.route.Model)
+			rememberStreamOptionsUnsupported(route.BaseURL, route.Model)
 			if options.OnAttemptStarted != nil {
 				options.OnAttemptStarted()
 			}
@@ -383,11 +434,6 @@ func isThinkingInstructionRejection(err error) bool {
 	return ok
 }
 
-// knobs is the reasoning request this adapter was configured with.
-func (m *OpenAICompatible) knobs() ReasoningKnobs {
-	return ReasoningKnobs{Thinking: m.thinking, Effort: m.effort}
-}
-
 // protocol is the dialect for the route as it stands right now.
 //
 // It is looked up per request rather than cached, because `Install` may have
@@ -395,17 +441,17 @@ func (m *OpenAICompatible) knobs() ReasoningKnobs {
 // would keep speaking the old one — the exact divergence the Route type exists to
 // make impossible.
 func (m *OpenAICompatible) protocol() (dialect, error) {
-	return dialectFor(m.route.Style)
+	return dialectFor(m.Route().Style)
 }
 
-func (m *OpenAICompatible) completeOnce(ctx context.Context, messages []map[string]any, tools []map[string]any, sink DeltaSink, shouldStop func() bool, knobs ReasoningKnobs) (ModelResponse, error) {
-	codec, err := m.protocol()
+func (m *OpenAICompatible) completeOnce(ctx context.Context, route Route, messages []map[string]any, tools []map[string]any, sink DeltaSink, shouldStop func() bool, knobs ReasoningKnobs) (ModelResponse, error) {
+	codec, err := dialectFor(route.Style)
 	if err != nil {
 		return ModelResponse{}, err
 	}
 
 	body, err := codec.encode(dialectRequest{
-		model:    m.route.Model,
+		model:    route.Model,
 		messages: messages,
 		tools:    tools,
 		stream:   sink != nil,
@@ -422,7 +468,7 @@ func (m *OpenAICompatible) completeOnce(ctx context.Context, messages []map[stri
 		// once per turn.
 		includeStreamUsage: sink != nil &&
 			codec.wantsStreamOptions() &&
-			streamOptionsSupported(m.route.BaseURL, m.route.Model),
+			streamOptionsSupported(route.BaseURL, route.Model),
 	})
 	if err != nil {
 		return ModelResponse{}, err
@@ -432,7 +478,7 @@ func (m *OpenAICompatible) completeOnce(ctx context.Context, messages []map[stri
 		return ModelResponse{}, AsFatal("cannot encode the request: %v", err)
 	}
 
-	endpoint := endpointURL(m.route.BaseURL, codec.path())
+	endpoint := endpointURL(route.BaseURL, codec.path())
 	// The request carries the turn's context, and that is the whole point: a stop
 	// has to reach a request that is still waiting for its first byte. `Do` and the
 	// body read below then fail as soon as the context is done, instead of at the
@@ -453,15 +499,15 @@ func (m *OpenAICompatible) completeOnce(ctx context.Context, messages []map[stri
 	// the headers this package is responsible for. A route that overwrote the
 	// credential header would produce an authentication failure whose cause is
 	// three files away from the message.
-	for name, value := range m.templateHeaders() {
+	for name, value := range templateHeaders(route) {
 		request.Header.Set(name, value)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	if m.route.APIKey != "" {
+	if route.APIKey != "" {
 		// Which header carries the credential, and in what form, is the protocol's
 		// business: the Messages shape wants `x-api-key`, and a bearer token sent to
 		// it is answered with "Missing API key".
-		request.Header.Set(codec.credentialHeader(), credentialValue(codec.credentialHeader(), m.route.APIKey))
+		request.Header.Set(codec.credentialHeader(), credentialValue(codec.credentialHeader(), route.APIKey))
 	}
 	if sink != nil {
 		request.Header.Set("Accept", "text/event-stream")
@@ -506,22 +552,22 @@ const credentialHeaderBearer = "Authorization"
 //     gateway reads that as a client claiming a session and then failing to name
 //     one, which is a different thing from a client that does not do sessions —
 //     and one of those is treated as a defect in the caller.
-func (m *OpenAICompatible) templateHeaders() map[string]string {
-	if len(m.route.Headers) == 0 {
+func templateHeaders(route Route) map[string]string {
+	if len(route.Headers) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(m.route.Headers))
-	for name, value := range m.route.Headers {
+	out := make(map[string]string, len(route.Headers))
+	for name, value := range route.Headers {
 		rendered := value
 		if strings.Contains(rendered, sessionPlaceholderValue) {
-			if m.route.SessionID == "" {
+			if route.SessionID == "" {
 				// Nothing to substitute. The header is dropped below rather than
 				// sent with a literal placeholder in it, which would be a session id
 				// of `${session}` — stable, meaningless, and shared by every user of
 				// this program.
 				rendered = ""
 			} else {
-				rendered = strings.ReplaceAll(rendered, sessionPlaceholderValue, m.route.SessionID)
+				rendered = strings.ReplaceAll(rendered, sessionPlaceholderValue, route.SessionID)
 			}
 		}
 		if rendered == "" {

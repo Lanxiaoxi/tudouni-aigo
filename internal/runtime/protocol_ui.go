@@ -53,7 +53,7 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 	// one is what the rail and the `/mcp` panel are drawn from, so hard-coding it
 	// empty is what made a mounted server invisible everywhere except the notice
 	// that announced it.
-	mcpRows, _ := r.mcpInventory(r.McpCfg)
+	mcpRows, _ := r.mcpInventory(r.mcpConfig())
 	payload := map[string]any{
 		"todos":            r.todos(),
 		"skills":           r.skillPointers(),
@@ -140,7 +140,8 @@ func (r *Runtime) StateMessage(withCatalog bool) map[string]any {
 // definition of the panel's shape, and the first bug it produces is a crash on
 // the empty case.
 func (r *Runtime) skillPointers() []any {
-	entries := skills.LoadEntries(r.SessionValue.Metadata)
+	snapshot := r.metaSnapshot()
+	entries := skills.LoadEntries(snapshot)
 	rows := make([]any, 0, len(entries))
 	for _, entry := range entries {
 		rows = append(rows, map[string]any{"name": entry.Name, "digest": entry.Digest})
@@ -168,11 +169,14 @@ func (r *Runtime) skillCatalogRows() []any {
 
 // StatusMessage implements protocol.Runtime.
 func (r *Runtime) StatusMessage() map[string]any {
-	var events []map[string]any
+	var summary map[string]any
+	var timing audit.Timing
+	hasTurn := false
 	if r.Logs != nil {
-		events, _ = r.Logs.Read(r.SessionIDValue)
+		summary, timing, hasTurn = r.Logs.Summary(r.SessionIDValue)
+	} else {
+		summary = state.Summarize(nil)
 	}
-	summary := state.Summarize(events)
 
 	counters, _ := summary["counters"].(map[string]any)
 	usage, _ := summary["usage"].(map[string]any)
@@ -194,7 +198,7 @@ func (r *Runtime) StatusMessage() map[string]any {
 	}
 	messages, steps := 0, 0
 	if r.SessionValue != nil {
-		messages = len(r.SessionValue.Messages)
+		messages = r.SessionValue.MessageCount()
 		steps = r.SessionValue.StepCount()
 	}
 	toolCount := 0
@@ -203,11 +207,12 @@ func (r *Runtime) StatusMessage() map[string]any {
 	}
 
 	// The wall time the **last turn** spent, one field per bucket, plus the
-	// turn's own total and whatever nothing measured of it. It is
-	// `audit.LastTurnTime` — `SummarizeTime` over that turn's `run_id` — not a
-	// re-derivation: the `--audit` line and this group must agree about what a
-	// bucket *is*, and a second division of the same events is a second source
-	// for the same fact.
+	// turn's own total and whatever nothing measured of it. It is the same
+	// breakdown `audit.LastTurnTime` gives — `SummarizeTime` over that turn's
+	// `run_id` — not a re-derivation: the `--audit` line and this group must agree
+	// about what a bucket *is*, and a second division of the same events is a
+	// second source for the same fact. The sink folds it in as the records are
+	// read, so this panel costs nothing extra.
 	//
 	// **Per turn, not cumulative.** The panel that reaches for this is reached
 	// from the status bar's turn chip, and the chip's number is one turn's
@@ -215,7 +220,7 @@ func (r *Runtime) StatusMessage() map[string]any {
 	// which is the mixture `stats.turn` refuses. `run_ms` and
 	// `unattributed` ride here rather than in the session group: they are
 	// defined against a turn's total, and the total is the turn's own
-	// `run_finished.duration_ms`, the very field `lastTurnMs` carries.
+	// `run_finished.duration_ms`.
 	//
 	// **null, not a zero row, when no turn has run.** The session totals above
 	// answer before anything has run because a zero row there reads "new
@@ -223,17 +228,17 @@ func (r *Runtime) StatusMessage() map[string]any {
 	// 0ms of model time and 0ms of tools", which is a false statement about a
 	// turn that does not exist yet; the absent group is the true one, and a
 	// front end that predates protocol 5 ignores it either way.
-	var timing map[string]any
-	if lastTurn, ok := audit.LastTurnTime(events); ok {
-		timing = map[string]any{
-			"run_ms":       lastTurn.RunMs,
-			"model_ms":     lastTurn.ModelMs,
-			"tool_ms":      lastTurn.ToolMs,
-			"waited_ms":    lastTurn.WaitedMs,
-			"human_ms":     lastTurn.HumanMs,
-			"backoff_ms":   lastTurn.BackoffMs,
-			"saved_ms":     lastTurn.SavedMs,
-			"unattributed": lastTurn.UnattributedMs(),
+	var timingRow map[string]any
+	if hasTurn {
+		timingRow = map[string]any{
+			"run_ms":       timing.RunMs,
+			"model_ms":     timing.ModelMs,
+			"tool_ms":      timing.ToolMs,
+			"waited_ms":    timing.WaitedMs,
+			"human_ms":     timing.HumanMs,
+			"backoff_ms":   timing.BackoffMs,
+			"saved_ms":     timing.SavedMs,
+			"unattributed": timing.UnattributedMs(),
 		}
 	}
 
@@ -267,7 +272,7 @@ func (r *Runtime) StatusMessage() map[string]any {
 		},
 		"counters": counters,
 		"usage":    usage,
-		"timing":   timing,
+		"timing":   timingRow,
 		// The context ledger travels with the status screen rather than only with
 		// `/context`: "how much can it see, and how much did the budget drop" is
 		// part of the question `/status` exists to answer. Nil means this runtime
@@ -350,7 +355,7 @@ func (r *Runtime) SkillsMessage() map[string]any {
 	}
 
 	active := make([]any, 0)
-	for _, name := range skills.ActiveNames(r.SessionValue.Metadata) {
+	for _, name := range skills.ActiveNames(r.metaSnapshot()) {
 		active = append(active, name)
 	}
 
@@ -408,7 +413,7 @@ func (r *Runtime) Compact() (map[string]any, error) {
 // tasks" for the whole session — the rail's Tasks block stayed empty until the
 // session was resumed, which is the one moment the list has been through JSON.
 func (r *Runtime) todos() []any {
-	return builtin.TodoRows(r.SessionValue.Metadata)
+	return builtin.TodoRows(r.metaSnapshot())
 }
 
 func (r *Runtime) riskScope() []any {
@@ -472,7 +477,8 @@ func agentMDNotices(session *state.Session) []map[string]any {
 	if session == nil {
 		return nil
 	}
-	block, ok := session.Metadata[state.AgentMDSessionKey].(map[string]any)
+	value, _ := session.Meta().Value(state.AgentMDSessionKey)
+	block, ok := value.(map[string]any)
 	if !ok {
 		return nil
 	}
@@ -529,7 +535,8 @@ func agentMDNotices(session *state.Session) []map[string]any {
 }
 
 func agentsMDRows(session *state.Session) []any {
-	rows := state.AgentMDForDisplay(session.Metadata[state.AgentMDSessionKey], paths.WorkspaceDir())
+	block, _ := session.Meta().Value(state.AgentMDSessionKey)
+	rows := state.AgentMDForDisplay(block, paths.WorkspaceDir())
 	out := make([]any, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, row)

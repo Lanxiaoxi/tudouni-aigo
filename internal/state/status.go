@@ -23,6 +23,100 @@ import (
 // place and as an integer in another makes users think one of them is wrong.
 const PercentDecimals = 1
 
+// Counter accumulates the ledger as records arrive.
+//
+// It exists so that "sum up this session" has one implementation with two entry
+// points: over a slice (`Summarize`, for a report read once) and record by record
+// (`Add`, for a reader that keeps up with an append-only log). A second
+// implementation for the incremental case is how the status bar and `--audit`
+// would start disagreeing about the same session.
+//
+// The zero value counts nothing, which is what an empty log means.
+type Counter struct {
+	runs, modelCalls, modelOK, toolCalls int
+	permissionWaits, asks                int
+	prompt, cached, miss, completion     int
+	// modelMs is the wall time of the **successful** calls only, and it is summed
+	// here rather than taken from the audit report's own timing line for one
+	// reason: that one totals every `model_call` including the failed attempts of
+	// a retry, while `completion_tokens` only exists on the calls that returned.
+	// Dividing one by the other would report a rate dragged down by attempts that
+	// produced no output at all.
+	modelMs    int
+	lastPrompt int
+	havePrompt bool
+}
+
+// Add folds one record in.
+func (c *Counter) Add(item map[string]any) {
+	switch stringFieldOf(item, "kind") {
+	case "run_started":
+		c.runs++
+	case "model_call":
+		c.modelCalls++
+		if stringFieldOf(item, "status") == "ok" {
+			c.modelOK++
+			c.prompt += numberFieldOf(item, "prompt_tokens")
+			c.cached += numberFieldOf(item, "cached_tokens")
+			c.miss += numberFieldOf(item, "miss_tokens")
+			c.completion += numberFieldOf(item, "completion_tokens")
+			c.modelMs += numberFieldOf(item, "duration_ms")
+			// "How much did the last request actually send" is the input of
+			// the last **successful** call. Counting successes rather than
+			// the last line matters: a failed attempt has no such field and
+			// may be followed by a successful one.
+			c.lastPrompt = numberFieldOf(item, "prompt_tokens")
+			c.havePrompt = true
+		}
+	case "tool_result":
+		c.toolCalls++
+		if stringFieldOf(item, "question_status") != "" {
+			c.asks++
+		}
+	case "permission":
+		// Only a call that actually asked somebody counts as a wait. A
+		// verdict is written for **every** call, whether or not anybody was
+		// asked, and `waited_ms` is the field that says a person was: the
+		// gate sets it only when the question went out. Counting the verdicts
+		// instead made the status screen's "of which N approval waits" equal
+		// the number of tool calls — a figure that tells nobody anything, and
+		// that says people were interrupted N times when they were not.
+		if _, asked := item["waited_ms"]; asked {
+			c.permissionWaits++
+		}
+	}
+}
+
+// Result renders the ledger.
+func (c *Counter) Result() map[string]any {
+	result := map[string]any{
+		"usage": map[string]any{
+			"prompt":     c.prompt,
+			"cached":     c.cached,
+			"miss":       c.miss,
+			"completion": c.completion,
+			// `model_ms` is what the output rate is computed from, and it travels
+			// with the usage block because the two are only meaningful together:
+			// a token count with no denominator cannot be read as a speed.
+			"model_ms": c.modelMs,
+		},
+		"counters": map[string]any{
+			"runs":             c.runs,
+			"model_calls":      c.modelCalls,
+			"model_ok":         c.modelOK,
+			"tool_calls":       c.toolCalls,
+			"permission_waits": c.permissionWaits,
+			"asks":             c.asks,
+		},
+	}
+	if c.havePrompt {
+		result["last_prompt_tokens"] = c.lastPrompt
+	} else {
+		result["last_prompt_tokens"] = nil
+	}
+	return result
+}
+
 // Summarize counts a run of audit events.
 //
 // Failures inside a retry carry no usage fields, so they contribute zero to the
@@ -30,83 +124,11 @@ const PercentDecimals = 1
 // for calls that succeeded. Missing fields count as zero throughout — the log may
 // be copied, spliced or truncated, and a missing key must not break `/status`.
 func Summarize(events []map[string]any) map[string]any {
-	runs, modelCalls, modelOK, toolCalls := 0, 0, 0, 0
-	permissionWaits, asks := 0, 0
-	prompt, cached, miss, completion := 0, 0, 0, 0
-	// modelMs is the wall time of the **successful** calls only, and it is summed
-	// here rather than taken from the audit report's own timing line for one
-	// reason: that one totals every `model_call` including the failed attempts of
-	// a retry, while `completion_tokens` only exists on the calls that returned.
-	// Dividing one by the other would report a rate dragged down by attempts that
-	// produced no output at all.
-	modelMs := 0
-	var lastPrompt *int
-
+	var counter Counter
 	for _, item := range events {
-		switch stringFieldOf(item, "kind") {
-		case "run_started":
-			runs++
-		case "model_call":
-			modelCalls++
-			if stringFieldOf(item, "status") == "ok" {
-				modelOK++
-				prompt += numberFieldOf(item, "prompt_tokens")
-				cached += numberFieldOf(item, "cached_tokens")
-				miss += numberFieldOf(item, "miss_tokens")
-				completion += numberFieldOf(item, "completion_tokens")
-				modelMs += numberFieldOf(item, "duration_ms")
-				// "How much did the last request actually send" is the input of
-				// the last **successful** call. Counting successes rather than
-				// the last line matters: a failed attempt has no such field and
-				// may be followed by a successful one.
-				value := numberFieldOf(item, "prompt_tokens")
-				lastPrompt = &value
-			}
-		case "tool_result":
-			toolCalls++
-			if stringFieldOf(item, "question_status") != "" {
-				asks++
-			}
-		case "permission":
-			// Only a call that actually asked somebody counts as a wait. A
-			// verdict is written for **every** call, whether or not anybody was
-			// asked, and `waited_ms` is the field that says a person was: the
-			// gate sets it only when the question went out. Counting the verdicts
-			// instead made the status screen's "of which N approval waits" equal
-			// the number of tool calls — a figure that tells nobody anything, and
-			// that says people were interrupted N times when they were not.
-			if _, asked := item["waited_ms"]; asked {
-				permissionWaits++
-			}
-		}
+		counter.Add(item)
 	}
-
-	result := map[string]any{
-		"usage": map[string]any{
-			"prompt":     prompt,
-			"cached":     cached,
-			"miss":       miss,
-			"completion": completion,
-			// `model_ms` is what the output rate is computed from, and it travels
-			// with the usage block because the two are only meaningful together:
-			// a token count with no denominator cannot be read as a speed.
-			"model_ms": modelMs,
-		},
-		"counters": map[string]any{
-			"runs":             runs,
-			"model_calls":      modelCalls,
-			"model_ok":         modelOK,
-			"tool_calls":       toolCalls,
-			"permission_waits": permissionWaits,
-			"asks":             asks,
-		},
-	}
-	if lastPrompt != nil {
-		result["last_prompt_tokens"] = *lastPrompt
-	} else {
-		result["last_prompt_tokens"] = nil
-	}
-	return result
+	return counter.Result()
 }
 
 // HitRate is the display form of the cache hit rate.

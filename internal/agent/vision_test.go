@@ -144,7 +144,13 @@ func TestAnUnreferencedPictureIsStillPaidFor(t *testing.T) {
 
 	// The same history with the words and no picture: whatever the difference is, the
 	// picture has to be worth something.
+	//
+	// `dropCache` is not incidental to this test. History is append-only in
+	// production — a message is written once, before it is appended — and the
+	// render cache relies on that. Editing one in place is exactly the case it
+	// cannot see, so a caller that does it says so. No production path does.
 	h.agent.Session.Messages[1]["content"] = "这张图怎么了？"
+	h.agent.dropCache()
 	if after := h.agent.FixedPayloadTokens(); after >= textOnly {
 		t.Fatalf("dropping the picture did not lower the estimate (%d → %d)", textOnly, after)
 	}

@@ -9,7 +9,9 @@
 package audit
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,6 +121,42 @@ type JsonlSink struct {
 	// file is the open handle for `path`. An empty `path` means no handle is
 	// held; the two are only ever set and cleared together, under `mu`.
 	file *os.File
+
+	// readMu guards the read-side cache. It is deliberately not `mu`: a read
+	// never touches the write handle, and making a status panel wait behind an
+	// in-flight append would put the log's writer in the reader's latency path.
+	readMu sync.Mutex
+	reads  map[string]*readCache
+}
+
+// readCache is how much of one session's log has already been parsed.
+//
+// The file is append-only, so a reader never needs to look at a byte it has
+// already seen. Before this cache `Read` was called once per turn to draw the
+// status line and once per status request, and each call re-read and re-parsed
+// the whole session — cost that grows with the conversation while the answer
+// changes only in its last record.
+type readCache struct {
+	size    int64
+	records []map[string]any
+
+	// The derived views below are kept because both are asked for on the turn's
+	// own path, from the same records, and computing either one from scratch is
+	// another walk over the session. They are maintained here rather than by the
+	// callers for the reason this whole type exists: one walk, one answer.
+	//
+	// `counter` is the `/status` ledger, and `timing` is the last turn's wall-time
+	// breakdown; `runID` and `runMs` are what `lastTurnMs` pairs up. Every one of
+	// them is a fold over the records, so appending a record and folding it in is
+	// exactly what recomputation would produce.
+	counter state.Counter
+	timing  timingCounts
+	runID   string
+	runMs   int64
+	hasRun  bool
+	// hasFinish distinguishes "the current turn finished, in runMs" from "the
+	// current turn is still running or died" — see `add`.
+	hasFinish bool
 }
 
 // NewJsonlSink opens (and creates) the directory.
@@ -243,21 +281,66 @@ func (s *JsonlSink) Close() error {
 // Lines that do not parse are skipped. A process killed mid-write leaves half a
 // line behind, and that is a designed-for condition: one half line must not make
 // the whole log unreadable.
+//
+// Only the bytes appended since the previous call are read. The log is
+// append-only, so the cache can never describe a record that is no longer in the
+// file; a size that went backwards (a truncated or replaced file) is the one case
+// that resets it.
 func (s *JsonlSink) Read(sessionID string) ([]map[string]any, error) {
 	path, err := s.Path(sessionID)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(path)
+
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	if s.reads == nil {
+		s.reads = make(map[string]*readCache)
+	}
+	cache := s.reads[sessionID]
+	if cache == nil {
+		cache = &readCache{}
+		s.reads[sessionID] = cache
+	}
+
+	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			*cache = readCache{}
 			return nil, nil
 		}
 		return nil, err
 	}
+	defer file.Close()
 
-	var records []map[string]any
-	for _, line := range strings.Split(string(raw), "\n") {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	// A size that went backwards is a truncated or replaced file, and everything
+	// derived from the old bytes is now describing something that is not there.
+	if info.Size() < cache.size {
+		*cache = readCache{}
+	}
+	if info.Size() == cache.size {
+		return snapshotRecords(cache.records), nil
+	}
+	if _, err := file.Seek(cache.size, io.SeekStart); err != nil {
+		return nil, err
+	}
+	chunk := make([]byte, info.Size()-cache.size)
+	if _, err := io.ReadFull(file, chunk); err != nil {
+		return nil, err
+	}
+	// A partial last line is not an error and is not skipped for good: it is the
+	// half line a killed process leaves, and it becomes readable the moment the
+	// rest of it is written. Consuming only up to the last newline is what makes
+	// the next call resume in the right place.
+	end := bytes.LastIndexByte(chunk, '\n')
+	if end < 0 {
+		return snapshotRecords(cache.records), nil
+	}
+	for _, line := range strings.Split(string(chunk[:end+1]), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -266,7 +349,131 @@ func (s *JsonlSink) Read(sessionID string) ([]map[string]any, error) {
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			continue
 		}
-		records = append(records, record)
+		cache.add(record)
 	}
-	return records, nil
+	cache.size += int64(end + 1)
+	return snapshotRecords(cache.records), nil
+}
+
+// Summary is `Read` plus the two derived views, computed incrementally.
+//
+// It exists so a caller that only wants the numbers does not pay for the record
+// list as well. The `/status` panel and the line REPL's end-of-turn report both
+// ask for exactly these, on the turn's own goroutine, once per turn — and both
+// used to walk the whole session's records to get them.
+//
+// The answers are the same ones the slice-based functions give over the same
+// records: `state.Summarize`, `SummarizeTime` over the last turn, and that turn's
+// total. That is not a coincidence to be preserved by hand — the folds live in
+// `readCache.add`, which is the only place a record enters.
+func (s *JsonlSink) Summary(sessionID string) (map[string]any, Timing, bool) {
+	view, _ := s.summaryOf(sessionID)
+	if view == nil {
+		return state.Summarize(nil), Timing{}, false
+	}
+	return view.counter.Result(), view.timing.timing(), view.hasRun
+}
+
+// LastTurnMs is the wall time of the most recent turn, paired by run id.
+//
+// Paired rather than "the last `run_finished` line": when a turn dies before it
+// finishes (Ctrl+C, a killed process) the last such line belongs to the
+// *previous* turn, and reporting it as "this turn" gives a number that is
+// completely unrelated and completely plausible.
+//
+// It reports nothing for a turn that has not finished, for the same reason.
+func (s *JsonlSink) LastTurnMs(sessionID string) (int64, bool) {
+	view, _ := s.summaryOf(sessionID)
+	if view == nil || !view.hasFinish {
+		return 0, false
+	}
+	return view.runMs, true
+}
+
+// summaryView is the cache's folded state, copied out for a caller.
+//
+// It is a copy rather than a pointer because the caller reads it after the lock is
+// dropped, and the next `Read` on another goroutine may be extending the cache at
+// that moment. Every field above is a value type, so a copy is the fold itself.
+type summaryView struct {
+	counter   state.Counter
+	timing    timingCounts
+	runMs     int64
+	hasRun    bool
+	hasFinish bool
+}
+
+// summaryOf brings the cache up to date and copies its folded state out.
+func (s *JsonlSink) summaryOf(sessionID string) (*summaryView, error) {
+	// `Read` does the file work and holds the lock for all of it, including the
+	// folds; this then takes the lock once more only to copy the values out.
+	if _, err := s.Read(sessionID); err != nil {
+		return nil, err
+	}
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	cache := s.reads[sessionID]
+	if cache == nil {
+		return nil, nil
+	}
+	return &summaryView{
+		counter:   cache.counter,
+		timing:    cache.timing,
+		runMs:     cache.runMs,
+		hasRun:    cache.hasRun,
+		hasFinish: cache.hasFinish,
+	}, nil
+}
+
+// add folds one parsed record into the cache: the record list and the views
+// derived from it.
+//
+// This is the single place a record enters, which is what keeps the views honest:
+// there is no path that appends to `records` and forgets to update a counter.
+func (c *readCache) add(record map[string]any) {
+	c.records = append(c.records, record)
+	c.counter.Add(record)
+
+	// The turn-scoped views restart at every `run_started`, because what they
+	// describe is one turn rather than the session. That is the difference between
+	// this and `counter` above: the ledger is cumulative, the timing is the last
+	// turn's own.
+	if stringOf(record["kind"]) == KindRunStarted {
+		if id := stringOf(record["run_id"]); id != "" {
+			c.runID, c.hasRun, c.hasFinish, c.runMs = id, true, false, 0
+			c.timing = timingCounts{}
+		}
+		return
+	}
+	// Records outside the current turn contribute nothing to it. A log copied from
+	// elsewhere can hold records whose `run_id` nobody started, and folding those
+	// in would make the turn's buckets describe more than the turn.
+	if !c.hasRun || stringOf(record["run_id"]) != c.runID {
+		return
+	}
+	c.timing.add(record)
+
+	if stringOf(record["kind"]) == KindRunFinished {
+		// `hasFinish` rather than a zero total: "the turn finished in 0ms" and "the
+		// turn never finished" are different claims, and only the first one may be
+		// reported as a duration. A turn killed before its last record is the
+		// common case for the second, and attributing the *previous* turn's total
+		// to it is the failure this pairing exists to prevent.
+		if value, present := record["duration_ms"]; present && value != nil {
+			c.runMs, c.hasFinish = int64(numberOf(value)), true
+		}
+	}
+}
+
+// snapshotRecords copies the slice header but not the records.
+//
+// The records themselves are written once and only read afterwards, so sharing
+// them is safe; the copy is what stops a caller from appending into the cache.
+func snapshotRecords(records []map[string]any) []map[string]any {
+	if len(records) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, len(records))
+	copy(out, records)
+	return out
 }

@@ -108,7 +108,11 @@ type Runtime struct {
 	}
 	Chat        model.ChatModel
 	WebCfg      WebConfig
+	// McpCfg is the server list last read from disk. It is guarded by cfgMu
+	// because `/mcp load` writes it from the protocol's read loop while the
+	// `ui(state)` snapshot reads it on the turn's goroutine.
 	McpCfg      []McpServerSpec
+	cfgMu       sync.RWMutex
 	Permissions PermissionConfig
 	Autopilot   bool
 	Debug       bool
@@ -221,4 +225,29 @@ type Runtime struct {
 	// CodeIntel is this workspace's index handle and its panel state. Nil only in
 	// tests that build a Runtime by hand.
 	CodeIntel *codeIntelState
+}
+
+// meta is the guarded handle on this session's metadata.
+//
+// Every read or write that can overlap the turn's own goes through it. The
+// boards hold this handle rather than the raw map for the same reason: the
+// protocol's read loop (`/goal`, `/model`) and the turn's tool handlers both
+// write the map, and a Go map that is written from two goroutines is a fatal
+// error rather than a stale read.
+func (r *Runtime) meta() *state.Meta {
+	return r.SessionValue.Meta()
+}
+
+// metaSnapshot is the metadata as one consistent value, for readers that only
+// want to look at it.
+func (r *Runtime) metaSnapshot() map[string]any {
+	return r.meta().Snapshot()
+}
+
+// goal is the session's goal, read under the metadata lock.
+func (r *Runtime) goal() (state.Goal, bool) {
+	var goal state.Goal
+	var ok bool
+	r.meta().Read(func(metadata map[string]any) { goal, ok = state.LoadGoal(metadata) })
+	return goal, ok
 }

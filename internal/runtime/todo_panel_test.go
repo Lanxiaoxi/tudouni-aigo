@@ -62,7 +62,7 @@ func todoRowsInPayload(t *testing.T, payload map[string]any) []any {
 // it had been through the file once.
 func TestTheStatePayloadCarriesATaskListWrittenThisSession(t *testing.T) {
 	session := state.NewEmptySession("s")
-	if result := builtin.NewTodoBoard(session.Metadata).Write(map[string]any{
+	if result := builtin.NewTodoBoard(session.Meta()).Write(map[string]any{
 		"todos": []any{
 			map[string]any{"content": "复现断连", "status": builtin.InProgress},
 			map[string]any{"content": "补一条回归测试", "status": builtin.Pending},
