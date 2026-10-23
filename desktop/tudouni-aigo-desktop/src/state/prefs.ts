@@ -256,7 +256,14 @@ function loadPrefs(): Prefs {
           : fallback.leftbarWidth,
       blockCollapsed: { ...EMPTY_BLOCKS, ...(parsed.blockCollapsed ?? {}) },
       blockTouched: parsed.blockTouched ?? {},
-      sessionsCollapsed: parsed.sessionsCollapsed ?? fallback.sessionsCollapsed,
+      // The same boundary as the two around it. A stored `false` is an answer
+      // and must survive the launch; anything that is not a boolean is a
+      // corrupted record, and `"false"` (truthy) would fold the side rail over
+      // a preference the person never set.
+      sessionsCollapsed:
+        typeof parsed.sessionsCollapsed === 'boolean'
+          ? parsed.sessionsCollapsed
+          : fallback.sessionsCollapsed,
       workspacesCollapsed:
         parsed.workspacesCollapsed === true || parsed.workspacesCollapsed === false
           ? parsed.workspacesCollapsed

@@ -26,7 +26,8 @@ import { Badge, RiskTag } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
 import { InBlock } from './InBlock';
 import { DeliverableCards } from './DeliverableCards';
-import { charCount, type Entry, type FrontMessage } from '@/state/entries';
+import { charCount, type Entry } from '@/state/entries';
+import { frontMessageText } from './frontMessageText';
 import type { TurnPhase } from '@/streamBlocks';
 import { formatDuration, formatTokens, oneLine, tokPerSecond } from '@/utils/format';
 import type { TKey } from '@/i18n';
@@ -825,33 +826,3 @@ export function NoteRow({ entry }: { entry: Extract<Entry, { kind: 'note' }> }) 
   );
 }
 
-/**
- * One sentence this front end is saying, as words.
- *
- * A function with an exhaustive `switch` and no `default`, like
- * `Composer.tsx`'s `noticeText`: a new code has to be given a sentence, and the
- * exhaustiveness check is what enforces that rather than a fallback that would
- * print an empty row.
- */
-export function frontMessageText(
-  t: ReturnType<typeof useT>,
-  message: FrontMessage,
-): string {
-  switch (message.code) {
-    case 'terminalEnded':
-      // The three endings stay three sentences. `killed` is not "exited with
-      // code null": a killed shell did not choose an exit status, so printing a
-      // number for it would invent one.
-      if (message.reason === 'killed') return t('note.term.endedKilled', { id: message.id });
-      if (message.exitCode === null) return t('note.term.ended', { id: message.id });
-      return t('note.term.endedCode', { id: message.id, code: message.exitCode });
-    case 'terminalDetached':
-      return t('note.term.detached', { id: message.id });
-    case 'refineApplied':
-      // Zero is the honest outcome of an answer that named nothing
-      // recognisable, and it gets its own sentence: "1 applied" with zero
-      // chosen would be a report the transcript contradicts.
-      if (message.applied === 0) return t('note.refine.appliedNone');
-      return t('note.refine.applied', { n: message.applied });
-  }
-}

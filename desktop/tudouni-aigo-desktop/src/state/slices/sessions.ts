@@ -24,8 +24,61 @@ import { FIND_IDLE } from '../find';
 import { nextStartingKey } from '../startingSeq';
 import { describeFailure, releaseImages } from '../runtimeLanding';
 
+/** How long a task's first prompt waits for the handshake. Matches the
+ *  `init`-then-`session_load` ordering rule: the prompt may only be written
+ *  once the empty `session_load` of a fresh session has been applied, and a
+ *  child that has not handshaken within half a minute is not about to. */
+const HANDSHAKE_WAIT_MS = 30_000;
+
 export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession' | 'focusSession' | 'detachSession' | 'openSession' | 'startLearning' | 'refineTask' | 'upsertTask' | 'deleteTask' | 'clearTaskRuns' | 'runTask' | 'noteTaskRunInit' | 'noteTaskRunOutcome'> {
   const { set, get, patch, patchWith, abandonIfUntouched } = ctx;
+
+  /**
+   * Wait for one session's handshake, and say **which** of the three outcomes
+   * happened rather than folding them together.
+   *
+   * `gone` is the ordinary failure (the bucket was replaced by a problem row or
+   * closed while waiting) and the failure is already on screen. `timeout` is
+   * not: the child is still there and still booting, so nothing has been said
+   * about the prompt that was never sent — the caller has to say it.
+   */
+  async function waitForReady(key: string): Promise<'ready' | 'gone' | 'timeout'> {
+    const deadline = Date.now() + HANDSHAKE_WAIT_MS;
+    for (;;) {
+      const current = get().sessions[key];
+      if (current === undefined) return 'gone';
+      if (current.ready) return 'ready';
+      if (Date.now() >= deadline) return 'timeout';
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  /**
+   * Say that a task's first prompt never left this window.
+   *
+   * A note rather than a silent return, because there is no other surface that
+   * could carry it: the session is still booting (so there is no `problem`
+   * row), and the composer's draft was never written (so the input box shows
+   * nothing either). `task` is the template's own title when the caller has
+   * one — "this prompt" is the honest sentence for a learning run, which has
+   * no task behind it.
+   */
+  function sayHandshakeTimedOut(key: string, task: string | null): void {
+    patchWith(key, (bucket) => ({
+      entries: [
+        ...bucket.entries,
+        {
+          kind: 'note',
+          id: nextId('note'),
+          tone: 'warn',
+          code: 'handshake_timeout',
+          text: '',
+          message: { code: 'handshakeTimeout', seconds: HANDSHAKE_WAIT_MS / 1000, task },
+        },
+      ],
+    }));
+  }
+
   return {
     async attachSession(options = {}) {
       const s = get();
@@ -482,25 +535,14 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       // reads, so by the time `ready` is set the empty `session_load` of a
       // fresh session has already been applied and cannot wipe what this
       // writes into `entries`. Waiting for `ready` is therefore the whole of
-      // the timing problem, and the wait is bounded: a child that never
-      // answers has a problem row of its own, and a prompt that never went
-      // out is stated rather than swallowed.
-      const deadline = Date.now() + 30_000;
-      for (;;) {
-        const current = get().sessions[key];
-        if (current?.ready) break;
-        if (current === undefined) {
-          // The session went away (a failure row replaced it, or it was
-          // closed while waiting). The failure is already on screen.
-          return;
-        }
-        if (Date.now() >= deadline) {
-          // A child that never answers has a problem row of its own; a prompt
-          // that never went out is the same fact and is not re-stated on the
-          // composer.
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
+      // the timing problem, and the wait is bounded — with the timeout stated
+      // rather than swallowed: a child that died has a problem row of its own,
+      // but one that is merely silent has no surface at all.
+      const wait = await waitForReady(key);
+      if (wait === 'gone') return;
+      if (wait === 'timeout') {
+        sayHandshakeTimedOut(key, null);
+        return;
       }
 
       const active = get().activeKey;
@@ -566,14 +608,14 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       // The prompt goes out as the session's first `user_message`, waiting on
       // the handshake for exactly the reason `startLearning` waits: the
       // `session_load` right behind `init` would wipe what is written before
-      // it lands, and a child that never answers has a problem row of its own.
-      const deadline = Date.now() + 30_000;
-      for (;;) {
-        const current = get().sessions[key];
-        if (current?.ready) break;
-        if (current === undefined) return null;
-        if (Date.now() >= deadline) return null;
-        await new Promise((resolve) => setTimeout(resolve, 100));
+      // it lands. `gone` returns null because the failure is already on
+      // screen; `timeout` returns the key (the session still exists) after
+      // saying that the prompt did not go out.
+      const wait = await waitForReady(key);
+      if (wait === 'gone') return null;
+      if (wait === 'timeout') {
+        sayHandshakeTimedOut(key, task.name);
+        return key;
       }
       const active = get().activeKey;
       if (active !== key) {
@@ -725,15 +767,15 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       // The prompt, as the session's first message — the same two-step
       // (`wait for ready`, then speak) `startLearning` established, for the
       // same reason: `session_load` lands right behind `init` and must not
-      // wipe what the run writes into the transcript.
+      // wipe what the run writes into the transcript. The run's link already
+      // exists at this point, so a timeout is said in the session it belongs
+      // to rather than on the composer.
       void (async () => {
-        const deadline = Date.now() + 30_000;
-        for (;;) {
-          const current = get().sessions[key];
-          if (current === undefined) return;
-          if (current.ready) break;
-          if (Date.now() >= deadline) return;
-          await new Promise((resolve) => setTimeout(resolve, 100));
+        const wait = await waitForReady(key);
+        if (wait === 'gone') return;
+        if (wait === 'timeout') {
+          sayHandshakeTimedOut(key, task.name);
+          return;
         }
         applyAutopilot?.();
         applyModel?.();

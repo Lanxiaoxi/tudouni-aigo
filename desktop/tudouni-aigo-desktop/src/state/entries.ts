@@ -139,7 +139,53 @@ export type FrontMessage =
    *  the agent never touches `aigo.prefs`, so without this line the
    *  transcript would say the person picked and nothing would ever say it
    *  landed. */
-  | { code: 'refineApplied'; taskId: string; applied: number };
+  | { code: 'refineApplied'; taskId: string; applied: number }
+  /** The context was squeezed before this turn (`internal/agent/context.go`).
+   *
+   *  The figures are the runtime's own; `null` is "the field was absent" and
+   *  must stay absent in the sentence rather than becoming a zero. `changes`
+   *  says *what* was squeezed — a bare count leaves the reader unable to tell
+   *  whether it was history or artifacts. */
+  | {
+      code: 'contextDegraded';
+      items: number | null;
+      estimated: number | null;
+      limit: number | null;
+      changes: string[];
+    }
+  /** Older turns were folded into a summary. Same null rule as above. */
+  | {
+      code: 'contextCompacted';
+      folded: number | null;
+      before: number | null;
+      after: number | null;
+    }
+  /** One goal-loop decision (`internal/runtime/goal_driver.go`).
+   *
+   *  "Queued" and "skipped" both become a row: the driver's record says a round
+   *  was *queued*, `recordGoalRound` says one actually *started*, and the two
+   *  disagreeing is itself the signal. */
+  | {
+      code: 'goalRound';
+      decision: string;
+      round: number | null;
+      rounds: number | null;
+      maxRounds: number | null;
+      reason: string;
+    }
+  /** One picture was attached. `width`/`height` are the runtime's measurement. */
+  | { code: 'imageAttached'; name: string; width: number | null; height: number | null }
+  /** One named picture could not be read or attached. `reason` is the
+   *  runtime's own sentence for the file (`internal/runtime/images.go`). */
+  | { code: 'imageSkipped'; path: string; reason: string }
+  /** The selected model cannot be shown pictures at all. */
+  | { code: 'imageRefused'; names: string[]; model: string }
+  /** More pictures were named than one message may carry. */
+  | { code: 'imageOverLimit'; rest: number | null; limit: number | null; paths: string[] }
+  /** A task's first prompt never left this window: the handshake did not land
+   *  inside the wait, so there was nowhere safe to send it. `task` is the
+   *  template's title when the caller has one. */
+  | { code: 'handshakeTimeout'; seconds: number; task: string | null };
 
 /** A system line. Used as a named type by callers that hold notes outside the
  *  stream (the handshake's own notices, which outlive a `session_load`). */
@@ -846,14 +892,6 @@ export function reduceEvent(
       const items = typeof ev.items === 'number' ? ev.items : null;
       const estimated = typeof ev.estimated === 'number' ? ev.estimated : null;
       const limit = typeof ev.limit === 'number' ? ev.limit : null;
-      const changes = stringList(ev.changes);
-      const detail = [
-        items !== null ? `${items} items` : '',
-        estimated !== null && limit !== null ? `${estimated} → ${limit} tok` : '',
-        changes.length > 0 ? changes.join(', ') : '',
-      ]
-        .filter((part) => part !== '')
-        .join(' · ');
       return {
         entries: [
           ...entries,
@@ -862,22 +900,23 @@ export function reduceEvent(
             id: nextId('note'),
             tone: 'degraded',
             code: 'context_degraded',
-            text: detail === '' ? 'context degraded' : `context degraded (${detail})`,
+            text: '',
+            message: {
+              code: 'contextDegraded',
+              items,
+              estimated,
+              limit,
+              changes: stringList(ev.changes),
+            },
           },
         ],
       };
     }
 
     case 'context_compacted': {
-      const folded = typeof ev.folded === 'number' ? ev.folded : 0;
+      const folded = typeof ev.folded === 'number' ? ev.folded : null;
       const before = typeof ev.before === 'number' ? ev.before : null;
       const after = typeof ev.after === 'number' ? ev.after : null;
-      const detail = [
-        `${folded} folded`,
-        before !== null && after !== null ? `${before} → ${after} tok` : '',
-      ]
-        .filter((part) => part !== '')
-        .join(' · ');
       return {
         entries: [
           ...entries,
@@ -886,7 +925,8 @@ export function reduceEvent(
             id: nextId('note'),
             tone: 'compacted',
             code: 'context_compacted',
-            text: `history compacted (${detail})`,
+            text: '',
+            message: { code: 'contextCompacted', folded, before, after },
           },
         ],
       };
@@ -909,15 +949,6 @@ export function reduceEvent(
       const rounds = typeof ev.goal_rounds === 'number' ? ev.goal_rounds : null;
       const maxRounds = typeof ev.goal_max_rounds === 'number' ? ev.goal_max_rounds : null;
 
-      const detail = [
-        decision === '' ? 'goal round' : `goal round ${decision}`,
-        round !== null ? `#${round}` : '',
-        rounds !== null && maxRounds !== null ? `${rounds}/${maxRounds}` : '',
-        reason !== '' ? reason : '',
-      ]
-        .filter((part) => part !== '')
-        .join(' · ');
-
       return {
         entries: [
           ...entries,
@@ -928,7 +959,8 @@ export function reduceEvent(
             // a reader needs to see rather than infer from the goal block.
             tone: decision === 'started' ? 'info' : 'degraded',
             code: 'goal_round',
-            text: detail,
+            text: '',
+            message: { code: 'goalRound', decision, round, rounds, maxRounds, reason },
           },
         ],
       };
@@ -992,66 +1024,75 @@ function bumpStep(after: Entry[], runId: string, step: number): { entries: Entry
  *   - `refused`    → `names[]`, `model` — **no `path`, no `reason`**
  *
  * The refusal's human-readable sentence is written to stderr by
- * `reportImagesRefused`, and stderr is deliberately not protocol content, so the
- * front end composes that one from the facts that *are* on the event.
+ * `reportImagesRefused`, and stderr is deliberately not protocol content. The
+ * front end therefore words that row from the facts that *are* on the event —
+ * but as a `FrontMessage`, not as a sentence assembled in the store: these four
+ * rows are this window speaking, and `text` stays `''`.
  */
 function imageNote(ev: LooseEvent): Entry {
   const status = typeof ev.status === 'string' ? ev.status : '';
   const path = typeof ev.path === 'string' ? ev.path : '';
 
   if (status === 'over_limit') {
-    const rest = typeof ev.rest === 'number' ? ev.rest : 0;
-    const limit = typeof ev.limit === 'number' ? ev.limit : 0;
     // The runtime names the pictures that did not fit on purpose: "4 of 9
-    // attached" leaves the reader to work out which four.
-    const paths = stringList(ev.paths);
-    const detail = paths.length > 0 ? `: ${paths.join(', ')}` : '';
+    // attached" leaves the reader to work out which four. A missing figure is
+    // null, never 0 — the sentence then omits it.
+    const rest = typeof ev.rest === 'number' ? ev.rest : null;
+    const limit = typeof ev.limit === 'number' ? ev.limit : null;
     return {
       kind: 'note',
       id: nextId('note'),
       tone: 'error',
       code: 'image_over_limit',
-      text: `${rest} more picture(s) did not fit (limit ${limit} per message)${detail}`,
+      text: '',
+      message: { code: 'imageOverLimit', rest, limit, paths: stringList(ev.paths) },
     };
   }
 
   if (status === 'refused') {
     // Said as a fact about the **model**, not the files: nothing is wrong with
     // the picture, and the fix is a different model.
-    const names = stringList(ev.names);
-    const model = typeof ev.model === 'string' && ev.model !== '' ? ev.model : '';
-    const who = model === '' ? 'the model in use' : `the model in use (${model})`;
-    const detail = names.length > 0 ? `: ${names.join(', ')}` : '';
     return {
       kind: 'note',
       id: nextId('note'),
       tone: 'error',
       code: 'image_refused',
-      text: `${who} cannot be shown pictures, so ${names.length} named picture(s) were not attached${detail}`,
+      text: '',
+      message: {
+        code: 'imageRefused',
+        names: stringList(ev.names),
+        model: typeof ev.model === 'string' ? ev.model : '',
+      },
     };
   }
 
   if (status === 'skipped') {
-    const reason = typeof ev.reason === 'string' ? ev.reason : '';
     return {
       kind: 'note',
       id: nextId('note'),
       tone: 'error',
       code: 'image_skipped',
-      text: reason === '' ? `${path} was not attached` : `${path} was not attached: ${reason}`,
+      text: '',
+      message: {
+        code: 'imageSkipped',
+        path,
+        reason: typeof ev.reason === 'string' ? ev.reason : '',
+      },
     };
   }
 
-  const name = typeof ev.name === 'string' && ev.name !== '' ? ev.name : path;
-  const width = typeof ev.width === 'number' ? ev.width : null;
-  const height = typeof ev.height === 'number' ? ev.height : null;
-  const size = width !== null && height !== null ? ` (${width}×${height})` : '';
   return {
     kind: 'note',
     id: nextId('note'),
     tone: 'image',
     code: 'image_attached',
-    text: `attached ${name}${size}`,
+    text: '',
+    message: {
+      code: 'imageAttached',
+      name: typeof ev.name === 'string' && ev.name !== '' ? ev.name : path,
+      width: typeof ev.width === 'number' ? ev.width : null,
+      height: typeof ev.height === 'number' ? ev.height : null,
+    },
   };
 }
 

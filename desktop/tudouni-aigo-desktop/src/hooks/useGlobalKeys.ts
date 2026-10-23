@@ -28,6 +28,30 @@ export function focusIsInTerminal(active: Element | null, pane: Element | null):
   return active === pane || pane.contains(active);
 }
 
+/**
+ * Does this key make the WebView reload the document?
+ *
+ * A pure predicate rather than a condition buried in the handler, because the
+ * answer depends only on which modifier is held and "did we miss one" is the
+ * kind of bug that is invisible in a screenshot. `Ctrl+P` is in the list for
+ * the same reason as the reloads: the window has no print dialog, so the only
+ * thing the browser would do with it is open one over the application.
+ *
+ * Shift is deliberately **not** consulted: `Ctrl+Shift+R` is WebView2's
+ * refresh-without-cache, and a hard reload loses exactly as much as a soft one.
+ */
+export function isReloadKey(e: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  /** Present so a caller (and a test) can pass a whole `KeyboardEvent`, and
+   *  **never read**: Shift must not be able to reach the reload. */
+  shiftKey: boolean;
+}): boolean {
+  const mod = e.ctrlKey || e.metaKey;
+  return e.key === 'F5' || (mod && ['r', 'p'].includes(e.key.toLowerCase()));
+}
+
 /** The live answer, for the window handler. */
 function keyboardIsAtAShell(): boolean {
   if (typeof document === 'undefined') return false;
@@ -82,10 +106,12 @@ export function useGlobalKeys(): void {
 
       /* ---- Reload keys: suppressed, and they must be suppressed *first* ----
        *
-       * A reload of the WebView re-runs `attachRuntime({})`, and the bridge's
-       * restart path kills the current child and starts a **new session** — the
-       * `--session` flag is not carried over. One stray F5 therefore loses the
-       * whole transcript and any turn in flight.
+       * A reload of the WebView re-runs the boot sequence and starts a **new
+       * session**; the `--session` flag is not carried over and the zustand
+       * store is gone with the document. One stray reload therefore loses the
+       * transcript on screen, the draft in the composer and the input history,
+       * while the child that was there keeps running unseen (`spawn` does not
+       * touch another child — see `launch.rs`).
        *
        * This used to say the native layer did it. It did not: there is no menu,
        * no `initialization_script` and no key interception in `src-tauri`, so
@@ -105,8 +131,13 @@ export function useGlobalKeys(): void {
        * with no menu has no find-in-page to open, so the key did nothing at all.
        * It is now the transcript's own find (`case 'f'` below), which is why it
        * is deliberately **not** in this list: the terminal guard has to be
-       * allowed to see it. */
-      if (e.key === 'F5' || (mod && !e.shiftKey && ['r', 'p'].includes(e.key.toLowerCase()))) {
+       * allowed to see it.
+       *
+       * **Shift is not an exception.** The list used to be guarded by
+       * `!e.shiftKey`, which let `Ctrl+Shift+R` through — WebView2's *hard*
+       * reload (the same family as `Ctrl+F5`). A reload costs exactly what a
+       * plain one costs, so a modifier must not be able to reach it. */
+      if (isReloadKey(e)) {
         e.preventDefault();
         return;
       }

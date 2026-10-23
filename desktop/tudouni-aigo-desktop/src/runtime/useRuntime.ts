@@ -73,8 +73,22 @@ export function useRuntimeBridge(): void {
       if (cancelled) return;
 
       // The listener exists now, so the bridge may release whatever it queued
-      // before this moment.
-      await attachRuntimeListener();
+      // before this moment. **If that announcement cannot be made, the window
+      // has no working bridge even though the listeners are installed**: the
+      // bridge would keep queueing every line for ever and this screen would
+      // boot over a perfectly healthy runtime. It gets the same treatment as a
+      // failed registration above — a stated start-up problem, not silence.
+      try {
+        await attachRuntimeListener();
+      } catch (err) {
+        if (cancelled) return;
+        useApp
+          .getState()
+          .setStartupProblem(
+            `the window could not start listening to the runtime: ${String(err)}`,
+          );
+        return;
+      }
 
       if (cancelled) return;
 

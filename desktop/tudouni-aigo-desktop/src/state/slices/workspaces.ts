@@ -17,9 +17,45 @@ import { headForActive } from '../modalQueue';
 import { activeRuntime } from '../appView';
 import { FIND_IDLE } from '../find';
 import { describeFailure, lookupToolFacts } from '../runtimeLanding';
+import { nextFailedKey } from '../startingSeq';
 
 export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspace' | 'enterWorkspace' | 'addWorkspace' | 'removeWorkspace' | 'addSshHost' | 'updateSshHost' | 'removeSshHost' | 'addRemoteWorkspace' | 'updateRemoteWorkspace' | 'removeRemoteWorkspace' | 'enterRemoteWorkspace' | 'connectRemoteWorkspace' | 'installRemoteWorkspace' | 'checkConfigSync' | 'resolveConfigSync' | 'dismissConfigSync' | 'applyLaunch' | 'toolFacts'> {
   const { set, get, abandonIfUntouched } = ctx;
+
+  /**
+   * Put a failed remote open on screen as its own short-lived row.
+   *
+   * Both failure paths in `connectRemoteWorkspace` — the automatic install
+   * ending without a binary, and the dial itself rejecting — need exactly this,
+   * and they used to build it twice. The key comes from the counter rather
+   * than a timestamp: two opens settling in the same millisecond would
+   * otherwise share one key, and the second `set` would replace the first row
+   * while `order` kept a second entry pointing at the same bucket.
+   *
+   * The row has **no runtime handle** (there was never a child), which is why
+   * its key must be one `bridgeKey` refuses: `sendTo` is a no-op on it, and a
+   * "Try again" goes through `attachSession` rather than a command keyed by
+   * it.
+   */
+  function openFailedRow(
+    workspace: string,
+    launch: LaunchArgs,
+    remoteWorkspaceId: string,
+    reason: string,
+  ): void {
+    const key = nextFailedKey();
+    const bucket = createSessionBucket(key, workspace, launch, remoteWorkspaceId);
+    bucket.problem = reason;
+    bucket.connection = { phase: 'failed', problem: reason };
+    set((state) => ({
+      sessions: { ...state.sessions, [key]: bucket },
+      order: [...state.order, key],
+      activeKey: key,
+      // The open is over, so the in-flight mark goes too.
+      openingRemote: null,
+    }));
+  }
+
   return {
     async pickWorkspace() {
       // A different workspace means a different child process: the runtime takes
@@ -285,18 +321,14 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
           // the catch below — except the sentence says the install failed
           // (with the install's own reason), not that a connection was
           // attempted and refused.
-          const failed = `failed-${Date.now().toString(36)}`;
-          const bucket = createSessionBucket(failed, entry.remotePath, launch, remoteWorkspaceId);
-          const reason = settled?.error !== null ? settled.error : 'the runtime was not installed on the remote host';
-          bucket.problem = reason;
-          bucket.connection = { phase: 'failed', problem: reason };
-          set((state) => ({
-            sessions: { ...state.sessions, [failed]: bucket },
-            order: [...state.order, failed],
-            activeKey: failed,
-            // The open is over, so the in-flight mark goes too.
-            openingRemote: null,
-          }));
+          openFailedRow(
+            entry.remotePath,
+            launch,
+            remoteWorkspaceId,
+            settled?.error !== null
+              ? settled.error
+              : 'the runtime was not installed on the remote host',
+          );
           return;
         }
       }
@@ -319,17 +351,7 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
         // Same shape as attachSession's own catch: the refusal belongs to the
         // session being opened, not to the window, so it gets its own
         // short-lived row rather than taking over the screen.
-        const failed = `failed-${Date.now().toString(36)}`;
-        const bucket = createSessionBucket(failed, entry.remotePath, launch, remoteWorkspaceId);
-        bucket.problem = describeFailure(err);
-        bucket.connection = { phase: 'failed', problem: describeFailure(err) };
-        set((state) => ({
-          sessions: { ...state.sessions, [failed]: bucket },
-          order: [...state.order, failed],
-          activeKey: failed,
-          // The open is over, so the in-flight mark goes too.
-          openingRemote: null,
-        }));
+        openFailedRow(entry.remotePath, launch, remoteWorkspaceId, describeFailure(err));
         return;
       }
 

@@ -196,6 +196,17 @@ const SUITES = [
   // carries no `data-entry` is counted and never drawn, and a highlight registry
   // name the stylesheet does not style paints nothing at all.
   'find.test.tsx',
+  // The one shortcut whose miss is invisible: a reload. The screen comes back
+  // looking normal, and the transcript, draft and history that were there are
+  // gone — while the child keeps running unseen. The rule is a pure predicate
+  // precisely so the modifier combinations (including WebView2's hard reload,
+  // `Ctrl+Shift+R`) can be asserted rather than trusted.
+  'global-keys.test.ts',
+  // The words this window puts on the runtime's records: context pressure,
+  // compaction, goal rounds and pictures. The store keeps facts only, and the
+  // sentences are asserted here — including the one a formatter gets wrong for
+  // free, printing a missing figure as zero.
+  'front-message.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

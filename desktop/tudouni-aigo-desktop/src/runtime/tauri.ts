@@ -527,7 +527,15 @@ export function createTauriRuntime(
 
     send(msg: FrontendMsg): void {
       if (disposed || !isHosted()) return;
-      void tauriInvoke('runtime_send', { key: Number(key), line: JSON.stringify(msg) }).catch(
+      // The same guard the shutting-down commands use. A handle is only minted
+      // for a key the bridge returned, so this should always pass — but
+      // `Number('failed-…')` is `NaN` and `JSON.stringify` turns that into
+      // `null`, which would be rejected by Rust's `ChildKey` and then vanish
+      // into the `catch` below. A message that never left is not something
+      // `runtime://exited` can explain.
+      const target = bridgeKey(key);
+      if (target === null) return;
+      void tauriInvoke('runtime_send', { key: target, line: JSON.stringify(msg) }).catch(
         () => {
           /* The child is gone; `runtime://exited` is the message that says so. */
         },
@@ -841,14 +849,16 @@ export async function readLocalConfigText(): Promise<LocalConfigText | null> {
 }
 
 /** Tell the bridge the front end is listening, so it flushes everything every
- *  child queued before that was true. Returns how many lines were released. */
+ *  child queued before that was true. Returns how many lines were released.
+ *
+ *  **A rejection is left as a rejection**, unlike the readers above. Zero is
+ *  also the legitimate answer ("nothing was queued"), so swallowing the error
+ *  would make the one unrecoverable failure — the bridge never heard the
+ *  announcement and therefore queues every future line for ever — look exactly
+ *  like a quiet start. The caller is the only place that can say so. */
 export async function attachRuntimeListener(): Promise<number> {
   if (!isHosted()) return 0;
-  try {
-    return await tauriInvoke<number>('runtime_attach_listener');
-  } catch {
-    return 0;
-  }
+  return await tauriInvoke<number>('runtime_attach_listener');
 }
 
 /**
@@ -1143,8 +1153,10 @@ export async function killRuntime(key?: string): Promise<void> {
  *  start" panel. Not protocol data. */
 export async function readRuntimeStderr(key: string): Promise<string[]> {
   if (!isHosted()) return [];
+  const target = bridgeKey(key);
+  if (target === null) return [];
   try {
-    return await tauriInvoke<string[]>('runtime_stderr', { key: Number(key) });
+    return await tauriInvoke<string[]>('runtime_stderr', { key: target });
   } catch {
     return [];
   }
@@ -1595,7 +1607,9 @@ export async function downloadDeliverable(key: string, path: string): Promise<Do
   if (!isHosted()) {
     throw new Error('deliverables can only be downloaded in the desktop application');
   }
-  return tauriInvoke<DownloadedDeliverable>('deliverable_download', { key: Number(key), path });
+  const target = bridgeKey(key);
+  if (target === null) throw new Error("that session's runtime is not running");
+  return tauriInvoke<DownloadedDeliverable>('deliverable_download', { key: target, path });
 }
 
 /**
@@ -1628,7 +1642,9 @@ export async function inlineImageRemote(key: string, path: string): Promise<Inli
   if (!isHosted()) {
     throw new Error('pictures can only be drawn in the desktop application');
   }
-  return tauriInvoke<InlineImage>('inline_image_remote', { key: Number(key), path });
+  const target = bridgeKey(key);
+  if (target === null) throw new Error("that session's runtime is not running");
+  return tauriInvoke<InlineImage>('inline_image_remote', { key: target, path });
 }
 
 /** What the bridge hands back after reading a workspace picture. */
@@ -1703,7 +1719,9 @@ export async function stashImage(key: string, bytes: Uint8Array): Promise<Stashe
   if (!isHosted()) {
     throw new Error('pictures can only be pasted into the desktop application');
   }
+  const target = bridgeKey(key);
+  if (target === null) throw new Error("that session's runtime is not running");
   return tauriInvoke<StashedImage>('image_stash', bytes, {
-    headers: { 'x-tudouni-key': String(Number(key)) },
+    headers: { 'x-tudouni-key': String(target) },
   });
 }

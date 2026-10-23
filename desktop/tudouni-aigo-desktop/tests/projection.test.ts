@@ -1662,8 +1662,14 @@ test('image_attached renders in its four shapes, with the keys each one really s
     bytes: 1000,
   });
   assert.equal(attached.tone, 'image');
-  assert.match(attached.text, /shot\.png/);
-  assert.match(attached.text, /800×600/);
+  assert.equal(attached.text, '', 'the sentence is this window’s, not the runtime’s');
+  assert.equal(attached.message?.code, 'imageAttached');
+  assert.deepEqual(attached.message, {
+    code: 'imageAttached',
+    name: 'shot.png',
+    width: 800,
+    height: 600,
+  });
 
   // `skipped` — `path` + `reason`, the runtime's own sentence for the file.
   const skipped = noteOf('image_attached', {
@@ -1672,8 +1678,11 @@ test('image_attached renders in its four shapes, with the keys each one really s
     reason: 'too large',
   });
   assert.equal(skipped.tone, 'error');
-  assert.match(skipped.text, /big\.png/);
-  assert.match(skipped.text, /too large/);
+  assert.deepEqual(skipped.message, {
+    code: 'imageSkipped',
+    path: 'big.png',
+    reason: 'too large',
+  });
 
   // `refused` — `names[]` + `model`, and **no** `path` / `reason`: the sentence
   // is written to stderr by the runtime, and stderr is not protocol content. A
@@ -1685,9 +1694,11 @@ test('image_attached renders in its four shapes, with the keys each one really s
     model: 'deepseek-chat',
   });
   assert.equal(refused.tone, 'error');
-  assert.match(refused.text, /a\.png/);
-  assert.match(refused.text, /b\.png/);
-  assert.match(refused.text, /deepseek-chat/);
+  assert.deepEqual(refused.message, {
+    code: 'imageRefused',
+    names: ['a.png', 'b.png'],
+    model: 'deepseek-chat',
+  });
 
   // `over_limit` — `limit` / `rest` / `paths[]`: the runtime names them on
   // purpose, because "4 of 9 attached" leaves the reader to guess which four.
@@ -1698,8 +1709,22 @@ test('image_attached renders in its four shapes, with the keys each one really s
     paths: ['a.png', 'b.png'],
   });
   assert.equal(overLimit.tone, 'error');
-  assert.match(overLimit.text, /limit 5/);
-  assert.match(overLimit.text, /b\.png/);
+  assert.deepEqual(overLimit.message, {
+    code: 'imageOverLimit',
+    rest: 4,
+    limit: 5,
+    paths: ['a.png', 'b.png'],
+  });
+
+  // A missing figure is null, not 0: the sentence then omits it rather than
+  // claiming "0 more picture(s)".
+  const unknown = noteOf('image_attached', { status: 'over_limit' });
+  assert.deepEqual(unknown.message, {
+    code: 'imageOverLimit',
+    rest: null,
+    limit: null,
+    paths: [],
+  });
 });
 
 test('an unknown event kind is ignored rather than fatal', () => {

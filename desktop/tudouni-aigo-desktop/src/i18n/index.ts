@@ -1055,6 +1055,44 @@ export const en = {
   'note.term.ended': 'Terminal {id} exited.',
   'note.term.endedCode': 'Terminal {id} exited with code {code}.',
   'note.term.detached': 'Terminal {id} is still running.',
+
+  /* ---- context, goal rounds and pictures ----
+   *
+   * The same rule as the terminal notes above: these rows are this window's
+   * own account of what the runtime reported, so the store keeps only the
+   * facts (`FrontMessage`) and the sentence is built here. The fragment keys
+   * exist because every figure is optional — a missing `items` or a missing
+   * `#round` must drop out of the sentence rather than be printed as zero. */
+  'note.context.degraded': 'Context degraded',
+  'note.context.degradedDetail': 'Context degraded ({detail})',
+  'note.context.compacted': 'History compacted',
+  'note.context.compactedDetail': 'History compacted ({detail})',
+  'note.context.items': '{n} items',
+  'note.context.tokens': '{from} → {to} tok',
+  'note.context.folded': '{n} folded',
+  'note.goal.round': 'Goal round',
+  'note.goal.roundDecision': 'Goal round {decision}',
+  'note.goal.position': '#{n}',
+  'note.goal.progress': '{n}/{max}',
+  'note.image.attached': 'Attached {name}{size}',
+  'note.image.size': ' ({width}×{height})',
+  'note.image.skipped': '{path} was not attached: {reason}',
+  'note.image.skippedNoReason': '{path} was not attached',
+  'note.image.refused':
+    'The model in use ({model}) cannot be shown pictures, so {n} named picture(s) were not attached: {names}',
+  'note.image.refusedNoModel':
+    'The model in use cannot be shown pictures, so {n} named picture(s) were not attached: {names}',
+  'note.image.overLimit': '{n} more picture(s) did not fit (limit {limit} per message){detail}',
+  'note.image.paths': ': {paths}',
+  /* Reachable only if the runtime ever omits `rest`/`limit`. The honest
+     sentence then states what happened and invents neither figure. */
+  'note.image.overLimitUnknown': 'Some pictures did not fit in this message.',
+  /** The wait for the handshake ran out before a task's first prompt could be
+   *  sent. Not a runtime sentence: the runtime never saw the prompt. */
+  'note.handshake.timeout':
+    'The runtime did not answer within {seconds} seconds, so this prompt was not sent. Try again once the session is ready.',
+  'note.handshake.timeoutTask':
+    'The runtime did not answer within {seconds} seconds, so “{task}” was not started. Try again once the session is ready.',
   'panel.help.title': 'Help',
   'panel.help.commands': 'Commands',
   'panel.help.keys': 'Keybindings',

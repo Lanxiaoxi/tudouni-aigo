@@ -13,7 +13,7 @@ import { extractRefinePrompts } from '@/learn/refineTemplate';
 import { outcomeOfChildExit, outcomeOfTurnStatus } from '@/task/tasks';
 import { sendTo } from '@/runtime/bus';
 import { samePath } from '@/utils/format';
-import { quitApp } from '@/runtime/tauri';
+import { attachRuntimeListener, quitApp } from '@/runtime/tauri';
 import { STDERR_TAIL } from '../types';
 import { persistPrefs } from '../prefs';
 import { enqueueModal, questionBatchOf, releaseModalsOf } from '../modalQueue';
@@ -128,6 +128,19 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRun
     },
 
     async retryStartup() {
+      // **The announcement is retried first.** A start-up problem can be the
+      // bridge never hearing that this window is listening, and in that state
+      // starting a child would only queue its handshake behind a door that
+      // never opens. Announcing again is harmless when the first one worked:
+      // it flips the same flag and releases an empty queue.
+      try {
+        await attachRuntimeListener();
+      } catch (err) {
+        set({
+          startupProblem: `the window could not start listening to the runtime: ${String(err)}`,
+        });
+        return;
+      }
       set({ startupProblem: null });
       // The active session's child is gone (that is why the screen is up), so
       // this is a fresh session rather than a retry inside a live one.
