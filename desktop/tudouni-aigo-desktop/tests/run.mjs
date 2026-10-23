@@ -146,6 +146,75 @@ const SUITES = [
   // remote child rather than hand the remote path to the local spawn 鈥?which
   // is what refused it with "the workspace 鈥?is not a directory".
   'remote-new-session.test.ts',
+  // Applying the start-up arguments (`--ericai` / `--max-steps`) while a remote
+  // session is on screen. The settings panel's "Apply" was the last entry point
+  // still handing the remote workspace's path to the **local** spawn — refused
+  // on Windows ("the workspace … is not a directory"), and silently a *local*
+  // session on a client where that path exists, with the rail and the top bar
+  // still reading as the remote workspace.
+  'remote-apply-launch.test.ts',
+  // Session search on a remote screen. The guard used to test the workspace for
+  // `''`, and a remote workspace's path is never empty — so the scan ran against
+  // this machine: a false "No session matches" on Windows/macOS, and another
+  // project's conversations on a client where the path does exist. The rule is
+  // pinned as a property of the bucket (`remoteWorkspaceId`), because the path
+  // string cannot tell the two apart.
+  'remote-session-search.test.ts',
+  // Which **machine** a saved session id belongs to. `openSession` decided
+  // remote-vs-local from the screen and then passed the id through, so a
+  // notification clicked (or a task run opened) while another conversation was
+  // on display sent the id — and, for the notification, the remote path — to the
+  // local spawn: a refusal, or a local child "resuming" an id it cannot have,
+  // which the runtime reads as a new conversation with that name.
+  'remote-session-home.test.ts',
+  // Refining a task on a remote screen. The panel used to grey Refine out for
+  // every remote workspace, on the theory that the run transcripts were "not on
+  // this machine" — true, but beside the point: the refine *child* lives on that
+  // host too and reads its own `.tudouni/sessions/`. What was actually broken
+  // was the open path, which always called the local spawn with a remote
+  // workspace path.
+  'remote-refine.test.ts',
+  // Which machine the config panel edits. The panel is the last place the two
+  // machines' files were indistinguishable: both are `~/.tudouni/config.json`,
+  // so a remote screen used to show this machine's routes and write this
+  // machine's file while the host's runtime kept reading its own. The store
+  // answers "whose file is this" here, because it is the layer that holds the
+  // credentials — and the baseline it records afterwards is what stops the next
+  // open reporting the person's own edit as somebody else's change.
+  'remote-config-target.test.ts',
+  // Dropping a file onto a remote session. The path the OS hands over is on
+  // **this** machine, so inserting it produced a sentence the far runtime could
+  // not resolve — and the notice explaining it ("the model would go through
+  // shell") was false, because the far shell cannot see this machine either.
+  // The file is uploaded into the workspace instead and the sentence carries the
+  // relative path, which is what a pasted picture already did.
+  'remote-attach.test.ts',
+  // A recorded `remoteBinary` that no longer runs: a host that was reinstalled,
+  // or had `~/.tudouni` cleaned, keeps resolving its symlink to a version name,
+  // so the install path said "already installed" and the dial failed for ever.
+  // The repair is "clear the path and install once" on the front end plus a
+  // `test -x` probe on the Rust side — either half alone leaves the row stuck.
+  'remote-binary-repair.test.ts',
+  // Which place the next launch offers. The start-up reopens a *local*
+  // directory by itself, and a remote workspace's directory is on another host —
+  // so "last used" needed a second field that holds an entry id rather than a
+  // path. The first screen offers it; it does not dial, because a connection on
+  // every launch costs a round trip, may fail before the network is up, and can
+  // raise the config-sync question before anybody asked for anything.
+  'remote-last-workspace.test.ts',
+  // Which build is answering this conversation. Audit read the **window**'s
+  // runtime version, which comes from the binary next to this application — the
+  // wrong build on a remote screen, shown beside a `protocol` that came from the
+  // host. `init` carries no product version, so the host is asked once, on
+  // demand, and the answer is kept on the bucket.
+  'remote-runtime-version.test.ts',
+  // The saved hosts. `removeSshHost` was implemented with a whole refusal rule
+  // and called by nothing; `configPolicy` could only ever be written, never
+  // shown or changed back. Both now have a surface, and these assert the rules
+  // it stands on: a referenced host is not removable, a host with no stored
+  // policy reads as `ask`, and re-adding a saved workspace updates its name
+  // rather than silently keeping the one from the first visit.
+  'remote-hosts.test.ts',
   // The connecting toast: what it names (the workspace being opened, not the
   // focus) and when it is gone (the handshake landing, or a failure that has
   // its own surface). The selector is pure, so the two halves 鈥?the pre-bucket

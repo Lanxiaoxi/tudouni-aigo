@@ -1,5 +1,5 @@
-import { FolderOpen, RefreshCw, TriangleAlert } from 'lucide-react';
-import { NO_STRINGS, useApp, useSessionField } from '@/state/store';
+import { FolderOpen, RefreshCw, Server, TriangleAlert } from 'lucide-react';
+import { NO_STRINGS, remoteConnectionOf, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 
 /**
@@ -34,6 +34,11 @@ export function SessionProblem() {
   const stderrTail = useSessionField((rt) => rt.stderrTail, NO_STRINGS);
   const retrySession = useApp((s) => s.retrySession);
   const pickWorkspace = useApp((s) => s.pickWorkspace);
+  // Which remote workspace this row belongs to, if any — `remoteConnectionOf`
+  // is the same "where is this session" answer the top bar and the file panel
+  // use, and `null` means the failure was a local one.
+  const remote = useApp((s) => remoteConnectionOf(s, s.activeKey));
+  const connectRemoteWorkspace = useApp((s) => s.connectRemoteWorkspace);
 
   if (!problem) return null;
 
@@ -61,17 +66,42 @@ export function SessionProblem() {
           <RefreshCw size={11} />
           <span>{t('startup.retry')}</span>
         </button>
-        {/* The other way out, and the one that is usually right: a directory the
-            runtime refuses is not fixed by trying again, it is fixed by picking
-            a different one. */}
-        <button
-          type="button"
-          className="btn btn-secondary btn-compact"
-          onClick={() => void pickWorkspace()}
-        >
-          <FolderOpen size={11} />
-          <span>{t('topbar.pickWorkspace')}</span>
-        </button>
+        {/* **The other way out, and on a remote row it is not a local
+            directory.** "Choose workspace" opens the native directory dialog,
+            which can only ever list **this** machine's file system: from a
+            failed remote session it led straight out of the remote workspace
+            and offered nothing that could fix the connection — the person was
+            being pointed at the wrong machine by the one button meant to help.
+            A remote row therefore offers the two things that are actually true
+            for it: reconnect *that* host (with the automatic install, in case
+            the binary is what went missing), or go back to the rail, where the
+            remote workspace is a row again. */}
+        {remote === null ? (
+          <button
+            type="button"
+            className="btn btn-secondary btn-compact"
+            onClick={() => void pickWorkspace()}
+          >
+            <FolderOpen size={11} />
+            <span>{t('topbar.pickWorkspace')}</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-secondary btn-compact"
+            onClick={() => {
+              const id = useApp.getState().sessions[key ?? '']?.remoteWorkspaceId ?? null;
+              if (id !== null) void connectRemoteWorkspace(id, { forceNew: true });
+            }}
+          >
+            <Server size={11} />
+            <span>
+              {t('problem.reconnectRemote', {
+                where: `${remote.user}@${remote.host}`,
+              })}
+            </span>
+          </button>
+        )}
       </div>
 
       {tail.length > 0 ? (

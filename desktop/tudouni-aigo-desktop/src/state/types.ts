@@ -155,6 +155,17 @@ export type ComposerNotice =
   | { code: 'drop-outside'; names: string[]; tone: 'warn' }
   /** Paths that were inserted with no workspace open: nothing can be checked. */
   | { code: 'drop-no-workspace'; names: string[]; tone: 'warn' }
+  /**
+   * A **remote** session could not take the file.
+   *
+   * There is no `drop-outside` on a remote screen, and that is the point: an
+   * outside path is a statement about *this* machine's workspace boundary, and a
+   * path on this machine is not outside the remote workspace — it is not in it at
+   * all, and the far shell cannot see it either. So the only two outcomes are
+   * "uploaded" and this: the upload was refused, with the bridge's own sentence
+   * as `reason` (`names` says which files, because one drop can carry several).
+   */
+  | { code: 'attach-remote-failed'; names: string[]; reason: string; tone: 'warn' }
   /** A paste refused before anything was written. */
   | { code: 'paste-no-workspace'; tone: 'warn' }
   | { code: 'paste-at-capacity'; limit: number; tone: 'warn' }
@@ -525,6 +536,21 @@ export interface SessionRuntime {
   runtimeExit: { code: number; requested: boolean } | null;
   /** What this child was started with. See `LaunchArgs`. */
   launch: LaunchArgs;
+  /**
+   * The build running **on this session's machine**, when this end has asked.
+   *
+   * `null` until asked, and that is not a gap: `init` carries no product version
+   * (`v` is the envelope, `protocol` is the conversation's semantic version), so
+   * the only way to learn it is to run the binary once. A local session can read
+   * it from the window-level `runtimeVersion`; a **remote** one has to ask the
+   * host, and this is where the answer is kept.
+   *
+   * It exists because the window-level value is the wrong answer on a remote
+   * screen: Audit drew this machine's version beside a `protocol` that came from
+   * the host, and the two lines contradicted each other — which is exactly what
+   * somebody reading Audit is trying to resolve.
+   */
+  runtimeBuild: string | null;
 
   session: SessionInfo | null;
   /**
@@ -911,18 +937,36 @@ export interface SessionRuntime {
  * in one child's copy and 141 · 55 in another's, while the file on disk held 240
  * messages and 99 steps.
  *
- * Keyed by workspace, because that is the scope the runtime answers in — the
- * rail draws the conversation list of the workspace on screen, and a list
- * belonging to another directory is not this list's business. **A map rather
- * than a single slot**, and that is not symmetry for its own sake: two sessions
- * in two workspaces can both answer `session_list`, and one slot would let a
- * background workspace's reply overwrite the list the person is looking at —
- * the same "the list changed under me" symptom, one layer down. The key is
- * `normPath(workspace)`, so it is built the same way it is looked up.
+ * Keyed by workspace **and machine**, because that is the scope the runtime
+ * answers in — the rail draws the conversation list of the workspace on screen,
+ * and a list belonging to another directory is not this list's business. **A map
+ * rather than a single slot**, and that is not symmetry for its own sake: two
+ * sessions in two workspaces can both answer `session_list`, and one slot would
+ * let a background workspace's reply overwrite the list the person is looking
+ * at — the same "the list changed under me" symptom, one layer down. The key is
+ * `savedSessionsKey(workspace, remoteWorkspaceId)`, so it is built the same way
+ * it is looked up.
+ *
+ * **The machine is part of the key, and that is a second instance of the same
+ * bug.** Keying by `normPath(workspace)` made `hostA:/srv/app`,
+ * `hostB:/srv/app` and a local `/srv/app` one bucket: whichever answered last
+ * overwrote the other, both rails drew one list, and a row clicked in it carried
+ * the *other* host's session id. See `state/savedSessionsKey.ts`.
  */
 export interface SavedSessions {
   /** The workspace this list describes, as the runtime named it. */
   workspace: string;
+  /**
+   * Which saved remote workspace this list belongs to, or `null` for a local
+   * directory.
+   *
+   * Carried on the value as well as in the key, because the two answer different
+   * questions: the key says where to find the list, and this says **what the
+   * list is about** — which is what lets a reader (the session board, the
+   * "which place does this id live in" lookup) match a list to a machine without
+   * parsing the key.
+   */
+  remoteWorkspaceId: string | null;
   /**
    * Every row the runtime reported, **as it reported them**.
    *

@@ -55,7 +55,7 @@ import {
 } from '@/state/store';
 import { registerRuntime } from '@/runtime/bus';
 import { reduceEvent, type Entry } from '@/state/entries';
-import { normPath } from '@/utils/format';
+import { savedSessionsKey } from '@/state/savedSessionsKey';
 import type { FrontendMsg } from '@/protocol/types';
 
 /** A store with the given sessions and nothing else carried over. */
@@ -120,6 +120,7 @@ function captureSent(): FrontendMsg[] {
 function savedFor(
   workspace: string,
   items: { id: string; messages?: number; steps?: number; preview?: string; archived?: boolean }[],
+  remoteWorkspaceId: string | null = null,
 ): void {
   const rows = items.map((row) => ({
     id: row.id,
@@ -133,8 +134,9 @@ function savedFor(
   useApp.setState((s) => ({
     savedSessions: {
       ...s.savedSessions,
-      [normPath(workspace)]: {
+      [savedSessionsKey(workspace, remoteWorkspaceId)]: {
         workspace,
+        remoteWorkspaceId,
         items: rows,
         // The same derivation the store does on write — `SavedSessions.active`.
         // A hand-built record that omitted this would make every `.active`
@@ -234,11 +236,17 @@ test('a remote conversation the saved list holds is not drawn twice either', () 
   const bucket = resumed('k1', '/home/deploy/repo', '20261015-180810');
   bucket.remoteWorkspaceId = 'rw-1';
   install({ k1: bucket }, ['k1'], 'k1');
-  savedFor('/home/deploy/repo', [
-    { id: '20261015-180810', messages: 80, steps: 38, preview: 'hi 你有些什么技能和工具' },
-  ]);
+  // The saved list carries the **same machine** as the bucket: a list filed
+  // under `rw-1` is what the remote row's own `session_list` answer writes, and
+  // a test that filed it as a local path would be asserting a state the app
+  // cannot produce.
+  savedFor(
+    '/home/deploy/repo',
+    [{ id: '20261015-180810', messages: 80, steps: 38, preview: 'hi 你有些什么技能和工具' }],
+    'rw-1',
+  );
 
-  const rows = parse(selectLiveOnlyKey(useApp.getState(), '/home/deploy/repo'));
+  const rows = parse(selectLiveOnlyKey(useApp.getState(), '/home/deploy/repo', 'rw-1'));
   assert.deepEqual(rows, [], 'the saved row is the only one drawn for this conversation');
 });
 
@@ -251,8 +259,26 @@ test('a remote conversation with no file yet is still listed', () => {
   bucket.remoteWorkspaceId = 'rw-1';
   install({ k1: bucket }, ['k1'], 'k1');
 
-  const rows = parse(selectLiveOnlyKey(useApp.getState(), '/home/deploy/repo'));
+  const rows = parse(selectLiveOnlyKey(useApp.getState(), '/home/deploy/repo', 'rw-1'));
   assert.deepEqual(rows, [{ key: 'k1', id: '20261015-190009', status: 'idle' }]);
+});
+
+test('a local and a remote workspace at the same path do not draw each other\'s rows', () => {
+  // The reason `selectLiveOnlyKey` takes the machine at all. `/srv/app` here and
+  // `/srv/app` on the host are two places that compare equal as strings; before
+  // the id was part of the guard, each one's "open now" group drew the other's
+  // conversations — the same list-shows-someone-else's-session shape the
+  // `savedSessions` key fix is about, one layer up.
+  const local = resumed('k-local', '/srv/app', 's-local');
+  const remote = resumed('k-remote', '/srv/app', 's-remote');
+  remote.remoteWorkspaceId = 'rw-1';
+  install({ 'k-local': local, 'k-remote': remote }, ['k-local', 'k-remote'], 'k-local');
+
+  const onLocal = parse(selectLiveOnlyKey(useApp.getState(), '/srv/app', null));
+  assert.deepEqual(onLocal.map((r) => r.key), ['k-local'], 'only this machine\'s conversation');
+
+  const onRemote = parse(selectLiveOnlyKey(useApp.getState(), '/srv/app', 'rw-1'));
+  assert.deepEqual(onRemote.map((r) => r.key), ['k-remote'], 'and only the host\'s');
 });
 
 /* ============================================================

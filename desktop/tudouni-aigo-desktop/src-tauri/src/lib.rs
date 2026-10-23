@@ -25,6 +25,11 @@
 mod bridge;
 mod config_commands;
 
+/// Attaching a **file** to a remote session's sentence: the drop and the plus
+/// menu both hand over a path on this machine, which the far host has never
+/// heard of. See its own module doc for why the upload is keyed by the child.
+mod attach;
+
 /// The configuration files the desktop reads and writes directly.
 ///
 /// A module rather than a pair of commands, because it is the one thing here
@@ -156,12 +161,19 @@ pub fn run() {
             crate::remote_commands::install_remote_runtime,
             crate::remote_commands::check_remote_config,
             crate::remote_commands::write_remote_config,
+            // The config panel's own pair, for a remote screen. Separate from
+            // the sync commands above because they answer a different question:
+            // those decide *whether* to copy a file between machines, these
+            // edit the far machine's file in place, in the panel's shape.
+            crate::remote_commands::read_remote_user_config,
+            crate::remote_commands::write_remote_user_config,
             crate::config_commands::read_local_config_text,
             crate::runtime_commands::runtime_attach_listener,
             crate::runtime_commands::runtime_send,
             crate::runtime_commands::runtime_shutdown,
             crate::runtime_commands::runtime_kill,
             crate::runtime_commands::runtime_version,
+            crate::runtime_commands::remote_runtime_version,
             crate::runtime_commands::runtime_stderr,
             crate::system::resource_usage,
             crate::system::set_prevent_sleep,
@@ -180,6 +192,7 @@ pub fn run() {
             crate::config_commands::config_write,
             crate::runtime_commands::sessions_search,
             crate::image_stash::image_stash,
+            crate::attach::attach_file_remote,
             crate::image::inline_image,
             crate::window_close::close_prompt_answer,
             crate::window_close::close_prompt_ack,

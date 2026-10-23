@@ -244,6 +244,7 @@ pub(crate) fn spawn_remote(app: &AppHandle, options: &RemoteAttachOptions) -> Re
                 staging: None,
                 remote_workspace: Some(remote_workspace.clone()),
                 remote_ssh: Some(remote_ssh.clone()),
+                remote_binary: Some(options.remote_binary.clone()),
             },
         );
         // Which remote children's paste slices belong to somebody: every

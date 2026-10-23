@@ -25,6 +25,7 @@ export function createSessionBucket(
     stderrTail: [],
     runtimeExit: null,
     launch,
+    runtimeBuild: null,
     session: null,
     learning: false,
     refineTaskId: null,

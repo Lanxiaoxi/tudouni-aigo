@@ -354,12 +354,73 @@ fn read_version(binary: &str) -> Result<Option<String>, String> {
         .map_err(|e| format!("could not run {}: {e}", path.display()))?;
 
     let text = String::from_utf8_lossy(&output.stdout);
-    let version = text
-        .split_whitespace()
+    Ok(parse_version_output(&text))
+}
+
+/// The version out of one `--version` output, or `None`.
+///
+/// `Describe()` prints a name and a version separated by whitespace (`tudouni-aigo
+/// 4.18.0`), and `dev` is a legitimate second field: a build without ldflags is a
+/// dev build, and prettifying it would hide which binary is actually running.
+///
+/// Shared with the remote door below, so the two cannot parse the same output
+/// differently — which would show one version on a local session and another on a
+/// remote one running the same build.
+fn parse_version_output(text: &str) -> Option<String> {
+    text.split_whitespace()
         .nth(1)
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    Ok(version)
+        .filter(|value| !value.is_empty())
+}
+
+/// The version of the runtime **running on a remote child's host**.
+///
+/// The window-level `runtime_version` reads this machine's binary, and on a
+/// remote session that is the wrong answer — the host may be running an older or
+/// newer build (the install is a one-off, not an upgrade-on-connect), so Audit
+/// showing the local version beside a `protocol` that came from the host is two
+/// lines that contradict each other.
+///
+/// `init` carries no version to fall back on (`v` is the envelope, `protocol` is
+/// the conversation's semantic version), so the only way to learn it is to run
+/// the binary once — over the child's own SSH destination, with the path it was
+/// started from. **Both come off the bridge rather than from the caller**, for
+/// the same reason the paste's destination does: a front end that could name a
+/// path here could ask a host to execute something this program never started.
+///
+/// A host that cannot answer is reported as `None` rather than as an error: the
+/// panel draws "unknown", which is honest, where a red failure row would suggest
+/// the session itself is broken.
+#[tauri::command]
+pub(crate) async fn remote_runtime_version(app: AppHandle, key: ChildKey) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || remote_version_blocking(app, key))
+        .await
+        .map_err(|error| format!("the remote version task failed: {error}"))?
+}
+
+fn remote_version_blocking(app: AppHandle, key: ChildKey) -> Result<Option<String>, String> {
+    let ssh = {
+        let state: State<Bridge> = app.state();
+        let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+        let current = guard
+            .children
+            .get(&key)
+            .ok_or("that session's runtime is not running, so its version cannot be asked for")?;
+        match (current.remote_ssh.clone(), current.remote_binary.clone()) {
+            (Some(ssh), Some(binary)) if !binary.trim().is_empty() => (ssh, binary),
+            _ => return Err("that session is not remote, or its binary path is unknown".to_string()),
+        }
+    };
+    let (ssh, binary) = ssh;
+    let session = crate::ssh_backend::dial_session(&ssh.to_target())
+        .map_err(|e| format!("could not reach the remote host to ask its version: {e}"))?;
+    // Quoted, because the path comes from a saved entry and a space in it would
+    // otherwise split the command — the same rule every other remote command
+    // here follows.
+    let command = format!("{} --version", crate::remote_install::q(binary.trim()));
+    let output = crate::remote_install::exec_capture(&session, &command)
+        .map_err(|e| format!("could not run --version on the remote host: {e}"))?;
+    Ok(parse_version_output(&output))
 }
 
 /// Search the workspace's saved sessions for a keyword and hand back the hits.

@@ -134,6 +134,7 @@ export function createAppStore() {
     pendingRemoteOpen: null,
     openingRemote: null,
     lastWorkspace: prefs.lastWorkspace,
+    lastRemoteWorkspaceId: prefs.lastRemoteWorkspaceId,
 
     ericaiDefault: prefs.ericaiDefault,
     maxStepsDefault: prefs.maxStepsDefault,
@@ -187,7 +188,9 @@ export {
   activeWorkspaceOf,
   isUntouchedSession,
   remoteConnectionOf,
+  remoteWorkspaceIdOf,
   resolveAttachWorkspace,
+  screenIsRemote,
 } from './appView';
 export {
   NO_ALIASES,
@@ -208,6 +211,14 @@ export {
 
 export { RAIL_MAX, RAIL_MIN, clampRailWidth } from './prefs';
 export { POLL_FLOOR_MS } from './polling';
+/** The key that names "which place's saved list this is". Exported alongside the
+ *  store because a reader outside the state tree (the board, a test that writes
+ *  a list the way the store does) has to build it the same way the store does. */
+export { savedSessionsKey } from './savedSessionsKey';
+/** Whether a refused remote dial means "the recorded binary is gone" — the
+ *  judgement the automatic reinstall turns on. Exported because it is a decision
+ *  about words, and a decision about words is worth asserting on its own. */
+export { looksLikeMissingBinary } from './runtimeLanding';
 
 /* ============================================================
    Compatibility surface

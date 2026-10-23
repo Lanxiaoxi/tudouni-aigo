@@ -10,16 +10,16 @@ import { registerRuntime, sendTo } from '@/runtime/bus';
 import { samePath } from '@/utils/format';
 import { attachRuntimeRemote, checkRemoteConfig, chooseWorkspaceDirectory, createTauriRuntime, getAppVersion, installRemoteRuntime, onInstallProgress, readLocalConfigText, readRuntimeStderr, writeRemoteConfig } from '@/runtime/tauri';
 import { decideConfigSync } from '@/state/configSync';
-import { type InstallStatus, type LaunchArgs } from '../types';
+import { type InstallStatus, type LaunchArgs, type RemoteWorkspaceEntry } from '../types';
 import { createSessionBucket } from '../sessionBucket';
 import { persistPrefs } from '../prefs';
 import { headForActive } from '../modalQueue';
-import { activeRuntime } from '../appView';
+import { activeRuntime, remoteWorkspaceIdOf } from '../appView';
 import { FIND_IDLE } from '../find';
-import { describeFailure, lookupToolFacts } from '../runtimeLanding';
+import { describeFailure, looksLikeMissingBinary, lookupToolFacts } from '../runtimeLanding';
 import { nextFailedKey } from '../startingSeq';
 
-export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspace' | 'enterWorkspace' | 'addWorkspace' | 'removeWorkspace' | 'addSshHost' | 'updateSshHost' | 'removeSshHost' | 'addRemoteWorkspace' | 'updateRemoteWorkspace' | 'removeRemoteWorkspace' | 'enterRemoteWorkspace' | 'connectRemoteWorkspace' | 'installRemoteWorkspace' | 'checkConfigSync' | 'resolveConfigSync' | 'dismissConfigSync' | 'applyLaunch' | 'toolFacts'> {
+export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspace' | 'enterWorkspace' | 'addWorkspace' | 'removeWorkspace' | 'addSshHost' | 'updateSshHost' | 'removeSshHost' | 'addRemoteWorkspace' | 'updateRemoteWorkspace' | 'removeRemoteWorkspace' | 'enterRemoteWorkspace' | 'connectRemoteWorkspace' | 'installRemoteWorkspace' | 'checkConfigSync' | 'resolveConfigSync' | 'dismissConfigSync' | 'applyLaunch' | 'configTarget' | 'noteRemoteConfigWritten' | 'toolFacts'> {
   const { set, get, abandonIfUntouched } = ctx;
 
   /**
@@ -77,9 +77,25 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
       // Opening a conversation in another workspace used to kill the one that
       // was running, which is precisely what the second target scenario needs to
       // stop happening.
+      //
+      // **`remoteWorkspaceId === null` is what makes "that directory" mean
+      // *this* machine's directory.** A remote bucket's `workspace` is a path on
+      // the other host, and a path string is the only thing the two have in
+      // common: `/srv/app` here and `/srv/app` there are two different places
+      // that compare equal. Without the guard, opening the local `/srv/app`
+      // while a remote session is saved under the same path focuses the
+      // **remote** conversation, and the person believes they opened a local
+      // directory. `enterRemoteWorkspace` already refuses the mirror image of
+      // this (it matches on `remoteWorkspaceId`), so the two entries now
+      // partition the bucket list instead of racing for it.
       const existing = s.order.find((key) => {
         const bucket = s.sessions[key];
-        return bucket && bucket.workspace !== '' && samePath(bucket.workspace, path);
+        return (
+          bucket !== undefined &&
+          bucket.workspace !== '' &&
+          bucket.remoteWorkspaceId === null &&
+          samePath(bucket.workspace, path)
+        );
       });
       if (existing) {
         get().focusSession(existing);
@@ -150,11 +166,27 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
         (item) => item.hostId === entry.hostId && item.remotePath === entry.remotePath,
       );
       if (existing) {
-        // A path that was blank (no Runtime installed yet) and is now known is
-        // worth recording — that is the wizard having learned something since.
+        // **The row is updated, not only returned** — the wizard can legitimately
+        // walk to a workspace that is already saved, and what it learned on the
+        // way is worth keeping:
+        //
+        //   - `remoteBinary` was the original case: a path that was blank ("no
+        //     Runtime installed yet") and is now known is the wizard having
+        //     installed it;
+        //   - `label` is what the person typed this time. Ignoring it meant the
+        //     second visit silently showed the name from the first, with no way
+        //     to change it — `updateRemoteWorkspace` supported it and no UI
+        //     called it;
+        //   - `remotePath` is left alone deliberately: it is the identity of this
+        //     row (two paths on one host are two rows), so a different path means
+        //     a different workspace and lands in the branch above.
+        const patch: Partial<Omit<RemoteWorkspaceEntry, 'id'>> = {};
         if (existing.remoteBinary.trim() === '' && entry.remoteBinary.trim() !== '') {
-          get().updateRemoteWorkspace(existing.id, { remoteBinary: entry.remoteBinary });
+          patch.remoteBinary = entry.remoteBinary;
         }
+        const nextLabel = entry.label.trim();
+        if (nextLabel !== '' && nextLabel !== existing.label) patch.label = nextLabel;
+        if (Object.keys(patch).length > 0) get().updateRemoteWorkspace(existing.id, patch);
         return existing.id;
       }
 
@@ -348,10 +380,35 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
           ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         });
       } catch (err) {
+        // **A binary the host no longer has is repaired, once.** The recorded
+        // path can outlive the file: the host was reinstalled, `~/.tudouni` was
+        // cleaned, or an archive was unpacked without the execute bit. The
+        // refusal names that specifically ("No such file", "not found",
+        // "Permission denied"), and the answer is not a second dial with the
+        // same path — it is one install with the entry's path cleared, because a
+        // non-empty `remoteBinary` is what tells the install path above that
+        // there is nothing to do.
+        //
+        // **Once**, guarded by `options.retried`: a host that genuinely cannot
+        // run an uploaded binary would otherwise install and re-dial in a loop,
+        // and each round trip is an upload. The second refusal is reported as an
+        // ordinary failure, which is the honest end state.
+        const reason = describeFailure(err);
+        if (!options?.retried && binary !== '' && looksLikeMissingBinary(reason)) {
+          // Cleared rather than overwritten: the install writes the new path
+          // back when it succeeds, and a stale one left here would be the same
+          // lie on the next open.
+          get().updateRemoteWorkspace(remoteWorkspaceId, { remoteBinary: '' });
+          await get().connectRemoteWorkspace(remoteWorkspaceId, {
+            ...options,
+            retried: true,
+          });
+          return;
+        }
         // Same shape as attachSession's own catch: the refusal belongs to the
         // session being opened, not to the window, so it gets its own
         // short-lived row rather than taking over the screen.
-        openFailedRow(entry.remotePath, launch, remoteWorkspaceId, describeFailure(err));
+        openFailedRow(entry.remotePath, launch, remoteWorkspaceId, reason);
         return;
       }
 
@@ -388,10 +445,16 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
         openingRemote: null,
       }));
 
+      // **The screen is now over this remote workspace, so it is where the work
+      // is.** Recorded here as well as in `focusSession`, because an *opened*
+      // session never passes through that function: it installs its bucket and
+      // sets `activeKey` in one write, and a "last used" that only moved on
+      // clicks would miss the commonest way a remote workspace is entered.
+      get().rememberRemoteWorkspace(remoteWorkspaceId);
+
       runtime.subscribe((msg) => {
         get().applyRuntimeMessage(key as string, msg);
       });
-
       void readRuntimeStderr(key).then((early) => {
         for (const line of early) get().pushStderr(key as string, line);
       });
@@ -690,6 +753,23 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
       // them means a new child. The workspace comes from the active session's
       // `init.workspace` — the runtime's own answer about where it is — rather
       // than from a remembered value.
+      //
+      // **A remote screen takes the remote open path, and that is the whole
+      // point of the branch below.** The `workspace` read here is, on a remote
+      // screen, a directory on the *other* host. Handing it to `attachSession`
+      // sends it to the local spawn, which checks it against **this** machine's
+      // filesystem: on Windows the open dies with "the workspace … is not a
+      // directory" and takes over the screen with a failure row, and on a Linux
+      // or macOS client whose `/srv/app` happens to exist locally it silently
+      // starts a *local* child while the rail, the top bar and the transcript
+      // all still read as the remote workspace — every file tool, terminal and
+      // deliverable then lands on this machine while the person believes they
+      // are editing the server.
+      //
+      // `connectRemoteWorkspace` reads `ericaiDefault` / `maxStepsDefault`, which
+      // were just persisted above, so nothing has to be passed: the branch has
+      // exactly the same meaning as the local one — another conversation in the
+      // same place, with the newly applied arguments.
       const current = activeRuntime(get());
       set({
         // Remembered first, and unconditionally: these are the defaults the *next*
@@ -699,12 +779,65 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
         maxStepsDefault: next.maxSteps,
       });
       persistPrefs(get());
+
+      // `?? null` folds "no active session" and "a local session" into one
+      // `null`, so a non-null result is exactly "the screen is over a remote
+      // workspace" — the same fold `openSession` and `startLearning` make.
+      const remoteId = current?.remoteWorkspaceId ?? null;
+      if (remoteId !== null) {
+        // **`forceNew`, and deliberately no `detachSession`.** The local path
+        // does not close the session it replaces — it only moves the screen —
+        // and closing one extra here would be a new inconsistency between the
+        // two branches rather than the removal of an old one. `forceNew` is what
+        // keeps the guard from focusing the session already open and turning
+        // "apply" into a dead button.
+        await get().connectRemoteWorkspace(remoteId, { forceNew: true });
+        return;
+      }
+
       const workspace = current?.workspace ?? '';
       await get().attachSession({
         ...(workspace === '' ? {} : { workspace }),
         ericai: next.ericai,
         maxSteps: next.maxSteps ?? undefined,
       });
+    },
+
+    configTarget() {
+      // Which machine is the panel looking at? The screen's, because that is
+      // what "the conversation I am working in" means — and `null` when it is a
+      // local one, so the plain local door is used.
+      const s = get();
+      const remoteWorkspaceId = remoteWorkspaceIdOf(s, s.activeKey);
+      if (remoteWorkspaceId === null) return null;
+      const entry = s.remoteWorkspaces.find((item) => item.id === remoteWorkspaceId);
+      if (entry === undefined) return null;
+      const host = s.sshHosts.find((item) => item.id === entry.hostId);
+      // A host that was deleted out from under a saved workspace has no dial to
+      // give. `null` sends the panel down the local path, which is wrong — so
+      // the caller checks `remoteWorkspaceIdOf` itself rather than relying on
+      // this answer alone. See `ConfigPanel`'s load.
+      if (host === undefined) return null;
+      return {
+        remoteWorkspaceId,
+        hostId: host.id,
+        target: {
+          host: host.host,
+          port: host.port,
+          user: host.user,
+          identityFiles: host.identityFiles,
+          password: host.password ?? null,
+        },
+      };
+    },
+
+    noteRemoteConfigWritten(hostId, remoteFingerprint) {
+      // The remote side is now exactly the bytes that were written, so it is the
+      // new baseline for that host. The **local** baseline is left alone: this
+      // save did not touch this machine's file, and moving it would hide a real
+      // local change from the next comparison — which is precisely the question
+      // §9.5 exists to ask.
+      get().updateSshHost(hostId, { configBaselineFingerprint: remoteFingerprint });
     },
 
     toolFacts(name) {

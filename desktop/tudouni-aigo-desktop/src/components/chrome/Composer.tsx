@@ -334,6 +334,8 @@ function noticeText(t: ReturnType<typeof useT>, notice: ComposerNotice): string 
       return t('composer.dropOutside', { names: notice.names.join(', ') });
     case 'drop-no-workspace':
       return t('composer.dropNoWorkspace', { names: notice.names.join(', ') });
+    case 'attach-remote-failed':
+      return t('composer.attachRemoteFailed', { names: notice.names.join(', '), reason: notice.reason });
     case 'paste-no-workspace':
       return t('composer.pasteNoWorkspace');
     case 'paste-at-capacity':

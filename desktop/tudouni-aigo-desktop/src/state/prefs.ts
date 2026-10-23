@@ -113,6 +113,23 @@ type Prefs = {
    */
   lastWorkspace: string | null;
   /**
+   * Which saved remote workspace was last worked in, by its entry id.
+   *
+   * **The remote counterpart of `lastWorkspace`, and it exists because a path
+   * cannot be the answer.** A remote workspace's directory is on another
+   * machine, so `lastWorkspace` — which `openFirstSession` opens **here** — can
+   * never name it; the local path of a remote session would send the next
+   * launch looking for a directory that is not on this computer. The entry's id
+   * is the only thing that says "that one, over there".
+   *
+   * `null` means no remote workspace was the last one worked in, which is the
+   * ordinary case for somebody who only ever uses local directories. The two
+   * fields are **not** exclusive: they answer "where was the work", and the
+   * answer may be either. Which one wins is decided by which session was
+   * focused last, and the start-up reads the pair together.
+   */
+  lastRemoteWorkspaceId: string | null;
+  /**
    * Start-up arguments, as remembered *defaults for the next start*.
    *
    * These are preferences in the only sense that is honest here: they decide what
@@ -206,6 +223,7 @@ function loadPrefs(): Prefs {
     // it would be worse than opening nothing: the honest answer is the first
     // screen, where a person picks a place.
     lastWorkspace: null,
+    lastRemoteWorkspaceId: null,
     // Off, and not because of a coin toss: this flag lets the runtime rewrite
     // `providers.ericai.api_key` in the person's own configuration file and keep a
     // refresh token under `~/.tudouni/`. That is not something to switch on for
@@ -299,6 +317,16 @@ function loadPrefs(): Prefs {
         typeof parsed.lastWorkspace === 'string' && parsed.lastWorkspace.trim() !== ''
           ? parsed.lastWorkspace
           : null,
+      // The remote counterpart. An id that names no saved workspace is not
+      // restored — the entry may have been forgotten while the field was still
+      // written, and offering a workspace that no longer exists would send the
+      // start-up to a place that cannot be opened. The start-up checks the
+      // entry itself before using this, so a stale id is simply ignored.
+      lastRemoteWorkspaceId:
+        typeof parsed.lastRemoteWorkspaceId === 'string' &&
+        parsed.lastRemoteWorkspaceId.trim() !== ''
+          ? parsed.lastRemoteWorkspaceId
+          : null,
       // Same rule as `workspaces`, and for the same reason: this is localStorage,
       // it outlives every build, and a string where a boolean belongs would reach
       // a `?` branch that treats any truthy value as "on".
@@ -353,6 +381,7 @@ export function persistPrefs(s: AppStore, quiet?: { key: string; value: QuietMod
         sshHosts: s.sshHosts,
         remoteWorkspaces: s.remoteWorkspaces,
         lastWorkspace: s.lastWorkspace,
+        lastRemoteWorkspaceId: s.lastRemoteWorkspaceId,
         ericaiDefault: s.ericaiDefault,
         maxStepsDefault: s.maxStepsDefault,
         notifyEnabled: s.notifyEnabled,

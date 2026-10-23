@@ -271,9 +271,142 @@ fn write_remote_config_blocking(target: RemoteConfigTarget, contents: String) ->
     let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
         .map_err(|e| format!("could not connect to write the remote configuration: {e}"))?;
     let bytes = contents.into_bytes();
-    remote_config::write_remote_config(&session, &home, &bytes)
+    remote_config::write_remote_file(&session, &home, "config.json", &bytes)
         .map_err(|e| format!("could not write the remote configuration: {e}"))?;
     Ok(remote_config::fingerprint_hex(&bytes))
+}
+
+/* ============================================================
+   The config panel's two files, on the far host
+   ============================================================ */
+
+/// Read the remote account's `config.json` + `mcp.json` in the panel's own
+/// shape.
+///
+/// **This is the remote twin of `config_read`, and it exists because the two
+/// files' paths look identical on both machines.** `~/.tudouni/config.json` is
+/// the same string here and there, so a panel that edited "the config file"
+/// without asking *whose* wrote this machine's — while the session on screen ran
+/// against the other one, and the edit appeared to do nothing.
+///
+/// The document is built by `config_file::document_from`, the same function the
+/// local door uses: the classification (missing / broken / structural) and the
+/// `mcp.json` shape are one implementation, so the two panels cannot disagree
+/// about what a file means.
+#[tauri::command]
+pub(crate) async fn read_remote_user_config(
+    target: RemoteConfigTarget,
+) -> Result<crate::config_file::ConfigDocument, String> {
+    tauri::async_runtime::spawn_blocking(move || read_remote_user_config_blocking(target))
+        .await
+        .map_err(|error| format!("the remote config read task failed: {error}"))?
+}
+
+fn read_remote_user_config_blocking(
+    target: RemoteConfigTarget,
+) -> Result<crate::config_file::ConfigDocument, String> {
+    let ssh_target = target.into_ssh_target();
+    // `connect_and_resolve_home` asks the far account for `$HOME`, which is the
+    // only honest source for where its files are — a path assembled from the
+    // client's own home would be a different account's directory.
+    let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
+        .map_err(|e| format!("could not connect to read the remote configuration: {e}"))?;
+    let paths = crate::config_file::ConfigPaths::under_home(&home);
+    let config = remote_config::read_remote_file(&session, &home, "config.json")
+        .map_err(|e| format!("could not read the remote config.json: {e}"))?;
+    let mcp = remote_config::read_remote_file(&session, &home, "mcp.json")
+        .map_err(|e| format!("could not read the remote mcp.json: {e}"))?;
+    crate::config_file::document_from(config, mcp, &paths)
+}
+
+/// Apply one save to the remote account's `config.json` / `mcp.json`, and
+/// answer with the result as it stands afterwards.
+///
+/// The merge runs against **bytes read over the same SFTP session, immediately
+/// before the write** — the local `config_write` rule, and it matters more here:
+/// a panel can be open for minutes, and merging into its stale copy would
+/// overwrite everything changed in between on a machine this end cannot see.
+#[tauri::command]
+pub(crate) async fn write_remote_user_config(
+    target: RemoteConfigTarget,
+    patch: crate::config_file::ConfigPatch,
+) -> Result<RemoteConfigWriteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || write_remote_user_config_blocking(target, patch))
+        .await
+        .map_err(|error| format!("the remote config write task failed: {error}"))?
+}
+
+/// What one remote save produced: the document as it now reads, and the
+/// fingerprints of what was written.
+///
+/// **Both fingerprints are carried because the sync baseline is a pair.** §9.5
+/// compares each side against the value it was last *seen* at, so a save that
+/// changed the host's file has to update the recorded remote fingerprint — the
+/// false conflict it prevented was "I just edited the server's config and it asks
+/// me to sync on every open". Doing it here is what makes that automatic.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RemoteConfigWriteResult {
+    document: crate::config_file::ConfigDocument,
+    /// Hex SHA256 of what was written to `config.json`, or `None` when the
+    /// patch did not touch that file.
+    config_fingerprint: Option<String>,
+    /// The same for `mcp.json`. Not part of §9's baseline, which predates the
+    /// panel editing this file — returned so a caller can tell "it was written"
+    /// from "it was not".
+    mcp_fingerprint: Option<String>,
+}
+
+fn write_remote_user_config_blocking(
+    target: RemoteConfigTarget,
+    patch: crate::config_file::ConfigPatch,
+) -> Result<RemoteConfigWriteResult, String> {
+    let ssh_target = target.into_ssh_target();
+    let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
+        .map_err(|e| format!("could not connect to write the remote configuration: {e}"))?;
+    let paths = crate::config_file::ConfigPaths::under_home(&home);
+
+    // Read the current bytes on the same connection the write will use.
+    let current = crate::config_file::MergeInput {
+        config: remote_config::read_remote_file(&session, &home, "config.json")
+            .map_err(|e| format!("could not read the remote config.json: {e}"))?,
+        mcp: remote_config::read_remote_file(&session, &home, "mcp.json")
+            .map_err(|e| format!("could not read the remote mcp.json: {e}"))?,
+    };
+    let merged = crate::config_file::merge(current, &patch, &paths)?;
+
+    let config_fingerprint = match &merged.config {
+        Some(bytes) => {
+            remote_config::write_remote_file(&session, &home, "config.json", bytes)
+                .map_err(|e| format!("could not write the remote config.json: {e}"))?;
+            Some(remote_config::fingerprint_hex(bytes))
+        }
+        None => None,
+    };
+    let mcp_fingerprint = match &merged.mcp {
+        Some(bytes) => {
+            remote_config::write_remote_file(&session, &home, "mcp.json", bytes)
+                .map_err(|e| format!("could not write the remote mcp.json: {e}"))?;
+            Some(remote_config::fingerprint_hex(bytes))
+        }
+        None => None,
+    };
+
+    // The answer is a re-read, not the patch echoed — the same contract as
+    // `config_write`, so the panel draws the file's own content after a save.
+    let document = crate::config_file::document_from(
+        remote_config::read_remote_file(&session, &home, "config.json")
+            .map_err(|e| format!("could not re-read the remote config.json: {e}"))?,
+        remote_config::read_remote_file(&session, &home, "mcp.json")
+            .map_err(|e| format!("could not re-read the remote mcp.json: {e}"))?,
+        &paths,
+    )?;
+
+    Ok(RemoteConfigWriteResult {
+        document,
+        config_fingerprint,
+        mcp_fingerprint,
+    })
 }
 
 /// Read `~/.ssh/config` and hand back its concrete `Host` blocks, for the

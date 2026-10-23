@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
-import { Clock } from 'lucide-react';
+import { Clock, Server } from 'lucide-react';
 import {
-  activeWorkspaceOf,
-  selectSavedSessions,
+  selectSavedSessionsOf,
   useApp,
   useSessionField,
 } from '@/state/store';
@@ -53,12 +52,35 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
   const startupNotice = useApp((s) => s.startupNotice);
   const session = useSessionField((rt) => rt.session, null);
   // The list is the **workspace's**, read from the window-level record rather
-  // than from whichever child is focused — see `SavedSessions`.
+  // than from whichever child is focused — see `SavedSessions`. `Of` because the
+  // workspace alone does not name the place: the same path on another host is a
+  // different list.
   // `active`: the first screen's "recent" slots are the same list the rail
   // shows, and an archived conversation does not belong on it.
-  const sessionList = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)).active);
+  const sessionList = useApp((s) => selectSavedSessionsOf(s, s.activeKey).active);
   const openSession = useApp((s) => s.openSession);
   const openPanel = useApp((s) => s.openPanel);
+
+  // **The remote workspace that was last worked in.** A local workspace is
+  // reopened by itself at start-up (`openFirstSession`), but a remote one cannot
+  // be: its directory is on another host, so the path this end remembers names
+  // nothing here — the start-up would look for a directory that does not exist
+  // on this machine. The entry's id is the answer instead.
+  //
+  // **Offered, not opened.** Dialling a host the moment the application starts
+  // costs a round trip on every launch, may fail on a network that is not up
+  // yet, and may raise the config-sync question before anybody has asked for
+  // anything. One click is the honest offer.
+  const lastRemote = useApp((s) =>
+    s.lastRemoteWorkspaceId === null
+      ? null
+      : s.remoteWorkspaces.find((entry) => entry.id === s.lastRemoteWorkspaceId) ?? null,
+  );
+  const lastRemoteHost = useApp((s) => {
+    if (lastRemote === null) return null;
+    return s.sshHosts.find((host) => host.id === lastRemote.hostId) ?? null;
+  });
+  const enterRemoteWorkspace = useApp((s) => s.enterRemoteWorkspace);
 
   const recent = useMemo(
     () => [...sessionList].sort((a, b) => (b.modifiedAt ?? 0) - (a.modifiedAt ?? 0)).slice(0, MAX_RECENT),
@@ -126,7 +148,39 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
           )}
         </section>
 
-        {/* 2 · recent sessions */}
+        {/* 2 · the remote workspace that was last worked in
+         *
+         * The local half of this needs no block: `openFirstSession` reopens the
+         * remembered directory on its own. A remote workspace cannot be reopened
+         * that way — its directory is on another host — so without this the
+         * person who works on a server every day gets the empty first screen on
+         * every launch and has to find the row in the rail.
+         *
+         * Only drawn when the entry is still saved **and** its host still is: an
+         * id that names nothing would be an offer that cannot be kept.
+         */}
+        {lastRemote !== null && lastRemoteHost !== null ? (
+          <section className="welcome-block">
+            <div className="wb-head">
+              <Server size={13} className="muted" />
+              <h2>{t('welcome.lastRemote')}</h2>
+            </div>
+            <button
+              type="button"
+              className="welcome-remote"
+              onClick={() => void enterRemoteWorkspace(lastRemote.id)}
+            >
+              <span className="wr-name">{lastRemote.label}</span>
+              <span className="wr-meta mono">
+                {lastRemoteHost.user}@{lastRemoteHost.host}:{lastRemoteHost.port}
+                {' · '}
+                {lastRemote.remotePath}
+              </span>
+            </button>
+          </section>
+        ) : null}
+
+        {/* 3 · recent sessions */}
         <section className="welcome-block welcome-recent-block">
           <div className="wb-head">
             <Clock size={13} className="muted" />

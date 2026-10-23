@@ -10,14 +10,14 @@ import type { QuietMode } from '../types';
 import { nextId } from '@/state/entries';
 import { sendTo } from '@/runtime/bus';
 import { insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, type AttachedFile, type PastedImage } from '@/runtime/paste';
-import { stashImage } from '@/runtime/tauri';
+import { stashImage, attachRemoteFile } from '@/runtime/tauri';
 import { clampRailWidth, persistPrefs } from '../prefs';
 import { selectModalVisible } from '../selectors/session';
 import { activeRuntime, activeWorkspaceOf } from '../appView';
 import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'setDragging' | 'setComposerNotice' | 'stashPastedImage' | 'forgetPastedImage' | 'clearPastedImages' | 'attachFilePath' | 'forgetAttachedFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'setDragging' | 'setComposerNotice' | 'stashPastedImage' | 'forgetPastedImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
   return {
     setDraft(v) {
@@ -130,6 +130,95 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         attachedFiles: [...bucket.attachedFiles, file],
       }));
       return caret;
+    },
+
+    /**
+     * Attach paths that came from the **operating system** — a drop, or the
+     * native file dialog behind the plus menu's "choose a file".
+     *
+     * The two kinds of screen want two different things, and this is where that
+     * stops being every caller's problem:
+     *
+     *   - **A local session.** The path is meaningful as it stands, so it is
+     *     inserted and, when it falls outside the workspace, flagged with the
+     *     heads-up `useFileDrop` already drew (`drop-outside`). The file tools
+     *     refuse an outside path at `SafePath`, but the model can still reach it
+     *     through `shell` — so "insert it, say so" is the honest answer.
+     *   - **A remote session.** The path is on *this* machine and the workspace
+     *     is on the other one. Inserting it would produce a sentence the far
+     *     runtime cannot resolve, and the old sentence explaining that ("the
+     *     model would go through shell") was **wrong**: the far shell cannot see
+     *     this machine's files either. So each file is uploaded into the remote
+     *     workspace and the sentence carries the **workspace-relative** path —
+     *     exactly what a pasted picture does, and exactly what the far
+     *     `SafePath` resolves.
+     *
+     * The upload is keyed by the child, never by a destination: the bridge owns
+     * the host and workspace, and a front end that could name them could upload
+     * into a machine the session does not run on.
+     *
+     * Answers the number of paths it actually attached, so a caller can tell
+     * "nothing landed" from "it worked". A failure is said in the composer —
+     * that is where the person is looking, and the drop has no other surface.
+     */
+    async attachFiles(paths, at) {
+      const s = get();
+      const key = s.activeKey;
+      if (key === null || paths.length === 0) return 0;
+      const bucket = s.sessions[key];
+      if (!bucket) return 0;
+
+      if (bucket.remoteWorkspaceId === null) {
+        // The local half is unchanged: insert the paths as the OS gave them.
+        // Whether they are inside the workspace is the caller's notice to draw
+        // (`partitionDrop`), because only that caller knows this was a drop
+        // rather than a dialog.
+        //
+        // The carets are not returned: `attachFilePath` answers where the cursor
+        // went after *that one* insertion, and with several paths the only
+        // sensible answer is the last — which the caller does not use, because a
+        // drop appends and a dialog has already returned focus to the textarea.
+        for (const path of paths) {
+          get().attachFilePath(path, at ?? get().sessions[key]?.draft.length ?? 0);
+        }
+        return paths.length;
+      }
+
+      // **Sequential, not `Promise.all`.** Each upload is a fresh SSH dial plus
+      // an SFTP round trip, and the name-collision loop has to see the previous
+      // one's result: two files with the same name uploaded at once would both
+      // be told "free" and one would overwrite the other.
+      const failed: string[] = [];
+      let reason = '';
+      let attached = 0;
+      for (const path of paths) {
+        try {
+          const uploaded = await attachRemoteFile(key, path);
+          // Inserted at the end each time rather than at the caller's caret:
+          // the draft may have been edited while the upload ran, and an index
+          // captured before it would cut a word in half.
+          const fresh = get().sessions[key]?.draft ?? '';
+          get().attachFilePath(uploaded.path, fresh.length);
+          attached += 1;
+        } catch (err) {
+          failed.push(nameOfPath(path));
+          // The bridge's sentence, verbatim — it is already written for a
+          // person ("… is a directory — attach a file, or put it in the
+          // workspace first"), and a second wording here would be a second fact.
+          reason = err instanceof Error ? err.message : String(err);
+        }
+      }
+      if (failed.length > 0) {
+        patch(key, {
+          composerNotice: { code: 'attach-remote-failed', names: failed, reason, tone: 'warn' },
+        });
+      } else if (attached > 0) {
+        // Nothing to say: the files are in the workspace and the sentence names
+        // them. Clearing rather than leaving a previous warning up is the same
+        // rule the drop's own "inserted" branch follows.
+        patch(key, { composerNotice: null });
+      }
+      return attached;
     },
 
     forgetAttachedFile(path) {
@@ -312,7 +401,10 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
       // Asked for immediately: the caller just changed which rows should be on
       // screen, and waiting for the next unrelated `session_list` would leave the
       // list showing the previous view under the new tab's label.
-      markSavedSessionsPending(activeWorkspaceOf(get()));
+      markSavedSessionsPending(
+        activeWorkspaceOf(get()),
+        get().sessions[key]?.remoteWorkspaceId ?? null,
+      );
       sendTo(key, { v: 1, t: 'session_list', filter });
     },
 

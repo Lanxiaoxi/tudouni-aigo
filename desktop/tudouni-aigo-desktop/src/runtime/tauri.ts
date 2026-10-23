@@ -470,6 +470,35 @@ export async function readRuntimeVersion(binary = ''): Promise<string | null> {
 }
 
 /**
+ * The version of the runtime running on **one remote child's host**.
+ *
+ * The per-session counterpart of `readRuntimeVersion`, and it has to be per
+ * session: the window-level call reads the binary next to this application, and
+ * on a remote screen that is a different build from the one answering the
+ * conversation. Audit showed both facts side by side, so the version line
+ * contradicted the `protocol` line exactly when somebody was reading them to
+ * work out why something did not take effect.
+ *
+ * Addressed by the child key, not by a path: the Rust side takes the destination
+ * and the binary from the bridge, the same rule the paste and the deliverable
+ * download follow.
+ *
+ * `null` is "the host did not answer" — a refusal, a missing binary, a host that
+ * has gone away. The panel draws "unknown" for it, which is honest, where an
+ * error would suggest the session itself is broken.
+ */
+export async function readRemoteRuntimeVersion(key: string): Promise<string | null> {
+  if (!isHosted()) return null;
+  const target = bridgeKey(key);
+  if (target === null) return null;
+  try {
+    return await tauriInvoke<string | null>('remote_runtime_version', { key: target });
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The handle for one session's child.
  *
  * @param key       The bridge's key, from `attachRuntime`.
@@ -1529,6 +1558,58 @@ export async function writeUserConfig(patch: ConfigPatch): Promise<ConfigDocumen
   return tauriInvoke<ConfigDocument>('config_write', { patch });
 }
 
+/* ---- the same panel, on the far host ---- */
+
+/**
+ * Read a **remote** account's `config.json` + `mcp.json`, in the panel's shape.
+ *
+ * The panel edits "the config file", and on both machines that file is
+ * `~/.tudouni/config.json` — one string that names two different files. Reading
+ * it from this machine while a remote session is on screen is the bug this pair
+ * of calls fixes: the panel showed this machine's routes and the runtime kept
+ * using the host's, so an edit looked applied and did nothing.
+ *
+ * The `target` is built by the caller from the saved host, because that layer is
+ * where the credentials live (`remoteConnectionOf` deliberately carries none).
+ */
+export async function readRemoteUserConfig(target: RemoteConfigTarget): Promise<ConfigDocument | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<ConfigDocument>('read_remote_user_config', { target });
+  } catch {
+    return null;
+  }
+}
+
+/** What one remote save produced: the document as it now reads, and what was
+ *  written. Both fingerprints matter — the sync baseline is a pair (§9.5), and
+ *  a save that is not recorded there makes the next open report the person's own
+ *  edit as somebody else's change. */
+export interface RemoteConfigWriteResult {
+  document: ConfigDocument;
+  /** Hex SHA256 of the `config.json` written, or null when the patch did not
+   *  touch it. */
+  configFingerprint: string | null;
+  /** The same for `mcp.json`. */
+  mcpFingerprint: string | null;
+}
+
+/**
+ * Apply one save on the far host.
+ *
+ * The merge happens there, against bytes read over the same SFTP session
+ * immediately before the write — so a panel that has been open for ten minutes
+ * cannot overwrite what changed in between, on a machine this end cannot watch.
+ * Thrown errors are refusals: the Rust side only returns `Err` when nothing was
+ * written.
+ */
+export async function writeRemoteUserConfig(
+  target: RemoteConfigTarget,
+  patch: ConfigPatch,
+): Promise<RemoteConfigWriteResult> {
+  return tauriInvoke<RemoteConfigWriteResult>('write_remote_user_config', { target, patch });
+}
+
 /**
  * Show one configuration file in the OS file manager.
  *
@@ -1723,5 +1804,45 @@ export async function stashImage(key: string, bytes: Uint8Array): Promise<Stashe
   if (target === null) throw new Error("that session's runtime is not running");
   return tauriInvoke<StashedImage>('image_stash', bytes, {
     headers: { 'x-tudouni-key': String(target) },
+  });
+}
+
+/** One file uploaded into a remote workspace, as the composer needs it back. */
+export interface AttachedRemoteFile {
+  /** Workspace-relative, forward slashes — the string the sentence carries. */
+  path: string;
+  /** The file's own name, or its numbered twin when that one was taken. */
+  name: string;
+  bytes: number;
+}
+
+/**
+ * Copy one file on **this** machine into a remote session's workspace, and
+ * answer with the workspace-relative path.
+ *
+ * The sibling of `stashImage`, for the other OS entry point: a drop and the
+ * native file dialog both hand over a path that only means something here. On a
+ * remote screen that path is meaningless to the far runtime — its `SafePath`
+ * refuses it, and the far shell cannot see this machine either — so the bytes
+ * are uploaded and the sentence names the relative path instead, exactly as a
+ * pasted picture does.
+ *
+ * **The key, not a target.** The host and workspace come from the child the
+ * bridge already started; a front end that could name them could upload into a
+ * machine the session does not run on. It is also what keeps credentials out of
+ * this layer: `remoteConnectionOf` deliberately carries none.
+ *
+ * Rejections are surfaced: every one of them is a reason the file did not
+ * attach, and the caller turns them into the composer's notice.
+ */
+export async function attachRemoteFile(key: string, localPath: string): Promise<AttachedRemoteFile> {
+  if (!isHosted()) {
+    throw new Error('remote file attach needs the desktop application');
+  }
+  const target = bridgeKey(key);
+  if (target === null) throw new Error("that session's runtime is not running");
+  return tauriInvoke<AttachedRemoteFile>('attach_file_remote', {
+    key: target,
+    localPath,
   });
 }

@@ -96,6 +96,24 @@ export interface TaskRunLink {
    *  panel dropping them. A *present* value that is not a string is malformed
    *  and drops the record. */
   prompt?: string;
+  /**
+   * Which saved remote workspace the run happened in, or `null`/absent for a
+   * local one.
+   *
+   * **The run's evidence lives on that machine**, and the label alone cannot say
+   * which machine that is: a local `/srv/app` and a remote `/srv/app` are two
+   * places that compare equal as strings. Refine reads the session files of the
+   * runs it studies, so "which host are these transcripts on" has to be a
+   * recorded fact rather than something inferred from a path — otherwise a task
+   * refined on a remote screen would be pointed at a local directory of the same
+   * name.
+   *
+   * Optional for the same compatibility reason `outcome` and `prompt` are: a
+   * link persisted before this field existed describes a run whose home is
+   * unknown, and the honest reading is "local", which is what every such link
+   * was.
+   */
+  remoteWorkspaceId?: string | null;
 }
 
 /**
@@ -290,6 +308,12 @@ export function isValidTaskRun(value: unknown): value is TaskRunLink {
   if (v.durationMs !== undefined && typeof v.durationMs !== 'number') return false;
   if (v.autopilot !== undefined && typeof v.autopilot !== 'boolean') return false;
   if (v.prompt !== undefined && typeof v.prompt !== 'string') return false;
+  // `null` is the explicit "local", and absent is the older record that had no
+  // way to say anything else — both are fine. A *present* value that is not a
+  // string (or null) is malformed.
+  if (v.remoteWorkspaceId !== undefined && v.remoteWorkspaceId !== null && typeof v.remoteWorkspaceId !== 'string') {
+    return false;
+  }
   return (
     typeof v.taskId === 'string' &&
     typeof v.sessionId === 'string' &&
@@ -423,31 +447,72 @@ export function refineRunScope(
 }
 
 /**
+ * Where the window is, as the refine rules see it.
+ *
+ * A pair rather than a path, for the reason the `savedSessions` key is a pair:
+ * `/srv/app` on this machine and `/srv/app` on a host are two places that
+ * compare equal as strings, and a refine run studies exactly one of them. The
+ * `remoteWorkspaceId` is `null` for a local screen.
+ */
+export interface RefineScreen {
+  workspace: string;
+  remoteWorkspaceId: string | null;
+}
+
+/** Which saved remote workspace a task names, or `null` for a local/active one.
+ *  The one fold the availability rule and the run path both need. */
+export function taskRemoteId(task: Task): string | null {
+  return task.workspace.kind === 'remote' ? task.workspace.id : null;
+}
+
+/**
  * Whether Refine may be offered for a task, and if not, which rule stopped it.
  *
- * The reasons are ordered so the first one drawn is the one that must be
- * fixed first: no finished run is a fact about the task's own history; a
- * remote task's session files are on another machine the agent cannot read
- * (first version: refused, not supported); and a task bound to a workspace
- * that is not on screen would make `.tudouni/sessions/` someone else's, so
- * the comparison would study the wrong directory.
+ * The reasons are ordered so the first one drawn is the one that must be fixed
+ * first: no finished run is a fact about the task's own history, and a task
+ * bound to a place that is not on screen would make `.tudouni/sessions/`
+ * someone else's — so the comparison would study the wrong transcripts.
  */
 export function refineAvailability(
   task: Task,
   links: TaskRunLink[],
-  activeWorkspace: string,
-  screenIsRemote: boolean,
-): { ok: boolean; reason: 'no-runs' | 'remote' | 'other-workspace' | null } {
+  screen: RefineScreen,
+): { ok: boolean; reason: 'no-runs' | 'other-workspace' | null } {
   const settled = links.some((link) => link.outcome === 'ok' || link.outcome === 'failed');
   if (!settled) return { ok: false, reason: 'no-runs' };
-  // Remote in either direction: a task whose ref names a saved remote
-  // workspace, or one whose `active` target happens to be a remote screen —
-  // in both cases the session files live on another machine this version does
-  // not study.
-  if (task.workspace.kind === 'remote' || screenIsRemote) return { ok: false, reason: 'remote' };
-  const onScreen =
-    activeWorkspace !== '' &&
-    (task.workspace.kind === 'active' || samePath(task.workspace.path, activeWorkspace));
-  if (!onScreen) return { ok: false, reason: 'other-workspace' };
-  return { ok: true, reason: null };
+  // **"The right place" is now a pair, not a path.** A refine run reads the
+  // session files of the workspace it studies, and the reading is done by the
+  // child of *that* place — so the machine has to match as well as the
+  // directory: a local `/srv/app` and a remote `/srv/app` hold different
+  // `.tudouni/sessions/`, and a refine pointed at the wrong one would study
+  // someone else's transcripts.
+  //
+  // There is no separate "remote is unsupported" refusal any more, and that was
+  // the earlier version's real defect: a remote *screen* is a perfectly good
+  // place to run a refine, because the remote child reads its own session files.
+  // What is genuinely impossible is refining a task whose place is *not* the one
+  // on screen — the same rule a local task always had.
+  //
+  // The split is by the task's ref, and each answer is a single fact:
+  //   - `remote` — the saved entry's id must be the screen's, and ids are unique
+  //     per (host, path), so that alone says "same place";
+  //   - `local` — no machine at all, and the directory must match;
+  //   - `active` — "wherever I am", which is true by construction.
+  if (screen.workspace === '') return { ok: false, reason: 'other-workspace' };
+  // `active` first, and **before** the machine check below: "wherever I am" is
+  // true by construction, on a local screen and on a host alike. Testing it after
+  // the local-only guard refused every `active` task on a remote screen — which
+  // is the common case, since `active` is what a fresh task gets.
+  if (task.workspace.kind === 'active') return { ok: true, reason: null };
+  if (task.workspace.kind === 'remote') {
+    return screen.remoteWorkspaceId === task.workspace.id
+      ? { ok: true, reason: null }
+      : { ok: false, reason: 'other-workspace' };
+  }
+  // A local ref names a directory **on this machine**, so a remote screen is
+  // somewhere else even when the two paths are spelled the same.
+  if (screen.remoteWorkspaceId !== null) return { ok: false, reason: 'other-workspace' };
+  return samePath(task.workspace.path, screen.workspace)
+    ? { ok: true, reason: null }
+    : { ok: false, reason: 'other-workspace' };
 }

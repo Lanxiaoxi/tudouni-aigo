@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { selectNotifyKey, selectSavedSessions, useApp } from '@/state/store';
+import { selectNotifyKey, selectSavedSessions, selectSessionHome, useApp } from '@/state/store';
 import { isHosted, onNotifyActivated } from '@/runtime/tauri';
 import {
   decodeNotifySnapshot,
@@ -167,7 +167,27 @@ export function useNotifications(): void {
         // The toast outlived the child it was about. `openSession` focuses a
         // child that already has this id and starts one that does not, which is
         // the same rule the saved-session list follows.
-        void s.openSession(destination.sessionId, destination.workspace);
+        //
+        // **The workspace the toast carries is not enough to reopen it.** It is
+        // the place the session *was in*, and on a remote session that is a path
+        // on another host — passing it to `openSession` with a local screen on
+        // display is what sent a remote path to the local spawn ("the workspace …
+        // is not a directory", or a local child resuming a remote id). The saved
+        // lists are the only thing that knows which machine that id belongs to,
+        // and `openSession` now asks them first; this is the same answer taken
+        // one step earlier, so the click never depends on what is on screen.
+        const home = selectSessionHome(s, destination.sessionId);
+        if (home !== null && home.remoteWorkspaceId !== null) {
+          void s.connectRemoteWorkspace(home.remoteWorkspaceId, {
+            forceNew: true,
+            sessionId: destination.sessionId,
+          });
+          return;
+        }
+        void s.openSession(
+          destination.sessionId,
+          home !== null ? home.workspace : destination.workspace,
+        );
       }
       // `nothing`: the session has no id to reopen and no key to focus — its
       // `init` never landed. There is nowhere to go and no sentence worth
@@ -198,7 +218,9 @@ async function deliver(reason: NotifyReason, key: string, sessionId: string): Pr
   const s = useApp.getState();
   const bucket = s.sessions[key];
   const workspace = bucket?.session?.workspace ?? bucket?.workspace ?? '';
-  const saved = selectSavedSessions(s, workspace);
+  // The bucket's own machine, so a remote workspace's preview is looked up in
+  // **its** list rather than in a local one that happens to share the path.
+  const saved = selectSavedSessions(s, workspace, bucket?.remoteWorkspaceId ?? null);
   const row = saved.items.find((item) => item.id === sessionId);
   // `makeT()` rather than `useT()`: this runs outside a render, and a
   // notification is not part of the rendered tree. It is the same closure over

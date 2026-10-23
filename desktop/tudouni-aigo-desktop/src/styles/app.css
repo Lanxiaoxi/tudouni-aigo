@@ -138,6 +138,22 @@
   color: var(--fg-secondary);
 }
 
+/* The machine a remote session runs on, inside the workspace chip.
+ *
+ * It is a third fact beside the path, not decoration: `user@host:port` is the
+ * only thing that separates a remote `/srv/app` from a local one, and the path
+ * alone cannot. `flex: none` because this half is short and must not be the
+ * part that gets ellipsised — the path is, and it has `.truncate` for it. */
+.topbar .toppath-host {
+  flex: none;
+  color: var(--fg-muted);
+  opacity: 0.85;
+}
+
+.topbar .toppath-host::after {
+  content: ':';
+}
+
 /* The help entry: the `?` immediately left of the palette box.
  *
  * It takes the `margin-left: auto` the palette trigger used to hold, because it
@@ -1534,6 +1550,48 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
+}
+
+/* The remote workspace that was last worked in.
+ *
+ * **One row, not a card grid.** There is only ever one of these — the last
+ * remote place worked in — so the recent block's two-column card layout would
+ * be a grid with one filled cell and one empty one, which reads as "something
+ * failed to load" rather than as "one thing". A single row, with the machine
+ * and the path on the second line, says what it is.
+ */
+.welcome-remote {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-base) var(--ease-out),
+    border-color var(--motion-base) var(--ease-out);
+}
+
+.welcome-remote:hover {
+  background: var(--bg-muted);
+  border-color: var(--border-default);
+}
+
+.welcome-remote .wr-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.welcome-remote .wr-meta {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .recent-slot {

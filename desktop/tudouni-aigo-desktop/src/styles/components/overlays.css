@@ -105,6 +105,106 @@
   animation: dialog-in var(--motion-base) var(--ease-out) 1;
 }
 
+/* A dialog with more than a form in it.
+ *
+ * The saved-hosts list puts a name, an address, its references and a three-way
+ * policy on one row; at the default 640px the policy buttons wrap onto a second
+ * line and each host reads as two hosts. Wider, not taller — a list that scrolls
+ * anyway gains nothing from height.
+ */
+.dialog-wide {
+  width: min(820px, calc(100vw - 48px));
+}
+
+/* One saved host. Three columns: what it is, how it syncs, and the one action
+ * that removes it. The middle column is fixed so the policies line up between
+ * rows — a ragged column of three-way switches is unreadable at a glance, which
+ * is the only way this list is ever read. */
+.host-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+
+.host-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.host-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.host-name {
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-address {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-meta {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.host-policy {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.host-policy-option {
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.host-policy-option:hover {
+  color: var(--fg-secondary);
+}
+
+/* The chosen one wears the card surface, the same way a segmented control does:
+   inside a group, "which one is on" is a fill rather than a border. */
+.host-policy-option.is-on {
+  background: var(--bg-elevated);
+  color: var(--fg);
+  box-shadow: var(--shadow-sm);
+}
+
 .dialog[data-state='closed'] {
   animation: dialog-out var(--motion-fast) var(--ease-in) 1;
 }

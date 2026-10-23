@@ -22,7 +22,7 @@ import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEnded
 import { runtimeOf } from '../appView';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
 
-export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
+export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
   const { set, get, patch, patchWith, noteSavedSessions, markSavedSessionsPending, activeKeyForSend } = ctx;
   return {
     send(msg) {
@@ -72,6 +72,25 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRun
       const remembered = get().lastWorkspace;
       if (remembered !== null && samePath(remembered, trimmed)) return;
       set({ lastWorkspace: trimmed });
+      persistPrefs(get());
+    },
+
+    rememberRemoteWorkspace(remoteWorkspaceId) {
+      // The remote counterpart of `rememberWorkspace`, and it is a **different
+      // field** rather than the same one: the answer to "where was the work" is
+      // either a directory on this machine or a saved entry on another host, and
+      // one field cannot hold both without the start-up having to guess which
+      // machine a path belonged to.
+      //
+      // The id is checked against the saved entries before it is written: a
+      // session whose entry was just deleted would otherwise leave an id that
+      // names nothing, and the start-up would have to decide whether to trust it.
+      const trimmed = remoteWorkspaceId.trim();
+      if (trimmed === '') return;
+      const known = get().remoteWorkspaces.some((entry) => entry.id === trimmed);
+      if (!known) return;
+      if (get().lastRemoteWorkspaceId === trimmed) return;
+      set({ lastRemoteWorkspaceId: trimmed });
       persistPrefs(get());
     },
 
@@ -254,8 +273,9 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRun
           // The list is a **workspace** fact, so what is marked pending is that
           // workspace's list — not this child's bucket. `init.workspace` is the
           // runtime's own name for the directory, which is the key the reply will
-          // be filed under.
-          markSavedSessionsPending(init.workspace);
+          // be filed under, and the child's own `remoteWorkspaceId` names the
+          // machine: the same path on another host is a different list.
+          markSavedSessionsPending(init.workspace, bucket.remoteWorkspaceId);
           sendTo(key, { v: 1, t: 'session_list', filter: get().sessionFilter });
           break;
         }
@@ -865,6 +885,7 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRun
           // it to. See `SavedSessions`.
           noteSavedSessions(
             bucket.session?.workspace ?? bucket.workspace,
+            bucket.remoteWorkspaceId,
             projectSessionList(msg.items),
             true,
           );

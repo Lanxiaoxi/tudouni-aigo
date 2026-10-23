@@ -11,7 +11,8 @@ import type { TKey } from '@/i18n';
 import { useTurnClock } from '@/hooks/useTurnClock';
 import { EmptyState, Progress, Tip } from '@/components/ui/kit';
 import { IdleCloseConfirm, type IdleCloseTarget } from '@/components/modals/IdleCloseConfirm';
-import { formatDuration, formatPercent, formatRelative, formatTokens, normPath } from '@/utils/format';
+import { formatDuration, formatPercent, formatRelative, formatTokens } from '@/utils/format';
+import { savedSessionsKey } from '@/state/savedSessionsKey';
 
 /**
  * The session board: what every session in this workspace is doing, on one
@@ -162,14 +163,21 @@ export function SessionBoard() {
     const rt = s.sessions[s.activeKey ?? ''];
     return rt ? rt.session?.workspace ?? rt.workspace : '';
   });
+  // The focused workspace's **machine**, which is the other half of its key: the
+  // `listed` test below and every card lookup use both.
+  const currentRemoteWorkspaceId = useApp(
+    (s) => s.sessions[s.activeKey ?? '']?.remoteWorkspaceId ?? null,
+  );
   // Per-workspace lookups, rebuilt only when a list is written: one source per
   // directory, so a card's preview and that directory's rail row can never
-  // disagree.
+  // disagree. Keyed by `savedSessionsKey`, which is the map's own key — a
+  // `normPath` here would miss every remote list, and a local and a remote
+  // `/srv/app` would resolve to one entry.
   const rowsByIdByWorkspace = useMemo(
     () =>
       new Map(
         Object.values(savedSessions).map((list) => [
-          normPath(list.workspace),
+          savedSessionsKey(list.workspace, list.remoteWorkspaceId),
           new Map(list.items.map((row) => [row.id, row])),
         ]),
       ),
@@ -211,7 +219,9 @@ export function SessionBoard() {
         const row =
           id === null || ownWorkspace.trim() === ''
             ? undefined
-            : rowsByIdByWorkspace.get(normPath(ownWorkspace))?.get(id);
+            : rowsByIdByWorkspace
+                .get(savedSessionsKey(ownWorkspace, bucket.remoteWorkspaceId))
+                ?.get(id);
         // `statusByKey` is keyed by **sessionId** (`selectRowStatusKey` builds
         // `sessionId:status`), not by the child key this card is otherwise
         // addressed by — looking the key up directly always missed and dropped
@@ -383,7 +393,8 @@ export function SessionBoard() {
   const loading =
     order.length === 0 &&
     (currentWorkspace.trim() === '' ||
-      savedSessions[normPath(currentWorkspace)]?.listed !== true);
+      savedSessions[savedSessionsKey(currentWorkspace, currentRemoteWorkspaceId)]?.listed !==
+        true);
 
   /**
    * Close every session the prompt named.

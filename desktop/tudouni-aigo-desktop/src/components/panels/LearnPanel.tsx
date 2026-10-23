@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { FolderOpen } from 'lucide-react';
 import {
   activeWorkspaceOf,
-  selectSavedSessions,
+  selectSavedSessionsOf,
   useApp,
 } from '@/state/store';
 import { useT } from '@/i18n/useT';
@@ -57,7 +57,10 @@ import { PanelBody, PanelShell } from './PanelShell';
 export function LearnPanel() {
   const t = useT();
   const workspace = useApp(activeWorkspaceOf);
-  const saved = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)));
+  // `Of`: the machine on screen is part of which list this is — two hosts can
+  // each have a `/srv/app`, and learning from one must not be told about the
+  // other's conversations.
+  const saved = useApp((s) => selectSavedSessionsOf(s, s.activeKey));
   const startLearning = useApp((s) => s.startLearning);
   const closePanel = useApp((s) => s.closePanel);
 

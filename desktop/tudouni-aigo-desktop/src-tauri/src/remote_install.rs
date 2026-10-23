@@ -359,7 +359,11 @@ impl RemoteLayout {
 /// `quote_shell_argument` the runtime-launch command already uses in
 /// `launch_remote.rs` — see any of those for why single-quoting is the one truly inert
 /// form and the single character that needs escaping.
-fn q(s: &str) -> String {
+///
+/// `pub(crate)` because the remote-version probe in `runtime_commands` runs one
+/// command with a path from a saved entry: a space in it would otherwise split
+/// the command, which is the same reason every other call site quotes.
+pub(crate) fn q(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for ch in s.chars() {
@@ -546,6 +550,32 @@ pub fn current_installed_version(session: &Session, layout: &RemoteLayout) -> Op
         .filter(|v| !v.is_empty())
 }
 
+/// Whether a path on the host is a runnable file right now.
+///
+/// **The check `current_installed_version` cannot make, and the reason
+/// "reinstall" used to do nothing.** That function resolves `CurrentLink` and
+/// compares the version name; a symlink whose target was deleted still resolves
+/// to a name, so `install_or_upgrade` concluded "already at this version" and
+/// returned the link's path — a path that does not exist. Clearing
+/// `remoteBinary` and pressing install therefore re-ran a check that answered
+/// "nothing to do", and the failure surfaced again on the next dial.
+///
+/// `test -x` is the one probe that answers the question actually being asked:
+/// can this process be started. A path that is missing, a directory, or present
+/// without the execute bit all fail it, and all three are the states a host that
+/// was reinstalled, cleaned, or unpacked wrong is left in.
+///
+/// Runs through `exec_capture`, so a host that cannot run `test` at all (no POSIX
+/// shell) reports `false` rather than erroring — in which case the install is
+/// attempted, which is the safe direction: a needless reinstall costs bandwidth,
+/// while a skipped one leaves a broken row.
+pub fn remote_binary_usable(session: &Session, path: &str) -> bool {
+    if path.trim().is_empty() {
+        return false;
+    }
+    exec_capture(session, &format!("test -x {}", q(path))).is_ok()
+}
+
 /// One progress event the install flow reports back to its caller, which in
 /// `remote_commands.rs` becomes the `remote-install://progress` event the WebView draws
 /// as `connection.phase = 'installing'` (§6 of the design: the connection's
@@ -591,14 +621,28 @@ pub fn install_or_upgrade(
 
     on_stage(InstallStage::CheckingExistingInstall);
     let backup_version = current_installed_version(session, &layout).unwrap_or_default();
-    if backup_version == version {
-        // Already installed at this exact version: nothing to do, and
-        // nothing is uploaded on this path at all — re-uploading an
+    let installed_path = format!("{}/{}", layout.current_link(), remote_target.binary_name());
+    // **The version agreeing is not the same as the thing being there.** A host
+    // that was reinstalled, had `~/.tudouni` cleaned, or unpacked an archive
+    // without the execute bit still resolves `CurrentLink` to the same version
+    // name — so the old check answered "already installed", returned a path that
+    // does not run, and the dial failed on the next open. Clearing
+    // `remoteBinary` and pressing install re-ran that same check and did
+    // nothing, which is why the row could never recover.
+    //
+    // The repair does not need a special mode: the upload path below is already
+    // idempotent (staging, then a verified switch), so treating "version matches
+    // but nothing is runnable" as "not installed" heals it with the normal
+    // sequence — and `verify_and_switch_command` still writes the backup from
+    // whatever `CurrentLink` said, so the record keeps its history.
+    if backup_version == version && remote_binary_usable(session, &installed_path) {
+        // Already installed **and runnable** at this exact version: nothing to
+        // do, and nothing is uploaded on this path at all — re-uploading an
         // identical version would still work, but the point of version
         // detection (§8.4) is specifically to skip that when it is not
         // necessary.
         on_stage(InstallStage::Done);
-        return Ok(layout.current_link() + "/" + remote_target.binary_name());
+        return Ok(installed_path);
     }
 
     on_stage(InstallStage::PreparingStaging);

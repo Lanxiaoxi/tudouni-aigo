@@ -57,6 +57,38 @@ export function describeFailure(err: unknown): string {
   return String(err);
 }
 
+/**
+ * Whether a refused remote dial is saying **"the binary that was recorded is not
+ * there any more"**.
+ *
+ * That is a different problem from "the connection was refused", and the answer
+ * to it is different too: the first is repaired by installing again (and the
+ * entry's stale `remoteBinary` is what stops the install from doing anything),
+ * while the second is a network or credential problem an install cannot fix.
+ *
+ * The phrases come from the shell and from `exec` on the far side — a POSIX shell
+ * says "No such file or directory" or "not found", and a file without the execute
+ * bit says "Permission denied". Matching on text is not elegant, and it is what
+ * there is: the far end reports through the SSH channel as a string, and the
+ * alternative is re-running a probe before every dial (which would double the
+ * latency of the common, working case to detect a rare one).
+ *
+ * Deliberately narrow. A false positive costs one wasted upload that ends in the
+ * same refusal with the flag set; a false negative leaves the row stuck, which is
+ * the state this repairs. Both are recoverable, but only one of them looks like a
+ * broken button, so the list errs towards recognising the case.
+ */
+export function looksLikeMissingBinary(reason: string): boolean {
+  const text = reason.toLowerCase();
+  return (
+    text.includes('no such file') ||
+    text.includes('not found') ||
+    text.includes('permission denied') ||
+    text.includes('cannot execute') ||
+    text.includes('exec format error')
+  );
+}
+
 /* ============================================================
    ui(state) landing, plus the auto-expand rule
    ============================================================ */

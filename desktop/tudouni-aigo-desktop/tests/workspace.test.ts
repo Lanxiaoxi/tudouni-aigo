@@ -211,6 +211,76 @@ test('a session\'s own workspace outranks having nothing, so the refusal is not 
 });
 
 /* ============================================================
+   Two places with one path
+   ============================================================ */
+
+/**
+ * A live bucket that would be abandoned if the screen moved off it, so the
+ * "did this open focus that session" question has an observable answer: an
+ * untouched bucket is closed by `abandonIfUntouched`, a conversation is not.
+ */
+function liveBucket(key: string, workspace: string, remoteWorkspaceId: string | null): SessionRuntime {
+  const bucket = createSessionBucket(key, workspace, { ericai: false, maxSteps: null }, remoteWorkspaceId);
+  bucket.ready = true;
+  bucket.session = { ...bucket.session!, resumed: true, id: `s-${key}` } as never;
+  return bucket;
+}
+
+test('opening a local directory does not focus the remote session that shares its path', async () => {
+  // `/srv/app` on this machine and `/srv/app` on a server are two different
+  // places that compare equal as strings. Before the guard, pressing the local
+  // `/srv/app` row focused the **remote** conversation — same path, different
+  // machine — and the person believed they had opened a local directory.
+  //
+  // The browser is observed as an IPC call rather than as a bucket: a local
+  // child asks for `runtime_attach`, and the assertion is that one was asked
+  // for at all. A focus asks for nothing, which is what makes the two
+  // distinguishable.
+  const remote = liveBucket('k-remote', '/srv/app', 'rw-1');
+  install({ 'k-remote': remote }, ['k-remote'], 'k-remote', { lastWorkspace: null });
+
+  const attached: Record<string, unknown>[] = [];
+  const previous = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    __TAURI_INTERNALS__: {
+      invoke(cmd: string, args: Record<string, unknown>) {
+        if (cmd === 'runtime_attach') {
+          attached.push((args.options ?? {}) as Record<string, unknown>);
+          return Promise.resolve(7);
+        }
+        if (cmd === 'runtime_stderr') return Promise.resolve([]);
+        return Promise.resolve(null);
+      },
+    },
+  };
+  try {
+    await useApp.getState().enterWorkspace('/srv/app');
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+  }
+
+  assert.equal(attached.length, 1, 'a local child was started, rather than the remote session focused');
+  assert.equal(attached[0].workspace, '/srv/app');
+  const s = useApp.getState();
+  const opened = s.sessions[s.activeKey ?? ''];
+  assert.ok(opened !== undefined);
+  assert.equal(opened.remoteWorkspaceId, null, 'and it is a local session');
+  assert.equal(s.activeKey, '7');
+});
+
+test('opening a remote row does not focus the local session that shares its path', async () => {
+  // The mirror image, and it already held: `enterRemoteWorkspace` matches on
+  // `remoteWorkspaceId`. Pinned here so a future change cannot make the two
+  // entries race for the same bucket in one direction only.
+  const local = liveBucket('k-local', '/srv/app', null);
+  install({ 'k-local': local }, ['k-local'], 'k-local', { lastWorkspace: null });
+
+  await useApp.getState().enterRemoteWorkspace('rw-missing');
+
+  assert.equal(useApp.getState().activeKey, 'k-local', 'a row that is not in the list moves nothing');
+});
+
+/* ============================================================
    A child that would not start
    ============================================================ */
 

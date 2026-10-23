@@ -25,7 +25,8 @@ import {
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { Badge, Count, Info, PanelInfo, Tip } from '@/components/ui/kit';
-import { readUserConfig, revealConfigFile, writeUserConfig } from '@/runtime/tauri';
+import { readRemoteUserConfig, readUserConfig, revealConfigFile, writeRemoteUserConfig, writeUserConfig } from '@/runtime/tauri';
+import { remoteConnectionOf, useApp } from '@/state/store';
 import {
   API_STYLES,
   blockingProblems,
@@ -122,10 +123,29 @@ export function ConfigPanel() {
   // Read once, on open. There is nothing to poll: the file changes when somebody
   // changes it, and the panel is the only writer acting on behalf of this window
   // while it is up.
+  //
+  // **Which machine, though, is the question the old version never asked.** On a
+  // remote screen the file the runtime reads is `~/.tudouni/config.json` *there*,
+  // and this machine has a file with the same name at the same-looking path. The
+  // panel used to edit this one, so a route added "on the server" went into the
+  // local file and nothing changed — while the reveal button opened this
+  // machine's folder, which is the clearest possible "you are on the wrong
+  // machine" signal that said nothing at all.
+  //
+  // `configTarget()` answers from the screen's own bucket. `null` is a local
+  // screen (or no session), and that keeps the original door exactly as it was.
+  const configTarget = useApp((s) => s.configTarget);
+  const noteRemoteConfigWritten = useApp((s) => s.noteRemoteConfigWritten);
+  // The destination, for the badge and the tooltip — `remoteConnectionOf` is the
+  // same "which host is this session on" answer the rail and the top bar use, and
+  // it carries no credentials (the store's `configTarget` is where those are).
+  const remote = useApp((s) => remoteConnectionOf(s, s.activeKey));
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const loaded = await readUserConfig();
+      const where = configTarget();
+      const loaded =
+        where === null ? await readUserConfig() : await readRemoteUserConfig(where.target);
       if (!alive) return;
       if (loaded === null) {
         setLoadProblem(t('panel.config.unreadable'));
@@ -137,7 +157,7 @@ export function ConfigPanel() {
     return () => {
       alive = false;
     };
-  }, [t]);
+  }, [t, configTarget]);
 
   const problems: Problem[] = draft === null ? [] : validateDraft(draft);
   const blocking = blockingProblems(problems);
@@ -269,9 +289,26 @@ export function ConfigPanel() {
     setSaving(true);
     setSaveProblem(null);
     try {
-      const written = await writeUserConfig(buildPatch(doc, draft));
-      setDoc(written);
-      setDraft(draftFrom(written));
+      const where = configTarget();
+      if (where === null) {
+        const written = await writeUserConfig(buildPatch(doc, draft));
+        setDoc(written);
+        setDraft(draftFrom(written));
+      } else {
+        // The merge runs on the far host against the bytes it has **now**, and
+        // the reply is that file re-read — the same contract as the local door,
+        // so the two branches below stay one shape.
+        const written = await writeRemoteUserConfig(where.target, buildPatch(doc, draft));
+        setDoc(written.document);
+        setDraft(draftFrom(written.document));
+        // §9.5's baseline, moved to what was just written. Without this the next
+        // open compares the host's file against the old baseline, concludes "the
+        // remote file changed", and asks which side should win — about an edit
+        // the person made in this very panel.
+        if (written.configFingerprint !== null) {
+          noteRemoteConfigWritten(where.hostId, written.configFingerprint);
+        }
+      }
       // The reply is the file as it now is, so a row this draft invented may not
       // exist in it any more — and an editor pointing at a row that is gone
       // would render nothing. Back to the list is the honest place to be.
@@ -485,21 +522,51 @@ export function ConfigPanel() {
         {/* Where the file is, and the one way to it that is not this form. The
             folder button is what a person needs when the file cannot be parsed
             — that is precisely the case this panel cannot fix for them. It
-            follows the tab, because the two tabs are two files. */}
+            follows the tab, because the two tabs are two files.
+
+            **On a remote screen the two halves split.** The path is still the
+            host's own (`/home/deploy/.tudouni/config.json`), and it is shown
+            with the `user@host` beside it so "whose file is this" is answered
+            on screen. The reveal button goes: `revealItemInDir` opens **this**
+            machine's file manager, and pointing it at a remote path either
+            fails or — where the path also exists here — shows a different file
+            with the same name, which is the worst of the two. The honest
+            alternative is to say why it is not offered, which the tooltip does. */}
         <div className="cfg-path-row">
+          {remote !== null ? (
+            <Badge tone="neutral">
+              {remote.user}@{remote.host}
+            </Badge>
+          ) : null}
           <span className="cfg-path mono" title={file.path}>
             {file.path}
           </span>
-          <Tip label={t('panel.config.reveal')}>
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon btn-compact"
-              aria-label={t('panel.config.reveal')}
-              onClick={() => void revealConfigFile(file.path)}
-            >
-              <FolderOpen size={13} />
-            </button>
-          </Tip>
+          {remote === null ? (
+            <Tip label={t('panel.config.reveal')}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon btn-compact"
+                aria-label={t('panel.config.reveal')}
+                onClick={() => void revealConfigFile(file.path)}
+              >
+                <FolderOpen size={13} />
+              </button>
+            </Tip>
+          ) : (
+            <Tip label={t('panel.config.revealRemote', { where: `${remote.user}@${remote.host}` })}>
+              {/* Rendered rather than omitted: a control that is simply missing
+                  from a panel that always had one reads as a bug. Disabled with
+                  the reason in the tooltip is the sentence. */}
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon btn-compact"
+                aria-label={t('panel.config.revealRemote', { where: `${remote.user}@${remote.host}` })}
+                disabled
+              >
+                <FolderOpen size={13} />
+              </button>
+            </Tip>
+          )}
         </div>
         {!file.exists ? <p className="set-hint">{t('panel.config.missing')}</p> : null}
         {file.problem !== null ? <p className="cfg-file-problem">{file.problem}</p> : null}

@@ -23,6 +23,40 @@ pub fn remote_config_path(home_dir: &str) -> String {
     format!("{}/.tudouni/config.json", home_dir.trim_end_matches('/'))
 }
 
+/// The remote account's `~/.tudouni/` directory.
+pub fn remote_config_dir(home_dir: &str) -> String {
+    format!("{}/.tudouni", home_dir.trim_end_matches('/'))
+}
+
+/// Read one file from the remote account by name, returning `None` when it is
+/// not there.
+///
+/// **A parameterised read rather than a second `check_remote_config`.** The
+/// config panel edits two files, and §9's sync policy only ever considered one
+/// of them — so the panel needs the other one's bytes through the same door.
+/// The two callers differ in which name they pass and in what they do with the
+/// answer, and nothing else about the operation changes.
+pub fn read_remote_file(
+    session: &Session,
+    home_dir: &str,
+    name: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let path = format!("{}/{}", remote_config_dir(home_dir), name);
+    let sftp = session.sftp().map_err(|e| format!("could not start an SFTP session: {e}"))?;
+    let mut file = match sftp.open(Path::new(&path)) {
+        Ok(file) => file,
+        // libssh2's SFTP errors do not reliably distinguish "not found" from
+        // other failures through ssh2's API — the same simplification
+        // `check_remote_config` documents. A permission-denied account would
+        // also fail every other remote operation this program attempts.
+        Err(_) => return Ok(None),
+    };
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)
+        .map_err(|e| format!("could not read {path}: {e}"))?;
+    Ok(Some(raw))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteConfigStatus {
     Missing,
@@ -157,9 +191,28 @@ fn file_stat_perm(mode: u32) -> ssh2::FileStat {
 /// last step atomic relative to anything reading the real path through the
 /// same SFTP session. Permissions are set to 0600 (owner read/write only)
 /// on both the new file and the backup, since this file holds API keys.
+/// The `config.json` case, named. Kept because §9's sync path reads better
+/// saying `write_remote_config` than `write_remote_file(…, "config.json", …)`,
+/// and because it is the one file whose write the sync policy established.
+#[allow(dead_code)]
 pub fn write_remote_config(session: &Session, home_dir: &str, contents: &[u8]) -> Result<(), String> {
-    let dir = format!("{}/.tudouni", home_dir.trim_end_matches('/'));
-    let path = remote_config_path(home_dir);
+    write_remote_file(session, home_dir, "config.json", contents)
+}
+
+/// The same safe write, for either file the config panel owns.
+///
+/// `config.json` is the one §9's sync policy was designed around, and `mcp.json`
+/// is the other half of the same panel — both hold secrets (API keys, and a
+/// server's `env`/`headers`), so both get the temp-file-then-rename treatment
+/// with 0600 permissions and a `.bak`.
+pub fn write_remote_file(
+    session: &Session,
+    home_dir: &str,
+    name: &str,
+    contents: &[u8],
+) -> Result<(), String> {
+    let dir = remote_config_dir(home_dir);
+    let path = format!("{dir}/{name}");
     let backup_path = format!("{path}.bak");
     let temp_path = format!("{path}.tmp-{}", std::process::id());
 

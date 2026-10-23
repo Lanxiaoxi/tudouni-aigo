@@ -9,16 +9,15 @@ import type { AppStore } from '../storeShape';
 import { nextId } from '@/state/entries';
 import { buildLearningMessage, learningSessionRefs } from '@/learn/template';
 import { buildRefineMessage } from '@/learn/refineTemplate';
-import { canRunTask, refineAvailability, refineRunScope, type Task, type TaskRunLink } from '@/task/tasks';
+import { canRunTask, refineAvailability, refineRunScope, type RefineScreen, type Task, type TaskRunLink } from '@/task/tasks';
 import { registerRuntime, sendTo, type Runtime, unregisterRuntime } from '@/runtime/bus';
-import { samePath } from '@/utils/format';
 import { attachRuntime, createTauriRuntime, readRuntimeStderr, shutdownRuntime, type BridgeOptions } from '@/runtime/tauri';
 import { TASK_RUNS_MAX, type LaunchArgs } from '../types';
 import { createSessionBucket } from '../sessionBucket';
 import { persistPrefs } from '../prefs';
 import { headForActive, releaseModalsOf } from '../modalQueue';
 import { forgetPolling } from '../polling';
-import { selectSavedSessions } from '../selectors/session';
+import { selectSavedSessionsOf, selectSessionHome } from '../selectors/session';
 import { activeRuntime, activeWorkspaceOf, resolveAttachWorkspace } from '../appView';
 import { FIND_IDLE } from '../find';
 import { nextStartingKey } from '../startingSeq';
@@ -372,16 +371,19 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       // would mean "last opened", and focusing a session in another workspace is
       // precisely how somebody changes which one that is.
       //
-      // **A remote session is skipped**, for the same reason `init` skips one: its
+      // **A remote session is skipped, and recorded separately.** Its
       // `workspace` is a directory on the remote host, and `lastWorkspace` is
-      // opened **on this machine** by `openFirstSession`. Remembering it would
-      // make the next start-up offer a directory that is not here. Which remote
-      // workspace was last used is already a row in `remoteWorkspaces`; nothing
-      // needs this field for it.
+      // opened **on this machine** by `openFirstSession` — remembering it there
+      // would make the next start-up offer a directory that is not here. The
+      // entry's id goes into `lastRemoteWorkspaceId` instead, which is the only
+      // thing that says "that one, over there".
       const focused = s.sessions[key];
       const workspace = focused?.workspace ?? '';
       if (workspace !== '' && focused?.remoteWorkspaceId === null) {
         get().rememberWorkspace(workspace);
+      }
+      if (focused?.remoteWorkspaceId != null) {
+        get().rememberRemoteWorkspace(focused.remoteWorkspaceId);
       }
       // Last, with the new focus already in place: what is being looked at now
       // is the one that stays, whatever it is.
@@ -441,6 +443,48 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
           return;
         }
       }
+      // **A saved id names its own place, and that place is asked first.**
+      //
+      // The rule below (a remote *screen* owns both open paths) only holds while
+      // the screen is where the conversation lives. Two entry points routinely
+      // click an id belonging to a place that is not on screen, and both of them
+      // used to end up at the wrong machine:
+      //
+      //   - a **notification's** reopen (`useNotifications`) carries the
+      //     workspace the toast was raised from, which for a remote session is
+      //     the *remote* path. Clicked with a local conversation on screen, the
+      //     screen test said "not here" and the id went to the local spawn with
+      //     a remote path — "the workspace … is not a directory", or (where the
+      //     path exists here) a local child resuming a remote id;
+      //   - a **task's run history** (`TaskPanel`) calls `openSession(id)` with
+      //     no workspace at all, so `namesTheScreen` was trivially true and the
+      //     *screen's* identity was used for a run that had happened elsewhere.
+      //     The child then got `--session <id>` for a file it does not have, and
+      //     the runtime reads an id with no file as *a new session with that
+      //     name*: an empty conversation, silently.
+      //
+      // The saved lists are the authority on which place an id belongs to, and
+      // they are the only thing here that knows about a machine the person is not
+      // currently looking at. `null` (no list holds it) falls through to the
+      // screen rule, which is the right answer whenever the screen *is* the place.
+      const home = sessionId === null ? null : selectSessionHome(s, sessionId);
+      if (home !== null && home.remoteWorkspaceId !== null) {
+        // The state the entry still exists. A saved list can outlive its remote
+        // entry (the row was forgotten while a child was running), and there is
+        // no dial to build from nothing — falling through would send a remote
+        // path to the local spawn, so it is refused here instead, with the same
+        // sentence the other "no entry" paths use.
+        const entry = s.remoteWorkspaces.find((item) => item.id === home.remoteWorkspaceId);
+        if (entry === undefined) {
+          set({ startupNotice: { code: 'no-workspace' } });
+          return;
+        }
+        await get().connectRemoteWorkspace(home.remoteWorkspaceId, {
+          forceNew: true,
+          ...(sessionId === null ? {} : { sessionId }),
+        });
+        return;
+      }
       // **A remote screen owns both open paths: a *new* conversation and a
       // *saved* session from the rail's list.** The session on screen carries
       // `remoteWorkspaceId`, and its `workspace` is a directory on the
@@ -492,7 +536,10 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       const s = get();
       const workspace = activeWorkspaceOf(s);
       if (workspace === '') return;
-      const saved = selectSavedSessions(s, workspace);
+      // `Of`: learning from this workspace must be told about **its** sessions,
+      // and a path alone does not say which machine's — two hosts can each have
+      // a `/srv/app`.
+      const saved = selectSavedSessionsOf(s, s.activeKey);
       const refs = learningSessionRefs(saved.items, scope);
       const text = buildLearningMessage({
         workspace,
@@ -573,16 +620,22 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       if (!task) return null;
       const workspace = activeWorkspaceOf(s);
       if (workspace === '') return null;
-      // The store's half of the panel's availability gate. The panel is the
-      // one that says *why*; this re-checks only the facts it owns — the task
-      // still exists, the screen still is its workspace, and the target is
-      // not remote (first version: the session files being read would be on
-      // the remote host, and this window's `.tudouni/sessions/` is not theirs).
+      // The store's half of the panel's availability gate. The panel is the one
+      // that says *why*; this re-checks only the facts it owns — the task still
+      // exists, and the screen is still the place the task names.
+      //
+      // **The place is a pair: directory *and* machine.** A remote refine is
+      // perfectly possible — the remote child reads its own
+      // `.tudouni/sessions/`, which is exactly where the runs' evidence is. What
+      // is impossible is refining a task whose place is not the one on screen,
+      // because then the child would study a different machine's transcripts
+      // (or, worse, a same-named local directory's).
       const links = s.taskRuns.filter((row) => row.taskId === taskId);
-      const screenIsRemote =
-        s.activeKey !== null && s.sessions[s.activeKey]?.remoteWorkspaceId !== null;
-      if (!refineAvailability(task, links, workspace, screenIsRemote).ok) return null;
-      if (task.workspace.kind === 'local' && !samePath(task.workspace.path, workspace)) return null;
+      const screen: RefineScreen = {
+        workspace,
+        remoteWorkspaceId: activeRuntime(s)?.remoteWorkspaceId ?? null,
+      };
+      if (!refineAvailability(task, links, screen).ok) return null;
 
       const text = buildRefineMessage({
         taskName: task.name,
@@ -594,11 +647,28 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         objectives,
       });
 
-      // A new local child in the workspace on screen — the same open as
-      // `startLearning`, and the only one this action knows: refine never
-      // dials remote, because its evidence is the local session files.
-      const key = await get().attachSession({});
-      if (key === null) return null;
+      // **A new child in the workspace on screen — the same split
+      // `startLearning` makes.** On a local screen that is
+      // `attachSession({})`; on a remote one the workspace is a path on the
+      // other host, so handing it to the local spawn would fail the local
+      // directory check ("the workspace … is not a directory"). `forceNew`
+      // because refine means a *new* conversation, never "focus the one already
+      // open" — the guard inside `connectRemoteWorkspace` is precisely what
+      // would swallow the request.
+      //
+      // There is no second upload or SFTP read here: the remote child resolves
+      // the same workspace-relative `.tudouni/sessions/<id>.jsonl` paths the
+      // prompt lists, on its own filesystem.
+      const remoteId = screen.remoteWorkspaceId;
+      let key: string | null;
+      if (remoteId !== null) {
+        await get().connectRemoteWorkspace(remoteId, { forceNew: true });
+        key = get().activeKey;
+        if (key === null) return null;
+      } else {
+        key = await get().attachSession({});
+        if (key === null) return null;
+      }
       // The front end's half of the delivery. The candidate is applied by
       // `upsertTask` on the question's answer, and the answer is read back
       // out of *this* session's transcript against *this* task — both halves
@@ -745,6 +815,13 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         // makes "which runs ran under which prompt" answerable — the whole
         // ground of the refine feature.
         prompt: task.prompt,
+        // **Which machine this run's evidence is on**, read off the bucket that
+        // actually opened rather than off the task's ref. The ref can say
+        // `active` (meaning "wherever I was"), and what matters later — when
+        // refine reads `.tudouni/sessions/<id>.jsonl` — is where the run
+        // *happened*. `null` is a local child, which is also what every link
+        // persisted before this field existed means.
+        remoteWorkspaceId: bucket.remoteWorkspaceId,
       };
       set((state) => ({
         taskRuns: [...state.taskRuns, link].slice(-TASK_RUNS_MAX),

@@ -56,7 +56,25 @@ export function useFileDrop(): void {
           // the path is inserted into *that* conversation's sentence, and
           // whether it is inside the workspace is a question only that session's
           // child can answer.
+          //
+          // **A remote screen is not that question at all, and this is where the
+          // old code went wrong.** `partitionDrop` compares two paths as
+          // strings, and on a remote screen the workspace is a path on the far
+          // host while `paths` are this machine's — so every path read as
+          // "outside", and the notice explained that the model would "go through
+          // shell". That sentence is false there: the far shell cannot see
+          // `C:\Users\me\report.pdf` either, so the file would simply be
+          // unreachable. The answer is not a better notice; it is to put the
+          // bytes where the runtime is, which `attachFiles` does.
           const rt = activeRuntime(s);
+          if ((rt?.remoteWorkspaceId ?? null) !== null) {
+            // Insertion *and* upload are one act here, so the drop's notice is
+            // the store's to write (it is the layer that knows the bridge's own
+            // refusal sentence). The drop only hands over the paths.
+            void s.attachFiles(paths);
+            return;
+          }
+
           const workspace = rt?.session?.workspace ?? rt?.workspace ?? '';
           const { inserted, outside, unknownWorkspace } = partitionDrop(paths, workspace);
 

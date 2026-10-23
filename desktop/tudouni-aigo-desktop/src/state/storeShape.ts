@@ -13,6 +13,7 @@ import { type ClosePolicy } from '@/runtime/windowClose';
 import { type BridgeOptions } from '@/runtime/tauri';
 import { type ConfigSyncChoice } from '@/state/configSync';
 import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModalState, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
+import type { RemoteConfigTarget } from '@/runtime/tauri';
 
 
 export interface AppStore {
@@ -33,8 +34,11 @@ export interface AppStore {
 
   /**
    * The saved sessions of each workspace this window has heard about, keyed by
-   * `normPath(workspace)`. **Window-level because the fact is the workspace's**,
-   * not any one child's — see `SavedSessions` for the report this fixed.
+   * `savedSessionsKey(workspace, remoteWorkspaceId)` — `normPath(workspace)` for
+   * a local directory, `rw:<id>` for a saved remote one. **Window-level because
+   * the fact is the workspace's**, not any one child's — see `SavedSessions` for
+   * the report this fixed, and `savedSessionsKey` for why the machine has to be
+   * part of the key: two hosts can each have a `/srv/app`.
    *
    * A record rather than one entry: several sessions in several workspaces can
    * each answer `session_list`, and a single slot would let a background
@@ -433,6 +437,19 @@ export interface AppStore {
    * disappears.
    */
   lastWorkspace: string | null;
+  /**
+   * Which saved remote workspace was last worked in, by entry id.
+   *
+   * **The remote counterpart of `lastWorkspace`.** A remote workspace's
+   * directory is on another machine, so `lastWorkspace` — which the start-up
+   * opens **here** — cannot name it, and a local path standing in for it would
+   * send the next launch looking for a directory that is not on this computer.
+   *
+   * The two fields are not exclusive: they answer "where was the work", and the
+   * answer may be either. The start-up reads the pair together and opens
+   * whichever the last session was.
+   */
+  lastRemoteWorkspaceId: string | null;
 
   /* ---------------- remembered start-up arguments ---------------- */
   /**
@@ -503,6 +520,19 @@ export interface AppStore {
    * been carried out.
    */
   rememberWorkspace(path: string): void;
+  /**
+   * Record the saved remote workspace the next launch should open, and persist
+   * it.
+   *
+   * The remote counterpart of `rememberWorkspace`, and a **separate field** for
+   * the reason that field is separate: a remote workspace's directory is on
+   * another machine, so `lastWorkspace` — which the start-up opens *here* —
+   * cannot name it.
+   *
+   * The id is checked against the saved entries before it is written, so a
+   * forgotten workspace leaves no dangling answer behind.
+   */
+  rememberRemoteWorkspace(remoteWorkspaceId: string): void;
   /**
    * Say why the window came up empty, when that needs saying.
    *
@@ -750,6 +780,23 @@ export interface AppStore {
    * nothing was inserted.
    */
   attachFilePath(path: string, at: number): number | null;
+
+  /**
+   * Attach paths that came from the **operating system** (a drop, or the native
+   * file dialog), which is a different act from `attachFilePath`.
+   *
+   * A local session inserts them as they stand. A **remote** session uploads
+   * each one into its workspace and inserts the workspace-relative path instead,
+   * because the path the OS handed over is on this machine and the workspace is
+   * on the other one. See the implementation for why the two branches cannot be
+   * one, and for why the old "the model would go through shell" sentence was
+   * false there.
+   *
+   * `at` is the caret for the local branch; the remote branch appends, because
+   * the draft can change while an upload is in flight. Answers how many paths
+   * were attached.
+   */
+  attachFiles(paths: string[], at?: number): Promise<number>;
   /** Forget one attached file. Called when its chip is dismissed. */
   forgetAttachedFile(path: string): void;
 
@@ -1161,8 +1208,17 @@ export interface AppStore {
    * (`--session <id>`), the same id the local path passes on. Without it the
    * remote child would start a *new* session rather than resume the one the
    * person clicked.
+   *
+   * `retried` is internal, and it exists to make the automatic repair **once**:
+   * a dial refused because the recorded binary no longer runs is retried after
+   * clearing `remoteBinary` (which makes the install path do its work), and the
+   * retry carries this flag so a host that cannot run the uploaded binary at all
+   * fails with a sentence instead of installing in a loop.
    */
-  connectRemoteWorkspace(remoteWorkspaceId: string, options?: { forceNew?: boolean; sessionId?: string }): Promise<void>;
+  connectRemoteWorkspace(
+    remoteWorkspaceId: string,
+    options?: { forceNew?: boolean; sessionId?: string; retried?: boolean },
+  ): Promise<void>;
   /**
    * Installs or upgrades the Runtime on a remote workspace's host (§8 of
    * the design), without connecting afterwards. A separate act from
@@ -1237,6 +1293,19 @@ export interface AppStore {
   toolFacts(name: string): ToolFacts | null;
 
   /**
+   * Ask the host which build one remote session is running, once, and keep it.
+   *
+   * `init` carries no product version, so a remote session's build has to be
+   * read by running its binary over SSH. Lazy rather than at connect because it
+   * costs a dial and one panel wants it; cached on the bucket because a running
+   * process cannot change its build.
+   *
+   * A local session is a no-op: the window-level `runtimeVersion` is already the
+   * right answer for it.
+   */
+  resolveRuntimeBuild(key: string): Promise<void>;
+
+  /**
    * Start a session with the given start-up arguments, and remember them.
    *
    * **A new child rather than a message**, and that is forced by the runtime
@@ -1255,6 +1324,38 @@ export interface AppStore {
    * session's `problem`, which is one place, and not on the window.
    */
   applyLaunch(next: LaunchArgs): Promise<void>;
+
+  /**
+   * Which machine the config panel should edit right now: the **screen's**, or
+   * `null` for this one.
+   *
+   * **The panel cannot answer this itself.** It needs the SSH destination, and
+   * `remoteConnectionOf` deliberately carries no credentials — the password
+   * lives on the saved host, which is the store's business. So the store builds
+   * the target, and the panel only asks "is this a remote screen and, if so,
+   * which host".
+   *
+   * `null` means a **local** screen, which includes "no session open": there is
+   * then nothing remote to edit, and the local file is the honest subject.
+   */
+  configTarget(): { remoteWorkspaceId: string; hostId: string; target: RemoteConfigTarget } | null;
+
+  /**
+   * Record the fingerprint of a remote `config.json` this window just wrote.
+   *
+   * **§9.5's baseline is what stops the panel's own edit from being reported as
+   * somebody else's change.** `checkConfigSync` compares each side against the
+   * value it was last *seen* at, so a save that leaves the host's file different
+   * from the recorded baseline makes the next open ask "the remote file changed —
+   * which wins?" about an edit the person made a minute ago, in this window.
+   * Writing both baselines to the bytes just stored is what the sync flow itself
+   * does after an upload.
+   *
+   * The local baseline is only moved when the local file was not the subject —
+   * editing the host's file does not touch this machine's, so claiming it did
+   * would hide a real local change from the next comparison.
+   */
+  noteRemoteConfigWritten(hostId: string, remoteFingerprint: string): void;
 }
 
 

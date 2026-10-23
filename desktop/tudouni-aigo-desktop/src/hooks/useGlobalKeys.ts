@@ -1,10 +1,9 @@
 import { useEffect } from 'react';
 import {
   activeRuntime,
-  activeWorkspaceOf,
   selectModalVisible,
   selectPhase,
-  selectSavedSessions,
+  selectSavedSessionsOf,
   useApp,
 } from '@/state/store';
 
@@ -326,7 +325,11 @@ export function useGlobalKeys(): void {
           // shows, and an archived session is not one of them. Reading `items`
           // would make the numbering depend on whether the library happened to be
           // open, since that is what flips the connection to the unfiltered list.
-          const item = selectSavedSessions(s, activeWorkspaceOf(s)).active[Number(e.key) - 1];
+          //
+          // `Of`, so the number agrees with the rows the rail drew: the same path
+          // on another host is a different list, and numbering the local
+          // `/srv/app` off a remote list would open the wrong conversation.
+          const item = selectSavedSessionsOf(s, s.activeKey).active[Number(e.key) - 1];
           if (item) {
             e.preventDefault();
             void s.openSession(item.id);

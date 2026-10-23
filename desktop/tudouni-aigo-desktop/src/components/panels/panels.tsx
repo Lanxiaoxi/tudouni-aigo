@@ -13,11 +13,11 @@ import {
   NO_SUBAGENTS,
   NO_SUBAGENTS_DONE,
   NO_TERMINALS,
-  activeWorkspaceOf,
+  remoteWorkspaceIdOf,
   selectAskOn,
   selectEffortLevels,
   selectLiveSessionIdsKey,
-  selectSavedSessions,
+  selectSavedSessionsOf,
   useApp,
   useSessionField,
 } from '@/state/store';
@@ -234,8 +234,9 @@ export function ResumePanel() {
   const [q, setQ] = useState('');
   // The picker shows the **workspace's** saved sessions, so it reads the same
   // window-level list the left rail does — one source, so the two can never
-  // disagree about what exists (see `SavedSessions`).
-  const saved = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)));
+  // disagree about what exists (see `SavedSessions`). `Of` because the machine is
+  // part of which list this is.
+  const saved = useApp((s) => selectSavedSessionsOf(s, s.activeKey));
   const listed = saved.listed;
   const openSession = useApp((s) => s.openSession);
   const archiveSession = useApp((s) => s.archiveSession);
@@ -1240,6 +1241,25 @@ export function AuditPanel() {
   const snap = useSessionField((rt) => rt.uiState, null);
   const desktopVersion = useApp((s) => s.desktopVersion);
   const runtimeVersion = useApp((s) => s.runtimeVersion);
+  // **Which build answered this conversation.** The window-level `runtimeVersion`
+  // is read from the binary next to this application, and on a remote screen that
+  // is a different build from the one running the session — so the panel used to
+  // show this machine's version beside a `protocol` that came from the host, two
+  // lines contradicting each other in the one place somebody looks to resolve
+  // exactly that kind of question.
+  //
+  // `runtimeBuild` is per session and filled on demand: `null` is "not asked
+  // yet", `''` is "asked and the host did not answer", and a value is the host's
+  // own `--version`. Asking on first draw is what makes the panel self-sufficient
+  // — the alternative is documenting that a person must press something first.
+  const runtimeBuild = useSessionField((rt) => rt.runtimeBuild, null);
+  const resolveRuntimeBuild = useApp((s) => s.resolveRuntimeBuild);
+  const sessionIsRemote = useApp((s) => remoteWorkspaceIdOf(s, s.activeKey) !== null);
+  useEffect(() => {
+    if (key !== null && sessionIsRemote && runtimeBuild === null) {
+      void resolveRuntimeBuild(key);
+    }
+  }, [key, sessionIsRemote, runtimeBuild, resolveRuntimeBuild]);
   const dropped = useSessionField((rt) => rt.dropped, 0);
   const lateDropped = useSessionField((rt) => rt.lateDropped, 0);
   const status = useSessionField((rt) => rt.status, null);
@@ -1275,9 +1295,24 @@ export function AuditPanel() {
           <dd className="mono">v{desktopVersion}</dd>
 
           {/* `dev` is shown as-is: a build without ldflags is a dev build, and
-              prettifying it would hide which binary is actually running. */}
-          <dt>{t('panel.audit.runtimeVersion')}</dt>
-          <dd className="mono">{runtimeVersion ?? '—'}</dd>
+              prettifying it would hide which binary is actually running.
+              On a remote screen the label says so: the number is the **host's**,
+              and a reader comparing it against the desktop version above needs
+              to know which machine each one came from. */}
+          <dt>
+            {sessionIsRemote
+              ? t('panel.audit.runtimeVersionRemote')
+              : t('panel.audit.runtimeVersion')}
+          </dt>
+          <dd className="mono">
+            {sessionIsRemote
+              ? runtimeBuild === null
+                ? t('common.loading')
+                : runtimeBuild === ''
+                  ? t('panel.audit.runtimeVersionUnknown')
+                  : runtimeBuild
+              : runtimeVersion ?? '—'}
+          </dd>
 
           <dt>{t('panel.audit.protocol')}</dt>
           <dd className="mono">v{session?.protocol ?? '—'}</dd>

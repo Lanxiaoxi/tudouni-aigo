@@ -157,3 +157,34 @@ export function isUntouchedSession(s: AppStore, key: string): boolean {
 export function runtimeOf(s: AppStore, key: string | null): SessionRuntime | null {
   return key === null ? null : (s.sessions[key] ?? null);
 }
+
+/**
+ * Which remote workspace a session belongs to, or `null` for a local one.
+ *
+ * **One predicate, because "is this remote?" is asked in a dozen places and a
+ * path string cannot answer it.** A remote bucket's `workspace` is a directory
+ * on the other host, and the same string can name a directory here — a
+ * container mount, a WSL share, or two projects that both chose `/srv/app`. The
+ * only fact that separates them is `remoteWorkspaceId`, which is `null` for a
+ * local child and the saved entry's id for a remote one.
+ *
+ * `?? null` is what folds "no session open" (`undefined`) and "a local session"
+ * into the same answer, so a non-null return is exactly "this screen is over a
+ * remote workspace". Callers that need the entry itself want
+ * `remoteConnectionOf`; this one is for the yes/no question.
+ */
+export function remoteWorkspaceIdOf(s: AppStore, key: string | null): string | null {
+  return runtimeOf(s, key)?.remoteWorkspaceId ?? null;
+}
+
+/**
+ * Whether the session on screen is over a remote workspace.
+ *
+ * The window-level form of `remoteWorkspaceIdOf`, for the rules that read "may
+ * this window do X with the workspace currently on display" — the session
+ * search, which scans *this* machine's `.tudouni/sessions`, is the one that got
+ * this wrong by testing the path for `''` instead (see `WorkspaceSidebar`).
+ */
+export function screenIsRemote(s: AppStore): boolean {
+  return remoteWorkspaceIdOf(s, s.activeKey) !== null;
+}

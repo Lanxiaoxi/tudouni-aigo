@@ -5,11 +5,12 @@ import {
   activeRuntime,
   activeWorkspaceOf,
   railBlocked,
+  screenIsRemote,
   selectBoardAvailable,
   selectLiveOnlyKey,
   selectLiveSessionIdsKey,
   selectRowStatusKey,
-  selectSavedSessions,
+  selectSavedSessionsOf,
   selectWorkspaceAttentionKey,
   useApp,
   type ConnectionPhase,
@@ -23,6 +24,7 @@ import { Logo } from '@/components/ui/Logo';
 import { Count, EmptyState, Tip } from '@/components/ui/kit';
 import { baseName, formatRelative, samePath } from '@/utils/format';
 import { AddRemoteWorkspaceModal } from '@/components/modals/AddRemoteWorkspaceModal';
+import { ManageHostsModal } from '@/components/modals/ManageHostsModal';
 
 /**
  * The left sidebar: **workspace management and session management**.
@@ -63,9 +65,14 @@ export function WorkspaceSidebar() {
   // when the person clicked another row: `focusSession` sends nothing, so the
   // rail simply switched to another child's frozen copy of the same files.
   //
+  // `selectSavedSessionsOf` rather than a bare path, because the workspace alone
+  // does not name the place: two hosts can each have a `/srv/app`, and a remote
+  // one collides with a local one of the same name. The id is taken off the
+  // bucket on screen, which is the only thing that knows which machine this is.
+  //
   // The selector returns either the stored entry or the shared empty constant,
   // so its identity only changes when the list actually does.
-  const savedSessions = useApp((s) => selectSavedSessions(s, activeWorkspaceOf(s)));
+  const savedSessions = useApp((s) => selectSavedSessionsOf(s, s.activeKey));
   // Whether there is a child to talk to at all. Both workspace capabilities
   // need one: a terminal belongs to a workspace the runtime is *in*, and a file
   // listing is answered by that child against that child's boundary. With no
@@ -222,7 +229,10 @@ export function WorkspaceSidebar() {
    * a local one is of its.
    */
   const liveWorkspace = rt?.session?.workspace ?? rt?.workspace ?? '';
-  const liveKey = useApp((s) => selectLiveOnlyKey(s, liveWorkspace));
+  // The machine travels with it: `selectLiveOnlyKey` refuses a bucket from
+  // another host, and a path string cannot say which host it belongs to.
+  const liveRemoteWorkspaceId = rt?.remoteWorkspaceId ?? null;
+  const liveKey = useApp((s) => selectLiveOnlyKey(s, liveWorkspace, liveRemoteWorkspaceId));
   const liveOnly = useMemo(() => {
     const out: { key: string; id: string; status: RowStatus }[] = [];
     if (liveKey === '') return out;
@@ -257,6 +267,10 @@ export function WorkspaceSidebar() {
   // remote list no longer has its own section, so its add button would have
   // had to live somewhere a person would not look.
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  /** The saved-hosts dialog. Its own open flag rather than a panel: it is a
+   *  modal about records that exist outside any session, and the wizard's own
+   *  flag next to it would make two dialogs share one boolean. */
+  const [hostsOpen, setHostsOpen] = useState(false);
   /**
    * The workbench's own filter. It is a **local** search, not the command
    * palette: it narrows the seven rows the drawer already holds, which is the
@@ -277,6 +291,20 @@ export function WorkspaceSidebar() {
   const [sessionSearchHits, setSessionSearchHits] = useState<SessionSearchHit[] | null>(null);
   const [sessionSearching, setSessionSearching] = useState(false);
   const [sessionSearchFailed, setSessionSearchFailed] = useState(false);
+  /**
+   * The screen's workspace is on **another machine**, so this end cannot search
+   * it at all.
+   *
+   * A third state, deliberately not folded into `sessionSearchFailed`. That one
+   * means "the files were there and could not be read" — a fault, drawn as one,
+   * and retrying may fix it. This one is a **capability that does not exist
+   * yet**: nothing is broken, nothing will change on a retry, and painting it
+   * red would send somebody looking for a permissions problem on the wrong
+   * machine. It is also not "no match": the word may well be in a session on the
+   * server, and saying "No session matches / Try a shorter word" is a false
+   * negative the person has no way to see through.
+   */
+  const [sessionSearchRemote, setSessionSearchRemote] = useState(false);
   const sessionSearchSeq = useRef(0);
   const sessionSearchTimer = useRef<number | null>(null);
   // The search row is opened by its button and stays open until closed —
@@ -292,12 +320,32 @@ export function WorkspaceSidebar() {
       setSessionSearchHits(null);
       setSessionSearching(false);
       setSessionSearchFailed(false);
+      setSessionSearchRemote(false);
       return;
     }
     if (sessionsCollapsed) toggleSessionsCollapsed();
     setSessionSearchOpen(true);
   }
   const sessionSearchWorkspace = useApp(activeWorkspaceOf);
+  /**
+   * Whether the screen is over a remote workspace.
+   *
+   * **This, not `sessionSearchWorkspace === ''`, is the guard the comment on the
+   * search effect has always described.** `activeWorkspaceOf` answers with the
+   * session's own `workspace`, and a remote session's is a perfectly ordinary
+   * non-empty string — it is just a path on *another* host. Checking for the
+   * empty string therefore never fired, so the search ran against this machine:
+   * on Windows and macOS the remote path does not exist here and the answer was
+   * an empty list drawn as "No session matches" (a false negative), and on a
+   * Linux client — or wherever `/srv/app` happens to exist locally — it scanned
+   * **this machine's** `.tudouni/sessions` and offered another project's
+   * conversations as results for this workspace.
+   *
+   * `screenIsRemote` is the shared predicate rather than a second reading of
+   * `remoteWorkspaceId` here: the top bar, the task panel and the file panel ask
+   * the same question, and a path string can never answer it.
+   */
+  const sessionSearchIsRemote = useApp(screenIsRemote);
   // The search is a query, not a listing: it is debounced (250ms) because it
   // is sent per keystroke, and it is re-aimed at the workspace the saved list
   // itself is read from — `activeWorkspaceOf`, the same key the list is filed
@@ -311,17 +359,21 @@ export function WorkspaceSidebar() {
       setSessionSearchHits(null);
       setSessionSearching(false);
       setSessionSearchFailed(false);
+      setSessionSearchRemote(false);
       return;
     }
-    if (sessionSearchWorkspace === '') {
-      // A remote session's workspace is a path on another host, not a
-      // directory on this machine, and the search scans the local disk.
-      // Nothing to answer — and that is a different sentence than "no match".
+    if (sessionSearchIsRemote || sessionSearchWorkspace === '') {
+      // Nothing to answer, and two different reasons to say so: a remote
+      // workspace's session files are on the other host and this scan reads
+      // **this** disk, while an empty workspace means there is no saved list at
+      // all yet. Neither is "no match" and neither is a fault.
       setSessionSearchHits(null);
       setSessionSearching(false);
-      setSessionSearchFailed(true);
+      setSessionSearchFailed(false);
+      setSessionSearchRemote(sessionSearchIsRemote);
       return;
     }
+    setSessionSearchRemote(false);
     setSessionSearching(true);
     setSessionSearchFailed(false);
     const seq = ++sessionSearchSeq.current;
@@ -341,7 +393,11 @@ export function WorkspaceSidebar() {
         setSessionSearchHits(hits);
       });
     }, 250);
-  }, [sessionQuery, sessionSearchOpen, sessionSearchWorkspace]);
+    // `sessionSearchIsRemote` is a dependency for the same reason the workspace
+    // is: switching from a remote session to a local one in the same directory
+    // (or the reverse) changes which disk the answer is about, and a stale
+    // answer from the other one must not survive the switch.
+  }, [sessionQuery, sessionSearchOpen, sessionSearchWorkspace, sessionSearchIsRemote]);
   useEffect(() => {
     return () => {
       if (sessionSearchTimer.current !== null) window.clearTimeout(sessionSearchTimer.current);
@@ -701,6 +757,7 @@ export function WorkspaceSidebar() {
               disabled={blocked}
               onLocal={() => void onAddLocal()}
               onRemote={() => setAddRemoteOpen(true)}
+              onHosts={() => setHostsOpen(true)}
             />
           </div>
 
@@ -925,6 +982,7 @@ export function WorkspaceSidebar() {
         {/* Outside the fold on purpose: a dialog mounted conditionally inside a
             folded region would be unmounted while it is open. */}
         <AddRemoteWorkspaceModal open={addRemoteOpen} onOpenChange={setAddRemoteOpen} />
+        <ManageHostsModal open={hostsOpen} onOpenChange={setHostsOpen} />
 
         {/* ---------------- sessions ---------------- */}
         <section className="lb-section">
@@ -1084,6 +1142,15 @@ export function WorkspaceSidebar() {
                    the session through the ordinary door. */
                 sessionSearching ? (
                   <div className="lb-note">{t('lb.searchSessionsLoading')}</div>
+                ) : sessionSearchRemote ? (
+                  /* A capability this end does not have, not a failure and not
+                     an empty answer — see `sessionSearchRemote`. Said before
+                     `sessionSearchFailed`: the two are exclusive today, but
+                     "does not apply here" is the stronger fact. */
+                  <div className="lb-note">
+                    {t('lb.searchSessions.remote')}
+                    <div className="lb-note-hint">{t('lb.searchSessions.remoteHint')}</div>
+                  </div>
                 ) : sessionSearchFailed ? (
                   <div className="lb-note">{t('lb.searchSessions.failed')}</div>
                 ) : (sessionSearchHits ?? []).length === 0 ? (
@@ -1458,12 +1525,17 @@ function AddWorkspaceMenu({
   disabled,
   onLocal,
   onRemote,
+  onHosts,
 }: {
   menuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
   disabled: boolean;
   onLocal: () => void;
   onRemote: () => void;
+  /** Open the saved-hosts dialog. A third item rather than a second menu: it is
+   *  the same question ("which place should the next work happen in") one step
+   *  back — the account those places sit on. */
+  onHosts: () => void;
 }) {
   const t = useT();
   return (
@@ -1524,6 +1596,20 @@ function AddWorkspaceMenu({
             >
               <Server size={15} />
               <span className="plus-item-label">{t('lb.workspaceKind.remote')}</span>
+            </button>
+            {/* The accounts those places sit on. Drawn only when there is one:
+                an empty host list has nothing to manage, and an item that opens
+                an empty dialog teaches nothing. */}
+            <button
+              type="button"
+              className="plus-item"
+              onClick={() => {
+                onMenuOpenChange(false);
+                onHosts();
+              }}
+            >
+              <Network size={15} />
+              <span className="plus-item-label">{t('lb.manageHosts')}</span>
             </button>
           </div>
         </PopoverPrimitive.Content>

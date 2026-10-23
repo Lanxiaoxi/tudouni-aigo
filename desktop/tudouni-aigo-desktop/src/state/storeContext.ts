@@ -11,7 +11,7 @@ import { isUntouchedSession } from './appView';
 import type { AppStore } from './storeShape';
 import type { SessionRuntime } from './types';
 import type { VmSessionListItem } from '@/runtime/adapt';
-import { normPath } from '@/utils/format';
+import { savedSessionsKey } from './savedSessionsKey';
 
 export interface StoreContext {
   set: StoreApi<AppStore>['setState'];
@@ -24,10 +24,11 @@ export interface StoreContext {
   patchActive: (changes: Partial<SessionRuntime>) => void;
   noteSavedSessions: (
     workspace: string,
+    remoteWorkspaceId: string | null,
     items: VmSessionListItem[],
     listed: boolean,
   ) => void;
-  markSavedSessionsPending: (workspace: string) => void;
+  markSavedSessionsPending: (workspace: string, remoteWorkspaceId: string | null) => void;
   activeKeyForSend: () => string | null;
   abandonIfUntouched: (key: string | null) => void;
 }
@@ -80,33 +81,41 @@ export function createStoreContext(
    * its child is in, and the connection is the only place that fact exists —
    * exactly like the session attribution `applyRuntimeMessage` takes a key for.
    *
+   * **`remoteWorkspaceId` is part of the identity, not decoration.** A path is
+   * not enough to say which list this is: `hostA:/srv/app`, `hostB:/srv/app` and
+   * a local `/srv/app` are three different places that compare equal as strings,
+   * so keying by the path alone let one machine's answer overwrite another's —
+   * two rails drawing one list, and a row clicked in it carrying the wrong
+   * host's `sessionId`. See `state/savedSessionsKey.ts`.
+   *
    * Written into `savedSessions[key]` and nothing else: this is a **workspace**
    * fact, so it must not land in the bucket of whichever child happened to
    * answer. That was the bug — see `SavedSessions`.
    */
   function noteSavedSessions(
     workspace: string,
+    remoteWorkspaceId: string | null,
     items: VmSessionListItem[],
     listed: boolean,
   ): void {
-    if (workspace.trim() === '') return;
-    const key = normPath(workspace);
+    if (workspace.trim() === '' && remoteWorkspaceId === null) return;
+    const key = savedSessionsKey(workspace, remoteWorkspaceId);
     // The rail's view, computed here rather than in a selector — see
     // `SavedSessions.active` for why a filtering selector would loop forever.
     const active = items.filter((row) => !row.archived);
     set((s) => ({
       savedSessions: {
         ...s.savedSessions,
-        [key]: { workspace, items, active, listed },
+        [key]: { workspace, remoteWorkspaceId, items, active, listed },
       },
     }));
   }
 
   /** Mark one workspace's list as not-yet-answered, so a reader shows loading
    *  rather than a stale list that a request is on its way to replace. */
-  function markSavedSessionsPending(workspace: string): void {
-    if (workspace.trim() === '') return;
-    const key = normPath(workspace);
+  function markSavedSessionsPending(workspace: string, remoteWorkspaceId: string | null): void {
+    if (workspace.trim() === '' && remoteWorkspaceId === null) return;
+    const key = savedSessionsKey(workspace, remoteWorkspaceId);
     set((s) => {
       const current = s.savedSessions[key];
       if (!current) return {};

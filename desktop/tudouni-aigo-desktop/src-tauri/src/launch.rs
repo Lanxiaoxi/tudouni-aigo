@@ -244,6 +244,7 @@ pub(crate) fn spawn(
                 staging: Some(staging.clone()),
                 remote_workspace: None,
                 remote_ssh: None,
+                remote_binary: None,
             },
         );
 

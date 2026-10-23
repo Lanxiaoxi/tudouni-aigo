@@ -6,10 +6,13 @@
  *   - **The scope** (`refineRunScope`): which of a task's runs the agent may
  *     study — only settled ones, newest first, "last N" a trim of that order,
  *     and the failed-only variant keeping the newest ok run as the reference.
- *   - **The gate** (`refineAvailability`): no finished run, remote in either
- *     direction, a task bound to a different workspace — the same function the
- *     panel's tooltip and the store's refusal both read, so the two cannot
- *     disagree about why.
+ *   - **The gate** (`refineAvailability`): no finished run, or a task bound to a
+ *     place that is not the one on screen — where a "place" is a **pair** (a
+ *     directory and a machine), because two hosts can each have a `/srv/app` and
+ *     the runs' evidence lives on exactly one of them. A remote task on its own
+ *     host is refinable: the child there reads its own session files. The same
+ *     function the panel's tooltip and the store's refusal both read, so the two
+ *     cannot disagree about why.
  *   - **The message and its reader** (`buildRefineMessage` /
  *     `extractRefinePrompts` / `refineSelectedNumbers`): the prompt carries
  *     every run's frozen snapshot (or `(not recorded)`), the candidate blocks
@@ -24,6 +27,7 @@ import {
   REFINE_LAST_N,
   refineAvailability,
   refineRunScope,
+  type RefineScreen,
   type RunScope,
   type Task,
   type TaskRunLink,
@@ -119,29 +123,53 @@ function task(patch: Partial<Task> = {}): Task {
 
 const SETTLED = [link({ startedAtMs: 1, outcome: 'ok' })];
 
-test('no finished run is the first refusal, with its own reason', () => {
-  assert.equal(refineAvailability(task(), [], 'C:/work', false).reason, 'no-runs');
-  assert.equal(refineAvailability(task(), [link({ startedAtMs: 1 })], 'C:/work', false).reason, 'no-runs');
+const SCREEN = (workspace: string, remoteWorkspaceId: string | null = null): RefineScreen => ({
+  workspace,
+  remoteWorkspaceId,
 });
 
-test('remote is refused in either direction', () => {
+test('no finished run is the first refusal, with its own reason', () => {
+  assert.equal(refineAvailability(task(), [], SCREEN('C:/work')).reason, 'no-runs');
+  assert.equal(refineAvailability(task(), [link({ startedAtMs: 1 })], SCREEN('C:/work')).reason, 'no-runs');
+});
+
+test('a remote task is refinable on its own host — that is the whole point', () => {
+  // The earlier version refused **any** remote task, on the theory that its
+  // session files were "on another machine this window cannot read". They are on
+  // another machine — but the child that runs the refine lives there too, and it
+  // reads its own `.tudouni/sessions/`. So the gate is about *which* place is on
+  // screen, not about whether that place is remote.
+  const remoteTask = task({ workspace: { kind: 'remote', id: 'rw-1' } });
+  assert.equal(refineAvailability(remoteTask, SETTLED, SCREEN('/srv/app', 'rw-1')).ok, true);
+  // And a plain `active` task on a remote screen is the same statement: "here",
+  // and here is the host.
+  assert.equal(refineAvailability(task(), SETTLED, SCREEN('/srv/app', 'rw-1')).ok, true);
+});
+
+test('a remote task with another place on screen is refused, in either direction', () => {
+  const remoteTask = task({ workspace: { kind: 'remote', id: 'rw-1' } });
+  // A different host.
+  assert.equal(refineAvailability(remoteTask, SETTLED, SCREEN('/srv/app', 'rw-2')).reason, 'other-workspace');
+  // **The same path on this machine.** A path string cannot tell them apart,
+  // which is exactly why the screen is a pair: refining here would study this
+  // machine's `.tudouni/sessions/`, not the host's.
+  assert.equal(refineAvailability(remoteTask, SETTLED, SCREEN('/srv/app', null)).reason, 'other-workspace');
+  // And the mirror: a local task while the host's same-named workspace is open.
   assert.equal(
-    refineAvailability(task({ workspace: { kind: 'remote', id: 'rw-1' } }), SETTLED, 'C:/work', false).reason,
-    'remote',
-    'a task bound to a remote workspace',
+    refineAvailability(task({ workspace: { kind: 'local', path: '/srv/app' } }), SETTLED, SCREEN('/srv/app', 'rw-1')).reason,
+    'other-workspace',
   );
-  assert.equal(refineAvailability(task(), SETTLED, 'C:/work', true).reason, 'remote', 'a task on a remote screen');
 });
 
 test('a task bound to a different workspace is not the wrong directory compared', () => {
   const localElsewhere = task({ workspace: { kind: 'local', path: 'D:/other' } });
-  assert.equal(refineAvailability(localElsewhere, SETTLED, 'C:/work', false).reason, 'other-workspace');
+  assert.equal(refineAvailability(localElsewhere, SETTLED, SCREEN('C:/work')).reason, 'other-workspace');
   // The same path, other spelling: the comparison is the workspace's own.
-  assert.equal(refineAvailability(task({ workspace: { kind: 'local', path: 'C:/work' } }), SETTLED, 'C:/work', false).ok, true);
+  assert.equal(refineAvailability(task({ workspace: { kind: 'local', path: 'C:/work' } }), SETTLED, SCREEN('C:/work')).ok, true);
   // `active` is the screen's own workspace, whenever that is.
-  assert.equal(refineAvailability(task(), SETTLED, 'C:/work', false).ok, true);
+  assert.equal(refineAvailability(task(), SETTLED, SCREEN('C:/work')).ok, true);
   // No workspace on screen is not a place: nothing is available.
-  assert.equal(refineAvailability(task(), SETTLED, '', false).reason, 'other-workspace');
+  assert.equal(refineAvailability(task(), SETTLED, SCREEN('')).reason, 'other-workspace');
 });
 
 /* ============================================================

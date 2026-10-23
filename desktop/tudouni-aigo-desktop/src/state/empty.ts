@@ -31,6 +31,7 @@ export const NO_STRINGS: string[] = [];
  */
 export const NO_SAVED_SESSIONS: SavedSessions = {
   workspace: '',
+  remoteWorkspaceId: null,
   items: [],
   active: [],
   listed: false,

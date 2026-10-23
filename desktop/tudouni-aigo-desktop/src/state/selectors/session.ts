@@ -25,9 +25,10 @@ import {
   type CallUsage,
 } from '@/state/entries';
 import { encodeNotifySnapshot, type NotifyRow } from '@/runtime/notify';
-import { baseName, normPath, samePath, tokPerSecond } from '@/utils/format';
+import { baseName, samePath, tokPerSecond } from '@/utils/format';
 import { activeWorkspaceOf, runtimeOf } from '../appView';
 import { NO_SAVED_SESSIONS } from '../empty';
+import { savedSessionsKey } from '../savedSessionsKey';
 import type { AppStore, SavedSessions, SessionRuntime } from '../store';
 
 
@@ -391,15 +392,84 @@ export function selectWorkspaceAttentionKey(s: AppStore): string {
 /**
  * One workspace's saved-session list, or the shared empty one.
  *
- * The lookup is by `normPath`, the same function the write is keyed with, so the
- * two cannot disagree about which directory a list belongs to. A workspace that
- * has never been asked about answers `listed: false` — "no runtime has told me
- * yet" — rather than an empty list that would read as "this workspace has
- * nothing in it".
+ * The lookup is by `savedSessionsKey(workspace, remoteWorkspaceId)`, the same
+ * function the write is keyed with, so the two cannot disagree about which
+ * directory a list belongs to.
+ *
+ * **The third parameter names the machine, and it is not optional by accident.**
+ * `hostA:/srv/app`, `hostB:/srv/app` and a local `/srv/app` are three places that
+ * compare equal as strings; keying by the path alone made them one bucket, so one
+ * machine's answer overwrote another's. Callers that hold a bucket pass
+ * `remoteWorkspaceIdOf`; the ones that hold only a path (the last parameter's
+ * `undefined` case) are asking the question about a **local** directory, which is
+ * the only thing a bare path means.
+ *
+ * A workspace that has never been asked about answers `listed: false` — "no
+ * runtime has told me yet" — rather than an empty list that would read as "this
+ * workspace has nothing in it".
  */
-export function selectSavedSessions(s: AppStore, workspace: string): SavedSessions {
-  if (workspace.trim() === '') return NO_SAVED_SESSIONS;
-  return s.savedSessions[normPath(workspace)] ?? NO_SAVED_SESSIONS;
+export function selectSavedSessions(
+  s: AppStore,
+  workspace: string,
+  remoteWorkspaceId: string | null = null,
+): SavedSessions {
+  if (workspace.trim() === '' && remoteWorkspaceId === null) return NO_SAVED_SESSIONS;
+  return s.savedSessions[savedSessionsKey(workspace, remoteWorkspaceId)] ?? NO_SAVED_SESSIONS;
+}
+
+/**
+ * The same list, for a caller that has the **screen** rather than a workspace
+ * pair.
+ *
+ * This is the one the rail, the first screen and the panels use: they draw "the
+ * conversations of the place I am in", and the bucket on screen is the authority
+ * on which place that is — including which machine.
+ */
+export function selectSavedSessionsOf(s: AppStore, key: string | null): SavedSessions {
+  const bucket = runtimeOf(s, key);
+  if (bucket === null) return NO_SAVED_SESSIONS;
+  return selectSavedSessions(
+    s,
+    bucket.session?.workspace ?? bucket.workspace,
+    bucket.remoteWorkspaceId,
+  );
+}
+
+/**
+ * Which place a **saved session id** belongs to, as far as this window knows.
+ *
+ * The question a reopened session asks — "the notification (or a task's run
+ * history) named session `S`; which workspace and which machine is that?" — and
+ * it has to be answered from the lists rather than from the conversation on
+ * screen, because the click routinely happens with something else on display.
+ *
+ * **Why the answer cannot come from the screen.** `openSession(id)` used to
+ * decide remote-vs-local from the *active* bucket and then pass the id through.
+ * Clicking a notification about a remote session while a local one was on
+ * screen therefore spawned a **local** child with `--session <remote id>`, and
+ * the runtime reads an id with no file as *a new session with that name*: the
+ * person got an empty local conversation and the report of a session that never
+ * opened. The id has to be resolved to its place first — that is this function.
+ *
+ * `null` means no list this window holds contains that id, which is not an
+ * error: a session can be described by a notification from an earlier run, or
+ * its workspace's list may never have been fetched. Callers fall back to the
+ * screen's own answer, which is the old behaviour and is right whenever the
+ * screen *is* the place.
+ */
+export function selectSessionHome(
+  s: AppStore,
+  sessionId: string,
+): { workspace: string; remoteWorkspaceId: string | null } | null {
+  if (sessionId === '') return null;
+  for (const list of Object.values(s.savedSessions)) {
+    // `items`, not `active`: an archived conversation is still a place, and
+    // reopening one (a notification about it can outlive the archive) must go to
+    // its own machine rather than being answered from wherever the screen is.
+    if (!list.items.some((row) => row.id === sessionId)) continue;
+    return { workspace: list.workspace, remoteWorkspaceId: list.remoteWorkspaceId };
+  }
+  return null;
 }
 
 /**
@@ -527,7 +597,11 @@ export function selectTaskRunStatusKey(s: AppStore): string {
   return parts.join('\u0001');
 }
 
-export function selectLiveOnlyKey(s: AppStore, workspace: string): string {
+export function selectLiveOnlyKey(
+  s: AppStore,
+  workspace: string,
+  remoteWorkspaceId: string | null = null,
+): string {
   // What the saved list already holds, so one conversation is never two rows.
   //
   // **The list of the workspace being drawn, not of whichever child is
@@ -537,14 +611,20 @@ export function selectLiveOnlyKey(s: AppStore, workspace: string): string {
   // landed in changed when the person clicked another row — one session shown as
   // "open now / Nothing has run in it yet" in one screenshot and as a normal
   // saved row in the next.
-  const saved = new Set(selectSavedSessions(s, workspace).items.map((row) => row.id));
+  const saved = new Set(
+    selectSavedSessions(s, workspace, remoteWorkspaceId).items.map((row) => row.id),
+  );
   const parts: string[] = [];
   for (const key of s.order) {
     const bucket = s.sessions[key];
     if (!bucket) continue;
     if (bucket.sessionId !== null && saved.has(bucket.sessionId)) continue;
-    // Scoped like the saved list is: this rail's list belongs to the workspace on
-    // screen, and a conversation somewhere else is not this list's business.
+    // **Scoped to the same place, machine included.** A conversation somewhere
+    // else is not this list's business — and "elsewhere" has to mean "another
+    // machine" as well as "another directory": a local `/srv/app` and a remote
+    // `/srv/app` are two places, and comparing the paths alone drew each one's
+    // open conversations into the other's "open now" group.
+    if (bucket.remoteWorkspaceId !== remoteWorkspaceId) continue;
     // `bucket.workspace` is set when the child is started, so this works before
     // `init` has landed — which is exactly the moment a new session exists.
     const own = bucket.session?.workspace ?? bucket.workspace;

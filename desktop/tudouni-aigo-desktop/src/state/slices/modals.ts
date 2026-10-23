@@ -9,13 +9,13 @@ import type { AppStore } from '../storeShape';
 import { nextId } from '@/state/entries';
 import { refineSelectedNumbers } from '@/learn/refineTemplate';
 import { sendTo } from '@/runtime/bus';
-import { inlineImage, inlineImageRemote } from '@/runtime/tauri';
+import { inlineImage, inlineImageRemote, readRemoteRuntimeVersion } from '@/runtime/tauri';
 import { drainModal } from '../modalQueue';
 import { throttled } from '../polling';
 import { selectModalVisible } from '../selectors/session';
 import { activeWorkspaceOf, remoteConnectionOf } from '../appView';
 
-export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction'> {
+export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction'> {
   const { set, get, patch, patchWith, markSavedSessionsPending } = ctx;
   return {
     answerPermission(decision) {
@@ -141,9 +141,40 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       // The **workspace's** list goes back to loading, not this child's: the
       // reply is filed under the workspace (see `SavedSessions`), so marking a
       // bucket would leave the rail drawing the old list over a refresh that is
-      // on its way.
-      markSavedSessionsPending(activeWorkspaceOf(get()));
+      // on its way. The machine comes off the same bucket as the path.
+      const current = get().sessions[key];
+      markSavedSessionsPending(
+        activeWorkspaceOf(get()),
+        current?.remoteWorkspaceId ?? null,
+      );
       sendTo(key, { v: 1, t: 'session_list', filter: get().sessionFilter });
+    },
+
+    /**
+     * Ask the host which build it is running, once per session, and keep it.
+     *
+     * **Only a remote session needs this**, and only when somebody looks: the
+     * window-level version reads this machine's binary, which on a remote screen
+     * is the wrong answer beside a `protocol` that came from the host.
+     *
+     * Lazy rather than at connect, because it costs an SSH dial and the answer is
+     * wanted by one panel. A session that already has it is not asked again — the
+     * process on the far end cannot change its build mid-life.
+     */
+    async resolveRuntimeBuild(key) {
+      const current = get().sessions[key];
+      if (current === undefined) return;
+      if (current.remoteWorkspaceId === null) return; // local: the window value is right
+      if (current.runtimeBuild !== null) return; // asked already
+
+      const build = await readRemoteRuntimeVersion(key);
+      // Re-read rather than patch blindly: the session may have been closed, or
+      // opened again under a new key, while the host was answering.
+      if (!get().sessions[key]) return;
+      // `null` is stored as an empty string, because "asked and the host did not
+      // answer" is a different fact from "never asked" — and the panel draws
+      // them differently.
+      patch(key, { runtimeBuild: build ?? '' });
     },
 
     deleteSession(id, via) {

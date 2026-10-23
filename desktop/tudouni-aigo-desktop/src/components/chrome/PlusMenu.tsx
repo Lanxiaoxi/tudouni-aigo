@@ -204,7 +204,12 @@ function FilePage({ t, onBack, onDone }: { t: T; onBack: () => void; onDone: () 
               const el = document.querySelector<HTMLTextAreaElement>('.composer textarea');
               const draft = s.sessions[s.activeKey ?? '']?.draft ?? '';
               const at = el?.selectionStart ?? draft.length;
-              s.attachFilePath(path, at);
+              // **`attachFiles`, not `attachFilePath`.** They are not the same
+              // act: this path is on *this* machine, so a remote session has to
+              // upload it into its workspace and insert the relative path. The
+              // local branch keeps the caret; the remote one appends, because the
+              // draft can change while the upload runs.
+              void s.attachFiles([path], at);
             })();
           }}
         >

@@ -1,5 +1,5 @@
-import { FolderOpen, HelpCircle, Search } from 'lucide-react';
-import { useApp, useSessionField } from '@/state/store';
+import { FolderOpen, HelpCircle, Search, Server } from 'lucide-react';
+import { remoteConnectionOf, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 
@@ -30,22 +30,47 @@ export function TopBar() {
   // open there is no single answer for the window, and the session bar right
   // below names which conversation this is about.
   const workspace = useSessionField((rt) => rt.session?.workspace ?? rt.workspace, '');
+  // **A bare path is not enough to say where this conversation is.** On a
+  // remote screen `workspace` is a directory on the other host, and the same
+  // string can name a directory on this machine too — a container mount, a WSL
+  // share, or simply two projects that both chose `/srv/app`. The rail marks
+  // its rows with a `Server` icon and a `user@host` tooltip; without the same
+  // fact here, the one place a person confirms *which directory the runtime is
+  // in* is the one place the two are indistinguishable. `remoteConnectionOf`
+  // answers it the same way the sidebar and the file panel do, and `null` is
+  // exactly "this one is local".
+  const remote = useApp((s) =>
+    remoteConnectionOf(s, s.activeKey),
+  );
   const openPanel = useApp((s) => s.openPanel);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
   const pickWorkspace = useApp((s) => s.pickWorkspace);
+
+  // `user@host:port`, the same triple the rail's remote rows show, so the two
+  // surfaces name one machine one way.
+  const where =
+    remote === null ? '' : `${remote.user}@${remote.host}:${remote.port}`;
+  // The tooltip states the whole destination when it is remote, and the plain
+  // path when it is not: a local session whose tooltip said "local" would be
+  // noise, while a remote one that said only a path is the bug this fixes.
+  const tip =
+    remote === null
+      ? workspace || t('topbar.workspaceTip')
+      : t('topbar.workspaceRemoteTip', { where, path: workspace });
 
   return (
     <header className="topbar">
       <span className="brand">{t('app.name')}</span>
 
-      <Tip label={workspace || t('topbar.workspaceTip')}>
+      <Tip label={tip}>
         <button
           type="button"
           className="workspace"
           onClick={() => openPanel('audit')}
-          aria-label={t('topbar.workspaceTip')}
+          aria-label={tip}
         >
-          <FolderOpen size={11} />
+          {remote === null ? <FolderOpen size={11} /> : <Server size={11} />}
+          {remote === null ? null : <span className="toppath-host">{where}</span>}
           <span className="truncate">{workspace || '—'}</span>
         </button>
       </Tip>

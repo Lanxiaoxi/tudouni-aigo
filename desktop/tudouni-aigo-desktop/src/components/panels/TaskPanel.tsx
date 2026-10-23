@@ -24,6 +24,7 @@ import {
   activeRuntime,
   activeWorkspaceOf,
   NO_MODEL_ROWS,
+  remoteWorkspaceIdOf as remoteWorkspaceIdOfNow,
   selectLiveSessionIdsKey,
   selectRunInFlight,
   selectTaskRunStatusKey,
@@ -42,6 +43,7 @@ import {
   taskProblems,
   taskRunOutcome,
   workspaceRefLabel,
+  type RefineScreen,
   type RunDay,
   type RunScope,
   type Task,
@@ -250,7 +252,16 @@ function TaskShelf({
   const [problem, setProblem] = useState<string | null>(null);
 
   const workspace = useApp(activeWorkspaceOf);
-  const screenIsRemote = useApp((s) => s.activeKey !== null && s.sessions[s.activeKey]?.remoteWorkspaceId !== null);
+  // The place the screen is in, as a **pair**: the directory alone cannot say
+  // whether it is this machine's or a host's, and refine's gate has to know.
+  // Read through the shared predicate rather than re-deriving
+  // `remoteWorkspaceId`, so this panel's gate and the store's re-check
+  // (`refineTask`) cannot drift into disagreeing about the same state.
+  const screenRemoteWorkspaceId = useApp((s) => remoteWorkspaceIdOfNow(s, s.activeKey));
+  const refineScreen = useMemo<RefineScreen>(
+    () => ({ workspace, remoteWorkspaceId: screenRemoteWorkspaceId }),
+    [workspace, screenRemoteWorkspaceId],
+  );
 
   // Whether this window has anywhere at all to run a template. Used only to
   // disable Run with a reason: the store refuses an unresolvable ref silently,
@@ -371,7 +382,7 @@ function TaskShelf({
               // Refine's gate, resolved the same way the store resolves it:
               // one function, so the tooltip the person reads and the refusal
               // the action would make cannot disagree about why.
-              const refine = refineAvailability(task, runs, workspace, screenIsRemote);
+              const refine = refineAvailability(task, runs, refineScreen);
               return (
                 <TaskRow
                   key={task.id}
@@ -580,15 +591,20 @@ function TaskMenu({
   }
 
   /** The sentence a disabled Refine stands behind: the reason for the
-   *  refusal is the tooltip's job, next to the control it explains. */
+   *  refusal is the tooltip's job, next to the control it explains.
+   *
+   *  **Two reasons, and "remote" is no longer one of them.** A remote task can
+   *  be refined like any other — the child on that host reads its own
+   *  `.tudouni/sessions/`, which is exactly where the runs' evidence is. What
+   *  still refuses is a task whose place is not the one on screen, because then
+   *  the comparison would study another machine's transcripts (or a same-named
+   *  local directory's). See `refineAvailability`. */
   const refineBlocked =
     refineReason === 'no-runs'
       ? t('panel.task.refine.noRuns')
-      : refineReason === 'remote'
-        ? t('panel.task.refine.remote')
-        : refineReason === 'other-workspace'
-          ? t('panel.task.refine.otherWorkspace')
-          : null;
+      : refineReason === 'other-workspace'
+        ? t('panel.task.refine.otherWorkspace')
+        : null;
 
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>

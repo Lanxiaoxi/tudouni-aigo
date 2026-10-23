@@ -277,31 +277,6 @@ fn mcp_path() -> Result<PathBuf, String> {
    Reading
    ============================================================ */
 
-/// The file's top-level object, or `None` when there is no file.
-///
-/// A byte-order mark is stripped for the same reason `config.readJSONDocument`
-/// strips it: this file is edited by hand on Windows, where Notepad has been
-/// known to leave one, and `serde_json` refuses it.
-fn read_object(path: &Path) -> Result<Option<Map<String, Value>>, String> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(format!("{} could not be read: {err}", path.display())),
-    };
-    if bytes.is_empty() {
-        return Ok(Some(Map::new()));
-    }
-    let text = std::str::from_utf8(&bytes)
-        .map_err(|_| format!("{} is not valid UTF-8", path.display()))?;
-    let text = text.trim_start_matches('\u{feff}');
-    let value: Value = serde_json::from_str(text)
-        .map_err(|err| format!("{} is not valid JSON: {err}", path.display()))?;
-    match value {
-        Value::Object(object) => Ok(Some(object)),
-        _ => Err(format!("{} must hold a JSON object", path.display())),
-    }
-}
-
 fn text_of(object: &Map<String, Value>, key: &str) -> String {
     match object.get(key) {
         Some(Value::String(text)) => text.trim().to_string(),
@@ -501,15 +476,117 @@ fn mcp_structural_problem(object: &Map<String, Value>) -> Option<String> {
     }
 }
 
+/// Where the two files are, for whichever machine is being edited.
+///
+/// **The paths are a parameter, and that is what lets the remote panel share
+/// this module.** Everything below is a rule about JSON — merge field-wise,
+/// refuse what will not parse, keep the route order — and none of it is a rule
+/// about *this* machine. So the reader and the writer take the paths, and the
+/// local call site hands them `home_dir()`'s answer while the remote one hands
+/// `$HOME`'s on the other side of SFTP. A second implementation for the remote
+/// case would be a second copy of the merge rules, which is how the two drift.
+pub struct ConfigPaths {
+    pub config: PathBuf,
+    pub mcp: PathBuf,
+}
+
+impl ConfigPaths {
+    /// The paths for one home directory — the account's, on whichever machine.
+    pub fn under_home(home: &str) -> Self {
+        // Forward slashes throughout: the remote side is always POSIX (see
+        // `remote_install::detect_remote_target`), so building the string here
+        // rather than with `Path::join` keeps one spelling regardless of the
+        // platform this desktop is compiled for.
+        let root = home.trim_end_matches(['/', '\\']);
+        Self {
+            config: PathBuf::from(format!("{root}/{RUNTIME_DIR}/{CONFIG_FILE_NAME}")),
+            mcp: PathBuf::from(format!("{root}/{RUNTIME_DIR}/{MCP_FILE_NAME}")),
+        }
+    }
+}
+
+/// One file, read as far as the panel needs it.
+enum ReadFile {
+    /// The file is not there. A normal state, not an error.
+    Missing,
+    /// The file parsed into a JSON object.
+    Parsed(Map<String, Value>),
+    /// The file is there and cannot be used. The sentence is written for a
+    /// person and is what the panel shows.
+    Broken(String),
+}
+
+/// Read one file's bytes into the three states the panel distinguishes.
+///
+/// The three are genuinely different answers, and folding them would lose the
+/// one the panel exists to show: a **broken** file must still draw its path and
+/// the reason (rule 2 in the module comment), while a **missing** one is the
+/// ordinary first-run state.
+fn read_file(raw: Option<&[u8]>, path: &Path) -> ReadFile {
+    let bytes = match raw {
+        Some(bytes) => bytes,
+        None => return ReadFile::Missing,
+    };
+    // An empty file is an empty object, the same reading `read_object` gave: the
+    // panel then shows "no routes yet" rather than a parse error about a file
+    // that simply has nothing in it.
+    if bytes.is_empty() {
+        return ReadFile::Parsed(Map::new());
+    }
+    let text = match std::str::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(_) => return ReadFile::Broken(format!("{} is not valid UTF-8", path.display())),
+    };
+    // A byte-order mark is stripped for the same reason `config.readJSONDocument`
+    // strips it: this file is edited by hand on Windows, where Notepad has been
+    // known to leave one, and `serde_json` refuses it.
+    let text = text.trim_start_matches('\u{feff}');
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(object)) => ReadFile::Parsed(object),
+        Ok(_) => ReadFile::Broken(format!("{} must hold a JSON object", path.display())),
+        Err(err) => ReadFile::Broken(format!("{} is not valid JSON: {err}", path.display())),
+    }
+}
+
 /// Read both files. Never fails for a *missing* file — only for a broken one,
 /// and even then the trouble is reported inside the document rather than as an
 /// error, so the paths stay visible.
+///
+/// This is the **local** door: it resolves the paths this process's own `HOME`
+/// names and reads them off disk. `document_from` below is the half that knows
+/// the rules, and the remote door reaches it with bytes it read over SFTP.
 pub fn read_document() -> Result<ConfigDocument, String> {
-    let path = config_path()?;
-    let (object, exists, mut problem) = match read_object(&path) {
-        Ok(Some(object)) => (object, true, None),
-        Ok(None) => (Map::new(), false, None),
-        Err(problem) => (Map::new(), true, Some(problem)),
+    let paths = ConfigPaths {
+        config: config_path()?,
+        mcp: mcp_path()?,
+    };
+    document_from(
+        fs::read(&paths.config).ok(),
+        fs::read(&paths.mcp).ok(),
+        &paths,
+    )
+}
+
+/// The panel's view of two files, given their **raw bytes** and where they
+/// live.
+///
+/// `None` is "the file does not exist", which is a normal state rather than an
+/// error.
+///
+/// **Taking bytes rather than paths is the whole point of this function.** The
+/// local call site reads them with `fs::read`; the remote one reads them over
+/// SFTP. Neither the classification below nor the merge in `merge` is about a
+/// particular machine, so there is one implementation of each and no way for the
+/// two doors to disagree about what a file means.
+pub fn document_from(
+    config: Option<Vec<u8>>,
+    mcp: Option<Vec<u8>>,
+    paths: &ConfigPaths,
+) -> Result<ConfigDocument, String> {
+    let (object, exists, mut problem) = match read_file(config.as_deref(), &paths.config) {
+        ReadFile::Missing => (Map::new(), false, None),
+        ReadFile::Parsed(object) => (object, true, None),
+        ReadFile::Broken(reason) => (Map::new(), true, Some(reason)),
     };
     if problem.is_none() {
         problem = structural_problem(&object);
@@ -531,9 +608,8 @@ pub fn read_document() -> Result<ConfigDocument, String> {
         _ => Map::new(),
     };
 
-    let mcp_path = mcp_path()?;
-    let mcp = match read_object(&mcp_path) {
-        Ok(Some(object)) => {
+    let mcp_document = match read_file(mcp.as_deref(), &paths.mcp) {
+        ReadFile::Parsed(object) => {
             let problem = mcp_structural_problem(&object);
             // Only read the servers when the shape was accepted: a file that
             // failed the check above may hold entries of any shape at all, and
@@ -549,28 +625,28 @@ pub fn read_document() -> Result<ConfigDocument, String> {
                 _ => Vec::new(),
             };
             McpDocumentView {
-                path: mcp_path.display().to_string(),
+                path: paths.mcp.display().to_string(),
                 exists: true,
                 problem,
                 servers,
             }
         }
-        Ok(None) => McpDocumentView {
-            path: mcp_path.display().to_string(),
+        ReadFile::Missing => McpDocumentView {
+            path: paths.mcp.display().to_string(),
             exists: false,
             problem: None,
             servers: Vec::new(),
         },
-        Err(problem) => McpDocumentView {
-            path: mcp_path.display().to_string(),
+        ReadFile::Broken(reason) => McpDocumentView {
+            path: paths.mcp.display().to_string(),
             exists: true,
-            problem: Some(problem),
+            problem: Some(reason),
             servers: Vec::new(),
         },
     };
 
     Ok(ConfigDocument {
-        path: path.display().to_string(),
+        path: paths.config.display().to_string(),
         exists,
         problem,
         providers,
@@ -578,7 +654,7 @@ pub fn read_document() -> Result<ConfigDocument, String> {
             tavily_api_key: text_of(&web_entry, "tavily_api_key"),
             tavily_base_url: text_of(&web_entry, "tavily_base_url"),
         },
-        mcp,
+        mcp: mcp_document,
     })
 }
 
@@ -897,22 +973,18 @@ fn apply_mcp(object: &mut Map<String, Value>, servers: &[McpPatch]) -> Result<()
     Ok(())
 }
 
-/// Replace the file with `object`, atomically.
+/// Replace the file with `bytes`, atomically.
 ///
 /// Temp file in the same directory, then a rename: the rename is atomic within
 /// one filesystem, so a reader sees either the old file or the new one. A
 /// half-written configuration is data loss, because this file holds keys.
 /// `--ericai` writes it the same way (`ericWriteBack`), and the two agreeing
 /// matters more than either being clever.
-fn write_object(path: &Path, object: &Map<String, Value>) -> Result<(), String> {
-    // `Map` serialises in its own order, which `preserve_order` keeps, so the
-    // section order in the file is the order it was read in.
-    let mut text = serde_json::to_string_pretty(object)
-        .map_err(|err| format!("the configuration could not be encoded: {err}"))?;
-    // Trailing newline, like the template and like `ericWriteBack`: a file
-    // without one shows up as "\ No newline at end of file" in every diff.
-    text.push('\n');
-
+///
+/// The bytes rather than the object, because the object was already encoded by
+/// `encode_object` in the shared merge — one place that decides the file's
+/// spelling, and the remote writer sends exactly the same bytes over SFTP.
+fn write_object(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = path
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
@@ -928,7 +1000,7 @@ fn write_object(path: &Path, object: &Map<String, Value>) -> Result<(), String> 
         .unwrap_or_else(|| CONFIG_FILE_NAME.to_string());
     let tmp = dir.join(format!(".{stem}.{}.tmp", std::process::id()));
 
-    fs::write(&tmp, text.as_bytes())
+    fs::write(&tmp, bytes)
         .map_err(|err| format!("{} could not be written: {err}", tmp.display()))?;
     #[cfg(unix)]
     {
@@ -951,42 +1023,250 @@ fn write_object(path: &Path, object: &Map<String, Value>) -> Result<(), String> 
 /// panel follows when it shows the argv the child was actually given rather than
 /// what somebody typed.
 pub fn write_document(patch: ConfigPatch) -> Result<ConfigDocument, String> {
+    let paths = ConfigPaths {
+        config: config_path()?,
+        mcp: mcp_path()?,
+    };
+    let current = MergeInput {
+        config: fs::read(&paths.config).ok(),
+        mcp: fs::read(&paths.mcp).ok(),
+    };
+    let merged = merge(current, &patch, &paths)?;
+    if let Some(bytes) = merged.config {
+        write_object(&paths.config, &bytes)?;
+    }
+    if let Some(bytes) = merged.mcp {
+        write_object(&paths.mcp, &bytes)?;
+    }
+    read_document()
+}
+
+/// Apply a patch to the **bytes** that were just read, and hand back the new
+/// bytes for each file the patch touched.
+///
+/// This is the half the two doors share, and it is deliberately pure: no path,
+/// no filesystem, no clock. The local writer reads with `fs::read`, merges here,
+/// and renames the result into place; the remote writer reads the same two files
+/// over SFTP, merges here, and does the same temp-file-then-rename dance on the
+/// far side.
+///
+/// **The merge runs against the bytes that were just read, never against
+/// anything the front end held.** The panel may have been open for minutes, and
+/// a merge built from its in-memory document would overwrite every edit made in
+/// between — including `providers.ericai.api_key`, which the runtime rewrites on
+/// its own.
+///
+/// Returns `None` for a file the patch does not touch, so a route edit does not
+/// rewrite `mcp.json` as a side effect (an absent section is not written at all
+/// — see `ConfigPatch`'s doc).
+pub fn merge(
+    current: MergeInput,
+    patch: &ConfigPatch,
+    paths: &ConfigPaths,
+) -> Result<MergeOutput, String> {
+    let mut config_out = None;
     if patch.providers.is_some() || patch.web.is_some() {
-        let path = config_path()?;
-        // Re-read rather than trusting anything held in the front end: the merge
-        // needs the file's own object, and this is the only copy of it.
-        let mut object = match read_object(&path)? {
-            Some(object) => {
-                if let Some(problem) = structural_problem(&object) {
-                    return Err(format!("{} was not written: {problem}", path.display()));
-                }
-                object
-            }
-            None => Map::new(),
-        };
+        let mut object = merge_base(current.config.as_deref(), &paths.config, structural_problem)?;
         if let Some(routes) = &patch.providers {
             apply_providers(&mut object, routes)?;
         }
         if let Some(web) = &patch.web {
             apply_web(&mut object, web)?;
         }
-        write_object(&path, &object)?;
+        config_out = Some(encode_object(&object)?);
     }
 
+    let mut mcp_out = None;
     if let Some(servers) = &patch.mcp {
-        let path = mcp_path()?;
-        let mut object = match read_object(&path)? {
-            Some(object) => {
-                if let Some(problem) = mcp_structural_problem(&object) {
-                    return Err(format!("{} was not written: {problem}", path.display()));
-                }
-                object
-            }
-            None => Map::new(),
-        };
+        let mut object = merge_base(current.mcp.as_deref(), &paths.mcp, mcp_structural_problem)?;
         apply_mcp(&mut object, servers)?;
-        write_object(&path, &object)?;
+        mcp_out = Some(encode_object(&object)?);
     }
 
-    read_document()
+    Ok(MergeOutput {
+        config: config_out,
+        mcp: mcp_out,
+    })
+}
+
+/// What `merge` needs from the caller: the two files exactly as they are now.
+pub struct MergeInput {
+    /// `None` when the file does not exist — a first save creates it.
+    pub config: Option<Vec<u8>>,
+    pub mcp: Option<Vec<u8>>,
+}
+
+/// What `merge` produced, per file. `None` means "not touched by this patch".
+#[derive(Debug)]
+pub struct MergeOutput {
+    pub config: Option<Vec<u8>>,
+    pub mcp: Option<Vec<u8>>,
+}
+
+/// The object a merge starts from: the file's own, with the section check
+/// applied — a document whose shape the merge cannot reason about is refused
+/// rather than rebuilt.
+fn merge_base(
+    raw: Option<&[u8]>,
+    path: &Path,
+    check: fn(&Map<String, Value>) -> Option<String>,
+) -> Result<Map<String, Value>, String> {
+    match read_file(raw, path) {
+        ReadFile::Missing => Ok(Map::new()),
+        ReadFile::Parsed(object) => match check(&object) {
+            Some(problem) => Err(format!("{} was not written: {problem}", path.display())),
+            None => Ok(object),
+        },
+        // **A broken file is refused, not replaced** — rule 2 in the module
+        // comment. Writing here would be a wholesale replacement of the one file
+        // whose contents are somebody's keys.
+        ReadFile::Broken(reason) => Err(format!("{} was not written: {reason}", path.display())),
+    }
+}
+
+/// One object as the bytes that go on disk: pretty, `preserve_order`, and with a
+/// trailing newline.
+///
+/// The newline is not cosmetic: a file without one shows up as
+/// "\ No newline at end of file" in every diff, and this file lives in people's
+/// repositories.
+fn encode_object(object: &Map<String, Value>) -> Result<Vec<u8>, String> {
+    let mut text = serde_json::to_string_pretty(object)
+        .map_err(|err| format!("the configuration could not be encoded: {err}"))?;
+    text.push('\n');
+    Ok(text.into_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    //! The shape rules, asserted without a filesystem.
+    //!
+    //! `document_from` and `merge` take **bytes**, which is what makes these
+    //! tests possible at all: the same functions serve the local panel and the
+    //! remote one, and the interesting behaviour — a missing file, a broken
+    //! file, a merge that must not invent a section — is a fact about bytes
+    //! rather than about a path. That is also why the remote door can be trusted
+    //! with them: nothing in these functions knows which machine it runs for.
+
+    use super::*;
+
+    fn paths() -> ConfigPaths {
+        ConfigPaths::under_home("/home/deploy")
+    }
+
+    #[test]
+    fn under_home_builds_both_paths_with_forward_slashes() {
+        let p = ConfigPaths::under_home("/home/deploy/");
+        // The trailing slash is trimmed rather than doubled, and the separator
+        // is forward regardless of the platform this is compiled on — the remote
+        // side is always POSIX.
+        assert_eq!(p.config.display().to_string(), "/home/deploy/.tudouni/config.json");
+        assert_eq!(p.mcp.display().to_string(), "/home/deploy/.tudouni/mcp.json");
+    }
+
+    #[test]
+    fn a_missing_file_is_an_empty_document_not_an_error() {
+        let doc = document_from(None, None, &paths()).expect("a missing file is not a failure");
+        assert!(!doc.exists);
+        assert!(doc.problem.is_none());
+        assert!(doc.providers.is_empty());
+        assert!(!doc.mcp.exists);
+        // The paths are still drawn: that is what lets a person see *which* file
+        // a fresh account would use.
+        assert!(doc.path.ends_with("config.json"));
+        assert!(doc.mcp.path.ends_with("mcp.json"));
+    }
+
+    #[test]
+    fn a_file_that_does_not_parse_draws_its_path_and_the_reason() {
+        let doc = document_from(Some(b"{ not json".to_vec()), None, &paths())
+            .expect("a broken file is reported inside the document");
+        assert!(doc.exists, "the file is there — it just cannot be used");
+        let problem = doc.problem.expect("the reason has to be shown");
+        assert!(problem.contains("config.json"), "the sentence names the file: {problem}");
+        assert!(doc.providers.is_empty());
+    }
+
+    #[test]
+    fn the_route_order_is_the_file_order() {
+        // Order is data: the first route with a key is the default route, so a
+        // reader that re-sorted would silently move the default.
+        let raw = br#"{"providers":{"zeta":{"api_key":"z"},"alpha":{"api_key":"a"}}}"#;
+        let doc = document_from(Some(raw.to_vec()), None, &paths()).unwrap();
+        let names: Vec<&str> = doc.providers.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["zeta", "alpha"]);
+    }
+
+    #[test]
+    fn a_route_edit_does_not_write_mcp_json() {
+        // An absent section is not a section: `ConfigPatch.mcp` being `None`
+        // must leave `mcp.json` untouched, or every route save would rewrite a
+        // file full of commands as a side effect.
+        let patch = ConfigPatch {
+            providers: Some(vec![]),
+            web: None,
+            mcp: None,
+        };
+        let out = merge(MergeInput { config: None, mcp: None }, &patch, &paths()).unwrap();
+        assert!(out.config.is_some(), "the touched file is written");
+        assert!(out.mcp.is_none(), "the untouched one is not");
+    }
+
+    #[test]
+    fn a_broken_file_is_refused_rather_than_replaced() {
+        // Rule 2: a merge needs an object to preserve, and there is none. The
+        // write would be a wholesale replacement of a file that holds keys.
+        let patch = ConfigPatch {
+            providers: Some(vec![]),
+            web: None,
+            mcp: None,
+        };
+        let err = merge(
+            MergeInput {
+                config: Some(b"{ broken".to_vec()),
+                mcp: None,
+            },
+            &patch,
+            &paths(),
+        )
+        .expect_err("a broken file must not be written");
+        assert!(err.contains("not written"));
+    }
+
+    #[test]
+    fn a_merge_reads_the_bytes_it_was_given() {
+        // The whole reason `merge` takes bytes rather than a path: what it
+        // merges is what the caller just read — on the remote door, the bytes
+        // straight off SFTP.
+        let raw = br#"{"comment":"keep me","providers":{}}"#;
+        let patch = ConfigPatch {
+            providers: Some(vec![]),
+            web: Some(WebPatch::default()),
+            mcp: None,
+        };
+        let out = merge(
+            MergeInput {
+                config: Some(raw.to_vec()),
+                mcp: None,
+            },
+            &patch,
+            &paths(),
+        )
+        .unwrap();
+        let text = String::from_utf8(out.config.expect("written")).unwrap();
+        assert!(text.contains("keep me"), "a key the form has no field for survives: {text}");
+        assert!(text.ends_with('\n'), "and the file keeps its trailing newline");
+    }
+
+    #[test]
+    fn a_byte_order_mark_is_not_a_syntax_error() {
+        // Notepad on Windows leaves one, and `serde_json` refuses it. The panel
+        // showing "not valid JSON" over such a file would be technically true
+        // and practically useless.
+        let mut raw = vec![0xef, 0xbb, 0xbf];
+        raw.extend_from_slice(br#"{"providers":{"a":{"api_key":"k"}}}"#);
+        let doc = document_from(Some(raw), None, &paths()).unwrap();
+        assert!(doc.problem.is_none(), "a BOM is not a parse failure");
+        assert_eq!(doc.providers.len(), 1);
+    }
 }

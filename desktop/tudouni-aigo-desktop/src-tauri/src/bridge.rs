@@ -165,6 +165,18 @@ pub(crate) struct Child_ {
     /// connection is re-dialled per act (see `remote_files`' module doc) rather
     /// than sharing the runtime's channel. `None` for a local child.
     pub(crate) remote_ssh: Option<RemoteSshConn>,
+    /// The binary this child was started from, on the remote host.
+    ///
+    /// Kept so a later question about **which build is running** can be asked of
+    /// the right file: `Audit` shows a runtime version, and the window-level one
+    /// comes from this machine's `--version` — a remote session needs *that*
+    /// host's answer, and the path is the only thing that can produce it.
+    ///
+    /// It is taken from the spawn rather than from the saved entry because the
+    /// entry can be edited (or deleted) while the child keeps running: the
+    /// process on the far end is still the one this path named. `None` for a
+    /// local child.
+    pub(crate) remote_binary: Option<String>,
 }
 
 /// The SSH destination of one remote child, as `spawn_remote` was handed it.

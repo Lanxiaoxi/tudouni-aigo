@@ -38,6 +38,10 @@ export const en = {
    * saying "the runtime could not be started" would be a sentence about the
    * wrong process. See `SessionProblem`. */
   'problem.title': 'This session could not be started',
+  /** The remote row's second button. It names the host because that is the
+   *  thing being retried — "try again" beside it is the same act with the same
+   *  words, and the two would be indistinguishable without it. */
+  'problem.reconnectRemote': 'Reconnect {where}',
 
   /* ---------------- start-up notice ----------------
    *
@@ -70,6 +74,10 @@ export const en = {
 
   /* ---------------- top bar ---------------- */
   'topbar.workspaceTip': 'Workspace path',
+  /** The tooltip on a **remote** screen's workspace chip. Both halves are
+   *  needed: the path alone is the one fact a local and a remote session can
+   *  share, and `{where}` is what tells them apart. */
+  'topbar.workspaceRemoteTip': '{where} — {path}',
   'topbar.palettePlaceholder': 'Type a command or search…',
   'topbar.commands': 'Command palette',
   /** The `?` button left of the palette box. The label is the panel's own title
@@ -210,6 +218,11 @@ export const en = {
   'welcome.recentEmpty': 'No past sessions',
   'welcome.recentEmptyHint': 'Sessions are written under .tudouni/ in this workspace.',
   'welcome.slotEmpty': 'empty',
+  /** The remote workspace that was last worked in. Its own block, because a
+   *  remote workspace cannot be reopened the way a local directory is: the
+   *  start-up opens local paths *here*, and this one's directory is on a host
+   *  that has to be dialled. One click, rather than a dial on every launch. */
+  'welcome.lastRemote': 'Where you were last time',
 
   /* ---------------- stream entries ---------------- */
   'entry.turn': 'Turn {n}',
@@ -361,6 +374,15 @@ export const en = {
   'lb.searchSessions.noMatchHint': 'Try a shorter word, or check the spelling.',
   'lb.searchSessions.failed':
     'The search could not run — the session files could not be read.',
+  /** A third state, and the reason it exists: the search scans **this**
+   *  machine's `.tudouni/sessions`, while a remote workspace's files are on the
+   *  other host. Answering "no match" there is a false negative the person
+   *  cannot see through, and answering red would send them hunting for a
+   *  permissions problem on the wrong machine. */
+  'lb.searchSessions.remote':
+    'Session search only scans this machine’s disk — remote workspaces are not searched.',
+  'lb.searchSessions.remoteHint':
+    'The sessions of this remote workspace are on the host. Use the Files panel there, or search after opening a local workspace.',
   'lb.searchSessions.open': 'Open this session',
   'lb.collapse': 'Hide this sidebar',
   'lb.settings': 'Settings',
@@ -547,8 +569,13 @@ export const en = {
   'panel.task.refine': 'Refine',
   'panel.task.refineHint': 'Refine: compare this task\u2019s runs and propose an improved prompt',
   'panel.task.refine.noRuns': 'This task has no finished run yet \u2014 there is nothing to compare.',
-  'panel.task.refine.remote': 'This task runs on a remote workspace; its sessions are not on this machine.',
-  'panel.task.refine.otherWorkspace': 'This task is bound to a different workspace \u2014 open it first.',
+  /* There is no `panel.task.refine.remote` any more, and its removal is the fix:
+     a remote task can be refined like any other, because the child on that host
+     reads its own `.tudouni/sessions/`. What still refuses is a task bound to a
+     *different* place, which is `otherWorkspace` below \u2014 and that sentence now
+     means the machine too, since two hosts can each have a `/srv/app`. */
+  'panel.task.refine.otherWorkspace':
+    'This task is bound to a different workspace \u2014 open it first, on the same host.',
   'panel.task.refine.title': 'Refine \u201c{name}\u201d',
   'panel.task.refine.note': 'Starts a new session that compares this task\u2019s finished runs. Its answer is a candidate new prompt, applied only when you pick it.',
   'panel.task.refine.scope': 'Runs to compare',
@@ -714,7 +741,30 @@ export const en = {
   'lb.remote.workspaceLabel': 'Workspace name (for your own reference)',
   'lb.remote.forgetHostInUse':
     'This host is used by at least one saved remote workspace. Remove those first.',
-  /* Connection state badges — §5.1 of the design. Each is a short word for the
+  'lb.manageHosts': 'Saved hosts…',
+
+  /* ---------------- the saved-hosts dialog ----------------
+     The two things that had no surface at all: deleting a host record, and
+     seeing or changing the config-sync policy a host was remembered with. */
+  'hosts.title': 'Saved hosts',
+  'hosts.note':
+    'The accounts remote workspaces sit on. A host stays here until nothing references it.',
+  'hosts.empty': 'No host has been saved yet — add a remote workspace and one is created with it.',
+  'hosts.authKey': '{n} key file(s)',
+  'hosts.authPassword': 'password',
+  'hosts.authAgent': 'agent or default key',
+  'hosts.usedBy': 'used by {names}',
+  'hosts.remove': 'Forget {name}',
+  'hosts.removeHint': 'Forget this host. Its saved workspaces keep their files; they just cannot be opened.',
+  'hosts.policy': 'Configuration on open',
+  'hosts.policy.ask': 'Ask',
+  'hosts.policy.askHint': 'Ask when the two configuration files differ. The default.',
+  'hosts.policy.syncLocal': 'Always use this machine’s',
+  'hosts.policy.syncLocalHint':
+    'Overwrite the host’s config.json with this machine’s on every open, without asking.',
+  'hosts.policy.useRemote': 'Always use the host’s',
+  'hosts.policy.useRemoteHint':
+    'Never copy this machine’s config.json up. Opening the Config panel on a remote session still edits the host’s own file.',  /* Connection state badges — §5.1 of the design. Each is a short word for the
      sidebar row; the sentence (when there is one) lives in the badge's own
      tooltip, built from `ConnectionState.problem` rather than translated here,
      since that text already comes from the Rust/Go side as a sentence. */
@@ -1118,6 +1168,15 @@ export const en = {
   'panel.audit.workspace': 'Workspace',
   'panel.audit.desktopVersion': 'Desktop version',
   'panel.audit.runtimeVersion': 'Runtime version',
+  /** The remote half. The number beside it is the **host's**, read over SSH, so
+   *  the label has to say whose it is: a reader comparing it against the desktop
+   *  version above is comparing two machines, and a bare "Runtime version" would
+   *  read as one. */
+  'panel.audit.runtimeVersionRemote': 'Runtime version (on the host)',
+  /** Asked and not answered — a host that could not run its own binary, or a
+   *  connection that went away. Distinct from the window-level version, which is
+   *  simply the wrong machine and must not be shown as a fallback. */
+  'panel.audit.runtimeVersionUnknown': 'unknown (the host did not answer)',
   'panel.audit.protocol': 'Protocol',
   'panel.audit.dropped': 'Lines rejected by the decoder',
   'panel.audit.droppedNote':
@@ -1341,6 +1400,14 @@ export const en = {
   'panel.config.missing':
     'The file does not exist yet. Saving creates it with only what is on this screen.',
   'panel.config.reveal': 'Show the file in the file manager',
+  /** The remote half of the reveal button. `revealItemInDir` opens **this**
+   *  machine's file manager, so pointing it at a host's path is either a
+   *  failure or — where that path also exists here — a different file with the
+   *  same name. The button stays on screen, disabled, with this as its reason:
+   *  a control that simply vanished from a panel that always had one reads as a
+   *  bug rather than as a decision. */
+  'panel.config.revealRemote':
+    'This file is on {where} — open it there. The file manager here can only show this machine’s files.',
   'panel.config.effect':
     'Saved now, read the next time a session starts. A session that is already running keeps the configuration it opened with.',
 
@@ -1504,6 +1571,13 @@ export const en = {
     'inserted, but outside this workspace — the file tools cannot read it directly, the model would go through shell: {names}',
   'composer.dropNoWorkspace':
     'inserted, but no workspace is open, so nothing can be checked: {names}',
+  /** A remote screen's only two outcomes are "uploaded" and this — there is no
+   *  "outside the workspace" there, because a path on this machine is not
+   *  outside the host's workspace, it is not in it at all (and the host's shell
+   *  cannot see it either). `{reason}` is the bridge's own sentence, which
+   *  already names what was wrong with the file. */
+  'composer.attachRemoteFailed':
+    'could not put {names} on the remote host — {reason}',
   /** The row of pasted pictures above the input. Its accessible name, not a
    *  visible heading: the chips are self-explanatory beside the box. */
   'composer.images': 'Pasted pictures',
