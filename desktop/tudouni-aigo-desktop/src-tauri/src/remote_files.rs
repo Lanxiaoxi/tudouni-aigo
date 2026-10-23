@@ -145,10 +145,22 @@ pub fn download(
     let copy = (|| -> std::io::Result<()> {
         let mut local = std::fs::File::create(&partial)?;
         let mut chunk = [0u8; 256 * 1024];
+        let mut total: u64 = 0;
         loop {
             let read = remote.read(&mut chunk)?;
             if read == 0 {
                 break;
+            }
+            // `metadata.size` is only a hint: some servers omit it, and a
+            // stream can simply keep going. Enforce the same ceiling against
+            // what actually arrives, or a length-less file would fill the disk
+            // under a promise that it cannot.
+            total += read as u64;
+            if total > max_bytes {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("the file is over the {max_bytes} byte ceiling for a download"),
+                ));
             }
             local.write_all(&chunk[..read])?;
         }
@@ -278,15 +290,40 @@ fn upload_bytes_checked(
 /// decides.
 pub(crate) fn sanitize_component(name: &str) -> String {
     const RESERVED: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
-    name.chars()
+    let folded: String = name
+        .chars()
         .map(|ch| {
-            if RESERVED.contains(&ch) {
+            if RESERVED.contains(&ch) || ch.is_control() {
                 '_'
             } else {
                 ch
             }
         })
-        .collect()
+        .collect();
+    // Windows cannot open a file whose name ends in a space or a dot: the
+    // name is silently stripped by the filesystem, so a download written as
+    // `report.` would not be found at the path this function returned.
+    let folded = folded.trim_end_matches([' ', '.']);
+    if folded.is_empty() {
+        return "_".to_string();
+    }
+    // Device names are reserved **even with an extension** (`CON.txt` is the
+    // console on Windows), so the check is on the stem, case-insensitively.
+    let stem = folded
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    let is_device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0');
+    if is_device {
+        format!("_{folded}")
+    } else {
+        folded.to_string()
+    }
 }
 
 /// The file's own name, from one remote path. The local twin of `Path::file_name`
@@ -553,5 +590,28 @@ mod tests {
         assert_eq!(last_component("a|b", "workspace"), "a_b");
         assert_eq!(last_component("/home/dev/", "workspace"), "dev");
         assert_eq!(last_component("", "workspace"), "workspace");
+    }
+
+    #[test]
+    fn a_windows_device_name_is_not_used_as_a_file_name() {
+        // `CON`, `NUL` and the serial ports are reserved even with an
+        // extension, and opening one opens the device rather than the file the
+        // download thinks it wrote.
+        for reserved in ["CON", "con.txt", "PRN", "AUX", "NUL", "COM1", "LPT9"] {
+            let name = sanitize_component(reserved);
+            assert!(name.starts_with('_'), "{reserved} became {name}");
+        }
+        assert_eq!(sanitize_component("COM0"), "COM0");
+        assert_eq!(sanitize_component("console.log"), "console.log");
+    }
+
+    #[test]
+    fn a_trailing_space_or_dot_is_dropped() {
+        // Windows silently strips both when the file is created, so the path
+        // this function returns would not name the file that exists.
+        assert_eq!(sanitize_component("report."), "report");
+        assert_eq!(sanitize_component("report "), "report");
+        assert_eq!(sanitize_component("..."), "_");
+        assert_eq!(sanitize_component(""), "_");
     }
 }

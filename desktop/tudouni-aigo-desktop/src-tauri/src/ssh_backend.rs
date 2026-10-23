@@ -16,7 +16,7 @@
 //! child, [`RuntimeProcess`] is the one difference factored out: "can this be
 //! polled for exit, killed, written to, and read as a stream of lines". A
 //! local `std::process::Child` already has that shape; this module gives the
-//! SSH channel the same shape, and `spawn_remote` (in `lib.rs`) reuses every
+//! SSH channel the same shape, and `spawn_remote` (in `launch_remote.rs`) reuses every
 //! other line of `spawn`'s surrounding machinery through the type both can
 //! live inside, `Child_`.
 //!
@@ -81,19 +81,37 @@
 
 use ssh2::{Channel, Session};
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How long a `WouldBlock` attempt waits before trying the channel again.
 ///
 /// Short enough that a session's first `init` is delivered without a person
 /// perceiving a delay (a few milliseconds against a handshake measured in
 /// hundreds), and long enough that three threads polling one channel do not
-/// spin a core. It is not a timeout: nothing here ever gives up on a live
-/// channel, it only ever yields the lock.
+/// spin a core. It is not a timeout: reads use it only to yield the lock, and
+/// nothing ever gives up on a live channel that is merely quiet.
 const POLL_INTERVAL: Duration = Duration::from_millis(4);
+
+/// How long a **write** may sit in `WouldBlock` before it is a failure.
+///
+/// Reads may wait indefinitely — an idle session writes nothing, and treating
+/// that as broken is exactly the bug the non-blocking loop was introduced to
+/// fix. Writes are different: a peer that has stopped draining its receive
+/// window for this long is wedged, and retrying forever would hold the caller
+/// (and, before the command was made async, the window) for the life of the
+/// session. The shutdown path has a 30 s budget; a single line gets 5 s.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The error a write reports once `WRITE_TIMEOUT` has elapsed.
+fn write_timed_out() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        "the SSH channel accepted no bytes for 5s; the connection is wedged",
+    )
+}
 
 /// The error every poisoned-lock path reports. One spelling, so a caller
 /// matching on the message (a test, or a person reading a log) sees one string.
@@ -107,6 +125,7 @@ fn poisoned() -> std::io::Error {
 /// with two reader threads, and holding the lock across a wait for the send
 /// window is how the deadlock described in the module doc came back.
 fn write_all_yielding(channel: &Arc<Mutex<Channel>>, mut data: &[u8]) -> std::io::Result<()> {
+    let deadline = Instant::now() + WRITE_TIMEOUT;
     while !data.is_empty() {
         let result = {
             let mut guard = channel.lock().map_err(|_| poisoned())?;
@@ -121,6 +140,9 @@ fn write_all_yielding(channel: &Arc<Mutex<Channel>>, mut data: &[u8]) -> std::io
             }
             Ok(written) => data = &data[written..],
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(write_timed_out());
+                }
                 thread::sleep(POLL_INTERVAL)
             }
             Err(error) => return Err(error),
@@ -131,6 +153,7 @@ fn write_all_yielding(channel: &Arc<Mutex<Channel>>, mut data: &[u8]) -> std::io
 
 /// Flushes the channel, yielding the lock while it reports `WouldBlock`.
 fn flush_yielding(channel: &Arc<Mutex<Channel>>) -> std::io::Result<()> {
+    let deadline = Instant::now() + WRITE_TIMEOUT;
     loop {
         let result = {
             let mut guard = channel.lock().map_err(|_| poisoned())?;
@@ -139,6 +162,9 @@ fn flush_yielding(channel: &Arc<Mutex<Channel>>) -> std::io::Result<()> {
         match result {
             Ok(()) => return Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(write_timed_out());
+                }
                 thread::sleep(POLL_INTERVAL)
             }
             Err(error) => return Err(error),
@@ -294,14 +320,14 @@ impl Read for ChannelStderr {
 /// it.
 pub struct SshRuntimeProcess {
     channel: Arc<Mutex<Channel>>,
-    // Order matters for Drop: fields are dropped in declaration order, and
-    // the Arc<Mutex<Channel>> above (and every other clone of it) must be
-    // gone before the session is torn down, since a channel outliving its
-    // session is a channel into a closed connection. Both reader structs are
-    // owned by threads that end on their own EOF/error, which happens before
-    // this field is dropped in every path that calls kill() first — see
-    // kill()'s own doc for why that ordering is enforced there rather than
-    // left to hope.
+    // The session is kept alongside the channel (not dropped once the channel
+    // is open) because the connection is a fact this type owns, and dropping it
+    // while the channel is in use would be the wrong way to think about the
+    // lifetime. In practice the ordering is safe either way: `ssh2::Channel`
+    // holds its own `Arc` to the session's inner state, so the reader threads'
+    // channel clones keep the connection alive until they see EOF or an error.
+    // The comment here used to claim the opposite — that declaration order put
+    // the channel out of scope first — which was simply not how `ssh2` works.
     #[allow(dead_code)]
     session: Session,
     exit_status: Option<i32>,
@@ -404,7 +430,17 @@ pub fn connect(
 /// not done here either.
 pub fn dial_session(target: &SshTarget) -> Result<Session, String> {
     let address = format!("{}:{}", target.host, target.port);
-    let tcp = TcpStream::connect(&address)
+
+    // Resolve first, then connect with the same budget the handshake is given.
+    // A bare `TcpStream::connect` uses the OS default (tens of seconds on an
+    // unreachable host), so `connect_timeout` used to bound only the SSH part
+    // of a connection whose TCP part could already have outlived it.
+    let socket = address
+        .to_socket_addrs()
+        .map_err(|e| format!("could not resolve {address}: {e}"))?
+        .next()
+        .ok_or_else(|| format!("{address} resolved to no address"))?;
+    let tcp = TcpStream::connect_timeout(&socket, target.connect_timeout)
         .map_err(|e| format!("could not open a TCP connection to {address}: {e}"))?;
 
     let mut session = Session::new().map_err(|e| format!("could not start an SSH session: {e}"))?;
@@ -467,11 +503,31 @@ impl RuntimeProcess for SshRuntimeProcess {
             return Ok(None);
         }
         // EOF means the remote command has nothing left to say, but libssh2
-        // can still be waiting on the close/exit-status exchange; close() is
-        // idempotent and is what makes exit_status() meaningful afterwards.
-        let _ = channel.close();
-        let _ = channel.wait_close();
-        let code = channel.exit_status().unwrap_or(-1);
+        // can still be waiting on the close/exit-status exchange. `close()` is
+        // idempotent and is what makes `exit_status()` meaningful afterwards.
+        //
+        // `WouldBlock` here is "the exchange has not finished yet", not a
+        // failure: report "still running" and poll again. Treating it as an
+        // error (the previous `let _ = ...` did exactly that) made a perfectly
+        // clean remote exit look like a crash with code -1.
+        if let Err(error) = channel.close().map_err(std::io::Error::from) {
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Ok(None);
+            }
+            return Err(error);
+        }
+        if let Err(error) = channel.wait_close().map_err(std::io::Error::from) {
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Ok(None);
+            }
+            return Err(error);
+        }
+        // Only now is the exit status authoritative. A failure here is a real
+        // protocol fault (the channel closed without reporting one), which the
+        // wait loop turns into `-1`; it is not cached as if it were an answer.
+        let code = channel
+            .exit_status()
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
         self.exit_status = Some(code);
         Ok(Some(code))
     }
@@ -515,6 +571,7 @@ impl RuntimeProcess for SshRuntimeProcess {
         // The error is converted through `io::Error` before its kind is read:
         // `ssh2::Error` has no `kind()` of its own, and `would_block` is what
         // says "the send window is not open yet" rather than "this failed".
+        let deadline = Instant::now() + WRITE_TIMEOUT;
         loop {
             let result = {
                 let mut channel = self.channel.lock().map_err(|_| poisoned())?;
@@ -523,6 +580,9 @@ impl RuntimeProcess for SshRuntimeProcess {
             match result {
                 Ok(()) => return Ok(()),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(write_timed_out());
+                    }
                     thread::sleep(POLL_INTERVAL)
                 }
                 Err(error) => return Err(std::io::Error::new(std::io::ErrorKind::Other, error)),

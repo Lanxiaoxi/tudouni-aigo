@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -21,6 +22,7 @@ use crate::bridge::Bridge;
 use crate::bridge::ChildKey;
 use crate::bridge::Child_;
 use crate::bridge::ExitPayload;
+use crate::bridge::SharedProcess;
 use crate::workspace_staging::PASTE_DIR;
 use crate::workspace_staging::PASTE_SUBDIR;
 use crate::bridge::STDERR_RING;
@@ -29,6 +31,14 @@ use crate::bridge::forward_line;
 use crate::workspace_staging::sweep_staging;
 use crate::workspace_staging::unsafe_workspace;
 use crate::ssh_backend;
+
+/// How often the wait thread asks whether a child has ended.
+///
+/// The exit is reported to the WebView from here, so this is the worst-case
+/// latency of "the session ended" being painted. 200 ms is imperceptible, and
+/// the alternative that was here before (100 ms) doubled the rate at which
+/// every session took the process lock for no observable benefit.
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Options the front end passes to `runtime_attach`.
 #[derive(Debug, Deserialize)]
@@ -203,8 +213,8 @@ pub(crate) fn spawn(
     let stdin = child.stdin.take().ok_or("the child has no stdin")?;
     let stdout = child.stdout.take().ok_or("the child has no stdout")?;
     let stderr = child.stderr.take().ok_or("the child has no stderr")?;
-    let process: Box<dyn ssh_backend::RuntimeProcess> =
-        Box::new(ssh_backend::LocalRuntimeProcess::new(child, stdin));
+    let process: SharedProcess =
+        Arc::new(Mutex::new(Box::new(ssh_backend::LocalRuntimeProcess::new(child, stdin))));
 
     // The key is minted and the child registered under the bridge lock, so
     // `image_stash` can never observe a child whose workspace has not been
@@ -337,54 +347,91 @@ pub(crate) fn spawn(
     }
 
     // ---- wait: report the exit code and whether we asked for it ----
-    //
-    // This is the only place a child is reaped, which is why `runtime_shutdown`
-    // polls instead of calling `wait()`: two waiters on one handle would race.
-    //
-    // The slot is removed here and only here, so membership in `children` means
-    // "this session has a process right now". A caller that acts on a key the
-    // bridge no longer holds is told so rather than being silently answered by a
-    // newer session.
-    {
-        let app = app.clone();
-        thread::spawn(move || {
-            let outcome = loop {
-                {
+    spawn_wait_thread(app, key);
+
+    Ok(key)
+}
+
+/// Starts the one thread that reports a child's exit, for either backend.
+///
+/// This is the only place a child is reaped, which is why `runtime_shutdown`
+/// polls instead of calling `wait()`: two waiters on one handle would race.
+///
+/// **The bridge lock is never held across `try_wait`.** `try_wait` takes the
+/// process's own lock and, for a remote child, can touch the SSH channel; the
+/// bridge lock is what every session, every reader and the resource panel need.
+/// The handle is cloned out under the bridge lock and polled after releasing
+/// it, so one slow connection cannot stall the rest of the app.
+///
+/// The slot is removed here and only here (or by `runtime_kill`), so membership
+/// in `children` means "this session has a process right now". A caller that
+/// acts on a key the bridge no longer holds is told so rather than being
+/// silently answered by a newer session.
+pub(crate) fn spawn_wait_thread(app: &AppHandle, key: ChildKey) {
+    let app = app.clone();
+    thread::spawn(move || {
+        let outcome = loop {
+            // Clone the handle out, then drop the bridge lock.
+            let process = {
+                let state: State<Bridge> = app.state();
+                let guard = match state.inner.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => break None,
+                };
+                match guard.children.get(&key) {
+                    Some(current) => current.process.clone(),
+                    // Already reaped or killed: nothing to say.
+                    None => break None,
+                }
+            };
+
+            let waited = {
+                let mut process = match process.lock() {
+                    Ok(process) => process,
+                    Err(_) => break None,
+                };
+                process.try_wait()
+            };
+
+            match waited {
+                Ok(Some(code)) => {
+                    let requested = {
+                        let state: State<Bridge> = app.state();
+                        let mut guard = match state.inner.lock() {
+                            Ok(guard) => guard,
+                            Err(_) => break None,
+                        };
+                        match guard.children.remove(&key) {
+                            Some(current) => current.requested,
+                            // `runtime_kill` removed it while we were polling.
+                            None => break None,
+                        }
+                    };
+                    break Some((code, requested));
+                }
+                Ok(None) => {}
+                Err(_) => {
                     let state: State<Bridge> = app.state();
                     let mut guard = match state.inner.lock() {
                         Ok(guard) => guard,
                         Err(_) => break None,
                     };
-                    match guard.children.get_mut(&key) {
-                        Some(current) => match current.process.try_wait() {
-                            Ok(Some(code)) => {
-                                let requested = current.requested;
-                                guard.children.remove(&key);
-                                break Some((code, requested));
-                            }
-                            Ok(None) => {}
-                            Err(_) => {
-                                guard.children.remove(&key);
-                                break Some((-1, false));
-                            }
-                        },
-                        // Already reaped or shut down: nothing to say.
-                        None => break None,
+                    if guard.children.remove(&key).is_none() {
+                        break None;
                     }
+                    break Some((-1, false));
                 }
-                thread::sleep(Duration::from_millis(100));
-            };
-
-            if let Some((code, requested)) = outcome {
-                // The runtime never sends `runtime_exited` itself — in the Go
-                // client it is the client's own synthesized message, and this is
-                // its equivalent. `requested` is not optional: a requested
-                // shutdown and a crash both exit with code 0, so it is the only
-                // thing that tells "the session ended" from "the runtime died".
-                let _ = app.emit("runtime://exited", ExitPayload { key, code, requested });
             }
-        });
-    }
+            thread::sleep(EXIT_POLL_INTERVAL);
+        };
 
-    Ok(key)
+        if let Some((code, requested)) = outcome {
+            // The runtime never sends `runtime_exited` itself — in the Go client
+            // it is the client's own synthesized message, and this is its
+            // equivalent. `requested` is not optional: a requested shutdown and
+            // a crash both exit with code 0, so it is the only thing that tells
+            // "the session ended" from "the runtime died".
+            let _ = app.emit("runtime://exited", ExitPayload { key, code, requested });
+        }
+    });
 }

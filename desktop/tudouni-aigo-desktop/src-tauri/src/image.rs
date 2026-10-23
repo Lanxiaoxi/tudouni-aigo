@@ -252,7 +252,17 @@ pub(crate) fn base64_encode(bytes: &[u8]) -> String {
 /// the byte sniff are the local door's own, read from the same constants, so
 /// a picture accepted by one door is accepted by the other.
 #[tauri::command]
-pub(crate) fn inline_image_remote(
+pub(crate) async fn inline_image_remote(
+    app: AppHandle,
+    key: ChildKey,
+    path: String,
+) -> Result<InlineImage, String> {
+    tauri::async_runtime::spawn_blocking(move || inline_image_remote_blocking(app, key, path))
+        .await
+        .map_err(|error| format!("the image read task failed: {error}"))?
+}
+
+fn inline_image_remote_blocking(
     app: AppHandle,
     key: ChildKey,
     path: String,

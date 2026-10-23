@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -18,6 +18,28 @@ use crate::ssh_backend;
 /// How many stderr lines to keep for the local diagnostics panel. This is not
 /// protocol data and is never shown as session content.
 pub(crate) const STDERR_RING: usize = 200;
+
+/// How many stdout lines to hold for a child the WebView has not attached to
+/// yet.
+///
+/// The queue exists for one handshake race and is flushed within a frame of the
+/// listener registering, so a legitimate backlog is the opening triple plus
+/// whatever a fast runtime emits before the renderer is ready. A cap therefore
+/// only bites when the WebView never attaches at all (a crashed renderer, a
+/// window that was torn down before its listener ran) — and in that case an
+/// unbounded queue grows for the life of the process. Dropping the oldest line
+/// is the right end to lose: the newest state is the one a later attach can
+/// still act on.
+pub(crate) const LINE_QUEUE_LIMIT: usize = 1024;
+
+/// One child's process, shared rather than owned by the bridge map.
+///
+/// Writes can block for up to `ssh_backend`'s write timeout, so they must not
+/// happen while the bridge lock is held: that lock is what every session, every
+/// stderr reader and the resource panel need, and one wedged connection holding
+/// it would freeze all of them. The `Arc` lets a caller clone the handle under
+/// the bridge lock, release it, and only then take the process lock.
+pub(crate) type SharedProcess = Arc<Mutex<Box<dyn ssh_backend::RuntimeProcess>>>;
 
 /// Which child a message belongs to.
 ///
@@ -103,8 +125,9 @@ pub(crate) struct Child_ {
     /// for why this is a trait object rather than a bare `Child`: a remote
     /// runtime has no PID, no separate stdin handle, and a stdin "close" that
     /// means something different (`send_eof` on the SSH channel rather than
-    /// dropping a pipe).
-    pub(crate) process: Box<dyn ssh_backend::RuntimeProcess>,
+    /// dropping a pipe). Shared so I/O can happen outside the bridge lock; see
+    /// [`SharedProcess`].
+    pub(crate) process: SharedProcess,
     /// True once we have asked for the shutdown ourselves.
     pub(crate) requested: bool,
     /// Lines read before the front end attached, flushed in order on attach.
@@ -202,6 +225,11 @@ pub(crate) fn forward_line(app: &AppHandle, key: ChildKey, line: String) {
         if guard.listening {
             true
         } else if let Some(current) = guard.children.get_mut(&key) {
+            // Bounded: see `LINE_QUEUE_LIMIT`. The oldest line goes first so a
+            // listener that attaches late still sees the newest state.
+            if current.queue.len() >= LINE_QUEUE_LIMIT {
+                current.queue.pop_front();
+            }
             current.queue.push_back(line.clone());
             false
         } else {

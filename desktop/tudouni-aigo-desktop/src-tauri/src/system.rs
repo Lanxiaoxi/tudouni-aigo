@@ -48,6 +48,7 @@ pub(crate) fn set_prevent_sleep(_app: AppHandle, on: bool) -> Result<(), String>
     #[cfg(windows)]
     {
         const ES_CONTINUOUS: u32 = 0x8000_0000;
+        const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
         const ES_DISPLAY_REQUIRED: u32 = 0x0000_0002;
 
         type SetThreadExecutionStateFn =
@@ -71,7 +72,14 @@ pub(crate) fn set_prevent_sleep(_app: AppHandle, on: bool) -> Result<(), String>
             // Off means "no flags other than ES_CONTINUOUS": that is how the
             // API spells "return to the default" rather than "nothing".
             let flags = if on {
-                ES_CONTINUOUS | ES_DISPLAY_REQUIRED
+                // Both flags are needed and the pair is deliberate:
+                // `ES_DISPLAY_REQUIRED` keeps the screen from going dark while
+                // somebody is watching a long turn, and `ES_SYSTEM_REQUIRED`
+                // keeps the machine itself from suspending, which would pause
+                // the runtime with the display still lit. The previous value had
+                // only the display flag despite the comment above claiming
+                // otherwise.
+                ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED
             } else {
                 ES_CONTINUOUS
             };
@@ -169,7 +177,16 @@ pub(crate) struct ResourceUsage {
 /// "240%" over the whole application is noise. On the machine's scale the
 /// answer is the one a person means when they ask "how busy is it".
 #[tauri::command]
-pub(crate) fn resource_usage(app: AppHandle) -> Result<ResourceUsage, String> {
+pub(crate) async fn resource_usage(app: AppHandle) -> Result<ResourceUsage, String> {
+    // `refresh_all` scans every process on the machine (about a second on the
+    // first call, and tens of milliseconds after), so a synchronous command
+    // would freeze the window on every poll. Off the main thread.
+    tauri::async_runtime::spawn_blocking(move || resource_usage_blocking(app))
+        .await
+        .map_err(|error| format!("the resource sampling task failed: {error}"))?
+}
+
+fn resource_usage_blocking(app: AppHandle) -> Result<ResourceUsage, String> {
     let mut system = SYSTEM
         .get_or_init(|| {
             let mut system = System::new();
@@ -194,17 +211,30 @@ pub(crate) fn resource_usage(app: AppHandle) -> Result<ResourceUsage, String> {
         .map(|current| (current.cpu_usage() as f64 / cores, current.memory()))
         .unwrap_or((0.0, 0));
 
-    let mut runtimes_cpu = 0.0;
-    let mut runtimes_mem: u64 = 0;
-    {
+    // Clone the handles under the bridge lock and take the process locks after
+    // releasing it: a remote session's write may be holding that lock for up to
+    // `WRITE_TIMEOUT`, and the bridge lock must not be waiting behind it.
+    let processes: Vec<crate::bridge::SharedProcess> = {
         let state: State<Bridge> = app.state();
         let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-        for current in guard.children.values() {
-            if let Some(pid) = current.process.pid() {
-                if let Some(process) = system.process(Pid::from(pid as usize)) {
-                    runtimes_cpu += process.cpu_usage() as f64 / cores;
-                    runtimes_mem += process.memory();
-                }
+        guard
+            .children
+            .values()
+            .map(|current| current.process.clone())
+            .collect()
+    };
+
+    let mut runtimes_cpu = 0.0;
+    let mut runtimes_mem: u64 = 0;
+    for process in processes {
+        let pid = match process.lock() {
+            Ok(process) => process.pid(),
+            Err(_) => continue,
+        };
+        if let Some(pid) = pid {
+            if let Some(found) = system.process(Pid::from(pid as usize)) {
+                runtimes_cpu += found.cpu_usage() as f64 / cores;
+                runtimes_mem += found.memory();
             }
         }
     }

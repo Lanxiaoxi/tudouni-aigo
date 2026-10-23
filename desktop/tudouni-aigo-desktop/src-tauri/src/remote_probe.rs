@@ -285,28 +285,45 @@ struct Cache {
     sessions: Vec<CachedSession>,
 }
 
+/// A hard ceiling on cached connections, independent of `SESSION_TTL`.
+///
+/// The TTL bounds how long an entry is *usable*; it does not bound how many
+/// hosts a person can probe in that window. Each entry holds a live TCP
+/// connection, so the vector needs a cap of its own: when it is full, the
+/// oldest session goes.
+const CACHE_MAX: usize = 8;
+
 static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(|| Mutex::new(Cache { sessions: Vec::new() }));
 
 /// A cached clone of the session, or a fresh dial — and the home directory
 /// either one implies. A clone is an `Arc` bump over the same live
 /// connection; the cache holds one clone for its own lifetime.
+///
+/// **The cache lock is not held across the network.** The liveness check below
+/// is a real `exec` round trip, and holding the mutex for it would serialise
+/// every other browse (and every other host) behind one slow connection. The
+/// candidate is cloned out under the lock, probed after releasing it, and only
+/// the removal of a dead entry takes the lock again.
 fn cached_or_dial(target: &SshTarget) -> Result<(Session, String), String> {
-    {
+    let candidate = {
         let mut cache = CACHE.lock().expect("session cache poisoned");
         cache.sessions.retain(|entry| entry.stored.elapsed() < SESSION_TTL);
-        if let Some(entry) = cache
+        cache
             .sessions
             .iter()
             .find(|entry| target_matches(&entry.target, target))
-        {
-            // The cached connection may have died idle: confirm with the
-            // cheapest call available (reading the home directory), and fall
-            // back to a dial rather than failing the click.
-            if remote_install::exec_capture(&entry.session, "true").is_ok() {
-                return Ok((entry.session.clone(), entry.home.clone()));
-            }
-            cache.sessions.retain(|entry| !target_matches(&entry.target, target));
+            .map(|entry| (entry.session.clone(), entry.home.clone()))
+    };
+
+    if let Some((session, home)) = candidate {
+        // The cached connection may have died idle: confirm with the
+        // cheapest call available, and fall back to a dial rather than failing
+        // the click.
+        if remote_install::exec_capture(&session, "true").is_ok() {
+            return Ok((session, home));
         }
+        let mut cache = CACHE.lock().expect("session cache poisoned");
+        cache.sessions.retain(|entry| !target_matches(&entry.target, target));
     }
 
     let session = crate::ssh_backend::dial_session(target)?;
@@ -316,7 +333,7 @@ fn cached_or_dial(target: &SshTarget) -> Result<(Session, String), String> {
 }
 
 /// Files the just-validated session in the cache, replacing any stale entry
-/// for the same connection parameters.
+/// for the same connection parameters and evicting the oldest when full.
 fn store_session(target: &SshTarget, session: Session, home: String) {
     let mut cache = CACHE.lock().expect("session cache poisoned");
     cache.sessions.retain(|entry| !target_matches(&entry.target, target));
@@ -326,6 +343,20 @@ fn store_session(target: &SshTarget, session: Session, home: String) {
         home,
         stored: Instant::now(),
     });
+    while cache.sessions.len() > CACHE_MAX {
+        let oldest = cache
+            .sessions
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, entry)| entry.stored)
+            .map(|(index, _)| index);
+        match oldest {
+            Some(index) => {
+                cache.sessions.remove(index);
+            }
+            None => break,
+        }
+    }
 }
 
 /// Two targets that must speak to the same endpoint the same way.
@@ -487,10 +518,23 @@ fn workspace_problem_for(dir: &str, home: &str) -> Option<String> {
     if normalised.is_empty() {
         return Some("it is the filesystem root".to_string());
     }
-    if normalised == home.trim_end_matches('/') {
+    let home = home.trim_end_matches('/');
+    if normalised == home {
         return Some(
             "it is the account's home directory, and the runtime refuses it: the file tools' \
              boundary would be everything below it"
+                .to_string(),
+        );
+    }
+    // An ancestor of home (`/home` when home is `/home/dev`) is refused for
+    // the same reason, and the local `unsafe_workspace` check already does
+    // this. Without it the remote form would accept a directory that contains
+    // the account's home, making `.ssh`, other projects and browser data part
+    // of the workspace boundary — the exact trust the runtime withholds.
+    if !home.is_empty() && home.starts_with(&format!("{normalised}/")) {
+        return Some(
+            "it contains the account's home directory, and the runtime refuses it: the file \
+             tools' boundary would reach into every other directory below it"
                 .to_string(),
         );
     }
@@ -508,4 +552,21 @@ fn expand_home(path: &str, home: &str) -> String {
         return format!("{}/{}", home, rest.trim_start_matches('/'));
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::workspace_problem_for;
+
+    #[test]
+    fn the_home_directory_and_its_ancestors_are_refused() {
+        assert!(workspace_problem_for("/home/dev", "/home/dev").is_some());
+        assert!(workspace_problem_for("/home/dev/", "/home/dev").is_some());
+        assert!(workspace_problem_for("/home", "/home/dev").is_some());
+        assert!(workspace_problem_for("/", "/home/dev").is_some());
+        // The boundary is on path segments, not a string prefix: `/home/dev2`
+        // is a sibling of home, not an ancestor.
+        assert!(workspace_problem_for("/home/dev2", "/home/dev").is_none());
+        assert!(workspace_problem_for("/home/dev/proj", "/home/dev").is_none());
+    }
 }

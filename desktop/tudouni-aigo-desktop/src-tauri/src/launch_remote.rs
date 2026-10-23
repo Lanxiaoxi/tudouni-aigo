@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -16,8 +17,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::bridge::Bridge;
 use crate::bridge::ChildKey;
 use crate::bridge::Child_;
-use crate::bridge::ExitPayload;
 use crate::bridge::RemoteSshConn;
+use crate::bridge::SharedProcess;
 use crate::bridge::STDERR_RING;
 use crate::bridge::StderrPayload;
 use crate::bridge::forward_line;
@@ -32,7 +33,7 @@ use crate::ssh_backend;
 /// never resolved or validated on this machine), and conflating the two
 /// shapes would let a caller accidentally mix a local workspace with a
 /// remote connection.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAttachOptions {
     /// The SSH host or address to connect to. Never an alias resolved from
@@ -75,6 +76,29 @@ pub struct RemoteAttachOptions {
     /// authentication together. `None` or `0` means `ssh_backend`'s own
     /// default.
     connect_timeout_ms: Option<u64>,
+}
+
+/// Redacted on purpose: the struct carries a password, and a derived `Debug`
+/// would put it in any log line that ever formatted these options. Not a
+/// theoretical leak — `{:?}` is the obvious way to diagnose a failed attach.
+impl std::fmt::Debug for RemoteAttachOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteAttachOptions")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("identity_files", &self.identity_files)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("remote_binary", &self.remote_binary)
+            .field("remote_workspace", &self.remote_workspace)
+            .field("session_id", &self.session_id)
+            .field("max_steps", &self.max_steps)
+            .field("stream", &self.stream)
+            .field("autopilot", &self.autopilot)
+            .field("ericai", &self.ericai)
+            .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .finish()
+    }
 }
 
 /// Finds the bundled release archive for one remote platform, the
@@ -188,7 +212,7 @@ pub(crate) fn spawn_remote(app: &AppHandle, options: &RemoteAttachOptions) -> Re
 
     let (process, stdout, stderr) = ssh_backend::connect(&target, &command)
         .map_err(|e| format!("could not start the remote runtime: {e}"))?;
-    let process: Box<dyn ssh_backend::RuntimeProcess> = Box::new(process);
+    let process: SharedProcess = Arc::new(Mutex::new(Box::new(process)));
 
     // The key is minted and the child registered under the bridge lock, same
     // as the local path. There is no **local** staging directory — a remote
@@ -318,43 +342,10 @@ pub(crate) fn spawn_remote(app: &AppHandle, options: &RemoteAttachOptions) -> Re
 
     // ---- wait: report the exit code and whether we asked for it ----
     //
-    // Identical in shape to spawn()'s own wait loop; `try_wait` is what hides
-    // "poll an SSH channel for EOF and an exit-status exchange" behind the
-    // same interface "poll a local process" already has.
-    {
-        let app = app.clone();
-        thread::spawn(move || {
-            let outcome = loop {
-                {
-                    let state: State<Bridge> = app.state();
-                    let mut guard = match state.inner.lock() {
-                        Ok(guard) => guard,
-                        Err(_) => break None,
-                    };
-                    match guard.children.get_mut(&key) {
-                        Some(current) => match current.process.try_wait() {
-                            Ok(Some(code)) => {
-                                let requested = current.requested;
-                                guard.children.remove(&key);
-                                break Some((code, requested));
-                            }
-                            Ok(None) => {}
-                            Err(_) => {
-                                guard.children.remove(&key);
-                                break Some((-1, false));
-                            }
-                        },
-                        None => break None,
-                    }
-                }
-                thread::sleep(Duration::from_millis(100));
-            };
-
-            if let Some((code, requested)) = outcome {
-                let _ = app.emit("runtime://exited", ExitPayload { key, code, requested });
-            }
-        });
-    }
+    // The same thread the local path uses; `try_wait` is what hides "poll an
+    // SSH channel for EOF and an exit-status exchange" behind the interface
+    // "poll a local process" already has.
+    crate::launch::spawn_wait_thread(app, key);
 
     Ok(key)
 }

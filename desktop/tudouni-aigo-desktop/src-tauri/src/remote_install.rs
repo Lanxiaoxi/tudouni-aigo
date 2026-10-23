@@ -273,7 +273,7 @@ pub fn mkdir_remote_recursive(session: &Session, remote_dir: &str) -> Result<(),
 /// Builds an [`SshTarget`] from the pieces the front end already has, so
 /// `detect_remote_target`/the upload functions can be driven with the same
 /// connection `connect` would open — kept here rather than constructed ad
-/// hoc at each call site in `lib.rs`, since `dial_session` is this module's
+/// hoc at each call site in `remote_commands.rs`, since `dial_session` is this module's
 /// one connection entry point for everything that is not starting the
 /// runtime itself.
 pub fn open_install_session(target: &SshTarget) -> Result<Session, String> {
@@ -320,17 +320,44 @@ impl RemoteLayout {
     }
 
     /// Within StagingDir, where one archive entry (named relative to the
-    /// archive root, forward-slash, exactly as `zip::ZipArchive` reports it)
-    /// should land.
-    pub fn staging_path_for_entry(&self, entry_name: &str) -> String {
-        format!("{}/{}", self.staging_dir(), entry_name.trim_start_matches('/'))
+    /// archive root, exactly as `zip::ZipArchive` reports it) should land.
+    ///
+    /// The archive is a build artifact this project produces, but "trusted
+    /// input" is not a property of a file format: a `..` segment or an
+    /// absolute name would let an entry land outside the staging directory
+    /// (and `..` survives a naive `trim_start_matches('/')`). Every segment is
+    /// therefore normalised and checked here, once, rather than at each of the
+    /// several SFTP calls that follow.
+    pub fn staging_path_for_entry(&self, entry_name: &str) -> Result<String, String> {
+        let normalised = entry_name.replace('\\', "/");
+        let mut segments: Vec<&str> = Vec::new();
+        for segment in normalised.split('/') {
+            if segment.is_empty() || segment == "." {
+                continue;
+            }
+            if segment == ".." {
+                return Err(format!(
+                    "the archive entry {entry_name:?} names a path outside the staging directory"
+                ));
+            }
+            if segment.contains('\0') {
+                return Err(format!(
+                    "the archive entry {entry_name:?} carries a control character"
+                ));
+            }
+            segments.push(segment);
+        }
+        if segments.is_empty() {
+            return Err(format!("the archive entry {entry_name:?} names no file"));
+        }
+        Ok(format!("{}/{}", self.staging_dir(), segments.join("/")))
     }
 }
 
 /// Quotes one argument for a POSIX shell command, mirroring
 /// `ssh.QuoteShellArgument` / `bootstrap.quoteShellArgument` / the local
 /// `quote_shell_argument` the runtime-launch command already uses in
-/// `lib.rs` — see any of those for why single-quoting is the one truly inert
+/// `launch_remote.rs` — see any of those for why single-quoting is the one truly inert
 /// form and the single character that needs escaping.
 fn q(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
@@ -450,7 +477,7 @@ pub fn upload_archive_contents(
             (name, is_dir, buffer)
         };
 
-        let remote_path = layout.staging_path_for_entry(&name);
+        let remote_path = layout.staging_path_for_entry(&name)?;
 
         if is_dir {
             mkdir_remote_recursive(session, &remote_path)?;
@@ -520,7 +547,7 @@ pub fn current_installed_version(session: &Session, layout: &RemoteLayout) -> Op
 }
 
 /// One progress event the install flow reports back to its caller, which in
-/// `lib.rs` becomes the `remote-install://progress` event the WebView draws
+/// `remote_commands.rs` becomes the `remote-install://progress` event the WebView draws
 /// as `connection.phase = 'installing'` (§6 of the design: the connection's
 /// own state machine, not a value borrowed from the turn/approval state).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -539,7 +566,7 @@ pub enum InstallStage {
 ///
 /// `archive_path` must already be the correct platform's archive — selected
 /// by the caller after `detect_remote_target` answers, from the two bundled
-/// under `remote-packages/` (`lib.rs`'s `install_remote_runtime` command is
+/// under `remote-packages/` (`remote_commands.rs`'s `install_remote_runtime` command is
 /// what makes that selection; this function only ever uploads the one
 /// archive it is given).
 ///
@@ -585,6 +612,30 @@ pub fn install_or_upgrade(
 
     on_stage(InstallStage::Done);
     Ok(format!("{}/{}", layout.current_link(), remote_target.binary_name()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_archive_entry_cannot_escape_the_staging_directory() {
+        let layout = RemoteLayout::new("/home/dev", "4.18.0", LINUX_AMD64);
+        for escaping in ["../evil", "a/../../evil", "..\\evil", "a/..", ".."] {
+            assert!(
+                layout.staging_path_for_entry(escaping).is_err(),
+                "{escaping} escaped the staging directory"
+            );
+        }
+        // An absolute name is normalised to a relative one rather than joined
+        // with the root — the outcome is inside staging, which is what matters.
+        let absolute = layout.staging_path_for_entry("/etc/passwd").unwrap();
+        assert!(absolute.starts_with(&layout.staging_dir()));
+        assert_eq!(
+            layout.staging_path_for_entry("runtime/rg").unwrap(),
+            "/home/dev/.tudouni/runtime/.staging-4.18.0/runtime/rg"
+        );
+    }
 }
 
 

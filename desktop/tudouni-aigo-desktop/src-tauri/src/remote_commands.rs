@@ -19,7 +19,7 @@ use crate::ssh_backend;
 use crate::ssh_config;
 
 /// Options for `install_remote_runtime`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRemoteOptions {
     host: String,
@@ -35,6 +35,20 @@ pub struct InstallRemoteOptions {
     /// WebView, not resolved here: this module has no reason to know its
     /// own version string any more directly than that.
     version: String,
+}
+
+impl std::fmt::Debug for InstallRemoteOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InstallRemoteOptions")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("identity_files", &self.identity_files)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .field("version", &self.version)
+            .finish()
+    }
 }
 
 /// One progress event the install flow emits as it runs each step, carried
@@ -72,7 +86,17 @@ struct InstallProgressPayload {
 /// acts here, the same way `runtime_attach`/`resolve_binary` never install
 /// anything locally either.
 #[tauri::command]
-pub(crate) fn install_remote_runtime(
+pub(crate) async fn install_remote_runtime(
+    app: AppHandle,
+    request_id: String,
+    options: InstallRemoteOptions,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || install_blocking(app, request_id, options))
+        .await
+        .map_err(|error| format!("the remote install task failed: {error}"))?
+}
+
+fn install_blocking(
     app: AppHandle,
     request_id: String,
     options: InstallRemoteOptions,
@@ -147,7 +171,7 @@ pub(crate) fn install_remote_runtime(
 /// SSH destination, nothing else. A separate, smaller struct from
 /// `InstallRemoteOptions` because a config-sync call carries no version and
 /// no runtime-specific fields.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteConfigTarget {
     host: String,
@@ -157,6 +181,19 @@ pub struct RemoteConfigTarget {
     identity_files: Vec<String>,
     password: Option<String>,
     connect_timeout_ms: Option<u64>,
+}
+
+impl std::fmt::Debug for RemoteConfigTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteConfigTarget")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("identity_files", &self.identity_files)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .finish()
+    }
 }
 
 impl RemoteConfigTarget {
@@ -189,7 +226,15 @@ pub(crate) struct RemoteConfigStatusPayload {
 /// compares against a stored baseline (§9.5) to decide whether this is a
 /// first sync, an ordinary continuation, or a conflict.
 #[tauri::command]
-pub(crate) fn check_remote_config(target: RemoteConfigTarget) -> Result<RemoteConfigStatusPayload, String> {
+pub(crate) async fn check_remote_config(
+    target: RemoteConfigTarget,
+) -> Result<RemoteConfigStatusPayload, String> {
+    tauri::async_runtime::spawn_blocking(move || check_remote_config_blocking(target))
+        .await
+        .map_err(|error| format!("the remote config check task failed: {error}"))?
+}
+
+fn check_remote_config_blocking(target: RemoteConfigTarget) -> Result<RemoteConfigStatusPayload, String> {
     let ssh_target = target.into_ssh_target();
     let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
         .map_err(|e| format!("could not connect to check the remote configuration: {e}"))?;
@@ -212,7 +257,16 @@ pub(crate) fn check_remote_config(target: RemoteConfigTarget) -> Result<RemoteCo
 /// record it as the new sync baseline without a second round trip to read
 /// it back.
 #[tauri::command]
-pub(crate) fn write_remote_config(target: RemoteConfigTarget, contents: String) -> Result<String, String> {
+pub(crate) async fn write_remote_config(
+    target: RemoteConfigTarget,
+    contents: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || write_remote_config_blocking(target, contents))
+        .await
+        .map_err(|error| format!("the remote config write task failed: {error}"))?
+}
+
+fn write_remote_config_blocking(target: RemoteConfigTarget, contents: String) -> Result<String, String> {
     let ssh_target = target.into_ssh_target();
     let (session, home) = remote_config::connect_and_resolve_home(&ssh_target)
         .map_err(|e| format!("could not connect to write the remote configuration: {e}"))?;
@@ -289,7 +343,7 @@ pub(crate) fn append_ssh_host(options: AppendSshHostOptions) -> Result<String, S
 /// rather than a reuse of it: the two are different questions asked of the same
 /// server, and one gaining a field the other has no business carrying is
 /// exactly the kind of drift a shared struct invites.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteProbeTarget {
     host: String,
@@ -299,6 +353,19 @@ pub struct RemoteProbeTarget {
     identity_files: Vec<String>,
     password: Option<String>,
     connect_timeout_ms: Option<u64>,
+}
+
+impl std::fmt::Debug for RemoteProbeTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteProbeTarget")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("identity_files", &self.identity_files)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("connect_timeout_ms", &self.connect_timeout_ms)
+            .finish()
+    }
 }
 
 impl RemoteProbeTarget {
@@ -327,11 +394,15 @@ impl RemoteProbeTarget {
 ///
 /// `path` omitted or empty means the account's home directory.
 #[tauri::command]
-pub(crate) fn probe_remote_host(
+pub(crate) async fn probe_remote_host(
     target: RemoteProbeTarget,
     path: Option<String>,
 ) -> Result<remote_probe::RemoteProbe, String> {
-    remote_probe::probe(&target.into_ssh_target(), path.as_deref())
+    tauri::async_runtime::spawn_blocking(move || {
+        remote_probe::probe(&target.into_ssh_target(), path.as_deref())
+    })
+    .await
+    .map_err(|error| format!("the remote probe task failed: {error}"))?
 }
 
 /// List one directory on a host the wizard has already probed — the browser's
@@ -346,11 +417,15 @@ pub(crate) fn probe_remote_host(
 ///
 /// `path` omitted or empty means the account's home directory.
 #[tauri::command]
-pub(crate) fn browse_remote_dir(
+pub(crate) async fn browse_remote_dir(
     target: RemoteProbeTarget,
     path: Option<String>,
 ) -> Result<remote_probe::RemoteBrowse, String> {
-    remote_probe::browse(&target.into_ssh_target(), path.as_deref())
+    tauri::async_runtime::spawn_blocking(move || {
+        remote_probe::browse(&target.into_ssh_target(), path.as_deref())
+    })
+    .await
+    .map_err(|error| format!("the remote browse task failed: {error}"))?
 }
 
 /// Create one directory on a remote host, for the wizard's "new folder".
@@ -361,6 +436,13 @@ pub(crate) fn browse_remote_dir(
 ///
 /// Returns the directory's absolute path, which is what the caller then lists.
 #[tauri::command]
-pub(crate) fn create_remote_directory(target: RemoteProbeTarget, path: String) -> Result<String, String> {
-    remote_probe::create_directory(&target.into_ssh_target(), &path)
+pub(crate) async fn create_remote_directory(
+    target: RemoteProbeTarget,
+    path: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        remote_probe::create_directory(&target.into_ssh_target(), &path)
+    })
+    .await
+    .map_err(|error| format!("the remote directory task failed: {error}"))?
 }

@@ -10,7 +10,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::runtime_commands::runtime_shutdown;
+use crate::runtime_commands::shutdown_blocking;
 
 /// The event the front end listens for when somebody acts on the tray menu.
 ///
@@ -99,7 +99,7 @@ pub(crate) fn make_tray(app: &AppHandle) -> tauri::Result<()> {
                 let app = app.clone();
                 let shutdown_handle = app.clone();
                 thread::spawn(move || {
-                    let _ = runtime_shutdown(shutdown_handle, None);
+                    let _ = shutdown_blocking(shutdown_handle, None);
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.destroy();
                     }

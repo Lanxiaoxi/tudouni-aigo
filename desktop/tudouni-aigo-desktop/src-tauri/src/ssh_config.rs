@@ -187,8 +187,7 @@ pub fn read_config() -> SshConfigDocument {
 /// # Why this writes the user's file rather than a private one
 ///
 /// This program reads `~/.ssh/config` and nothing else — there is no second
-/// place a host can be configured (`internal/ssh`'s package doc says so, and
-/// `ssh_backend` resolves aliases through the same file). So a host the person
+/// place a host can be configured (`internal/ssh`'s package doc says so). So a host the person
 /// adds through this wizard has to land **there** to be usable, and the
 /// alternative — a private list only this application can see — would be a host
 /// they cannot reach with `ssh` either, which is the opposite of the point.
@@ -376,20 +375,39 @@ pub fn list_hosts_from(path: &Path) -> Result<Vec<SshConfigHost>, String> {    l
 /// `IdentityFile ~/.ssh/%h_key` mean "a key named after the alias".
 fn expand_tokens(value: &str, alias: &str, remote_user: &str, home: &str) -> String {
     let text = value.trim();
-    let mut out: String = if text == "~" {
+    let expanded: String = if text == "~" {
         home.to_string()
     } else if let Some(rest) = text.strip_prefix("~/") {
         Path::new(home).join(rest).display().to_string()
     } else {
         text.to_string()
     };
-    out = out.replace("%h", alias);
-    out = out.replace("%n", alias);
-    out = out.replace("%r", remote_user);
-    out = out.replace("%d", home);
-    out = out.replace("%u", &local_username());
-    // `%%` last, so a literal percent is not re-expanded.
-    out = out.replace("%%", "%");
+
+    // One left-to-right pass, so `%%h` means a literal `%h` rather than
+    // "`%h` was already replaced inside it". Replacing each token in turn (as
+    // this used to) makes `%%h` expand to `%<alias>`, because the `%h` inside
+    // it is matched before `%%` is considered. An unknown token is left
+    // untouched, as OpenSSH does.
+    let mut out = String::with_capacity(expanded.len());
+    let mut chars = expanded.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            None => out.push('%'),
+            Some('%') => out.push('%'),
+            Some('h') | Some('n') => out.push_str(alias),
+            Some('r') => out.push_str(remote_user),
+            Some('d') => out.push_str(home),
+            Some('u') => out.push_str(&local_username()),
+            Some(other) => {
+                out.push('%');
+                out.push(other);
+            }
+        }
+    }
     out
 }
 
@@ -1193,5 +1211,19 @@ mod tests {
         assert_eq!(parsed[0].user, "deploy");
         assert_eq!(parsed[0].identity_files, vec!["/home/me/.ssh/id_ed25519"]);
         assert!(!parsed[0].has_password, "we never write one, so it must not read one");
+    }
+
+    #[test]
+    fn a_double_percent_is_a_literal_percent() {
+        // `%%h` is OpenSSH's escape for a literal `%h`. Replacing `%h` first
+        // (which the previous implementation did) turned it into `%prod`.
+        assert_eq!(
+            expand_tokens("/keys/%%h_key", "prod", "deploy", "/home/dev"),
+            "/keys/%h_key"
+        );
+        assert_eq!(
+            expand_tokens("/keys/%h/%n/%r/%d/%z", "prod", "deploy", "/home/dev"),
+            "/keys/prod/prod/deploy//home/dev/%z"
+        );
     }
 }

@@ -4,7 +4,11 @@ version = "4.18.0"
 description = "tudouni-aigo desktop client"
 authors = ["tudouni-aigo"]
 edition = "2021"
-rust-version = "1.77"
+# Not 1.77: `std::sync::LazyLock` needs 1.80, and `&raw mut` / `unsafe extern`
+# blocks (window_theme.rs, system.rs) need 1.82. A lower claim is not harmless —
+# CI or a contributor on 1.77 would fail with a syntax error rather than a
+# useful message.
+rust-version = "1.82"
 
 [lib]
 name = "tudouni_aigo_desktop_lib"

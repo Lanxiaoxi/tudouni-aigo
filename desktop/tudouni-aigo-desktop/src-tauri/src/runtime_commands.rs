@@ -15,6 +15,7 @@ use crate::launch::AttachOptions;
 use crate::bridge::Bridge;
 use crate::bridge::ChildKey;
 use crate::bridge::LinePayload;
+use crate::bridge::SharedProcess;
 use crate::launch_remote::RemoteAttachOptions;
 use crate::launch::resolve_binary;
 use crate::launch::spawn;
@@ -41,9 +42,18 @@ pub(crate) const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 /// returned as sentences rather than as an exit code somewhere. They belong to
 /// the session being opened and to no other: a refusal to start B must not take
 /// over a screen where A is running.
+/// **`async`, and that is load-bearing.** A synchronous Tauri command runs on
+/// the main thread, and spawning a child plus sweeping its staging directory is
+/// filesystem work; `sessions_search` below documents the same rule. The work
+/// itself moves to the blocking pool so the window's event loop stays free.
 #[tauri::command]
-pub(crate) fn runtime_attach(app: AppHandle, options: AttachOptions) -> Result<ChildKey, String> {
-    spawn(&app, &options)
+pub(crate) async fn runtime_attach(
+    app: AppHandle,
+    options: AttachOptions,
+) -> Result<ChildKey, String> {
+    tauri::async_runtime::spawn_blocking(move || spawn(&app, &options))
+        .await
+        .map_err(|error| format!("the runtime start task failed: {error}"))?
 }
 
 /// Start one session's runtime on a remote host over SSH, and begin
@@ -63,11 +73,13 @@ pub(crate) fn runtime_attach(app: AppHandle, options: AttachOptions) -> Result<C
 /// `ssh_backend::connect`'s own doc for why host key checking in particular is
 /// deliberately not this function's job.
 #[tauri::command]
-pub(crate) fn runtime_attach_remote(
+pub(crate) async fn runtime_attach_remote(
     app: AppHandle,
     options: RemoteAttachOptions,
 ) -> Result<ChildKey, String> {
-    spawn_remote(&app, &options)
+    tauri::async_runtime::spawn_blocking(move || spawn_remote(&app, &options))
+        .await
+        .map_err(|error| format!("the remote runtime start task failed: {error}"))?
 }
 
 /// Write one protocol line to **one** session's stdin.
@@ -78,18 +90,34 @@ pub(crate) fn runtime_attach_remote(
 /// reads the transcript. The line itself arrives already encoded (including
 /// `v`), so nothing here parses it: whatever the front end decided is what goes
 /// out, and to whom is decided by the key.
+///
+/// The write can block for up to `ssh_backend`'s write timeout on a wedged
+/// connection, so it happens off the main thread and **outside** the bridge
+/// lock — see [`SharedProcess`]. Holding that lock across a remote write would
+/// stall every other session and every stderr reader behind one bad connection.
 #[tauri::command]
-pub(crate) fn runtime_send(app: AppHandle, key: ChildKey, line: String) -> Result<(), String> {
-    let state: State<Bridge> = app.state();
-    let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-    let current = guard
-        .children
-        .get_mut(&key)
-        .ok_or("that session's runtime is not running")?;
-    current
-        .process
-        .write_line(&line)
-        .map_err(|e| format!("could not write to the runtime: {e}"))
+pub(crate) async fn runtime_send(
+    app: AppHandle,
+    key: ChildKey,
+    line: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state: State<Bridge> = app.state();
+        let process = {
+            let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+            guard
+                .children
+                .get(&key)
+                .map(|current| current.process.clone())
+                .ok_or("that session's runtime is not running")?
+        };
+        let mut process = process.lock().map_err(|_| "the runtime lock is poisoned")?;
+        process
+            .write_line(&line)
+            .map_err(|e| format!("could not write to the runtime: {e}"))
+    })
+    .await
+    .map_err(|error| format!("the send task failed: {error}"))?
 }
 
 /// Mark that the front end is listening and flush everything queued so far, in
@@ -145,20 +173,30 @@ pub(crate) fn runtime_attach_listener(app: AppHandle) -> Result<usize, String> {
 /// This function therefore polls the slots rather than waiting on its own
 /// handles: two waiters on one child is a race with no upside.
 #[tauri::command]
-pub(crate) fn runtime_shutdown(app: AppHandle, key: Option<ChildKey>) -> Result<(), String> {
+pub(crate) async fn runtime_shutdown(
+    app: AppHandle,
+    key: Option<ChildKey>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || shutdown_blocking(app, key))
+        .await
+        .map_err(|error| format!("the shutdown task failed: {error}"))?
+}
+
+/// The blocking half of `runtime_shutdown`, for callers that already own a
+/// thread (the close prompt and the tray's Quit) and must not spawn a nested
+/// task. Everything that goes through the Tauri command uses the async
+/// wrapper above instead.
+pub(crate) fn shutdown_blocking(app: AppHandle, key: Option<ChildKey>) -> Result<(), String> {
     let state: State<Bridge> = app.state();
 
-    // `shutdown()` is called while holding the lock, one child at a time —
-    // unlike the old `ChildStdin`-only version, `RuntimeProcess::shutdown`
-    // cannot be moved out and called after releasing it, because a remote
-    // channel's "close" (`send_eof`) is a method on the object itself, not an
-    // owned handle whose `Drop` does the closing. The write and flush this
-    // performs are fast (one small line, no network round trip waited on
-    // here), so holding the lock for it is the same cost `runtime_send`
-    // already pays for an ordinary message.
-    {
+    // Take a handle to each target under the bridge lock, mark it as requested,
+    // then release the lock **before** writing `shutdown`. A remote write can
+    // wait out `WRITE_TIMEOUT`; doing it under the bridge lock would freeze
+    // every other session and the resource panel for those seconds. One line
+    // per session, so the writes still happen concurrently.
+    let targets: Vec<SharedProcess> = {
         let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-        let targets: Vec<ChildKey> = match key {
+        let keys: Vec<ChildKey> = match key {
             Some(key) => {
                 if guard.children.contains_key(&key) {
                     vec![key]
@@ -168,15 +206,23 @@ pub(crate) fn runtime_shutdown(app: AppHandle, key: Option<ChildKey>) -> Result<
             }
             None => guard.children.keys().copied().collect(),
         };
-        // One `shutdown` line per session: the sessions are independent, so
-        // asking them in the same pass costs nothing and lets them finish
-        // their turns concurrently. Doing this session by session would
-        // serialise N times the time a turn takes.
-        for target in targets {
-            if let Some(current) = guard.children.get_mut(&target) {
-                current.requested = true;
-                let _ = current.process.shutdown();
+        keys.into_iter()
+            .filter_map(|target| {
+                guard.children.get_mut(&target).map(|current| {
+                    current.requested = true;
+                    current.process.clone()
+                })
+            })
+            .collect()
+    };
+    for process in targets {
+        match process.lock() {
+            Ok(mut process) => {
+                // A failure here is reported by the exit path; shutdown is
+                // best-effort once the session is already going away.
+                let _ = process.shutdown();
             }
+            Err(_) => return Err("the runtime lock is poisoned".to_string()),
         }
     }
 
@@ -201,17 +247,27 @@ pub(crate) fn runtime_shutdown(app: AppHandle, key: Option<ChildKey>) -> Result<
             // The timeout has to exist, or the window cannot be closed. The cost
             // is real and is stated in the design: a kill mid-turn can leave a
             // session unsendable.
-            let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-            match key {
-                Some(key) => {
-                    if let Some(current) = guard.children.get_mut(&key) {
-                        let _ = current.process.kill();
-                    }
+            //
+            // Collect the handles under the bridge lock and kill after
+            // releasing it, for the same reason the writes above are outside.
+            let victims: Vec<SharedProcess> = {
+                let guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+                match key {
+                    Some(key) => guard
+                        .children
+                        .get(&key)
+                        .map(|current| vec![current.process.clone()])
+                        .unwrap_or_default(),
+                    None => guard
+                        .children
+                        .values()
+                        .map(|current| current.process.clone())
+                        .collect(),
                 }
-                None => {
-                    for current in guard.children.values_mut() {
-                        let _ = current.process.kill();
-                    }
+            };
+            for process in victims {
+                if let Ok(mut process) = process.lock() {
+                    let _ = process.kill();
                 }
             }
             return Ok(());
@@ -221,28 +277,46 @@ pub(crate) fn runtime_shutdown(app: AppHandle, key: Option<ChildKey>) -> Result<
 }
 
 /// The kill switch, for when the timeout is not enough.
+///
+/// Off the main thread because `wait_after_kill` reaps a local child and can
+/// block until it is gone; the bridge lock is released before that wait starts.
 #[tauri::command]
-pub(crate) fn runtime_kill(app: AppHandle, key: Option<ChildKey>) -> Result<(), String> {
-    let state: State<Bridge> = app.state();
-    let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
-    let targets: Vec<ChildKey> = match key {
-        Some(key) => {
-            if guard.children.contains_key(&key) {
-                vec![key]
-            } else {
-                vec![]
-            }
+pub(crate) async fn runtime_kill(
+    app: AppHandle,
+    key: Option<ChildKey>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state: State<Bridge> = app.state();
+        let victims: Vec<SharedProcess> = {
+            let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+            let keys: Vec<ChildKey> = match key {
+                Some(key) => {
+                    if guard.children.contains_key(&key) {
+                        vec![key]
+                    } else {
+                        vec![]
+                    }
+                }
+                None => guard.children.keys().copied().collect(),
+            };
+            keys.into_iter()
+                .filter_map(|target| {
+                    guard.children.remove(&target).map(|mut current| {
+                        current.requested = true;
+                        current.process.clone()
+                    })
+                })
+                .collect()
+        };
+        for process in victims {
+            let mut process = process.lock().map_err(|_| "the runtime lock is poisoned")?;
+            let _ = process.kill();
+            process.wait_after_kill();
         }
-        None => guard.children.keys().copied().collect(),
-    };
-    for target in targets {
-        if let Some(mut current) = guard.children.remove(&target) {
-            current.requested = true;
-            let _ = current.process.kill();
-            current.process.wait_after_kill();
-        }
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("the kill task failed: {error}"))?
 }
 
 /// The runtime's own version, from `--version`.
@@ -254,11 +328,17 @@ pub(crate) fn runtime_kill(app: AppHandle, key: Option<ChildKey>) -> Result<(), 
 /// build without ldflags is a dev build, and prettifying it would hide which
 /// binary is actually running.
 #[tauri::command]
-pub(crate) fn runtime_version(binary: String) -> Result<Option<String>, String> {
+pub(crate) async fn runtime_version(binary: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || read_version(&binary))
+        .await
+        .map_err(|error| format!("the version task failed: {error}"))?
+}
+
+fn read_version(binary: &str) -> Result<Option<String>, String> {
     let path = if binary.trim().is_empty() {
         resolve_binary(None)?
     } else {
-        resolve_binary(Some(&binary))?
+        resolve_binary(Some(binary))?
     };
 
     // Same CREATE_NO_WINDOW flag as spawn(): the welcome screen runs this from

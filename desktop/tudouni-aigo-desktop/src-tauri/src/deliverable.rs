@@ -131,7 +131,17 @@ pub(crate) fn deliverable_open_local(app: AppHandle, path: String) -> Result<(),
 /// existing copy is served as-is — a second press is "open the copy", not a
 /// re-download.
 #[tauri::command]
-pub(crate) fn deliverable_download(
+pub(crate) async fn deliverable_download(
+    app: AppHandle,
+    key: ChildKey,
+    path: String,
+) -> Result<DownloadedDeliverable, String> {
+    tauri::async_runtime::spawn_blocking(move || deliverable_download_blocking(app, key, path))
+        .await
+        .map_err(|error| format!("the download task failed: {error}"))?
+}
+
+fn deliverable_download_blocking(
     app: AppHandle,
     key: ChildKey,
     path: String,

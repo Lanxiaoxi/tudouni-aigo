@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use tauri::{Emitter, Manager};
 
-use crate::runtime_commands::runtime_shutdown;
+use crate::runtime_commands::shutdown_blocking;
 
 /// How long the front end is given to **acknowledge** a close prompt before the
 /// window closes anyway.
@@ -119,7 +119,7 @@ pub(crate) fn finish_close(window: tauri::Window) {
 
     let app = window.app_handle().clone();
     thread::spawn(move || {
-        let _ = runtime_shutdown(app, None);
+        let _ = shutdown_blocking(app, None);
         let _ = window.destroy();
     });
 }
