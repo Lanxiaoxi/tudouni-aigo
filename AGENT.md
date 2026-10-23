@@ -30,6 +30,7 @@
 | `prompts/` | 系统提示词（运行时按目录是否存在来判定「这是不是安装包根目录」） |
 | `tools/vendor/rg/` | 随包分发的 ripgrep，按平台各一份 |
 | `packaging/` | `install.ps1`、`install.sh`、`README.txt` |
+| `docs/` | 为什么这样写：`spec/` 是权威规格，`design/` 是决策与成因，`parity/` 是 Go↔Python 的对照审查（已完成），`history/` 是已归档的调查和账本。**入口是 `docs/README.md`** —— 每份文档今天还有没有权威都写在那里，别拿已实现或已推翻的当依据 |
 
 ## 构建、测试、发布
 
