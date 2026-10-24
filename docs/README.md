@@ -38,6 +38,9 @@
 - [architecture-review.md](design/architecture-review.md) — Go 运行时核心架构评审的**处置
   记录**：哪些结论已落地、哪些有意没做、以及继续做时的顺序。动 `internal/runtime` /
   `internal/protocol` / `internal/agent` 的并发或分层之前先读它。
+- [system-prompt-review.md](design/system-prompt-review.md) — `prompts/system.zh.md` 与
+  `compact.zh.md` 的评审：12 个与实现不一致的点、证据和建议改法。**状态：评审完成；
+  #1 已修复，其余待处理。** 改提示词或工具描述之前先读它。
 
 **还没做的方案，别当成现状读：**
 
