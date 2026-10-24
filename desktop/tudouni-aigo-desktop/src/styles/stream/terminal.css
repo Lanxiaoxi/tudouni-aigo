@@ -200,11 +200,33 @@
    1.2ms on a 322-row transcript with 93% of the cost in laying out rows nobody
    was looking at; a build log is longer than a transcript. The intrinsic size is
    a remembered estimate, and `auto` is what makes it converge to each row's real
-   height once it has been drawn. */
+   height once it has been drawn.
+
+   `width: max-content` is what makes the pane's horizontal scrollbar exist at
+   all, and it is load-bearing rather than decorative. `content-visibility: auto`
+   applies **paint containment**: a row clips whatever overflows its own box, and
+   a block-level row's box is the pane's width. With `white-space: pre` a line
+   longer than the pane therefore painted nothing past the right edge *and* added
+   nothing to the pane's `scrollWidth` — so the long line was unreachable and the
+   pane that scrolls horizontally (see `.term-pane`) could not be scrolled at
+   all. Measured in Chromium on a 120-character line: `scrollWidth ===
+   clientWidth` with the row as a plain block, `scrollWidth` 840px against a
+   285px pane with `width: max-content`. Giving each row the width of its own
+   text is what reconciles the skip with the overflow: the row's box is then as
+   wide as what it draws, so nothing is clipped and the pane's scrollable width
+   is the longest line's.
+
+   `min-width: 100%` keeps a short row as wide as the pane — that is the width a
+   row has always had, and it is what the caret and a text selection at the end
+   of a short line sit in. A skipped row does not collapse to that minimum: with
+   `contain-intrinsic-size: auto` the browser remembers the last size it laid
+   out, width included, so the bar does not jump as rows scroll out of view. */
 .term-line {
   min-height: calc(var(--text-code) * var(--leading-code));
   content-visibility: auto;
   contain-intrinsic-size: auto 19px;
+  width: max-content;
+  min-width: 100%;
 }
 
 /* The caret.

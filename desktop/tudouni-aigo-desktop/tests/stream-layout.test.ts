@@ -279,3 +279,38 @@ test('the terminal pane skips the rows nobody is looking at', () => {
     '`contain-intrinsic-size` must be `auto <length>` on the terminal rows too',
   );
 });
+
+test('a long terminal line is reachable by the pane\'s horizontal scrollbar', () => {
+  // The two declarations that keep `content-visibility: auto` from swallowing
+  // horizontal overflow, and the failure is silent in the worst way: the output
+  // is simply cut off at the pane's right edge, with no scrollbar to say there is
+  // more. `content-visibility` paints through a containment box, and a
+  // block-level row's box is the pane's width — so the row clipped the tail of
+  // any line longer than the pane *and* contributed nothing to `scrollWidth`.
+  // Measured in Chromium on one 120-character line: the pane's `scrollWidth`
+  // equalled its `clientWidth` (285px) with the row as a plain block, and was
+  // 840px with `width: max-content`.
+  //
+  // Read as text, like the rule above: what is being pinned is that the width
+  // declaration stays beside the skip, because either one alone looks correct and
+  // the combination is what breaks.
+  const body = streamRuleBody('.term-line');
+  assert.ok(body !== null, 'the `.term-line` rule is gone from stream.css');
+
+  assert.match(
+    body,
+    /width:\s*max-content/,
+    'a `.term-line` box is the pane\'s width again, so `content-visibility` clips ' +
+      'the tail of a long line and the pane gets no horizontal scrollbar to ' +
+      'reach it — see the comment in stream/terminal.css for the measurement',
+  );
+  // Full-width for short rows: the caret and a selection at the end of a short
+  // line live in that width, and a row that hugged its text would make them look
+  // like they belong to a narrower block.
+  assert.match(
+    body,
+    /min-width:\s*100%/,
+    'short terminal rows must still span the pane, or the caret and selection at ' +
+      'the end of a line sit in a box that ends at the last glyph',
+  );
+});
