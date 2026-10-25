@@ -207,6 +207,25 @@ test('notice-center.css exists and is imported by the entry point', () => {
   assert.match(indexCss(), /@import '\.\/components\/notice-center\.css';/);
 });
 
+test('the capsule is a circle closed and a pill open, on the rim badge', () => {
+  const css = noticeCss();
+  // A constant stadium radius is the whole trick: at the 32px floor it is a
+  // circle, wider it is the pill — one shape changing size, not two swapping.
+  assert.match(css, /min-width: 32px/);
+  assert.match(css, /border-radius: 999px/);
+  // The states are driven by Radix's own data-state on the trigger.
+  assert.match(css, /\.nc-capsule\[data-state='open'\]/);
+  assert.match(css, /\.nc-capsule\[data-state='open'\] \.nc-label/);
+  // The badge floats on the rim in both states — the circle has no room for
+  // it in the flow, and a badge that only existed open would hide the one
+  // fact the closed state exists to tell.
+  assert.match(css, /\.nc-badge \{[\s\S]*?position: absolute/);
+  // The panel answers close with a real exit animation (Radix waits for it
+  // before unmounting), not a disappearance.
+  assert.match(css, /@keyframes nc-sink/);
+  assert.match(css, /\.nc-popover\[data-state='closed'\]/);
+});
+
 test('the capsule animates within the motion contract', () => {
   // tokens.css allows opacity and transform only; the keyframes must not
   // smuggle a layout property back in.

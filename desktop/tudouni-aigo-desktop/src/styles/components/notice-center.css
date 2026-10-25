@@ -2,20 +2,29 @@
  *
  * The floating capsule that gathers every note entry the session holds —
  * runtime diagnostics, panel replies, front-end event lines — into one
- * surface. It docks to the bottom centre of `.app-stream` (which is
+ * surface. It docks to the **bottom left** of `.app-stream` (which is
  * `position: relative`; the capsule is the only absolutely-positioned occupant
  * there, overlaying rather than replacing the view under it), and opens
  * upward as a Radix popover.
  *
- * Motion stays inside the token contract: opacity and transform only, no
- * width/height animation. The dock carries the centring transform; the
- * capsule carries the entrance, so the two transforms never fight. */
+ * The closed state is a **circle** — the bell alone, with the unread badge
+ * floating on its rim — and opening morphs that circle into the pill, the
+ * label unfolding from under the round edge. The morph is driven by the
+ * label's own `max-width` (plus `gap`/`padding`): the button's box follows
+ * its content frame by frame, so there is no width animation on the button
+ * itself and the text is never stretched, only revealed.
+ *
+ * This is the one conscious extension of the motion budget in tokens.css
+ * (which allows opacity/transform only): the interpolated properties are
+ * layout ones, but they live on a single isolated element — an absolutely
+ * positioned dock whose only descendant is the label — so the reflow they
+ * cause is the button alone and nothing in the stream ever moves because of
+ * it. The popover panel and the bell keep to transform/opacity strictly. */
 
 .nc-dock {
   position: absolute;
   bottom: var(--space-3);
-  left: 50%;
-  transform: translateX(-50%);
+  left: var(--space-3);
   z-index: var(--z-sticky);
   /* A hover shield, not a click target: the stream scrolls under the dock's
      empty half, and only the capsule itself takes the pointer. */
@@ -24,18 +33,33 @@
 
 .nc-capsule {
   pointer-events: auto;
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 6px var(--space-3);
+  justify-content: center;
+  /* The circle's diameter: a floor, not a width — opening lets the box grow
+     past it as the label unfolds, and closed the floor is the whole box. */
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  gap: 0;
+  /* A constant stadium radius is what makes the morph read as one shape
+     changing size rather than two shapes swapping: at 32×32 it *is* a
+     circle, wider it is the pill. */
+  border-radius: 999px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-overlay);
   font-size: var(--text-compact);
   color: var(--fg-secondary);
   cursor: pointer;
   animation: nc-rise var(--motion-base) var(--ease-out) 1;
+  transition:
+    gap var(--motion-base) var(--ease-out),
+    padding var(--motion-base) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 
 .nc-capsule:hover {
@@ -43,8 +67,33 @@
   color: var(--fg);
 }
 
+/* Open: the accent treatment every other "on" chip wears (`set-toggle.is-on`
+   is the house rule) — subtle accent fill, accent text — so the state is
+   readable from the corner of the eye while the panel is up. */
+.nc-capsule[data-state='open'] {
+  padding: 0 var(--space-3);
+  gap: var(--space-2);
+  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
 .nc-capsule .nc-label {
   min-width: 0;
+  /* The unfold. Clipped at its own edge, so the letters slide out from under
+     the round border instead of wrapping while the box grows. */
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  transition:
+    max-width var(--motion-base) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.nc-capsule[data-state='open'] .nc-label {
+  max-width: 120px;
+  opacity: 1;
 }
 
 .nc-capsule svg {
@@ -52,14 +101,33 @@
   flex: none;
 }
 
-/* The unread counter. Warning-coloured when an unread note is a warning —
-   the same mapping every other surface uses (`--warning` for 等待/警告,
-   `--destructive` for errors), so colour is never the only signal: the
-   number is there too. */
+/* The bell answers the press with the ring it exists for. Transform only,
+   hung from its crown (transform-origin at the top), so it swings rather
+   than spins. */
+.nc-capsule[data-state='open'] svg {
+  color: var(--accent);
+  transform-origin: 50% 1px;
+  animation: nc-ring var(--motion-slow) var(--ease-out) 1;
+}
+
+/* Closed: a short settle back from the ring's last swing, so releasing the
+   panel is also answered — not only the press. */
+.nc-capsule[data-state='closed'] svg {
+  animation: nc-settle var(--motion-base) var(--ease-out) 1;
+}
+
+/* The unread counter. It is **absolute, on the rim**, in both states: the
+   circle has no room for it in the flow, and a badge that only existed open
+   would hide exactly the fact the closed state exists to tell. The ring of
+   background colour separates it from whatever is under the dock. */
 .nc-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
   min-width: 18px;
   padding: 1px 5px;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
+  border: 2px solid var(--bg-elevated);
   background: var(--info-subtle);
   color: var(--info);
   font-size: var(--text-caption);
@@ -85,7 +153,18 @@
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-overlay);
+}
+
+/* Open rises in; **closed sinks out**, and Radix's presence waits for the
+   animation to finish before unmounting — so the close is a real transition
+   rather than a disappearance. The reverse of the entrance, on the same
+   distance, is what makes the pair read as one object leaving. */
+.nc-popover[data-state='open'] {
   animation: nc-rise var(--motion-base) var(--ease-out) 1;
+}
+
+.nc-popover[data-state='closed'] {
+  animation: nc-sink var(--motion-fast) var(--ease-in) 1;
 }
 
 .nc-head {
@@ -165,5 +244,48 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes nc-sink {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* The bell's ring: a decaying swing either side of vertical. Transform only;
+   the origin sits at the crown so the mouth of the bell does the moving. */
+@keyframes nc-ring {
+  0% {
+    transform: rotate(0deg);
+  }
+  18% {
+    transform: rotate(14deg);
+  }
+  38% {
+    transform: rotate(-11deg);
+  }
+  58% {
+    transform: rotate(7deg);
+  }
+  78% {
+    transform: rotate(-4deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes nc-settle {
+  from {
+    transform: rotate(-6deg);
+  }
+  to {
+    transform: rotate(0deg);
   }
 }
