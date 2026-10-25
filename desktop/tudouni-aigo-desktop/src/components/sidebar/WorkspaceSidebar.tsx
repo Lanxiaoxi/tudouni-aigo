@@ -20,7 +20,6 @@ import {
 import { SessionDot } from '@/components/sidebar/SessionDot';
 import { useT } from '@/i18n/useT';
 import { checkWorkspace, chooseWorkspaceDirectory, searchSessions, type SessionSearchHit } from '@/runtime/tauri';
-import { Logo } from '@/components/ui/Logo';
 import { Count, EmptyState, Tip } from '@/components/ui/kit';
 import { baseName, formatRelative, samePath } from '@/utils/format';
 import { AddRemoteWorkspaceModal } from '@/components/modals/AddRemoteWorkspaceModal';
@@ -729,11 +728,6 @@ export function WorkspaceSidebar() {
 
   return (
     <aside className="app-leftbar" aria-label={t('lb.workspaces')}>
-      <div className="lb-head">
-        <Logo size={28} title={t('app.name')} />
-        <span className="lb-brand">{t('app.name')}</span>
-      </div>
-
       <div className="lb-new">
         <Tip label={t('lb.newSessionHint')}>
           <button

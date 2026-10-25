@@ -2,9 +2,14 @@ import { FolderOpen, HelpCircle, Search, Server } from 'lucide-react';
 import { remoteConnectionOf, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
+import { Logo } from '@/components/ui/Logo';
 
 /**
  * §1·1 Top bar: program name + workspace path + help + the command palette entry.
+ *
+ * The mark sits left of the program name — it moved here from the left rail's
+ * head, which used to repeat name and mark one row below this bar. The name is
+ * in the text beside it, so the mark stays decorative (see `Logo`).
  *
  * Narrow windows may drop the right-hand side; the brand never shrinks.
  *
@@ -60,7 +65,10 @@ export function TopBar() {
 
   return (
     <header className="topbar">
-      <span className="brand">{t('app.name')}</span>
+      <span className="brand">
+        <Logo size={20} />
+        {t('app.name')}
+      </span>
 
       <Tip label={tip}>
         <button

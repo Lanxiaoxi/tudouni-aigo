@@ -9,50 +9,21 @@
      - every row that shows a path or an id has `min-width: 0` on the flexible
        cell, so a long name ellipsises instead of pushing the action button out
        of the rail (the same failure the window controls had);
-     - the head and the "new session" button are `flex: none`, and only the two
-       sections scroll. A scrolling header would let the workspace list push the
-       rail's own identity off the top.
+     - the "new session" button is `flex: none`, and only the two sections
+       scroll. A scrolling header would let the workspace list push the rail's
+       own first control off the top.
    ============================================================ */
-/* The head is the rail's name, and it carries **no control** — the rail is
-   folded from the session bar's leading toggle, which survives its own press.
-   Its height still matches `.rb-head` exactly, so the two heads keep drawing
-   one horizontal band across the window. The separator under it is gone: on the
-   redesign's flat plane the head and the list are the same surface, and a
-   hairline there was just the top edge of the first card. */
-.lb-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 42px;
-  padding: 0 12px;
-}
-
-/* The mark is drawn a step larger than the window's copy (the title bar uses
-   14–20px) and clipped a little harder: at this size it is the rail's identity,
-   not a decorative bullet. 8px is the design's own tile radius. */
-.lb-head .app-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-}
-
-.lb-head .lb-brand {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-sans);
-  font-size: 13.5px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--fg);
-}
-
+/* The rail opens straight at its primary action. The named head that used to
+   sit above it (mark + app name) is gone: the window's top bar now carries both
+   — the mark moved to the left of the brand text there — and repeating them one
+   row lower said the same thing twice on the same screen. The button's band is
+   still 42px tall like `.rb-head` opposite, so the two rails keep drawing one
+   horizontal band across the window. */
 .lb-new {
   flex: none;
-  padding: 2px 10px 10px;
+  /* (42 − 36) / 2 = 3px above the 36px button centres it in that band; the
+     10px below is the rail's own gap to the first section. */
+  padding: 3px 10px 10px;
 }
 
 /* The rail's primary action: the redesign's pale green bar — no border, no

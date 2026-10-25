@@ -155,7 +155,11 @@ async function main() {
     const convBox = box(conv);
     const statusBox = box(sb);
     const sessionBar = q('.sessionbar');
-    const leftTop = Math.round(q('.lb-head')?.getBoundingClientRect().top ?? -1);
+    // The left rail opens straight at its primary action ('.lb-new', the
+    // new-session button's band) — the named head it used to open with moved to
+    // the top bar. Its block top is the rail's own top, so the band check below
+    // still reads the pair of rails.
+    const leftTop = Math.round(q('.lb-new')?.getBoundingClientRect().top ?? -1);
     const rightTop = Math.round(q('.rb-head')?.getBoundingClientRect().top ?? -1);
     return JSON.stringify({
       // The composer must be a descendant of the conversation column, and NOT a
@@ -223,15 +227,16 @@ async function main() {
       throw new Error(`the session bar's left edge is not the column's: ${L.sessionbarBox.x} vs ${L.convBox.x}`);
     }
   }
-  // One band across the conversation row: the two rail heads and the session bar
-  // start at the same y. A head taller than its neighbours shows as a step at the
-  // rail boundary — the exact failure the band check below watches for.
+  // One band across the conversation row: the two rails' first rows and the
+  // session bar start at the same y. A taller first row than its neighbour shows
+  // as a step at the rail boundary — the exact failure the band check below
+  // watches for.
   if (L.sessionbarBox && L.leftTop >= 0 && L.rightTop >= 0) {
     if (Math.abs(L.leftTop - L.rightTop) > 1) {
-      throw new Error(`the two rail heads do not share one band: left ${L.leftTop}, right ${L.rightTop}`);
+      throw new Error(`the two rails' first rows do not share one band: left ${L.leftTop}, right ${L.rightTop}`);
     }
     if (Math.abs(L.sessionbarBox.y - L.leftTop) > 2) {
-      throw new Error(`the session bar and the rail heads are not on one band: bar ${L.sessionbarBox.y}, heads ${L.leftTop}`);
+      throw new Error(`the session bar and the rails' first rows are not on one band: bar ${L.sessionbarBox.y}, rails ${L.leftTop}`);
     }
   }
   // The conversation column is above it, and together they close the height
@@ -732,17 +737,19 @@ async function main() {
   // ---- the left rail: workspaces and sessions ----
   //
   // Two assertions here, and both are about things that cannot fail loudly:
-  //   - the **brand mark is drawn**, which is now the application's own icon
-  //     file (`<img class="app-mark">`, the same PNG `tauri.conf.json` bundles).
-  //     A missing mark renders as nothing at all — no error, no gap in the
-  //     layout, just a rail that starts with a word;
+  //   - the **brand mark is drawn**, which is the application's own icon file
+  //     (`<img class="app-mark">`, the same PNG `tauri.conf.json` bundles). It
+  //     lives in the **top bar** now, left of the program name — the left rail
+  //     used to draw mark and name again one row lower, and the top bar carries
+  //     both. A missing mark renders as nothing at all — no error, no gap in
+  //     the layout, just a name with nothing beside it;
   //   - the **current workspace is a row even though nothing is bookmarked**.
   //     `init.workspace` is the runtime's own answer to "where am I", and a list
   //     of bookmarks that omits it would answer "where have I been" instead.
   const leftbar = await evaluate(`(() => {
     const q = (s) => document.querySelector(s);
     const bar = q('.app-leftbar');
-    const mark = q('.lb-head .app-mark');
+    const mark = q('.topbar .brand .app-mark');
     const cs = mark ? getComputedStyle(mark) : null;
     return JSON.stringify({
       present: !!bar,
@@ -753,6 +760,9 @@ async function main() {
       // box or as alt text, silently, with the layout intact.
       markLoaded: mark ? mark.complete && mark.naturalWidth > 0 : false,
       markRadius: cs ? cs.borderRadius : null,
+      // The identity left the rail for the top bar; a mark or a brand row drawn
+      // back inside the rail is the old double statement returning.
+      railMark: !!q('.app-leftbar .app-mark'),
       currentRows: document.querySelectorAll('.lb-row.is-current').length,
       newSession: !!q('.lb-new button'),
     });
@@ -764,7 +774,7 @@ async function main() {
   // tests the CSS, not the rail.
   const lbText = String(lb.text).toLowerCase();
   if (!lb.present) throw new Error('the left sidebar is missing');
-  if (!lb.markTag) throw new Error('the left sidebar has no brand mark');
+  if (!lb.markTag) throw new Error('the top bar has no brand mark');
   if (lb.markTag !== 'IMG') {
     throw new Error(`the brand mark is a <${lb.markTag}>, not the application icon file`);
   }
@@ -775,12 +785,15 @@ async function main() {
     throw new Error(`the brand mark is not the bundled application icon: ${lb.markSrc}`);
   }
   if (!lb.markLoaded) {
-    throw new Error(`the brand mark did not load, so the rail shows an empty box: ${lb.markSrc}`);
+    throw new Error(`the brand mark did not load, so the bar shows an empty box: ${lb.markSrc}`);
   }
   // The icon file is a rounded square on an opaque black page, so without a clip
   // it wears black corners — visible as a black box on the light theme.
   if (!String(lb.markRadius) || String(lb.markRadius) === '0px') {
     throw new Error(`the brand mark is not clipped, so its black corners show: ${lb.markRadius}`);
+  }
+  if (lb.railMark) {
+    throw new Error('the left rail still draws the app mark that moved to the top bar');
   }
   if (!lb.newSession) throw new Error('the "new session" button is missing');
   if (!lbText.includes('workspaces')) throw new Error('the workspace section is missing');
@@ -871,10 +884,13 @@ async function main() {
           (b) => b.hasAttribute('aria-pressed'),
         )?.disabled ?? null,
       store: { leftbarVisible: st.leftbarVisible, sidebarVisible: st.sidebarVisible, boardOpen: st.boardOpen },
-      // The rail heads: the title each carries, and — the point of the change —
-      // the fact that **neither head has a collapse control any more**. A button
-      // that lives inside the thing it hides cannot perform its own act.
-      leftHeadButtons: q('.lb-head')?.querySelectorAll('button').length ?? -1,
+      // The rail heads: the title the right one carries, and — the point of the
+      // change — the fact that **neither head has a collapse control any more**.
+      // A button that lives inside the thing it hides cannot perform its own act.
+      // The left rail no longer draws a head at all: its identity moved to the
+      // top bar and the rail opens straight at the new-session button, so the
+      // guard here is the head's absence.
+      leftHeadGone: !q('.app-leftbar .lb-head'),
       rightHead: q('.rb-head')?.innerText?.replace(/\\s+/g,' ').trim() ?? null,
       rightHeadButtons: q('.rb-head')?.querySelectorAll('button').length ?? -1,
       // The head must sit **outside** the scrolling region: a head that scrolled
@@ -883,10 +899,8 @@ async function main() {
       rightHeadInScroller: !!q('.sidebar-inner .rb-head'),
       rightHeadMark: !!q('.rb-head .app-mark'),
       band: {
-        leftTop: Math.round(q('.lb-head')?.getBoundingClientRect().top ?? -1),
+        leftTop: Math.round(q('.lb-new')?.getBoundingClientRect().top ?? -1),
         rightTop: Math.round(q('.rb-head')?.getBoundingClientRect().top ?? -1),
-        leftH: Math.round(q('.lb-head')?.getBoundingClientRect().height ?? -1),
-        rightH: Math.round(q('.rb-head')?.getBoundingClientRect().height ?? -1),
       },
     });
   })()`);
@@ -1007,16 +1021,18 @@ async function main() {
       `the right rail's head carries ${bt.rightHeadButtons} button(s): its collapse control belongs at the session bar's trailing end, where it survives its own press`,
     );
   }
-  if (bt.leftHeadButtons !== 0) {
+  if (bt.leftHeadGone !== true) {
     throw new Error(
-      `the left rail's head carries ${bt.leftHeadButtons} button(s): its collapse control belongs at the session bar's leading end, where it survives its own press`,
+      'the left rail still draws a brand head: its mark and name moved to the top bar, and the rail opens at the new-session button',
     );
   }
-  // One horizontal band across the window: the two heads are read as a pair, so
-  // a height difference shows up as a step at the transcript's edges.
-  if (bt.band.leftH !== bt.band.rightH || bt.band.leftTop !== bt.band.rightTop) {
+  // One horizontal band across the window: the two rails' first rows start at
+  // the same y, so the pair still reads as rails around one transcript. Their
+  // heights are no longer expected to agree — the left one is an action button's
+  // band, the right one a title's.
+  if (bt.band.leftTop !== bt.band.rightTop) {
     throw new Error(
-      `the two rail heads do not form one band: left ${JSON.stringify({ h: bt.band.leftH, y: bt.band.leftTop })} vs right ${JSON.stringify({ h: bt.band.rightH, y: bt.band.rightTop })}`,
+      `the two rails' first rows do not form one band: left ${JSON.stringify({ y: bt.band.leftTop })} vs right ${JSON.stringify({ y: bt.band.rightTop })}`,
     );
   }
 
