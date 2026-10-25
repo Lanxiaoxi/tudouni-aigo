@@ -29,10 +29,15 @@ import type { Entry } from '@/state/entries';
  * `min-height: 0` scroll region, so a panel sized to its content can never push
  * the status bar or the composer out of the viewport (§9.1).
  *
- * Scrolling: while pinned to the bottom, new entries are followed; once the
- * reader scrolls up, the position is not stolen back — a "jump to latest"
- * button appears instead, so reading history is not interrupted by streaming
- * output.
+ * Scrolling: bottom-follow is a mode the reader owns. While it holds, every
+ * kind of growth is followed — new entries, and a row's height arriving after
+ * its entry does — and the follow never releases itself: the scroll events its
+ * own writes produce are flagged and ignored, because a tall card growing
+ * between a write and its event used to read as "the reader scrolled up" and
+ * drop the pin mid-stream. Only the reader releases it — an upward scroll, or
+ * a press anywhere in the transcript — and released, the position is not
+ * stolen back: a "jump to latest" button appears instead, so reading history
+ * is not interrupted by streaming output.
  *
  * The transcript and the turn rail share a row (`.stream-body`). Reserving the
  * rail's lane here rather than floating it over the transcript is what makes it
@@ -92,7 +97,11 @@ export function StreamView() {
   const quiet = useSessionField((rt) => rt.quiet, 'off');
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
+  // True from a programmatic stick until its scroll event has been delivered;
+  // `onScroll` skips and clears those. See `stickToBottom`.
+  const followWrite = useRef(false);
   // The transcript's own find (`Ctrl+F`). It is run here rather than in the bar
   // because this component owns both the scroller a jump lands in and the row
   // list the hits are drawn over.
@@ -130,14 +139,70 @@ export function StreamView() {
   const turns = useMemo(() => turnRail(entries), [entries]);
   const rail = turns.length >= MIN_RAIL_TURNS;
 
+  /**
+   * The one way anything sticks to the bottom: write, flag, release next frame.
+   *
+   * The flag is what keeps the follow from releasing itself. A `scrollTop`
+   * write fires its scroll event from a later rendering update, and if the
+   * document grew in between — a tall card landing, an estimate being replaced
+   * by layout — the event reports a gap past the pin threshold and reads as a
+   * reader who scrolled up. The flag drops once the write's own event has been
+   * delivered (cleared by `onScroll` when it arrives, by the frame callback
+   * when it never does), so a reader's wheel or scrollbar is still read.
+   */
+  const stickToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    followWrite.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      followWrite.current = false;
+    });
+  }, []);
+
   // Follow only while pinned, and land directly — no positional animation.
   useEffect(() => {
+    if (!pinned) return;
+    stickToBottom();
+  }, [rows, pinned, stickToBottom]);
+
+  /**
+   * Follow the transcript's height, not just its row list.
+   *
+   * The effect above runs when `rows` changes, but a row's real height can
+   * arrive after its entry does: images decode, markdown settles, and a row
+   * under `content-visibility: auto` stands at a 120px estimate until it is
+   * laid out (`app.css`). That is the tall card that used to leave the
+   * transcript above a bottom that had since moved, with nothing left to
+   * correct it. Subscribed only while pinned — a reader who released the
+   * follow is never moved by it — and the initial callback that comes with
+   * every subscription re-lands a pin whose document was still settling.
+   */
+  useEffect(() => {
     const el = scrollRef.current;
-    if (!el || !pinned) return;
-    el.scrollTop = el.scrollHeight;
-  }, [rows, pinned]);
+    const inner = innerRef.current;
+    if (!pinned || !el || !inner) return;
+    const ro = new ResizeObserver(() => {
+      // At the bottom already — or clamped there by a shrink — the write
+      // would be a no-op; leave it and its flag alone.
+      if (el.scrollHeight - el.scrollTop - el.clientHeight <= 1) return;
+      stickToBottom();
+    });
+    // The transcript for growth; the scroller for the viewport around it, so
+    // a window resize corrects the gap without waiting for the next chunk.
+    ro.observe(inner);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pinned, stickToBottom]);
 
   const onScroll = useCallback(() => {
+    // A flagged event is the follow's own write arriving; it says nothing
+    // about where the reader wants to be. Unflagged events decide the pin,
+    // and nearing the bottom re-pins — how wheeling back down rejoins.
+    if (followWrite.current) {
+      followWrite.current = false;
+      return;
+    }
     const el = scrollRef.current;
     if (!el) return;
     const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -145,11 +210,9 @@ export function StreamView() {
   }, []);
 
   const jumpToLatest = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    stickToBottom();
     setPinned(true);
-  }, []);
+  }, [stickToBottom]);
 
   /**
    * PageUp / PageDown / Home / End.
@@ -176,6 +239,17 @@ export function StreamView() {
     // streaming output does not drag the reader back down.
     const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
     setPinned(gap < 48);
+  }, []);
+
+  /**
+   * A press anywhere in the transcript is the reader taking over: a fold to
+   * open, text to select, a copy button — whatever the press turns into, the
+   * next chunk must not drag them off it. The jump-to-latest button is left
+   * alone so its press does not fight the click that re-pins.
+   */
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('.jump-latest')) return;
+    setPinned(false);
   }, []);
 
   return (
@@ -212,12 +286,13 @@ export function StreamView() {
           ref={scrollRef}
           onScroll={onScroll}
           onKeyDown={onKeyDown}
+          onPointerDown={onPointerDown}
           tabIndex={0}
           role="log"
           aria-live="polite"
           aria-label={t('stream.label')}
         >
-          <div className="stream-inner">
+          <div className="stream-inner" ref={innerRef}>
             {sections.map((section) =>
               section.kind === 'turn' ? (
                 <TurnFold key={section.key} section={section} />
