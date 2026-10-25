@@ -93,7 +93,7 @@ export function NoticeCapsule({ view }: { view: NoticeCenterView }) {
         <PopoverPrimitive.Content
           className="nc-popover"
           side="top"
-          align="center"
+          align="start"
           sideOffset={10}
           aria-label={t('noticeCenter.label')}
           onOpenAutoFocus={(e) => e.preventDefault()}
