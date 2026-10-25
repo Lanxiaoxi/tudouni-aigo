@@ -484,7 +484,7 @@ function StepBlock({ block }: { block: Extract<StreamBlock, { kind: 'step' }> })
     const deliverables = status.deliverables;
     return (
       <section
-        className={`e-step${block.running ? ' is-running' : ''}${
+        className={`e-step is-simple${block.running ? ' is-running' : ''}${
           elevated !== '' ? ` is-elevated ${elevated}` : ''
         }`}
       >

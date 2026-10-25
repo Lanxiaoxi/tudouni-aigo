@@ -244,6 +244,14 @@
   white-space: nowrap;
 }
 
+/* Simple quiet mode's card is its head alone, so the status line ("Done:
+   shell") is the only fact on it — content, not a footnote. It takes the
+   title's colour rather than the metrics' faint grey. This sits above the
+   `is-running` override, which keeps its accent on the in-flight card. */
+.e-step.is-simple .e-step-metrics {
+  color: var(--fg-secondary);
+}
+
 /* The card's work rows. 行自身保留原有形状（折叠、徽章、hover），只是从
    "散开的一条"变为"卡内一行"。 */
 .e-step-rows {
