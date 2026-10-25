@@ -12,7 +12,7 @@ import { type PastedImage } from '@/runtime/paste';
 import { type AppStore } from './storeShape';
 import { SIDEBAR_BLOCKS, type SessionRuntime, type SidebarBlockKey } from './types';
 import { persistPrefs } from './prefs';
-import { noteOutstanding, throttled } from './polling';
+import { noteOutstanding } from './polling';
 import { applyTerminalList, recomputeModelCurrent } from './terminal';
 
 
@@ -228,10 +228,10 @@ export function applyStateSnapshot(
   // snapshot refresh is not a disk write.
   if (changedPrefs) persistPrefs(get());
 
-  // Something is still outstanding: ask once, throttled **for this session**.
-  // This is the only reason the front end ever polls — and it gives up after a
-  // few identical answers, so a job nobody collects cannot turn this into a
-  // heartbeat.
+  // Something is still outstanding: keep asking, one booked send at a time,
+  // throttled **for this session**. This is the only reason the front end ever
+  // polls — and it gives up after a few identical answers, so a job nobody
+  // collects cannot turn this into a heartbeat.
   //
   // **A delegation counts here for the same reason a job does, and polling is the
   // only thing that makes its row move.** The runtime has no timers, so a running
@@ -241,6 +241,13 @@ export function applyStateSnapshot(
   // are forwarded deliberately without a snapshot, since forty tool calls must not
   // become forty snapshots. Without this the panel and the badge sat on a row frozen
   // at `0s · 0 steps` with an empty activity line for the whole delegation.
+  //
+  // The landing only **books** the send (`noteOutstanding`); a timer fires it.
+  // Checking the floor here cannot work: the landing that answers a poll arrives a
+  // few dozen milliseconds after the send, so the floor was always unexpired at
+  // check time — the loop died after one iteration, and the freeze above is exactly
+  // what a quiet session (a foreground delegation, an idle one with a background
+  // job) then sat in. `polling.ts` carries the full argument.
   //
   // The `seconds` in each key is what keeps the poll alive while something is really
   // running and lets it stop once a settled row's numbers freeze — the same shape
@@ -259,8 +266,5 @@ export function applyStateSnapshot(
   ]
     .sort()
     .join(',');
-  noteOutstanding(key, outstandingKey);
-  if (outstandingKey !== '') {
-    throttled(key, () => sendTo(key, { v: 1, t: 'refresh_state' }));
-  }
+  noteOutstanding(key, outstandingKey, () => sendTo(key, { v: 1, t: 'refresh_state' }));
 }

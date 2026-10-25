@@ -17,7 +17,7 @@ import { attachRuntimeListener, quitApp } from '@/runtime/tauri';
 import { STDERR_TAIL } from '../types';
 import { persistPrefs } from '../prefs';
 import { enqueueModal, questionBatchOf, releaseModalsOf } from '../modalQueue';
-import { throttled, wakePolling } from '../polling';
+import { pollNow, wakePolling } from '../polling';
 import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEndedNote } from '../terminal';
 import { runtimeOf } from '../appView';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
@@ -419,7 +419,7 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
           // backoff, since a turn that just ended can change what is outstanding.
           if (result.runEnded) {
             wakePolling(key);
-            throttled(key, () => sendTo(key, { v: 1, t: 'status' }));
+            pollNow(key, () => sendTo(key, { v: 1, t: 'status' }));
 
             // A task-started run's verdict, written the one moment it is
             // knowable. Read from the **post-patch** state rather than from

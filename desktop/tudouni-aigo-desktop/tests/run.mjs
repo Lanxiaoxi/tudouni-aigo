@@ -42,6 +42,15 @@ const SUITES = [
   // store possible in a test. Two stores, two states — a singleton cannot say
   // that about itself.
   'store-factory.test.ts',
+  // The poll loop that keeps a running job's or delegation's `seconds` moving.
+  // It used to check the throttle floor where the snapshot lands — a check that
+  // can never pass, because the answer lands a few dozen milliseconds after the
+  // send — so the loop died after one iteration and a quiet session's rows sat
+  // frozen for the work's whole life. The clock is mocked here, because the
+  // property being asserted (a landing books, a timer sends, the cadence is the
+  // floor, a static situation stops, a change restarts) has no meaning without
+  // one.
+  'polling.test.ts',
   'contract.test.ts',
   'paste.test.ts',
   'workspace.test.ts',

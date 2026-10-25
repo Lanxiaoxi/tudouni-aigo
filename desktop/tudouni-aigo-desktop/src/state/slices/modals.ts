@@ -11,7 +11,7 @@ import { refineSelectedNumbers } from '@/learn/refineTemplate';
 import { sendTo } from '@/runtime/bus';
 import { inlineImage, inlineImageRemote, readRemoteRuntimeVersion } from '@/runtime/tauri';
 import { drainModal } from '../modalQueue';
-import { throttled } from '../polling';
+import { pollNow } from '../polling';
 import { selectModalVisible } from '../selectors/session';
 import { activeWorkspaceOf, remoteConnectionOf } from '../appView';
 
@@ -339,7 +339,7 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
     refreshState() {
       const key = get().activeKey;
       if (key === null) return;
-      throttled(key, () => sendTo(key, { v: 1, t: 'refresh_state' }));
+      pollNow(key, () => sendTo(key, { v: 1, t: 'refresh_state' }));
     },
 
     /* ==========================================================
