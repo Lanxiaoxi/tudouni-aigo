@@ -208,12 +208,24 @@
 }
 
 /* 表格。GMF 的对齐来自分隔行：`| :---: |` 输出 `<th align="center">`，所以
-   用 `:has()` 对整列发 `text-align`，不需要 JS 参与。 */
+   用 `:has()` 对整列发 `text-align`，不需要 JS 参与。
+
+   底色给 `--bg-card`（浅色即近白）：`.md` 是 block 表，透明底会让单元格直接
+   骑在画布上，行线之间的文字和画布上的正文连成一片；给一张卡片底，表就是
+   流里浮起的一块，深色下也自动落到面板色，不会变成刺眼的纯白。
+
+   `width: fit-content` 是这张底的前提：block 表作为 flex item 被拉伸到整列
+   宽，而内部的匿名表格只按内容收缩——白底一旦跟着 block 走，就会铺出一张
+   比表格线宽得多的空白板。收窄到内容宽度，底和线重新对齐；宽表格仍由
+   `max-width: 100%` 封顶、在块内横向滚动。不要改成 `display: table` 来拉
+   伸列宽——`overflow-x` 对 table 盒无效，宽表会直接溢出容器。 */
 .md table {
   display: block;
   max-width: 100%;
+  width: fit-content;
   overflow-x: auto;
   border-collapse: collapse;
+  background: var(--bg-card);
   font-size: var(--text-code);
 }
 

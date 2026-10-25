@@ -11,12 +11,16 @@
   gap: var(--space-1);
 }
 
+/* The bubble is the one solid surface the user's own words sit on, and it is
+   a neutral white card — the canvas's lift (`--bg-card`) with a plain hairline
+   (`--border`) — not an accent-tinted chip: green here competed with the step
+   head's wash, the one place the accent fill actually means "running". */
 .e-user {
   max-width: 78%;
-  padding: 10px 12px;
-  border: 1px solid var(--accent-border);
-  border-radius: var(--radius-lg);
-  background: var(--accent-subtle);
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
   font-size: var(--text-body);
   white-space: pre-wrap;
   word-break: break-word;
