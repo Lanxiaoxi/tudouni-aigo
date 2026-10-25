@@ -17,9 +17,11 @@ import { Fact, Tip } from '@/components/ui/kit';
  *
  * The permission statement ("which risks will ask") is **not** here: stripped
  * when the bar became the conversation column's header, because it is a
- * sidebar-level fact — the collapsed summary already renders it, and a second
- * reading of the runtime's judgement was one copy too many. The panels
- * (`SettingsPanel`) and the collapsed row remain its homes.
+ * sidebar-level fact — a second reading of the runtime's judgement was one
+ * copy too many. The settings panel remains its home; the collapsed summary
+ * used to repeat it as well and no longer does, which is also why it must not
+ * come back here — a fact with one home left is the one a bar can least spare
+ * the space for.
  *
  * ## Both rails are folded from here
  *

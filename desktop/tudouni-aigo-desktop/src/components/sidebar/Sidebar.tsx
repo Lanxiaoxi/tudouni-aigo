@@ -211,24 +211,142 @@ export function Sidebar() {
   );
 }
 
+/**
+ * One block's body **without the block shell** — the same rows the rail draws
+ * for it, plus the same empty state when there is nothing to draw.
+ *
+ * The rail's `Block` renders its body through its own head (count badge, fold,
+ * emptiness), so it keeps its inline copy; this component exists for a **second
+ * surface**: the collapsed summary's hover popover, which has no block head to
+ * hang the emptiness on and needs the whole thing — rows or empty state — as
+ * one answer. It reads the same fields from the same session the rail does, so
+ * the two can never disagree about what a block says.
+ */
+export function SidebarBlockContent({ blockKey }: { blockKey: SidebarBlockKey }) {
+  const t = useT();
+  const snap = useSessionField((rt) => rt.uiState, null);
+  const loadedSkills = useSessionField((rt) => rt.skills, NO_SKILLS);
+  const subagentsDone = useSessionField(
+    (rt) => rt.uiState?.subagentsDone ?? NO_SUBAGENTS_DONE,
+    NO_SUBAGENTS_DONE,
+  );
+
+  if (!snap) return null;
+
+  switch (blockKey) {
+    case 'goal':
+      return snap.goal.present ? (
+        <GoalBody goal={snap.goal} />
+      ) : (
+        <EmptyState compact title={t('empty.goal.title')} hint={t('empty.goal.hint')} />
+      );
+
+    case 'tasks': {
+      if (snap.todos.length === 0) {
+        return (
+          <EmptyState compact title={t('empty.tasks.title')} hint={t('empty.tasks.hint')} />
+        );
+      }
+      const doneTasks = snap.todos.filter((todo) => todo.status === 'completed').length;
+      return (
+        <>
+          <div className="sb-progress">
+            <Progress value={doneTasks} max={snap.todos.length} />
+            <span className="sbr-aside mono">
+              {t('tasks.progress', { done: doneTasks, total: snap.todos.length })}
+            </span>
+          </div>
+          {snap.todos.map((task, index) => (
+            <TaskRow key={`${task.content}-${index}`} task={task} />
+          ))}
+        </>
+      );
+    }
+
+    case 'jobs':
+      if (snap.jobs.length === 0 && subagentsDone.length === 0) {
+        return (
+          <EmptyState compact title={t('empty.jobs.title')} hint={t('empty.jobs.hint')} />
+        );
+      }
+      return (
+        <>
+          {snap.jobs.map((job) => (
+            <JobRow key={job.id} job={job} />
+          ))}
+          {subagentsDone.map((agent) => (
+            <SubagentRow key={agent.id} agent={agent} />
+          ))}
+        </>
+      );
+
+    case 'skills':
+      if (loadedSkills.length === 0) {
+        return (
+          <EmptyState compact title={t('empty.skills.title')} hint={t('empty.skills.hint')} />
+        );
+      }
+      return (
+        <>
+          {loadedSkills.map((skill) => (
+            <div key={skill.name} className="sb-row">
+              {/* The description only exists in the first snapshot's catalog, so
+                  it may legitimately be null. */}
+              <span className="sbr-main" title={skill.description ?? undefined}>
+                <span className="mono">{skill.name}</span>
+              </span>
+            </div>
+          ))}
+        </>
+      );
+
+    case 'mcp':
+      if (snap.mcp.length === 0) {
+        return (
+          <EmptyState compact title={t('empty.mcp.title')} hint={t('empty.mcp.hint')} />
+        );
+      }
+      return (
+        <>
+          {snap.mcp.map((server) => (
+            <McpRow key={server.name} server={server} />
+          ))}
+        </>
+      );
+
+    case 'ssh':
+      if (snap.ssh.length === 0) {
+        return (
+          <EmptyState compact title={t('empty.ssh.title')} hint={t('empty.ssh.hint')} />
+        );
+      }
+      return (
+        <>
+          {snap.ssh.map((row) => (
+            <SshSessionRow key={row.id} row={row} />
+          ))}
+        </>
+      );
+  }
+  return null;
+}
+
 /* ---------------- the rail's own head ---------------- */
 
 /**
  * The right rail's head: **what this rail is**.
  *
- * It is the left rail's head mirrored (`.lb-head`), deliberately: the two rails
- * flank the transcript, and one of them starting with a named head while the
- * other began straight at "Goal" made them read as two unrelated designs rather
- * than as a pair. It carries no collapse control, and neither does the left
- * head any more: both rails are folded from the session bar's two toggles, which
- * are the only place a control can be *and still be reachable after the fold*.
- * A button inside the rail it hides is a button that disappears with the act of
- * pressing it (see `SessionBar`).
+ * Its 42px band keeps the height the left rail's first row (the "new session"
+ * button) draws at, so the two rails still flank the transcript as one pair
+ * rather than as two unrelated designs. It carries no collapse control: the rail
+ * is folded from the session bar's toggle, which is the only place a control can
+ * be *and still be reachable after the fold*. A button inside the rail it hides
+ * is a button that disappears with the act of pressing it (see `SessionBar`).
  *
- * **No mark here either.** The left rail's head carries the application icon as
- * the window's identity; the right rail repeats the app's name in words
+ * **No mark here either.** The window's top bar carries the application icon
+ * beside the app's name; the right rail repeats the app's name in words
  * ("Session runtime"), which is all this rail needs — a second copy of the mark
- * two inches from the left one read as decoration, not as information.
+ * two inches from the top bar's read as decoration, not as information.
  */
 function RailHead() {
   const t = useT();

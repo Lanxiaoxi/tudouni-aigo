@@ -225,13 +225,12 @@
   height: 42px;
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
-  /* Transparent, not a bar: in the reference the session chips sit directly on
-     the transcript's own surface (`.main` has no background of its own), so the
-     aurora wash passes behind them and they read as facts about the
-     conversation rather than as a third chrome strip between the title bar and
-     the text. Painting `--bg` here also cut the green halo off at a hard line
-     the design does not have. */
-  background: none;
+  /* The chrome bars' own shade (`--bg-bar`, #FBFDFA in the light theme) — the
+     same paint `.titlebar`, `.topbar` and `.statusbar` wear. The bar used to
+     be transparent so the aurora wash would pass behind the chips, but with
+     the window's other bars painted that read as a hole in the chrome: a
+     strip of canvas floating between two painted bands. */
+  background: var(--bg-bar);
   /* The degradation container. Its inline size is the conversation column's
      own — the thing that actually shrinks when a rail opens — so the tiers
      below respond to *that*, which a window media query cannot see. */
@@ -548,11 +547,14 @@
    about the conversation beside it. Same padding as the bar above so the two
    line up on both edges.
 
-   No `border-bottom` of its own: the session bar above already draws the rule
-   between the chrome and the transcript, and two stacked hairlines one pixel
-   apart is a seam that looks like a rendering artefact. Transparent for the same
-   reason the session bar is — the aurora wash passes behind it and the row reads
-   as facts about the conversation rather than as a strip of chrome. */
+   Painted with the chrome bars' own shade (`--bg-bar`), like the session bar
+   it sits under: the two are one chrome band over the transcript, and a
+   transparent row between two painted ones read as the band wearing a hole.
+   With the paint comes the row's own hairline — while it was transparent the
+   session bar's border-bottom was the *only* chrome/canvas rule and a second
+   line here would have been a seam one pixel apart; now it is the rule between
+   the chrome band and the transcript, the same job `.statusbar`'s border-top
+   does at the window's other end. */
 .collapsed-summary {
   flex: none;
   display: flex;
@@ -560,7 +562,8 @@
   gap: var(--space-3);
   height: 28px;
   padding: 0 var(--space-2);
-  background: none;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-bar);
   font-size: var(--text-caption);
   color: var(--fg-muted);
   overflow: hidden;
@@ -890,6 +893,40 @@
   to {
     opacity: 0;
     translate: 0 8px;
+  }
+}
+
+/* 折叠摘要行 chip 的浮窗（`CsItem`）：同一套 `.st-popover` 表面，锚在 chip
+   **下方**（side="bottom"）展开，所以进出场换成自上而下的位移——浮窗从它
+   出现的那一侧滑入，和状态栏自下而上正好互为镜像。覆盖方式与上面一致：
+   只换 animation-name，时长与缓动沿用基础规则。 */
+.st-popover.cs-popover[data-state='open'] {
+  animation-name: cs-popover-in;
+}
+
+.st-popover.cs-popover[data-state='closed'] {
+  animation-name: cs-popover-out;
+}
+
+@keyframes cs-popover-in {
+  from {
+    opacity: 0;
+    translate: 0 -8px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+@keyframes cs-popover-out {
+  from {
+    opacity: 1;
+    translate: 0 0;
+  }
+  to {
+    opacity: 0;
+    translate: 0 -8px;
   }
 }
 
