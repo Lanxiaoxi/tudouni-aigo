@@ -44,6 +44,7 @@
 
 **还没做的方案，别当成现状读：**
 
+- [benchmark-harbor.md](design/benchmark-harbor.md) — 用 Harbor + Terminal-Bench 2.0 评估 runtime 的方案：只写一个 adapter，Harbor 负责容器、题库、判分与成本/耗时记录，结论只从「同模型换 harness」的配对实验里读。**状态：方案，未实施。**
 - [usage-stats.md](design/usage-stats.md) — `/stats` 统计面板的设计草案。**状态：草案，未实现。**
   它打算复用 `internal/state/status.go` 的 `Summarize` 做只读汇总。
 
