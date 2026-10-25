@@ -157,6 +157,7 @@ pub fn run() {
         .manage(Bridge::default())
         .invoke_handler(tauri::generate_handler![
             crate::runtime_commands::runtime_attach,
+            crate::runtime_commands::runtime_pref_mirror,
             crate::runtime_commands::runtime_attach_remote,
             crate::remote_commands::install_remote_runtime,
             crate::remote_commands::check_remote_config,
@@ -218,6 +219,16 @@ pub fn run() {
                 // without a visible window, and the tray can bring it back.
                 let _ = window_theme::show_window_in_its_own_colour(&window);
             }
+            // The speculative runtime, started from the launch pref the
+            // previous run mirrored. On its own thread because set-up owns the
+            // window's first show: the whole point is that the WebView's boot
+            // and the child's start overlap, and neither waits for the other.
+            // `pre_spawn` is best effort by construction — every failure path
+            // inside it returns without touching anything else.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                crate::launch::pre_spawn(&handle);
+            });
             Ok(())
         })
         .on_window_event(window_close::on_close_requested)

@@ -118,6 +118,23 @@ pub(crate) struct BridgeState {
     pub(crate) next_key: ChildKey,
     /// True once the front end says a listener is in place.
     pub(crate) listening: bool,
+    /// The one child the launch started speculatively, before the front end
+    /// asked for anything. `None` once adopted, refused, or dead — see
+    /// `launch::pre_spawn` for the whole design.
+    pub(crate) pending: Option<PendingSpawn>,
+}
+
+/// What a pre-spawned child was started with, recorded so `runtime_attach` can
+/// tell "this is the session being asked for" from "the person chose
+/// differently this time". Canonicalized workspace, because the front end's
+/// remembered path and this launch's path can differ in case or separators and
+/// still name the same directory.
+pub(crate) struct PendingSpawn {
+    pub(crate) key: ChildKey,
+    pub(crate) workspace: PathBuf,
+    pub(crate) ericai: bool,
+    pub(crate) max_steps: Option<i64>,
+    pub(crate) stream: bool,
 }
 
 pub(crate) struct Child_ {

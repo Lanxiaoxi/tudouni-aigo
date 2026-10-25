@@ -98,14 +98,16 @@ export function useRuntimeBridge(): void {
 
       // The greeting's name comes from the OS, and the runtime's version from a
       // one-shot `--version` — neither is in the protocol. Both are window-level
-      // facts, read once.
+      // facts, read once. **They are not awaited before the first session**:
+      // they feed a line of greeting text and nothing else, while the version
+      // read spawns a whole child process. Awaiting them first put that between
+      // mount and the runtime; the session starts now and the greeting fills in
+      // when the two reads land.
+      const first = openFirstSession(() => cancelled);
       const [userName, version] = await Promise.all([readUserName(), readRuntimeVersion()]);
       if (cancelled) return;
       useApp.getState().setRuntimeInfo({ version, userName });
-
-      // The first session, in the workspace last worked in. Every later session
-      // is opened from the interface.
-      await openFirstSession(() => cancelled);
+      await first;
     })();
 
     return () => {

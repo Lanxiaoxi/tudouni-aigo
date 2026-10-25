@@ -18,7 +18,7 @@ use crate::bridge::LinePayload;
 use crate::bridge::SharedProcess;
 use crate::launch_remote::RemoteAttachOptions;
 use crate::launch::resolve_binary;
-use crate::launch::spawn;
+use crate::launch::adopt_or_spawn;
 use crate::launch_remote::spawn_remote;
 use crate::session_search;
 
@@ -51,9 +51,24 @@ pub(crate) async fn runtime_attach(
     app: AppHandle,
     options: AttachOptions,
 ) -> Result<ChildKey, String> {
-    tauri::async_runtime::spawn_blocking(move || spawn(&app, &options))
+    tauri::async_runtime::spawn_blocking(move || adopt_or_spawn(&app, &options))
         .await
         .map_err(|error| format!("the runtime start task failed: {error}"))?
+}
+
+/// Record the launch arguments of a successfully opened local session, for the
+/// *next* launch's [`crate::launch::pre_spawn`].
+///
+/// The front end fires this and forgets it: the mirror can only help a launch
+/// that has not happened yet, so a failure here has nothing to say to the
+/// session that caused it — and this command is where that policy is enforced,
+/// because a front end that had to handle the error would be tempted to show
+/// it.
+#[tauri::command]
+pub(crate) async fn runtime_pref_mirror(pref: crate::launch::LaunchPref) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::launch::write_pref(&pref))
+        .await
+        .map_err(|error| format!("the launch pref task failed: {error}"))?
 }
 
 /// Start one session's runtime on a remote host over SSH, and begin

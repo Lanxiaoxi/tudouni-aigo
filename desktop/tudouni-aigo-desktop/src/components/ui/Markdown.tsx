@@ -1,8 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useT } from '@/i18n/useT';
 import { copyText } from '@/utils/clipboard';
@@ -26,9 +25,49 @@ import { imageUrlTransform } from './imageUrl';
  * colours live in `stream.css` under `.hljs` — the same One Dark hues the
  * terminal ANSI palette already uses, so a highlighted block reads like code
  * in the terminal next to it.
+ *
+ * **highlight.js is loaded out of band**, by [`useHighlight`], and until it
+ * lands the plugin list simply does not include it: a fenced block paints
+ * plain and picks up its colours a moment later, which is exactly what a
+ * `font-display: swap` face already does for text. Everything else — the
+ * `.md` container, tables, the fence bar, images — renders with no waiting,
+ * because the find layer walks `.e-answer .md` the moment a row mounts and
+ * the tests that assert that contract render this component synchronously.
  */
 
 type Components = Parameters<typeof ReactMarkdown>[0]['components'];
+type Highlight = typeof import('rehype-highlight').default;
+
+/** highlight.js, fetched once per app run, off the module-eval path. It is by
+ * far the heaviest piece of this stack, and none of it is needed before the
+ * first answer with a fenced block is on screen. The loaded module lives in a
+ * module-level slot rather than in hook state, so a render that happens after
+ * the load sees it on the first pass — which is what the find and fence tests,
+ * synchronous `renderToStaticMarkup` renders with no effects, rely on.
+ *
+ * The promise is memoized so a burst of answers shares one load. */
+let highlightLoaded: Highlight | null = null;
+let highlightPromise: Promise<void> | null = null;
+
+/** Resolve highlight.js; a no-op once it is in. Exposed because the tests
+ * render this component synchronously and need the plugin in place before
+ * the render, not one effect after it. */
+export function ensureHighlightLoaded(): Promise<void> {
+  highlightPromise ??= import('rehype-highlight')
+    .then((m) => {
+      highlightLoaded = m.default;
+    })
+    .catch(() => undefined);
+  return highlightPromise;
+}
+
+function useHighlight(): Highlight | null {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    void ensureHighlightLoaded().then(() => bump((n) => n + 1));
+  }, []);
+  return highlightLoaded;
+}
 
 /**
  * A fenced block: a language bar on top (the tag itself, plus the copy button)
@@ -136,13 +175,14 @@ const components: Components = {
 };
 
 export function Markdown({ text }: { text: string }) {
+  const highlight = useHighlight();
   // react-markdown renders no wrapper of its own: the styled `.md` div is the
   // container, so the flex-gap rules in stream.css apply to its output directly.
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={highlight ? [highlight] : []}
         components={components}
         urlTransform={imageUrlTransform}
       >

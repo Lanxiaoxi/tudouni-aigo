@@ -1,0 +1,81 @@
+/* ============================================================
+   JetBrains Maple Mono — the CJK half of the mono stacks.
+
+   **This file is deliberately NOT imported at boot.** It is injected by
+   `src/fonts/lazyMaple.ts` when the first session becomes ready: each weight
+   is a ~5.6 MB full-CJK woff2, and loading three of them during start-up put
+   the decode work squarely inside the window between first paint and the
+   runtime handshake — the most expensive milliseconds the launch has. Latin
+   text never touches these faces (JetBrains Mono covers it, and sits first in
+   `--font-mono`), so deferring them costs nothing the boot screen shows;
+   CJK text renders on the OS fallback until the faces arrive, which is the
+   same `font-display: swap` behaviour a slow load already produced.
+
+   The design intent below is unchanged — only when the faces are declared
+   moved. See `fonts.css` for the stacks that reference these families.
+   ============================================================ */
+
+/* The strict 2:1 variant — terminals and code must not get narrower CJK. */
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-700.woff2') format('woff2');
+}
+
+/* Narrow-CJK variant (same fusion, CJK glyphs at ~0.88em instead of 1em).
+   Registered under a distinct alias: both variants share the internal name
+   "JetBrains Maple Mono", so two @font-face blocks with the same family and
+   weights would collide. The sans stack points at this alias — its latin
+   (Plex Sans covers it) never loads these faces, they exist only for the
+   CJK. */
+@font-face {
+  font-family: "JetBrains Maple Mono NR";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-nr-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono NR";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-nr-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono NR";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-nr-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: "JetBrains Maple Mono NR";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../fonts/jetbrains-maple-mono-nr-700.woff2') format('woff2');
+}

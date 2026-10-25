@@ -15,14 +15,16 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::bridge::Bridge;
 use crate::bridge::ChildKey;
 use crate::bridge::Child_;
 use crate::bridge::ExitPayload;
+use crate::bridge::PendingSpawn;
 use crate::bridge::SharedProcess;
+use crate::config_file::home_dir;
 use crate::workspace_staging::PASTE_DIR;
 use crate::workspace_staging::PASTE_SUBDIR;
 use crate::bridge::STDERR_RING;
@@ -435,4 +437,239 @@ pub(crate) fn spawn_wait_thread(app: &AppHandle, key: ChildKey) {
             let _ = app.emit("runtime://exited", ExitPayload { key, code, requested });
         }
     });
+}
+
+/* ============================================================
+   Pre-spawn: the runtime started before the front end asked
+   ============================================================ */
+
+/// What the front end mirrors after every successful local attach: exactly the
+/// arguments that decided the child, and nothing else. The next launch reads
+/// this and starts the runtime while its WebView is still booting — see
+/// [`pre_spawn`].
+///
+/// camelCase to match [`AttachOptions`]: the front end sends the resolved
+/// values it already computed for the attach, so there are not two
+/// spellings of the same facts to drift.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LaunchPref {
+    workspace: String,
+    ericai: bool,
+    max_steps: Option<i64>,
+    stream: bool,
+}
+
+/// Where the mirror lives: `~/.tudouni/desktop-launch.json`, beside
+/// `config.json` — the directory the desktop already owns writes in.
+fn launch_pref_path() -> Result<PathBuf, String> {
+    let home = home_dir().ok_or("the home directory could not be read")?;
+    let dir = home.join(".tudouni");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    Ok(dir.join("desktop-launch.json"))
+}
+
+/// Write the mirror atomically — a temp file in the same directory, then a
+/// rename — the same shape `config_file` and the runtime's own `ericWriteBack`
+/// use, because a torn file here would be read as "nothing remembered" and
+/// silently cost the next launch its pre-spawn.
+pub(crate) fn write_pref(pref: &LaunchPref) -> Result<(), String> {
+    let path = launch_pref_path()?;
+    let json = serde_json::to_string(pref).map_err(|e| format!("could not encode the launch pref: {e}"))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("could not replace {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn read_pref() -> Option<LaunchPref> {
+    let path = launch_pref_path().ok()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Start the next launch's first session before the front end exists to ask
+/// for it.
+///
+/// The boot measured like this: the window paints in ~0.5 s, the WebView boots
+/// and mounts for ~2.5 s more, and only then does `runtime_attach` run — while
+/// the child itself needs well under 0.2 s. Almost the whole gap is the front
+/// end's, so the child is moved **underneath** it: `set-up` calls this on its
+/// own thread, the child starts, and because the bridge is not listening yet
+/// its whole opening (`init` -> `session_load` -> `ui`) sits in the per-child
+/// queue that `runtime_attach_listener` already exists to flush. The first
+/// `runtime_attach` of the launch then adopts the child ([`adopt_or_spawn`])
+/// and the handshake lands with the flush — the same three lines, one arrival
+/// earlier.
+///
+/// **Everything here is best effort.** A missing mirror (first launch ever, a
+/// deleted file), a workspace that is gone or refused, a binary that will not
+/// start: each is a silent no-op, because the fallback is the launch path that
+/// already works and a speculative child must never be able to fail it. There
+/// is at most one pending child per launch, and it is always in `children`,
+/// so the existing quit/shutdown paths reap it even if nobody ever adopts it.
+pub(crate) fn pre_spawn(app: &AppHandle) {
+    let Some(pref) = read_pref() else { return };
+
+    // The same refusal rules `spawn` applies, checked here so the speculative
+    // child never exists to become somebody else's problem.
+    let workspace = PathBuf::from(&pref.workspace);
+    if !workspace.is_dir() || unsafe_workspace(&workspace).is_some() {
+        return;
+    }
+
+    // The front end's listener is registered before its first session is
+    // started, so `listening` already true means the WebView is ahead of us
+    // and there is nothing left to win.
+    {
+        let state: State<Bridge> = app.state();
+        let ahead = match state.inner.lock() {
+            Ok(guard) => guard.listening,
+            Err(_) => true,
+        };
+        if ahead {
+            return;
+        }
+    }
+
+    let options = AttachOptions {
+        binary: None,
+        workspace: Some(pref.workspace.clone()),
+        session_id: None,
+        max_steps: if pref.max_steps.unwrap_or(0) > 0 { pref.max_steps } else { None },
+        stream: if pref.stream { Some(true) } else { None },
+        autopilot: None,
+        ericai: if pref.ericai { Some(true) } else { None },
+    };
+    let key = match spawn(app, &options) {
+        Ok(key) => key,
+        Err(_) => return,
+    };
+    let canonical = workspace.canonicalize().unwrap_or_else(|_| workspace.clone());
+
+    let mut surplus: Option<SharedProcess> = None;
+    {
+        let state: State<Bridge> = app.state();
+        let mut guard = match state.inner.lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        // The webview attached while the child was starting and opened the
+        // same workspace itself: ours is a duplicate of a session that
+        // already exists, so it goes now rather than waiting to be the
+        // mismatched pending child of some later attach. Our own key is
+        // excluded — it was registered under the same workspace the moment
+        // `spawn` returned — and the comparison is on the **raw** strings
+        // both were registered with: `canonicalize` answers in the
+        // `\\?\`-prefixed form on Windows, which never equals the plain
+        // path a workspace was remembered by.
+        let duplicate = guard
+            .children
+            .iter()
+            .any(|(current_key, current)| {
+                *current_key != key
+                    && current.workspace.as_deref() == Some(workspace.as_path())
+            });
+        if duplicate && guard.children.contains_key(&key) {
+            if let Some(mut child) = guard.children.remove(&key) {
+                child.requested = true;
+                surplus = Some(child.process.clone());
+            }
+        } else {
+            guard.pending = Some(PendingSpawn {
+                key,
+                workspace: canonical,
+                ericai: pref.ericai,
+                max_steps: options.max_steps,
+                stream: pref.stream,
+            });
+        }
+    }
+    if let Some(process) = surplus {
+        if let Ok(mut process) = process.lock() {
+            let _ = process.kill();
+            process.wait_after_kill();
+        }
+    }
+}
+
+/// The half of adoption that says whether a pending child is the session being
+/// asked for. `workspace: None` never matches — a caller that names no
+/// workspace gets the process directory, which no pre-spawn was started in.
+struct RequestedLaunch {
+    workspace: Option<PathBuf>,
+    ericai: bool,
+    max_steps: Option<i64>,
+    stream: bool,
+}
+
+fn requested_launch(options: &AttachOptions) -> RequestedLaunch {
+    RequestedLaunch {
+        workspace: options
+            .workspace
+            .as_deref()
+            .map(PathBuf::from)
+            .and_then(|path| path.canonicalize().ok()),
+        ericai: options.ericai == Some(true),
+        max_steps: match options.max_steps {
+            Some(steps) if steps > 0 => Some(steps),
+            _ => None,
+        },
+        stream: options.stream == Some(true),
+    }
+}
+
+/// `runtime_attach`'s spawn path, with one branch in front of the spawn: if
+/// this launch pre-started the very session being asked for, that child is
+/// the answer.
+///
+/// Matching is exact on everything that changes what the runtime does —
+/// workspace, `--ericai`, `--max-steps`, `--stream` — plus the arguments a
+/// pre-spawn never carries (`--session`, `--autopilot`, an explicit binary):
+/// any of those present means the ask is for something else, and the pending
+/// child is killed before a fresh one starts, exactly as `runtime_kill` would
+/// (removed from `children` under the lock, `requested` set, killed outside
+/// it). A pending child that died while waiting is simply not adopted — its
+/// wait thread already reaped it, and the spawn below replaces it.
+///
+/// Adopting changes nothing about the child: its opening lines are still in
+/// its queue (nothing was listening), and the front end's own
+/// `runtime_attach_listener` — which its boot calls *before* the first attach
+/// — flushes them in order. The handshake therefore arrives with the flush
+/// rather than a round trip later.
+pub(crate) fn adopt_or_spawn(app: &AppHandle, options: &AttachOptions) -> Result<ChildKey, String> {
+    let requested = requested_launch(options);
+    let adoptable = options.binary.is_none()
+        && options.session_id.as_deref().map_or(true, |id| id.is_empty())
+        && options.autopilot != Some(true);
+
+    let mut stale: Option<SharedProcess> = None;
+    {
+        let state: State<Bridge> = app.state();
+        let mut guard = state.inner.lock().map_err(|_| "the bridge lock is poisoned")?;
+        if let Some(pending) = guard.pending.take() {
+            let alive = guard.children.contains_key(&pending.key);
+            let matches = adoptable
+                && requested.workspace == Some(pending.workspace.clone())
+                && requested.ericai == pending.ericai
+                && requested.max_steps == pending.max_steps
+                && requested.stream == pending.stream;
+            if alive && matches {
+                return Ok(pending.key);
+            }
+            if alive {
+                if let Some(mut child) = guard.children.remove(&pending.key) {
+                    child.requested = true;
+                    stale = Some(child.process.clone());
+                }
+            }
+        }
+    }
+    if let Some(process) = stale {
+        if let Ok(mut process) = process.lock() {
+            let _ = process.kill();
+            process.wait_after_kill();
+        }
+    }
+    spawn(app, options)
 }

@@ -11,7 +11,7 @@ import { buildLearningMessage, learningSessionRefs } from '@/learn/template';
 import { buildRefineMessage } from '@/learn/refineTemplate';
 import { canRunTask, refineAvailability, refineRunScope, type RefineScreen, type Task, type TaskRunLink } from '@/task/tasks';
 import { registerRuntime, sendTo, type Runtime, unregisterRuntime } from '@/runtime/bus';
-import { attachRuntime, createTauriRuntime, readRuntimeStderr, shutdownRuntime, type BridgeOptions } from '@/runtime/tauri';
+import { attachRuntime, createTauriRuntime, mirrorLaunchPrefs, readRuntimeStderr, shutdownRuntime, type BridgeOptions } from '@/runtime/tauri';
 import { TASK_RUNS_MAX, type LaunchArgs } from '../types';
 import { createSessionBucket } from '../sessionBucket';
 import { persistPrefs } from '../prefs';
@@ -330,6 +330,22 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       // the next launch should open. `init.workspace` refines it a moment later
       // with the runtime's own canonical answer.
       get().rememberWorkspace(workspace);
+
+      // The same facts, mirrored to the Rust side in the shape the next
+      // launch's pre-spawn reads (`runtime/tauri.ts`'s `mirrorLaunchPrefs`):
+      // the workspace, the flags, the streaming choice this attach actually
+      // started with. Local sessions only — a remote session's workspace is a
+      // path on another machine, which no local child can be started in.
+      mirrorLaunchPrefs({
+        workspace,
+        ericai: launch.ericai,
+        maxSteps: maxSteps,
+        // What the attach sent, not a constant: `attachRuntime` defaults the
+        // flag to on, and a caller asking for `stream: false` gets a child
+        // without it — the mirror has to say the same thing or the next
+        // launch's adopt check will refuse a match and spawn fresh.
+        stream: options.stream ?? true,
+      });
 
       // The session list is what the left rail draws saved conversations from,
       // and a fresh child is the only thing that can answer for this workspace.

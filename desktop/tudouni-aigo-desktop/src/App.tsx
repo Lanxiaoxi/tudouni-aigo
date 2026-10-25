@@ -14,6 +14,7 @@ import { useFileDrop } from '@/hooks/useFileDrop';
 import { useInputModality } from '@/hooks/useInputModality';
 import { useSidebarHiddenByCss } from '@/hooks/useLayout';
 import { applySystemTheme, watchSystemTheme } from '@/theme';
+import { injectMapleFonts } from '@/fonts/lazyMaple';
 
 import { TitleBar } from '@/components/chrome/TitleBar';
 import { useT } from '@/i18n/useT';
@@ -100,6 +101,16 @@ export function App() {
     applySystemTheme();
     return watchSystemTheme();
   }, []);
+
+  // The CJK faces of the mono stacks are declared only once a conversation
+  // exists to show them: each Maple Mono weight is a ~5.6 MB woff2, and
+  // loading them during boot put the decode inside the stretch between first
+  // paint and the runtime handshake. `ready` is the earliest moment the
+  // column shows session text — until then nothing on screen can use the
+  // faces, so nothing is lost by waiting. See `src/fonts/lazyMaple.ts`.
+  useEffect(() => {
+    if (ready) injectMapleFonts();
+  }, [ready]);
 
   // The first screen shows only when there is no real conversation yet. Runtime
   // notices are not conversation — but they **are** session content, and the

@@ -639,6 +639,27 @@ export async function attachRuntime(
   return String(key);
 }
 
+/** Mirror the launch arguments of a session that just opened, for the next
+ *  launch's pre-spawn (`launch::pre_spawn` on the Rust side reads
+ *  `~/.tudouni/desktop-launch.json` and starts that runtime while the WebView
+ *  is still booting; the first `runtime_attach` of the next launch adopts it).
+ *
+ *  Fire-and-forget on purpose: the mirror can only help a launch that has not
+ *  happened yet, so a failed write has nothing to say to the session that
+ *  caused it — and a caller that had to handle the error would be tempted to
+ *  show it. The arguments are the *resolved* ones, the same values the attach
+ *  sent, so the next launch's speculative child and its first real attach
+ *  describe one session rather than two. */
+export function mirrorLaunchPrefs(launch: {
+  workspace: string;
+  ericai: boolean;
+  maxSteps: number | null;
+  stream: boolean;
+}): void {
+  if (!isHosted()) return;
+  void tauriInvoke('runtime_pref_mirror', { pref: launch }).catch(() => undefined);
+}
+
 /** What `attachRuntimeRemote` sends across — the camelCase mirror of the
  *  Rust side's `RemoteAttachOptions`, one field at a time rather than a
  *  passthrough object, for the same reason `attachRuntime` above spells

@@ -223,9 +223,10 @@ pub struct ConfigPatch {
    Paths
    ============================================================ */
 
-fn home_dir() -> Option<PathBuf> {
-    // `USERPROFILE` then `HOME`, the same order `unsafe_workspace` uses and the
-    // same set Go's `os.UserHomeDir` consults.
+/// `USERPROFILE` then `HOME`, the same set Go's `os.UserHomeDir` consults.
+/// `pub(crate)` because the launch-time mirror (`launch::LaunchPref`) lives in
+/// the same per-user directory as the config files below.
+pub(crate) fn home_dir() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)

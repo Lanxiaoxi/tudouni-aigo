@@ -26,7 +26,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server.browser';
-import { Markdown } from '@/components/ui/Markdown';
+import { Markdown, ensureHighlightLoaded } from '@/components/ui/Markdown';
 import { fenceLanguage, fenceLayout } from '@/components/ui/fence';
 
 /* ---------------- the reading, against the real renderer ---------------- */
@@ -108,12 +108,18 @@ test('the layout is a bar exactly when there is a tag', () => {
   assert.deepEqual(fenceLayout(null), { bar: false, language: null });
 });
 
-test('the rendered answer keeps the fence text intact under the bar', () => {
+test('the rendered answer keeps the fence text intact under the bar', async () => {
   // The bar is added *around* the code, never in place of it: a fenced block
   // whose body disappeared would still look like a code block from a screenshot.
   // The body is matched piecewise because `rehype-highlight` splits it into
   // `<span>`s — `func `, `main` and `()` are three tokens — so what is asserted
   // is that the words survive, not that they survive in one text node.
+  //
+  // The plugin is loaded out of band in production (`Markdown.tsx`), so it has
+  // to be in place before this synchronous render: the promise is awaited here
+  // and the module-level slot it fills is what the component reads at render
+  // time, effects or no effects.
+  await ensureHighlightLoaded();
   const html = renderToStaticMarkup(<Markdown text={'```go\nfunc main() {}\n```'} />);
   assert.match(html, /hljs-keyword/);
   assert.match(html, /func/);
