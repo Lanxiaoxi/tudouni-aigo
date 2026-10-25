@@ -11,18 +11,19 @@ import { useClipboardPaste } from '@/hooks/useClipboardPaste';
 /**
  * §1·7 The composer: a multi-line editor with a caret and history.
  *
- * **Two fixed heights, and one row of controls at a time.** Empty, the box is
+ * **Three fixed heights, and one row of controls at a time.** Empty, the box is
  * 48px and is a single row: the `+`, the placeholder, the action. Once there is
  * something to say it becomes 96px — two lines of text with a toolbar under
- * them, holding the `+`, the key hint, and the action. That split is the
- * redesign's, and the reason it is worth having is that the empty box stops
- * reserving a toolbar nobody is using, while the filled box stops growing: a
- * long sentence scrolls inside its two lines instead of pushing the transcript
- * up the window.
+ * them, holding the `+`, the key hint, and the action. When the draft outgrows
+ * those two lines (`isLargeDraft` below decides) it becomes 192px, the filled
+ * height doubled, so a pasted block is read rather than scrolled. That split is
+ * the redesign's, and the reason it is worth having is that the empty box stops
+ * reserving a toolbar nobody is using, while no state grows with the sentence:
+ * what changes is the tier, and a tier is one class on one element.
  *
- * The height is CSS's (`height: 48px` / `96px` on `.cp-box`), never a measured
- * `scrollHeight` written back by this component. That measurement is what made
- * the old box grow without a bound.
+ * The height is CSS's (`height: 48px` / `96px` / `192px` on `.cp-box`), never a
+ * measured `scrollHeight` written back by this component. That measurement is
+ * what made the old box grow without a bound.
  *
  * Only two controls, on purpose. The reference has four (attach, permission,
  * model, send); this build's plus opens the **plus menu** (`PlusMenu`): files
@@ -194,14 +195,17 @@ export function Composer() {
   }
 
   /**
-   * The composer has **two fixed heights**, not a growing box.
+   * The composer has **three fixed heights**, not a growing box.
    *
    * Empty it is one 48px row: `+`, the placeholder, the send button. Once there
    * is something to send it is 96px: two lines of text above, and a toolbar
-   * under them holding `+`, the key hint and the action. The quote "two fixed
-   * heights" is the design's, and it is the reason the box no longer measures the
-   * textarea: a long sentence does not turn the composer into a panel that grows
-   * until it reaches the transcript — the input scrolls inside two lines instead.
+   * under them holding `+`, the key hint and the action. When the draft has
+   * outgrown those two lines — several lines of it, or one long enough to wrap
+   * past both — it is 192px, and the sentence gets every added pixel. The quote
+   * "two fixed heights" was the design's, and it is still the reason the box
+   * never measures the textarea: a tier is a class, so the longest paste in the
+   * world moves the composer between three numbers instead of growing it toward
+   * the transcript.
    *
    * The toolbar is drawn for anything that has something to say in it, not only
    * for text: a running turn (the stop button and its sentence), a drop notice,
@@ -209,10 +213,17 @@ export function Composer() {
    */
   const empty = draft.trim() === '';
   const showTools = !empty || running || composerNotice !== null || dragging;
+  // A height state on top of `is-filled`, never instead of it: the toolbar row,
+  // the grid areas and the filled input rules are all shared, and only the two
+  // height numbers differ. An empty draft never earns it, so the 48px row stays
+  // a single row however long the draft's cleared tail was.
+  const large = !empty && isLargeDraft(draft);
 
   return (
     <div className="composer">
-      <div className={`cp-box${blocked ? ' is-blocked' : ''}${showTools ? ' is-filled' : ''}`}>
+      <div
+        className={`cp-box${blocked ? ' is-blocked' : ''}${showTools ? ' is-filled' : ''}${large ? ' is-large' : ''}`}
+      >
         {/* The two attachment trays share one grid area, above both states.
             Wrapped rather than passed through because they are two components
             with one job, and an empty wrapper must not leave a gap. */}
@@ -317,6 +328,19 @@ export function Composer() {
       </div>
     </div>
   );
+}
+
+/**
+ * Whether the draft has outgrown the filled box's two 20px lines and earns the
+ * 192px tier. Two readings of "a large block", because both arrive in practice:
+ * several lines (three or more `newline`s), and the pasted paragraph that
+ * carries no newlines at all — long enough to wrap past both lines on any
+ * window the app opens at. Both are counts on the string, never a measurement
+ * of the rendered box: the tiers are classes, and a measurement here is the
+ * grow-with-every-keystroke behaviour the fixed heights exist to prevent.
+ */
+function isLargeDraft(draft: string): boolean {
+  return draft.split('\n').length >= 3 || draft.length > 200;
 }
 
 /**

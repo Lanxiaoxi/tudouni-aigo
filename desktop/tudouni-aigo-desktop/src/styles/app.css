@@ -987,15 +987,17 @@
    from the text on any window wider than about 1020px. Two numbers, one
    relationship — which is why they are written next to each other.
 
-   **Two fixed heights, not a growing box.** Empty the composer is one 48px row
-   — `+`, the placeholder, the send button. With something to say it is 96px:
-   two lines of text, then a toolbar with `+`, the hint and the action.
+   **Three fixed heights, not a growing box.** Empty the composer is one 48px
+   row — `+`, the placeholder, the send button. With something to say it is
+   96px: two lines of text, then a toolbar with `+`, the hint and the action.
+   When the draft has outgrown those two lines it is 192px, the filled height
+   doubled, and the sentence keeps every added pixel (`is-large` below).
 
-   The layout is a 3-column grid with named areas, and the areas are what moves
-   the two buttons between the two states: in the empty state they share the
-   input's row; in the filled state the input spans the full width above them.
-   One `+` and one action exist in the DOM at all times, so the two states cannot
-   drift apart.
+   The layout is a 3-column grid with named areas, and the areas are what move
+   the two buttons between the empty and the filled states: in the empty state
+   they share the input's row; in the filled state the input spans the full
+   width above them. One `+` and one action exist in the DOM at all times, so
+   the two states cannot drift apart.
 
    `height` is a layout property and `tokens.css` keeps those off the animatable
    list. The deviation is the design's own ("height switches between 48 and 96")
@@ -1038,8 +1040,18 @@
   border-color: var(--accent-border);
 }
 
-/* Attachments are the one thing the two fixed heights cannot predict. A tray
-   adds a row and the box takes its natural height; the 48/96 values become
+/* Large: the draft has outgrown the two lines the filled state holds — three
+   or more, or one long enough to wrap past both — and the box doubles rather
+   than making the sentence scroll inside them. `is-large` is a height state on
+   top of `is-filled`, never instead of it: the grid areas, the toolbar row and
+   the filled input rules are shared, so only the two height numbers live here
+   (the input's own is with `.cp-input` below). */
+.composer .cp-box.is-large {
+  height: 192px;
+}
+
+/* Attachments are the one thing the fixed heights cannot predict. A tray
+   adds a row and the box takes its natural height; the 48/96/192 values become
    minimums. This is why the height transition is skipped in that case — an
    `auto` endpoint cannot interpolate, and a jump between two states that are
    already taller than both fixed heights is the honest behaviour. */
@@ -1051,6 +1063,11 @@
 .composer .cp-box.is-filled:has(.cp-trays > *) {
   height: auto;
   min-height: 96px;
+}
+
+.composer .cp-box.is-large:has(.cp-trays > *) {
+  height: auto;
+  min-height: 192px;
 }
 
 /* The composer box draws **no** focus ring of its own — neither for a pointer
@@ -1080,8 +1097,9 @@
 }
 
 /* The input: one line high while the box is empty, two lines when it is filled,
-   and it scrolls inside that second height rather than growing. That is the
-   whole of "the composer no longer grows with the sentence". */
+   seven-ish when the tier is large, and it scrolls inside its height rather
+   than growing. That is the whole of "the composer no longer grows with the
+   sentence". */
 .composer .cp-input {
   grid-area: input;
   align-self: center;
@@ -1107,6 +1125,14 @@
      这里用同特异性写法覆盖，不占 JSX）。 */
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
+}
+
+/* The large tier gives the doubled box's added 96px entirely to the sentence:
+   136px is the filled input plus exactly what the box gained, so the toolbar
+   row below sits where it always sits. Same特异性 as the filled rule above —
+   this one is later, and wins. */
+.composer .cp-box.is-large .cp-input {
+  height: 136px;
 }
 
 .composer .cp-box.is-filled .cp-input:hover,
