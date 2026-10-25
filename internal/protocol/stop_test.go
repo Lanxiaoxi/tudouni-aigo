@@ -25,9 +25,13 @@ type blockingRuntime struct {
 	// here, and the second turn would stop at its first safe point for no reason the
 	// person could see.
 	secondErr error
+	// secondText records what the second turn was asked, so the "a person's
+	// message replaces the running turn" rule can be checked against the
+	// sentence that actually reached the runtime.
+	secondText string
 }
 
-func (r *blockingRuntime) RunTurn(ctx context.Context, _ string) (string, error) {
+func (r *blockingRuntime) RunTurn(ctx context.Context, text string) (string, error) {
 	r.turns++
 	if r.turns == 1 {
 		close(r.entered)
@@ -36,6 +40,7 @@ func (r *blockingRuntime) RunTurn(ctx context.Context, _ string) (string, error)
 		return "", nil
 	}
 	r.secondErr = ctx.Err()
+	r.secondText = text
 	return "second turn done", nil
 }
 
@@ -117,6 +122,52 @@ func TestTheNextTurnGetsAFreshContext(t *testing.T) {
 	if runtimeValue.secondErr != nil {
 		t.Errorf("the second turn was handed an already-cancelled context (%v): "+
 			"the turn context is being reused across turns", runtimeValue.secondErr)
+	}
+}
+
+// TestAPersonsMessageDuringARunningTurnStopsItAndTakesOver pins the combined act:
+// a `user_message` that lands on a running turn is the stop button and a new
+// message at once, not a queue forming behind the running turn. The queue is not
+// merely a worse feel — it parks the read loop behind the old turn, and the loop
+// is stdin's only reader, so an approval the old turn asked for while it was
+// parked could never be read: the session would hang on an answer its own front
+// end had already given.
+func TestAPersonsMessageDuringARunningTurnStopsItAndTakesOver(t *testing.T) {
+	output := &safeBuffer{}
+	server := NewServer(OpenStreams(strings.NewReader(""), output), Bootstrap{})
+	runtimeValue := newBlockingRuntime()
+	server.Attach(runtimeValue)
+
+	server.startTurn("跑一个很慢的命令")
+	select {
+	case <-runtimeValue.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the turn never started")
+	}
+
+	// The person sends again mid-turn — what Dispatch does with a `user_message`.
+	server.startTurn("改说这句")
+
+	select {
+	case <-runtimeValue.cancelled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the running turn was never stopped: the message queued behind it instead")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtimeValue.turns >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if runtimeValue.turns < 2 {
+		t.Fatal("the replacement turn never ran")
+	}
+	if runtimeValue.secondText != "改说这句" {
+		t.Errorf("the replacement turn carried %q, want the person's new message", runtimeValue.secondText)
+	}
+	if runtimeValue.secondErr != nil {
+		t.Errorf("the replacement turn was handed the stopped turn's cancelled context (%v)", runtimeValue.secondErr)
 	}
 }
 

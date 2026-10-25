@@ -10,13 +10,18 @@ import (
 //
 // A turn is one exchange — the person's message, every model step it takes, and
 // the answer — and everything that can only be reasoned about while exactly one of
-// them is in flight lives here. The two facts this file is organised around are:
+// them is in flight lives here. The facts this file is organised around are:
 //
 //   - **turns never overlap.** `startTurnWith` begins with `joinTurn`, so the only
 //     instant at which the message list is consistent is between turns. That is
 //     also the only instant at which "is this session finished?" has an answer,
 //     which is why `finishTurn` — not the agent — asks the goal driver whether
 //     another round is allowed.
+//   - **a person's message stops the turn it lands on.** `startTurn` opens with
+//     `requestStop`, so a `user_message` sent while a turn runs is the stop
+//     button and a new message in one act, not a queue forming behind work the
+//     person has superseded. The reserved goal round keeps the plain waiting
+//     semantics: it is only ever fired after the previous turn's `done` anyway.
 //   - **a stop has two halves.** A context reaches work already in flight (a
 //     request waiting for its first byte, a shell command), and a flag answers a
 //     synchronous question ("did somebody ask to stop during this turn"). Both are
@@ -32,7 +37,15 @@ func (s *Server) joinTurn() {
 }
 
 // startTurn begins a turn started by a person.
+//
+// A message that lands on a **running** turn stops it first — the same stop the
+// stop button sends — and takes over once it has wound down. Waiting politely
+// instead would park the read loop behind the old turn for as long as it likes to
+// run: the loop is stdin's only reader, and an approval the old turn asked for
+// while it was parked could never be read — the turn would wait forever on an
+// answer its own front end had already given.
 func (s *Server) startTurn(text string) {
+	s.requestStop()
 	s.startTurnWith(text, nil)
 }
 
