@@ -19,6 +19,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/terminal"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/usage"
 )
 
 // Options configures one runtime.
@@ -92,7 +93,12 @@ type Runtime struct {
 	SessionValue   *state.Session
 	Store          *state.SessionStore
 	Logs           *audit.JsonlSink
-	Tools          *tools.Registry
+	// Usage is the cross-workspace usage ledger (`internal/usage`). It is on
+	// `Booted` for the same reason `Logs` is — the file follows the user, not
+	// the session — and nil means it could not be opened, which the usage panel
+	// reports rather than papering over with an empty answer.
+	Usage *usage.Ledger
+	Tools *tools.Registry
 	Policy         security.Policy
 	Memory         *security.Memory
 	Agent          *agent.Agent

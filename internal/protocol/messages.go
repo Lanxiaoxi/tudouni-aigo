@@ -93,7 +93,16 @@ const VERSION = 1
 //     keys on both the panel snapshot and `ui(state)` because a person reaches
 //     both mismatched states — built-but-turned-off, and turned-on-but-never-built
 //     — and a single boolean could not express either.
-const PROTOCOL = 10
+//
+// 10 batched `ask_user`'s questions into one panel.
+//
+// 11 adds `usage_stats` inbound and a `usage` kind on the `ui` channel: the
+// cross-workspace usage ledger folded into the numbers the desktop's usage
+// panel draws. One inbound message with no arguments, one outbound snapshot
+// with `problem` beside it on refusal — the memory/codeintel shape. Additive
+// in the same way 6 was: a front end that does not know the kind ignores it,
+// and nothing about a session's behaviour depends on the panel being drawn.
+const PROTOCOL = 11
 
 // Message keys used by every envelope.
 const (
@@ -177,6 +186,11 @@ const (
 	// about the person's machine (time, disk, CPU), which is the same rule as the memory
 	// verbs: the model cannot spend somebody else's afternoon.
 	InCodeIntel = "codeintel_action"
+
+	// The cross-workspace usage ledger. One verb, and no arguments: the panel
+	// asks for the whole snapshot on open, and there is nothing on it a person
+	// can act on — the one panel whose message carries no action field.
+	InUsageStats = "usage_stats"
 )
 
 // Message kinds travelling runtime -> front end.
@@ -259,6 +273,13 @@ const (
 	// snapshot, for the reason the memory panel carries it: the transcript is behind the
 	// panel that is asking.
 	UICodeIntel = "codeintel"
+
+	// The cross-workspace usage ledger, folded into the usage panel's numbers.
+	// A refusal carries `problem` and no `usage`, for the same reason memory and
+	// codeintel do: the transcript is behind the panel that is asking, so the
+	// refusal must arrive as the panel's own message rather than as a notice
+	// nobody can see.
+	UIUsage = "usage"
 )
 
 // Terminal statuses. The runtime is the only source of truth for these; a front
@@ -429,6 +450,9 @@ var RequiredKeys = map[string][]string{
 	// `config` carries `enabled` — validated by the runtime for the same reason the
 	// memory verbs are: it is the side that knows what a switch needs.
 	InCodeIntel: {"v", "t", "action"},
+
+	// No arguments at all: the snapshot is the whole answer.
+	InUsageStats: {"v", "t"},
 }
 
 // TerminalDefaults are the size a terminal is created with when the client does

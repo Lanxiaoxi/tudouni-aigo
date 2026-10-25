@@ -29,6 +29,10 @@ const outDir = resolve(root, '.test-build');
  */
 const SUITES = [
   'projection.test.ts',
+  // The usage heatmap's date math: the 365-day window, the seven-row columns,
+  // the quartile ramp and the week buckets. All pure, which is why a midnight
+  // or a leap day can be asserted instead of stared at.
+  'usage-heatmap.test.ts',
   // The factory seam: `createAppStore()` is what makes a second, independent
   // store possible in a test. Two stores, two states — a singleton cannot say
   // that about itself.

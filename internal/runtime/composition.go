@@ -102,6 +102,7 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		SessionValue:   session,
 		Store:          options.Booted.Store,
 		Logs:           options.Booted.Logs,
+		Usage:          options.Booted.Usage,
 		Policy:         security.Policy{AutoApprove: permissions.AutoApprove, DenyTools: permissions.DenyTools},
 		Chat:           chat,
 		WebCfg:         webCfg,

@@ -19,6 +19,7 @@ import {
 import { LearnPanel } from './LearnPanel';
 import { MemoryPanel } from './MemoryPanel';
 import { CodeIntelPanel } from './CodeIntelPanel';
+import { UsagePanel } from './UsagePanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ConfigPanel } from './ConfigPanel';
 import { TaskPanel } from './TaskPanel';
@@ -36,6 +37,9 @@ import { TaskPanel } from './TaskPanel';
  * one line — at 640px the action slot and the meta line collide, which is the
  * whole reason the task design puts them at opposite edges; and Learn this
  * workspace, which is the same two-column editor shape as the task panel's.
+ * Usage joins them with its own reason: a year's heatmap is fifty-three week
+ * columns, and every column squeezed below that width is a month nobody can
+ * point at.
  *
  * Workspace memory has a rung of its own (`dialog-memory`, 1000px): it is the one
  * panel that is two real columns rather than a form with a side card, and the
@@ -63,7 +67,7 @@ export function PanelHost() {
         <DialogPrimitive.Overlay className="overlay-mask" />
         <DialogPrimitive.Content
           className={`dialog${panel === 'commands' ? ' cmdk' : ''}${
-            panel === 'config' || panel === 'tasks' || panel === 'learn' ? ' dialog-wide' : ''
+            panel === 'config' || panel === 'tasks' || panel === 'learn' || panel === 'usage' ? ' dialog-wide' : ''
           }${panel === 'files' ? ' dialog-files' : ''}${
             panel === 'memory' ? ' dialog-memory dialog-split' : ''
           }${panel === 'codeintel' ? ' dialog-memory' : ''}`}
@@ -88,6 +92,7 @@ export function PanelHost() {
           {panel === 'tasks' ? <TaskPanel /> : null}
           {panel === 'memory' ? <MemoryPanel /> : null}
           {panel === 'codeintel' ? <CodeIntelPanel /> : null}
+          {panel === 'usage' ? <UsagePanel /> : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

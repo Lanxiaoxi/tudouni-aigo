@@ -199,7 +199,7 @@ const ALLOWED = new Map([
 ]);
 
 const missing = [];
-const DYNAMIC_PREFIX = /^(badge|risk|btn|fact|wm-conf|is|tone|e)-?$/;
+const DYNAMIC_PREFIX = /^(badge|risk|btn|fact|wm-conf|is|tone|e|usage-l)-?$/;
 for (const [name, where] of used) {
   if (defined.has(name)) continue;
   if (ALLOWED.has(name)) continue;

@@ -201,6 +201,19 @@
   --accent-tint-border: rgba(52, 211, 153, 0.40);
   --accent-tint-text:   #6EE7B7;
 
+  /* The usage heatmap's five activity levels (the usage panel's grid). l0 is
+     the empty cell — the same shade as `--bg-muted`, kept as its own token so
+     the five read as one ramp — and l1–l4 walk the accent up to full strength.
+     Alpha steps rather than solid ones on purpose, for the same reason
+     `--accent-tint` is the accent at low alpha: on a dark surface a family of
+     solid pale greens reads as four unrelated colours, while an opacity ramp
+     keeps them visibly one hue. */
+  --usage-l0: #262C35;
+  --usage-l1: rgba(52, 211, 153, 0.22);
+  --usage-l2: rgba(52, 211, 153, 0.42);
+  --usage-l3: rgba(52, 211, 153, 0.66);
+  --usage-l4: #34D399;
+
   --info:          #60A5FA;  --info-subtle:    rgba(96, 165, 250, 0.14);
   --warning:       #F59E0B;  --warning-subtle: rgba(245, 158, 11, 0.15);
   --warning-border: rgba(245, 158, 11, 0.45);  /* 看板卡片「等你回答」的描边，配对 accent-border */
@@ -353,6 +366,16 @@
   --accent-tint:        #DFF0E3;
   --accent-tint-border: #BFE0C3;
   --accent-tint-text:   #047857;
+
+  /* The usage heatmap's five levels — the dark theme's comment up top applies.
+     Solid steps here, following the light reference's own habit: a pale-to-deep
+     walk of the accent family, with l0 the same shade an empty nested surface
+     (`--bg-muted`) wears. */
+  --usage-l0: #E9EEE6;
+  --usage-l1: #CBE8D2;
+  --usage-l2: #A3D9B1;
+  --usage-l3: #64BD7D;
+  --usage-l4: #059669;
 
   --info:          #2563EB;  --info-subtle:    #EAF1FC;
   --warning:       #A66314;  --warning-subtle: #FBF1E1;

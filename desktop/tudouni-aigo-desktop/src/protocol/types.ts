@@ -57,8 +57,16 @@ export const ENVELOPE_VERSION = 1;
  *   - `enabled` and `indexed` are **separate facts** — a person reaches both
  *     mismatched states (built then switched off; switched on but never built),
  *     and one boolean could not express either.
+ *
+ * **10** batched `ask_user`'s questions into one panel.
+ *
+ * **11** adds `usage_stats` inbound and the `usage` kind on the `ui` channel:
+ * the cross-workspace usage ledger folded into the desktop's usage panel
+ * numbers. Purely additive — a front end that does not know the kind ignores
+ * it, and nothing about a session's behaviour depends on the panel being
+ * drawn.
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 /* ============================================================
    Shared vocabulary
@@ -640,6 +648,68 @@ export interface UiCodeIntelMsg {
   problem?: string;
 }
 
+/** One day's activity, as `by_day` and `peak` carry it. `tokens` is
+ *  prompt + completion — cached input counted, because it was really sent. */
+export interface UsageDay {
+  /** Local calendar day, `YYYY-MM-DD`, from the record's own timestamp. */
+  day: string;
+  tokens: number;
+  turns: number;
+}
+
+/** `ui(usage)`'s `usage` object: the cross-workspace usage ledger folded into
+ *  the panel's numbers.
+ *
+ *  The ledger lives beside `config.json` in the user's home, so these are
+ *  facts about **the user of this machine**, not about any one workspace or
+ *  conversation — which is also why the snapshot lands in a window-level slot
+ *  rather than in a session's bucket.
+ *
+ *  Only numbers travel. `peak` and `longest_run_ms` are **absent** when no
+ *  record exists yet, and that absence is a sentence — "nothing has been spent
+ *  here" — that a zero would corrupt into "the busiest day spent nothing". */
+export interface UsageSnapshot {
+  /** When this aggregation was computed. The panel shows it as "as of": the
+   *  data is one snapshot per panel open, never a live stream. */
+  generated_at: string;
+  totals: {
+    prompt: number;
+    cached: number;
+    miss: number;
+    completion: number;
+    /** prompt + completion. */
+    tokens: number;
+    /** Finished turns with at least one successful model call. */
+    turns: number;
+    calls: number;
+    /** Distinct calendar days with at least one record. */
+    days: number;
+  };
+  /** The busiest day over the whole history. Absent until a record exists. */
+  peak?: UsageDay;
+  /** Wall time of the longest finished turn. Absent for the same reason. */
+  longest_run_ms?: number;
+  streak: {
+    /** Counted back from today — or from yesterday when today has no record
+     *  yet, because a day is not over until it is. */
+    current: number;
+    longest: number;
+  };
+  /** Days with records inside the last 365, ascending. The empty cells of the
+   *  heatmap are the front end's to draw. */
+  by_day: UsageDay[];
+}
+
+/** `ui(usage)`. A refusal arrives as `problem` with no `usage` — the one
+ *  case where the panel has no snapshot to draw beside it. */
+export interface UiUsageMsg {
+  v: number;
+  t: 'ui';
+  kind: 'usage';
+  usage?: UsageSnapshot;
+  problem?: string;
+}
+
 /** The verbs a `codeintel_action` message accepts.
  *
  *  `status` is one verb rather than its own message kind: the panel asks for the
@@ -1165,7 +1235,8 @@ export type UiMsg =
   | UiTerminalOutputMsg
   | UiTerminalExitMsg
   | UiMemoryMsg
-  | UiCodeIntelMsg;
+  | UiCodeIntelMsg
+  | UiUsageMsg;
 
 /* ---------------- the rest ---------------- */
 
@@ -1422,6 +1493,10 @@ export type FrontendMsg =
       /** `config` only. */
       enabled?: boolean;
     }
+  /** Ask for the cross-workspace usage ledger's snapshot. No arguments and no
+   *  verbs: the panel opens, asks once, and draws — there is nothing on it a
+   *  person can act on, and nothing to poll for. */
+  | { v: number; t: 'usage_stats' }
   | { v: number; t: 'mcp'; action: McpAction; servers: string[] }
   /** List one directory level. An **empty** path is the workspace root — the
    *  same value the runtime uses for "the workspace itself", so there is no

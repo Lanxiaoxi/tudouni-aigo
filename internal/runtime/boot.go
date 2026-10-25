@@ -8,6 +8,7 @@ import (
 	sshlib "github.com/Lanxiaoxi/tudouni-aigo/internal/ssh"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/terminal"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/usage"
 )
 
 // hostTriple maps this machine onto the ripgrep release triple whose build is
@@ -33,6 +34,11 @@ func hostTriple() (string, bool) {
 type Booted struct {
 	Store *state.SessionStore
 	Logs  *audit.JsonlSink
+	// Usage is the cross-workspace usage ledger: one append-only file in the
+	// user's config directory that every session this process mounts appends
+	// its token spend to. Nil when it could not be opened — which is a warning
+	// and a panel that says so, never a reason to refuse to run.
+	Usage *usage.Ledger
 	// Terminals owns this workspace's shells. It lives **here** rather than on a
 	// runtime, and that placement is the design's central structural point: a
 	// session can be switched, deleted or closed while a shell the person is
@@ -58,6 +64,15 @@ func Boot() (Booted, error) {
 	if err != nil {
 		return Booted{}, err
 	}
+	// The ledger follows the user rather than the workspace, so it is opened
+	// once per process here and shared by every runtime that gets mounted. Its
+	// failure is deliberately not this function's failure: a session with no
+	// usage history is still a session, and the panel is the place that says
+	// "there is no ledger", the way Memory degrades to "no memory".
+	ledger, ledgerErr := usage.NewLedger(usage.LedgerPath())
+	if ledgerErr != nil {
+		warn("usage ledger unavailable: %v", ledgerErr)
+	}
 	// The workspace boundary is resolved here, once, so the shells and the file
 	// tools are checked against the same object. A failure is fatal rather than a
 	// reason to start without one: a terminal with no boundary would be a shell
@@ -73,6 +88,7 @@ func Boot() (Booted, error) {
 	return Booted{
 		Store:     store,
 		Logs:      logs,
+		Usage:     ledger,
 		Terminals: terminals,
 		SSH:       sshlib.NewManager("", ""),
 	}, nil

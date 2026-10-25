@@ -472,6 +472,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 	case InCodeIntel:
 		s.handleCodeIntel(message)
 
+	case InUsageStats:
+		s.handleUsage()
+
 	case InGoal:
 		s.handleGoal(message)
 

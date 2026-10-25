@@ -614,5 +614,13 @@
       }
     },
     "required": ["v", "t", "action"]
+  },
+  "usage_stats": {
+    "summary": "要跨工作区用量总账的汇总。**回答永远是 ui(usage) 的全量快照**（读不出账本时带 `problem`）。无参数：面板打开时要一次，没有可操作的动作，也不轮询。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "usage_stats"}
+    },
+    "required": ["v", "t"]
   }
 }

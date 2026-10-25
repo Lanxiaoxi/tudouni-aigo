@@ -1833,6 +1833,31 @@ export const en = {
     'An index exists and nothing is using it. Turn the switch on to give the model code_explore.',
   'panel.codeintel.situation.disabledNoIndex':
     'Off, and nothing has been indexed. Turning it on does not build anything by itself.',
+
+  'lb.usage': 'Usage',
+  'lb.usageHint': 'Token spend across every workspace on this machine',
+  'panel.usage.title': 'Usage statistics',
+  'panel.usage.note': 'Every workspace on this machine, since the first turn',
+  'panel.usage.noSession': 'Open a conversation to read the usage ledger.',
+  'panel.usage.problem': 'Could not read the usage ledger',
+  'panel.usage.empty': 'Nothing recorded yet. Tokens land here after your first finished turn.',
+  'panel.usage.asOf': 'As of {when}',
+  'panel.usage.activity': 'Token activity',
+  'panel.usage.daily': 'Daily',
+  'panel.usage.weekly': 'Weekly',
+  'panel.usage.fact.total': 'Total tokens',
+  'panel.usage.fact.peak': 'Peak day',
+  'panel.usage.fact.peakSub': '{day}',
+  'panel.usage.fact.longestTurn': 'Longest turn',
+  'panel.usage.fact.streakCurrent': 'Current streak',
+  'panel.usage.fact.streakLongest': 'Longest streak',
+  'panel.usage.days': '{n} day(s)',
+  'panel.usage.noData': '—',
+  'panel.usage.cellTokens': '{tokens} tokens · {turns} turn(s)',
+  'panel.usage.cellIdle': 'No tokens',
+  'panel.usage.cellWeek': 'Week of {day}',
+  'panel.usage.legendLess': 'less',
+  'panel.usage.legendMore': 'more',
 } as const;
 
 export type TKey = keyof typeof en;

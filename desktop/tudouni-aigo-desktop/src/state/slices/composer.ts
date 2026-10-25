@@ -374,6 +374,13 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         // question the panel exists to answer.
         get().requestCodeIntel();
       }
+      if (p === 'usage') {
+        // Same rule again, with one window-level twist: the answer lands outside the
+        // session buckets, so it survives a session switch — the ledger counts this
+        // user's spend across every workspace, and resetting it on a switch would
+        // make the panel contradict what it had just shown.
+        get().requestUsage();
+      }
     },
 
     closePanel() {

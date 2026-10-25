@@ -46,6 +46,9 @@ var _ protocol.TerminalService = (*Runtime)(nil)
 // CodeIntelService answers `codeintel_action`.
 var _ protocol.CodeIntelService = (*Runtime)(nil)
 
+// UsageService answers `usage_stats`.
+var _ protocol.UsageService = (*Runtime)(nil)
+
 // MemoryService answers the workspace-memory commands.
 var _ protocol.MemoryService = (*Runtime)(nil)
 

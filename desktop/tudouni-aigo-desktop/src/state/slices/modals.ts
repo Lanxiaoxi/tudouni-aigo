@@ -15,7 +15,7 @@ import { throttled } from '../polling';
 import { selectModalVisible } from '../selectors/session';
 import { activeWorkspaceOf, remoteConnectionOf } from '../appView';
 
-export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction'> {
+export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage'> {
   const { set, get, patch, patchWith, markSavedSessionsPending } = ctx;
   return {
     answerPermission(decision) {
@@ -474,6 +474,16 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       // state may already be fine.
       patch(key, { codeintelProblem: null });
       sendTo(key, { v: 1, t: 'codeintel_action', action, ...(args ?? {}) });
+    },
+
+    requestUsage() {
+      const key = get().activeKey;
+      if (key === null) return;
+      // No loading flag, for the reason `requestCodeIntel` has none: the panel draws
+      // `usage === null` as its loading state. A re-open while a snapshot is already
+      // held shows that snapshot until the fresh answer replaces it — a stale "as
+      // of" line beats a blank panel that knows the answer.
+      sendTo(key, { v: 1, t: 'usage_stats' });
     },
 
     /* ==========================================================

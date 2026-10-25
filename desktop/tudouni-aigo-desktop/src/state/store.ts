@@ -103,6 +103,10 @@ export function createAppStore() {
     closePrompt: false,
     questionMinimizedId: null,
     boardOpen: false,
+    // The usage panel's snapshot: window-level (see `storeShape`), `null` until
+    // the first open of the panel asks for it.
+    usage: null,
+    usageProblem: null,
     // The desktop's steady state: archived sessions are hidden, so archiving
     // frees one of the runtime's fifty slots. See `SessionFilter`.
     sessionFilter: 'active',

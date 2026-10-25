@@ -7,11 +7,11 @@
  * re-exported by `store.ts`, so every `import ... from '@/state/store'` keeps
  * working.
  */
-import { type CodeIntelSnapshot, type FileEntry, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
+import { type CodeIntelSnapshot, type FileEntry, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
-import type { TerminalState } from '@/runtime/terminalOutput';
-import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
-import { type AttachedFile, type PastedImage } from '@/runtime/paste';
+import type { TerminalState } from '@/runtime/terminalOutput';
+import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
+import { type AttachedFile, type PastedImage } from '@/runtime/paste';
 import { type InstallStage, type RemoteConfigStatus } from '@/runtime/tauri';
 
 
@@ -79,7 +79,15 @@ export type PanelKind =
    * two buttons that make one. A panel for the same reason Memory is — its
    * subject is the workspace rather than the conversation, and what it configures
    * outlives every session. */
-  | 'codeintel';
+  | 'codeintel'
+  /* The cross-workspace usage ledger: cumulative tokens, the busiest day, the
+   * active-day streaks and the per-day heatmap. A panel for the same reason the
+   * others are, but the only one whose subject is **the user of this machine**
+   * rather than a session or a workspace — the ledger lives beside config.json
+   * in the home directory, so switching workspaces must not reset it. It reads
+   * through the runtime (the ledger's only writer and reader), which is why it
+   * gates on a live session like Memory and Code intelligence do. */
+  | 'usage';
 
 /* `ssh` sits with the workspace-capability blocks (jobs, mcp): it is about
  * things running in the workspace, not about this turn's conversation. */

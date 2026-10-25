@@ -41,6 +41,8 @@
 - [system-prompt-review.md](design/system-prompt-review.md) — `prompts/system.zh.md` 与
   `compact.zh.md` 的评审：12 个与实现不一致的点、证据和建议改法。**状态：评审完成；
   #1 已修复，其余待处理。** 改提示词或工具描述之前先读它。
+- [usage-panel.md](design/usage-panel.md) — 桌面端「使用统计」面板 + home 目录跨工作区
+  总账（`internal/usage/`，协议 11）。卡片口径、总账格式、窗口级快照的决定都在这里。
 
 **还没做的方案，别当成现状读：**
 

@@ -184,6 +184,13 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRun
       switch (msg.t) {
         case 'init': {
           const init = projectInit(msg);
+          // A handshake means a (possibly different) runtime process is now
+          // answering — and the usage ledger lives on **that process's machine**.
+          // A snapshot held from the previous connection would describe a ledger
+          // this one may not own (a remote workspace, another host), so it is
+          // dropped here; switching sessions within one connection keeps it,
+          // which is what the window-level slot is for.
+          set({ usage: null, usageProblem: null });
           // The handshake's notices are the runtime's own sentences, written for
           // a person. They are kept in their own field, because `session_load`
           // arrives right behind this message and rebuilds the whole transcript —
@@ -634,6 +641,25 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRun
                 codeintelProblem:
                   typeof msg.problem === 'string' && msg.problem !== '' ? msg.problem : null,
               }));
+              break;
+            }
+            case 'usage': {
+              // **A window-level slot, not a bucket field.** The ledger counts this
+              // user's spend across every workspace, so the snapshot means the same
+              // thing whatever conversation the answer arrived on — filing it under
+              // the session would blank the panel on every switch. `set`, not
+              // `patchWith`, for exactly that reason.
+              //
+              // The snapshot replaces, never merges (the codeintel rule); `problem`
+              // with no snapshot is the one refusal that has nothing to draw beside
+              // it, and it clears the previous problem rather than joining it — the
+              // newest answer is the only one the panel should be able to name.
+              const snapshot = msg.usage && typeof msg.usage === 'object' ? msg.usage : null;
+              set({
+                ...(snapshot !== null ? { usage: snapshot } : {}),
+                usageProblem:
+                  typeof msg.problem === 'string' && msg.problem !== '' ? msg.problem : null,
+              });
               break;
             }
             case 'file_read': {

@@ -182,7 +182,9 @@ test('the envelope version is the one hard failure point', () => {
   // 10 batches `ask_user`: `question_request` gains `batch_id` /
   // `question_index` / `question_count`, and the runtime sends a batch's
   // requests back to back before it waits.
-  assert.equal(PROTOCOL_VERSION, 10);
+  // 11 adds the cross-workspace usage ledger: `usage_stats` inbound and the
+  // `usage` kind on the `ui` channel, both purely additive.
+  assert.equal(PROTOCOL_VERSION, 11);
 
   // Decoding an `init` from a **3** runtime still works: the field is documented
   // as survivable, and the capture in `tests/fixtures/opening.jsonl` is one, so

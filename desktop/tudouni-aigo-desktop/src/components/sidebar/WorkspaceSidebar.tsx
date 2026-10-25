@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Archive, ArchiveRestore, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
+import { Activity, Archive, ArchiveRestore, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -669,6 +669,23 @@ export function WorkspaceSidebar() {
       disabled: blocked || (!hasLiveChild && !boardOpen),
       active: boardOpen,
       run: () => setBoardOpen(!boardOpen),
+    },
+    {
+      key: 'usage',
+      group: 'settings',
+      // The one row whose subject is the **user**, not this workspace or any
+      // conversation: the ledger lives beside config.json in the home directory
+      // and counts every workspace's spend. It sits with the lower group rather
+      // than the workspace's own four for the reason Tasks and Board do.
+      label: t('lb.usage'),
+      hint: t('lb.usageHint'),
+      icon: <Activity size={14} />,
+      // A live session, like Memory and Code intelligence: the ledger is read
+      // by the runtime (it is the ledger's only writer and reader), and opening
+      // the panel with no session would draw a view that cannot ask anybody
+      // anything.
+      disabled: blocked || !hasSession,
+      run: () => openPanel('usage'),
     },
     {
       key: 'config',

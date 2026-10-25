@@ -5,13 +5,13 @@
  * shares. It lives apart from the actions so a slice can be read — or tested —
  * without importing the store that assembles them.
  */
-import { type CodeIntelActionKind, type FrontendMsg, type MemoryActionKind, type PermissionDecision, type RuntimeMsg } from '@/protocol/types';
-import { type BlockKind, type ToolFacts } from '@/state/entries';
-import { type Deliverable, type LearnScope } from '@/learn/template';
-import { type RunScope, type Task, type TaskRunLink, type TaskRunOutcome } from '@/task/tasks';
-import { type ClosePolicy } from '@/runtime/windowClose';
-import { type BridgeOptions } from '@/runtime/tauri';
-import { type ConfigSyncChoice } from '@/state/configSync';
+import { type CodeIntelActionKind, type FrontendMsg, type MemoryActionKind, type PermissionDecision, type RuntimeMsg, type UsageSnapshot } from '@/protocol/types';
+import { type BlockKind, type ToolFacts } from '@/state/entries';
+import { type Deliverable, type LearnScope } from '@/learn/template';
+import { type RunScope, type Task, type TaskRunLink, type TaskRunOutcome } from '@/task/tasks';
+import { type ClosePolicy } from '@/runtime/windowClose';
+import { type BridgeOptions } from '@/runtime/tauri';
+import { type ConfigSyncChoice } from '@/state/configSync';
 import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModalState, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
 import type { RemoteConfigTarget } from '@/runtime/tauri';
 
@@ -191,6 +191,21 @@ export interface AppStore {
    * it for no reason the person gave.
    */
   boardOpen: boolean;
+  /**
+   * The usage panel's snapshot, and the refusal the last request ended with.
+   *
+   * **Window-level, not a bucket field, on purpose.** The ledger counts this
+   * user's spend across every workspace, so the numbers mean the same thing no
+   * matter which conversation is mounted, and resetting them on a session
+   * switch would make the panel lie about what it had just shown. `null` is
+   * "never fetched", which the panel draws as its loading state; a refusal is a
+   * separate `usageProblem` so an error cannot be mistaken for an empty ledger.
+   *
+   * Requested once per panel open, never polled — the same on-demand rule every
+   * other panel's snapshot follows.
+   */
+  usage: UsageSnapshot | null;
+  usageProblem: string | null;
   /**
    * Which sessions this end is asking the runtime to report.
    *
@@ -1047,6 +1062,17 @@ export interface AppStore {
    * start.
    */
   codeIntelAction(action: CodeIntelActionKind, args?: { enabled?: boolean }): void;
+
+  /* ---------------- the usage ledger ---------------- */
+
+  /**
+   * Ask for the usage panel's whole snapshot (`ui(usage)`).
+   *
+   * One request per panel open, never polled: the ledger only grows on finished
+   * turns, and a person reading totals does not need them to tick. The answer
+   * lands in the window-level `usage` slot, so it survives a session switch.
+   */
+  requestUsage(): void;
 
   /* ---------------- the workspace: terminals ---------------- */
 

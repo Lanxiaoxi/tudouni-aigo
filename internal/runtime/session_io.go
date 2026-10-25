@@ -80,6 +80,13 @@ func (r *Runtime) onEvent(record map[string]any) {
 			warn("audit write failed: %v", err)
 		}
 	}
+	// The usage ledger rides the same stream. It sees the record as emitted —
+	// before `auditRecord` trims the child-origin marker — but it reads none of
+	// the fields that marker exists for, so the copy `auditRecord` would make
+	// would be spent for nothing.
+	if r.Usage != nil {
+		r.Usage.Observe(record)
+	}
 	if r.OnEventHook != nil {
 		r.OnEventHook(record)
 	}
@@ -228,6 +235,13 @@ func (r *Runtime) Close() error {
 	if r.Logs != nil {
 		if err := r.Logs.Close(); err != nil {
 			warn("%s", i18n.T("close.logs_failed", "problem", err.Error()))
+		}
+	}
+	// Same reason as the audit sink above: a resident handle per shared store is
+	// one the shutdown path lets go of, and a later append reopens it.
+	if r.Usage != nil {
+		if err := r.Usage.Close(); err != nil {
+			warn("usage ledger close failed: %v", err)
 		}
 	}
 	// A mounted server is a child process. Leaving children behind on exit is how
