@@ -22,13 +22,24 @@ import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEnded
 import { runtimeOf } from '../appView';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
 
-export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
+export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
   const { set, get, patch, patchWith, noteSavedSessions, markSavedSessionsPending, activeKeyForSend } = ctx;
   return {
     send(msg) {
       const key = activeKeyForSend();
       if (key === null) return;
       sendTo(key, msg);
+    },
+
+    markNotesRead() {
+      const key = activeKeyForSend();
+      if (key === null) return;
+      patchWith(key, (current) => ({
+        notesReadCount: current.entries.reduce(
+          (read, row) => (row.kind === 'note' ? read + 1 : read),
+          0,
+        ),
+      }));
     },
 
     setRuntimeInfo(info) {
@@ -327,8 +338,18 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'setRun
           // stream. They belong to the session, not to the moment they were said,
           // and the design is explicit that they are not pushed out by session
           // content.
+          //
+          // The rebuild also re-reads the notice ledger: everything the rebuilt
+          // stream carries counts as seen, so reopening a session does not badge
+          // diagnostics that were on screen when it was closed. Only notes that
+          // land after this moment are unread.
+          const rebuiltEntries = [...bucket.handshakeNotices, ...rebuilt];
           patch(key, {
-            entries: [...bucket.handshakeNotices, ...rebuilt],
+            entries: rebuiltEntries,
+            notesReadCount: rebuiltEntries.reduce(
+              (read, row) => (row.kind === 'note' ? read + 1 : read),
+              0,
+            ),
             restoredTurns,
             activeRunId: null,
             lastRunId: null,

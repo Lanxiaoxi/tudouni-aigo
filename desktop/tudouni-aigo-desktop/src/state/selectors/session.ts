@@ -23,6 +23,8 @@ import {
   hasRunningTurn,
   lastStopReason,
   type CallUsage,
+  type Entry,
+  type NoteEntry,
 } from '@/state/entries';
 import { encodeNotifySnapshot, type NotifyRow } from '@/runtime/notify';
 import { baseName, samePath, tokPerSecond } from '@/utils/format';
@@ -880,4 +882,33 @@ export function selectWorkspaceAttention(s: AppStore, workspace: string): number
     const status = selectRowStatus(s, key);
     return status === 'asking' || status === 'broken' || status === 'unseen';
   }).length;
+}
+
+/** What the notice center capsule shows for one session. */
+export interface NoticeCenterView {
+  /** Every note the session holds, in arrival order (oldest first). */
+  notes: NoteEntry[];
+  /** Notes that arrived after the last time the popover was opened. */
+  unread: number;
+  /** Whether any **unread** note is a warning — the badge colours by it. */
+  hasWarnUnread: boolean;
+}
+
+/**
+ * The notice center's read model.
+ *
+ * Pure and shaped as `(entries, readCount)` rather than a whole bucket, so the
+ * component can subscribe to the two fields separately — each a stable
+ * reference the store only replaces when it actually changes — and the unread
+ * arithmetic can be asserted without a window. The unread tail is the **last**
+ * `readCount`-complement of the notes: notes are append-only, so a suffix is
+ * exactly what arrived since the ledger last moved.
+ */
+export function selectNoticeCenter(entries: Entry[], notesReadCount: number): NoticeCenterView {
+  const notes = entries.filter((entry): entry is NoteEntry => entry.kind === 'note');
+  const unread = Math.max(0, notes.length - notesReadCount);
+  const hasWarnUnread = notes
+    .slice(notes.length - unread)
+    .some((note) => note.tone === 'warn' || note.tone === 'error');
+  return { notes, unread, hasWarnUnread };
 }

@@ -4,16 +4,11 @@ import {
   Ban,
   Boxes,
   Brain,
-  Camera,
   Check,
   ChevronRight,
-  CircleAlert,
   Copy,
   FileCheck,
   GitFork,
-  Info,
-  Layers,
-  Minus,
   ShieldCheck,
   Sparkles,
   Wrench,
@@ -27,7 +22,6 @@ import { Markdown } from '@/components/ui/Markdown';
 import { InBlock } from './InBlock';
 import { DeliverableCards } from './DeliverableCards';
 import { charCount, type Entry } from '@/state/entries';
-import { frontMessageText } from './frontMessageText';
 import type { TurnPhase } from '@/streamBlocks';
 import { formatDuration, formatTokens, oneLine, tokPerSecond } from '@/utils/format';
 import type { TKey } from '@/i18n';
@@ -113,7 +107,12 @@ export const EntryView = memo(function EntryView({
         </div>
       );
     case 'note':
-      return <NoteRow entry={entry} />;
+      // Notes are not drawn here any more: the notice center capsule is their
+      // one surface (`@/components/NoticeCenter`), and the unread ledger it
+      // keeps is only honest if no copy of the row also lands on the floor.
+      // The entry still occupies its slot in the partition, so the fold spans
+      // and the "notes are not conversation" tests are untouched.
+      return null;
     case 'block':
       return <InBlock entry={entry} />;
     default:
@@ -758,70 +757,6 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
           <div className="e-reason-body scroll-fade">{entry.text}</div>
         </div>
       </div>
-    </div>
-  );
-}
-
-/* ---------------- 12. attached / system rows ---------------- */
-
-/**
- * The colour a note's tone earns it, where it has one of its own.
- *
- * `warn` and `error` used to be missing from this list, so a failure was drawn in
- * the same `--fg-faint` grey as every ordinary notice around it: the icon changed
- * and nothing else did. That is worst exactly where notes cluster — a
- * `subagent problem` row landed between two "started/finished" rows that looked
- * identical to it. The two colours are the ones the design system gives the same
- * meanings everywhere else (`component-states.md`, the badge mapping).
- */
-const NOTE_TONE_CLASS: Record<string, string> = {
-  degraded: ' is-degraded',
-  compacted: ' is-compacted',
-  image: ' is-image',
-  warn: ' is-warn',
-  error: ' is-error',
-};
-
-/**
- * Exported because the first screen renders notices too: they are session
- * content, and the design is explicit that the first screen must not squeeze
- * them out. One implementation, so the two places cannot drift.
- */
-export function NoteRow({ entry }: { entry: Extract<Entry, { kind: 'note' }> }) {
-  const t = useT();
-  const icon =
-    entry.tone === 'degraded' ? (
-      <Layers size={11} />
-    ) : entry.tone === 'compacted' ? (
-      <Minus size={11} />
-    ) : entry.tone === 'image' ? (
-      <Camera size={11} />
-    ) : entry.tone === 'error' ? (
-      <CircleAlert size={11} />
-    ) : entry.tone === 'warn' ? (
-      <AlertTriangle size={11} />
-    ) : (
-      <Info size={11} />
-    );
-
-  const cls = NOTE_TONE_CLASS[entry.tone] ?? '';
-
-  return (
-    <div className={`e-note${cls}`} data-code={entry.code}>
-      {icon}
-      {/* **Two sources, and they are not interchangeable.** A runtime notice
-          carries the runtime's own sentence and is displayed verbatim —
-          translating it would invent a second source for the same fact. A
-          sentence *this window* is saying arrives as a code (`entry.message`)
-          and is worded here, from i18n, because the store has no business
-          holding English.
-
-          Exactly one of the two is set; the fallback order is what makes a note
-          with neither render as nothing rather than as a blank row that looks
-          like a layout bug. */}
-      <span className="en-text">
-        {entry.message ? frontMessageText(t, entry.message) : entry.text}
-      </span>
     </div>
   );
 }

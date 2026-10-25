@@ -7,7 +7,7 @@
  * These constants are the stable fallbacks; every one of them is read-only by
  * convention (never push into one).
  */
-import type { Entry, NoteEntry } from '@/state/entries';
+import type { Entry } from '@/state/entries';
 import type { VmInitTool, VmMcp, VmModel, VmSkill } from '@/runtime/adapt';
 import type { AttachedFile, PastedImage } from '@/runtime/paste';
 import type { FileEntry, ModelAlias, TerminalRow } from '@/protocol/types';
@@ -15,7 +15,6 @@ import type { SavedSessions } from './store';
 
 
 export const NO_ENTRIES: Entry[] = [];
-export const NO_NOTES: NoteEntry[] = [];
 export const NO_STRINGS: string[] = [];
 /**
  * The saved-session list for a workspace nothing has been heard about yet.

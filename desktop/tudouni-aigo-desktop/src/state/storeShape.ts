@@ -731,6 +731,13 @@ export interface AppStore {
    * `startupProblem` instead.
    */
   countDrop(key: string): void;
+  /**
+   * Mark every note the active session holds as seen by the notice center.
+   *
+   * Called when the capsule's popover opens. Only the ledger moves — the notes
+   * themselves stay in `entries`, where the popover reads them.
+   */
+  markNotesRead(): void;
   /** Record a session's own start-up refusal. */
   setSessionProblem(key: string, problem: string | null): void;
   /** Retry a session that failed to start, in the same workspace. */

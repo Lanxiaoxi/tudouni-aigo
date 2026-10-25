@@ -9,8 +9,6 @@ import { useT } from '@/i18n/useT';
 import { mottoOfDay } from '@/i18n';
 import { StartupNoticeLine, ChooseWorkspaceButton } from '@/components/StartupNotice';
 import { Logo } from '@/components/ui/Logo';
-import { NoteRow } from '@/components/stream/EntryView';
-import type { Entry } from '@/state/entries';
 import { formatPath, formatRelative } from '@/utils/format';
 
 /**
@@ -27,11 +25,9 @@ import { formatPath, formatRelative } from '@/utils/format';
  * ("what was the key for this?") actually comes up. See `TopBar`.
  *
  * Content priority when the window is short: spare recent rows go first, then
- * all but the identity block's first lines. Runtime notices are handed in and
- * rendered **below** all of it — they belong to the session, and the design is
- * explicit that they are not squeezed out by this screen. A workspace whose
- * runtime failed to start would otherwise show a friendly greeting and no
- * reason why.
+ * all but the identity block's first lines. Runtime notices are **not** handed
+ * in here any more — the notice center capsule floats over this screen and is
+ * their one surface.
  *
  * Decision 1: the identity block shows **both** versions — the desktop's own,
  * and the runtime's, read back from `--version` at start-up. Decision 3: the
@@ -41,10 +37,7 @@ import { formatPath, formatRelative } from '@/utils/format';
 
 const MAX_RECENT = 4;
 
-/** Notices only: the first screen renders system rows, not the conversation. */
-type NoteEntry = Extract<Entry, { kind: 'note' }>;
-
-export function Welcome({ notices }: { notices: NoteEntry[] }) {
+export function Welcome() {
   const t = useT();
   const userName = useApp((s) => s.userName);
   const desktopVersion = useApp((s) => s.desktopVersion);
@@ -236,16 +229,6 @@ export function Welcome({ notices }: { notices: NoteEntry[] }) {
             )}
           </div>
         </section>
-
-        {/* Runtime notices. Session content, so they sit below the two blocks
-            and are never dropped — the words are the runtime's own, verbatim. */}
-        {notices.length > 0 ? (
-          <section className="welcome-notices">
-            {notices.map((entry) => (
-              <NoteRow key={entry.id} entry={entry} />
-            ))}
-          </section>
-        ) : null}
       </div>
     </div>
   );

@@ -1143,6 +1143,15 @@ export const en = {
     'The runtime did not answer within {seconds} seconds, so this prompt was not sent. Try again once the session is ready.',
   'note.handshake.timeoutTask':
     'The runtime did not answer within {seconds} seconds, so “{task}” was not started. Try again once the session is ready.',
+
+  /* ---- the notice center capsule ----
+   *
+   * Only the capsule's own chrome is worded here. The rows inside it are
+   * **not**: a runtime notice is displayed verbatim, and a front-end note is
+   * worded from its own `note.*` key above — the capsule is a surface, not a
+   * second source for any sentence. */
+  'noticeCenter.label': 'Notices',
+  'noticeCenter.aria': 'Notices: {n} total, {unread} unread',
   'panel.help.title': 'Help',
   'panel.help.commands': 'Commands',
   'panel.help.keys': 'Keybindings',

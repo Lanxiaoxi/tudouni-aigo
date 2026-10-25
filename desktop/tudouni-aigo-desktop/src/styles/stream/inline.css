@@ -1,44 +1,5 @@
 
 
-/* ---------------- 12. 附加 / 系统行 ---------------- */
-.e-note {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 3px 0;
-  font-size: var(--text-caption);
-  color: var(--fg-faint);
-}
-
-.e-note .en-text {
-  min-width: 0;
-}
-
-.e-note.is-degraded {
-  color: var(--warning);
-}
-
-.e-note.is-compacted {
-  color: var(--info);
-}
-
-.e-note.is-image {
-  color: var(--fg-muted);
-}
-
-/* A notice that says something is wrong has to be findable while scrolling past a
-   cluster of ordinary ones. Both colours are the ones the design system already
-   gives these meanings (`component-states.md`: 等待/警告 `--warning`,
-   错误 `--destructive`); the tone also picks the icon, so colour is never the only
-   signal. */
-.e-note.is-warn {
-  color: var(--warning);
-}
-
-.e-note.is-error {
-  color: var(--destructive);
-}
-
 /* ---------------- §5 流内大屏文本块 ---------------- */
 .inblock {
   border: 1px solid var(--border);

@@ -644,6 +644,17 @@ export interface SessionRuntime {
    * stream when `session_load` arrives.
    */
   handshakeNotices: NoteEntry[];
+  /**
+   * How many of the note entries in `entries` the notice center has shown.
+   *
+   * The unread count is `notes − notesReadCount`, and it has to live here rather
+   * than in the component because notes land in the store while the popover is
+   * closed — and while another view (the board, a terminal) covers the stream
+   * entirely. Rebuilt to the full count by every `session_load`, so a restored
+   * session does not open with a stale badge; moved to the current count by
+   * `markNotesRead` when the popover opens.
+   */
+  notesReadCount: number;
   activeRunId: string | null;
   lastRunId: string | null;
   /**

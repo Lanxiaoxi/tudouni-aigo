@@ -1,0 +1,169 @@
+/* ---------------- 通知中心胶囊（notice center） ----------------
+ *
+ * The floating capsule that gathers every note entry the session holds —
+ * runtime diagnostics, panel replies, front-end event lines — into one
+ * surface. It docks to the bottom centre of `.app-stream` (which is
+ * `position: relative`; the capsule is the only absolutely-positioned occupant
+ * there, overlaying rather than replacing the view under it), and opens
+ * upward as a Radix popover.
+ *
+ * Motion stays inside the token contract: opacity and transform only, no
+ * width/height animation. The dock carries the centring transform; the
+ * capsule carries the entrance, so the two transforms never fight. */
+
+.nc-dock {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-sticky);
+  /* A hover shield, not a click target: the stream scrolls under the dock's
+     empty half, and only the capsule itself takes the pointer. */
+  pointer-events: none;
+}
+
+.nc-capsule {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  animation: nc-rise var(--motion-base) var(--ease-out) 1;
+}
+
+.nc-capsule:hover {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+.nc-capsule .nc-label {
+  min-width: 0;
+}
+
+.nc-capsule svg {
+  color: var(--fg-muted);
+  flex: none;
+}
+
+/* The unread counter. Warning-coloured when an unread note is a warning —
+   the same mapping every other surface uses (`--warning` for 等待/警告,
+   `--destructive` for errors), so colour is never the only signal: the
+   number is there too. */
+.nc-badge {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--info-subtle);
+  color: var(--info);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  text-align: center;
+}
+
+.nc-badge.is-warn {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+/* ---------------- the open panel ----------------
+ *
+ * A portal, so the transcript's `overflow: hidden` cannot clip it. The reveal
+ * follows the dialog convention: opacity + a small rise, driven by
+ * `data-state` so Radix's open/close is the only trigger. */
+
+.nc-popover {
+  z-index: var(--z-popover);
+  width: min(560px, calc(100vw - 48px));
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  animation: nc-rise var(--motion-base) var(--ease-out) 1;
+}
+
+.nc-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  font-size: var(--text-compact);
+  font-weight: 600;
+  color: var(--fg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.nc-head .nc-total {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+.nc-list {
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* One note. The tone colours are the ones the inline row used to wear — the
+   rows moved here whole, and so did the rule that a warning is findable while
+   scrolling past a cluster of ordinary ones. */
+.nc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 3px 0;
+  font-size: var(--text-caption);
+  line-height: 1.5;
+  color: var(--fg-faint);
+}
+
+.nc-row svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.nc-row .nc-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.nc-row.is-degraded {
+  color: var(--warning);
+}
+
+.nc-row.is-compacted {
+  color: var(--info);
+}
+
+.nc-row.is-image {
+  color: var(--fg-muted);
+}
+
+.nc-row.is-warn {
+  color: var(--warning);
+}
+
+.nc-row.is-error {
+  color: var(--destructive);
+}
+
+@keyframes nc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

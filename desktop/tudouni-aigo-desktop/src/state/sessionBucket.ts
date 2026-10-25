@@ -36,6 +36,7 @@ export function createSessionBucket(
     entries: [],
     restoredTurns: 0,
     handshakeNotices: [],
+    notesReadCount: 0,
     activeRunId: null,
     lastRunId: null,
     dropped: 0,

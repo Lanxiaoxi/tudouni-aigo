@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
-import { activeRuntime, NO_ENTRIES, NO_NOTES, useApp } from '@/state/store';
+import { activeRuntime, NO_ENTRIES, useApp } from '@/state/store';
 import { draggedRailWidth, type RailSide } from '@/railWidth';
 import { conversationView, showsComposer, showsTranscript } from '@/conversationView';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
@@ -25,6 +25,7 @@ import { Composer } from '@/components/chrome/Composer';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { WorkspaceSidebar } from '@/components/sidebar/WorkspaceSidebar';
 import { Welcome } from '@/components/Welcome';
+import { NoticeCenter } from '@/components/NoticeCenter';
 import { Booting } from '@/components/Booting';
 import { StartupProblem } from '@/components/StartupProblem';
 import { SessionProblem } from '@/components/SessionProblem';
@@ -77,7 +78,6 @@ export function App() {
   // "Starting the runtime…" over a process that already gave up.
   const problem = rt?.problem ?? null;
   const entries = rt?.entries ?? NO_ENTRIES;
-  const handshakeNotices = rt?.handshakeNotices ?? NO_NOTES;
   const sidebarVisible = useApp((s) => s.sidebarVisible);
   const leftbarVisible = useApp((s) => s.leftbarVisible);
   const boardOpen = useApp((s) => s.boardOpen);
@@ -286,12 +286,20 @@ export function App() {
               ) : view === 'board' ? (
                 <SessionBoard />
               ) : view === 'welcome' ? (
-                <Welcome notices={handshakeNotices} />
+                <Welcome />
               ) : view === 'booting' ? (
                 <Booting />
               ) : (
                 <StreamView />
               )}
+              {/* The notice center — **a seventh occupant, and the only one that
+                  overlays rather than replaces**. It belongs to the two
+                  conversation-shaped views: the board and the terminal own the
+                  whole floor while they are up, so the capsule stands down there,
+                  and notes keep landing in the bucket, where the badge answers
+                  for them on the way back. It renders nothing at all while the
+                  session holds no notes, so a clean session has no capsule. */}
+              {view === 'welcome' || view === 'stream' ? <NoticeCenter /> : null}
             </main>
 
             {/* The composer is the conversation's, and it is **not drawn while a

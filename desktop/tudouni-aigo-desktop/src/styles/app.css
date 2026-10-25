@@ -1543,16 +1543,6 @@
   color: var(--fg-secondary);
 }
 
-/* Runtime notices on the first screen. Session content, so they sit below the
-   three blocks and are never dropped by a short window. */
-.welcome-notices {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-top: 1px solid var(--border-subtle);
-  padding-top: var(--space-3);
-}
-
 .welcome-recent {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

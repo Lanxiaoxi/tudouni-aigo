@@ -29,6 +29,11 @@ const outDir = resolve(root, '.test-build');
  */
 const SUITES = [
   'projection.test.ts',
+  // The notice center: the unread ledger behind the capsule badge, the store
+  // action that moves it, and the fact that the transcript floor no longer
+  // draws notes — three rules that are only honest together, and each
+  // invisible when wrong on its own.
+  'notice-center.test.tsx',
   // The usage heatmap's date math: the 365-day window, the seven-row columns,
   // the quartile ramp and the week buckets. All pure, which is why a midnight
   // or a leap day can be asserted instead of stared at.
