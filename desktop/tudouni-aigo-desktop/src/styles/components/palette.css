@@ -266,3 +266,222 @@
   color: var(--fg-faint);
   text-align: center;
 }
+
+/* ---------------- 模型面板（ModelPanel） ----------------
+   目录按路由分组：可折叠的组头、贯穿可见行的连续序号、
+   所有组共享的「上下文窗口 / 强度」两列。列对齐靠同一张
+   grid：序号与强度定宽，窗口列右缘固定（justify-self: end），
+   数字逐行对齐。 */
+
+/* 搜索框：圆角填充底，计数（命中 / 总数）住在框内右缘。 */
+.mp-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  height: 34px;
+  margin: 0 var(--space-4) var(--space-2);
+  padding: 0 var(--space-3);
+  background: var(--bg-muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--fg-faint);
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.mp-search:focus-within {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+
+.mp-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.mp-search input::placeholder {
+  color: var(--fg-faint);
+}
+
+.mp-search input:focus-visible {
+  outline: none;
+}
+
+.mp-search-count {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 列表头与模型行共用一张列模板：22px 序号、弹性名称列、
+   max-content 窗口列（右对齐）、定宽强度列（右对齐）。 */
+.mp-cols,
+.mp-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) max-content 48px;
+  column-gap: var(--space-3);
+  align-items: center;
+}
+
+.mp-cols {
+  padding: var(--space-2) var(--space-3) var(--space-2) 28px;
+  margin-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.mp-col-window,
+.mp-col-effort {
+  justify-self: end;
+}
+
+/* 路由组头：chevron + 路由名，右侧组的模型数。 */
+.mp-group {
+  margin-bottom: var(--space-1);
+}
+
+.mp-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 30px;
+  padding: 2px var(--space-3) 2px var(--space-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.mp-group-head:hover {
+  background: var(--bg-muted);
+}
+
+.mp-group-head:hover .caret {
+  color: var(--fg-secondary);
+}
+
+.mp-group-name {
+  font-size: var(--text-body);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-group-count {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* 模型行。行内左移 28px：序号落在组名之下，名称再右一档。 */
+.mp-row {
+  min-height: 30px;
+  padding: 3px var(--space-3) 3px 28px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.mp-row:hover,
+.mp-row.is-active {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* 当前行：accent 淡底 + 左缘 2px accent 条。inset 阴影而不是
+   border-left，行盒不因选中而位移。写在 hover 之后，悬停不盖掉它。 */
+.mp-row.is-current {
+  background: var(--accent-subtle);
+  color: var(--fg);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.mp-seq {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-body);
+  color: var(--fg);
+}
+
+.mp-name .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-vision {
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.mp-flag {
+  flex: none;
+  color: var(--warning);
+}
+
+.mp-current {
+  flex: none;
+  font-size: var(--text-caption);
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.mp-window {
+  justify-self: end;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 目录给这一行写了 note：窗口数字随「!」一起读作警示色。 */
+.mp-window.is-flagged {
+  color: var(--warning);
+}
+
+.mp-effort {
+  justify-self: end;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+/* 别名区：最后一个路由组之下，隔一档再落，读作附录而非又一组路由。 */
+.mp-aliases {
+  margin-top: var(--space-3);
+}
+
+/* 别名行不可选：只读，不响应悬停。 */
+.mp-alias {
+  cursor: default;
+}
+
+.mp-alias:hover {
+  background: transparent;
+}

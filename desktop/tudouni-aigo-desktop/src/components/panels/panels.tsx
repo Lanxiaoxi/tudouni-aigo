@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
   Archive,
   ArchiveRestore,
   ArrowUp,
   Bot,
+  ChevronRight,
   Clock,
   Download,
+  Eye,
   Folder,
   Plus,
   Search,
@@ -14,7 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
-import { notesByServer } from '@/runtime/adapt';
+import { notesByServer, type VmModel } from '@/runtime/adapt';
 import {
   NO_ALIASES,
   NO_FILE_ENTRIES,
@@ -59,6 +62,25 @@ const closePanel = () => useApp.getState().closePanel();
    Two routes can carry the same model name, so `provider/model` is
    what actually gets sent — the palette must be able to tell them apart.
    ============================================================ */
+/**
+ * The catalogue, the way the config declares it: one collapsible group per
+ * route, the route's models under it, a shared column pair (context window,
+ * effort) across every group.
+ *
+ * **The number on a row is the pick.** The sequence runs continuously across
+ * the visible groups and is what `1`–`9` choose, so a filter change or a fold
+ * renumbers — a number that outlived its row would pick a different model than
+ * the one printed under the key.
+ *
+ * **A search unfolds.** The at-rest list honors the folds; a search that left
+ * a match hidden behind one would be a search that did not search. The counter
+ * in the search box is the honest version of the same rule: what matched
+ * against what exists.
+ *
+ * **The `!` is the note.** The runtime's catalogue carries an optional free-text
+ * `note` per model; a row with one wears the mark and the note is the mark's
+ * tooltip — data shown, not a threshold invented here.
+ */
 export function ModelPanel() {
   const t = useT();
   // The catalogue belongs to the session's child — it is read from that child's
@@ -66,86 +88,250 @@ export function ModelPanel() {
   const models = useSessionField((rt) => rt.models, NO_MODEL_ROWS);
   const aliases = useSessionField((rt) => rt.modelAliases, NO_ALIASES);
   const chooseModel = useApp((s) => s.chooseModel);
+  const [q, setQ] = useState('');
+  /** Route names folded shut. Reset on every fold, like every filter change:
+   *  the cursor must not land on a row the fold hid. */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
 
-  const rows = models;
+  /** Substring match over the three strings a person could type: the model
+   *  name, its display label, and the route it sits under. */
+  const matches = useCallback((row: VmModel) => {
+    const needle = q.trim().toLowerCase();
+    if (needle === '') return true;
+    return (
+      row.id.toLowerCase().includes(needle) ||
+      row.label.toLowerCase().includes(needle) ||
+      row.provider.toLowerCase().includes(needle)
+    );
+  }, [q]);
+
+  /** The catalogue grouped by route, in the catalogue's own order. The route
+   *  order is declared in the config, not derived (see the runtime's
+   *  `providerNames`) — grouping must not re-derive what the order already
+   *  states. */
+  const groups = useMemo(() => {
+    const out: Array<{ provider: string; models: VmModel[] }> = [];
+    const at = new Map<string, number>();
+    for (const row of models) {
+      if (!matches(row)) continue;
+      const spot = at.get(row.provider);
+      if (spot === undefined) {
+        at.set(row.provider, out.length);
+        out.push({ provider: row.provider, models: [row] });
+      } else {
+        out[spot].models.push(row);
+      }
+    }
+    return out;
+  }, [models, matches]);
+
+  const searching = q.trim() !== '';
+  /** The rows still on screen — what the numbers count and what the keyboard
+   *  walks. The group **heads** render from `groups`, never from this: a fold
+   *  hides a group's rows, not the head that re-opens it. */
+  const openGroups = useMemo(
+    () => (searching ? groups : groups.filter((group) => !collapsed.has(group.provider))),
+    [groups, collapsed, searching],
+  );
+
+  /** The rows a person can see, in render order, numbered from 1. */
+  const visible = useMemo(
+    () => openGroups.flatMap((group) => group.models).map((model, i) => ({ model, seq: i + 1 })),
+    [openGroups],
+  );
+  const seqOf = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const { model, seq } of visible) map.set(`${model.provider}/${model.id}`, seq);
+    return map;
+  }, [visible]);
+
   const { active, setActive } = useListKeys({
-    count: rows.length,
+    count: visible.length,
     onClose: closePanel,
     onPick: (i) => {
-      const row = rows[i];
+      const row = visible[i]?.model;
       // `set_model` requires an exact name and does no fuzzy matching, so the
       // qualified form is what is sent when a name exists on several routes.
       if (row) chooseModel(row.provider ? `${row.provider}/${row.id}` : row.id);
     },
   });
 
-  return (
-    <PanelShell title={t('panel.model.title')} count={rows.length} note={t('cmd.model.desc')}>
-      <PanelBody>
-        {rows.length === 0 ? (
-          <EmptyState title={t('common.loading')} />
-        ) : (
-          rows.map((model, i) => (
-            <PanelRow
-              key={`${model.provider}/${model.id}`}
-              index={i + 1}
-              active={active === i}
-              selected={model.current}
-              onHover={() => setActive(i)}
-              onPick={() => chooseModel(`${model.provider}/${model.id}`)}
-              aside={
-                model.current ? (
-                  <Badge tone="success" dot={false}>
-                    {t('panel.model.current')}
-                  </Badge>
-                ) : null
-              }
-            >
-              <div className="row" style={{ gap: 'var(--space-2)' }}>
-                <span className="mono strong">{model.label || model.id}</span>
-                <Badge tone="neutral" dot={false}>
-                  {t('panel.model.route')} {model.provider}
-                </Badge>
-                <span className="caption faint">
-                  {t('panel.model.window')}{' '}
-                  {/* Null means the catalogue does not name a window. */}
-                  {model.window === null ? t('common.unknown') : formatTokens(model.window)}
-                </span>
-                {model.vision ? (
-                  <Badge tone="info" dot={false}>
-                    {t('panel.model.vision')}
-                  </Badge>
-                ) : null}
-                {model.effort ? (
-                  <span className="caption faint">
-                    {t('session.effort')} {model.effort}
-                  </span>
-                ) : null}
-              </div>
-              {model.summary || model.note ? (
-                <div className="caption muted">{model.summary || model.note}</div>
-              ) : null}
-            </PanelRow>
-          ))
-        )}
+  function toggleRoute(provider: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(provider)) next.delete(provider);
+      else next.add(provider);
+      return next;
+    });
+    setActive(0);
+  }
 
-        {/* Aliases are names the runtime accepts that are not in the list. They
-            are data, not an answer: shown and labelled rather than hidden. */}
-        {aliases.length > 0 ? (
+  const total = models.length;
+
+  return (
+    <PanelShell title={t('panel.model.title')} count={total} note={t('cmd.model.desc')}>
+      <div className="mp-search">
+        <Search size={14} className="muted" />
+        <input
+          autoFocus
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            // The cursor must not stay on a row the new query hid — it would
+            // pick the wrong model on Enter.
+            setActive(0);
+          }}
+          placeholder={t('panel.model.search')}
+          aria-label={t('panel.model.search')}
+          spellCheck={false}
+        />
+        <span className="mp-search-count">
+          {visible.length} / {total}
+        </span>
+      </div>
+
+      <PanelBody>
+        {total === 0 ? (
+          <EmptyState title={t('common.loading')} />
+        ) : visible.length === 0 ? (
+          <EmptyState title={t('panel.model.noMatch')} />
+        ) : (
           <>
-            <div className="cmdk-group">{t('panel.model.aliases')}</div>
-            {aliases.map((alias) => (
-              <PanelRow key={alias.id} aside={<Badge tone="neutral" dot={false}>{t('panel.model.alias')}</Badge>}>
-                <div className="row" style={{ gap: 'var(--space-2)' }}>
-                  <span className="mono muted">{alias.id}</span>
-                  <span className="caption faint">→ {alias.of}</span>
-                </div>
-              </PanelRow>
-            ))}
+            <div className="mp-cols" aria-hidden>
+              <span />
+              <span>{t('panel.model.colModel')}</span>
+              <span className="mp-col-window">{t('panel.model.colWindow')}</span>
+              <span className="mp-col-effort">{t('panel.model.colEffort')}</span>
+            </div>
+
+            {groups.map((group) => {
+              const open = searching || !collapsed.has(group.provider);
+              return (
+                <section key={group.provider} className="mp-group">
+                  <button
+                    type="button"
+                    className="mp-group-head"
+                    aria-expanded={open}
+                    onClick={() => toggleRoute(group.provider)}
+                  >
+                    <ChevronRight size={13} className={`caret${open ? ' caret-open' : ''}`} />
+                    <span className="mp-group-name">{group.provider}</span>
+                    <span className="mp-group-count">
+                      {t('panel.model.count', { n: group.models.length })}
+                    </span>
+                  </button>
+
+                  {open
+                    ? group.models.map((model) => {
+                        const seq = seqOf.get(`${model.provider}/${model.id}`) ?? 0;
+                        return (
+                          <ModelRow
+                            key={`${model.provider}/${model.id}`}
+                            model={model}
+                            seq={seq}
+                            active={active === seq - 1}
+                            onHover={() => setActive(seq - 1)}
+                            onPick={() =>
+                              chooseModel(model.provider ? `${model.provider}/${model.id}` : model.id)
+                            }
+                          />
+                        );
+                      })
+                    : null}
+                </section>
+              );
+            })}
+
+            {/* Aliases are names the runtime accepts that are not in the list. They
+                are data, not an answer: shown and labelled rather than hidden. */}
+            {aliases.length > 0 ? (
+              <div className="mp-aliases">
+                <div className="cmdk-group">{t('panel.model.aliases')}</div>
+                {aliases.map((alias) => (
+                  <div key={alias.id} className="mp-row mp-alias">
+                    <span className="mp-seq" />
+                    <span className="mp-name">
+                      <span className="mono muted">{alias.id}</span>
+                      <span className="caption faint">→ {alias.of}</span>
+                    </span>
+                    <span />
+                    <span />
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </>
-        ) : null}
+        )}
       </PanelBody>
     </PanelShell>
+  );
+}
+
+/**
+ * One model, in the catalogue's table shape: sequence, name, and the two
+ * numbers the list is scanned by.
+ *
+ * The whole row picks (like every list row in this dialog family); the summary
+ * rides on the row's tooltip so the catalogue's own sentence about a model is
+ * one hover away without giving every row a second line.
+ */
+function ModelRow({
+  model,
+  seq,
+  active,
+  onHover,
+  onPick,
+}: {
+  model: VmModel;
+  seq: number;
+  active: boolean;
+  onHover: () => void;
+  onPick: () => void;
+}) {
+  const t = useT();
+  // The `!` and the tinted window are the same fact: the catalogue's note about
+  // this model, and the note is the tooltip that says what it is.
+  const flagged = model.note !== '';
+  return (
+    /* `stopPropagation` on the row's own keys, as in `PanelRow`: the panel's
+        keys go through `useListKeys`, whose listener is on `window` — a
+        focused row meant one `Enter` reached both handlers. */
+    <div
+      className={`mp-row${model.current ? ' is-current' : ''}${active ? ' is-active' : ''}`}
+      role="button"
+      tabIndex={0}
+      title={model.summary || undefined}
+      onClick={onPick}
+      onMouseEnter={onHover}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          onPick();
+        }
+      }}
+    >
+      <span className="mp-seq">{seq}</span>
+      <span className="mp-name">
+        <span className="mono">{model.label || model.id}</span>
+        {model.vision ? (
+          <Tip label={t('panel.model.vision')}>
+            <Eye size={13} className="mp-vision" />
+          </Tip>
+        ) : null}
+        {flagged ? (
+          <Tip label={model.note}>
+            <AlertCircle size={13} className="mp-flag" />
+          </Tip>
+        ) : null}
+        {model.current ? <span className="mp-current">{t('panel.model.current')}</span> : null}
+      </span>
+      <span className={`mp-window mono${flagged ? ' is-flagged' : ''}`}>
+        {/* Null means the catalogue does not name a window. */}
+        {model.window === null ? '—' : formatTokens(model.window)}
+      </span>
+      <span className="mp-effort">{model.effort || '—'}</span>
+    </div>
   );
 }
 

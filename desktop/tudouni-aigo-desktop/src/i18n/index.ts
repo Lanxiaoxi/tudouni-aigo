@@ -999,11 +999,17 @@ export const en = {
   'panel.commands.runWith': 'run with this argument',
   'panel.model.title': 'Model',
   'panel.model.current': 'current',
-  'panel.model.route': 'route',
-  'panel.model.window': 'window',
-  'panel.model.alias': 'legacy name',
-  'panel.model.aliases': 'Legacy names',
   'panel.model.vision': 'vision',
+  /** The search box: it matches the model name, the display label and the route. */
+  'panel.model.search': 'Search models or routes…',
+  'panel.model.noMatch': 'No model matches',
+  /* The shared column pair above every route group. */
+  'panel.model.colModel': 'Model',
+  'panel.model.colWindow': 'Context window',
+  'panel.model.colEffort': 'Effort',
+  /** A route group's own counter, at the head's right edge. */
+  'panel.model.count': '{n} models',
+  'panel.model.aliases': 'Legacy names',
   'panel.effort.title': 'Reasoning effort',
   'panel.effort.note':
     'The list is sent by the runtime per model — never hardcoded here.',
