@@ -102,7 +102,15 @@ const VERSION = 1
 // with `problem` beside it on refusal — the memory/codeintel shape. Additive
 // in the same way 6 was: a front end that does not know the kind ignores it,
 // and nothing about a session's behaviour depends on the panel being drawn.
-const PROTOCOL = 11
+//
+// 12 splits the usage snapshot's `by_day` by model: a day whose rows record
+// models may carry a `models` map of `{model: tokens}`. Additive in the same
+// way 8 was — a runtime below 12 sends days without the key, and a front end
+// that does not know it reads the day totals exactly as before. The absence
+// rule runs the other way too: a day with no modeled rows omits the key, so
+// a front end that draws per-model charts hides them rather than inventing a
+// split the ledger never recorded.
+const PROTOCOL = 12
 
 // Message keys used by every envelope.
 const (

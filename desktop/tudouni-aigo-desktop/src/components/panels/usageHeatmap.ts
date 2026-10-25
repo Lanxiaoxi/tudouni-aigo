@@ -78,6 +78,15 @@ export function dayLabel(day: string): string {
   return `${MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
 }
 
+/** A short date for the per-model trend's x axis: "Oct 25". A tick has no
+ *  room for the year, and within a 7- or 30-day window it is the same year
+ *  for every tick but a year boundary — the full form stays on the points'
+ *  tooltips, where there is room for it. */
+export function dayLabelShort(day: string): string {
+  const date = parseDay(day);
+  return `${MONTHS[date.getMonth()]} ${date.getDate()}`;
+}
+
 /**
  * The activity ramp's thresholds: the quartiles of the **non-zero** days.
  *

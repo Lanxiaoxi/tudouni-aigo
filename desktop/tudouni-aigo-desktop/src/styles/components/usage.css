@@ -199,3 +199,166 @@
   width: var(--usage-cell);
   height: var(--usage-cell);
 }
+
+/* ============================================================
+   The per-model charts: the daily trend and the model-share donut.
+
+   One custom property carries each series' colour (`--series`, set by the
+   `.usage-series-*` classes below), so a model's line, its dots, its donut
+   arc and its legend swatch cannot disagree — the colour is decided once,
+   where the series is named, and everything else inherits it.
+   ============================================================ */
+
+.usage-series-0 { --series: var(--usage-m1); }
+.usage-series-1 { --series: var(--usage-m2); }
+.usage-series-2 { --series: var(--usage-m3); }
+.usage-series-3 { --series: var(--usage-m4); }
+.usage-series-4 { --series: var(--usage-m5); }
+.usage-series-5 { --series: var(--usage-m6); }
+/* The folded remainder is no single model, so it wears the neutral shade
+   rather than any series colour. */
+.usage-series-other { --series: var(--fg-faint); }
+
+/* The trend chart. The SVG scales to the card's width at a fixed aspect —
+   the same responsive trick the reference draws, without a resize observer. */
+.usage-trend {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: var(--space-3);
+}
+
+.usage-trend-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+}
+
+.usage-trend-line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.usage-trend-dot {
+  fill: var(--series);
+}
+
+.usage-trend-tick {
+  font-size: 11px;
+  fill: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The trend's legend: one row per series, the range total beside the name. */
+.usage-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.usage-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  min-width: 0;
+}
+
+.usage-model-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--series);
+  flex: none;
+}
+
+.usage-model-name {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.usage-model-total {
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The donut card. */
+.usage-share {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.usage-donut {
+  width: 168px;
+  height: 168px;
+  flex: none;
+}
+
+.usage-donut-arc {
+  fill: none;
+  stroke: var(--series);
+}
+
+.usage-donut-total {
+  font-size: 20px;
+  font-weight: 600;
+  fill: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-donut-unit {
+  font-size: 11px;
+  fill: var(--fg-faint);
+}
+
+/* The slice list: name, absolute tokens, share — the ring's numbers in the
+   order the arcs were drawn. */
+.usage-share-list {
+  flex: 1;
+  min-width: 220px;
+}
+
+.usage-share-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-caption);
+}
+
+.usage-share-row:last-child {
+  border-bottom: 0;
+}
+
+.usage-share-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.usage-share-tokens {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-share-pct {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 4ch;
+  text-align: right;
+}

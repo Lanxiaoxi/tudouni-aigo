@@ -411,7 +411,8 @@
           "`generated_at`（这次汇总的时间）；`totals`（`{prompt, cached, miss, completion, tokens, turns, calls, days}`，全量历史；`tokens = prompt + completion`，缓存命中算在内）；",
           "`peak`（`{day, tokens, turns}`，**全量历史**里最高的一天；一条记录都没有时缺省，不画 0）；`longest_run_ms`（最长一轮的 wall time，同样一轮都没有时缺省）；",
           "`streak`（`{current, longest}`，连续活跃天数；current 从今天往回数，今天还没动过就退到昨天 —— 一天没过完不算断）；",
-          "`by_day`（`[{day, tokens, turns}]`，只含最近 365 天里**有记录**的日子、升序；空格子由前端自己补）。",
+          "`by_day`（`[{day, tokens, turns, models?}]`，只含最近 365 天里**有记录**的日子、升序；空格子由前端自己补）。",
+          "`by_day[].models`（protocol 12 起，**有才带**）：`{model: tokens}` 的按模型拆分。每行总账记的是该轮**最后一次成功调用**的模型（总账自己既定的近似），没记模型的行只进当日合计、不进任何桶 —— 所以拆分之和可以小于 `tokens`，这是诚实答案不是漏账；一整天都没有可归的模型时整个键缺省，前端据此隐藏按模型的两张图，而不是画一张编出来的图。",
           "**只发数字**：总账里只有 id 和数值，这里不加任何正文 —— 和 stats 汇总层同一条规矩。"
         ]
       }

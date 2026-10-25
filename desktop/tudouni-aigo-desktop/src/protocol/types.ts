@@ -65,8 +65,16 @@ export const ENVELOPE_VERSION = 1;
  * numbers. Purely additive — a front end that does not know the kind ignores
  * it, and nothing about a session's behaviour depends on the panel being
  * drawn.
+ *
+ * **12** splits the usage snapshot's `by_day` by model: a day whose rows
+ * record models may carry a `models` map of `{model: tokens}`. Additive in
+ * the same way 8 was — a runtime below 12 sends days without the key, and a
+ * front end that does not know it reads the day totals exactly as before.
+ * The absence rule runs the other way too: a day with no modeled rows omits
+ * the key, so a front end that draws per-model charts hides them rather than
+ * inventing a split the ledger never recorded.
  */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 /* ============================================================
    Shared vocabulary
@@ -655,6 +663,14 @@ export interface UsageDay {
   day: string;
   tokens: number;
   turns: number;
+  /** The day's tokens split by model (protocol 12). A turn's row names the
+   *  model of its last successful call, and a row without one lands in the
+   *  day's totals but in no bucket here — so the split can sum to less than
+   *  `tokens`, which is the honest answer, not a lost ledger row. Absent
+   *  when the runtime predates the split or the day has no modeled rows;
+   *  the panel hides its per-model charts rather than drawing an invented
+   *  one. */
+  models?: Record<string, number>;
 }
 
 /** `ui(usage)`'s `usage` object: the cross-workspace usage ledger folded into

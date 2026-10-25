@@ -214,6 +214,18 @@
   --usage-l3: rgba(52, 211, 153, 0.66);
   --usage-l4: #34D399;
 
+  /* The per-model charts' palette (the usage panel's trend lines and donut
+     arcs). Six slots because a person configures at most a handful of
+     routes; a seventh model folds into "other" (drawn in --fg-faint) rather
+     than recycling a colour onto a second model. Solid colours, no alpha:
+     the strokes are thin, and translucency would grey them into the card. */
+  --usage-m1: #60A5FA;
+  --usage-m2: #34D399;
+  --usage-m3: #F59E0B;
+  --usage-m4: #A78BFA;
+  --usage-m5: #22D3EE;
+  --usage-m6: #F472B6;
+
   --info:          #60A5FA;  --info-subtle:    rgba(96, 165, 250, 0.14);
   --warning:       #F59E0B;  --warning-subtle: rgba(245, 158, 11, 0.15);
   --warning-border: rgba(245, 158, 11, 0.45);  /* 看板卡片「等你回答」的描边，配对 accent-border */
@@ -376,6 +388,16 @@
   --usage-l2: #A3D9B1;
   --usage-l3: #64BD7D;
   --usage-l4: #059669;
+
+  /* The per-model charts' palette — the dark theme's comment up top applies.
+     Each slot is the light-theme retune of its dark counterpart: darker and
+     less pastel, so the thin strokes keep their contrast on a pale card. */
+  --usage-m1: #2563EB;
+  --usage-m2: #059669;
+  --usage-m3: #D97706;
+  --usage-m4: #7C3AED;
+  --usage-m5: #0891B2;
+  --usage-m6: #DB2777;
 
   --info:          #2563EB;  --info-subtle:    #EAF1FC;
   --warning:       #A66314;  --warning-subtle: #FBF1E1;

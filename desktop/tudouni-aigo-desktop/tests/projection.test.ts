@@ -184,7 +184,10 @@ test('the envelope version is the one hard failure point', () => {
   // requests back to back before it waits.
   // 11 adds the cross-workspace usage ledger: `usage_stats` inbound and the
   // `usage` kind on the `ui` channel, both purely additive.
-  assert.equal(PROTOCOL_VERSION, 11);
+  // 12 splits the usage snapshot's `by_day` by model: a day may carry a
+  // `models` map, absent when the runtime predates it or the day has no
+  // modeled rows.
+  assert.equal(PROTOCOL_VERSION, 12);
 
   // Decoding an `init` from a **3** runtime still works: the field is documented
   // as survivable, and the capture in `tests/fixtures/opening.jsonl` is one, so

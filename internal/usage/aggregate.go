@@ -24,6 +24,15 @@ type Day struct {
 	Day    string
 	Tokens int
 	Turns  int
+	// Models splits the day's tokens by the model each turn's row names — the
+	// turn's last successful call, the same approximation the row itself
+	// carries (see the ledger's fold). A row without a model lands in the
+	// day's totals but in no bucket here, so the split can sum to less than
+	// `Tokens`: guessing a model for a row that did not record one would
+	// invent spend. A day whose rows all lack a model carries a nil map, and
+	// the payload omits the key — the front end hides its per-model charts
+	// rather than drawing an invented one.
+	Models map[string]int
 }
 
 // Report is the ledger folded into the panel's numbers.
@@ -63,6 +72,7 @@ type Report struct {
 // cannot stop at its edge.
 type dayFold struct {
 	tokens, turns int
+	models        map[string]int
 }
 
 // Aggregate folds the ledger file into a Report.
@@ -117,8 +127,15 @@ func Aggregate(path string, now time.Time) (Report, error) {
 				agg = &dayFold{}
 				days[day] = agg
 			}
-			agg.tokens += intOf(row["prompt"]) + intOf(row["completion"])
+			spent := intOf(row["prompt"]) + intOf(row["completion"])
+			agg.tokens += spent
 			agg.turns++
+			if model := stringOf(row["model"]); model != "" {
+				if agg.models == nil {
+					agg.models = make(map[string]int)
+				}
+				agg.models[model] += spent
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -140,7 +157,7 @@ func Aggregate(path string, now time.Time) (Report, error) {
 			report.Peak = &Day{Day: day, Tokens: agg.tokens, Turns: agg.turns}
 		}
 		if day >= windowStart && day <= today {
-			report.ByDay = append(report.ByDay, Day{Day: day, Tokens: agg.tokens, Turns: agg.turns})
+			report.ByDay = append(report.ByDay, Day{Day: day, Tokens: agg.tokens, Turns: agg.turns, Models: agg.models})
 		}
 	}
 	report.StreakCurrent, report.StreakLongest = streaks(sorted, now)
@@ -227,7 +244,8 @@ func nextDayReverse(day string) string {
 //
 // Only numbers travel — the ledger holds ids and figures, and this payload
 // adds no text to them. The optional facts are omitted rather than zeroed: a
-// day that never happened is absent, not "the busiest day had 0 tokens".
+// day that never happened is absent, not "the busiest day had 0 tokens", and
+// a day with no modeled rows carries no `models` key, not an empty one.
 func (r Report) Payload() map[string]any {
 	payload := map[string]any{
 		"generated_at": r.GeneratedAt,
@@ -259,11 +277,18 @@ func (r Report) Payload() map[string]any {
 	}
 	byDay := make([]map[string]any, 0, len(r.ByDay))
 	for _, day := range r.ByDay {
-		byDay = append(byDay, map[string]any{
+		entry := map[string]any{
 			"day":    day.Day,
 			"tokens": day.Tokens,
 			"turns":  day.Turns,
-		})
+		}
+		// Absent, not empty, when nothing in the day recorded a model: the
+		// front end decides "no per-model charts" from the key's absence, and
+		// an empty map would read as "charts with nothing in them".
+		if len(day.Models) > 0 {
+			entry["models"] = day.Models
+		}
+		byDay = append(byDay, entry)
 	}
 	payload["by_day"] = byDay
 	return payload

@@ -26,6 +26,20 @@ export function formatTokens(n: number | null | undefined): string {
   return n.toLocaleString('en-US');
 }
 
+/** Token counts in the compact form tight spots need ("1.4B", "15.2M",
+ *  "980k"): the donut's centre, unlike the fact cards, has room for neither
+ *  the commas nor the digits they stand for. Same value as `formatTokens`
+ *  would print, said in fewer characters — never a different number. */
+export function formatTokensCompact(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—';
+  const say = (value: number) =>
+    value >= 100 ? `${Math.round(value)}` : `${Math.round(value * 10) / 10}`;
+  if (n >= 1e9) return `${say(n / 1e9)}B`;
+  if (n >= 1e6) return `${say(n / 1e6)}M`;
+  if (n >= 1e3) return `${say(n / 1e3)}k`;
+  return `${n}`;
+}
+
 /**
  * The average output rate of one model call, tokens per second.
  *

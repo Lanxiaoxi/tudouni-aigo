@@ -38,6 +38,10 @@ const SUITES = [
   // the quartile ramp and the week buckets. All pure, which is why a midnight
   // or a leap day can be asserted instead of stared at.
   'usage-heatmap.test.ts',
+  // The per-model charts' math: the trend's zero-filled window, the
+  // largest-single-point scale, the fold past six models, and the donut's
+  // shares. Pure like the heatmap's, for the same reason.
+  'usage-charts.test.ts',
   // The factory seam: `createAppStore()` is what makes a second, independent
   // store possible in a test. Two stores, two states — a singleton cannot say
   // that about itself.

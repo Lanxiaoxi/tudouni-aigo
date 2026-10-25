@@ -254,6 +254,77 @@ func TestAggregateCurrentStreakFallsBackToYesterday(t *testing.T) {
 	}
 }
 
+func TestAggregateSplitsDaysByModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	content := `{"v":1,"kind":"run","ts":"2026-10-25T10:00:00.000","prompt":100,"completion":10,"calls":1,"model":"m-a"}` + "\n" +
+		`{"v":1,"kind":"run","ts":"2026-10-25T11:00:00.000","prompt":200,"completion":20,"calls":1,"model":"m-b"}` + "\n" +
+		// Two turns of the same model on one day fold into one bucket.
+		`{"v":1,"kind":"run","ts":"2026-10-25T12:00:00.000","prompt":1,"completion":2,"calls":1,"model":"m-a"}` + "\n" +
+		// A row without a model: in the day's totals, in no bucket — and the
+		// day it lands on carries no key for it to hide in.
+		`{"v":1,"kind":"run","ts":"2026-10-24T09:00:00.000","prompt":50,"completion":5,"calls":1}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Aggregate(path, time.Date(2026, 10, 25, 9, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	// The split never covers the model-less row, so it sums to less than the
+	// day — that is the honest answer, not a bug in the fold.
+	if report.Tokens != 388 {
+		t.Fatalf("totals keep every row: got %d, want 388", report.Tokens)
+	}
+	if len(report.ByDay) != 2 {
+		t.Fatalf("by_day carries both days, got %d: %+v", len(report.ByDay), report.ByDay)
+	}
+	modeled := report.ByDay[1]
+	if modeled.Day != "2026-10-25" {
+		t.Fatalf("by_day must ascend, got %+v", report.ByDay)
+	}
+	if modeled.Models["m-a"] != 113 || modeled.Models["m-b"] != 220 {
+		t.Fatalf("per-model split: %+v", modeled.Models)
+	}
+	if len(modeled.Models) != 2 {
+		t.Fatalf("per-model split must carry exactly the two models: %+v", modeled.Models)
+	}
+	if report.ByDay[0].Models != nil {
+		t.Fatalf("a day with no modeled rows carries no split: %+v", report.ByDay[0].Models)
+	}
+}
+
+func TestReportPayloadOmitsEmptyModelSplits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	content := `{"v":1,"kind":"run","ts":"2026-10-25T10:00:00.000","prompt":100,"completion":10,"calls":1,"model":"m-a"}` + "\n" +
+		`{"v":1,"kind":"run","ts":"2026-10-24T09:00:00.000","prompt":50,"completion":5,"calls":1}` + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Aggregate(path, time.Date(2026, 10, 25, 9, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	byDay, ok := report.Payload()["by_day"].([]map[string]any)
+	if !ok || len(byDay) != 2 {
+		t.Fatalf("payload by_day: %v", report.Payload()["by_day"])
+	}
+	// Absence, not an empty map: the front end hides its per-model charts
+	// when the key is missing, and an empty map would read as "charts with
+	// nothing in them" — a different sentence.
+	if got, ok := byDay[0]["models"]; ok {
+		t.Fatalf("the model-less day must omit models, got %v", got)
+	}
+	split, ok := byDay[1]["models"].(map[string]int)
+	if !ok {
+		t.Fatalf("the modeled day must carry its split: %v", byDay[1])
+	}
+	if split["m-a"] != 110 {
+		t.Fatalf("split value: %v", split)
+	}
+}
+
 func TestAggregateDropsRowsWithoutADay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "usage.jsonl")
 	content := `{"v":1,"kind":"run","ts":"not-a-date","prompt":100,"completion":10,"calls":1}` + "\n" +

@@ -1892,6 +1892,12 @@ export const en = {
   'panel.usage.cellWeek': 'Week of {day}',
   'panel.usage.legendLess': 'less',
   'panel.usage.legendMore': 'more',
+  'panel.usage.range7': 'Last 7 days',
+  'panel.usage.range30': 'Last 30 days',
+  'panel.usage.trend': 'Daily tokens by model',
+  'panel.usage.share': 'Model share',
+  'panel.usage.modelOther': 'Other models',
+  'panel.usage.tokensUnit': 'tokens',
 } as const;
 
 export type TKey = keyof typeof en;
