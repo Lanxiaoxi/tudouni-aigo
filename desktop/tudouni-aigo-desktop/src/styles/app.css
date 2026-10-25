@@ -856,6 +856,13 @@
   overflow: hidden;
 }
 
+/* 400px 是「面板」的宽度（context、timing 那种多行内容），不是一个
+   一行一词的菜单的。收窄成 `.plus-menu` 同档的菜单宽度，说明文字
+   （quiet 的 note）换行，选项行不撑。 */
+.st-popover.st-popover-menu {
+  width: 240px;
+}
+
 .st-popover[data-state='open'] {
   animation: st-popover-in var(--motion-base) var(--ease-out) 1;
 }

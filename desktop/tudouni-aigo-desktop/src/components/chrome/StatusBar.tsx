@@ -304,6 +304,7 @@ export function StatusBar() {
             the mode name, which is the state a glance needs. */}
         <StatusPopover
           label={t('status.quiet')}
+          className="st-popover-menu"
           content={<QuietModeMenu mode={quiet} onPick={setQuiet} />}
         >
           <button
@@ -602,10 +603,13 @@ function QuietModeMenu({ mode, onPick }: { mode: QuietMode; onPick: (m: QuietMod
 function StatusPopover({
   label,
   content,
+  className,
   children,
 }: {
   label: ReactNode;
   content: ReactNode;
+  /** Width variant for the surface, e.g. `st-popover-menu` — see the CSS. */
+  className?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -643,7 +647,7 @@ function StatusPopover({
       </Tip>
       <PopoverPrimitive.Portal>
         <PopoverPrimitive.Content
-          className="st-popover"
+          className={className ? `st-popover ${className}` : 'st-popover'}
           side="top"
           align="end"
           sideOffset={6}
