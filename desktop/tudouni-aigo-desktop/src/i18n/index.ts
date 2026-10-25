@@ -1093,6 +1093,25 @@ export const en = {
     'Keys go to the shell byte for byte: Ctrl+C interrupts its command, arrows move in it. Nothing is interpreted by this window.',
   'panel.term.dropped': 'Earlier output scrolled out of this buffer.',
   'panel.term.outline': 'The runtime keeps no output — this buffer is this window’s own.',
+  /* The status chips on the panel's list. `running` already exists above as a
+     row badge; the chips are their own keys because a filter label is a
+     sentence's subject ("Running · 2"), not the badge's verdict word. */
+  'panel.term.filter.all': 'All',
+  'panel.term.filter.running': 'Running',
+  'panel.term.filter.ended': 'Ended',
+  'panel.term.filterEmpty': 'No terminals in this view',
+  'panel.term.filterEmptyHint': 'Another filter may hold the one you are looking for.',
+  'panel.term.emptyHint':
+    'Open one to run commands beside the conversation — while you are in it, its view replaces the transcript.',
+  'panel.term.attach': 'Attach',
+  'panel.term.show': 'Show',
+  'panel.term.attached': 'attached',
+  'panel.term.opened': 'opened {when}',
+  /* The one-press removal of an ended terminal: forgetting a record destroys
+     nothing but the record, so it needs no arm — the running shell's kill,
+     which takes down a process tree, keeps the two-press rule above. */
+  'panel.term.remove': 'Remove this record',
+  'panel.term.removeHint': 'The shell has ended — this forgets the record only.',
 
   /* ---- what this window itself says about a terminal ----
    *

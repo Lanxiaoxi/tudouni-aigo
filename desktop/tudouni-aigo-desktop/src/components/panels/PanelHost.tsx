@@ -41,6 +41,11 @@ import { TaskPanel } from './TaskPanel';
  * columns, and every column squeezed below that width is a month nobody can
  * point at.
  *
+ * Terminals are on the same rung for the task row's own reason: a terminal row
+ * carries an id, a status badge, a cwd path, a shell and an action slot on one
+ * line, and the cwd is the fact the list is scanned by — squeezed to 640px it
+ * truncates before the shell is named.
+ *
  * Workspace memory has a rung of its own (`dialog-memory`, 1000px): it is the one
  * panel that is two real columns rather than a form with a side card, and the
  * review card stops fitting beside the tuning rows below ~1000px.
@@ -67,7 +72,9 @@ export function PanelHost() {
         <DialogPrimitive.Overlay className="overlay-mask" />
         <DialogPrimitive.Content
           className={`dialog${panel === 'commands' ? ' cmdk' : ''}${
-            panel === 'config' || panel === 'tasks' || panel === 'learn' || panel === 'usage' ? ' dialog-wide' : ''
+            panel === 'config' || panel === 'tasks' || panel === 'learn' || panel === 'usage' || panel === 'terminal'
+              ? ' dialog-wide'
+              : ''
           }${panel === 'files' ? ' dialog-files' : ''}${
             panel === 'memory' ? ' dialog-memory dialog-split' : ''
           }${panel === 'codeintel' ? ' dialog-memory' : ''}`}

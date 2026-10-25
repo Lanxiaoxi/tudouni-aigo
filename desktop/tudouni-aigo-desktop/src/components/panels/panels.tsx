@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, ArchiveRestore, ArrowUp, Bot, Download, Folder, Plus, Search, Upload, X } from 'lucide-react';
+import {
+  Archive,
+  ArchiveRestore,
+  ArrowUp,
+  Bot,
+  Clock,
+  Download,
+  Folder,
+  Plus,
+  Search,
+  Terminal as TerminalIcon,
+  Upload,
+  X,
+} from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { notesByServer } from '@/runtime/adapt';
 import {
@@ -30,7 +43,7 @@ import { PanelBody, PanelRow, PanelShell } from './PanelShell';
 import { COMMANDS } from '@/commands';
 import { formatDuration, formatPath, formatRelative, formatTokens, oneLine } from '@/utils/format';
 import { formatBytes } from '@/runtime/paste';
-import type { FileEntry } from '@/protocol/types';
+import type { FileEntry, TerminalRow } from '@/protocol/types';
 
 // Through the store's action rather than `setState({ panel: null })`: the
 // library borrows the connection's session filter while it is open, and this is
@@ -1092,6 +1105,28 @@ export function parentPath(path: string): string {  const trimmed = path.replace
 /* ============================================================
    Terminals. The list, and the one thing a client owns about a terminal.
    ============================================================ */
+
+/**
+ * The workspace's terminals, in the task row's shape.
+ *
+ * **The vocabulary is the shelf's, on purpose.** A mark, a name with its
+ * badges, a location line, and a fixed action slot at the right edge — the
+ * same row the tasks panel and the configuration editor draw. A terminal is
+ * the third list in this dialog family, and a second row shape here would be
+ * a second application on one screen.
+ *
+ * **Status filters, because ended shells stay.** A row is a record as much as
+ * a process — an ended terminal stays listed so "what was I running" has an
+ * answer — so the list grows towards its history. The chips are the same
+ * three-way split the tasks shelf uses over its own enabled/disabled split,
+ * and they filter the list only: the runtime's list is the source, and each
+ * row still says its own exact ending.
+ *
+ * **Two acts behind the `X`, split by status.** A running shell is ended with
+ * the two-press arm (a kill takes down a process tree); an ended terminal is
+ * removed with one press, because forgetting a record destroys nothing but
+ * the record — the same split the tab strip makes.
+ */
 export function TerminalPanel() {
   const t = useT();
   const terminals = useSessionField((rt) => rt.terminals, NO_TERMINALS);
@@ -1099,20 +1134,40 @@ export function TerminalPanel() {
   const pending = useSessionField((rt) => rt.terminalPending, NO_STRINGS);
   const createTerminal = useApp((s) => s.createTerminal);
   const killTerminal = useApp((s) => s.killTerminal);
+  const closeTerminal = useApp((s) => s.closeTerminal);
   const attachTerminal = useApp((s) => s.attachTerminal);
+  const [filter, setFilter] = useState<'all' | 'running' | 'ended'>('all');
+  /** Which running terminal has asked to be ended once already. */
   const [armed, setArmed] = useState<string | null>(null);
 
-  const { active, setActive } = useListKeys({
-    count: terminals.length,
-    onClose: closePanel,
+  const runningCount = terminals.filter((row) => row.status === 'running').length;
+  const counts = {
+    all: terminals.length,
+    running: runningCount,
+    ended: terminals.length - runningCount,
+  };
+
+  /** A display filter over the runtime's own list — never a second source. */
+  const shown = useMemo(() => {
+    if (filter === 'running') return terminals.filter((row) => row.status === 'running');
+    if (filter === 'ended') return terminals.filter((row) => row.status !== 'running');
+    return terminals;
+  }, [terminals, filter]);
+
+  function attach(id: string) {
     // Enter **attaches**, and closing the panel is what makes the attach
-    // visible: the terminal view is the composer's replacement, so a panel left
-    // open over it would hide the thing that just changed.
+    // visible: the terminal view is the composer's replacement, so a panel
+    // left open over it would hide the thing that just changed.
+    attachTerminal(id);
+    closePanel();
+  }
+
+  const { active, setActive } = useListKeys({
+    count: shown.length,
+    onClose: closePanel,
     onPick: (i) => {
-      const row = terminals[i];
-      if (!row) return;
-      attachTerminal(row.id);
-      closePanel();
+      const row = shown[i];
+      if (row) attach(row.id);
     },
   });
 
@@ -1121,19 +1176,17 @@ export function TerminalPanel() {
       title={t('panel.term.title')}
       count={terminals.length}
       note={t('panel.term.outline')}
-    >
-      <PanelBody>
-        {/* **Disabled while a create is in flight.** Two quick presses used to
+      actions={
+        /* **Disabled while a create is in flight.** Two quick presses used to
             send two `terminal_create` messages, which the runtime answered with
             two real shells — and because the reply attaches the view to the
             newest one, the first was left as a tab nobody remembered asking
             for. The sentinel `'new'` is released by `terminal_created` on
             success and by `ui(terminals)` on a refusal, so a refused create
-            cannot leave this button dead. */}
+            cannot leave this button dead. */
         <button
           type="button"
-          className="btn btn-outline btn-block"
-          style={{ margin: '0 var(--space-3) var(--space-2)' }}
+          className="btn btn-primary"
           disabled={pending.includes('new')}
           onClick={() => {
             createTerminal();
@@ -1148,83 +1201,240 @@ export function TerminalPanel() {
           <Plus size={13} />
           {t('panel.term.new')}
         </button>
-
-        {terminals.length === 0 ? (
-          <EmptyState title={t('panel.term.empty')} />
-        ) : (
-          terminals.map((row, i) => (
-            <PanelRow
-              key={row.id}
-              index={i + 1}
-              active={active === i}
-              selected={row.id === attachedId}
-              onHover={() => setActive(i)}
-              onPick={() => {
-                attachTerminal(row.id);
-                closePanel();
+      }
+    >
+      <div className="tk-filters">
+        <div className="tk-chips" role="tablist" aria-label={t('panel.term.title')}>
+          {(['all', 'running', 'ended'] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={filter === key}
+              className={`tk-chip${filter === key ? ' is-on' : ''}`}
+              onClick={() => {
+                setFilter(key);
+                // The cursor must not stay on a row the new filter hid — it
+                // would attach the wrong shell on Enter.
+                setActive(0);
               }}
-              aside={
-                <>
-                  {/* The status comes from the runtime and from nowhere else.
-                      Three endings read three ways, and the third is why this
-                      cannot be a lookup: `killed`, `exited` with a code, and
-                      `exited` with no code are different facts — a killed shell
-                      did not choose an exit status, so printing 0 next to it
-                      would invent one. */}
-                  {row.status === 'running' ? (
-                    <Badge tone="success" dot={false}>
-                      {t('panel.term.running')}
-                    </Badge>
-                  ) : row.status === 'killed' ? (
-                    <Badge tone="warning" dot={false}>
-                      {t('panel.term.killed')}
-                    </Badge>
-                  ) : (
-                    <Badge tone="neutral" dot={false}>
-                      {row.exit_code === null || row.exit_code === undefined
-                        ? t('panel.term.exitedNoCode')
-                        : t('panel.term.exited', { code: row.exit_code })}
-                    </Badge>
-                  )}{' '}
-                  {/* End it. Two presses, like deleting a session: a kill takes
-                      down a whole process tree and cannot be undone. */}
-                  <button
-                    type="button"
-                    className={`btn btn-ghost btn-icon btn-compact${armed === row.id ? ' is-armed' : ''}`}
-                    aria-label={
-                      armed === row.id ? t('panel.term.killConfirm') : t('panel.term.kill')
-                    }
-                    disabled={row.status !== 'running' || pending.includes(row.id)}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (armed === row.id) {
-                        setArmed(null);
-                        killTerminal(row.id);
-                      } else {
-                        setArmed(row.id);
-                      }
-                    }}
-                    onMouseLeave={() => {
-                      if (armed === row.id) setArmed(null);
-                    }}
-                  >
-                    <X size={12} />
-                  </button>
-                </>
-              }
             >
-              <div className="row" style={{ gap: 'var(--space-2)', alignItems: 'baseline' }}>
-                <span className="mono strong">{row.id}</span>
-                <span className="caption faint">
-                  {row.cwd === '' ? t('panel.term.cwdRoot') : row.cwd}
-                </span>
-                <span className="caption faint mono">{row.shell}</span>
-              </div>
-            </PanelRow>
-          ))
+              {t(`panel.term.filter.${key}`)}
+              <span className="tk-chip-count">{counts[key]}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <PanelBody>
+        {terminals.length === 0 ? (
+          <div className="tk-blank">
+            <TerminalIcon size={20} className="tk-blank-icon" />
+            <div className="tk-blank-title">{t('panel.term.empty')}</div>
+            <div className="tk-blank-hint">{t('panel.term.emptyHint')}</div>
+          </div>
+        ) : shown.length === 0 ? (
+          <div className="tk-blank">
+            <div className="tk-blank-title">{t('panel.term.filterEmpty')}</div>
+            <div className="tk-blank-hint">{t('panel.term.filterEmptyHint')}</div>
+          </div>
+        ) : (
+          <div className="tk-list">
+            {shown.map((row, i) => (
+              <TermListRow
+                key={row.id}
+                row={row}
+                attached={row.id === attachedId}
+                active={active === i}
+                armed={armed === row.id}
+                killPending={pending.includes(row.id)}
+                onHover={() => setActive(i)}
+                onAttach={() => attach(row.id)}
+                onArm={() => setArmed(row.id)}
+                onDisarm={() => setArmed(null)}
+                onKill={() => {
+                  setArmed(null);
+                  killTerminal(row.id);
+                }}
+                onRemove={() => {
+                  setArmed(null);
+                  closeTerminal(row.id);
+                }}
+              />
+            ))}
+          </div>
         )}
       </PanelBody>
     </PanelShell>
+  );
+}
+
+/**
+ * One terminal, in the shared row shape: mark, main, fixed action slot.
+ *
+ * The whole row picks (like every list row in this dialog family); the slot
+ * holds the same two acts as a right edge that never moves — **Attach**,
+ * revealed on hover the way the task row reveals Run, and the `X` that ends or
+ * forgets, always visible because ending a shell must not be a discoverable
+ * secret.
+ */
+function TermListRow({
+  row,
+  attached,
+  active,
+  armed,
+  killPending,
+  onHover,
+  onAttach,
+  onArm,
+  onDisarm,
+  onKill,
+  onRemove,
+}: {
+  row: TerminalRow;
+  attached: boolean;
+  active: boolean;
+  armed: boolean;
+  killPending: boolean;
+  onHover: () => void;
+  onAttach: () => void;
+  onArm: () => void;
+  /** Disarms without acting — the mouse left the button mid-decision. */
+  onDisarm: () => void;
+  onKill: () => void;
+  onRemove: () => void;
+}) {
+  const t = useT();
+  const running = row.status === 'running';
+  const cwd = row.cwd === '' ? t('panel.term.cwdRoot') : row.cwd;
+
+  return (
+    /* `stopPropagation` on the row's own keys, and it is load-bearing: the
+        panel's keys go through `useListKeys`, whose listener is on `window` —
+        a focused row meant one `Enter` reached both handlers and the attach
+        ran twice. See `PanelRow`, which stopped the same collision. */
+    <div
+      className={`tk-row${attached ? ' is-attached' : ''}${active ? ' is-active' : ''}`}
+      role="button"
+      tabIndex={0}
+      onClick={onAttach}
+      onMouseEnter={onHover}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          onAttach();
+        }
+      }}
+    >
+      <span className="tk-mark" aria-hidden>
+        <TerminalIcon size={15} />
+      </span>
+
+      <div className="tk-row-main">
+        <div className="tk-row-title">
+          <span className="mono strong">{row.id}</span>
+          {/* The status is the runtime's word, never derived here. Three
+              endings read three ways: `killed`, `exited` with a code, and
+              `exited` with none are different facts. */}
+          {running ? (
+            <Badge tone="success" dot={false}>
+              {t('panel.term.running')}
+            </Badge>
+          ) : row.status === 'killed' ? (
+            <Badge tone="warning" dot={false}>
+              {t('panel.term.killed')}
+            </Badge>
+          ) : (
+            <Badge tone="neutral" dot={false}>
+              {row.exit_code === null || row.exit_code === undefined
+                ? t('panel.term.exitedNoCode')
+                : t('panel.term.exited', { code: row.exit_code })}
+            </Badge>
+          )}
+          {/* Which shell has the screen. The hover CTA says "Show" on this
+              row, but the CTA is invisible at rest — this badge is the at-rest
+              answer to "which one am I looking at". */}
+          {attached ? (
+            <Badge tone="info" dot={false}>
+              {t('panel.term.attached')}
+            </Badge>
+          ) : null}
+        </div>
+
+        <div className="tk-row-desc mono" title={cwd}>
+          {cwd}
+        </div>
+
+        <div className="tk-row-meta">
+          <span className="tk-meta-item">
+            <TerminalIcon size={12} />
+            <span className="mono">{row.shell}</span>
+          </span>
+          {/* The runtime writes `created_at` in unix seconds; the caption is
+              the age, which is the question asked of a shell list. */}
+          <span className="tk-meta-item">
+            <Clock size={12} />
+            {t('panel.term.opened', { when: formatRelative(row.created_at * 1000) })}
+          </span>
+        </div>
+      </div>
+
+      <div className="tk-row-actions">
+        <button
+          type="button"
+          className="btn btn-primary tk-row-cta"
+          onClick={(e) => {
+            e.stopPropagation();
+            onAttach();
+          }}
+        >
+          {attached ? t('panel.term.show') : t('panel.term.attach')}
+        </button>
+
+        {/* Two acts, split by status, one slot. **End it, then forget it** —
+            and for the running shell **both presses are needed**, because a
+            kill takes down a whole process tree and cannot be undone. An ended
+            terminal is only forgotten (nothing is lost but the record), so one
+            press — the same split the tab strip makes. The button is never
+            absent: a row whose only way out was hidden behind its own status
+            left ended terminals with no way off the list at all. */}
+        {running ? (
+          <button
+            type="button"
+            className={`btn btn-ghost btn-icon btn-compact${armed ? ' is-armed' : ''}`}
+            aria-label={armed ? t('panel.term.killConfirm') : t('panel.term.kill')}
+            title={armed ? t('panel.term.killConfirm') : t('panel.term.kill')}
+            disabled={killPending}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (armed) onKill();
+              else onArm();
+            }}
+            onMouseLeave={() => {
+              if (armed) onDisarm();
+            }}
+          >
+            <X size={12} />
+          </button>
+        ) : (
+          <Tip label={t('panel.term.removeHint')}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon btn-compact"
+              aria-label={t('panel.term.remove')}
+              title={t('panel.term.remove')}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove();
+              }}
+            >
+              <X size={12} />
+            </button>
+          </Tip>
+        )}
+      </div>
+    </div>
   );
 }
 

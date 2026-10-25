@@ -157,6 +157,20 @@
   color: var(--fg);
 }
 
+/* Armed: a destructive two-press control between its presses. The colour is
+   the sentence — "the next press ends something" — because the tooltip alone
+   was the only thing that ever said so, and a tooltip is not a state. The
+   hover rule sits above this one in specificity, and the armed button is
+   *definitionally* hovered while it is armed, so the state re-asserts itself
+   on hover: an armed control that paints the hover back over the warning is
+   an armed control that does not look armed. The tab strip's close button
+   wears the same pair of tokens. */
+.btn-ghost.is-armed,
+.btn-ghost.is-armed:hover:not(:disabled) {
+  background: var(--destructive-subtle);
+  color: var(--destructive);
+}
+
 /* Disabled —— 保持 token 文字色，靠透明度，不吃 hover */
 .btn:disabled,
 .btn[data-disabled] {

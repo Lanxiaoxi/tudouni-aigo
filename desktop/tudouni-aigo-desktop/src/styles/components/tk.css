@@ -169,6 +169,21 @@
   background: var(--bg-muted);
 }
 
+/* The keyboard cursor. `useListKeys` drives one row per panel with ↑/↓, and
+   the cursor has to look exactly like the hover it stands in for — a second
+   visual language for "the keyboard is here" would be one more thing to learn.
+   The terminals panel is the first list to draw this state on these rows. */
+.tk-row.is-active {
+  background: var(--bg-muted);
+}
+
+/* The row whose terminal has the screen. An inset rule rather than a border
+   so engaging it cannot shift the row's text by a pixel — the rule is the one
+   "current" mark every list row in the app already wears (`PanelRow`). */
+.tk-row.is-attached {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 /* The leading mark: the same square icon tile every row carries, tinted with
    the accent's own wash. It is the row's identity, not a control. */
 .tk-mark {
