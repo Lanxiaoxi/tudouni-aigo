@@ -26,6 +26,7 @@ import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { Badge, Count, Info, PanelInfo, Tip } from '@/components/ui/kit';
 import { readRemoteUserConfig, readUserConfig, revealConfigFile, writeRemoteUserConfig, writeUserConfig } from '@/runtime/tauri';
+import { useShallow } from 'zustand/react/shallow';
 import { remoteConnectionOf, useApp } from '@/state/store';
 import {
   API_STYLES,
@@ -139,7 +140,7 @@ export function ConfigPanel() {
   // The destination, for the badge and the tooltip — `remoteConnectionOf` is the
   // same "which host is this session on" answer the rail and the top bar use, and
   // it carries no credentials (the store's `configTarget` is where those are).
-  const remote = useApp((s) => remoteConnectionOf(s, s.activeKey));
+  const remote = useApp(useShallow((s) => remoteConnectionOf(s, s.activeKey)));
   useEffect(() => {
     let alive = true;
     void (async () => {

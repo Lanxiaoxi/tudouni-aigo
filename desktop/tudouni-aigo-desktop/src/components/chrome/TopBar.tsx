@@ -1,4 +1,5 @@
 import { FolderOpen, HelpCircle, Search, Server } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { remoteConnectionOf, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
@@ -44,8 +45,8 @@ export function TopBar() {
   // in* is the one place the two are indistinguishable. `remoteConnectionOf`
   // answers it the same way the sidebar and the file panel do, and `null` is
   // exactly "this one is local".
-  const remote = useApp((s) =>
-    remoteConnectionOf(s, s.activeKey),
+  const remote = useApp(
+    useShallow((s) => remoteConnectionOf(s, s.activeKey)),
   );
   const openPanel = useApp((s) => s.openPanel);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);

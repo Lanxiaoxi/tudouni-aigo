@@ -1,4 +1,5 @@
 import { FolderOpen, RefreshCw, Server, TriangleAlert } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { NO_STRINGS, remoteConnectionOf, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 
@@ -37,7 +38,7 @@ export function SessionProblem() {
   // Which remote workspace this row belongs to, if any — `remoteConnectionOf`
   // is the same "where is this session" answer the top bar and the file panel
   // use, and `null` means the failure was a local one.
-  const remote = useApp((s) => remoteConnectionOf(s, s.activeKey));
+  const remote = useApp(useShallow((s) => remoteConnectionOf(s, s.activeKey)));
   const connectRemoteWorkspace = useApp((s) => s.connectRemoteWorkspace);
 
   if (!problem) return null;
