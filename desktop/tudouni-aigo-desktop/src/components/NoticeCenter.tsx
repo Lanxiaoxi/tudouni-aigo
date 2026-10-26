@@ -61,8 +61,18 @@ export function NoticeCapsule({ view }: { view: NoticeCenterView }) {
 
   // Newest sits at the bottom (arrival order, like the transcript); an open
   // lands on what just happened rather than on the session's first diagnostic.
+  //
+  // The scroll is deferred a frame, not run in the effect body: Radix's
+  // Portal commits the list a tick after `open` flips, so reading the ref
+  // synchronously usually catches it still `null` and silently no-ops — which
+  // is exactly why the panel used to reopen at the top every time.
   useEffect(() => {
-    if (open && listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+    if (!open) return;
+    const raf = requestAnimationFrame(() => {
+      const list = listRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [open, view.notes.length]);
 
   // The guard lives here rather than in the caller: a capsule with nothing to
