@@ -80,26 +80,30 @@ fn system_prefers_light() -> bool {
     }
 }
 
-/// Paint the window the right colour, then show it.
+/// Paint the window the right colour, **before anything can be shown in it**.
 ///
-/// **Why the window starts hidden (`"visible": false` in tauri.conf.json).** The
-/// window is shown as soon as it is created — around 560 ms into a launch — but
-/// the page inside it does not begin to load until ~1.1 s, and does not paint
-/// anything of its own until ~1.9 s. For that whole 1.3 s the person is looking
-/// at WebView2's default, which is white: a flash out of a dark application and
-/// back, every single launch.
+/// **Why this is separate from `show_main_window` below.** It used to be one
+/// function that corrected the colour and showed the window in the same breath,
+/// because the window used to be shown as soon as it was created — around 560 ms
+/// into a launch — while the page inside it did not begin to load until ~1.1 s
+/// and did not paint anything of its own until ~1.9 s. For that whole 1.3 s the
+/// person was looking at WebView2's default, which is white.
 ///
-/// `backgroundColor` in the config fixes the colour, but it cannot be right for
-/// both themes, and getting it wrong is worse than white in the one theme it does
-/// not match. So the config carries the dark value — which is what
-/// `index.html`'s own `data-theme` default is — and this corrects it to the light
-/// value when the OS asks for light, **before** the window is ever shown. The
-/// person sees one colour, the correct one, from the first frame.
+/// That is no longer the shape of a launch: the main window now stays hidden
+/// until the front end reports that the first screen is actually drawn
+/// (`splash://ready`), with a breathing-icon splash window holding the screen
+/// until then. So the show and the colour have different owners and therefore
+/// different places to live — this half stays in `setup`, the show happens in
+/// `splash::hand_over`. **The correction still matters**, and the reason is
+/// unchanged: `backgroundColor` cannot be right for both themes, getting it
+/// wrong is worse than white in the one theme it does not match, and
+/// `set_background_color` is the only place the value can be fixed from outside
+/// a document.
 ///
 /// Doing it here rather than in the front end is the whole point: the interval
-/// being covered is the one before any document exists, so no script of ours can
-/// be running yet.
-pub(crate) fn show_window_in_its_own_colour(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+/// being corrected is the one before any document exists, so no script of ours
+/// can be running yet.
+pub(crate) fn correct_window_colour(window: &tauri::WebviewWindow) -> tauri::Result<()> {
     // `set_background_color` sets both the window layer and the webview layer
     // (see `WebviewWindow::set_background_color`), which is why one call is
     // enough — a window-background-only fix would leave the webview's own white
@@ -109,6 +113,18 @@ pub(crate) fn show_window_in_its_own_colour(window: &tauri::WebviewWindow) -> ta
         window.set_background_color(Some(tauri::window::Color(r, g, b, 255)))?;
     }
     // Dark is already what the config says, so there is nothing to correct.
+    Ok(())
+}
+
+/// Show the main window — **the other half, called when the splash hands over**.
+///
+/// Named as its own function rather than left as a bare `window.show()` at the
+/// call site so the pairing with `correct_window_colour` is visible: the colour
+/// is corrected in `setup` and this is the only `show` that follows it, from
+/// `splash::hand_over`. Showing the window is the *last* act of the handover, so
+/// there is never a frame with neither the splash nor the application on
+/// screen.
+pub(crate) fn show_main_window(window: &tauri::WebviewWindow) -> tauri::Result<()> {
     window.show()
 }
 
@@ -199,8 +215,8 @@ mod window_colour_tests {
 
     #[test]
     fn the_two_themes_are_actually_different() {
-        // If this ever fails, the correction in `show_window_in_its_own_colour`
-        // has become a no-op and the whole `visible: false` dance is pointless —
+        // If this ever fails, the correction in `correct_window_colour` has
+        // become a no-op and the whole hidden-until-ready dance is pointless —
         // a cheaper signal than noticing white-on-white.
         assert_ne!(WINDOW_BG_DARK, WINDOW_BG_LIGHT);
     }

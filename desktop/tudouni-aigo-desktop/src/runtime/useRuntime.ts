@@ -1,5 +1,6 @@
 import { useLayoutEffect } from 'react';
 import { useApp } from '@/state/store';
+import { markBootSettled } from '@/splash';
 import {
   attachRuntimeListener,
   checkWorkspace,
@@ -87,6 +88,10 @@ export function useRuntimeBridge(): void {
           .setStartupProblem(
             `the window could not start listening to the runtime: ${String(err)}`,
           );
+        // An end point of the start-up chain: nothing after this can open a
+        // session, so the splash has to be allowed to go (the error screen it
+        // reveals is the answer). See `src/splash.ts` for the rule.
+        markBootSettled();
         return;
       }
 
@@ -94,7 +99,10 @@ export function useRuntimeBridge(): void {
 
       // Not hosted (plain `npm run dev` in a browser): nothing to start, and the
       // UI stays in its booting phase rather than pretending.
-      if (!isHosted()) return;
+      if (!isHosted()) {
+        markBootSettled();
+        return;
+      }
 
       // The greeting's name comes from the OS, and the runtime's version from a
       // one-shot `--version` — neither is in the protocol. Both are window-level
@@ -147,7 +155,12 @@ async function openFirstSession(isCancelled: () => boolean): Promise<void> {
 
   // Nothing to go back to. The first screen is the answer, and it is where
   // somebody picks the place they will be working in.
-  if (remembered === null) return;
+  if (remembered === null) {
+    // An end point: no session is coming, so the greeting behind the splash is
+    // the first screen rather than a moment on the way to one.
+    markBootSettled();
+    return;
+  }
 
   const refusal = await checkWorkspace(remembered);
   if (isCancelled()) return;
@@ -162,8 +175,16 @@ async function openFirstSession(isCancelled: () => boolean): Promise<void> {
       path: remembered,
       reason: refusal,
     });
+    // The notice rides on the first screen, which is what the splash is hiding.
+    markBootSettled();
     return;
   }
 
   await useApp.getState().attachSession({ workspace: remembered });
+  // **The last end point, and the ordinary one.** `attachSession` resolving
+  // means the child exists (or its refusal is on screen as a failed row), so
+  // what the column draws from here on is an answer. It is deliberately *not*
+  // enough on its own: the handshake may still be in flight, which is why the
+  // rule also requires the view to have left `booting`.
+  if (!isCancelled()) markBootSettled();
 }

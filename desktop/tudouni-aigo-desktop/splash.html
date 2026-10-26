@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>tudouni-aigo</title>
+    <style>
+      /* ============================================================
+         The launch splash: **a window of its own** (configured in
+         `src-tauri/tauri.conf.json`, retired by `src-tauri/src/splash.rs`), not
+         an overlay inside the main window's document. The interval it covers is
+         the one before the main window has anything to paint, so an overlay in
+         that document would be covering nothing.
+
+         Four rules it is built to, each a constraint rather than a preference:
+
+         1. **No JavaScript at all.** The splash exists to be painted before
+            anything else can be, and a script would be one more thing to wait
+            for. It is also why the Rust side never talks to it: the whole
+            interaction is the main window's `splash://ready`.
+
+         2. **Nothing to flash.** The window is created transparent and the
+            document declares `background: transparent`, so the frame before
+            this document loads shows the desktop rather than WebView2's default
+            white — the same white this window exists to keep off the screen.
+
+         3. **No web font, no layout text.** The only thing drawn is the icon.
+            A webfont or a label would make the first paint wait on a download
+            that cannot have arrived yet.
+
+         4. **One animation, and it stops on request.** The breathing is the
+            whole point of the window, and `prefers-reduced-motion` turns it
+            into an opacity pulse rather than taking it away: the icon still has
+            to read as alive, without the scale change.
+
+         The icon is served as `/splash-icon.png` — the very file the bundle
+         already ships (`src-tauri/icons/128x128@2x.png`, emitted by the
+         `splash-icon` plugin in `vite.config.ts`). One source, so it cannot
+         drift from the packaged icon.
+         ============================================================ */
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+
+      .splash-stage {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+      }
+
+      .splash-mark {
+        width: 120px;
+        height: 120px;
+        /* A still image of an application starting, not content. */
+        user-select: none;
+        -webkit-user-drag: none;
+        will-change: transform, filter;
+        animation: splash-breathe 2.2s ease-in-out infinite;
+      }
+
+      /* Scale and glow together: the scale alone reads as a twitch at 6%, and
+         the glow alone leaves the icon static. The glow follows the icon's own
+         alpha (a `drop-shadow`, not a box), which is why it can sit on the
+         transparent window without drawing a rectangle. */
+      @keyframes splash-breathe {
+        0%,
+        100% {
+          transform: scale(1);
+          filter: drop-shadow(0 0 16px rgba(52, 211, 153, 0.16));
+        }
+        50% {
+          transform: scale(1.06);
+          filter: drop-shadow(0 0 34px rgba(52, 211, 153, 0.4));
+        }
+      }
+
+      /* The motion is the breathing; reduced motion keeps the sign of life
+         without moving anything. */
+      @media (prefers-reduced-motion: reduce) {
+        .splash-mark {
+          animation: splash-fade 2.2s ease-in-out infinite;
+          filter: drop-shadow(0 0 22px rgba(52, 211, 153, 0.28));
+        }
+
+        @keyframes splash-fade {
+          0%,
+          100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.72;
+          }
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="splash-stage">
+      <img class="splash-mark" src="/splash-icon.png" alt="" draggable="false" />
+    </div>
+  </body>
+</html>

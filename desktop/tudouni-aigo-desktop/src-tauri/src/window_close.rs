@@ -235,6 +235,17 @@ pub(crate) fn on_close_requested(window: &tauri::Window, event: &tauri::WindowEv
     // cannot be closed at all. Same reasoning as `SHUTDOWN_TIMEOUT`: the
     // wait has to end.
     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        // **Only the main window's close is a question for a person.** This
+        // handler is registered on the builder, so it sees every window's
+        // events — including the launch splash's, which is never supposed to
+        // close this way (it is retired with `destroy`, which raises no request
+        // at all). Refusing here rather than there is what makes the guard hold
+        // even if some future caller closes the splash by mistake: the splash
+        // would simply go away instead of raising a minimize-or-close prompt
+        // over the whole application.
+        if window.label() != "main" {
+            return;
+        }
         api.prevent_close();
 
         // A close request while the prompt is already up is the person

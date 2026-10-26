@@ -78,6 +78,11 @@ mod runtime_commands;
 /// for the division of labour with `internal/state` and the rules it mirrors.
 mod session_search;
 
+/// The launch splash's own window, and the one act it exists for: handing the
+/// screen over to the main window. See its module doc for why the trigger is an
+/// event with a deadline rather than a timer.
+mod splash;
+
 /// The Remote Backend: starting the runtime over SSH instead of as a local
 /// child process. See its own module doc for why this is a trait
 /// ([`ssh_backend::RuntimeProcess`]) rather than a parallel copy of `spawn`.
@@ -136,6 +141,13 @@ pub fn run() {
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
+            // **A second launch can also arrive while the first is still
+            // booting.** The splash is up and the main window has not been
+            // shown yet; focusing "the window you have" without retiring the
+            // splash would leave the person looking at a floating icon over a
+            // window they cannot see. The handover is idempotent, so the
+            // ordinary case — splash already gone — costs one failed lookup.
+            crate::splash::hand_over(app);
         }))
         .plugin(tauri_plugin_dialog::init())
         // System notifications. The rule for *when* one is sent is the front
@@ -205,20 +217,23 @@ pub fn run() {
         // before the first hide, because the remembered "minimize" policy can
         // hide the window with no dialog ever drawn (see `make_tray`).
         //
-        // **The window is shown here too, and the order of these two matters
-        // less than the order inside `show_window_in_its_own_colour`.** The
-        // window is configured hidden, so between creating it (which tauri does
-        // just before this closure runs) and this line nothing is on screen at
-        // all — no white, which is the entire point. See that function for why
-        // the colour has to be corrected before the first `show()`.
+        // **The main window is no longer shown here.** It is configured hidden
+        // (`"visible": false`) and two things happen to it: the colour is
+        // corrected below, and it is shown by `splash::arm`'s handover once the
+        // front end reports that the first screen is drawn. Between creating the
+        // window and that moment the splash window is the only thing on screen,
+        // which is the point — the old version showed the window at ~560 ms and
+        // left it empty (WebView2's white) until ~1.9 s.
         .setup(|app| {
             tray::make_tray(app.handle())?;
             if let Some(window) = app.get_webview_window("main") {
-                // A window that cannot be shown is not a reason to fail the
-                // launch: everything below it — the bridge, the sessions — works
-                // without a visible window, and the tray can bring it back.
-                let _ = window_theme::show_window_in_its_own_colour(&window);
+                // Only the colour: a window that cannot be painted is not a
+                // reason to fail the launch, and nothing below depends on it.
+                let _ = window_theme::correct_window_colour(&window);
             }
+            // The splash's half of the launch: listen for "the first screen is
+            // drawn" and hold a 20-second deadline in case it never is.
+            splash::arm(app.handle());
             // The speculative runtime, started from the launch pref the
             // previous run mirrored. On its own thread because set-up owns the
             // window's first show: the whole point is that the WebView's boot

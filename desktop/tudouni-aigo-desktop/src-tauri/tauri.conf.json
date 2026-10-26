@@ -26,6 +26,23 @@
         "dragDropEnabled": true,
         "backgroundColor": "#12151A",
         "visible": false
+      },
+      {
+        "label": "splash",
+        "title": "tudouni-aigo",
+        "url": "splash.html",
+        "width": 440,
+        "height": 440,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "focus": false,
+        "shadow": false,
+        "visible": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

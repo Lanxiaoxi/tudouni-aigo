@@ -303,6 +303,12 @@ const SUITES = [
   // sentences are asserted here — including the one a formatter gets wrong for
   // free, printing a missing figure as zero.
   'front-message.test.ts',
+  // When the launch splash may be retired, and the two ends of it that have no
+  // type between them. Both wrong rules produce a plausible-looking launch — an
+  // empty greeting with "starting" behind it, or a booting shell where the icon
+  // was — so the rule is a pure function and the document and the Rust module
+  // are read as text.
+  'splash.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });
