@@ -42,6 +42,11 @@ const SUITES = [
   // largest-single-point scale, the fold past six models, and the donut's
   // shares. Pure like the heatmap's, for the same reason.
   'usage-charts.test.ts',
+  // The heatmap's cell geometry, where it is declared: a custom property
+  // declared on the grids does not reach the month-label row between them,
+  // which is what bunched the month labels at the card's left edge. The
+  // stylesheet is read as text, the way stream-layout does.
+  'usage-panel-css.test.ts',
   // The factory seam: `createAppStore()` is what makes a second, independent
   // store possible in a test. Two stores, two states — a singleton cannot say
   // that about itself.

@@ -114,9 +114,12 @@
 
 /* The grid's geometry. One cell size, declared once, that the day grid, the
    week row and the month labels all share — the labels align with the columns
-   only while the three agree on the step. */
-.usage-grid,
-.usage-weeks {
+   only while the three agree on the step. Declared on the card, not on the
+   grids themselves: `.usage-months` sits between the two grids in the DOM and
+   is none of them, so a custom property on the grids would not reach it —
+   and its columns would silently fall back to `auto`, which is what bunched
+   the month labels together at the card's left edge. */
+.usage-activity {
   --usage-cell: 11px;
   --usage-gap: 3px;
 }
