@@ -155,14 +155,28 @@ func (r *Runtime) recallForTurn(text string) {
 // because the distinctive part of an error is often at the end (a nested exception, a
 // "caused by" chain) and matching on the first line alone would miss the very cases a
 // remembered fix is worth most for.
-func (r *Runtime) onToolResult(name, status, result string) {
+//
+// Two kinds of failure reach this hook:
+//
+//   - `status == "error"`: the tool handler returned an error. These are usually
+//     environment problems or argument issues, but they still carry an error text
+//     that might match a remembered fix.
+//
+//   - `semanticFailure`: the tool ran without error and returned a result, but the
+//     outcome is one the model must react to — a shell command that exited non-zero,
+//     a build that broke. This is the case the design originally intended: the
+//     command "succeeded" as a tool call, the news is bad, and a remembered fix is
+//     worth more here than at any other moment. Without this flag the shell tool's
+//     non-zero exit codes would all be `status == "ok"` and the trigger would never
+//     fire for them.
+func (r *Runtime) onToolResult(name, status, result string, semanticFailure bool) {
 	if r.WorkspaceMemory == nil || result == "" {
 		return
 	}
 	// `interrupted` is not a failure of the tool and `denied` is a decision of the
 	// person; neither is something a memory can help with, and recalling on them would
 	// put a note about a Gradle error in front of a model whose command was refused.
-	if status != "error" {
+	if status != "error" && !semanticFailure {
 		return
 	}
 	// A memory tool that fails must not trigger a memory lookup: the recursion is not

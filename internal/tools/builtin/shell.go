@@ -280,8 +280,9 @@ func runShell(ctx context.Context, workspace *tools.Workspace, command string, t
 				"等了 %d 秒后强制收尾 —— 上面的输出可能不完整。）", reapAfterKillSeconds)
 		}
 		return tools.Result{
-			Text:  text,
-			Audit: map[string]any{"exit_code": code},
+			Text:            text,
+			Audit:           map[string]any{"exit_code": code},
+			SemanticFailure: code != 0,
 		}
 	case <-time.After(time.Duration(timeoutSeconds) * time.Second):
 		return reportTimeout()

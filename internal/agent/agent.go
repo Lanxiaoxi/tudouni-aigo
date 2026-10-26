@@ -157,7 +157,7 @@ type Config struct {
 	// Like OnEvent, it is observation and may never fail the turn: it is called after
 	// the result is settled, from whichever goroutine ran the call, and a panic in it
 	// is swallowed.
-	OnToolResult func(name, status, result string)
+	OnToolResult func(name, status, result string, semanticFailure bool)
 	// OnDelta reports a stream increment. reset=true means "throw away what you
 	// have drawn for this step".
 	//
@@ -794,6 +794,11 @@ type prepared struct {
 	failureKind string // "invalid_args" | "denied" | "interrupted"
 	status      string
 	result      string
+	// semanticFailure is the tools.Result.SemanticFailure the handler set: the
+	// tool ran without error, but the outcome is one the model must react to.
+	// It is carried here so the observer hook (workspace-memory recall) can see
+	// it without having to re-parse the result text.
+	semanticFailure bool
 	// ran records that the handler was entered. It is what tells the settlement
 	// pass apart from the two other ways a call leaves without a result: a refusal
 	// (failure is set before anything runs) and a stop (nothing was ever started).
@@ -1168,6 +1173,7 @@ func (a *Agent) runOne(ctx context.Context, item *prepared) {
 	}
 
 	item.status = status
+	item.semanticFailure = result.SemanticFailure
 	if result.Audit != nil {
 		for key, value := range result.Audit {
 			if key == tools.InterruptedAuditKey {
@@ -1248,7 +1254,7 @@ func (a *Agent) reportToObserver(item *prepared) {
 		return
 	}
 	defer func() { _ = recover() }()
-	a.OnToolResult(item.call.Name, item.status, item.result)
+	a.OnToolResult(item.call.Name, item.status, item.result, item.semanticFailure)
 }
 
 func (a *Agent) runParallel(ctx context.Context, batch []prepared) {

@@ -55,6 +55,15 @@ type Result struct {
 	// was answered, which skill action happened. The agent cannot derive them, and
 	// they are what makes the audit log worth reading.
 	Audit map[string]any
+	// SemanticFailure marks a result that completed normally as a tool — no
+	// error, the handler ran and returned — but whose outcome is a failure the
+	// model must react to: a shell command that exited non-zero, a build that
+	// broke. It is the distinction between "the tool broke" (an `error` return,
+	// which the agent labels `status="error"`) and "the tool worked and the news
+	// is bad". The workspace-memory recall listens for this so a remembered fix
+	// can surface at the moment it is worth most, without having to wait for the
+	// model to call `memory_search` on its own initiative.
+	SemanticFailure bool
 }
 
 // TextResult is the common case: a string and nothing extra.

@@ -136,22 +136,49 @@ func TestMemoryToolFailureRecall(t *testing.T) {
 	value.memory.reset()
 
 	// A successful call recalls nothing.
-	value.onToolResult("shell", "ok", "all good")
+	value.onToolResult("shell", "ok", "all good", false)
 	if note := value.memoryNote(); note != "" {
 		t.Fatalf("a successful tool call recalled a memory:\n%s", note)
 	}
 	// A denied call is a decision, not a failure to learn from.
-	value.onToolResult("shell", "denied", "ECONNREFUSED 127.0.0.1:7890")
+	value.onToolResult("shell", "denied", "ECONNREFUSED 127.0.0.1:7890", false)
 	if note := value.memoryNote(); note != "" {
 		t.Fatalf("a denied tool call recalled a memory:\n%s", note)
 	}
 	// The real thing: the error text arrives after a lot of noise, which is the case the
 	// audit's two-hundred-character preview cannot serve.
 	value.onToolResult("shell", "error",
-		strings.Repeat("noise\n", 40)+"npm ERR! network ECONNREFUSED 127.0.0.1:7890")
+		strings.Repeat("noise\n", 40)+"npm ERR! network ECONNREFUSED 127.0.0.1:7890", false)
 	note := value.memoryNote()
 	if !strings.Contains(note, "npm 拉不动依赖时代理没生效") {
 		t.Fatalf("a tool failure did not recall the matching memory:\n%s", note)
+	}
+}
+
+// TestMemorySemanticFailureRecall is the case the design originally intended: the
+// shell tool ran without error (status == "ok"), but the command exited non-zero.
+// The SemanticFailure flag is what lets this trigger fire — without it, every
+// non-zero exit code would be an ordinary "ok" result and the trigger would never
+// see them.
+func TestMemorySemanticFailureRecall(t *testing.T) {
+	store := openMemoryForTest(t)
+	publishMemory(t, store, memory.Proposal{
+		Title:      "npm 拉不动依赖时代理没生效",
+		Body:       "先确认 HTTPS_PROXY 在子进程里也在。",
+		Triggers:   []string{"ECONNREFUSED 127.0.0.1:7890"},
+		Confidence: memory.ConfidenceVerified,
+	})
+
+	value := &Runtime{WorkspaceMemory: store, SessionIDValue: "s-test"}
+	value.memory.reset()
+
+	// A shell command that exited non-zero is status "ok" — the tool did not
+	// break — but semanticFailure is true, so the recall fires.
+	value.onToolResult("shell", "ok",
+		"exit code 1\nnpm ERR! network ECONNREFUSED 127.0.0.1:7890", true)
+	note := value.memoryNote()
+	if !strings.Contains(note, "npm 拉不动依赖时代理没生效") {
+		t.Fatalf("a semantic failure did not recall the matching memory:\n%s", note)
 	}
 }
 
