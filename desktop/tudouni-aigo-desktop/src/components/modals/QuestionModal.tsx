@@ -242,6 +242,23 @@ export function QuestionModal() {
                 <Badge tone={question.multi_select ? 'info' : 'neutral'} dot={false}>
                   {question.multi_select ? t('q.multi') : t('q.single')}
                 </Badge>
+
+                {/* The minimize control lives in the head's far right — the
+                    corner a window's minimize button sits in — rather than
+                    among the foot's answer actions: hiding the panel is about
+                    the panel, not about the answer, so it does not belong
+                    beside Skip all and Submit. */}
+                <Tip label={t('q.minimizeHint')} side="bottom">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ flex: 'none', width: 26, height: 26, padding: 0 }}
+                    onClick={() => minimize()}
+                    aria-label={t('q.minimize')}
+                  >
+                    <Minus size={14} />
+                  </button>
+                </Tip>
               </div>
 
               {/* Which conversation asked, and whether another request is
@@ -402,18 +419,6 @@ export function QuestionModal() {
                     </button>
                   </span>
                 ) : null}
-
-                <Tip label={t('q.minimizeHint')} side="top">
-                  <button
-                    type="button"
-                    className="btn btn-outline"
-                    onClick={() => minimize()}
-                    aria-label={t('q.minimize')}
-                  >
-                    <Minus size={12} />
-                    {t('q.minimize')}
-                  </button>
-                </Tip>
 
                 <button
                   type="button"
