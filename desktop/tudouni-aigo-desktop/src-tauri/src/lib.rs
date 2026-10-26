@@ -147,7 +147,13 @@ pub fn run() {
             // splash would leave the person looking at a floating icon over a
             // window they cannot see. The handover is idempotent, so the
             // ordinary case — splash already gone — costs one failed lookup.
-            crate::splash::hand_over(app);
+            //
+            // **Not held back by the splash's minimum time.** That minimum
+            // exists so a very fast launch still shows the icon; a person
+            // launching the exe again is asking for their window, and delaying
+            // it would be the opposite of what they asked for. `now` as the
+            // start makes the elapsed time already past the minimum.
+            crate::splash::hand_over(app, std::time::Instant::now());
         }))
         .plugin(tauri_plugin_dialog::init())
         // System notifications. The rule for *when* one is sent is the front
@@ -211,6 +217,11 @@ pub fn run() {
             crate::window_close::close_prompt_ack,
             crate::window_close::window_destroy,
             crate::notify::notify_send,
+            // The launch splash's hand-over. A **command** rather than an
+            // event: an invoke is ordered and answered, so the "ready" the
+            // front end sends cannot be delivered to nobody. See `splash`'s
+            // module doc for the launch that lost it.
+            crate::splash::splash_ready,
         ])
         // The tray is built in `setup` rather than in a builder callback so it
         // can use the app handle the same way the commands do; it must exist

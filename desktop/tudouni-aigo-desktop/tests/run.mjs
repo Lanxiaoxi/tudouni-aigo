@@ -309,6 +309,13 @@ const SUITES = [
   // was — so the rule is a pure function and the document and the Rust module
   // are read as text.
   'splash.test.ts',
+  // A window that exists but has never been presented still has to make
+  // progress. `requestAnimationFrame` is accepted for it and never called back
+  // while `document.hidden` reads `false`, so the lines that make the main
+  // window ready waited for a frame that never came — the "second launch shows
+  // a breathing icon over no window" report. The host now puts a 32 ms task
+  // behind the frame, and this drives it with a frame source that never fires.
+  'hidden-window-flush.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

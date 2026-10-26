@@ -93,6 +93,7 @@ export function createAppStore() {
     desktopVersion: __DESKTOP_VERSION__,
     userName: '',
     startupProblem: null,
+    splashTick: 0,
     startupNotice: null,
 
     modal: null,

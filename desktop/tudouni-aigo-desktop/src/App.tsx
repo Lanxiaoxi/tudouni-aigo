@@ -5,7 +5,6 @@ import { activeRuntime, NO_ENTRIES, useApp } from '@/state/store';
 import { draggedRailWidth, type RailSide } from '@/railWidth';
 import { conversationView, showsComposer, showsTranscript } from '@/conversationView';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
-import { handOverSplashIfDue, isBootSettled } from '@/splash';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
 import { useKeepAwake } from '@/hooks/useKeepAwake';
 import { useNotifications } from '@/hooks/useNotifications';
@@ -146,27 +145,12 @@ export function App() {
     hasConversation,
   });
 
-  // The launch splash's side of the hand-over. The rule is in `src/splash.ts`
-  // (pure, and asserted there); this is the one place with both inputs in view —
-  // the start-up chain's end, and which of the seven things the column is
-  // drawing. The event it emits is what shows the main window, so a wrong answer
-  // here is a launch that either shows an empty shell or a floating icon over a
-  // working application.
-  //
-  // Deliberately an effect rather than a store subscription: `view` is a render
-  // value (seven inputs, one priority order), and re-deriving it anywhere else
-  // would be a second definition of it.
-  useEffect(() => {
-    void handOverSplashIfDue({
-      // Read rather than subscribed: the latch is a history fact, and nothing
-      // re-renders on it. The effect runs on the transitions that matter (the
-      // store updates that change `view` or `startupProblem`) and re-reads it
-      // each time, which is exactly the granularity the rule needs.
-      bootSettled: isBootSettled(),
-      startupProblem,
-      view,
-    });
-  }, [startupProblem, view]);
+  // The launch splash's hand-over is **not** decided here: it runs from a store
+  // subscription installed in `main.tsx` (`watchSplashHandover`), because this
+  // window is hidden for the whole of that decision and React's scheduler does
+  // not run a hidden renderer's effects. Measured before the move: the chain
+  // settled at 290 ms and this effect first ran at 32.7 s — after the deadline
+  // had already shown the window. See `src/splash.ts` for the rule itself.
 
   // The destination side of the board's card press: a card press focuses its
   // session *under the board* and closes the board instantly — the gesture is

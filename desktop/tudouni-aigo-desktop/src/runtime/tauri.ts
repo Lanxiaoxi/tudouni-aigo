@@ -142,7 +142,9 @@ class RuntimeHost {
    * The release is scheduled three ways, and which one runs is load-bearing:
    *
    *   - **Visible**: `requestAnimationFrame`, so the work lands with the frame
-   *     that will paint it.
+   *     that will paint it — with a 32 ms task behind it, because a frame can be
+   *     requested from a window that is not being presented and never arrive
+   *     (see `scheduleFlush`).
    *   - **Hidden**: a 16 ms task. A hidden WebView never paints, and rAF never
    *     fires there — a stream running behind a minimized window would queue
    *     for as long as it stays hidden if rAF alone carried this.
@@ -268,6 +270,31 @@ class RuntimeHost {
       this.taskHandle = setTimeout(() => this.flushHeldLines(), 16);
     } else if (typeof requestAnimationFrame === 'function') {
       this.frameHandle = requestAnimationFrame(() => this.flushHeldLines());
+      // **A frame is not guaranteed to arrive, and that is not a hypothetical.**
+      // The main window is created hidden and stays hidden until the front end
+      // says its first screen is drawn — so the very lines that *make* it
+      // ready are held waiting for a frame. WebView2 is happy to accept a
+      // `requestAnimationFrame` from a window that has never been shown and
+      // never call it back, while `document.hidden` still reads `false` (the
+      // page is not "hidden", merely in a window nobody can see), so the branch
+      // above does not catch it either. The result was a launch that never
+      // finished booting: `init` sat in this queue, `ready` never became true,
+      // and the splash had nothing to hand over to until the window was
+      // revealed some other way (the tray, or the 20 s deadline) — at which
+      // point the accumulated lines flushed and everything looked fine.
+      //
+      // A task after one frame's worth of time is the backstop: if the frame
+      // has run, `flushScheduled` is already down and this finds nothing to do;
+      // if it has not, the lines are delivered a few milliseconds late rather
+      // than indefinitely. The frame is still tried first, because landing with
+      // the paint is the whole reason the queue exists.
+      const frame = this.frameHandle;
+      this.taskHandle = setTimeout(() => {
+        if (this.frameHandle === frame) {
+          if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
+          this.flushHeldLines();
+        }
+      }, 32);
     } else {
       this.taskHandle = setTimeout(() => this.flushHeldLines(), 0);
     }

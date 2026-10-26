@@ -25,7 +25,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { SPLASH_READY_EVENT, shouldDismissSplash, type SplashHandoverInput } from '@/splash';
+import { SPLASH_READY_COMMAND, shouldDismissSplash, type SplashHandoverInput } from '@/splash';
 
 /** A launch that has not reached an end and is looking at "starting…". */
 function booting(overrides: Partial<SplashHandoverInput> = {}): SplashHandoverInput {
@@ -98,6 +98,48 @@ test('a refused session reveals its own failure panel', () => {
 });
 
 /* ============================================================
+   The mechanism, which is the half that actually shipped broken
+   ============================================================ */
+
+test('settling the boot notifies the store and does not wait for a render', async () => {
+  // The defect this pins was not in the rule but in where the rule ran. As an
+  // effect in `App` it was correct and useless: the main window is hidden while
+  // this decision is made, and React does not schedule effects for a renderer
+  // that is not being presented. Measured, the chain settled at 290 ms and the
+  // effect first ran at 32.7 s. So the decision moved to a store subscription,
+  // and this asserts the half that makes that possible: settling the boot is a
+  // **store write**, delivered synchronously to subscribers, with no renderer
+  // involved anywhere.
+  const { markBootSettled, isBootSettled } = await import('@/splash');
+  const { useApp } = await import('@/state/store');
+
+  if (isBootSettled()) {
+    // The latch is process-wide and this suite may run after another test has
+    // already settled it; nothing to assert then.
+    return;
+  }
+
+  const seen: number[] = [];
+  const off = useApp.subscribe((s) => seen.push(s.splashTick));
+  const before = useApp.getState().splashTick;
+
+  markBootSettled();
+
+  off();
+
+  assert.equal(isBootSettled(), true, 'the latch is set');
+  assert.equal(
+    useApp.getState().splashTick,
+    before + 1,
+    'and the store was written, which is what wakes the subscriber',
+  );
+  // Synchronous: the notification arrived without any await, microtask, frame or
+  // render in between. That is the property a hidden window preserves and a
+  // React effect does not.
+  assert.deepEqual(seen, [before + 1], 'the subscriber was called once, on the same turn');
+});
+
+/* ============================================================
    The two ends, read as text
    ============================================================ */
 
@@ -133,13 +175,19 @@ test('splash.html draws the icon the bundle already ships', () => {
   );
 });
 
-test('the two ends agree on the event name', () => {
-  // The one link between the front end and Rust with no type to catch it
-  // drifting: rename it on one side and the splash never hands over (or never
-  // goes away), silently.
-  assert.equal(SPLASH_READY_EVENT, 'splash://ready');
-  assert.match(splashModule, /SPLASH_READY_EVENT = 'splash:\/\/ready'/);
-  assert.match(splashRust, /const SPLASH_READY: &str = "splash:\/\/ready"/);
+test('the two ends agree on how the front end says it is ready', () => {
+  // The link between the front end and Rust has no type to catch it drifting:
+  // rename the command on one side and the splash never hands over — silently,
+  // because an invoke for an unregistered command rejects only where the caller
+  // looks, and a missing listener has no such courtesy at all. That is the
+  // launch this suite was written after: both sides logged their half, and the
+  // window waited out the deadline.
+  assert.equal(SPLASH_READY_COMMAND, 'splash_ready');
+  assert.match(splashModule, /SPLASH_READY_COMMAND = 'splash_ready'/);
+  assert.match(splashRust, /pub\(crate\) async fn splash_ready\(/);
+  // And the command is registered, or the invoke above rejects at runtime.
+  const libRs = readFileSync(resolve(root, 'src-tauri', 'src', 'lib.rs'), 'utf8');
+  assert.match(libRs, /crate::splash::splash_ready/);
 });
 
 test('the rust deadline outlasts any plausible handshake, and the linger is short', () => {

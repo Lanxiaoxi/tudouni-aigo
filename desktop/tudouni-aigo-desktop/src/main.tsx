@@ -8,6 +8,7 @@ import '@/styles/index.css';
 import { App } from './App';
 import { applyDelta } from '@/state/entries';
 import { createSessionBucket, useApp } from '@/state/store';
+import { watchSplashHandover } from '@/splash';
 
 const host = document.getElementById('root');
 if (!host) throw new Error('#root not found');
@@ -57,3 +58,9 @@ createRoot(host).render(
     <App />
   </StrictMode>,
 );
+
+// The splash's hand-over, installed outside React on purpose: the main window is
+// hidden while the decision is being made, and a hidden renderer's effects are
+// not scheduled — which is what made the window wait out its deadline. See
+// `src/splash.ts`.
+watchSplashHandover();

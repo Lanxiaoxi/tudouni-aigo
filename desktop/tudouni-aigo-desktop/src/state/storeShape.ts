@@ -69,6 +69,16 @@ export interface AppStore {
    */
   startupProblem: string | null;
   /**
+   * A counter bumped when the start-up chain reaches an end, so the splash
+   * hand-over check re-runs even when nothing else on screen changed.
+   *
+   * `src/splash.ts` owns the latch; this is only the signal that carries it into
+   * a render. A counter rather than a boolean, because the interesting event is
+   * the *transition* and a boolean cannot express "it happened again" — the same
+   * reason `findFocus` is a counter.
+   */
+  splashTick: number;
+  /**
    * Why nothing was opened at start-up, when that is worth saying.
    *
    * Separate from `startupProblem` because the two are read differently. A

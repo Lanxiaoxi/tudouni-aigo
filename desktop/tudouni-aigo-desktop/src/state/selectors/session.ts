@@ -7,7 +7,7 @@
  * Moved verbatim out of `store.ts`; `store.ts` re-exports them, so call sites
  * still import from `@/state/store`.
  */
-import { conversationView } from '@/conversationView';
+import { conversationViewOf } from '@/conversationView';
 import {
   cacheHitRate,
   phaseFromStopReason,
@@ -784,17 +784,9 @@ export function selectModalVisible(s: AppStore): boolean {
   // Whose request this is decides the first hold: another session's prompt
   // waits for its own turn on the screen, however healthy the view is.
   if (s.activeKey !== s.modal.key) return false;
-  const rt = s.sessions[s.activeKey ?? ''];
-  const view = conversationView({
-    startupProblem: s.startupProblem !== null,
-    sessionProblem: rt?.problem != null,
-    attachedTerminalId: rt?.activeTerminalId ?? null,
-    boardOpen: s.boardOpen,
-    hasSession: s.activeKey !== null,
-    ready: rt?.ready ?? false,
-    hasConversation: (rt?.entries ?? []).some((entry) => entry.kind !== 'note'),
-  });
-  return view !== 'board';
+  // The view, read off the store rather than fed by a render — the same helper
+  // the splash hand-over uses, so the seven-input order has one definition.
+  return conversationViewOf(s) !== 'board';
 }
 
 /**

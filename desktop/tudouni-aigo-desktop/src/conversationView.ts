@@ -111,6 +111,34 @@ export function conversationView(input: ConversationViewInput): ConversationView
 }
 
 /**
+ * The same decision, read straight off the store.
+ *
+ * **Not a second definition**: it is `conversationView` applied to the fields
+ * `App` would have read, so a caller with a store rather than a render can ask
+ * the same question. Two callers need it without a component — the modal
+ * visibility rule, and the splash hand-over, which runs from a store
+ * subscription precisely because React's effects do not run in a hidden
+ * window (see `src/splash.ts`).
+ */
+export function conversationViewOf(s: {
+  startupProblem: string | null;
+  activeKey: string | null;
+  boardOpen: boolean;
+  sessions: Record<string, { problem: string | null; activeTerminalId: string | null; ready: boolean; entries: { kind: string }[] } | undefined>;
+}): ConversationView {
+  const rt = s.activeKey === null ? undefined : s.sessions[s.activeKey];
+  return conversationView({
+    startupProblem: s.startupProblem !== null,
+    sessionProblem: rt?.problem != null,
+    attachedTerminalId: rt?.activeTerminalId ?? null,
+    boardOpen: s.boardOpen,
+    hasSession: s.activeKey !== null,
+    ready: rt?.ready ?? false,
+    hasConversation: (rt?.entries ?? []).some((entry) => entry.kind !== 'note'),
+  });
+}
+
+/**
  * Whether the composer is drawn under the column.
  *
  * It is derived from the view rather than from `activeTerminalId`, and that is

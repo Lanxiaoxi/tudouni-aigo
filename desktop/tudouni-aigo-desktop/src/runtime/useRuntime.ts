@@ -186,5 +186,11 @@ async function openFirstSession(isCancelled: () => boolean): Promise<void> {
   // what the column draws from here on is an answer. It is deliberately *not*
   // enough on its own: the handshake may still be in flight, which is why the
   // rule also requires the view to have left `booting`.
-  if (!isCancelled()) markBootSettled();
+  //
+  // **Deliberately not gated on `isCancelled`.** That flag says "this effect
+  // instance was torn down", which in development is what StrictMode does to
+  // every effect once — and the latch it guards is not a fact about an effect
+  // instance, it is a fact about the start-up: the session *was* attached, by
+  // whichever instance got that far.
+  markBootSettled();
 }
