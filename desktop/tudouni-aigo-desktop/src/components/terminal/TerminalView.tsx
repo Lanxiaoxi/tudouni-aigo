@@ -3,7 +3,7 @@ import { ArrowLeft, Plus, X } from 'lucide-react';
 import { selectModalVisible, useApp, useSessionField, EMPTY_TAIL, NO_STRINGS, NO_TERMINALS } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
-import { encodeKey } from '@/runtime/terminalKeys';
+import { encodeKey, encodePaste } from '@/runtime/terminalKeys';
 import { attrStyle, caretPosition, lineSegments, NO_RUNS } from '@/runtime/terminalOutput';
 import type { TerminalRow } from '@/protocol/types';
 
@@ -435,6 +435,36 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
     terminalInput(row.id, data);
   }
 
+  /**
+   * A paste is one `ClipboardEvent`, not a run of keystrokes, so `encodeKey`
+   * never saw it — which is why `Ctrl+V` in the pane did nothing at all.
+   *
+   * The pane has **no editable field to paste into**, so the browser's default
+   * paste writes nowhere; the only behaviour this window can give a paste is to
+   * send the clipboard to the shell, and it does so byte for byte, the same
+   * contract the keystrokes have. `preventDefault` keeps the browser from
+   * additionally writing the text into whatever had focus after the pane.
+   *
+   * Newlines inside the text are **Ctrl+J (LF), not CR** — the reason is in
+   * `encodePaste`: this pane is not a terminal emulator, so a pasted newline
+   * delivered as Enter would submit whatever line the shell had and run the
+   * rest of the paste as commands. A paste of a stack trace would have been a
+   * shell session.
+   *
+   * Like `onKeyDown`, the `running` guard applies: an ended shell has no
+   * process to receive the bytes, and writing to a dead terminal reads as a
+   * bug in this window rather than as "the shell is gone".
+   */
+  function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    if (row.status !== 'running') return;
+    const text = e.clipboardData.getData('text');
+    const data = encodePaste(text);
+    if (data === '') return;
+    e.preventDefault();
+    e.stopPropagation();
+    terminalInput(row.id, data);
+  }
+
   return (
     <div className="term-pane-wrap">
       <div
@@ -444,6 +474,7 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
         role="log"
         aria-label={t('panel.term.title')}
         onKeyDown={onKeyDown}
+        onPaste={onPaste}
       >
         {rows.map((segments, i) => (
           // **The absolute line number, not the index.** The array is bounded and

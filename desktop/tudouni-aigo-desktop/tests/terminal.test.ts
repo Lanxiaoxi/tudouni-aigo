@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 
-import { encodeKey, isTerminalKey } from '@/runtime/terminalKeys';
+import { encodeKey, encodePaste, isTerminalKey } from '@/runtime/terminalKeys';
 import {
   ansiColour,
   applyTerminalOutput,
@@ -146,6 +146,40 @@ test('isTerminalKey answers what the window handlers ask it', () => {
   // Escape included: while a terminal is attached, Escape is the ESC byte rather
   // than "close the panel" — which is why the window's Esc handler must ask.
   assert.equal(isTerminalKey(key('Shift')), false);
+});
+
+/* ============================================================
+   Pasting
+   ============================================================ */
+
+test('a paste is sent byte for byte, unchanged when it has no line breaks', () => {
+  assert.equal(encodePaste('echo hello'), 'echo hello');
+  assert.equal(encodePaste('中 文'), '中 文');
+});
+
+test('a newline inside a paste is Ctrl+J (LF), not CR — Enter would submit the line', () => {
+  // The pane is not a terminal emulator: a pasted newline delivered as CR would
+  // run whatever the shell had as a command, then the next line as another.
+  assert.equal(encodePaste('line1\nline2'), 'line1\x0aline2');
+});
+
+test('CRLF and lone CR are normalised before they can become an Enter', () => {
+  assert.equal(encodePaste('a\r\nb'), 'a\x0ab');
+  assert.equal(encodePaste('a\rb'), 'a\x0ab');
+});
+
+test('a trailing newline is dropped: the selection ended at a line break, not an Enter', () => {
+  assert.equal(encodePaste('echo hello\n'), 'echo hello');
+  assert.equal(encodePaste('echo hello\r\n'), 'echo hello');
+});
+
+test('an empty or newline-only clipboard sends nothing', () => {
+  // Internal whitespace is kept — a pasted space is input — but a clipboard that
+  // is only line breaks would send nothing but an Enter, which submits whatever
+  // the shell had.
+  assert.equal(encodePaste(''), '');
+  assert.equal(encodePaste('\n\n'), '');
+  assert.equal(encodePaste(' \n '), ' \n ');
 });
 
 /* ============================================================

@@ -140,6 +140,38 @@ export function encodeKey(k: KeyDescriptor): string {
 }
 
 /**
+ * Encode a **paste** — the bytes a real terminal puts on the wire for the text
+ * on the clipboard.
+ *
+ * `encodeKey` cannot do this: a paste is one `ClipboardEvent`, not a run of
+ * `KeyboardEvent`s, and two of its bytes matter.
+ *
+ *   - **A newline is Ctrl+J (LF), not CR.** This pane is not a terminal
+ *     emulator, so a pasted newline would otherwise be delivered as the Enter
+ *     keystroke — and Enter in a command line *submits* the line. Pasting a
+ *     stack trace would then have executed every line of it, one after
+ *     another. LF is what a terminal sends for an inserted newline while a
+ *     line editor is reading: readline appends a line break to the input
+ *     rather than running it. The same distinction is why `encodeKey`'s Enter
+ *     is CR.
+ *   - **The clipboard's own line breaks are normalised first.** CRLF (Windows)
+ *     and lone CR (old Mac files, some tools) would both leave a CR behind,
+ *     which is the Enter byte again — the failure above, one character in.
+ *
+ * A **trailing** newline is dropped rather than converted: the most common
+ * clipboard content is a selection that ended at a line break, and sending
+ * that trailing newline as an Enter would submit whatever line the person had
+ * already typed. Newlines *inside* the text keep their Ctrl+J.
+ *
+ * Empty after the rules mean **nothing is sent**, the same as `encodeKey`'s
+ * silence: a whitespace-only clipboard is not input.
+ */
+export function encodePaste(text: string): string {
+  const normalised = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  return normalised.replace(/\n+$/u, '');
+}
+
+/**
  * Whether this keystroke belongs to the shell rather than to the window.
  *
  * The window's own handlers ask this before acting, and it is one function

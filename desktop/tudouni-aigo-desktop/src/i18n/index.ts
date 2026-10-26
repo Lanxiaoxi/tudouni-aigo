@@ -1096,7 +1096,7 @@ export const en = {
   'panel.term.killed': 'killed',
   'panel.term.cwdRoot': 'workspace root',
   'panel.term.hint':
-    'Keys go to the shell byte for byte: Ctrl+C interrupts its command, arrows move in it. Nothing is interpreted by this window.',
+    'Keys go to the shell byte for byte: Ctrl+C interrupts its command, arrows move in it, Ctrl+V pastes into it. Nothing is interpreted by this window.',
   'panel.term.dropped': 'Earlier output scrolled out of this buffer.',
   'panel.term.outline': 'The runtime keeps no output — this buffer is this window’s own.',
   /* The status chips on the panel's list. `running` already exists above as a
