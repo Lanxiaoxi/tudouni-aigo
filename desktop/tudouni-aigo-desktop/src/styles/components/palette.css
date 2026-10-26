@@ -485,3 +485,93 @@
 .mp-alias:hover {
   background: transparent;
 }
+
+/* ---------------- the effort probe ----------------
+ *
+ * A zone beneath the level rows. The list rows are the panel's subject and
+ * stay clickable; the probe is one action with a result, so it sits apart
+ * under a rule, the way `.mp-aliases` separates itself from the groups. */
+
+.probe-zone {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.probe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The confirmation is a card, not a dialog: it is one step of the panel's
+   own action and the list above stays readable. */
+.probe-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}
+
+.probe-confirm-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.probe-probing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--fg-secondary);
+}
+
+.probe-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.probe-result-head {
+  color: var(--fg-secondary);
+}
+
+.probe-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+}
+
+/* The endpoint's own sentence is a fact the person may need to act on
+   (a dead key reads exactly like this), so it truncates to one line and
+   keeps the whole in the tooltip. */
+.probe-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.probe-written {
+  color: var(--accent);
+}
+
+.probe-problem {
+  color: var(--warning);
+}
+
+.probe-fineprint {
+  margin-top: var(--space-1);
+}

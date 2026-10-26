@@ -7,7 +7,7 @@
  * re-exported by `store.ts`, so every `import ... from '@/state/store'` keeps
  * working.
  */
-import { type CodeIntelSnapshot, type FileEntry, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
+import { type CodeIntelSnapshot, type FileEntry, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type ProbeEffortSnapshot, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
 import type { TerminalState } from '@/runtime/terminalOutput';
 import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
@@ -891,6 +891,32 @@ export interface SessionRuntime {
    * snapshot, because by then it describes a request that has been superseded.
    */
   codeintelProblem: string | null;
+
+  /**
+   * The last `ui(probe_effort)` answer, per session for the same reason the
+   * other panel snapshots are: the runtime that answered is per session, and
+   * its (model, provider) is what a config save looks up afterwards.
+   *
+   * `null` until asked; the panel's probe state (probing / done / problem)
+   * is derived from it rather than held separately, so a session switch
+   * cannot show one session's probe beside another's model.
+   */
+  probeEffort: ProbeEffortSnapshot | null;
+  /** Epoch seconds when the probe answered. The result is about the endpoint
+   *  as it was at that moment, and a result nobody re-asked about a week
+   *  later is not a reason to rewrite a config file. */
+  probeEffortAt: number | null;
+  /** Epoch seconds when the last ask went out, or `null` when nothing is in
+   *  flight. "Probing" is derived from this rather than from a panel-local
+   *  flag, so a closed-and-reopened panel still shows the pass that is
+   *  running — the ask takes seconds and outlives any single render. */
+  probeEffortStartedAt: number | null;
+  /**
+   * Why the last `probe_effort` did **not** run, verbatim from the runtime.
+   * Same reason `codeintelProblem` is here: the panel is a layer over the
+   * transcript and a notice about the refusal lands behind it.
+   */
+  probeEffortProblem: string | null;
 
   /* ---------------- this session's own input state ---------------- */
   draft: string;

@@ -1081,6 +1081,17 @@ export interface AppStore {
    */
   requestUsage(): void;
 
+  /**
+   * Ask the runtime to probe the current model's reasoning levels.
+   *
+   * The asks cost real tokens, so the **confirmation is the panel's**: this
+   * action sends the message, and only the panel decides the moment that is
+   * allowed — after the person has read what a probe will send. The answer
+   * lands in the session bucket's `probeEffort`; nothing here pre-draws a
+   * result, because a probe that takes seconds must not look finished.
+   */
+  requestProbeEffort(): void;
+
   /* ---------------- the workspace: terminals ---------------- */
 
   /** Ask for the workspace's terminal list. */

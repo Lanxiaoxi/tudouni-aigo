@@ -15,7 +15,7 @@ import { pollNow } from '../polling';
 import { selectModalVisible } from '../selectors/session';
 import { activeWorkspaceOf, remoteConnectionOf } from '../appView';
 
-export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage'> {
+export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
   const { set, get, patch, patchWith, markSavedSessionsPending } = ctx;
   return {
     answerPermission(decision) {
@@ -484,6 +484,23 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       // held shows that snapshot until the fresh answer replaces it — a stale "as
       // of" line beats a blank panel that knows the answer.
       sendTo(key, { v: 1, t: 'usage_stats' });
+    },
+
+    requestProbeEffort() {
+      const key = get().activeKey;
+      if (key === null) return;
+      // The previous answer is cleared **here**, not on the way back: a probe
+      // takes seconds and is a real spend, so the panel must show "probing",
+      // not the result of the last one, for the whole time. "Probing" is
+      // then simply `startedAt && no answer yet`, and the store stays the
+      // only source of that fact across a re-open of the panel.
+      patch(key, {
+        probeEffort: null,
+        probeEffortAt: null,
+        probeEffortStartedAt: Date.now() / 1000,
+        probeEffortProblem: null,
+      });
+      sendTo(key, { v: 1, t: 'probe_effort' });
     },
 
     /* ==========================================================

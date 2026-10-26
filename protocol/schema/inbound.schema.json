@@ -622,5 +622,13 @@
       "t": {"type": "string", "const": "usage_stats"}
     },
     "required": ["v", "t"]
+  },
+  "probe_effort": {
+    "summary": "探测当前模型的推理档位：runtime 对 `effort_levels` 的**每一档**发一个真实的小请求（thinking 开、输出额度压到最小），回答 ui(probe_effort)，逐档给出 ok / rejected / uncertain。无参数：档位清单只有 runtime 知道（目录里声明的）。探测花真金，**确认是前端的活**——用户点头才发这条。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "probe_effort"}
+    },
+    "required": ["v", "t"]
   }
 }

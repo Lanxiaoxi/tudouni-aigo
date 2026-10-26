@@ -110,7 +110,14 @@ const VERSION = 1
 // rule runs the other way too: a day with no modeled rows omits the key, so
 // a front end that draws per-model charts hides them rather than inventing a
 // split the ledger never recorded.
-const PROTOCOL = 12
+//
+// 13 adds `probe_effort` inbound and a `probe_effort` kind on the `ui`
+// channel: one ask to the endpoint per offered reasoning level, and the
+// answer beside it. A front end that does not know the kind ignores it, and
+// one that draws a probe control gates it on this number — a runtime below
+// 13 would silently drop the message, and a button that answers with nothing
+// is a promise the runtime cannot keep.
+const PROTOCOL = 13
 
 // Message keys used by every envelope.
 const (
@@ -199,6 +206,14 @@ const (
 	// asks for the whole snapshot on open, and there is nothing on it a person
 	// can act on — the one panel whose message carries no action field.
 	InUsageStats = "usage_stats"
+
+	// Ask the endpoint which of the current model's reasoning levels it takes.
+	// One inbound message, no arguments — the levels are the model's own list
+	// and only the runtime knows it — and one outbound `ui` kind with the
+	// answer per level. The asks cost real tokens, so the **front end**
+	// confirms with the person first; the runtime simply does what it is
+	// asked.
+	InProbeEffort = "probe_effort"
 )
 
 // Message kinds travelling runtime -> front end.
@@ -288,6 +303,13 @@ const (
 	// refusal must arrive as the panel's own message rather than as a notice
 	// nobody can see.
 	UIUsage = "usage"
+
+	// The answer to `probe_effort`: the (model, provider) the probes were about
+	// and one row per level — `result` ("ok" / "rejected" / "uncertain") and,
+	// when uncertain, the endpoint's own sentence in `note`. A runtime that
+	// cannot probe answers this kind with `problem` and no `probe`, for the
+	// reason the memory and codeintel panels carry theirs.
+	UIProbeEffort = "probe_effort"
 )
 
 // Terminal statuses. The runtime is the only source of truth for these; a front
@@ -461,6 +483,9 @@ var RequiredKeys = map[string][]string{
 
 	// No arguments at all: the snapshot is the whole answer.
 	InUsageStats: {"v", "t"},
+
+	// No arguments: the levels come from the catalogue, not the front end.
+	InProbeEffort: {"v", "t"},
 }
 
 // TerminalDefaults are the size a terminal is created with when the client does

@@ -67,6 +67,18 @@ func thinkingBudget(effort string) int {
 // The two are set here in one place so that relationship cannot drift.
 func maxOutputTokens(effort string) int { return thinkingBudget(effort) + 8192 }
 
+// probeThinkingFloor and probeAnswerRoom are the probe's numbers on this wire.
+//
+// The floor is the protocol's smallest thinking budget: the probe still asks
+// for thinking (a level the endpoint takes only while thinking is not a level),
+// but at the smallest budget the shape allows. The answer room is what keeps
+// the relationship the endpoint requires — `max_tokens` strictly above the
+// budget — while the answer itself stays small.
+const (
+	probeThinkingFloor = 1024
+	probeAnswerRoom    = 128
+)
+
 // onTheWireMessage returns the message unchanged: this shape rebuilds every
 // message field by field in `splitSystemPrompt` and `anthropicMessages`, so a key
 // this program added to its own session format has no path to the wire. The
@@ -91,10 +103,27 @@ func (anthropicDialect) encode(request dialectRequest) (map[string]any, error) {
 		return nil, err
 	}
 
+	// The probe drops to the protocol's floor: see probeThinkingFloor. The
+	// turn's rule (budget-plus-allowance, see maxOutputTokens) is a real spend
+	// on an ask whose only job is to be refused or not, and a one-word answer
+	// room is invalid at every level — the endpoint requires `max_tokens` to
+	// **exceed** `thinking.budget_tokens`.
+	//
+	// On this wire the level stops mattering while the floor stands in: the
+	// level-to-budget mapping is a translation **this program** makes, so a
+	// probe here asks "does this model take thinking at all" and every level
+	// shares the endpoint's answer. That is the honest reading — an answer
+	// about a level would be an invented one.
+	budget := thinkingBudget(request.knobs.Effort)
+	maxTokens := budget + 8192
+	if request.probe {
+		budget = probeThinkingFloor
+		maxTokens = budget + probeAnswerRoom
+	}
 	body := map[string]any{
 		"model":      request.model,
 		"messages":   messages,
-		"max_tokens": maxOutputTokens(request.knobs.Effort),
+		"max_tokens": maxTokens,
 	}
 	// `system` is omitted rather than sent as an empty string: the field is
 	// optional, and an empty one is a prompt the model has to interpret.
@@ -123,7 +152,7 @@ func (anthropicDialect) encode(request dialectRequest) (map[string]any, error) {
 	case request.knobs.Thinking:
 		body["thinking"] = map[string]any{
 			"type":          "enabled",
-			"budget_tokens": thinkingBudget(request.knobs.Effort),
+			"budget_tokens": budget,
 		}
 	default:
 		body["thinking"] = map[string]any{"type": "disabled"}

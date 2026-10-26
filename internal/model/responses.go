@@ -84,6 +84,14 @@ func (responsesDialect) encode(request dialectRequest) (map[string]any, error) {
 	// inventing one here would be a second, invisible place where the effort
 	// levels are declared.
 
+	if request.probe {
+		// This shape's output room is the endpoint's default, which for a
+		// thinking model is a real spend on an ask whose only job is to be
+		// refused or not. The cap keeps the answer small without inventing a
+		// parameter the shape might not know.
+		body["max_output_tokens"] = probeAnswerRoom
+	}
+
 	if request.stream {
 		body["stream"] = true
 	}

@@ -5,12 +5,14 @@ import {
   ArchiveRestore,
   ArrowUp,
   Bot,
+  Check,
   ChevronRight,
   Clock,
   Download,
   Eye,
   Folder,
   Plus,
+  Radio,
   Search,
   Terminal as TerminalIcon,
   Upload,
@@ -40,6 +42,13 @@ import {
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { useListKeys } from '@/hooks/useListKeys';
+import { buildPatch, draftFrom, type RouteView } from '@/runtime/userConfig';
+import {
+  readRemoteUserConfig,
+  readUserConfig,
+  writeRemoteUserConfig,
+  writeUserConfig,
+} from '@/runtime/tauri';
 import { Badge, EmptyState, Info, RiskTag, Tip } from '@/components/ui/kit';
 import { ContextBlock, InBlock } from '@/components/stream/InBlock';
 import { PanelBody, PanelRow, PanelShell } from './PanelShell';
@@ -340,6 +349,14 @@ function ModelRow({
    The list is `string[]` from the runtime and changes with the model;
    the labels are this layer's job, the levels are not.
    ============================================================ */
+
+/** The result a probe row can carry, and the badge it wears. */
+const PROBE_TONE: Record<string, 'success' | 'destructive' | 'warning'> = {
+  ok: 'success',
+  rejected: 'destructive',
+  uncertain: 'warning',
+};
+
 export function EffortPanel() {
   const t = useT();
   // The shared empty constant keeps the snapshot's identity while the data is
@@ -351,13 +368,100 @@ export function EffortPanel() {
   );
   const current = useSessionField((rt) => rt.session?.effort ?? '', '');
   const thinking = useSessionField((rt) => rt.session?.thinking ?? false, false);
+  const model = useSessionField((rt) => rt.session?.model ?? '', '');
+  const protocol = useSessionField((rt) => rt.session?.protocol ?? 0, 0);
+  const probe = useSessionField((rt) => rt.probeEffort, null);
+  const probing = useSessionField(
+    (rt) => rt.probeEffortStartedAt !== null && rt.probeEffort === null,
+    false,
+  );
+  const probeProblem = useSessionField((rt) => rt.probeEffortProblem, null);
   const chooseEffort = useApp((s) => s.chooseEffort);
+  const requestProbeEffort = useApp((s) => s.requestProbeEffort);
+  // The write-back edits the configuration **file**, and on a remote screen
+  // that file lives on the far host — the same door the config panel uses.
+  const configTarget = useApp((s) => s.configTarget);
+  const noteRemoteConfigWritten = useApp((s) => s.noteRemoteConfigWritten);
+
+  const [confirming, setConfirming] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [written, setWritten] = useState(false);
+  const [writeProblem, setWriteProblem] = useState<string | null>(null);
 
   const { active, setActive } = useListKeys({
     count: levels.length,
     onClose: closePanel,
     onPick: (i) => levels[i] && chooseEffort(levels[i]),
   });
+
+  // The result applies to the model it probed, not to whichever model happens
+  // to be on screen: switching models in the meantime is exactly what the
+  // panel must not paper over.
+  const probeMatches = probe !== null && probe.model === model;
+  const accepted = probe ? probe.levels.filter((row) => row.result === 'ok').map((row) => row.level) : [];
+  const canWrite = probeMatches && accepted.length > 0 && !writing && !probing;
+
+  /**
+   * Write the accepted levels into the configuration file, on whichever
+   * machine that file lives.
+   *
+   * The read-modify-write is **here and now**, not against the panel's state:
+   * the file may have been edited since the panel opened, and the Rust merge
+   * runs against the bytes it just read — the config panel's own save rule.
+   * Only the one model the probe covered is touched; every other route and
+   * model round-trips unchanged.
+   */
+  async function writeAccepted() {
+    if (probe === null || !probeMatches) return;
+    setWriting(true);
+    setWriteProblem(null);
+    setWritten(false);
+    try {
+      const where = configTarget();
+      const doc = where === null ? await readUserConfig() : await readRemoteUserConfig(where.target);
+      if (doc === null) {
+        setWriteProblem(t('panel.effort.probeReadFailed'));
+        return;
+      }
+      let found = false;
+      const providers: RouteView[] = doc.providers.map((route) => {
+        if (route.name !== probe.provider) return route;
+        return {
+          ...route,
+          models: route.models.map((entry) => {
+            if (entry.id !== probe.model) return entry;
+            found = true;
+            return { ...entry, effortLevels: accepted };
+          }),
+        };
+      });
+      if (!found) {
+        // The file no longer lists the model the probe covered: writing the
+        // levels into a rebuilt entry would invent configuration, and doing
+        // nothing while saying "saved" would be a lie.
+        setWriteProblem(t('panel.effort.probeNotFound'));
+        return;
+      }
+      const patch = buildPatch(doc, { ...draftFrom(doc), providers });
+      if (where === null) {
+        await writeUserConfig(patch);
+      } else {
+        // The same §9.5 baseline move the config panel makes: without it the
+        // next open would report this save as somebody else's change.
+        const writtenDoc = await writeRemoteUserConfig(where.target, patch);
+        if (writtenDoc.configFingerprint !== null) {
+          noteRemoteConfigWritten(where.hostId, writtenDoc.configFingerprint);
+        }
+      }
+      setWritten(true);
+    } catch (err) {
+      setWriteProblem(
+        t('panel.effort.probeWriteFailed', { problem: err instanceof Error ? err.message : String(err) }),
+      );
+    } finally {
+      setWriting(false);
+    }
+  }
 
   return (
     <PanelShell
@@ -396,6 +500,120 @@ export function EffortPanel() {
           <div className="caption faint" style={{ padding: 'var(--space-2) var(--space-3)' }}>
             {t('session.thinking')}: {t('session.thinkingOff')} —{' '}
             {t('cmd.thinking.desc')}
+          </div>
+        ) : null}
+
+        {/* ---------------- the probe ----------------
+         *
+         * A button that asks real questions of the endpoint. The confirmation
+         * is here rather than in the store, because the cost is what the
+         * person is confirming: the list length and the model are this panel's
+         * facts, and a store that had to hold them would know more than its
+         * job. Gated on protocol 13 for the reason the fork control is: a
+         * runtime below it would drop the message, and a button that answers
+         * with nothing is a promise the runtime cannot keep. */}
+        {protocol >= 13 ? (
+          <div className="probe-zone">
+            {probeProblem !== null ? (
+              <div className="caption probe-problem">{probeProblem}</div>
+            ) : null}
+
+            {probing ? (
+              <div className="caption probe-probing">
+                <Radio size={12} aria-hidden />
+                {t('panel.effort.probing')}
+              </div>
+            ) : null}
+
+            {probe && !probing ? (
+              <div className="probe-result">
+                <div className="caption probe-result-head">
+                  {probeMatches
+                    ? t('panel.effort.probeResult', {
+                        model: probe.model,
+                        ok: probe.levels.filter((row) => row.result === 'ok').length,
+                        rejected: probe.levels.filter((row) => row.result === 'rejected').length,
+                        uncertain: probe.levels.filter((row) => row.result === 'uncertain').length,
+                      })
+                    : t('panel.effort.probeStale', { probed: probe.model, model })}
+                </div>
+                {probe.levels.map((row) => (
+                  <div key={row.level} className="probe-row">
+                    <span className="mono strong">{row.level}</span>
+                    <Badge tone={PROBE_TONE[row.result] ?? 'warning'} dot={false}>
+                      {row.result}
+                    </Badge>
+                    {row.result === 'uncertain' && row.note ? (
+                      <span className="caption faint probe-note" title={row.note}>
+                        {row.note}
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
+                {accepted.length === 0 ? (
+                  <div className="caption faint">{t('panel.effort.probeEmpty')}</div>
+                ) : null}
+                <div className="probe-actions">
+                  {canWrite ? (
+                    <Tip label={t('panel.effort.probeWriteHint')}>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-compact"
+                        disabled={writing}
+                        onClick={() => void writeAccepted()}
+                      >
+                        {writing ? <Radio size={12} aria-hidden /> : <Check size={12} aria-hidden />}
+                        {t('panel.effort.probeWrite')}
+                      </button>
+                    </Tip>
+                  ) : null}
+                  {written ? (
+                    <span className="caption probe-written">
+                      {t('panel.effort.probeWritten', { levels: accepted.join(' / ') })}
+                    </span>
+                  ) : null}
+                </div>
+                {writeProblem !== null ? (
+                  <div className="caption probe-problem">{writeProblem}</div>
+                ) : null}
+                <div className="caption faint probe-fineprint">{t('panel.effort.probeNote')}</div>
+              </div>
+            ) : null}
+
+            {!probing ? (
+              confirming ? (
+                <div className="probe-confirm">
+                  <div className="strong">{t('panel.effort.probeConfirmTitle')}</div>
+                  <div className="caption">
+                    {t('panel.effort.probeConfirmBody', { n: levels.length, model })}
+                  </div>
+                  <div className="probe-confirm-actions">
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-compact"
+                      onClick={() => {
+                        setConfirming(false);
+                        requestProbeEffort();
+                      }}
+                    >
+                      {t('panel.effort.probe')}
+                    </button>
+                    <button type="button" className="btn btn-outline btn-compact" onClick={() => setConfirming(false)}>
+                      {t('common.cancel')}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="probe-actions">
+                  <Tip label={t('panel.effort.probeHint')}>
+                    <button type="button" className="btn btn-outline btn-compact" onClick={() => setConfirming(true)}>
+                      <Radio size={12} aria-hidden />
+                      {t('panel.effort.probe')}
+                    </button>
+                  </Tip>
+                </div>
+              )
+            ) : null}
           </div>
         ) : null}
       </PanelBody>

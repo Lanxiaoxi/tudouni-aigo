@@ -6,7 +6,7 @@
  */
 import type { StoreContext } from '../storeContext';
 import type { AppStore } from '../storeShape';
-import { type CodeIntelSnapshot, type MemorySnapshot } from '@/protocol/types';
+import { type CodeIntelSnapshot, type MemorySnapshot, type ProbeEffortSnapshot } from '@/protocol/types';
 import { appendBlock, applyDelta, applyFinalAnswer, clearStream, lastStopReason, lastTurnHead, newTurnStartsFolded, nextId, pushBlock, reduceEvent, settleAbandonedTurn, type Entry, type LooseEvent, type NoteEntry } from '@/state/entries';
 import { mergeSkills, projectCompacted, projectContext, projectHistory, projectInit, projectMcpMsg, projectSessionList, projectSkillsMsg, projectState, projectStatus, projectToolsMsg } from '@/runtime/adapt';
 import { extractRefinePrompts } from '@/learn/refineTemplate';
@@ -679,6 +679,30 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
               set({
                 ...(snapshot !== null ? { usage: snapshot } : {}),
                 usageProblem:
+                  typeof msg.problem === 'string' && msg.problem !== '' ? msg.problem : null,
+              });
+              break;
+            }
+            case 'probe_effort': {
+              // The answer is a **replacement**, not a merge — the codeintel
+              // rule — and it is filed beside the session for the same reason:
+              // the (model, provider) it names is what a config save looks up
+              // afterwards, and a switch of model in the meantime is exactly
+              // what the panel uses to decide the result no longer applies.
+              //
+              // `problem` with no snapshot is the one refusal that has nothing
+              // to draw beside it (the runtime cannot probe, or the pass
+              // failed), and it clears the previous problem rather than
+              // joining it: the newest answer is the only one the panel names.
+              const snapshot =
+                msg.probe && typeof msg.probe === 'object' ? (msg.probe as ProbeEffortSnapshot) : null;
+              patch(key, {
+                ...(snapshot !== null
+                  ? { probeEffort: snapshot, probeEffortAt: Date.now() / 1000 }
+                  : {}),
+                // The answer — refusal or result — ends the pass either way.
+                probeEffortStartedAt: null,
+                probeEffortProblem:
                   typeof msg.problem === 'string' && msg.problem !== '' ? msg.problem : null,
               });
               break;

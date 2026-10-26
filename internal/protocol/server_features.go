@@ -102,6 +102,46 @@ func (s *Server) startCompact() {
 	}()
 }
 
+// handleProbeEffort asks the endpoint, level by level, which reasoning levels
+// the current model takes.
+//
+// The answer is async for the reason compaction's is: six serial asks to a
+// thinking endpoint take seconds at best and a hung one a full minute each,
+// and a read loop blocked for that long stops answering every other message
+// on the connection — including the ones the panel itself needs. The refusal
+// is not a notice alone: the panel that asked is a modal layer over the
+// transcript, and a notice lands behind it — so the refusal rides the panel's
+// own kind with `problem` beside it, the way memory and codeintel do.
+func (s *Server) handleProbeEffort() {
+	runtime := s.current()
+	if runtime == nil {
+		s.notice("warn", "probe", i18n.T("channels.probe.no_session"))
+		return
+	}
+	prober, ok := runtime.(ProbeEfforter)
+	if !ok {
+		s.Send(map[string]any{
+			"v": VERSION, "t": OutUI, "kind": UIProbeEffort,
+			"problem": i18n.T("channels.probe.unsupported"),
+		})
+		return
+	}
+	go func() {
+		payload, err := prober.ProbeEffort()
+		if err != nil {
+			s.Send(map[string]any{
+				"v": VERSION, "t": OutUI, "kind": UIProbeEffort,
+				"problem": i18n.T("channels.probe.failed", "problem", err.Error()),
+			})
+			return
+		}
+		payload["v"] = VERSION
+		payload["t"] = OutUI
+		payload["kind"] = UIProbeEffort
+		s.Send(payload)
+	}()
+}
+
 // handleGoal performs a command about the session's goal.
 //
 // The command is the person's half of the goal feature, and it is deliberately a

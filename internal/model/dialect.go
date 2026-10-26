@@ -177,6 +177,11 @@ type dialectRequest struct {
 	// the parameter once (see unsupportedStreamOptions). A dialect that has no
 	// such parameter ignores it.
 	includeStreamUsage bool
+	// probe marks a level probe rather than a turn. A probe's job is to be
+	// refused or not, and the turn's output rules (the thinking budget plus its
+	// allowance of answer room) are a real spend on every one — so each dialect
+	// substitutes its smallest legal shape when this is set. See ProbeEffort.
+	probe bool
 }
 
 // dialectFor picks the implementation for a style.

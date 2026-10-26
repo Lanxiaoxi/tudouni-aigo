@@ -221,6 +221,21 @@ type GoalCommander interface {
 	GoalCommand(action string) (map[string]any, error)
 }
 
+// ProbeEfforter is what a runtime must provide to answer `probe_effort`.
+//
+// Optional for the reason `GoalCommander` is: the CLI and TUI front ends have no
+// probe control, and a stub runtime that does not implement it answers the
+// message with a notice saying so rather than an empty answer that reads as
+// "every level was refused".
+//
+// The map is the `ui` payload minus the envelope: the (model, provider) the
+// probes were about and one row per level. A refusal carries the error, and the
+// handler turns it into `problem` beside the kind, the way the memory and
+// codeintel panels carry theirs.
+type ProbeEfforter interface {
+	ProbeEffort() (map[string]any, error)
+}
+
 // FileService is what a runtime must provide for the workspace's file
 // capability.
 //
@@ -477,6 +492,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 
 	case InGoal:
 		s.handleGoal(message)
+
+	case InProbeEffort:
+		s.handleProbeEffort()
 
 	case InRefreshState:
 		s.Send(s.stateMessage(false))

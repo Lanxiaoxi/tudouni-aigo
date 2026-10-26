@@ -137,7 +137,7 @@
       "t": {"type": "string", "const": "ui"},
       "kind": {
         "type": "string",
-        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "terminals", "terminal_created", "terminal_output", "terminal_exit", "memory", "codeintel", "usage"],
+        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "terminals", "terminal_created", "terminal_output", "terminal_exit", "memory", "codeintel", "usage", "probe_effort"],
         "doc": "run_finished = 这一轮的正文（answer + run_id）；state = 面板数据快照（todos/skills/skill_catalog/jobs/mcp/agents_md/messages/steps/model/**terminals**）；status = `/status` 要的那一屏（回答入站的 status）；tools = `/tools` 的清单（回答入站的 tools）；mcp = `/mcp` 的清单（回答入站的 mcp）；skills = `/skills` 的清单（回答入站的 skills：`skills` 是这个会话**能加载**的全量目录，`active` 才是**已加载**的名字 —— 两者不能混，详见 `skills` 那条）；compacted = `/compact` 那一次的结果（回答入站的 compact，字段 `compaction`）；context = `/context` 那一屏（回答入站的 context，字段 `context`）；files = 一层目录的清单（回答入站的 `file_list`）；file_read = 一个文件的读取结果（回答入站的 `file_read`）；terminals = 这个 workspace 的全量 Terminal 清单（回答入站的 `terminal_list`，也是 `terminal_create` **失败**时的回答）；terminal_created = `terminal_create` 成功，带新建的那一条；terminal_output = 终端输出的**异步增量**（没有对应的入站消息 —— 它是对 `terminal_input` 那一次写的后续，而不是它的答案）；terminal_exit = shell 结束（自己退的或被杀的，靠 `reason` 分）；codeintel = 工作区代码索引面板（回答入站的 `codeintel_action`，也承载构建进度的推送）；usage = 跨工作区用量总账的汇总（回答入站的 `usage_stats`，字段 `usage`）。这些 kind 都不进审计 —— 终端输出尤其不能：它是无限流，写进审计等于把日志变成第二个终端。"
       },
       "answer": {
@@ -385,9 +385,19 @@
       "problem": {
         "type": "string",
         "doc": [
-          "**kind=memory / codeintel / usage 有**（可选）。上一次 `memory_action` / `codeintel_action` 为什么没成，或者 `usage_stats` 为什么答不出（没有会话 / 没有账本 / 读不出来），runtime 自己的整句。",
+          "**kind=memory / codeintel / usage / probe_effort 有**（可选）。上一次 `memory_action` / `codeintel_action` 为什么没成，或者 `usage_stats` 为什么答不出（没有会话 / 没有账本 / 读不出来），或者 `probe_effort` 为什么跑不了（runtime 不支持探测 / 探测中途失败），runtime 自己的整句。",
           "**它必须在这条消息里**，不能只发 notice：面板是盖在会话流上的一层，notice 会写在它背后 —— 文件面板踩过这个坑。",
-          "带 `problem` 时 `memory` / `codeintel` 可能仍然在（拒绝之后快照照发，因为「现在有什么」还是要知道的）；`usage` 在读不出账本时没有快照可带，是唯一「只有 problem」的情形。"
+          "带 `problem` 时 `memory` / `codeintel` 可能仍然在（拒绝之后快照照发，因为「现在有什么」还是要知道的）；`usage` 在读不出账本时没有快照可带，是唯一「只有 problem」的情形；`probe_effort` 跑不了时同样只有 problem。"
+        ]
+      },
+      "probe": {
+        "type": "object",
+        "doc": [
+          "**kind=probe_effort 有**（protocol 13）。**回答入站的 `probe_effort`**：`model` / `provider`（探测的是哪一对，前端拿它去配置文件里找同一个模型），",
+          "`levels`：逐档一行 `{level, result, note?}`，`result` 是 `ok` / `rejected` / `uncertain` 三值之一 ——",
+          "`ok` = 端点接受这一档；`rejected` = 端点的 400 点着参数名说这档的值不合法；`uncertain` = 其他一切（鉴权、限流、上游错误、超时），`note` 带着端点自己的整句。",
+          "**uncertain 绝不折叠成 rejected**：一次限流落在六档探测的第四档，若读成「这档不存在」，写进配置文件的就是错话。",
+          "**逐档串行**：六次并发会撞上同一台端点的限流，把真答案读成 uncertain。探测是真实请求（thinking 开、输出额度压到最小），所以面板侧要先向人确认才发。"
         ]
       },
       "codeintel": {

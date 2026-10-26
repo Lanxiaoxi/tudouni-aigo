@@ -1226,6 +1226,33 @@ export interface UiSkillsMsg {
   shadowed: string[];
 }
 
+/** The answer to `probe_effort` (protocol 13).
+ *
+ *  One row per level the current model offers. `result` is the runtime's own
+ *  three-way reading: the endpoint accepted the level (`ok`), refused it by
+ *  naming the parameter (`rejected`), or did not answer in a way this program
+ *  can read as either (`uncertain` — with the endpoint's own sentence in
+ *  `note`). `problem` rides beside the kind for a probe that could not run at
+ *  all, for the reason `memory` and `codeintel` carry theirs: the panel is a
+ *  layer over the transcript, and a notice lands behind it. */
+/** The probed (model, provider) and its rows, as the store keeps them.
+ *  Flat rather than nested under `probe`: the store's field is the snapshot,
+ *  and a nesting the wire has but the state does not is a re-shape every
+ *  reader has to remember. */
+export interface ProbeEffortSnapshot {
+  model: string;
+  provider: string;
+  levels: Array<{ level: string; result: string; note?: string }>;
+}
+
+export interface UiProbeEffortMsg {
+  v: number;
+  t: 'ui';
+  kind: 'probe_effort';
+  problem?: string;
+  probe?: ProbeEffortSnapshot;
+}
+
 export interface UiRunFinishedMsg {
   v: number;
   t: 'ui';
@@ -1252,7 +1279,8 @@ export type UiMsg =
   | UiTerminalExitMsg
   | UiMemoryMsg
   | UiCodeIntelMsg
-  | UiUsageMsg;
+  | UiUsageMsg
+  | UiProbeEffortMsg;
 
 /* ---------------- the rest ---------------- */
 
@@ -1513,6 +1541,12 @@ export type FrontendMsg =
    *  verbs: the panel opens, asks once, and draws — there is nothing on it a
    *  person can act on, and nothing to poll for. */
   | { v: number; t: 'usage_stats' }
+  /** Ask the runtime to probe the current model's reasoning levels: one real
+   *  request per offered level, the answer on `ui(probe_effort)`. No arguments
+   *  — the levels are the catalogue's and only the runtime knows them. The
+   *  asks cost real tokens, so this window confirms with the person **before**
+   *  sending it; the runtime simply does what it is asked. Gate on protocol 13. */
+  | { v: number; t: 'probe_effort' }
   | { v: number; t: 'mcp'; action: McpAction; servers: string[] }
   /** List one directory level. An **empty** path is the workspace root — the
    *  same value the runtime uses for "the workspace itself", so there is no

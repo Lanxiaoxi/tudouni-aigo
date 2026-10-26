@@ -1013,6 +1013,29 @@ export const en = {
   'panel.effort.title': 'Reasoning effort',
   'panel.effort.note':
     'The list is sent by the runtime per model — never hardcoded here.',
+  /* ---------------- the effort probe ---------------- */
+  'panel.effort.probe': 'Probe the endpoint',
+  'panel.effort.probeHint':
+    'Asks the endpoint for every level in the list and marks which ones it accepts.',
+  'panel.effort.probeConfirmTitle': 'Probe the endpoint for effort levels?',
+  'panel.effort.probeConfirmBody':
+    'This sends {n} real requests to {model} — one per level — with thinking on and a one-word answer. That costs a small amount of tokens. The accepted levels can then be written to the configuration file.',
+  'panel.effort.probing': 'Probing the endpoint… this is a real request per level and takes a moment.',
+  'panel.effort.probeUnsupported': 'This runtime build cannot probe effort levels.',
+  'panel.effort.probeResult': 'Probe of {model} — {ok} accepted, {rejected} refused, {uncertain} unclear.',
+  'panel.effort.probeReadFailed': 'The configuration file could not be read, so nothing was written.',
+  'panel.effort.probeNote': 'Accepting the level means the endpoint did not refuse it; a gateway that accepts a level may still ignore it.',
+  'panel.effort.probeWrite': 'Save accepted levels to config',
+  'panel.effort.probeWriteHint':
+    'Sets this model’s thinking levels in the configuration file to the accepted ones. Re-reads the file first and writes only this model’s entry.',
+  'panel.effort.probeWritten':
+    'Saved: the configuration now lists {levels} for this model. New sessions will offer exactly that list.',
+  'panel.effort.probeNotFound':
+    'The configuration file no longer lists this model, so nothing was written.',
+  'panel.effort.probeWriteFailed': 'The configuration was not written: {problem}',
+  'panel.effort.probeStale':
+    'This result is for {probed}; the model on screen is {model}. Switch back or probe again before saving.',
+  'panel.effort.probeEmpty': 'The endpoint refused every level in the list.',
   'panel.resume.title': 'Sessions',
   'panel.resume.empty': 'The runtime reported no sessions',
   'panel.resume.messages': '{n} messages',
