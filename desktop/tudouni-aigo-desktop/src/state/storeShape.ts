@@ -12,7 +12,7 @@ import { type RunScope, type Task, type TaskRunLink, type TaskRunOutcome } from 
 import { type ClosePolicy } from '@/runtime/windowClose';
 import { type BridgeOptions } from '@/runtime/tauri';
 import { type ConfigSyncChoice } from '@/state/configSync';
-import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModalState, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
+import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModelMemoryEntry, type ModalState, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
 import type { RemoteConfigTarget } from '@/runtime/tauri';
 
 
@@ -522,6 +522,21 @@ export interface AppStore {
    * then `sessionKey` is what a row is reachable by.
    */
   taskRuns: TaskRunLink[];
+  /**
+   * The model and effort last in use, by workspace (`desktop.json` holds it).
+   *
+   * The key follows `savedSessionsKey`: a local directory as `normPath`, a
+   * remote workspace as `rw:<id>` — the same convention the saved lists use,
+   * so "this place" is one identity in the file and in the lists alike.
+   *
+   * A **fallback for the next session in that workspace**: the start paths
+   * pass it to the child as `--model`/`--effort`, and the runtime applies it
+   * to a fresh session only — a session that stored its own choice keeps it,
+   * and a name the catalogue no longer holds falls back to the configured
+   * default. It is written from `ui(state)` (the runtime's own report of the
+   * model in force), never from a path this front end assembled.
+   */
+  modelMemory: Record<string, ModelMemoryEntry>;
 
   /* ---------------- composer ---------------- */
   /** An OS drag is currently over the window. Purely local, purely visual. */
@@ -559,6 +574,20 @@ export interface AppStore {
    * forgotten workspace leaves no dangling answer behind.
    */
   rememberRemoteWorkspace(remoteWorkspaceId: string): void;
+  /**
+   * Remember the model and effort in force in one workspace, and persist it.
+   *
+   * Written from `ui(state)` (the runtime's own report of the model in force),
+   * keyed by the workspace the way `savedSessionsKey` keys the saved lists:
+   * a local directory as `normPath`, a remote one as `rw:<id>`. It is a
+   * **fallback for the workspace's next session** — the start paths pass it
+   * to the child as `--model`/`--effort`, and the runtime applies it to a
+   * fresh session only (a stored choice wins, and a name the catalogue no
+   * longer holds falls back to the configured default). A no-op when the
+   * entry already holds the same pair, so a stream of snapshots costs a
+   * comparison and nothing else.
+   */
+  rememberModel(workspace: string, remoteWorkspaceId: string | null, model: string, effort: string): void;
   /**
    * Say why the window came up empty, when that needs saying.
    *

@@ -20,6 +20,7 @@ import { enqueueModal, questionBatchOf, releaseModalsOf } from '../modalQueue';
 import { pollNow, wakePolling } from '../polling';
 import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEndedNote } from '../terminal';
 import { runtimeOf } from '../appView';
+import { savedSessionsKey } from '../savedSessionsKey';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
 
 /**
@@ -48,7 +49,7 @@ function refineReportText(entries: Entry[]): string {
     .join('\n');
 }
 
-export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
+export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'rememberModel' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
   const { set, get, patch, patchWith, noteSavedSessions, markSavedSessionsPending, activeKeyForSend } = ctx;
   return {
     send(msg) {
@@ -128,6 +129,23 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
       if (!known) return;
       if (get().lastRemoteWorkspaceId === trimmed) return;
       set({ lastRemoteWorkspaceId: trimmed });
+      persistPrefs(get());
+    },
+
+    rememberModel(workspace, remoteWorkspaceId, model, effort) {
+      const trimmedModel = model.trim();
+      if (trimmedModel === '') return;
+      // The key follows `savedSessionsKey` — the same identity the saved
+      // lists use, so the file and the lists agree about which place is
+      // which (a local path and a remote path may be the same string).
+      const key = savedSessionsKey(workspace, remoteWorkspaceId);
+      const current = get().modelMemory[key];
+      // Snapshots arrive on every message and restate the model in force;
+      // the ordinary case is a no-op. `effort` rides along because it
+      // belongs to the same choice, and an empty one is a real answer
+      // (a runtime that reports no level).
+      if (current !== undefined && current.model === trimmedModel && current.effort === effort) return;
+      set((state) => ({ modelMemory: { ...state.modelMemory, [key]: { model: trimmedModel, effort } } }));
       persistPrefs(get());
     },
 

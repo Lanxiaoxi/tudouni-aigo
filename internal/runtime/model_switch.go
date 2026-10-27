@@ -42,6 +42,59 @@ func resolveModel(modelState *state.SessionModel, catalog state.Registry) (strin
 	return "", state.Provider{}, errorf("no usable model route")
 }
 
+// sessionHasStoredSelection reports whether the session already chose a model,
+// which is the whole condition under which a start-up fallback may not touch it:
+// the fallback is for the session that has **no** memory, and overwriting a
+// stored choice with a remembered one is a second description of the same
+// intent that drifts the day the two are edited separately.
+//
+// Read through the session's own guard: `NewSessionModelFor` takes the same
+// lock when it reads the selection, and a direct read of the metadata map would
+// race the agent's checkpoint writer.
+func sessionHasStoredSelection(meta *state.Meta) bool {
+	var ok bool
+	meta.Read(func(metadata map[string]any) { _, ok = state.LoadSelection(metadata) })
+	return ok
+}
+
+// resolveFallback checks a start-up model name against the catalogue.
+//
+// The answer is always a catalogue name, never the argument: a name that is
+// gone from the configuration is dropped silently, because the person edited
+// the route out from under the memory and the catalogue's own default is the
+// only honest answer. An empty or unknown name yields "" and the caller keeps
+// its own default.
+func resolveFallback(catalog state.Registry, name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+	ref, ok := catalog.Find(name, "")
+	if !ok {
+		return ""
+	}
+	return ref.ID
+}
+
+// applyFallbackEffort applies the start-up effort to a session that never chose
+// one.
+//
+// It sits between the two existing sources: it outranks the model's own
+// declared default — a person who ran this workspace on `low` last time is
+// making the same kind of choice the model's `reasoning_effort` makes, just
+// for a different model — but it is applied only when nobody in the session
+// chose, on the same terms. A level the chosen model does not take is dropped
+// rather than sent: the model's default-effort branch that follows in the
+// caller fills the gap, while sending a refused level would turn a fallback
+// into a forced 400.
+func applyFallbackEffort(modelState *state.SessionModel, catalog state.Registry, effort, modelID, provider string) {
+	if modelState.EffortChosen() || strings.TrimSpace(effort) == "" {
+		return
+	}
+	if level, ok := state.ResolveEffort(effort, catalog.EffortLevelsFor(modelID, provider)); ok {
+		modelState.SelectEffort(level, 0)
+	}
+}
+
 // routeOf turns one catalogue entry into the model package's route value.
 //
 // It is the **only** place the two descriptions of a route meet, which is the

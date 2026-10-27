@@ -227,6 +227,61 @@ test('a broken file with no legacy record: the empty shelf, and the file is repl
 });
 
 /* ============================================================
+   The model memory: what a workspace's next session starts from
+   ============================================================ */
+
+test('a model memory survives the file round trip', async () => {
+  reset();
+  const memory = { '/srv/app': { model: 'deepseek-flash', effort: 'low' } };
+  fileText = JSON.stringify({ ...emptyDesktopData(), modelMemory: memory });
+
+  const data = await hydrateDesktopData();
+  assert.deepEqual(data.modelMemory, memory, 'the entry is read as-is');
+  assert.equal(writes, 0, 'a healthy file is not rewritten');
+
+  // A change reaches the file; a restatement does not.
+  syncFromStore(state({ modelMemory: { '/srv/app': { model: 'deepseek-v4', effort: 'high' } } }));
+  await flush();
+  assert.deepEqual(
+    JSON.parse(fileText as string).modelMemory,
+    { '/srv/app': { model: 'deepseek-v4', effort: 'high' } },
+  );
+  const noOp = await flush();
+  assert.equal(noOp, false, 'repeating the same entry costs no write');
+});
+
+test('a malformed model memory entry is dropped, the good one kept', async () => {
+  reset();
+  fileText = JSON.stringify({
+    ...emptyDesktopData(),
+    modelMemory: {
+      '/good': { model: 'm-1', effort: 'low' },
+      // A missing model: the entry is useless, so it goes whole.
+      '/no-model': { effort: 'low' },
+      // A non-string model: same.
+      '/weird-model': { model: 42, effort: 'low' },
+      // Not an object at all: same.
+      '/not-an-object': 'm-2',
+      // An empty model name is "nothing remembered", not an entry.
+      '/blank': { model: '  ', effort: '' },
+    },
+  });
+
+  const data = await hydrateDesktopData();
+  assert.deepEqual(data.modelMemory, { '/good': { model: 'm-1', effort: 'low' } });
+});
+
+test('a model memory without the key at all is an empty map, not a crash', async () => {
+  reset();
+  // The file a previous build wrote, before this field existed.
+  fileText = JSON.stringify({ ...emptyDesktopData(), workspaces: ['/srv'] });
+  delete (JSON.parse(fileText as string) as Record<string, unknown>).modelMemory;
+
+  const data = await hydrateDesktopData();
+  assert.deepEqual(data.modelMemory, {});
+});
+
+/* ============================================================
    The latch: a store change before the read lands is refused
    ============================================================ */
 

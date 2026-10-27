@@ -62,6 +62,11 @@ type options struct {
 	ericai        bool
 	theme         string
 	quiet         bool
+	// The start-up model fallback: what a parent (the desktop front end)
+	// remembers a person last using in this workspace. A fresh session takes
+	// it; a session with a stored selection keeps its own.
+	fallbackModel  string
+	fallbackEffort string
 }
 
 func run(argv []string) int {
@@ -300,6 +305,11 @@ func parse(argv []string) (options, error) {
 	flags.BoolVar(&opts.ericai, "ericai", false, "manage the EricAI token: refresh it at start-up and, from then on, whenever a request is about to use a stale one")
 	flags.StringVar(&opts.theme, "theme", "", "start-up theme: deep clear (default), amber, pink violet — /theme changes it later")
 	flags.BoolVar(&opts.quiet, "quiet", false, "start in quiet mode: one line per tool call — /quiet toggles it later")
+	// Fallbacks for a fresh session: the remembered model of this workspace,
+	// passed by a parent. A session with a stored selection keeps its own, and
+	// a name missing from the catalogue falls back to the configured default.
+	flags.StringVar(&opts.fallbackModel, "model", "", "model a fresh session starts with (a session that stored its own choice keeps it)")
+	flags.StringVar(&opts.fallbackEffort, "effort", "", "effort a fresh session starts with (only when the model takes the level)")
 
 	if err := flags.Parse(argv); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -345,6 +355,8 @@ func usageText() string {
 		"  --stream/--no-stream",
 		"  --debug           print what goes to the model",
 		"  --max-steps <n>   how many model calls one turn may take",
+		"  --model <id>      a fresh session starts on this model (a session with a stored choice keeps it)",
+		"  --effort <level>  a fresh session starts at this level, when the model takes it",
 		"  --version",
 		"",
 		"Configuration lives in " + config.ConfigFile() + " (there is no environment variable to set).",
@@ -400,6 +412,8 @@ func openRuntime(booted runtime.Booted, sessionID string,
 		MaxSteps:    opts.maxSteps,
 		Resumed:     resumed,
 		EricAI:      opts.ericai,
+		FallbackModel:  opts.fallbackModel,
+		FallbackEffort: opts.fallbackEffort,
 		ShouldStop:  hooks.ShouldStop,
 		OnDelta:     hooks.OnDelta,
 		OnEventHook: hooks.OnEvent,

@@ -44,7 +44,12 @@ import {
   type Task,
   type TaskRunLink,
 } from '@/task/tasks';
-import type { AppStore, RemoteWorkspaceEntry, SshHostConfig } from './store';
+import type {
+  AppStore,
+  ModelMemoryEntry,
+  RemoteWorkspaceEntry,
+  SshHostConfig,
+} from './store';
 
 /** The user-data half of the old `aigo.prefs` record, now `desktop.json`. */
 export interface DesktopData {
@@ -79,6 +84,17 @@ export interface DesktopData {
    */
   tasks: Task[];
   taskRuns: TaskRunLink[];
+  /**
+   * The model and effort last in use, by workspace. A local directory path
+   * names a local workspace; `rw:<id>` names a saved remote one (the same
+   * convention `savedSessionsKey` uses for the saved lists).
+   *
+   * A **fallback for the next session**, not a record of a running one: the
+   * runtime validates the name against its own catalogue at open and falls
+   * back to the configured default when the person has since removed it —
+   * the same rule the remembered workspace follows for a deleted directory.
+   */
+  modelMemory: Record<string, ModelMemoryEntry>;
 }
 
 export function emptyDesktopData(): DesktopData {
@@ -100,6 +116,7 @@ export function emptyDesktopData(): DesktopData {
     closePolicy: 'ask',
     tasks: [],
     taskRuns: [],
+    modelMemory: {},
   };
 }
 
@@ -182,7 +199,18 @@ function extract(s: AppStore): DesktopData {
     closePolicy: s.closePolicy,
     tasks: s.tasks,
     taskRuns: s.taskRuns,
+    modelMemory: s.modelMemory,
   };
+}
+
+/** Guards one `modelMemory` entry before it is trusted: the record outlives
+ *  every build, so a malformed entry is dropped whole, the same rule the
+ *  host and workspace guards follow. `effort` may be empty (a runtime that
+ *  reports no level) and is dropped from the command line at launch. */
+function isValidModelMemory(value: unknown): value is ModelMemoryEntry {
+  if (typeof value !== null && typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.model === 'string' && v.model.trim() !== '' && typeof v.effort === 'string';
 }
 
 
@@ -297,6 +325,17 @@ function validate(raw: Record<string, unknown> | null | undefined): DesktopData 
     closePolicy: readClosePolicy(raw.closePolicy),
     tasks: Array.isArray(raw.tasks) ? raw.tasks.filter(isValidTask) : empty.tasks,
     taskRuns: Array.isArray(raw.taskRuns) ? raw.taskRuns.filter(isValidTaskRun) : empty.taskRuns,
+    // A whole map or nothing: a half-valid record is worse than an empty one
+    // (a missing model is a claim "this workspace last used nothing").
+    modelMemory:
+      raw.modelMemory !== null && typeof raw.modelMemory === 'object' && !Array.isArray(raw.modelMemory)
+        ? Object.fromEntries(
+            Object.entries(raw.modelMemory as Record<string, unknown>).filter(
+              (entry): entry is [string, ModelMemoryEntry] =>
+                entry[0].trim() !== '' && isValidModelMemory(entry[1]),
+            ),
+          )
+        : empty.modelMemory,
   };
 }
 

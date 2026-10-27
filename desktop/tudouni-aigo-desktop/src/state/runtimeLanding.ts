@@ -103,6 +103,15 @@ export function applyStateSnapshot(
   const bucket = s.sessions[key];
   if (!bucket) return;
 
+  // The workspace's remembered model, written from the runtime's own report
+  // of the model in force. The snapshot restates it on every send, so the
+  // ordinary case is a no-op; `rememberModel` carries the comparison. A
+  // fresh session in this workspace starts from it; a session that stored
+  // its own choice keeps it (the runtime's rule, not this one).
+  if (snap.model !== '') {
+    get().rememberModel(bucket.workspace, bucket.remoteWorkspaceId, snap.model, snap.effort);
+  }
+
   const hasContent: Record<SidebarBlockKey, boolean> = {
     goal: snap.goal.present,
     tasks: snap.todos.length > 0,

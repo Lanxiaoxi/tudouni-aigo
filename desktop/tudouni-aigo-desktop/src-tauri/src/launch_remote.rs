@@ -72,6 +72,14 @@ pub struct RemoteAttachOptions {
     stream: Option<bool>,
     autopilot: Option<bool>,
     ericai: Option<bool>,
+    /// `--model <id>`: the workspace's remembered model, as on the local path.
+    /// The runtime on the remote host validates it against the **remote**
+    /// catalogue (a different file) and falls back to the configured default
+    /// when the name is unknown there — the same rule as locally.
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
     /// Milliseconds to allow for the TCP connection, the SSH handshake and
     /// authentication together. `None` or `0` means `ssh_backend`'s own
     /// default.
@@ -96,6 +104,8 @@ impl std::fmt::Debug for RemoteAttachOptions {
             .field("stream", &self.stream)
             .field("autopilot", &self.autopilot)
             .field("ericai", &self.ericai)
+            .field("model", &self.model)
+            .field("effort", &self.effort)
             .field("connect_timeout_ms", &self.connect_timeout_ms)
             .finish()
     }
@@ -407,6 +417,17 @@ fn build_remote_command(options: &RemoteAttachOptions) -> String {
     }
     if options.ericai == Some(true) {
         tokens.push("--ericai".to_string());
+    }
+    // The remembered model fallback, quoted like every other argument: a model
+    // id is the front end's remembered text, and it goes over the SSH channel
+    // through a shell, so it takes the same quoting as the session id.
+    if let Some(model) = options.model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        tokens.push("--model".to_string());
+        tokens.push(quote_shell_argument(model));
+    }
+    if let Some(effort) = options.effort.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        tokens.push("--effort".to_string());
+        tokens.push(quote_shell_argument(effort));
     }
     tokens.join(" ")
 }

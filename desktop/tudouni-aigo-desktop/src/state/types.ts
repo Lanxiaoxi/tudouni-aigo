@@ -455,6 +455,17 @@ export interface LaunchArgs {
   maxSteps: number | null;
 }
 
+/**
+ * The model and effort last in use in one workspace, as `desktop.json` holds
+ * them. A fallback for the workspace's *next* session, never a claim about a
+ * session that is running: the runtime validates the name against its own
+ * catalogue at open and falls back to the configured default when it is gone.
+ */
+export interface ModelMemoryEntry {
+  model: string;
+  effort: string;
+}
+
 /** The session as the handshake describes it. Flat on the wire, kept flat here. */
 export interface SessionInfo {
   id: string;

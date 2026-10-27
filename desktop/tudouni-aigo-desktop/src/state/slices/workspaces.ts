@@ -18,6 +18,7 @@ import { activeRuntime, remoteWorkspaceIdOf } from '../appView';
 import { FIND_IDLE } from '../find';
 import { describeFailure, looksLikeMissingBinary, lookupToolFacts } from '../runtimeLanding';
 import { nextFailedKey } from '../startingSeq';
+import { savedSessionsKey } from '../savedSessionsKey';
 
 export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspace' | 'enterWorkspace' | 'addWorkspace' | 'removeWorkspace' | 'addSshHost' | 'updateSshHost' | 'removeSshHost' | 'addRemoteWorkspace' | 'updateRemoteWorkspace' | 'removeRemoteWorkspace' | 'enterRemoteWorkspace' | 'connectRemoteWorkspace' | 'installRemoteWorkspace' | 'checkConfigSync' | 'resolveConfigSync' | 'dismissConfigSync' | 'applyLaunch' | 'configTarget' | 'noteRemoteConfigWritten' | 'toolFacts'> {
   const { set, get, abandonIfUntouched } = ctx;
@@ -321,6 +322,12 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
       const maxSteps = s.maxStepsDefault;
       const launch: LaunchArgs = { ericai, maxSteps };
 
+      // The remembered model of this remote workspace, keyed by the entry's
+      // id the way the saved lists key a place (`rw:<id>`). Validated by the
+      // remote runtime against the **remote** catalogue — a name unknown
+      // there falls back to the configured default, the same rule as locally.
+      const remembered = s.modelMemory[savedSessionsKey(entry.remotePath, remoteWorkspaceId)];
+
       // A workspace saved without a binary path is not a broken bookmark —
       // it is "this host has not had the Runtime installed yet", and the
       // answer is the automatic install, not a form asking for an address.
@@ -377,6 +384,10 @@ export function workspacesSlice(ctx: StoreContext): Pick<AppStore, 'pickWorkspac
           remoteWorkspace: entry.remotePath,
           ericai,
           ...(maxSteps === null ? {} : { maxSteps }),
+          ...(remembered !== undefined ? { model: remembered.model } : {}),
+          ...(remembered !== undefined && remembered.effort.trim() !== ''
+            ? { effort: remembered.effort }
+            : {}),
           ...(options?.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
         });
       } catch (err) {

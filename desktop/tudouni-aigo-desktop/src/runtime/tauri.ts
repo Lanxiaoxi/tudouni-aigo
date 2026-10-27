@@ -438,6 +438,16 @@ export interface BridgeOptions {
   stream?: boolean;
   /** `--autopilot`. */
   autopilot?: boolean;
+  /** `--model <id>`: the model this workspace last used, as the desktop
+   *  remembers it. A **fallback** the runtime applies to a fresh session
+   *  only — a session that stored its own choice keeps it, and a name the
+   *  runtime's catalogue no longer holds falls back to the configured
+   *  default. Absent (or empty) means nothing was remembered. */
+  model?: string;
+  /** `--effort <level>`, remembered together with the model. Applied on
+   *  the same terms: fresh sessions only, and only when the model takes
+   *  the level. */
+  effort?: string;
   /** `--ericai`: manage the EricAI token for this session.
    *
    *  A start-up argument and **not** a setting, which is not a matter of taste:
@@ -661,6 +671,8 @@ export async function attachRuntime(
       // here so that "nobody said" stays visible: this is the one flag that lets
       // the runtime write to the person's configuration file.
       ericai: options.ericai ?? null,
+      model: options.model ?? null,
+      effort: options.effort ?? null,
     },
   });
   return String(key);
@@ -682,6 +694,8 @@ export function mirrorLaunchPrefs(launch: {
   ericai: boolean;
   maxSteps: number | null;
   stream: boolean;
+  model: string | null;
+  effort: string | null;
 }): void {
   if (!isHosted()) return;
   void tauriInvoke('runtime_pref_mirror', { pref: launch }).catch(() => undefined);
@@ -706,6 +720,13 @@ export interface RemoteAttachOptions {
   stream?: boolean;
   autopilot?: boolean;
   ericai?: boolean;
+  /** `--model <id>`: the workspace's remembered model, as on the local path.
+   *  The runtime **on the remote host** validates it against **that** host's
+   *  catalogue, which is a different file — a name unknown there simply
+   *  falls back to the configured default, the same rule as locally. */
+  model?: string;
+  /** `--effort <level>`, on the same terms as `model`. */
+  effort?: string;
   /** Milliseconds for the TCP connect + SSH handshake + authentication,
    *  together. `undefined` means the Rust side's own default (15s). */
   connectTimeoutMs?: number;
@@ -741,6 +762,8 @@ export async function attachRuntimeRemote(
       stream: options.stream ?? true,
       autopilot: options.autopilot ?? null,
       ericai: options.ericai ?? null,
+      model: options.model ?? null,
+      effort: options.effort ?? null,
       connectTimeoutMs: options.connectTimeoutMs ?? null,
     },
   });

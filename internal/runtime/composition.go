@@ -58,11 +58,23 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	defaultProvider, _ := catalog.DefaultProvider()
 	defaultModel, _ := catalog.DefaultModel()
 
-	modelState := state.NewSessionModelFor(meta, defaultModel.ID, defaultProvider.Name)
+	// The remembered model, when it applies at all. A session that stored its own
+	// choice keeps it; only one that never chose takes the start-up fallback.
+	fallbackModel := ""
+	if !sessionHasStoredSelection(meta) {
+		fallbackModel = resolveFallback(catalog, options.FallbackModel)
+	}
+
+	fallbackID := defaultModel.ID
+	if fallbackModel != "" {
+		fallbackID = fallbackModel
+	}
+	modelState := state.NewSessionModelFor(meta, fallbackID, defaultProvider.Name)
 	chosen, chosenProvider, err := resolveModel(modelState, catalog)
 	if err != nil {
 		return nil, err
 	}
+	applyFallbackEffort(modelState, catalog, options.FallbackEffort, chosen, chosenProvider.Name)
 	// A model may name its own default level; until now that field was read and
 	// validated and then dropped, so a route declaring `reasoning_effort: low`
 	// still came up at the global default. It applies only when nobody has

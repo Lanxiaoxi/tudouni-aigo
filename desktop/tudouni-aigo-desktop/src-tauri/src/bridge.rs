@@ -135,6 +135,11 @@ pub(crate) struct PendingSpawn {
     pub(crate) ericai: bool,
     pub(crate) max_steps: Option<i64>,
     pub(crate) stream: bool,
+    /// The start-up model fallback the pre-spawn carried, recorded so the
+    /// adopt check can tell "the same ask" from "a different memory" the same
+    /// way it does for `max_steps`.
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
 }
 
 pub(crate) struct Child_ {

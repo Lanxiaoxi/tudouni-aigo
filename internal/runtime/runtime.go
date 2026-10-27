@@ -32,6 +32,20 @@ type Options struct {
 	Stream    bool
 	MaxSteps  int
 	Resumed   bool
+	// FallbackModel and FallbackEffort are start-up arguments the parent gives a
+	// fresh session: what a person last used in this workspace, remembered by the
+	// front end and passed in because the runtime has no workspace-level memory of
+	// its own (the TUI does not keep one either).
+	//
+	// **Fallback** is the whole word: the session's own stored selection always
+	// wins — a resumed session opened on a remembered model would be a second
+	// description of the same intent that drifts the day the two are edited
+	// separately. And a name that is no longer in the catalogue is not an
+	// error: the person edited the configuration out from under the memory,
+	// which is exactly the situation a fallback exists for, so the catalogue's
+	// own default is used instead.
+	FallbackModel  string
+	FallbackEffort string
 	// EricAI is `--ericai`: manage this session's token. It is the switch for
 	// everything in auth_session.go — without it nothing inspects a token, nothing
 	// is refreshed, and an authentication refusal is reported like any other fatal

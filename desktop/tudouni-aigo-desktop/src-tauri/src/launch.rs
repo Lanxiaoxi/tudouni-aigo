@@ -74,6 +74,17 @@ pub struct AttachOptions {
     /// store a refresh token under `~/.tudouni/`, which is not a thing to do on
     /// somebody's behalf without their asking.
     ericai: Option<bool>,
+    /// `--model <id>`: the model this workspace last used, as the front end
+    /// remembers it. A **fallback**: the runtime applies it to a fresh session
+    /// only — a session that stored its own choice keeps it, and a name the
+    /// runtime's catalogue no longer holds falls back to the configured
+    /// default (`internal/runtime/composition.go`). An empty string is the
+    /// front end's "nothing remembered".
+    model: Option<String>,
+    /// `--effort <level>`, remembered together with the model and applied on
+    /// the same terms. The runtime refuses a level the model does not take
+    /// rather than sending it to the endpoint.
+    effort: Option<String>,
 }
 
 /// Where the runtime binary lives.
@@ -189,6 +200,17 @@ pub(crate) fn spawn(
     // to be spelled `--ericai=true`, and it is never given one.
     if options.ericai == Some(true) {
         command.arg("--ericai");
+    }
+    // The remembered model of the workspace. `None` and an empty string are
+    // the same thing ("nothing remembered"), which the front end spells two
+    // ways: `null` on the wire and the runtime's own absence. A name the
+    // runtime's catalogue no longer holds is refused **there** — the fallback
+    // to the configured default is a catalogue decision, not this one's.
+    if let Some(model) = options.model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        command.arg("--model").arg(model);
+    }
+    if let Some(effort) = options.effort.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        command.arg("--effort").arg(effort);
     }
 
     command
@@ -458,6 +480,14 @@ pub(crate) struct LaunchPref {
     ericai: bool,
     max_steps: Option<i64>,
     stream: bool,
+    /// The remembered model of the workspace, mirrored with the rest of the
+    /// launch arguments. Optional and defaulted because the mirror file may
+    /// be one the previous build wrote, before this field existed — an old
+    /// record is "nothing remembered", not a parse failure.
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
 }
 
 /// Where the mirror lives: `~/.tudouni/desktop-launch.json`, beside
@@ -540,6 +570,8 @@ pub(crate) fn pre_spawn(app: &AppHandle) {
         stream: if pref.stream { Some(true) } else { None },
         autopilot: None,
         ericai: if pref.ericai { Some(true) } else { None },
+        model: pref.model.clone(),
+        effort: pref.effort.clone(),
     };
     let key = match spawn(app, &options) {
         Ok(key) => key,
@@ -582,6 +614,8 @@ pub(crate) fn pre_spawn(app: &AppHandle) {
                 ericai: pref.ericai,
                 max_steps: options.max_steps,
                 stream: pref.stream,
+                model: options.model.clone(),
+                effort: options.effort.clone(),
             });
         }
     }
@@ -596,11 +630,20 @@ pub(crate) fn pre_spawn(app: &AppHandle) {
 /// The half of adoption that says whether a pending child is the session being
 /// asked for. `workspace: None` never matches — a caller that names no
 /// workspace gets the process directory, which no pre-spawn was started in.
+/// The form a start-up fallback string takes on the command line: trimmed,
+/// and empty folded to `None`, so "nothing remembered" is one value rather
+/// than `None` and `Some("")`.
+fn fallback_arg(value: Option<&str>) -> Option<String> {
+    value.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+}
+
 struct RequestedLaunch {
     workspace: Option<PathBuf>,
     ericai: bool,
     max_steps: Option<i64>,
     stream: bool,
+    model: Option<String>,
+    effort: Option<String>,
 }
 
 fn requested_launch(options: &AttachOptions) -> RequestedLaunch {
@@ -616,6 +659,8 @@ fn requested_launch(options: &AttachOptions) -> RequestedLaunch {
             _ => None,
         },
         stream: options.stream == Some(true),
+        model: fallback_arg(options.model.as_deref()),
+        effort: fallback_arg(options.effort.as_deref()),
     }
 }
 
@@ -653,7 +698,9 @@ pub(crate) fn adopt_or_spawn(app: &AppHandle, options: &AttachOptions) -> Result
                 && requested.workspace == Some(pending.workspace.clone())
                 && requested.ericai == pending.ericai
                 && requested.max_steps == pending.max_steps
-                && requested.stream == pending.stream;
+                && requested.stream == pending.stream
+                && requested.model == pending.model
+                && requested.effort == pending.effort;
             if alive && matches {
                 return Ok(pending.key);
             }

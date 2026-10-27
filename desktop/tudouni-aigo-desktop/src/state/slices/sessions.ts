@@ -19,6 +19,7 @@ import { headForActive, releaseModalsOf } from '../modalQueue';
 import { forgetPolling } from '../polling';
 import { selectSavedSessionsOf, selectSessionHome } from '../selectors/session';
 import { activeRuntime, activeWorkspaceOf, resolveAttachWorkspace } from '../appView';
+import { savedSessionsKey } from '../savedSessionsKey';
 import { FIND_IDLE } from '../find';
 import { nextStartingKey } from '../startingSeq';
 import { describeFailure, releaseImages } from '../runtimeLanding';
@@ -123,6 +124,14 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       const maxSteps = options.maxSteps ?? get().maxStepsDefault;
       const launch: LaunchArgs = { ericai, maxSteps };
 
+      // The remembered model of **this workspace**, from `desktop.json`
+      // (`modelMemory`), keyed the way the saved lists key a place.
+      // `attachSession` is the local path only — a remote session goes
+      // through `connectRemoteWorkspace` — so the key has no remote id.
+      // A resumed session keeps its own stored choice (the runtime's rule);
+      // a name the catalogue no longer holds falls back there too.
+      const remembered = get().modelMemory[savedSessionsKey(workspace, null)];
+
       // **The default is passed on, not only recorded.** Computing it above and
       // then handing the caller's `options` straight through made the two
       // disagree in exactly the case the default exists for — opening a saved
@@ -166,6 +175,15 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         // is how "nothing remembered" is spelled here, so the absent key is what
         // the bridge's own `?? null` turns into "no flag".
         ...(maxSteps === null ? {} : { maxSteps }),
+        // The workspace's remembered model, the same pass-on-not-only-record
+        // rule `ericai` and `maxSteps` follow: resolved here and dropped from
+        // the payload, it would be a memory nobody is started with. `effort`
+        // only rides when the model is, because a level without a route is
+        // nonsense on the command line.
+        ...(remembered !== undefined ? { model: remembered.model } : {}),
+        ...(remembered !== undefined && remembered.effort.trim() !== ''
+          ? { effort: remembered.effort }
+          : {}),
       };
 
       // **The placeholder is installed before the child exists.** The bridge's
@@ -345,6 +363,11 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         // without it — the mirror has to say the same thing or the next
         // launch's adopt check will refuse a match and spawn fresh.
         stream: options.stream ?? true,
+        // The same pass-on rule for the remembered model: the pre-spawned
+        // child must be started with what the adopt check will compare it
+        // against, or the next launch refuses a match and spawns fresh.
+        model: remembered !== undefined ? remembered.model : null,
+        effort: remembered !== undefined && remembered.effort.trim() !== '' ? remembered.effort : null,
       });
 
       // The session list is what the left rail draws saved conversations from,
