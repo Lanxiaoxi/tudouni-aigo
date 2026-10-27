@@ -54,7 +54,16 @@ impl std::fmt::Debug for InstallRemoteOptions {
 /// One progress event the install flow emits as it runs each step, carried
 /// to the WebView as `remote-install://progress` — what
 /// `connection.phase = 'installing'` (§5.1 of the design) is drawn from.
+///
+/// The camelCase rename is load-bearing, not cosmetic: the front end filters
+/// these events on `event.requestId` (and reads `uploadedEntries` /
+/// `totalEntries`) — `InstallProgressEvent` in `runtime/tauri.ts`. Without
+/// the rename the payload drifts snake_case, every event fails that one
+/// filter, and the install badge freezes on the optimistically-patched
+/// `detecting_platform` until the call returns, which is exactly the
+/// "Detecting… then Installed" symptom this payload once shipped as.
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct InstallProgressPayload {
     /// A caller-supplied id correlating a sequence of progress events with
     /// the one `install_remote_runtime` call that produced them — a plain
@@ -578,4 +587,32 @@ pub(crate) async fn create_remote_directory(
     })
     .await
     .map_err(|error| format!("the remote directory task failed: {error}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_progress_payload_serializes_as_camel_case() {
+        // The WebView-side shape these events must match is the camelCase
+        // `InstallProgressEvent` in `runtime/tauri.ts`, whose `requestId`
+        // doubles as the one filter `installRemoteWorkspace` applies to every
+        // incoming event. A snake_case key here is not a cosmetic drift: no
+        // event survives that filter, so every stage (and the per-entry upload
+        // counts) silently vanishes and the badge jumps from the
+        // optimistically-patched `detecting_platform` straight to `done`.
+        let json = serde_json::to_value(InstallProgressPayload {
+            request_id: "install-abc".to_string(),
+            stage: "uploading".to_string(),
+            uploaded_entries: 2,
+            total_entries: 7,
+        })
+        .unwrap();
+        assert_eq!(json["requestId"], "install-abc");
+        assert_eq!(json["stage"], "uploading");
+        assert_eq!(json["uploadedEntries"], 2);
+        assert_eq!(json["totalEntries"], 7);
+        assert!(json.get("request_id").is_none(), "snake_case keys leak through serde");
+    }
 }
