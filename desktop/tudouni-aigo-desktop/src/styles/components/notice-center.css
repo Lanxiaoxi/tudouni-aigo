@@ -187,28 +187,36 @@
   font-weight: 400;
 }
 
+/* One note per card. A long list of flat text lines reads as one wall — the
+   row is the unit here, so each row gets its own surface: a nested fill plus a
+   hairline edge and a small radius, on a grid gap. Tones keep the rule that a
+   warning is findable while scrolling past a cluster of ordinary ones, but
+   now by filling and edging the whole card rather than recolouring a line. */
 .nc-list {
+  display: grid;
+  gap: var(--space-2);
   max-height: min(420px, 55vh);
   overflow-y: auto;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3);
 }
 
-/* One note. The tone colours are the ones the inline row used to wear — the
-   rows moved here whole, and so did the rule that a warning is findable while
-   scrolling past a cluster of ordinary ones. */
 .nc-row {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  padding: 3px 0;
+  padding: var(--space-2) 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
   font-size: var(--text-caption);
   line-height: 1.5;
-  color: var(--fg-faint);
+  color: var(--fg-secondary);
 }
 
 .nc-row svg {
   flex: none;
-  margin-top: 1px;
+  margin-top: 2px;
+  color: var(--fg-faint);
 }
 
 .nc-row .nc-text {
@@ -216,24 +224,43 @@
   overflow-wrap: anywhere;
 }
 
+/* Warn and degraded share the amber treatment: the card itself is the
+   signal, so both fill and edge are the tone's pair — the same "findable
+   while scrolling" rule the recoloured line used to be, at card scale. */
+.nc-row.is-warn,
 .nc-row.is-degraded {
-  color: var(--warning);
+  background: var(--warning-subtle);
+  border-color: var(--warning-border);
+  color: var(--fg);
 }
 
-.nc-row.is-compacted {
-  color: var(--info);
-}
-
-.nc-row.is-image {
-  color: var(--fg-muted);
-}
-
-.nc-row.is-warn {
+.nc-row.is-warn svg,
+.nc-row.is-degraded svg {
   color: var(--warning);
 }
 
 .nc-row.is-error {
+  background: var(--destructive-subtle);
+  border-color: var(--destructive);
+  color: var(--fg);
+}
+
+.nc-row.is-error svg {
   color: var(--destructive);
+}
+
+/* Compacted is the info family: a quiet tint, the row's own text stays
+   neutral so it does not compete with the warn cards. */
+.nc-row.is-compacted {
+  background: var(--info-subtle);
+}
+
+.nc-row.is-compacted svg {
+  color: var(--info);
+}
+
+.nc-row.is-image svg {
+  color: var(--fg-muted);
 }
 
 @keyframes nc-rise {

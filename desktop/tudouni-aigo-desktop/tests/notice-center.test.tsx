@@ -203,7 +203,7 @@ test('notice-center.css exists and is imported by the entry point', () => {
   const css = noticeCss();
   assert.match(css, /\.nc-capsule \{/);
   assert.match(css, /\.nc-popover \{/);
-  assert.match(css, /\.nc-row\.is-warn \{/);
+  assert.match(css, /\.nc-row\.is-warn/);
   assert.match(indexCss(), /@import '\.\/components\/notice-center\.css';/);
 });
 
