@@ -8,10 +8,11 @@
  * — the same two steps `startLearning` takes, and no protocol of its own.
  * Nothing in the runtime knows the word "task".
  *
- * **Persistence is `aigo.prefs`** (localStorage, like the workspace bookmarks
- * and the remote-workspace entries). The design's requirement — "task templates
- * and their association with sessions are saved by the desktop's own
- * persistence layer" — is answered there, and nowhere else.
+ * **Persistence is `~/.tudouni/desktop.json`** (via `state/desktopData.ts`,
+ * with the workspace bookmarks and the remote-workspace entries). The design's
+ * requirement — "task templates and their association with sessions are saved
+ * by the desktop's own persistence layer" — is answered there, and nowhere
+ * else.
  */
 
 import { samePath } from '@/utils/format';
@@ -264,8 +265,8 @@ export function emptyTask(nowMs: number): Task {
   };
 }
 
-/** Guard one parsed task record from `aigo.prefs` before it is trusted.
- *  localStorage outlives every build, so a malformed record is dropped whole
+/** Guard one parsed task record from `desktop.json` before it is trusted.
+ *  The record outlives every build, so a malformed record is dropped whole
  *  rather than let through with `undefined` fields. */
 export function isValidTask(value: unknown): value is Task {
   if (typeof value !== 'object' || value === null) return false;

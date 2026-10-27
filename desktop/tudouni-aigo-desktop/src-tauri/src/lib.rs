@@ -38,6 +38,15 @@ mod attach;
 /// that keep a save from destroying what the form does not draw.
 mod config_file;
 
+/// `~/.tudouni/desktop.json` — the desktop's user data (task templates, run
+/// history, saved hosts, remote workspaces, the remembered workspace).
+///
+/// A text door rather than a parsed document: the front end owns the record's
+/// shape and its validators, and this module moves bytes the same way
+/// `read_local_config_text` does. See its module doc for why the split out of
+/// the window's localStorage record and why the write is a rename.
+mod desktop_data;
+
 mod deliverable;
 mod image;
 mod image_stash;
@@ -187,6 +196,8 @@ pub fn run() {
             crate::remote_commands::read_remote_user_config,
             crate::remote_commands::write_remote_user_config,
             crate::config_commands::read_local_config_text,
+            crate::desktop_data::desktop_data_read,
+            crate::desktop_data::desktop_data_write,
             crate::runtime_commands::runtime_attach_listener,
             crate::runtime_commands::runtime_send,
             crate::runtime_commands::runtime_shutdown,

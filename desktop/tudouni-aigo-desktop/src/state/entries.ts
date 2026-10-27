@@ -136,9 +136,9 @@ export type FrontMessage =
    *
    *  `applied` is the number of candidates written; the sentence is this
    *  window's own report of what the front end did with the person's choice —
-   *  the agent never touches `aigo.prefs`, so without this line the
-   *  transcript would say the person picked and nothing would ever say it
-   *  landed. */
+   *  the agent never touches the desktop's persistence (`~/.tudouni/desktop.json`),
+   *  so without this line the transcript would say the person picked and
+   *  nothing would ever say it landed. */
   | { code: 'refineApplied'; taskId: string; applied: number }
   /** The context was squeezed before this turn (`internal/agent/context.go`).
    *

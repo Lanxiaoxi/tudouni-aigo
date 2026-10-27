@@ -28,6 +28,7 @@ import { create } from 'zustand';
 import { createStoreContext } from './storeContext';
 import { FIND_IDLE } from './find';
 import { prefs } from './prefs';
+import { desktopDataSnapshot } from './desktopData';
 import { activeRuntime } from './appView';
 import type { AppStore } from './storeShape';
 import type { SessionRuntime } from './types';
@@ -129,25 +130,18 @@ export function createAppStore() {
     sessionsCollapsed: prefs.sessionsCollapsed,
     workspacesCollapsed: prefs.workspacesCollapsed,
     footCollapsed: prefs.footCollapsed,
-    workspaces: prefs.workspaces,
-    sshHosts: prefs.sshHosts,
-    remoteWorkspaces: prefs.remoteWorkspaces,
+    // The user data starts from the in-memory copy, which at module load is
+    // the empty shelf: the file that holds it is read asynchronously by
+    // `hydrateDesktopData`, and the start-up applies the result to the store
+    // before the first session. Until then these fields hold the empty shelf,
+    // and nothing draws or runs that reads them before the first session.
+    ...desktopDataSnapshot(),
     installStatus: {},
     configSyncPrompt: null,
     configSyncBusy: null,
     configSyncError: null,
     pendingRemoteOpen: null,
     openingRemote: null,
-    lastWorkspace: prefs.lastWorkspace,
-    lastRemoteWorkspaceId: prefs.lastRemoteWorkspaceId,
-
-    ericaiDefault: prefs.ericaiDefault,
-    maxStepsDefault: prefs.maxStepsDefault,
-    notifyEnabled: prefs.notifyEnabled,
-    closePolicy: prefs.closePolicy,
-
-    tasks: prefs.tasks,
-    taskRuns: prefs.taskRuns,
 
     dragging: false,
     resizing: null,

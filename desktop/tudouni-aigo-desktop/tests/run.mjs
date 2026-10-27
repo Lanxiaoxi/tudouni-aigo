@@ -51,6 +51,13 @@ const SUITES = [
   // store possible in a test. Two stores, two states — a singleton cannot say
   // that about itself.
   'store-factory.test.ts',
+  // The user data's new home: `~/.tudouni/desktop.json`. The rules that decide
+  // whether a person's task templates survive an upgrade — the file wins over
+  // the legacy localStorage record, the migration is one-way and loss-ordered
+  // (the legacy copy leaves the record only after the write landed), a broken
+  // file is not an empty one, and a store change before the file read lands
+  // must not deliver the empty shelf over the person's data.
+  'desktop-data.test.ts',
   // The poll loop that keeps a running job's or delegation's `seconds` moving.
   // It used to check the throttle floor where the snapshot lands — a check that
   // can never pass, because the answer lands a few dozen milliseconds after the

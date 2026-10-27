@@ -511,7 +511,8 @@ export interface AppStore {
    * orders by what it reads; this is the shelf in insertion order.
    *
    * Front-end data end to end: created, edited and deleted by the actions
-   * below, persisted with the rest of `aigo.prefs`. The runtime never sees
+   * below, persisted with the rest of the user data in
+   * `~/.tudouni/desktop.json` (`desktopData.ts`). The runtime never sees
    * these; only the prompt, the workspace and (on run) a `set_model` do.
    */
   tasks: Task[];

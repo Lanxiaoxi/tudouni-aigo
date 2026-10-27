@@ -21,7 +21,8 @@ import { PanelBody, PanelShell } from './PanelShell';
  *
  * The second is *this window's own behaviour*: session notifications, and what
  * the X button does. Neither reaches the runtime at all — they are front-end
- * preferences in `aigo.prefs`, applied the moment they are changed — so they
+ * preferences in the desktop's user data (`~/.tudouni/desktop.json`), applied
+ * the moment they are changed — so they
  * carry no confirmation, no "in force" badge and no restart. Putting them in the
  * first group would have borrowed its whole apparatus ("Restart the runtime?" for
  * a checkbox about toasts) and taught people to distrust both.

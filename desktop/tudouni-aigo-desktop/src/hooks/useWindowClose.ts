@@ -14,8 +14,9 @@ import { needsPrompt, readClosePolicy } from '@/runtime/windowClose';
  * Rust owns the event and the deadline (`CloseRequested`, `CLOSE_PROMPT_TIMEOUT`
  * in `lib.rs`); this owns the question, and the split is deliberate. Rust always
  * asks, because it does not know what the person decided last time — preferences
- * live in this front end (`aigo.prefs`), which is the same division every other
- * preference already follows. So the flow is:
+ * live in this front end (the policy itself in `~/.tudouni/desktop.json`, via
+ * the store), which is the same division every other preference already
+ * follows. So the flow is:
  *
  *   1. `CloseRequested` → Rust refuses the close and emits
  *      `window://close-requested`;

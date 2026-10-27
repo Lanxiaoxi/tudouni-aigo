@@ -925,6 +925,24 @@ export async function readLocalConfigText(): Promise<LocalConfigText | null> {
   }
 }
 
+/** The desktop's user data, as the text of `~/.tudouni/desktop.json`.
+ *  `null` when the file does not exist yet (a first launch). */
+export async function readDesktopData(): Promise<string | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<string | null>('desktop_data_read');
+  } catch {
+    return null;
+  }
+}
+
+/** Replace `~/.tudouni/desktop.json`, atomically on the Rust side.
+ *  Resolves to the text it wrote; rejects when the write refused. */
+export async function writeDesktopData(text: string): Promise<string> {
+  await tauriInvoke<null>('desktop_data_write', { text });
+  return text;
+}
+
 /** Tell the bridge the front end is listening, so it flushes everything every
  *  child queued before that was true. Returns how many lines were released.
  *

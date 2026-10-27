@@ -1,6 +1,7 @@
 import { useLayoutEffect } from 'react';
 import { useApp } from '@/state/store';
 import { markBootSettled } from '@/splash';
+import { hydrateDesktopData } from '@/state/desktopData';
 import {
   attachRuntimeListener,
   checkWorkspace,
@@ -96,6 +97,19 @@ export function useRuntimeBridge(): void {
       }
 
       if (cancelled) return;
+
+      // The user data (tasks, hosts, the remembered workspace) lives in
+      // `~/.tudouni/desktop.json`, not in this window's storage, so the store's
+      // copy of it is an empty shelf until this read lands. **Awaited before
+      // the first session on purpose**: `openFirstSession` reads
+      // `lastWorkspace` to decide where to open, and a first session started
+      // over an empty shelf would lose the remembered workspace and, worse,
+      // the first `persistPrefs` after it would have been a write of the empty
+      // shelf over the file the person's data sits in. In a plain browser there
+      // is no file to read and the read resolves empty, so this costs nothing.
+      const data = await hydrateDesktopData();
+      if (cancelled) return;
+      useApp.setState(data);
 
       // Not hosted (plain `npm run dev` in a browser): nothing to start, and the
       // UI stays in its booting phase rather than pretending.

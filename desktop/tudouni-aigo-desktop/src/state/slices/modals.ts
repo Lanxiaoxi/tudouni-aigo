@@ -57,9 +57,9 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       }
       // The refine delivery: when the question came out of a refine run, the
       // person's choice is applied here, by the front end. The agent never
-      // touches `aigo.prefs` (it cannot — that is this window's persistence),
-      // so the selected candidate's text, read back out of the report this
-      // session delivered, is the only copy that ever lands on the task.
+      // touches the desktop's persistence (`~/.tudouni/desktop.json`), so the
+      // selected candidate's text, read back out of the report this session
+      // delivered, is the only copy that ever lands on the task.
       // `createdAtMs` is the task's birth and survives; `updatedAtMs` moves.
       // A refine run asks exactly one question, so the batch's first member
       // is the one the choice refers to.

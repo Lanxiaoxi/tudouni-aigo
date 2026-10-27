@@ -18,13 +18,13 @@
  *
  * ## Where the answer lives
  *
- * In this front end, with the rest of the person's preferences (`aigo.prefs`),
- * and not in the Rust side. That split is not arbitrary: Rust holds the *events*
- * (`CloseRequested`, the prompt's deadline, the children's teardown) and the
- * front end holds *preferences*, which is the same division the workspace list,
- * the rail widths and quiet mode already follow. Rust therefore always asks, and
- * the front end decides whether asking the person is necessary — see
- * `useWindowClose`.
+ * In this front end, with the rest of the person's preferences (the policy
+ * itself in `~/.tudouni/desktop.json`), and not in the Rust side. That split is
+ * not arbitrary: Rust holds the *events* (`CloseRequested`, the prompt's
+ * deadline, the children's teardown) and the front end holds *preferences*,
+ * which is the same division the workspace list, the rail widths and quiet
+ * mode already follow. Rust therefore always asks, and the front end decides
+ * whether asking the person is necessary — see `useWindowClose`.
  *
  * ## The three states, and why the default is `ask`
  *

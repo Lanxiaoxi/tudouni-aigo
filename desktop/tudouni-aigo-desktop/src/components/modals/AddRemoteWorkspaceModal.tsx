@@ -84,7 +84,8 @@ import {
  * `Bad configuration option: password` on every connection (see
  * `ssh_config::append_host`). It is therefore asked for at connect time and kept
  * in this application's own preferences, which is the existing, documented
- * trade-off (plain `localStorage`, not an OS keychain) rather than a new one.
+ * trade-off (a plain file the desktop owns, `~/.tudouni/desktop.json`, not an
+ * OS keychain) rather than a new one.
  */
 type WizardStep = 'host' | 'connect' | 'workspace';
 

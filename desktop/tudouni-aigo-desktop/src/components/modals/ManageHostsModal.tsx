@@ -15,7 +15,7 @@ import { Tip } from '@/components/ui/kit';
  *
  *   - `removeSshHost` existed with its whole refusal rule ("still referenced by
  *     a saved workspace") and **zero callers**, so a host that had been mistyped
- *     once lived in `aigo.prefs` for ever;
+ *     once lived in the saved hosts for ever;
  *   - `configPolicy` (§9.4) was written by the sync prompt's "remember" and read
  *     by the check, and nothing could show or change it. A host left on
  *     `use-remote` kept that answer silently, which is the kind of one-way state
