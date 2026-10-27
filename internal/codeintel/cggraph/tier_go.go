@@ -14,8 +14,10 @@ import (
 
 // goTier implements LanguageTier for Go.
 type goTier struct {
-	// repoPrefix is the module path, needed to map an import path onto a directory.
-	repoPrefix string
+	// r is the resolver the tier is registered on: the module prefix it narrows
+	// with is looked up per reference (the file's own repo), not copied here,
+	// because a multi-repo index carries one prefix per scope.
+	r *Resolver
 }
 
 func (t *goTier) Name() string { return "go" }
@@ -27,7 +29,7 @@ func (t *goTier) Visible(candidate *Candidate, ref *pendingRef) bool {
 
 // Narrow restricts candidates to the imported package a qualifier names.
 func (t *goTier) Narrow(ref *pendingRef, imports map[string]Import, candidates []Candidate) ([]Candidate, bool) {
-	return narrowToImport(ref, imports, candidates, t.repoPrefix)
+	return narrowToImport(ref, imports, candidates, t.r.repoPrefixFor(ref.FromFileName))
 }
 
 // ReceiverType infers the receiver's type from the file's local declarations.

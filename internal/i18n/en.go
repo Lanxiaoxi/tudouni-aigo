@@ -1021,6 +1021,7 @@ var catalog = map[string]string{
 	"channels.codeintel.disabled":       "[code] code intelligence is off. code_explore is gone from the tool set from the next turn; the index on disk is untouched.",
 	"channels.codeintel.init_started":   "[code] rebuilding the index from scratch. Progress is in the Code intelligence panel; the index is not usable until it finishes.",
 	"channels.codeintel.sync_started":   "[code] bringing the index up to date. Progress is in the Code intelligence panel.",
+	"channels.codeintel.cleared":        "[code] the index and the repository selection have been cleared. Choose the repositories again and Initialize to build a fresh one.",
 	"channels.usage.no_session":         "[usage] no session yet.",
 	"channels.usage.unsupported":        "[usage] this runtime has no usage ledger.",
 	"channels.usage.failed":             "[usage] reading the usage ledger failed: {problem}",

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -235,6 +236,42 @@ type buildSummary struct {
 	Unresolved int
 }
 
+// buildingFlag reports whether a deliberate build is in flight.
+func (s *codeIntelState) buildingFlag() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.building
+}
+
+// sameRepoSelection reports whether two selections name the same set of
+// repositories, ignoring order and empty entries.
+func sameRepoSelection(a, b []string) bool {
+	norm := func(list []string) map[string]struct{} {
+		out := make(map[string]struct{}, len(list))
+		for _, rel := range list {
+			rel = strings.ReplaceAll(rel, "\\", "/")
+			if rel == "" {
+				continue
+			}
+			out[rel] = struct{}{}
+		}
+		return out
+	}
+	na, nb := norm(a), norm(b)
+	if len(na) != len(nb) {
+		return false
+	}
+	for rel := range na {
+		if _, ok := nb[rel]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // snapshot is everything the panel draws, in one message.
 func (s *codeIntelState) snapshot(ctx context.Context) map[string]any {
 	var enabled, building bool
@@ -291,6 +328,22 @@ func (s *codeIntelState) snapshot(ctx context.Context) map[string]any {
 		"building": building,
 		"problem":  index.Problem,
 	}
+	// The repository selection, when the workspace has one: the saved choice,
+	// what discovery found (so the first-run checklist can be drawn), and any
+	// repositories that appeared after the selection was made — reported, never
+	// acted on, because the selection is locked and adding a repo is the
+	// person's decision after a clear.
+	if s != nil && root != "" {
+		saved := codeintel.LoadConfig(root).Repos
+		candidates := codeintel.DiscoverRepos(root)
+		payload["candidates"] = candidates
+		if len(saved) > 0 {
+			payload["repos"] = saved
+		}
+		if newRepos := reposNotInSelection(candidates, saved); len(newRepos) > 0 {
+			payload["new_repos"] = newRepos
+		}
+	}
 	if !index.IndexedAt.IsZero() {
 		payload["indexed_at"] = index.IndexedAt.UTC().Format(time.RFC3339)
 	}
@@ -310,6 +363,29 @@ func (s *codeIntelState) snapshot(ctx context.Context) map[string]any {
 		}
 	}
 	return payload
+}
+
+// reposNotInSelection lists the candidates a saved selection does not cover.
+//
+// The report-only half of the lock: a repo cloned in after the selection was
+// made stays out of the index, and that fact must be visible in the panel
+// rather than discovered as a missing answer months later.
+func reposNotInSelection(candidates, saved []string) []string {
+	if len(saved) == 0 {
+		return nil
+	}
+	chosen := make(map[string]struct{}, len(saved))
+	for _, rel := range saved {
+		chosen[strings.ReplaceAll(rel, "\\", "/")] = struct{}{}
+	}
+	var out []string
+	for _, rel := range candidates {
+		rel = strings.ReplaceAll(rel, "\\", "/")
+		if _, ok := chosen[rel]; !ok && rel != "" {
+			out = append(out, rel)
+		}
+	}
+	return out
 }
 
 // stringKeyed renders a language→count map for the wire, with no nil on the empty case.
@@ -423,6 +499,42 @@ func (r *Runtime) CodeIntelAction(action string, arguments map[string]any) (map[
 		if root == "" {
 			return nil, fmt.Errorf("this runtime has no workspace")
 		}
+
+		// The repo selection, when the front end carries it. It is a patch
+		// beside `enabled`, not a second action: one message is one moment of
+		// intent, and the first-run checklist is exactly that moment.
+		//
+		// The lock: a selection that differs from a saved one no longer
+		// describes the index on disk, so the index must be gone by the time
+		// the selection lands. The panel only sends a changed selection after
+		// the person pressed clear (or before the first build); a changed
+		// selection arriving while an index still exists is a front end
+		// disagreeing with the lock, and the runtime says so rather than
+		// silently deleting a database.
+		var repos []string
+		if list, present := arguments["repos"].([]any); present {
+			repos = make([]string, 0, len(list))
+			for _, entry := range list {
+				rel, _ := entry.(string)
+				repos = append(repos, rel)
+			}
+			ok, problem := codeintel.SelectionValid(root, repos)
+			if !ok {
+				return nil, fmt.Errorf("repo selection rejected: %s", problem)
+			}
+			saved := codeintel.LoadConfig(root).Repos
+			if !sameRepoSelection(saved, repos) {
+				if r.CodeIntel.indexPresent() {
+					return nil, fmt.Errorf(
+						"the repository selection is locked while an index exists; clear the index first")
+				}
+				if _, err := codeintel.SetRepos(root, repos); err != nil {
+					return nil, err
+				}
+				r.CodeIntel.refresher.ReloadSelection()
+			}
+		}
+
 		if _, err := codeintel.SetEnabled(root, raw); err != nil {
 			return nil, err
 		}
@@ -434,7 +546,37 @@ func (r *Runtime) CodeIntelAction(action string, arguments map[string]any) (map[
 		if err := r.applyCodeIntelTool(); err != nil {
 			return nil, err
 		}
-		return map[string]any{"enabled": raw}, nil
+		result := map[string]any{"enabled": raw}
+		if len(repos) > 0 {
+			result["repos"] = repos
+		}
+		return result, nil
+
+	case protocol.CodeIntelClear:
+		// Delete the index and reset the selection: the only door back to the
+		// checklist. Deleting while a build is running would race the writer
+		// over the same directory, so a build in flight refuses the clear.
+		if r.CodeIntel.buildingFlag() {
+			return nil, fmt.Errorf("an index build is running; clear it once it finishes")
+		}
+		root := r.CodeIntel.Root()
+		if root == "" {
+			return nil, fmt.Errorf("this runtime has no workspace")
+		}
+		if err := codeintel.ClearIndex(root); err != nil {
+			return nil, err
+		}
+		if _, err := codeintel.SetRepos(root, nil); err != nil {
+			return nil, err
+		}
+		r.CodeIntel.refresher.ReloadSelection()
+		// The index is gone, so the tool the switch promised cannot stay
+		// registered: it would answer every query from a database that no
+		// longer exists.
+		if err := r.applyCodeIntelTool(); err != nil {
+			return nil, err
+		}
+		return map[string]any{"cleared": true}, nil
 
 	case protocol.CodeIntelInit:
 		if err := r.startCodeIntelBuild(true); err != nil {

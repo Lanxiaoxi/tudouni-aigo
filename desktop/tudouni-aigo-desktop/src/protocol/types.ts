@@ -73,8 +73,25 @@ export const ENVELOPE_VERSION = 1;
  * The absence rule runs the other way too: a day with no modeled rows omits
  * the key, so a front end that draws per-model charts hides them rather than
  * inventing a split the ledger never recorded.
+ *
+ * **13** adds `probe_effort` inbound and a `probe_effort` kind on the `ui`
+ * channel: one ask to the endpoint per offered reasoning level, and the
+ * answer beside it. A front end that does not know the kind ignores it, and
+ * one that draws a probe control gates it on this number.
+ *
+ * **14** gives the code index a repository selection. `config` may also carry
+ * `repos` (workspace-relative paths, `""` the whole workspace): the first
+ * write is the person confirming which repositories the index covers, and it
+ * is **locked** from then on — the only door back is the new `clear` action,
+ * which deletes the index and resets the selection. `CodeIntelSnapshot` gains
+ * `repos` (the saved selection, absent until one is made), `candidates`
+ * (what discovery found — the first-run checklist) and `new_repos` (repos
+ * discovered after the selection, reported so a new clone is never silently
+ * unindexed). A front end that knows none of it keeps working: `config`
+ * without `repos` only writes the switch, and the new snapshot keys are
+ * additive.
  */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 14;
 
 /* ============================================================
    Shared vocabulary
@@ -640,6 +657,18 @@ export interface CodeIntelSnapshot {
   /** Why the counts could not be read. Empty is the normal state, including for
    *  "there is no index yet" — that is a state, not an error. */
   problem: string;
+  /** The saved repository selection (protocol 14): workspace-relative paths,
+   *  `""` the whole workspace. **Absent until one is made** — absence is the
+   *  "nothing chosen yet" state that gets the first-run checklist, and it is
+   *  locked from the first write on: changing it requires `clear` first. */
+  repos?: string[];
+  /** What discovery found (protocol 14): every `.git`-marked directory, deepest
+   *  first, plus the root. The first-run checklist is drawn from this list. */
+  candidates?: string[];
+  /** Repositories discovered since the selection was made (protocol 14),
+   *  reported but never indexed — the lock keeps them out, and the panel must
+   *  say so rather than let a new clone go invisible. */
+  new_repos?: string[];
 }
 
 /** `ui(codeintel)`.
@@ -731,7 +760,7 @@ export interface UiUsageMsg {
  *  `status` is one verb rather than its own message kind: the panel asks for the
  *  snapshot on open and after every action anyway, so a separate request kind would
  *  always produce the same reply as its siblings'. */
-export type CodeIntelActionKind = 'status' | 'config' | 'init' | 'sync';
+export type CodeIntelActionKind = 'status' | 'config' | 'init' | 'sync' | 'clear';
 
 /**
  * One terminal, as the runtime reports it.

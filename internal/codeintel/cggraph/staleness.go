@@ -71,7 +71,12 @@ func (s Staleness) Summarise() string {
 //
 // A missing database or a never-built index reports not-stale: there is nothing to be stale
 // relative to, and the tool is not registered in that case anyway.
-func (d *DB) CheckStaleness(ctx context.Context, root string) (Staleness, error) {
+//
+// `scope` is the same view of the tree the index was built with: a nil scope is the whole
+// tree. The walk must match the build's or the two sides of the comparison would disagree —
+// a file inside a sub-repo that the build carved out of the root's walk would be counted
+// as "added" on every check, and the index would look stale forever.
+func (d *DB) CheckStaleness(ctx context.Context, root string, scope *Scope) (Staleness, error) {
 	var result Staleness
 
 	rows, err := d.sql.QueryContext(ctx, `SELECT path, size, modified_at FROM files`)
@@ -105,7 +110,7 @@ func (d *DB) CheckStaleness(ctx context.Context, root string) (Staleness, error)
 
 	// Files on disk the index has never seen. The walk shares scanTree's filtering, so a
 	// file it would refuse to index is not reported as missing from the index.
-	onDisk, err := scanTree(root)
+	onDisk, err := scanScopes(root, scope)
 	if err != nil {
 		return result, err
 	}

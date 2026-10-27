@@ -1890,6 +1890,17 @@ export const en = {
     'An index exists and nothing is using it. Turn the switch on to give the model code_explore.',
   'panel.codeintel.situation.disabledNoIndex':
     'Off, and nothing has been indexed. Turning it on does not build anything by itself.',
+  'panel.codeintel.reposTitle': 'Repositories',
+  'panel.codeintel.reposHint':
+    'Choose which repositories the index covers. The choice is locked once confirmed — Clear is the only way back.',
+  'panel.codeintel.repoRoot': 'Entire workspace',
+  'panel.codeintel.reposConfirm': 'Confirm and lock selection',
+  'panel.codeintel.chooseReposFirst': 'Confirm the repository selection to initialize the index.',
+  'panel.codeintel.reposLocked': 'Locked — Clear to change it',
+  'panel.codeintel.newRepos':
+    '{repos} appeared since the selection was locked and is not indexed. Clear to include it.',
+  'panel.codeintel.clear': 'Clear index & selection',
+  'panel.codeintel.clearConfirm': 'Press again to clear',
 
   'lb.usage': 'Usage',
   'lb.usageHint': 'Token spend across every workspace on this machine',

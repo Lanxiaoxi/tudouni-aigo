@@ -51,7 +51,7 @@ func TestStalenessCleanWhenTreeMatches(t *testing.T) {
 	indexFile(t, db, dir, "a.go", "package a\n")
 	indexFile(t, db, dir, "b.go", "package a\n")
 
-	status, err := db.CheckStaleness(context.Background(), dir)
+	status, err := db.CheckStaleness(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("CheckStaleness: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestStalenessDetectsModified(t *testing.T) {
 		t.Fatalf("rewrite: %v", err)
 	}
 
-	status, err := db.CheckStaleness(context.Background(), dir)
+	status, err := db.CheckStaleness(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("CheckStaleness: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestStalenessDetectsAddedAndRemoved(t *testing.T) {
 	}
 	writeTempSourceAt(t, dir, "new.go", "package a\n")
 
-	status, err := db.CheckStaleness(context.Background(), dir)
+	status, err := db.CheckStaleness(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("CheckStaleness: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestStalenessIgnoresUnindexableFiles(t *testing.T) {
 	writeTempSourceAt(t, dir, "notes.txt", "not source\n")
 	writeTempSourceAt(t, dir, "node_modules/x.js", "module.exports = 1\n")
 
-	status, err := db.CheckStaleness(context.Background(), dir)
+	status, err := db.CheckStaleness(context.Background(), dir, nil)
 	if err != nil {
 		t.Fatalf("CheckStaleness: %v", err)
 	}

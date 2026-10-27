@@ -41,6 +41,10 @@ type BuildOptions struct {
 	// Full clears the database first. `init` means full: it is the button a person
 	// presses when they want the index rebuilt rather than topped up.
 	Full bool
+	// Scope is the multi-repo view of the tree the build walks and checks.
+	// Nil is the whole tree — the behaviour every index built before the
+	// selection existed used.
+	Scope *cggraph.Scope
 	// OnProgress is called as phases advance. Rates are the indexer's business; the
 	// caller decides how often to turn them into a message.
 	OnProgress func(phase string, done, total int)
@@ -76,6 +80,7 @@ func Build(ctx context.Context, root, parserPath string, options BuildOptions) (
 	}
 	result, err = cggraph.Index(ctx, db, cggraph.IndexOptions{
 		Root:       root,
+		Scope:      options.Scope,
 		Parser:     parser,
 		Full:       options.Full,
 		OnProgress: options.OnProgress,
@@ -117,6 +122,9 @@ func (r *Refresher) Rebuild(ctx context.Context, options BuildOptions) (cggraph.
 	stopKeepAlive := lock.KeepAlive(time.Minute)
 	defer stopKeepAlive()
 
+	if options.Scope == nil {
+		options.Scope = r.Scope()
+	}
 	return Build(ctx, r.root, r.parserPath, options)
 }
 
@@ -211,7 +219,7 @@ func (r *Refresher) Snapshot(ctx context.Context, options SnapshotOptions) Index
 	if options.SkipStaleness {
 		return snapshot
 	}
-	staleness, err := db.CheckStaleness(ctx, r.root)
+	staleness, err := db.CheckStaleness(ctx, r.root, r.Scope())
 	if err != nil {
 		// A failed comparison is not proof of freshness; the counts stay zero and the
 		// problem says why, so the panel never draws "up to date" over an unknown.
@@ -232,4 +240,25 @@ func (r *Refresher) Snapshot(ctx context.Context, options SnapshotOptions) Index
 // rebuild replaces the file anyway.
 func removeIndex(root string) error {
 	return os.RemoveAll(filepath.Join(root, filepath.FromSlash(cggraph.IndexDirName)))
+}
+
+// ClearIndex deletes the index database and its journal.
+//
+// The panel's "forget the index" verb: the difference from `init` (which clears
+// the tables and re-uses the file) is that a cleared index still answers "there
+// is an index here", and the panel's four situations cannot express "an index
+// the person deleted". Deleting the file is the sentence that puts it back to
+// "there is no index yet".
+//
+// The file's own directory is removed, not just graph.db: WAL mode leaves
+// `-wal` and `-shm` companions, and a directory that only contains them reads
+// back as a broken index rather than an absent one.
+func ClearIndex(root string) error {
+	dir := filepath.Join(root, filepath.FromSlash(cggraph.IndexDirName))
+	if _, err := os.Stat(filepath.Join(dir, cggraph.DefaultDBName)); err != nil {
+		// No database: nothing to clear. Not an error — the panel may press
+		// clear on a workspace that was never indexed.
+		return nil
+	}
+	return os.RemoveAll(dir)
 }

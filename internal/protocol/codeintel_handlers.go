@@ -102,6 +102,8 @@ func codeIntelResultLine(action string, result map[string]any) string {
 		return i18n.T("channels.codeintel.init_started")
 	case CodeIntelSync:
 		return i18n.T("channels.codeintel.sync_started")
+	case CodeIntelClear:
+		return i18n.T("channels.codeintel.cleared")
 	default:
 		return ""
 	}

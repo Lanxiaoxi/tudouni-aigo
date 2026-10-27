@@ -117,7 +117,19 @@ const VERSION = 1
 // one that draws a probe control gates it on this number — a runtime below
 // 13 would silently drop the message, and a button that answers with nothing
 // is a promise the runtime cannot keep.
-const PROTOCOL = 13
+//
+// 14 gives the code index a repository selection. `config` may now also carry
+// `repos` (workspace-relative paths, "" the whole workspace): the first write
+// is the person confirming which repositories the index covers, and it is
+// **locked** from then on — the only door back is the new `clear` action,
+// which deletes the index and resets the selection. The `ui(codeintel)`
+// snapshot gains `repos` (the saved selection, absent until one is made),
+// `candidates` (what `DiscoverRepos` found, so the first-run checklist can be
+// drawn) and `new_repos` (repositories discovered since the selection was
+// made, reported so a newly cloned repo is never silently unindexed). A
+// front end that knows none of it keeps working: `config` without `repos`
+// only writes the switch, and a runtime below 14 simply never sends the keys.
+const PROTOCOL = 14
 
 // Message keys used by every envelope.
 const (
@@ -404,16 +416,21 @@ var MemoryActions = []string{MemoryPublish, MemoryReject, MemoryDeprecate, Memor
 const (
 	// CodeIntelStatus reads the panel's snapshot. It changes nothing.
 	CodeIntelStatus = "status"
-	// CodeIntelConfig writes the enable switch.
+	// CodeIntelConfig writes the enable switch and, when the workspace has
+	// several repositories, the repo selection the index covers.
 	CodeIntelConfig = "config"
 	// CodeIntelInit builds the index from scratch.
 	CodeIntelInit = "init"
 	// CodeIntelSync brings an existing index up to date.
 	CodeIntelSync = "sync"
+	// CodeIntelClear deletes the index and resets the repo selection: the
+	// selection is locked once made, and this is the only door back to the
+	// checklist. The rebuild after it is a plain `init`.
+	CodeIntelClear = "clear"
 )
 
 // CodeIntelActions is the accepted list, for the error message that names them.
-var CodeIntelActions = []string{CodeIntelStatus, CodeIntelConfig, CodeIntelInit, CodeIntelSync}
+var CodeIntelActions = []string{CodeIntelStatus, CodeIntelConfig, CodeIntelInit, CodeIntelSync, CodeIntelClear}
 
 // Answers a front end may return for a question. The third value the runtime
 // can produce — `unavailable`, nobody to ask — is never sent by a front end.

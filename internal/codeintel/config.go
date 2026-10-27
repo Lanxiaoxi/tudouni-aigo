@@ -37,6 +37,15 @@ type Config struct {
 	// a 50MB index and a tool in every request is a cost nobody asked for, and the
 	// switch is one click.
 	Enabled bool `json:"enabled"`
+	// Repos is the person's selection of which repositories the index covers, as
+	// workspace-relative paths ("" is the whole workspace, "a/b" a sub-repo).
+	//
+	// Empty means **nothing has been chosen yet** — a distinct state from "the
+	// person chose nothing", which this file cannot express and does not need to:
+	// the panel re-offers the checklist whenever an empty selection is read back.
+	// The selection is locked once made: changing it clears the index first, so a
+	// saved choice never describes a database it does not match.
+	Repos []string `json:"repos,omitempty"`
 }
 
 // DefaultConfig is what a workspace that has never been configured gets.
@@ -126,6 +135,21 @@ func SaveConfig(root string, config Config) error {
 func SetEnabled(root string, enabled bool) (Config, error) {
 	config := LoadConfig(root)
 	config.Enabled = enabled
+	if err := SaveConfig(root, config); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+// SetRepos writes the repository selection and returns the config it saved.
+//
+// Callers are responsible for the lock: a selection that differs from a
+// saved one invalidates the index it describes, and the panel is the side
+// that knows whether the index has been cleared first. This function only
+// writes what it is told.
+func SetRepos(root string, repos []string) (Config, error) {
+	config := LoadConfig(root)
+	config.Repos = repos
 	if err := SaveConfig(root, config); err != nil {
 		return config, err
 	}

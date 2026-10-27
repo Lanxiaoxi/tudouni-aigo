@@ -31,6 +31,11 @@ import (
 type IndexOptions struct {
 	// Root is the tree to index.
 	Root string
+	// Scope is the multi-repo form of Root: the directories to walk and the
+	// sub-repo exclusions that keep the root's walk out of their territory.
+	// Nil falls back to the whole tree, the behaviour every index built before
+	// the selection existed used.
+	Scope *Scope
 	// Parser is the configured cg-parse driver.
 	Parser *cgparse.Parser
 	// Full clears the database first. Without it, only changed files are re-parsed.
@@ -206,7 +211,7 @@ func Index(ctx context.Context, db *DB, opts IndexOptions) (IndexResult, error) 
 		}
 	}
 
-	files, err := scanTree(root)
+	files, err := scanScopes(root, opts.Scope)
 	if err != nil {
 		return result, err
 	}
@@ -386,15 +391,31 @@ func Index(ctx context.Context, db *DB, opts IndexOptions) (IndexResult, error) 
 		result.RefsReopened = int(reopened)
 	}
 	resolver := NewResolver(db)
-	// The module path and the TS path aliases are facts about the tree, so they are
-	// detected rather than configured: import narrowing needs the module path to map
-	// `github.com/x/y/internal/tools` onto `internal/tools`, and the JS tier needs the
-	// alias table or it treats `@/components/Foo` as an external dependency.
-	projectConfig := DetectProjectConfig(root)
-	resolver.SetRepoPrefix(projectConfig.GoModule)
-	resolver.SetPathAliases(projectConfig.PathAliases)
-	result.GoModule = projectConfig.GoModule
-	result.PathAliases = len(projectConfig.PathAliases)
+	// The module path and the TS path aliases are facts about **one repository**,
+	// not about the tree: with several repos indexed together each repo's Go
+	// imports must be narrowed with its OWN module path, and each TS repo's
+	// aliases with its own tsconfig. The detection runs per scope, and the
+	// resolver picks the right one from the referencing file's location.
+	scope := opts.Scope
+	if scope == nil {
+		scope = NewScope(root, nil, nil)
+	}
+	// Detect once per scope directory the resolver may own a file in: its
+	// prefix and alias table are the settings that file's references narrow
+	// with, and the two facts live in that directory, not at the workspace root.
+	scopePrefixes := map[string]string{}
+	scopeAliases := map[string]map[string]string{}
+	for _, dir := range scope.Dirs() {
+		scopePrefixes[dir] = DetectGoModule(dir)
+		if aliases := DetectPathAliases(dir); len(aliases) > 0 {
+			scopeAliases[dir] = aliases
+		}
+	}
+	resolver.SetRepoPrefixes(scopePrefixes)
+	resolver.SetPathAliasesByScope(scopeAliases)
+	legacy := DetectProjectConfig(root)
+	result.GoModule = legacy.GoModule
+	result.PathAliases = len(legacy.PathAliases)
 	stats, err := resolver.ResolveAll(ctx)
 	if err != nil {
 		return result, fmt.Errorf("cggraph: resolve: %w", err)

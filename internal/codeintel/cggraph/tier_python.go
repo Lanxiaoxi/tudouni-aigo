@@ -40,9 +40,10 @@ import (
 
 // pythonTier implements LanguageTier for Python.
 type pythonTier struct {
-	// repoPrefix is the module path, unused by the current rules but kept so the tier
-	// can honour import roots when a future rule needs them.
-	repoPrefix string
+	// r is the resolver the tier is registered on: the module prefix it could
+	// narrow with is looked up per reference (the file's own repo) when a future
+	// rule needs it.
+	r *Resolver
 }
 
 func (t *pythonTier) Name() string { return "python" }

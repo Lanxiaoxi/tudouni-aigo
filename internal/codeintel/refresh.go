@@ -118,6 +118,14 @@ type Refresher struct {
 	parserPath string
 
 	mu sync.Mutex
+
+	// repos is the selection of repositories the index covers, read from
+	// config.json at construction and on every ReloadSelection. The walk and
+	// the staleness check must both use it, so it lives on the refresher
+	// rather than being passed down call by call: a call site that forgot it
+	// would compare the index against a different tree than the one it was
+	// built from, and report stale forever.
+	repos []string
 }
 
 // New builds a refresher.
@@ -126,11 +134,36 @@ type Refresher struct {
 // reports Unavailable rather than failing. A development build without the parser binary must
 // still be able to query an index built earlier.
 func New(root, parserPath string) *Refresher {
-	return &Refresher{root: root, parserPath: parserPath}
+	return &Refresher{root: root, parserPath: parserPath, repos: LoadConfig(root).Repos}
 }
 
 // Root is the workspace this refresher maintains.
 func (r *Refresher) Root() string { return r.root }
+
+// Repos is the saved repository selection; empty means "the whole workspace".
+func (r *Refresher) Repos() []string { return r.repos }
+
+// Scope is the tree view the index is built and checked against, derived from
+// the saved selection. Nil-safe: an unset refresher sees the whole tree.
+func (r *Refresher) Scope() *cggraph.Scope {
+	if r == nil {
+		return nil
+	}
+	return ResolveScopes(r.root, r.repos)
+}
+
+// ReloadSelection re-reads the repository selection from config.json.
+//
+// The file is the shared fact, not this field: another conversation's runtime
+// can change the selection while this process is running, and the next panel
+// status must reflect it — the same reason the enabled switch has its
+// refresh path.
+func (r *Refresher) ReloadSelection() {
+	if r == nil {
+		return
+	}
+	r.repos = LoadConfig(r.root).Repos
+}
 
 // EnsureFresh compares the index against the working tree and rebuilds if it is
 // behind.
@@ -197,7 +230,7 @@ func (r *Refresher) EnsureFresh(ctx context.Context, maxInline int) (report Repo
 	}
 	defer db.Close()
 
-	status, err := db.CheckStaleness(ctx, r.root)
+	status, err := db.CheckStaleness(ctx, r.root, r.Scope())
 	if err != nil {
 		// A failed check is not proof of freshness. Say so instead of claiming Current.
 		report.State = Failed
@@ -275,6 +308,7 @@ func (r *Refresher) rebuild(ctx context.Context, db *cggraph.DB) error {
 	_, err := cggraph.Index(ctx, db, cggraph.IndexOptions{
 		Root:   r.root,
 		Parser: parser,
+		Scope:  r.Scope(),
 	})
 	if err != nil {
 		return fmt.Errorf("codeintel: index %s: %w", r.root, err)
@@ -306,7 +340,7 @@ func (r *Refresher) CheckOnly(ctx context.Context) (Report, error) {
 	}
 	defer db.Close()
 
-	status, err := db.CheckStaleness(ctx, r.root)
+	status, err := db.CheckStaleness(ctx, r.root, r.Scope())
 	if err != nil {
 		report.State = Failed
 		report.Detail = err.Error()

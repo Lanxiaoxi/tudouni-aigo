@@ -1108,7 +1108,7 @@ export interface AppStore {
    * guessed one would show a progress bar for a pass that had already failed to
    * start.
    */
-  codeIntelAction(action: CodeIntelActionKind, args?: { enabled?: boolean }): void;
+  codeIntelAction(action: CodeIntelActionKind, args?: { enabled?: boolean; repos?: string[] }): void;
 
   /* ---------------- the usage ledger ---------------- */
 

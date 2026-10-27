@@ -51,6 +51,17 @@ export function CodeIntelPanel() {
     if (snapshot?.building === true) setArmed(false);
   }, [snapshot?.building]);
 
+  // The clear button's arm, same pattern: the first press arms, the second acts.
+  const [clearArmed, setClearArmed] = useState(false);
+  useEffect(() => {
+    if (snapshot?.building === true) setClearArmed(false);
+  }, [snapshot?.building]);
+
+  // The repository selection is locked once made, so the checklist is only a
+  // thing before the first index: absent `repos` + no index is the first run.
+  const selectionOpen = snapshot !== null && snapshot.repos === undefined && !snapshot.indexed;
+  const initBlocked = selectionOpen;
+
   if (!hasSession) {
     return (
       <PanelShell title={t('panel.codeintel.title')} note={t('panel.codeintel.note')}>
@@ -101,6 +112,25 @@ export function CodeIntelPanel() {
               <div className="wm-legend">{t('panel.codeintel.state')}</div>
               <IndexFacts snapshot={snapshot} />
 
+              {/* The locked selection, in one line: which repositories the index
+                * covers, and — reported, never acted on — any repositories that
+                * appeared after the lock. */}
+              {snapshot.repos !== undefined ? (
+                <div className="ci-repos-locked">
+                  <span className="ci-repo-name">
+                    {snapshot.repos.length === 1 && snapshot.repos[0] === ''
+                      ? t('panel.codeintel.repoRoot')
+                      : snapshot.repos.map((r) => (r === '' ? t('panel.codeintel.repoRoot') : r)).join(' + ')}
+                  </span>
+                  <span className="ci-hint">{t('panel.codeintel.reposLocked')}</span>
+                  {snapshot.new_repos && snapshot.new_repos.length > 0 ? (
+                    <span className="ci-hint ci-new-repos">
+                      {t('panel.codeintel.newRepos', { repos: snapshot.new_repos.join(', ') })}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+
               {snapshot.building ? (
                 <div className="ci-progress">
                   <div className="ci-progress-row">
@@ -148,6 +178,13 @@ export function CodeIntelPanel() {
                 </div>
               ) : null}
 
+              {selectionOpen ? (
+                <RepoChecklist
+                  candidates={snapshot.candidates ?? ['']}
+                  onConfirm={(repos) => codeIntelAction('config', { enabled: snapshot.enabled, repos })}
+                />
+              ) : null}
+
               <div className="ci-actions">
                 {snapshot.indexed ? (
                   <button
@@ -170,7 +207,7 @@ export function CodeIntelPanel() {
                   <button
                     type="button"
                     className="btn btn-primary"
-                    disabled={snapshot.building || !snapshot.parser}
+                    disabled={snapshot.building || !snapshot.parser || initBlocked}
                     onClick={() => codeIntelAction('init')}
                   >
                     <Play size={13} />
@@ -180,7 +217,29 @@ export function CodeIntelPanel() {
                 {!snapshot.parser ? (
                   <span className="ci-hint">{t('panel.codeintel.noParser')}</span>
                 ) : null}
+                {/* The only door back to the checklist: clear the index and the
+                  * locked selection. Two presses, for the same reason init has
+                  * two — it deletes a database a person may have been working
+                  * against for weeks. */}
+                <button
+                  type="button"
+                  className={`btn ${clearArmed ? 'btn-danger' : 'btn-outline'}`}
+                  disabled={snapshot.building || (snapshot.repos === undefined && !snapshot.indexed)}
+                  onClick={() => {
+                    if (clearArmed) {
+                      setClearArmed(false);
+                      codeIntelAction('clear');
+                      return;
+                    }
+                    setClearArmed(true);
+                  }}
+                >
+                  {clearArmed ? t('panel.codeintel.clearConfirm') : t('panel.codeintel.clear')}
+                </button>
               </div>
+              {initBlocked ? (
+                <span className="ci-hint">{t('panel.codeintel.chooseReposFirst')}</span>
+              ) : null}
             </div>
 
             <aside className="wm-side">
@@ -346,4 +405,60 @@ function languageList(counts: Record<string, number>): string {
   return Object.keys(counts ?? {})
     .sort()
     .join(', ');
+}
+
+/**
+ * The first-run repository checklist.
+ *
+ * Shown only while nothing has been chosen yet (absent `repos` + no index):
+ * every candidate pre-checked — the default is "index everything you found" —
+ * and the person confirms or unchecks before the first build. The confirmed
+ * selection is **locked** from then on; the only door back is `clear`, which
+ * is why the confirm here is a one-way act and needs no armed second press.
+ */
+function RepoChecklist({
+  candidates,
+  onConfirm,
+}: {
+  candidates: string[];
+  onConfirm: (repos: string[]) => void;
+}) {
+  const t = useT();
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(candidates));
+
+  const toggle = (repo: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(repo)) next.delete(repo);
+      else next.add(repo);
+      return next;
+    });
+  };
+
+  return (
+    <div className="ci-repos">
+      <div className="wm-legend">{t('panel.codeintel.reposTitle')}</div>
+      <p className="ci-hint">{t('panel.codeintel.reposHint')}</p>
+      <div className="ci-repos-list" role="group" aria-label={t('panel.codeintel.reposTitle')}>
+        {candidates.map((repo) => (
+          <label key={repo || '.'} className="ci-repo-row">
+            <input
+              type="checkbox"
+              checked={checked.has(repo)}
+              onChange={() => toggle(repo)}
+            />
+            <span className="ci-repo-name">{repo === '' ? t('panel.codeintel.repoRoot') : repo}</span>
+          </label>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="btn btn-primary"
+        disabled={checked.size === 0}
+        onClick={() => onConfirm([...checked])}
+      >
+        {t('panel.codeintel.reposConfirm')}
+      </button>
+    </div>
+  );
 }

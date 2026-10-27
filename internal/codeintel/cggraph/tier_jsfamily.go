@@ -33,8 +33,12 @@ import (
 // jsTier implements LanguageTier for the JS family.
 type jsTier struct {
 	language string
-	// aliases maps a path-alias prefix (as written in an import, `@/`) to the directory
-	// it stands for. Supplied by SetPathAliases.
+	// r is the resolver the tier is registered on: the alias table it resolves
+	// against is looked up per reference (the file's own repo), because each
+	// repo's tsconfig is a different fact in a multi-repo index.
+	r *Resolver
+	// aliases is the single-repo form, kept for tests that build a tier
+	// without a resolver.
 	aliases map[string]string
 }
 
@@ -161,7 +165,11 @@ func (t *jsTier) resolveSpecifier(specifier, fromFile string) string {
 		return strings.TrimPrefix(joined, "./")
 	}
 	// A path alias: the longest matching prefix wins, so `@/components` beats `@/`.
-	if t.aliases != nil {
+	aliases := t.aliases
+	if t.r != nil {
+		aliases = t.r.aliasesFor(fromFile)
+	}
+	if aliases != nil {
 		bestPrefix := ""
 		for prefix := range t.aliases {
 			if !strings.HasPrefix(spec, prefix) {

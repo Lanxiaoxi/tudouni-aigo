@@ -43,16 +43,25 @@ type Resolver struct {
 	batchSize int
 	// repoPrefix is the module path (`github.com/owner/repo`), used to map an import
 	// path onto a directory. Empty means "infer from the tree", which treats a path
-	// with no dot in its first segment as in-repo.
+	// with no dot in its first segment as in-repo. The single-value form, kept for
+	// callers (and tests) that index one tree as one repository.
 	repoPrefix string
+	// scopePrefixes maps a scope directory (an absolute path) to its module path.
+	// When set, it replaces repoPrefix: a reference is narrowed with the prefix of
+	// the scope its file belongs to.
+	scopePrefixes map[string]string
 	// tiers are the per-language rules, keyed by the extractor's language name.
 	//
 	// A language with no tier runs the neutral path: everything visible, no import
 	// narrowing, no receiver inference. That is deliberate — adding a language must
 	// never change another language's output.
 	tiers map[string]LanguageTier
-	// pathAliases maps a TypeScript path-alias prefix to the directory it stands for.
+	// pathAliases maps a TypeScript path-alias prefix to the directory it stands
+	// for. The single-repo form, kept for callers that index one tree.
 	pathAliases map[string]string
+	// scopeAliases maps a scope directory to its alias table. When set, it
+	// replaces pathAliases with the same per-scope rule as scopePrefixes.
+	scopeAliases map[string]map[string]string
 	// sources caches file bodies across one batch, for tiers that read source.
 	sources map[string]*sourceFile
 }
@@ -71,17 +80,79 @@ func NewResolver(db *DB) *Resolver {
 // One place that lists them all, so adding a language is one line here plus its file —
 // and so a reader can see at a glance which languages have rules and which fall through
 // to the neutral path.
+//
+// The tiers hold a pointer to the resolver rather than a copy of its scope settings:
+// a module prefix or an alias table belongs to the **referencing file's repo**, and
+// with several repos indexed in one database the right one is only knowable at
+// Narrow time, from the reference's own path.
 func (r *Resolver) registerAllTiers() {
-	r.declareTier(&goTier{repoPrefix: r.repoPrefix})
-	r.declareTier(&pythonTier{repoPrefix: r.repoPrefix})
+	r.declareTier(&goTier{r: r})
+	r.declareTier(&pythonTier{r: r})
 	r.declareTier(&rustTier{})
 	r.declareTier(&javaTier{})
 	r.declareTier(&kotlinTier{})
 	r.declareTier(&cTier{language: "c"})
 	r.declareTier(&cTier{language: "cpp"})
 	for _, language := range jsLanguages {
-		r.declareTier(&jsTier{language: language, aliases: r.pathAliases})
+		r.declareTier(&jsTier{language: language, r: r})
 	}
+}
+
+// repoPrefixFor resolves the module path a reference in `path` must be
+// narrowed with: the prefix of the scope (repo) the file belongs to when the
+// per-scope table is set, otherwise the single legacy prefix.
+func (r *Resolver) repoPrefixFor(path string) string {
+	if len(r.scopePrefixes) > 0 {
+		return r.scopePrefixes[scopeOwnerPath(path, r.scopePrefixes)]
+	}
+	return r.repoPrefix
+}
+
+// aliasesFor returns the path-alias table of the scope a file belongs to, or
+// the legacy single table, or nil (a bare specifier is then a dependency).
+func (r *Resolver) aliasesFor(path string) map[string]string {
+	if len(r.scopeAliases) > 0 {
+		return r.scopeAliases[scopeOwnerPath(path, r.scopeAliases)]
+	}
+	return r.pathAliases
+}
+
+// SetRepoPrefixes installs per-scope module paths, replacing the single
+// prefix. Keys are the scope directories, values the module path detected
+// there (possibly empty — a scope without a go.mod narrows the Go way:
+// first-segment-has-a-dot).
+func (r *Resolver) SetRepoPrefixes(prefixes map[string]string) {
+	r.scopePrefixes = prefixes
+}
+
+// SetPathAliasesByScope installs per-scope alias tables, replacing the single
+// table. A scope absent from the map has no aliases.
+func (r *Resolver) SetPathAliasesByScope(aliases map[string]map[string]string) {
+	r.scopeAliases = aliases
+}
+
+// scopeOwnerPath returns the key of the scope (an absolute directory) that
+// owns `path` — longest match, so a file in a sub-repo never falls back to the
+// root's settings. Both sides are normalised to forward slashes because the
+// scopes are built on one platform and the stored file paths on another
+// spelling of the same tree.
+func scopeOwnerPath[V any](path string, scopes map[string]V) string {
+	best := ""
+	bestLen := -1
+	for scope := range scopes {
+		s := normalizeSlash(scope)
+		p := normalizeSlash(path)
+		if p == s || hasPrefixSlash(p, s) {
+			if len(scope) > bestLen {
+				best, bestLen = scope, len(scope)
+			}
+		}
+	}
+	return best
+}
+
+func hasPrefixSlash(p, s string) bool {
+	return len(p) > len(s) && p[:len(s)] == s && p[len(s)] == '/'
 }
 
 // source returns the cached source file for a path.
