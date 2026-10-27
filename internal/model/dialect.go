@@ -118,6 +118,18 @@ type dialect interface {
 	// to agree on this, which is why it is one answer per protocol rather than
 	// something configurable.
 	credentialHeader() string
+	// probeCarriesLevel reports whether a probe request on this wire carries the
+	// level at all.
+	//
+	// It is not cosmetic. The Messages shape has no `reasoning_effort` field: this
+	// program translates a level into `thinking.budget_tokens`, and a probe drops
+	// to the protocol's floor (see probeThinkingFloor), so **the level never
+	// reaches the request** and every row of a six-level probe is the endpoint's
+	// one answer about thinking, repeated. A panel that drew that as six findings
+	// would be selling a per-level result the wire cannot produce, and writing it
+	// into the configuration file would be writing a guess in the shape of a
+	// measurement. The two OpenAI shapes send the level verbatim and report true.
+	probeCarriesLevel() bool
 	// onTheWireMessage reduces one message to the fields this protocol defines.
 	//
 	// It is a hole in the wall that has to exist, because the message list this
@@ -180,7 +192,20 @@ type dialectRequest struct {
 	// probe marks a level probe rather than a turn. A probe's job is to be
 	// refused or not, and the turn's output rules (the thinking budget plus its
 	// allowance of answer room) are a real spend on every one — so each dialect
-	// substitutes its smallest legal shape when this is set. See ProbeEffort.
+	// substitutes its **smallest shape it can express without guessing**, and the
+	// claim is deliberately not "the same shape on every wire":
+	//
+	//   - the Messages wire drops to `probeThinkingFloor` plus `probeAnswerRoom`,
+	//     because this program chooses `thinking.budget_tokens` there and cannot
+	//     send a one-word room beside it;
+	//   - the Responses wire caps `max_output_tokens` at `probeAnswerRoom`;
+	//   - chat completions sends **nothing** extra: `max_tokens` and
+	//     `max_completion_tokens` are not interchangeable across the gateways
+	//     this program talks to (the o-series endpoints refuse the first by
+	//     name), and a cap that a reasoning model spends entirely on thinking
+	//     turns a level question into an empty answer. Its output room is
+	//     therefore the endpoint's default, which is the one thing a probe can
+	//     cost more than a word on. See ProbeEffort.
 	probe bool
 }
 

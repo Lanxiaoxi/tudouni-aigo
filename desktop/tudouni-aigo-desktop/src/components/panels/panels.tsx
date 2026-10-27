@@ -44,6 +44,15 @@ import type { TKey } from '@/i18n';
 import { useListKeys } from '@/hooks/useListKeys';
 import { buildPatch, draftFrom, type RouteView } from '@/runtime/userConfig';
 import {
+  nothingToSaveReason,
+  probeApplies,
+  probeResultExpired,
+  probeSaveable,
+  probeTally,
+  stillProbing,
+  writableLevels,
+} from './effortProbe';
+import {
   readRemoteUserConfig,
   readUserConfig,
   writeRemoteUserConfig,
@@ -369,13 +378,34 @@ export function EffortPanel() {
   const current = useSessionField((rt) => rt.session?.effort ?? '', '');
   const thinking = useSessionField((rt) => rt.session?.thinking ?? false, false);
   const model = useSessionField((rt) => rt.session?.model ?? '', '');
+  const provider = useSessionField((rt) => rt.session?.provider ?? '', '');
   const protocol = useSessionField((rt) => rt.session?.protocol ?? 0, 0);
   const probe = useSessionField((rt) => rt.probeEffort, null);
-  const probing = useSessionField(
-    (rt) => rt.probeEffortStartedAt !== null && rt.probeEffort === null,
-    false,
-  );
+  const probeAt = useSessionField((rt) => rt.probeEffortAt, null);
+  const probeStartedAt = useSessionField((rt) => rt.probeEffortStartedAt, null);
+  // A clock, not a flag: "probing" is derived from the store so a panel that is
+  // closed and reopened still shows a running pass, but that same derivation
+  // means a runtime that dies mid-pass leaves it running for ever. The deadline
+  // above is read against a clock that ticks only while an ask is outstanding —
+  // plus, once, when a result is due to expire — so a panel sitting on a
+  // finished probe costs no timers.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (probeStartedAt === null && probeAt === null) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, [probeStartedAt, probeAt]);
+  const probing = stillProbing(probeStartedAt, probe !== null, now);
+  // Asked, never answered, and past the deadline: the runtime owed a reply and
+  // did not send one (it died, the connection dropped, or the child was
+  // replaced). Saying so is the only way the button comes back.
+  const probeOverdue = probeStartedAt !== null && probe === null && !probing;
   const probeProblem = useSessionField((rt) => rt.probeEffortProblem, null);
+  // A result older than the TTL is still drawn — it is history, and hiding it
+  // would look like the probe never ran — but it no longer offers a save. See
+  // `probeResultExpired`.
+  const probeExpired = probeResultExpired(probeAt, now);
   const chooseEffort = useApp((s) => s.chooseEffort);
   const requestProbeEffort = useApp((s) => s.requestProbeEffort);
   // The write-back edits the configuration **file**, and on a remote screen
@@ -385,7 +415,11 @@ export function EffortPanel() {
 
   const [confirming, setConfirming] = useState(false);
   const [writing, setWriting] = useState(false);
-  const [written, setWritten] = useState(false);
+  // What the last save wrote, and for which endpoint — a **copy of that
+  // moment's list**, not a flag, and not read back off the current probe. The
+  // sentence under the result names levels, and a later probe must not inherit
+  // the old "saved" and claim it had written levels it never did.
+  const [written, setWritten] = useState<{ endpoint: string; levels: string } | null>(null);
   const [writeProblem, setWriteProblem] = useState<string | null>(null);
 
   const { active, setActive } = useListKeys({
@@ -394,16 +428,36 @@ export function EffortPanel() {
     onPick: (i) => levels[i] && chooseEffort(levels[i]),
   });
 
-  // The result applies to the model it probed, not to whichever model happens
-  // to be on screen: switching models in the meantime is exactly what the
-  // panel must not paper over.
-  const probeMatches = probe !== null && probe.model === model;
-  const accepted = probe ? probe.levels.filter((row) => row.result === 'ok').map((row) => row.level) : [];
-  const canWrite = probeMatches && accepted.length > 0 && !writing && !probing;
+  // The result applies to the endpoint it probed — the **pair**, not the model
+  // id. `probeApplies` owns the rule and its reason: one model id can be listed
+  // on two routes, and a save writes into `probe.provider`'s entry.
+  const probeMatches = probeApplies(probe, { model, provider });
+  // Everything the endpoint did **not** refuse (`ok` and `uncertain`). The rule
+  // and the reason it is not "only ok" live in `writableLevels`.
+  const writable = writableLevels(probe);
+  // The three columns, counted once: the head line, the rows and the "nothing
+  // here can be saved" sentence all read the same tally, so one of them cannot
+  // disagree with the badges beside it.
+  const tally = probeTally(probe);
+  const noSaveReason = nothingToSaveReason(probe);
+  // Saveable needs a **confirmed** level as well as a writable one: a pass that
+  // came back entirely `uncertain` learned nothing, and writing it would both
+  // claim a result and put a list into the file that no probe vouched for. See
+  // `probeSaveable`.
+  const canOfferWrite = probeMatches && probeSaveable(probe) && !probing && !probeExpired;
+  // Whether the rows below are six findings or one finding repeated. On the
+  // Messages wire the level is translated into a thinking budget and a probe
+  // uses the protocol floor, so the endpoint never sees the word — the runtime
+  // says so rather than letting the panel sell six measurements.
+  const rowsAreOneAnswer = probe?.levels_are_one_answer === true;
+  // The endpoint as the panel names it. The save confirmation is only true of
+  // the pair it was written for; switching route or model hides it rather than
+  // letting a sentence about one entry sit under another.
+  const endpointKey = `${provider}/${model}`;
 
   /**
-   * Write the accepted levels into the configuration file, on whichever
-   * machine that file lives.
+   * Write the levels the endpoint did not refuse into the configuration file,
+   * on whichever machine that file lives.
    *
    * The read-modify-write is **here and now**, not against the panel's state:
    * the file may have been edited since the panel opened, and the Rust merge
@@ -415,12 +469,20 @@ export function EffortPanel() {
     if (probe === null || !probeMatches) return;
     setWriting(true);
     setWriteProblem(null);
-    setWritten(false);
+    setWritten(null);
     try {
       const where = configTarget();
       const doc = where === null ? await readUserConfig() : await readRemoteUserConfig(where.target);
       if (doc === null) {
         setWriteProblem(t('panel.effort.probeReadFailed'));
+        return;
+      }
+      if (doc.problem !== null) {
+        // The file did not parse. Its `providers` list is empty for that reason
+        // and not because the model was removed — reporting "no longer lists
+        // this model" would point at the wrong thing entirely, and the config
+        // panel already refuses to write an unparseable file.
+        setWriteProblem(doc.problem);
         return;
       }
       let found = false;
@@ -431,7 +493,7 @@ export function EffortPanel() {
           models: route.models.map((entry) => {
             if (entry.id !== probe.model) return entry;
             found = true;
-            return { ...entry, effortLevels: accepted };
+            return { ...entry, effortLevels: writable };
           }),
         };
       });
@@ -453,7 +515,11 @@ export function EffortPanel() {
           noteRemoteConfigWritten(where.hostId, writtenDoc.configFingerprint);
         }
       }
-      setWritten(true);
+      // The list is captured here, at the moment it was written, and carries
+      // the endpoint it was written for. The sentence below the result is about
+      // **that** save; reading the levels off whichever probe is on screen
+      // later would let the old confirmation claim a write that never happened.
+      setWritten({ endpoint: `${probe.provider}/${probe.model}`, levels: writable.join(' / ') });
     } catch (err) {
       setWriteProblem(
         t('panel.effort.probeWriteFailed', { problem: err instanceof Error ? err.message : String(err) }),
@@ -525,17 +591,30 @@ export function EffortPanel() {
               </div>
             ) : null}
 
+            {/* The ask went out and no answer ever came back: nothing will
+                clear `startedAt` now, so the panel says so and offers the
+                button again rather than spinning for ever. */}
+            {probeOverdue ? (
+              <div className="caption probe-problem">{t('panel.effort.probeOverdue')}</div>
+            ) : null}
+
             {probe && !probing ? (
               <div className="probe-result">
                 <div className="caption probe-result-head">
                   {probeMatches
                     ? t('panel.effort.probeResult', {
                         model: probe.model,
-                        ok: probe.levels.filter((row) => row.result === 'ok').length,
-                        rejected: probe.levels.filter((row) => row.result === 'rejected').length,
-                        uncertain: probe.levels.filter((row) => row.result === 'uncertain').length,
+                        ok: tally.ok,
+                        rejected: tally.rejected,
+                        uncertain: tally.uncertain,
                       })
-                    : t('panel.effort.probeStale', { probed: probe.model, model })}
+                    : t('panel.effort.probeStale', {
+                        // The whole pair, not just the model: two routes can
+                        // carry one model id, and "this result is for X" has to
+                        // be able to say which route X is.
+                        probed: `${probe.provider}/${probe.model}`,
+                        model: endpointKey,
+                      })}
                 </div>
                 {probe.levels.map((row) => (
                   <div key={row.level} className="probe-row">
@@ -550,26 +629,48 @@ export function EffortPanel() {
                     ) : null}
                   </div>
                 ))}
-                {accepted.length === 0 ? (
-                  <div className="caption faint">{t('panel.effort.probeEmpty')}</div>
+                {/* One finding, drawn as one: listing six identical rows under
+                    a heading that says "probe of <model>" would claim the
+                    endpoint answered about each level. */}
+                {rowsAreOneAnswer ? (
+                  <div className="caption faint">{t('panel.effort.probeOneAnswer')}</div>
+                ) : null}
+                {/* Why nothing can be saved, in the one sentence that is true:
+                    "refused every level" only when the endpoint refused every
+                    level, and "no answer" when it never answered readably. See
+                    `nothingToSaveReason`. */}
+                {noSaveReason === 'all-refused' ? (
+                  <div className="caption faint">{t('panel.effort.probeAllRefused')}</div>
+                ) : noSaveReason === 'no-answer' ? (
+                  <div className="caption faint">{t('panel.effort.probeNoAnswer')}</div>
+                ) : null}
+                {/* A result past its TTL keeps its rows and loses its save: the
+                    list describes the endpoint as it was, and a stale list
+                    written into the file would delete levels the endpoint has
+                    since started taking. */}
+                {probeExpired && probeMatches ? (
+                  <div className="caption faint">{t('panel.effort.probeExpired')}</div>
                 ) : null}
                 <div className="probe-actions">
-                  {canWrite ? (
+                  {canOfferWrite ? (
                     <Tip label={t('panel.effort.probeWriteHint')}>
                       <button
                         type="button"
                         className="btn btn-outline btn-compact"
+                        // Disabled rather than unmounted while the write runs:
+                        // unmounting it is what left a save in flight with no
+                        // progress mark anywhere on screen.
                         disabled={writing}
                         onClick={() => void writeAccepted()}
                       >
                         {writing ? <Radio size={12} aria-hidden /> : <Check size={12} aria-hidden />}
-                        {t('panel.effort.probeWrite')}
+                        {writing ? t('panel.effort.probeWriting') : t('panel.effort.probeWrite')}
                       </button>
                     </Tip>
                   ) : null}
-                  {written ? (
+                  {written !== null && written.endpoint === endpointKey ? (
                     <span className="caption probe-written">
-                      {t('panel.effort.probeWritten', { levels: accepted.join(' / ') })}
+                      {t('panel.effort.probeWritten', { levels: written.levels })}
                     </span>
                   ) : null}
                 </div>
@@ -593,6 +694,12 @@ export function EffortPanel() {
                       className="btn btn-primary btn-compact"
                       onClick={() => {
                         setConfirming(false);
+                        // A new ask supersedes the last save: its sentence and
+                        // its refusal both describe a probe that is now being
+                        // replaced, and leaving them up would print "saved"
+                        // beside a result the save never covered.
+                        setWritten(null);
+                        setWriteProblem(null);
                         requestProbeEffort();
                       }}
                     >

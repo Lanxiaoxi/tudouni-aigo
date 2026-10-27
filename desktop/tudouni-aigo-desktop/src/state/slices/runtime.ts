@@ -303,6 +303,16 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
             // The handshake means this child is up, so a previous refusal is no
             // longer true.
             problem: null,
+            // A new handshake is a (possibly different) runtime process, and the
+            // probe it might have been running was that process's. Keeping the
+            // mark would leave the panel saying "Probing…" about an ask this
+            // child never heard; the result goes with it, because its snapshot
+            // names a (model, provider) this process may not serve. Same rule the
+            // usage ledger's snapshot follows above.
+            probeEffort: null,
+            probeEffortAt: null,
+            probeEffortStartedAt: null,
+            probeEffortProblem: null,
           });
           // The runtime's own answer about where this session is, which is what
           // the next launch should open — **when this is the session on screen.**
@@ -1085,6 +1095,12 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
             // button left disabled by a reply that can never arrive is worse than
             // one that lets the person press again after the runtime is back.
             mcpPending: [],
+            // Same rule for a probe in flight: the child that was going to
+            // answer it is gone, so the pass is over with no result. The panel
+            // has a deadline for the case where this message never arrives; this
+            // ends it at the moment the exit is known, instead of leaving the
+            // button hidden for the rest of the deadline.
+            probeEffortStartedAt: null,
             // §5.1/§5.3 of the design: a connection ending is reported through
             // its own state, independent of the turn it leaves unsettled above.
             // `requested` is what the Rust/Go bridges already use to separate

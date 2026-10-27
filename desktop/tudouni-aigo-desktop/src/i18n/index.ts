@@ -1016,18 +1016,20 @@ export const en = {
   /* ---------------- the effort probe ---------------- */
   'panel.effort.probe': 'Probe the endpoint',
   'panel.effort.probeHint':
-    'Asks the endpoint for every level in the list and marks which ones it accepts.',
+    'Asks the endpoint which levels in this list it accepts. One real request per level, or a single one on a protocol that cannot carry a level.',
   'panel.effort.probeConfirmTitle': 'Probe the endpoint for effort levels?',
   'panel.effort.probeConfirmBody':
-    'This sends {n} real requests to {model} — one per level — with thinking on and a one-word answer. That costs a small amount of tokens. The accepted levels can then be written to the configuration file.',
-  'panel.effort.probing': 'Probing the endpoint… this is a real request per level and takes a moment.',
-  'panel.effort.probeUnsupported': 'This runtime build cannot probe effort levels.',
+    'This sends up to {n} real requests to {model} with thinking on and a one-word answer, and each one costs tokens. A protocol that takes a named level gets one request per level; one that takes only a thinking budget gets a single request, because the level never reaches the wire there. The levels it does not refuse can then be written to the configuration file.',
+  'panel.effort.probing': 'Probing the endpoint… these are real requests and take a moment.',
+  'panel.effort.probeOverdue':
+    'The endpoint never answered this probe — the runtime may have stopped or the connection dropped. Nothing was changed; probe again to retry.',
   'panel.effort.probeResult': 'Probe of {model} — {ok} accepted, {rejected} refused, {uncertain} unclear.',
   'panel.effort.probeReadFailed': 'The configuration file could not be read, so nothing was written.',
   'panel.effort.probeNote': 'Accepting the level means the endpoint did not refuse it; a gateway that accepts a level may still ignore it.',
-  'panel.effort.probeWrite': 'Save accepted levels to config',
+  'panel.effort.probeWrite': 'Save the levels it did not refuse',
+  'panel.effort.probeWriting': 'Saving…',
   'panel.effort.probeWriteHint':
-    'Sets this model’s thinking levels in the configuration file to the accepted ones. Re-reads the file first and writes only this model’s entry.',
+    'Sets this model’s thinking levels in the configuration file to the levels the endpoint did not refuse — the accepted ones and the unclear ones, because “unclear” is not a refusal and dropping it would delete a level nobody asked to remove. Re-reads the file first and writes only this model’s entry.',
   'panel.effort.probeWritten':
     'Saved: the configuration now lists {levels} for this model. New sessions will offer exactly that list.',
   'panel.effort.probeNotFound':
@@ -1035,7 +1037,13 @@ export const en = {
   'panel.effort.probeWriteFailed': 'The configuration was not written: {problem}',
   'panel.effort.probeStale':
     'This result is for {probed}; the model on screen is {model}. Switch back or probe again before saving.',
-  'panel.effort.probeEmpty': 'The endpoint refused every level in the list.',
+  'panel.effort.probeAllRefused': 'The endpoint refused every level in the list.',
+  'panel.effort.probeNoAnswer':
+    'No level could be confirmed: the endpoint did not answer clearly for any of them, so there is nothing to save. Try again.',
+  'panel.effort.probeOneAnswer':
+    'This endpoint takes a thinking budget rather than a named level, so the probe could only ask “does it accept thinking at all” — the rows above are that one answer repeated, not six findings.',
+  'panel.effort.probeExpired':
+    'This probe is more than half an hour old, so it can no longer be saved — the endpoint may have changed since. Probe again to write the current list.',
   'panel.resume.title': 'Sessions',
   'panel.resume.empty': 'The runtime reported no sessions',
   'panel.resume.messages': '{n} messages',

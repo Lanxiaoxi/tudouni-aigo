@@ -27,6 +27,10 @@ func (responsesDialect) wantsStreamOptions() bool { return false }
 // serving this shape, a bearer token authenticates here.
 func (responsesDialect) credentialHeader() string { return credentialHeaderBearer }
 
+// probeCarriesLevel is true: `reasoning.effort` is this shape's own field for a
+// level, and a probe sends the level in it unchanged.
+func (responsesDialect) probeCarriesLevel() bool { return true }
+
 // onTheWireMessage returns the message unchanged, for the same reason as the
 // Messages shape: `splitResponsesInput` builds each item from named fields, so an
 // unknown key cannot reach this protocol's wire. See the dialect interface.

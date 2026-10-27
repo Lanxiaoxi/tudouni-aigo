@@ -62,6 +62,10 @@ func (openaiDialect) wantsStreamOptions() bool { return true }
 // bearer token.
 func (openaiDialect) credentialHeader() string { return credentialHeaderBearer }
 
+// probeCarriesLevel is true: `reasoning_effort` goes out verbatim, so a probe's
+// answer is an answer about that level.
+func (openaiDialect) probeCarriesLevel() bool { return true }
+
 // onTheWireMessage keeps only the fields the chat completions shape defines, for
 // the messages whose fields are all strings or arrays of objects and therefore
 // need no rebuilding.

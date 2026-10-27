@@ -33,6 +33,12 @@ func (anthropicDialect) wantsStreamOptions() bool { return false }
 // `x-api-key`, which is why this is a protocol fact rather than a setting.
 func (anthropicDialect) credentialHeader() string { return "x-api-key" }
 
+// probeCarriesLevel is false here, and that is the honest answer: this wire has
+// no field for a level. A probe substitutes `probeThinkingFloor` for the budget
+// (see encode), so all it can learn is "this endpoint takes thinking at all" —
+// once, not once per level.
+func (anthropicDialect) probeCarriesLevel() bool { return false }
+
 // Thinking budgets, in tokens.
 //
 // The Messages shape does not take a level; it takes a budget. The levels this
@@ -66,18 +72,6 @@ func thinkingBudget(effort string) int {
 // with `stop_reason: max_tokens` — which reads as the model having nothing to say.
 // The two are set here in one place so that relationship cannot drift.
 func maxOutputTokens(effort string) int { return thinkingBudget(effort) + 8192 }
-
-// probeThinkingFloor and probeAnswerRoom are the probe's numbers on this wire.
-//
-// The floor is the protocol's smallest thinking budget: the probe still asks
-// for thinking (a level the endpoint takes only while thinking is not a level),
-// but at the smallest budget the shape allows. The answer room is what keeps
-// the relationship the endpoint requires — `max_tokens` strictly above the
-// budget — while the answer itself stays small.
-const (
-	probeThinkingFloor = 1024
-	probeAnswerRoom    = 128
-)
 
 // onTheWireMessage returns the message unchanged: this shape rebuilds every
 // message field by field in `splitSystemPrompt` and `anthropicMessages`, so a key

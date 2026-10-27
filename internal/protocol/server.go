@@ -228,10 +228,11 @@ type GoalCommander interface {
 // message with a notice saying so rather than an empty answer that reads as
 // "every level was refused".
 //
-// The map is the `ui` payload minus the envelope: the (model, provider) the
-// probes were about and one row per level. A refusal carries the error, and the
-// handler turns it into `problem` beside the kind, the way the memory and
-// codeintel panels carry theirs.
+// The map is the `probe` payload: the (model, provider) the probes were about
+// and one row per level. The handler puts it under `probe` beside the envelope,
+// the way `memory` and `usage` carry their snapshots. A refusal carries the
+// error, and the handler turns it into `problem` beside the kind, the way the
+// memory and codeintel panels carry theirs.
 type ProbeEfforter interface {
 	ProbeEffort() (map[string]any, error)
 }

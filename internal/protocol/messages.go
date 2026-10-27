@@ -129,7 +129,17 @@ const VERSION = 1
 // made, reported so a newly cloned repo is never silently unindexed). A
 // front end that knows none of it keeps working: `config` without `repos`
 // only writes the switch, and a runtime below 14 simply never sends the keys.
-const PROTOCOL = 14
+//
+// 15 tells a front end that a probe's rows are **one answer asked repeatedly**.
+// `ui(probe_effort).probe` may now carry `levels_are_one_answer`, present only
+// when true: the Messages wire has no field for a level — this program
+// translates one into `thinking.budget_tokens`, and a probe uses the protocol
+// floor — so the endpoint never sees the level. The runtime then asks **once**
+// and copies that reading onto every level, rather than spending five more real
+// requests to learn nothing. The absence rule keeps the old reading (no key
+// means the rows are per level), which is what a runtime below 15 means by
+// sending rows at all. Purely additive for the same reason 13 was.
+const PROTOCOL = 15
 
 // Message keys used by every envelope.
 const (

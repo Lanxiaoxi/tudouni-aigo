@@ -90,8 +90,13 @@ export const ENVELOPE_VERSION = 1;
  * unindexed). A front end that knows none of it keeps working: `config`
  * without `repos` only writes the switch, and the new snapshot keys are
  * additive.
+ *
+ * **15** says when a probe's rows are **one answer asked repeatedly**:
+ * `ProbeEffortSnapshot.levels_are_one_answer`, present only when true. The
+ * Messages wire has no field for a level, so the endpoint never sees it and
+ * every row is the same finding — absent keeps the old reading (per level).
  */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 
 /* ============================================================
    Shared vocabulary
@@ -1255,6 +1260,28 @@ export interface UiSkillsMsg {
   shadowed: string[];
 }
 
+/** The probed (model, provider) and its rows, as the store keeps them.
+ *  Flat rather than nested under `probe`: the store's field is the snapshot,
+ *  and a nesting the wire has but the state does not is a re-shape every
+ *  reader has to remember. */
+export interface ProbeEffortSnapshot {
+  model: string;
+  provider: string;
+  levels: Array<{ level: string; result: string; note?: string }>;
+  /**
+   * True when the wire never carried the level, so every row is **one** answer
+   * asked six times — the Messages shape translates a level into a thinking
+   * budget and a probe uses the protocol floor, so it can only answer "this
+   * endpoint takes thinking at all".
+   *
+   * Absent means "the rows are per level", which is also what a runtime that
+   * predates the key means. The rows still travel: they are what a save writes.
+   * Snake_case like every other key in this shape — the store hands the object
+   * through untouched.
+   */
+  levels_are_one_answer?: boolean;
+}
+
 /** The answer to `probe_effort` (protocol 13).
  *
  *  One row per level the current model offers. `result` is the runtime's own
@@ -1264,16 +1291,6 @@ export interface UiSkillsMsg {
  *  `note`). `problem` rides beside the kind for a probe that could not run at
  *  all, for the reason `memory` and `codeintel` carry theirs: the panel is a
  *  layer over the transcript, and a notice lands behind it. */
-/** The probed (model, provider) and its rows, as the store keeps them.
- *  Flat rather than nested under `probe`: the store's field is the snapshot,
- *  and a nesting the wire has but the state does not is a re-shape every
- *  reader has to remember. */
-export interface ProbeEffortSnapshot {
-  model: string;
-  provider: string;
-  levels: Array<{ level: string; result: string; note?: string }>;
-}
-
 export interface UiProbeEffortMsg {
   v: number;
   t: 'ui';

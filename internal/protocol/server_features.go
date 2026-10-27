@@ -135,10 +135,15 @@ func (s *Server) handleProbeEffort() {
 			})
 			return
 		}
-		payload["v"] = VERSION
-		payload["t"] = OutUI
-		payload["kind"] = UIProbeEffort
-		s.Send(payload)
+		// The answer travels under `probe`, not spread beside the envelope: the
+		// snapshot is one object (the memory and usage handlers' shape), and a
+		// front end reads `probe.model` / `probe.levels` out of it. Spreading the
+		// keys instead would put fields on the wire the schema never declared,
+		// and the panel — which reads `msg.probe` — would draw nothing at all.
+		s.Send(map[string]any{
+			"v": VERSION, "t": OutUI, "kind": UIProbeEffort,
+			"probe": payload,
+		})
 	}()
 }
 

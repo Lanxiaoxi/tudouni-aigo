@@ -166,6 +166,45 @@ func TestEverySchemaMessageTypeHasAGoSender(t *testing.T) {
 	}
 }
 
+// TestTheProbeSnapshotSatisfiesTheSchema covers the one `ui` kind whose payload is
+// an object a front end indexes into, rather than keys spread beside the envelope.
+//
+// The sender once spread `model` / `provider` / `levels` beside the envelope, and
+// nothing failed: an undeclared key is only a note in `checkMessage`, and the
+// snapshot object was missing, which no `required` list named. The panel reads
+// `msg.probe`, so it drew nothing — and the person was told nothing about the six
+// real requests they had just paid for. This case is what a flat answer has to
+// argue with now.
+func TestTheProbeSnapshotSatisfiesTheSchema(t *testing.T) {
+	schema := loadSchema(t, "outbound.schema.json")
+
+	message := map[string]any{
+		"v": VERSION, "t": OutUI, "kind": UIProbeEffort,
+		"probe": map[string]any{
+			"model":    "m",
+			"provider": "p",
+			"levels": []any{
+				map[string]any{"level": "low", "result": "ok"},
+				map[string]any{"level": "xhigh", "result": "rejected"},
+				map[string]any{"level": "max", "result": "uncertain", "note": "HTTP 429"},
+			},
+		},
+	}
+	spec, ok := schema["ui"]
+	if !ok {
+		t.Fatal("the schema has no `ui` declaration")
+	}
+	checkMessage(t, spec, message)
+
+	// And the flat shape really is the one that fails: `model` / `provider` /
+	// `levels` beside the kind leave `probe` absent, which is what the panel
+	// reads. Asserted here rather than only described, because this is the bug
+	// that shipped.
+	if _, present := message["probe"]; !present {
+		t.Fatal("the fixture lost its `probe` object, so this test proves nothing")
+	}
+}
+
 // TestTheOpeningMessageSatisfiesItsSchema checks the handshake against the file.
 //
 // `init` is the message a new front end codes against first, and it is assembled by

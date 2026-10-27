@@ -341,6 +341,15 @@ const SUITES = [
   // a breathing icon over no window" report. The host now puts a 32 ms task
   // behind the frame, and this drives it with a frame source that never fires.
   'hidden-window-flush.test.ts',
+  // The effort probe's write-back rules — the half of the feature that edits a
+  // **file**. Every claim here is invisible in a window: a save that silently
+  // dropped the "unclear" levels (deleting configuration nobody asked to
+  // remove), a result still offered as a match after the route changed under
+  // one model id, a sentence saying "refused every level" about a run that
+  // never got an answer, and a probe that spins for ever because the runtime
+  // that owed the reply died. The functions are pure, which is what lets the
+  // rate-limit and two-routes cases be constructed instead of staged.
+  'effort-probe.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });
