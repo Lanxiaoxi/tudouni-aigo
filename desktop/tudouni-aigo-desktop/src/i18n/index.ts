@@ -1291,6 +1291,15 @@ export const en = {
   'panel.settings.notify': 'Session notifications',
   'panel.settings.notifyDesc':
     'A system notification when a session asks for an answer, fails, or finishes while you are looking at something else.',
+  /** The pacing switch. It says what changes in reading terms ("as it is
+   *  written") rather than naming the technique, because "smooth streaming" is
+   *  not a fact about the reply �?"written out while the model is still
+   *  writing" is. */
+  'panel.settings.smoothing': 'Reveal replies as they are written',
+  'panel.settings.smoothingDesc':
+    'Text appears at a steady reading pace instead of in bursts as each network packet lands. Off draws each burst the moment it arrives.',
+  'panel.settings.smoothingReduced':
+    'Your system asks for reduced motion, so replies are drawn immediately. This switch cannot override that.',
   'panel.settings.close': 'Closing the window',
   'panel.settings.closeDesc': 'What the X button does.',
   'panel.close': 'Close',

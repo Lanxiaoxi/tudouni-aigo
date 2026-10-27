@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Bell, Pause, Zap } from 'lucide-react';
+import { Bell, Pause, PenLine, Zap } from 'lucide-react';
 import { selectModalVisible, selectPhase, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { CLOSE_POLICIES, type ClosePolicy } from '@/runtime/windowClose';
 import { Badge, Info, Tip } from '@/components/ui/kit';
 import { PanelBody, PanelShell } from './PanelShell';
@@ -60,8 +61,15 @@ export function SettingsPanel() {
   // (`closePolicy`) is not about any process at all.
   const notifyEnabled = useApp((s) => s.notifyEnabled);
   const setNotifyEnabled = useApp((s) => s.setNotifyEnabled);
+  const streamSmoothing = useApp((s) => s.streamSmoothing);
+  const setStreamSmoothing = useApp((s) => s.setStreamSmoothing);
   const closePolicy = useApp((s) => s.closePolicy);
   const setClosePolicy = useApp((s) => s.setClosePolicy);
+  // The OS's answer, shown beside the switch rather than acted on silently: when
+  // it is on, the switch below does nothing, and a control that appears on while
+  // nothing changes is the one thing this panel must not do. See rule 1 in the
+  // module note — this row reports what is in force, so it says so.
+  const reducedMotion = usePrefersReducedMotion();
 
   // The draft starts from what is **in force**, so the panel opens showing the
   // truth rather than a remembered value that nothing is using.
@@ -249,6 +257,29 @@ export function SettingsPanel() {
             >
               <Bell size={11} />
               <span>{t('panel.settings.notify')}</span>
+            </button>
+          </Tip>
+        </div>
+
+        {/* ---- streamed replies, paced or immediate ---- */}
+        <div className="set-row">
+          <div className="set-main">
+            <div className="set-title">
+              <span>{t('panel.settings.smoothing')}</span>
+            </div>
+            <div className="set-desc">{t('panel.settings.smoothingDesc')}</div>
+          </div>
+          <Tip
+            label={reducedMotion ? t('panel.settings.smoothingReduced') : t('common.none')}
+          >
+            <button
+              type="button"
+              className={`set-toggle${streamSmoothing && !reducedMotion ? ' is-on' : ''}`}
+              aria-pressed={streamSmoothing && !reducedMotion}
+              onClick={() => setStreamSmoothing(!streamSmoothing)}
+            >
+              <PenLine size={11} />
+              <span>{t('panel.settings.smoothing')}</span>
             </button>
           </Tip>
         </div>

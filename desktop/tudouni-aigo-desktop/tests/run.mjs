@@ -316,6 +316,24 @@ const SUITES = [
   // was — so the rule is a pure function and the document and the Rust module
   // are read as text.
   'splash.test.ts',
+  // The pacing curve behind streamed text, and the cursor it drives. Both are
+  // pure arithmetic on purpose: every constant in the curve is a feel
+  // judgement, so a wrong one shows up as "the reply types too fast" weeks
+  // later and is never traced back. The properties that make the feel are
+  // asserted instead of the numbers �?it accelerates with backlog, it makes
+  // progress every frame, a stall cannot lurch, and the cursor never lands
+  // inside a surrogate pair.
+  'stream-reveal.test.ts',
+  // The one frame loop every paced row shares. What is asserted is the reason
+  // it exists: one clock per document, every simulate before any write, and the
+  // loop stops when nothing is owed �?a per-row `requestAnimationFrame` would
+  // pass none of these and looks identical in a window.
+  'frame-clock.test.ts',
+  // The hook's half of the same feature: the three ways pacing lets go. All
+  // three are decided during render �?a search opening, or a switch flipping,
+  // settles the text before any frame can run �?which is why one synchronous
+  // render can assert them with no testing library.
+  'revealed-text.test.tsx',
   // A window that exists but has never been presented still has to make
   // progress. `requestAnimationFrame` is accepted for it and never called back
   // while `document.hidden` reads `false`, so the lines that make the main

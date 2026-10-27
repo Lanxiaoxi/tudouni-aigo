@@ -16,6 +16,8 @@ import {
 import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { useTurnClock } from '@/hooks/useTurnClock';
+import { useRevealedText } from '@/hooks/useRevealedText';
+import { useStreamPacing } from '@/hooks/useStreamPacing';
 import { copyText } from '@/utils/clipboard';
 import { Badge, RiskTag } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
@@ -100,12 +102,7 @@ export const EntryView = memo(function EntryView({
     case 'answer':
       return <AnswerEntry entry={entry} />;
     case 'stream':
-      return (
-        <div className="e-stream" data-entry={entry.id}>
-          {entry.text}
-          {entry.streaming ? <span className="stream-caret" aria-hidden /> : null}
-        </div>
-      );
+      return <StreamEntry entry={entry} />;
     case 'note':
       // Notes are not drawn here any more: the notice center capsule is their
       // one surface (`@/components/NoticeCenter`), and the unread ledger it
@@ -327,6 +324,36 @@ function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
         copyLabel={t('entry.userCopy')}
         copiedLabel={t('entry.userCopied')}
       />
+    </div>
+  );
+}
+
+/* ---------------- 11. the live body ---------------- */
+
+/**
+ * The streaming row: the reply as it arrives, before `run_finished`'s answer
+ * replaces it.
+ *
+ * **It is one of the two places that paces text** (the reasoning body is the
+ * other), and the reason it is a component rather than three lines inline is
+ * that it needs a hook — `useRevealedText` — and the `EntryView` switch is a
+ * render branch, not a component boundary. A hook called from the switch would
+ * run for every row kind and violate the rules of hooks; a component called from
+ * it runs only for this one.
+ *
+ * The caret is drawn from the **entry's** liveness, not the cursor's: it marks
+ * that the model is still writing, which stays true through the drain. When the
+ * drain finishes the caret is already gone, because `entry.streaming` has been
+ * false since `run_finished` — so the last frame of text is not followed by a
+ * caret that blinks on nothing.
+ */
+function StreamEntry({ entry }: { entry: Extract<Entry, { kind: 'stream' }> }) {
+  const pacing = useStreamPacing();
+  const shown = useRevealedText(entry.text, entry.streaming, pacing);
+  return (
+    <div className="e-stream" data-entry={entry.id}>
+      {shown}
+      {entry.streaming ? <span className="stream-caret" aria-hidden /> : null}
     </div>
   );
 }
@@ -754,10 +781,31 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
           legible rather than looking like the text vanished. */}
       <div className={`collapse${open ? '' : ' is-collapsed'}`} inert={!open}>
         <div>
-          <div className="e-reason-body scroll-fade">{entry.text}</div>
+          <ReasonBody text={entry.text} live={entry.streaming} open={open} />
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * The reasoning body, paced like the reply.
+ *
+ * **Paced only while it is open**, which is not an optimisation: a folded body
+ * is still in the document (that is what makes `Ctrl+F` able to find it and the
+ * fold able to animate), and stepping a cursor through text nobody can see
+ * would hold a frame task open for the whole of a long think. Closed, the text
+ * is drawn whole — and since closing is what happens the moment the stream
+ * stops, the cursor is never behind the text when a person opens it again.
+ *
+ * The count on the head is deliberately **not** this body's: `charCount(entry.text)`
+ * is the model's own total — a figure that grew to match today — whereas a count
+ * that ticked down as the reveal drained would be describing this window's
+ * frames rather than the thinking.
+ */
+function ReasonBody({ text, live, open }: { text: string; live: boolean; open: boolean }) {
+  const pacing = useStreamPacing();
+  const shown = useRevealedText(text, live, pacing && open);
+  return <div className="e-reason-body scroll-fade">{shown}</div>;
 }
 

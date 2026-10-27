@@ -76,6 +76,15 @@ export interface DesktopData {
   ericaiDefault: boolean;
   maxStepsDefault: number | null;
   notifyEnabled: boolean;
+  /**
+   * Whether a streamed reply is revealed at a paced cadence (`streamReveal.ts`).
+   *
+   * A reading preference, so it follows the person rather than the window: the
+   * same answer should hold in every window and after every update. On is the
+   * default — off is a revert, and a revert nobody knows about is not a
+   * default.
+   */
+  streamSmoothing: boolean;
   closePolicy: ClosePolicy;
   /**
    * Task templates and their run links. The runtime has no Task entity and
@@ -112,6 +121,10 @@ export function emptyDesktopData(): DesktopData {
     // On, and the reasoning is in `readNotifyEnabled`: a notifier that starts
     // switched off is a feature nobody finds.
     notifyEnabled: true,
+    // On, for the same reason as the line above and one of its own: pacing is
+    // what the reply looks like, so a build that shipped it off would be
+    // indistinguishable from the build before it.
+    streamSmoothing: true,
     // Ask. Neither of the other two is safe to apply without being asked for.
     closePolicy: 'ask',
     tasks: [],
@@ -196,6 +209,7 @@ function extract(s: AppStore): DesktopData {
     ericaiDefault: s.ericaiDefault,
     maxStepsDefault: s.maxStepsDefault,
     notifyEnabled: s.notifyEnabled,
+    streamSmoothing: s.streamSmoothing,
     closePolicy: s.closePolicy,
     tasks: s.tasks,
     taskRuns: s.taskRuns,
@@ -322,6 +336,13 @@ function validate(raw: Record<string, unknown> | null | undefined): DesktopData 
     // deliberate decision, and restating either would put a second copy of
     // the rule where only one of them would be updated.
     notifyEnabled: readNotifyEnabled(raw.notifyEnabled),
+    // The mirror image of `readNotifyEnabled`'s rule, and the opposite default:
+    // a record from a build that predates this field has no answer, and "on" is
+    // the answer this window would have given. Only a stored `false` — an
+    // explicit choice — survives; a non-boolean (a hand-edited `"false"`, which
+    // is truthy) is dropped rather than honoured, the same boundary the two
+    // rail widths use.
+    streamSmoothing: raw.streamSmoothing !== false,
     closePolicy: readClosePolicy(raw.closePolicy),
     tasks: Array.isArray(raw.tasks) ? raw.tasks.filter(isValidTask) : empty.tasks,
     taskRuns: Array.isArray(raw.taskRuns) ? raw.taskRuns.filter(isValidTaskRun) : empty.taskRuns,

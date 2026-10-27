@@ -49,7 +49,7 @@ function refineReportText(entries: Entry[]): string {
     .join('\n');
 }
 
-export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'rememberModel' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
+export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setStreamSmoothing' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'rememberModel' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
   const { set, get, patch, patchWith, noteSavedSessions, markSavedSessionsPending, activeKeyForSend } = ctx;
   return {
     send(msg) {
@@ -75,6 +75,11 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
 
     setNotifyEnabled(on) {
       set({ notifyEnabled: on });
+      persistPrefs(get());
+    },
+
+    setStreamSmoothing(on) {
+      set({ streamSmoothing: on });
       persistPrefs(get());
     },
 

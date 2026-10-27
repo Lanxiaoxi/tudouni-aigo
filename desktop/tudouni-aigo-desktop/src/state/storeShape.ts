@@ -497,6 +497,16 @@ export interface AppStore {
    */
   notifyEnabled: boolean;
   /**
+   * Whether a streamed reply is revealed at a paced cadence instead of in
+   * arrival-sized bursts (`streamReveal.ts`).
+   *
+   * On by default, and off is a plain revert: the accumulator is drawn as it
+   * arrives, which is what this window did before the reveal engine existed.
+   * Persisted with the rest of the user data, because the answer is about the
+   * person's eyes rather than about this window's state.
+   */
+  streamSmoothing: boolean;
+  /**
    * What the window's X button does.
    *
    * `ask` → the prompt; `minimize` / `close` → applied directly, with no prompt.
@@ -747,6 +757,20 @@ export interface AppStore {
    * to be unwound.
    */
   setNotifyEnabled(on: boolean): void;
+  /**
+   * Set whether streamed text is drawn at a paced cadence, and remember it.
+   *
+   * **This is a reading preference, not a rendering detail**, which is why it is
+   * a stored setting rather than a constant: the whole point of pacing a reply
+   * is how it feels to read one, and how that feels is not something this file
+   * gets to decide for a person. Off restores the previous behaviour exactly —
+   * the accumulated text is drawn the moment it arrives — so turning it off is
+   * a complete undo rather than a degraded mode.
+   *
+   * The OS's reduced-motion preference outranks it either way (`global.css`
+   * makes the same promise for everything CSS animates).
+   */
+  setStreamSmoothing(on: boolean): void;
   /**
    * Set what the window's X button does, and remember it.
    *
