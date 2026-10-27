@@ -290,11 +290,12 @@ export interface SshHostConfig {
   /**
    * A password for this host, if one is configured.
    *
-   * **Stored locally, in the same place `aigo.prefs` already lives**, and
-   * that is a real property to be honest about rather than a detail: this is
-   * `localStorage`, not an OS keychain. It is accepted here, in Phase 2,
-   * because the design's own Phase 1/2 scope is "assume an already-configured
-   * remote runtime" — a proper secret store is not yet part of this layer.
+   * **Stored locally, in `~/.tudouni/desktop.json` with the rest of the saved
+   * hosts**, and that is a real property to be honest about rather than a
+   * detail: this is a file the desktop owns, not an OS keychain. It is
+   * accepted here, in Phase 2, because the design's own Phase 1/2 scope is
+   * "assume an already-configured remote runtime" — a proper secret store is
+   * not yet part of this layer.
    * `undefined` means no password is configured, which is the ordinary case
    * for a host using key auth.
    */
@@ -583,15 +584,21 @@ export interface SessionRuntime {
    */
   refineTaskId: string | null;
   /**
-   * The candidate prompts this session's last finished turn delivered,
+   * The candidate prompts this session's refine report delivered,
    * extracted from the report the model wrote — `null` until the refine run
    * has produced one, `[]` when it produced none.
    *
    * Held on the bucket rather than re-read from the transcript at answer
    * time: the transcript is rebuilt by every `session_load` (which rewrites
    * the entries wholesale), and the question's answer can land long after a
-   * later turn has moved the stream on. The extraction runs once, when the
-   * turn that carries the report finishes.
+   * later turn has moved the stream on.
+   *
+   * The extraction runs when the **question_request** of the refine run's
+   * ask_user lands: the report streams in the same model step as that tool
+   * call, so its text is in the stream at that instant. The turn's
+   * `run_finished` cannot be the moment — the turn blocks on the question,
+   * so its `answer` is the model's post-answer confirmation, which carries
+   * no candidate blocks at all.
    */
   refineCandidates: string[] | null;
   /** A local fact: has this session been spoken to. "Never spoken" and "idle"

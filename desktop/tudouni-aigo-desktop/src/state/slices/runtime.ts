@@ -22,6 +22,32 @@ import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEnded
 import { runtimeOf } from '../appView';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
 
+/**
+ * The text a refine report has already delivered, for candidate extraction.
+ *
+ * The report streams in the **same model step** as the ask_user call: the
+ * model writes the report's text and the tool call in one response, so every
+ * delta of it has landed before the tool runs and its `question_request`
+ * reaches this front end. That is the moment the candidates must be read —
+ * `ui(run_finished)` arrives only after the person has answered (the turn
+ * blocks on the question), and its `answer` is the model's post-answer
+ * confirmation, which carries no candidate blocks.
+ *
+ * Both the stream rows (live report) and the settled answer rows (a question
+ * a later, second step asks) are scanned: whichever shape the report takes,
+ * the blocks are in one of the two, and joining them is idempotent because
+ * `extractRefinePrompts` keys on the numbered markers.
+ */
+function refineReportText(entries: Entry[]): string {
+  return entries
+    .filter(
+      (e): e is Extract<Entry, { kind: 'stream' } | Extract<Entry, { kind: 'answer' }>> =>
+        (e.kind === 'stream' || e.kind === 'answer') && e.runId !== 'history',
+    )
+    .map((e) => e.text)
+    .join('\n');
+}
+
 export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
   const { set, get, patch, patchWith, noteSavedSessions, markSavedSessionsPending, activeKeyForSend } = ctx;
   return {
@@ -79,7 +105,7 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
       if (trimmed === '') return;
       // `samePath` rather than `!==`: the runtime echoes the directory back with
       // its own casing and separators, so a strict comparison would make every
-      // ordinary `init` look like a change and write localStorage each time.
+      // ordinary `init` look like a change and write the file each time.
       const remembered = get().lastWorkspace;
       if (remembered !== null && samePath(remembered, trimmed)) return;
       set({ lastWorkspace: trimmed });
@@ -840,6 +866,25 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
                 patch(key, { lateDropped: bucket.lateDropped + 1 });
                 break;
               }
+              // The primary extraction ran on the question_request (see that
+              // case): the report streams in the same model step as the
+              // ask_user call, so its text is in the stream the moment the
+              // question lands. This is the fallback for the timing edges that
+              // case cannot see — a question asked in a separate step after
+              // the report (the candidates sit in a settled answer row or in
+              // the stream this line is about to clear), or a question that
+              // landed before the report's tail arrived. Scanned against the
+              // **pre-patch** entries, and it may only ever *add* a list,
+              // never blank one: the normal `answer` here is the model's
+              // post-answer confirmation, which carries no blocks, and
+              // overwriting the question's good list with it would be the
+              // bug this fallback exists to repair.
+              const refineFromTurn =
+                bucket.refineTaskId !== null
+                  ? answer !== ''
+                    ? extractRefinePrompts(answer)
+                    : extractRefinePrompts(refineReportText(bucket.entries))
+                  : null;
               patch(key, {
                 // `answer` is read through a type guard rather than passed
                 // straight on. It reaches `Markdown`, which calls `text.replace`,
@@ -850,13 +895,8 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
                 entries: applyFinalAnswer(bucket.entries, runId, answer),
                 activeRunId: null,
                 lastRunId: runId,
-                // A refine run's report is the turn that carries the candidate
-                // blocks, and this finish is the moment they are read out of it:
-                // the question's answer applies against the extracted list, not
-                // the transcript — every `session_load` rebuilds the entries, and
-                // a later turn has moved the stream on by the time a person picks.
-                ...(bucket.refineTaskId !== null && answer !== ''
-                  ? { refineCandidates: extractRefinePrompts(answer) }
+                ...(refineFromTurn !== null && refineFromTurn.length > 0
+                  ? { refineCandidates: refineFromTurn }
                   : {}),
                 // The turn is over. If nobody is looking at this session, that
                 // is the fact the blue dot exists to report — a background
@@ -980,6 +1020,20 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
           // the runtime sends them back to back — and `enqueueModal` merges
           // the members into the one entry that holds the batch.
           set(enqueueModal(get(), { kind: 'question', key, batch: questionBatchOf(msg) }));
+          // The refine candidates are read **here**, not at the turn's
+          // `run_finished`: the report's text streams in the same model step
+          // as the ask_user call, so every one of its deltas is in this
+          // session's stream the moment the question lands — while
+          // `run_finished` waits for the person's answer and carries only the
+          // model's post-answer confirmation. A question asked mid-turn by a
+          // refine run is therefore the one instant at which the candidates
+          // are guaranteed to be on screen and about to be needed.
+          if (bucket.refineTaskId !== null) {
+            const candidates = extractRefinePrompts(refineReportText(bucket.entries));
+            if (candidates.length > 0) {
+              patch(key, { refineCandidates: candidates });
+            }
+          }
           break;
         }
 

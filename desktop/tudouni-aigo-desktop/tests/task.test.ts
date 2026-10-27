@@ -714,7 +714,9 @@ test('a refine answer applies the chosen candidate to the task — created stays
   const key = 'k-refine';
   const bucket = liveBucket(key, 'C:/work', null);
   bucket.refineTaskId = task.id;
-  // What a `run_finished` carrying the report would have left behind.
+  // What the `question_request` handler would have left behind — the report
+  // is in the stream by the time the question lands (see the wire-order test
+  // below).
   bucket.refineCandidates = ['the improved prompt'];
   useApp.setState((s) => ({
     sessions: { ...s.sessions, [key]: bucket },
@@ -807,4 +809,143 @@ test('a question that is not a refine\u2019s touches no task at all', () => {
   const s = useApp.getState();
   assert.equal(s.tasks[0]?.prompt, task.prompt, 'an ordinary session\u2019s answer is not a refine delivery');
   assert.equal(s.tasks[0]?.updatedAtMs, before);
+});
+
+/**
+ * The wire order that broke the real delivery (TR-assistant, 2026-06): the
+ * refine report streams in the **same model step** as the ask_user call, so
+ * its text is in the stream the moment the question_request lands — while
+ * `run_finished` arrives only after the person has answered, and its
+ * `answer` is the model's post-answer confirmation, which carries no
+ * candidate blocks. Extracting on `run_finished` alone therefore found
+ * nothing, and the chosen candidate never reached the task.
+ */
+const REPORT_WITH_BLOCKS = [
+  '# Refine report',
+  '',
+  'BEGIN TASK PROMPT CANDIDATE (candidate 1)',
+  'the improved prompt text',
+  'END TASK PROMPT CANDIDATE',
+].join('\n');
+
+function feedTurnStart(key: string, runId: string): void {
+  useApp.getState().applyRuntimeMessage(key, {
+    v: 1,
+    t: 'event',
+    kind: 'run_started',
+    run_id: runId,
+    step: 0,
+    session_id: 's-x',
+    ts: '2026-06-01T00:00:00Z',
+  } as never);
+}
+
+function feedDelta(key: string, runId: string, step: number, text: string): void {
+  useApp.getState().applyRuntimeMessage(key, {
+    v: 1,
+    t: 'delta',
+    session_id: 's-x',
+    run_id: runId,
+    step,
+    channel: 'text',
+    text,
+    reset: false,
+  } as never);
+}
+
+function feedQuestionRequest(key: string): void {
+  useApp.getState().applyRuntimeMessage(key, {
+    v: 1,
+    t: 'question_request',
+    id: 'q-t1',
+    question: 'Which candidate do you want applied?',
+    header: 'Refine',
+    options: ['Apply candidate 1: replace the task prompt', 'Apply none of them'],
+    multi_select: false,
+    batch_id: 'q-t1',
+    question_index: 0,
+    question_count: 1,
+  } as never);
+}
+
+function feedRunFinished(key: string, runId: string, answer: string): void {
+  useApp.getState().applyRuntimeMessage(key, {
+    v: 1,
+    t: 'ui',
+    kind: 'run_finished',
+    run_id: runId,
+    answer,
+  } as never);
+}
+
+test('the refine report streams before its question: the candidates are read when the question lands, and the post-answer run_finished does not blank them', () => {
+  localScreen();
+  const task = makeTask();
+  useApp.setState({ tasks: [task], taskRuns: [] });
+
+  const key = 'k-wire';
+  const bucket = liveBucket(key, 'C:/work', null);
+  bucket.refineTaskId = task.id;
+  useApp.setState((s) => ({
+    sessions: { ...s.sessions, [key]: bucket },
+    order: [...s.order, key],
+    activeKey: key,
+    modal: null,
+    pendingModals: [],
+  }));
+
+  const runId = 'rr-1';
+  feedTurnStart(key, runId);
+  // The report streams in the same step as the ask_user call.
+  feedDelta(key, runId, 1, REPORT_WITH_BLOCKS);
+  feedQuestionRequest(key);
+
+  const midTurn = useApp.getState().sessions[key];
+  assert.ok(midTurn.refineCandidates, 'the question_request is where the candidates are read');
+  assert.deepEqual(midTurn.refineCandidates, ['the improved prompt text']);
+
+  // The person answers; the turn ends with the model's confirmation, which
+  // names no candidate blocks at all.
+  useApp.getState().answerQuestion(['Apply candidate 1: replace the task prompt']);
+
+  const s = useApp.getState();
+  assert.equal(s.tasks[0]?.prompt, 'the improved prompt text', 'the choice landed on the task');
+  assert.deepEqual(s.sessions[key].refineCandidates, ['the improved prompt text']);
+
+  // Then run_finished arrives with the confirmation as its answer: it must
+  // not overwrite the list the question already read.
+  feedRunFinished(key, runId, 'Done — candidate 1 applied.');
+  const after = useApp.getState().sessions[key];
+  assert.deepEqual(after.refineCandidates, ['the improved prompt text'], 'the post-answer answer carries no blocks and must not blank the list');
+  assert.equal(after.activeRunId, null);
+  assert.equal(after.lastRunId, runId);
+});
+
+test('a refine question that lands before the report has finished streaming is still rescued by run_finished', () => {
+  localScreen();
+  const task = makeTask();
+  useApp.setState({ tasks: [task], taskRuns: [] });
+
+  const key = 'k-wire2';
+  const bucket = liveBucket(key, 'C:/work', null);
+  bucket.refineTaskId = task.id;
+  useApp.setState((s) => ({
+    sessions: { ...s.sessions, [key]: bucket },
+    order: [...s.order, key],
+    activeKey: key,
+    modal: null,
+    pendingModals: [],
+  }));
+
+  const runId = 'rr-2';
+  feedTurnStart(key, runId);
+  feedDelta(key, runId, 1, REPORT_WITH_BLOCKS);
+  // No question_request: the question never drew (a background session), but
+  // the turn still ends. The fallback reads the report out of the stream —
+  // before applyFinalAnswer clears it.
+  feedRunFinished(key, runId, '');
+
+  const s = useApp.getState();
+  assert.deepEqual(s.sessions[key].refineCandidates, ['the improved prompt text'], 'the stream held the report, and the fallback read it');
+  assert.equal(s.tasks[0]?.prompt, task.prompt, 'nobody answered, so nothing was applied');
 });
