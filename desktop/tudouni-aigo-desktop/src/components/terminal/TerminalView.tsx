@@ -3,7 +3,7 @@ import { ArrowLeft, Plus, X } from 'lucide-react';
 import { selectModalVisible, useApp, useSessionField, EMPTY_TAIL, NO_STRINGS, NO_TERMINALS } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
-import { encodeKey, encodePaste } from '@/runtime/terminalKeys';
+import { encodeKey, encodePaste, isCopySelectionKey, isPasteKey } from '@/runtime/terminalKeys';
 import { attrStyle, caretPosition, lineSegments, NO_RUNS } from '@/runtime/terminalOutput';
 import type { TerminalRow } from '@/protocol/types';
 
@@ -408,7 +408,10 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
    *
    * Every key that has a terminal meaning is sent and **`preventDefault`ed**, so
    * nothing leaks to the window's handlers — otherwise `Ctrl+B` would fold a rail
-   * while the shell was also receiving it.
+   * while the shell was also receiving it. The two exceptions below are the
+   * pane's own clipboard keys, and both are decided **before** the encoder, the
+   * way the leave key above is: `encodeKey` has an answer for every one of them,
+   * and its answer is the wrong one.
    */
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     // **`Ctrl+Shift+\` leaves, and it is tested before the encoder.** That order
@@ -427,7 +430,34 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
       onLeave();
       return;
     }
+    // **`Ctrl+Shift+C` copies the selection, also before the encoder.** For the
+    // same order as the leave key: `controlByte` ignores Shift, so the encoder's
+    // answer for this combination is ETX — a second `Ctrl+C`, interrupting
+    // whatever the shell was running, for the key every terminal uses to copy.
+    // It is before the `running` guard on purpose too: copying is about what the
+    // view is showing, not about the shell, and the output of a *finished*
+    // command is exactly what a person most often wants to copy.
+    if (isCopySelectionKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      if ((window.getSelection()?.toString() ?? '') !== '') {
+        // `execCommand('copy')` on the live selection rather than
+        // `copyText(selection)`: `copyText`'s fallback stages its text into a
+        // throwaway textarea and selects it, which would collapse the very
+        // selection being copied. The copy command copies what is selected —
+        // which is exactly the intent here — and keeps the selection.
+        document.execCommand('copy');
+      }
+      return;
+    }
     if (row.status !== 'running') return;
+    // **`Ctrl+V` is stood aside for, not answered.** The paste reaches the shell
+    // through the `paste` event below (`onPaste`), and that event is the
+    // *default action* of this keydown — so the only way to receive it is to
+    // neither send bytes nor `preventDefault` here. Leaving the event alone is
+    // safe with the window's handlers as well: the terminal guard there sees the
+    // focus is at a shell and returns before any of its own bindings could run.
+    if (isPasteKey(e)) return;
     const data = encodeKey(e);
     if (data === '') return;
     e.preventDefault();
@@ -436,8 +466,14 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
   }
 
   /**
-   * A paste is one `ClipboardEvent`, not a run of keystrokes, so `encodeKey`
-   * never saw it — which is why `Ctrl+V` in the pane did nothing at all.
+   * A paste is one `ClipboardEvent`, not a run of keystrokes, so it arrives here
+   * rather than through `encodeKey` — and the pane's own keyboard rule would
+   * have swallowed its own trigger: the encoder's answer for `Ctrl+V` is SYN,
+   * sent with a `preventDefault` that suppresses the very event this handler
+   * exists for, since the browser fires `paste` as the **default action of the
+   * `Ctrl+V` keydown**. That is why the keydown stands aside for it
+   * (`isPasteKey`) instead of answering with bytes, and why this handler is the
+   * one place the clipboard can reach the shell from.
    *
    * The pane has **no editable field to paste into**, so the browser's default
    * paste writes nowhere; the only behaviour this window can give a paste is to
@@ -452,8 +488,8 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
    * shell session.
    *
    * Like `onKeyDown`, the `running` guard applies: an ended shell has no
-   * process to receive the bytes, and writing to a dead terminal reads as a
-   * bug in this window rather than as "the shell is gone".
+   * process to receive the bytes, and writing to a dead terminal reads as a bug
+   * in this window rather than as "the shell is gone".
    */
   function onPaste(e: React.ClipboardEvent<HTMLDivElement>) {
     if (row.status !== 'running') return;

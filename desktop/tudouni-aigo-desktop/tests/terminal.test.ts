@@ -22,7 +22,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 
-import { encodeKey, encodePaste, isTerminalKey } from '@/runtime/terminalKeys';
+import {
+  encodeKey,
+  encodePaste,
+  isCopySelectionKey,
+  isPasteKey,
+  isTerminalKey,
+} from '@/runtime/terminalKeys';
 import {
   ansiColour,
   applyTerminalOutput,
@@ -83,6 +89,15 @@ test('the control range is arithmetic, not a table', () => {
   assert.equal(encodeKey(key('z', { ctrl: true })), '\x1a');
   assert.equal(encodeKey(key('\\', { ctrl: true })), '\x1c');
   assert.equal(encodeKey(key('[', { ctrl: true })), '\x1b');
+});
+
+test('Ctrl+V still encodes to SYN — it is the pane that stands aside, not the encoder', () => {
+  // The paste fix lives in the pane's keydown (`isPasteKey`), which steps aside
+  // before asking the encoder so the browser's `paste` event can fire. The
+  // encoder itself keeps the honest terminal byte: if this ever starts returning
+  // `''` instead, `quoted-insert` has been lost from the one place the byte is
+  // still defined — and the pane's exception has become a silent rewrite.
+  assert.equal(encodeKey(key('v', { ctrl: true })), '\x16');
 });
 
 test('Enter sends CR and Backspace sends DEL', () => {
@@ -180,6 +195,41 @@ test('an empty or newline-only clipboard sends nothing', () => {
   assert.equal(encodePaste(''), '');
   assert.equal(encodePaste('\n\n'), '');
   assert.equal(encodePaste(' \n '), ' \n ');
+});
+
+/* ============================================================
+   The pane's clipboard keys — the two combinations the pane must
+   decide about *before* it asks the encoder, because the encoder's
+   honest byte is the wrong answer for each of them.
+   ============================================================ */
+
+test('Ctrl+V is the paste key, in both its shifted and plain forms', () => {
+  // The browser fires `paste` as the default action of this keydown, so the pane
+  // has to stand aside rather than answer with the encoder's SYN. Both forms:
+  // `Ctrl+Shift+V` arrives with `key === 'V'` and is the browser's paste-as-
+  // plain-text — also a paste.
+  assert.equal(isPasteKey(key('v', { ctrl: true })), true);
+  assert.equal(isPasteKey(key('V', { ctrl: true, shift: true })), true);
+  // With Alt it is back to being a shell byte: `ESC 0x16` is `Meta-quoted-insert`
+  // territory, and the encoder already keeps Alt outside `controlByte`.
+  assert.equal(isPasteKey(key('v', { ctrl: true, alt: true })), false);
+  // A bare `v` types the letter, whatever the pane's paste plumbing does.
+  assert.equal(isPasteKey(key('v')), false);
+  assert.equal(isPasteKey(key('v', { meta: true })), false);
+});
+
+test('Ctrl+Shift+C is the copy key — never a second Ctrl+C', () => {
+  // `controlByte` ignores Shift, so the encoder's answer for this combination is
+  // ETX: before the pane asked, the industry's copy key interrupted whatever the
+  // shell was running. Both letter cases — Shift hands the keydown a capital C.
+  assert.equal(isCopySelectionKey(key('C', { ctrl: true, shift: true })), true);
+  assert.equal(isCopySelectionKey(key('c', { ctrl: true, shift: true })), true);
+  // Plain `Ctrl+C` stays the interrupt byte; that is the whole point of a shell.
+  assert.equal(isCopySelectionKey(key('c', { ctrl: true })), false);
+  assert.equal(isCopySelectionKey(key('c', { shift: true })), false);
+  // With Alt the combination belongs to the shell again (`ESC`-prefixed keys),
+  // matching the encoder's own exclusion of Alt from the control range.
+  assert.equal(isCopySelectionKey(key('c', { ctrl: true, shift: true, alt: true })), false);
 });
 
 /* ============================================================

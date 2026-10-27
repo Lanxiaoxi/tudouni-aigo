@@ -172,6 +172,38 @@ export function encodePaste(text: string): string {
 }
 
 /**
+ * Whether this keystroke means **paste** to this window rather than a byte for
+ * the shell.
+ *
+ * The encoder does have an answer for `Ctrl+V` — SYN, readline's quoted-insert,
+ * still reachable as `Ctrl+Q` — but the pane's paste is not a keystroke at all:
+ * it is the `paste` ClipboardEvent that `TerminalView` forwards through
+ * `encodePaste`, and the browser fires that event as the **default action of the
+ * `Ctrl+V` keydown**. Answering the keydown with bytes and `preventDefault` is
+ * therefore how a paste silently becomes nothing — which is what this pane did
+ * at first, and why the pane asks this **before** it asks the encoder. On a
+ * match it stands aside entirely: no bytes, no `preventDefault`, and the
+ * browser's own paste machinery hands the clipboard over.
+ */
+export function isPasteKey(k: KeyDescriptor): boolean {
+  return k.ctrlKey && !k.altKey && (k.key === 'v' || k.key === 'V');
+}
+
+/**
+ * Whether this keystroke means **copy the selection** to this window.
+ *
+ * The same arithmetic that turns `Ctrl+C` into ETX reads `Ctrl+Shift+C` as ETX
+ * too — `controlByte` ignores Shift — so an unasked pane sent the interrupt byte
+ * for what the terminal-world convention (GNOME Terminal, Windows Terminal, VS
+ * Code) promises is a copy. With no selection it does **nothing** rather than
+ * fall through to the shell: the combination is a UI key or it is nothing, and
+ * "copy" that sometimes interrupts a running command is a trap.
+ */
+export function isCopySelectionKey(k: KeyDescriptor): boolean {
+  return k.ctrlKey && k.shiftKey && !k.altKey && (k.key === 'c' || k.key === 'C');
+}
+
+/**
  * Whether this keystroke belongs to the shell rather than to the window.
  *
  * The window's own handlers ask this before acting, and it is one function
