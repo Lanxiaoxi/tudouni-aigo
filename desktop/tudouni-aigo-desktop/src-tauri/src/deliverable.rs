@@ -113,6 +113,49 @@ pub(crate) fn deliverable_open_local(app: AppHandle, path: String) -> Result<(),
         .map_err(|e| format!("the system could not open it: {e}"))
 }
 
+/// Open a file **mentioned in the model's reply text** in the OS default
+/// application.
+///
+/// Unlike `deliverable_open`, this command accepts **both** relative paths
+/// (resolved against the workspace root) and absolute paths. The model's prose
+/// often names files by relative path (`src/main.rs`) or by absolute path
+/// (`C:/tmp/out.png`), and the front end has already narrowed the call to a
+/// allow-list of extensions before invoking this command — so the trust model
+/// is "the user clicked a path the model wrote, and the extension is one we
+/// agreed to open." This is deliberately less strict than the deliverable
+/// boundary, which guards a *declared* output the runtime vouched for.
+///
+/// Relative paths are canonicalized under the workspace root; absolute paths
+/// are canonicalized as-is. Either way, the file must exist and be a regular
+/// file — a directory or a missing path is refused with a sentence written
+/// for the person reading the reply.
+#[tauri::command]
+pub(crate) fn open_file_path(workspace: String, path: String) -> Result<(), String> {
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err("no file was named".to_string());
+    }
+
+    let target = if Path::new(raw).is_absolute() {
+        fs::canonicalize(raw).map_err(|_| {
+            format!("{raw} is not there — it may have been moved or deleted")
+        })?
+    } else {
+        let root = fs::canonicalize(workspace.trim())
+            .map_err(|e| format!("cannot read the workspace directory: {e}"))?;
+        fs::canonicalize(root.join(raw)).map_err(|_| {
+            format!("{raw} is not there — it may have been moved or deleted")
+        })?
+    };
+
+    if !target.is_file() {
+        return Err(format!("{} is not a regular file", raw));
+    }
+
+    tauri_plugin_opener::open_path(&target, None::<&str>)
+        .map_err(|e| format!("the system could not open it: {e}"))
+}
+
 /// Download one declared deliverable from the session's remote workspace into
 /// the local cache tree, so the card's "open" can hand the local copy to the
 /// OS default application — the act `deliverable_open` refuses for a remote

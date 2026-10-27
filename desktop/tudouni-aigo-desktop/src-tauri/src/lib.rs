@@ -201,6 +201,7 @@ pub fn run() {
             crate::deliverable::deliverable_open,
             crate::deliverable::deliverable_open_local,
             crate::deliverable::deliverable_download,
+            crate::deliverable::open_file_path,
             crate::image::inline_image_remote,
             crate::remote_commands::read_ssh_config,
             crate::remote_commands::append_ssh_host,

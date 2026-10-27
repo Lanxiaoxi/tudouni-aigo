@@ -1703,6 +1703,21 @@ export async function openDeliverable(workspace: string, path: string): Promise<
   await tauriInvoke<void>('deliverable_open', { workspace, path });
 }
 
+/**
+ * Open a file **mentioned in the model's reply text** in the OS default
+ * application.
+ *
+ * Accepts both relative paths (resolved against `workspace`) and absolute
+ * paths. The front end has already narrowed the call to an allow-list of
+ * extensions, so the trust model is "the user clicked a path the model wrote,
+ * and the extension is one we agreed to open." Less strict than
+ * {@link openDeliverable}, which guards a *declared* output the runtime vouched
+ * for — this guards a string in prose.
+ */
+export async function openFilePath(workspace: string, path: string): Promise<void> {
+  await tauriInvoke<void>('open_file_path', { workspace, path });
+}
+
 /** What the bridge hands back after pulling one remote deliverable down. */
 export interface DownloadedDeliverable {
   /** The absolute path of the local copy — what the OS is handed and what

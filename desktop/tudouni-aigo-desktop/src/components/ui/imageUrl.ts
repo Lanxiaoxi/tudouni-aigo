@@ -39,6 +39,14 @@ import { defaultUrlTransform } from 'react-markdown';
  * because the two answers have to agree and one place is where they can.
  */
 export function imageUrlTransform(value: string, key: string, node?: { tagName?: string }): string {
+  // `workspace-file:` is the marker scheme `remarkFilePath` emits for file
+  // paths detected in the model's prose. The default rule blanks it (only
+  // http(s)/ircs/mailto/xmpp are allowed), so it has to be let through here.
+  // The `a` component decides what to do with it; the URL itself never
+  // navigates — `preventDefault` stops that before the bridge is called.
+  if (key === 'href' && node?.tagName === 'a' && value.startsWith('workspace-file:')) {
+    return value;
+  }
   if (key === 'src' && node?.tagName === 'img') {
     const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(value)?.[1]?.toLowerCase();
     // No scheme: a relative or absolute path, which `MarkdownImage` resolves

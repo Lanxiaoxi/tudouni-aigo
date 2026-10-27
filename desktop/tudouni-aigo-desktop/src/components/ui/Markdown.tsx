@@ -4,10 +4,13 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useT } from '@/i18n/useT';
+import { useSessionField } from '@/state/store';
 import { copyText } from '@/utils/clipboard';
 import { fenceLanguage, fenceLayout } from './fence';
 import { MarkdownImage } from './MarkdownImage';
 import { imageUrlTransform } from './imageUrl';
+import { remarkFilePath } from './remarkFilePath';
+import { openFilePath } from '@/runtime/tauri';
 
 /**
  * Markdown rendering.
@@ -131,6 +134,57 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
+/**
+ * The `a` renderer: handles two kinds of links.
+ *
+ * - `workspace-file:<path>` — synthesised by `remarkFilePath` for file paths
+ *   detected in the model's prose. Clicking opens the file in the OS default
+ *   application via the Rust `open_file_path` command. The workspace is read
+ *   from session state (the same fold `MarkdownImage` uses) so a relative path
+ *   is resolved against the right root. The Rust side re-checks the path
+ *   against the real filesystem, so a string the model wrote is never handed
+ *   to the OS without verification.
+ *
+ * - everything else — an ordinary URL. Opened in the OS browser via the
+ *   opener plugin, exactly as before. Tauri 2 refuses `window.open`/
+ *   `target=_blank` by default, so the explicit handler is what makes a
+ *   link that looks clickable actually click.
+ *
+ * `workspace-file:` URLs never reach the browser: `preventDefault` stops the
+ * default navigation before the bridge is called.
+ */
+function FilePathLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const workspace = useSessionField((rt) => rt.session?.workspace ?? rt.workspace, '');
+
+  const isFile = href?.startsWith('workspace-file:');
+
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!href) return;
+    e.preventDefault();
+    if (isFile) {
+      // Strip the `workspace-file:` scheme to get the raw path.
+      const path = href.slice('workspace-file:'.length);
+      void openFilePath(workspace, path).catch((err) => {
+        // The Rust command returns a sentence written for the person reading
+        // the reply; the console is the only place to put it from here.
+        console.warn('could not open file path:', err);
+      });
+    } else {
+      void openUrl(href);
+    }
+  };
+
+  return (
+    <a
+      href={isFile ? undefined : href}
+      onClick={handleClick}
+      className={isFile ? 'md-filepath' : undefined}
+    >
+      {children}
+    </a>
+  );
+}
+
 const components: Components = {
   // react-markdown defaults headings to the raw tag; cap the visual level so
   // `##`-heavy answers keep the same hierarchy the old renderer produced.
@@ -146,22 +200,17 @@ const components: Components = {
   pre: CodeBlock,
   // A model ending text with two spaces used to force a line break the old
   // renderer silently dropped; keep that behaviour visible here too.
-  // Open in the OS browser via the opener plugin. Tauri 2 refuses `window.open`
-  // and `target=_blank` navigation by default, so a plain external link would
-  // look clickable and do nothing on click — hence the explicit handler.
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      onClick={(e) => {
-        e.preventDefault();
-        if (href) {
-          void openUrl(href);
-        }
-      }}
-    >
-      {children}
-    </a>
-  ),
+  // Two kinds of link pass through here:
+  //   - ordinary URLs (`http(s)`, `mailto`) → open in the OS browser via the
+  //     opener plugin. Tauri 2 refuses `window.open`/`target=_blank` by
+  //     default, so a plain external link would look clickable and do nothing
+  //     on click — hence the explicit handler.
+  //   - `workspace-file:<path>` links synthesised by `remarkFilePath` → open
+  //     the file in the OS default application via the Rust `open_file_path`
+  //     command. `FilePathLink` reads the workspace from session state (the
+  //     same fold `MarkdownImage` uses) and calls the bridge; the Rust side
+  //     re-checks the path against the filesystem.
+  a: FilePathLink,
   // A picture is the one place this renderer reaches outside the DOM: the
   // destination is a **path** the model wrote, and a WebView cannot load one.
   // `MarkdownImage` decides what the string means and, for a workspace path,
@@ -181,7 +230,7 @@ export function Markdown({ text }: { text: string }) {
   return (
     <div className="md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkFilePath]}
         rehypePlugins={highlight ? [highlight] : []}
         components={components}
         urlTransform={imageUrlTransform}
