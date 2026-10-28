@@ -1,47 +1,31 @@
 # tudouni-aigo
 
-An agent runtime for the terminal. One static binary, no interpreter, no virtual
-environment, no `_internal/` directory.
+**tudouni-aigo** 是一个用 Go 编写的智能体运行时：模型调用工具、工具结果回给模型，循环往复，直到把事情做完。一个静态二进制，没有解释器、没有虚拟环境、没有 `_internal/` 目录，解包即用。
 
-```
-tudouni-aigo                  the full-screen interface (the default on a terminal)
-tudouni-aigo --cli            the line-oriented REPL
-tudouni-aigo --runtime-stdio  the JSONL protocol endpoint a front end starts as a child
-tudouni-aigo --audit …        the read-only subcommands
-```
+它从 Python + Textual 版本逐项对照重写而来（对照审查见 [docs/parity/](docs/parity/)），并在此基础上新增了桌面客户端、工作区记忆、代码智能索引等能力。
 
-The interface is chosen by the terminal rather than by a flag. A bare invocation gets
-the full-screen interface when both stdin and stdout are a terminal, and the line REPL
-when they are not: `tudouni-aigo > chat.txt`, `echo hi | tudouni-aigo` and a CI job all
-take the second path, because a full-screen program on a pipe either fails to start or
-writes escape sequences into the redirected file. `--cli` asks for the REPL anyway, and
-`--tui` forces the interface back — which is what every note written before this
-default changed already says.
+![主界面](screenshots/main-dark.png)
 
-The installer also leaves a second name, `tudouni`, pointing at the same binary: the
-command was renamed, and a rename should not silently turn old notes and scripts into
-"command not found".
+## 特性一览
 
-`tudouni-aigo --version` answers which build this is; `--help` lists the rest, including
-`--session`, `--list`, `--skills`, `--history`, `--autopilot`, `--theme`,
-`--quiet`, `--stream`/`--no-stream`, `--debug` and `--max-steps`.
+- **一个二进制，四种形态**：全屏 TUI、行式 REPL、JSONL 协议端点、只读审计子命令——按需选择，而不是装四份程序。
+- **工作区即边界**：模型的文件工具只能碰启动目录以内，程序拒绝在用户主目录或文件系统根启动。
+- **缺配置的工具不注册**：没有 key、没有依赖的功能从 schema 里消失，而不是带着"未配置"的错误每次浪费一个来回。
+- **审批 fail-closed**：中高风险工具每次询问，"允许"才可记忆，`--autopilot` 的每次放行都留审计记录。
+- **会话可追溯**：会话文件追加写、上下文超限搬成工件、审计日志逐事件独立成档。
+- **技能与 MCP**：SKILL.md 技能目录 + 外部 MCP 工具服务器，两者都能挂进同一个工具注册表。
+- **桌面客户端**：Tauri 2 + React 独立前端，通过 JSONL stdio 协议驱动同一个 runtime。
 
-The program is meant to be started inside a project directory, and it refuses to
-start in your home directory or at a filesystem root: the workspace is what the
-model's file tools may touch, and `read_file` needs no approval, so a workspace
-that is "everything below here" would hand over `.ssh` and other projects' `.env`
-files without anybody being asked twice.
+## 快速开始
 
-The interface text is English; the system prompt is Chinese and stays Chinese, no
-matter what the interface speaks — changing what the interface says must not change
-what the model is told.
+### 1. 拿到二进制
 
-## Getting a model
+- **发布包**：解压 `dist/tudouni-aigo-<版本>-<平台>.zip`，运行 `install.ps1`（Windows）或 `install.sh`（Linux），安装器会同时留下旧命令名 `tudouni` 指向同一二进制。
+- **从源码构建**：需要 Go ≥ 1.27，然后 `make build`，产物在 `dist/` 下。
 
-Configuration lives in one file: `~/.tudouni/config.json`. There is exactly one
-source — no environment variables, no `.env` — because a value that can be set in
-two places and only takes effect from one of them is the hardest kind of problem
-to find.
+### 2. 配置模型
+
+配置只有一个来源：`~/.tudouni/config.json`。没有环境变量、没有 `.env`——一个值能在两处设置、却只在一处生效，是最难查的那种问题。首次运行找不到可用路线时程序会自动生成这个文件（模板就是仓库里的 `config.example.json`），把 `api_key` 填上即可：
 
 ```jsonc
 {
@@ -61,443 +45,171 @@ to find.
 }
 ```
 
-The key is the route name and the order is the `/model` list order, so **which
-route is the default is something you arranged**: the first route with a key wins.
-Omit `context_window` and the interface reports usage without a percentage — a
-wrong percentage is worse than none, because it gets believed. Fill in the `web`
-key and `web_search` is registered; leave it out and the tool is simply absent from
-the schema rather than present and forever failing.
+要点：
 
-### Endpoints that are not plain OpenAI
+- **键名是路线名，顺序就是 `/model` 列表的顺序**：第一个有 key 的路线是默认模型，默认是谁是你自己排出来的。
+- 不知道 `context_window` 就删掉整行，界面会显示用量但不显示百分比——错误的百分比比没有更糟，因为它会被当真。
+- `web.tavily_api_key` 填了才注册 `web_search`；不填则该工具不存在，`fetch_web` 不受影响。
+- **非标准端点按 `base_url` 推断协议**：以 `/messages`、`/v1/messages` 或 `/anthropic` 结尾走 Anthropic Messages 形状，以 `/responses` 结尾走 Responses 形状，其余都是 chat completions。`api_style`（`openai` / `anthropic` / `responses`）可以显式覆盖，但只在 base URL 真有歧义时才写——路径不自动调整，端点在 `/v1/messages` 时 `base_url` 就不能已以 `/v1` 结尾。
+- `headers` 是给要求自报身份的网关准备的额外请求头；`${session}` 会被替换成当前会话 id，空值的头不发送。
+- 思考强度：`reasoning_effort` 是模型的起始档位，`effort_levels` 是 `/effort` 提供并执行的档位菜单（全词汇：`minimal` 到 `max`）。档位**从不去线上重写**，你选什么就发什么。
+- **凭证放哪由协议决定**：chat completions 与 Responses 用 `Authorization: Bearer`，Messages 形状用 `x-api-key`。给 Messages 端点手写 Bearer 的报错是"Missing API key"，而 key 其实就在请求里——这是唯一一种错因被报错指向别处的失败。
 
-Most gateways speak the chat completions shape and need nothing extra. Two other
-protocols are supported, and a route is put on one by its `base_url` — ending it in
-`/messages`, `/v1/messages` or `/anthropic` selects the Messages shape, `/responses`
-selects the Responses shape, and anything else is chat completions:
+### 3. 生成图片（可选）
 
-```jsonc
-{
-  "providers": {
-    "qwen": {
-      "base_url": "https://{workspace}.ap-southeast-1.maas.aliyuncs.com/apps/anthropic",
-      "api_key": "sk-…",
-      "models": [{"id": "qwen3-max", "context_window": 200000}]
-    },
-    "vendor-required-headers": {
-      "base_url": "https://gateway.example",
-      "api_key": "sk-…",
-      "headers": {
-        "User-Agent": "my-agent/1.0",
-        "x-vendor-session": "${session}"
-      },
-      "models": [{"id": "some-model", "context_window": 200000}]
-    }
-  }
-}
-```
-
-`api_style` (`openai` / `anthropic` / `responses`) overrides that inference; write it
-only when a base URL is genuinely ambiguous — the case it exists for is one gateway
-serving several protocols under one host, where every route's `base_url` looks the
-same. Nothing else is adjusted for you: if the endpoint is reached at
-`/v1/messages`, `base_url` must not already end in `/v1`, or the path comes out
-`/v1/v1/messages`.
-
-`headers` are the escape hatch for a vendor that demands its own client
-identification. They are sent on every request to that route and cannot displace the
-headers the program sets itself. The value `${session}` is replaced by the current
-session id, which is what a gateway asking for a per-conversation identifier wants;
-a header whose value comes out empty is not sent at all.
-
-`effort_levels` and `reasoning_effort` are the thinking strength. `reasoning_effort`
-on a model is the level it starts on; `effort_levels` is which levels it accepts, and
-that is what `/effort` offers and enforces. Put `effort_levels` on the route to cover
-its models, or on one model to override that:
-
-```json
-{
-  "base_url": "https://api.example",
-  "api_key": "",
-  "effort_levels": ["high", "max"],
-  "models": [{"id": "quiet-model", "reasoning_effort": "max"}]
-}
-```
-
-Write neither and `/effort` offers the whole vocabulary — `minimal`, `low`, `medium`,
-`high`, `xhigh`, `max` — and a level the model does not take comes back as an error
-from the endpoint. That default is deliberately wide: listing too much costs one
-visible error, while listing too little hides a level that works, and nobody reports
-a level they cannot see. **A level is never rewritten on its way out**, so what you
-pick is what goes on the wire; if a route wants a short menu, say so here rather than
-letting the program guess. `none` is not a level — it means thinking off, which is
-`/thinking`.
-
-**Where the credential goes is the protocol's decision, not yours.** Chat completions
-and the Responses shape take `Authorization: Bearer <key>`; the Messages shape takes
-`x-api-key: <key>`. Writing the bearer token by hand for a Messages endpoint is the
-one thing here that fails in a way that names the wrong cause — the endpoint answers
-"Missing API key" while the key is sitting in the request.
-
-## Drawing pictures
-
-`vision` is the **input** side — a picture goes in, text and tool calls come out.
-`generate_image` is the **output** side — text goes in, a picture comes out. They are
-orthogonal, and they are joined the way any other capability is joined: as a tool.
-
-The route is a **top-level section**, not an entry in `providers[].models[]`:
+`image_generation` 是顶层配置段，`provider` 指向一条聊天路线以继承 key 和端点（key 只写一次），`model` 必填且永不继承：
 
 ```jsonc
-{
-  "image_generation": {
-    "provider": "openai",
-    "model": "gpt-image-1"
-  }
+"image_generation": {
+  "provider": "deepseek",
+  "model": "gpt-image-1"
 }
 ```
 
-`provider` names a chat route to inherit the key and the endpoint from, so **one key
-is written once**. `model` is required and is never inherited — the chat route's model
-is a different model. Write `base_url` / `api_key` / `headers` here to override what
-was inherited, which is what you want when the generation endpoint is not the chat
-endpoint: some gateways serve only one of the two, and an inherited `base_url` then
-answers 404 for `/images/generations`. The error message names the URL that was
-actually used, so that 404 is a report rather than a mystery.
+不写这一段，`generate_image` 就不注册，其余一切照旧。生成的图片是**工作区里的真实文件**（如 `out/poster.png`），可以用 `![](路径)` 展示、用 `present` 声明、用系统查看器打开。该工具是中风险，每次调用都会请求审批，且每轮最多四张——每张都花你的钱。
 
-`api_style` defaults to `openai-images` (`POST base_url/images/generations`), the only
-dialect in this build.
-
-Leave the section out and `generate_image` is **not registered** — the capability is
-simply not there, and one startup line says so. It is not in `/model` either, and
-that is deliberate: `providers[].models[]` is a list of models that may be *chosen as
-the conversation model*, and a picture model in that list would be selectable and then
-fail every chat request.
-
-**The picture is a file, not a message.** It lands in the workspace as
-`out/poster.png`, so it can be shown with `![](out/poster.png)`, declared with
-`present`, opened with the system viewer, and found again in a later session. Three
-numbers, all different, because they answer three different questions:
-
-| | value | question |
-| --- | --- | --- |
-| `MaxGeneratedImageBytes` | 20MB | may this file be written into the workspace? |
-| `content.MaxImageBytes` | 5MB | may this picture go into a request? |
-| the desktop's inline limit | 5MB | may it be drawn inside the window? |
-
-A picture between the two sizes is legal: it is written, it opens, and it simply
-cannot be shown inline or handed to the model.
-
-The tool asks for `prompt` and `path` (and an optional `orientation` of `square`,
-`landscape` or `portrait` — never a ratio, because the endpoints offer three sizes and
-nothing else). It is **medium risk**, so it asks for approval once per call: every
-call costs money on your account. It generates **at most four pictures per turn**,
-which is a budget and not a style preference — the step ceiling is 120, and for a
-tool where every call costs money that is no ceiling at all.
-
-When the conversation model can see pictures, the tool hands the bytes back to it, so
-the model can look at what it drew and redraw it. When it cannot, the bytes are not
-returned — the model would store an artifact and be handed a sentence saying "this
-model cannot see pictures", which is money spent to produce a sentence.
-
-Three tools check a configuration without starting a session. They answer three
-different questions, which is why there are three:
+### 校验配置的三件套
 
 ```sh
-go run ./tools/checkconfig ~/.tudouni/config.json
-go run ./tools/probeconfig ~/.tudouni/config.json my-session-id [route]
-go run ./tools/probereachable ~/.tudouni/config.json my-session-id [model...]
+go run ./tools/checkconfig ~/.tudouni/config.json                  # 只读解析每条路线，零成本
+go run ./tools/probeconfig ~/.tudouni/config.json my-session [route]   # 每条路线发一个小请求
+go run ./tools/probereachable ~/.tudouni/config.json my-session [model…]  # 问每个模型答不答应
 ```
 
-`checkconfig` reads the file through the same catalogue reader the program uses and
-prints what each route resolved to, including the endpoint it will actually POST to.
-It sends nothing, so it costs nothing, and it is the one to run after editing by
-hand.
+`checkconfig` 打印每条路线实际会 POST 到哪个端点，改完配置先跑它。`probeconfig` 区分"请求形状错了"和"key 错了"。`probereachable` 把目录里的声明当主张而不是事实——模型可能在名录里，却因账号、地区或套餐被拒。后两个会消耗配额。
 
-`probeconfig` sends one small request per route — non-streamed and streamed — through
-the same code path a session uses. It is the only way to tell a wrong request shape
-from a wrong key before a real session does it for you. An empty `api_style`, an
-inferred protocol and a header the configuration declared but nothing substituted are
-all visible here and nowhere else.
+### 4. 启动
 
-`probereachable` asks **every** model in the file whether it answers, with no model
-names, or only the ones named. A catalogue entry is a claim, not a fact: a model can
-be listed by the vendor and still be refused for this account, for this region, or
-for a plan that does not include it. It separates the three outcomes that matter —
-answered, refused by the endpoint, and never reached — because they call for
-completely different actions. Pass model names to re-check only what changed; a
-region-restricted model will refuse every time, and there is no reason to pay for
-that answer twice.
-
-`probeconfig` and `probereachable` spend quota.
-
-The program creates this file for you the first time it finds no usable route, and
-tells you where it put it. `config.example.json` in this repository is only the
-template it copies.
-
-## Building
-
-```
-make build            # for this machine, with the version compiled in
-make test             # the whole suite
-make release          # build, verify and archive every shipped platform
+```sh
+cd 你的项目目录
+tudouni-aigo
 ```
 
-`CGO_ENABLED=0` throughout: a static binary has no libc to match, which is what
-makes "unpack it and run it" true.
+程序**必须在项目目录里启动**，并拒绝在用户主目录或文件系统根启动：工作区是模型文件工具的活动范围，`read_file` 无需审批，"这个目录以下全是工作区"等于免审批读你的 `.ssh` 和其他项目的 `.env`。
 
-The version is **compiled into the binary** with `-ldflags`. It is not a file next
-to it, because a file can be newer than the binary it describes — replacing the
-executable has silently failed before, the old binary went on reporting the new
-version, and the one question `--version` exists to answer was answered wrongly.
-The string comes from `VERSION`, or `$TUDOUNI_VERSION`, or `git describe`.
+## 使用
 
-On some sandboxed machines `go test ./...` exits without printing anything even
-though the tests pass. `bash test.sh` compiles each package's test binary and runs
-it directly; the conclusion is the same.
+| 形态 | 怎么进入 |
+| --- | --- |
+| 全屏 TUI | 终端里裸跑 `tudouni-aigo`（默认） |
+| 行式 REPL | `--cli`；或 stdin/stdout 不是终端时自动回落（`tudouni-aigo > chat.txt`、管道、CI） |
+| JSONL 协议端点 | `--runtime-stdio`，桌面端/Web 前端/测试框架以子进程方式启动它 |
+| 只读审计 | `--audit` 及其子命令 |
 
-### Releasing
+界面由终端决定而不是由 flag 决定：全屏程序往重定向文件里写的只会是转义序列，所以接上管道就自动退回行式 REPL。`--tui` 可以强制切回全屏。
 
-`make release` runs `tools/release`, which for each platform builds the binary,
-stages what has to sit beside it, **verifies the result**, and writes
-`dist/tudouni-aigo-<version>-<triple>.zip`. The archive is the whole download: unpack
-it, run `install.ps1` / `install.sh`, done.
+其余常用参数：`--session`、`--list`、`--skills`、`--history`、`--autopilot`、`--theme`、`--quiet`、`--stream`/`--no-stream`、`--debug`、`--max-steps`。`--help` 是全量清单。
 
-Two platforms ship, both x86_64: the ones with a vendored ripgrep is exactly the
-ones that can ship, because a package without it produces a program whose `grep`
-tool is silently missing. Adding a platform means vendoring its ripgrep first.
+界面文案是英文；系统提示词是中文并保持中文——界面说什么不许改变模型被告知什么。
 
-The verification is the point, not a formality. A release package's characteristic
-failure is not "it will not start" — it is "it starts and one feature is quietly
-absent", and that is invisible in the source tree where the tests run. So the
-release step re-opens the archive it just wrote, checks what landed in it, runs
-the binary (`--help`, `--version`, `--runtime-stdio`), and reads the runtime's
-startup notices to confirm the vendored ripgrep was found. It also checks the
-installers' storage form: `install.ps1` must carry a UTF-8 BOM (without one,
-PowerShell 5.1 mis-decodes it and fails to parse) and `install.sh` must be LF and
-BOM-free (otherwise the kernel cannot find its interpreter).
+### 桌面客户端
 
-## What travels with the code
+[desktop/tudouni-aigo-desktop/](desktop/tudouni-aigo-desktop/) 是独立的 Tauri 2 + React 前端，驱动同一个 Go runtime（版本号与 runtime 各自独立）：
 
-Four categories of file ship beside the binary, and a missing one does not produce
-an error — it produces a program that starts and is quietly missing a feature:
-
-| | what breaks without it |
-|---|---|
-| `prompts/` | there is no system prompt to send |
-| `config.example.json` | a new user has no template to fill in |
-| `protocol/schema/` | other front ends have no shape to code against |
-| `tools/vendor/rg/` | `grep` is not registered (text search falls back to `shell`, which asks for approval every time) |
-
-`prompts/` and `config.example.json` are compiled in with `go:embed`, so a `go
-build` output already carries them. The ripgrep builds stay on disk because they
-are executables that get run. `config.example.json` also **ships as a file** next
-to the binary: its bytes being compiled in is what keeps the first-run message
-from naming a file that is not there, and the copy on disk is what a person
-actually opens. The protocol schema is compiled in by nothing — it has no reader
-inside this program; `internal/protocol`'s conformance test checks the messages it
-sends against the file field by field, because this program is both sender and
-receiver and a key it forgot to send would otherwise be noticed by whoever writes
-the next front end. `tools/release` checks for the other three in the staged tree,
-and `internal/paths/paths_test.go` covers all four.
-
-`prompts/` is on that list for a second reason worth knowing: its **presence** is
-how the program recognises its own directory (`paths.PackageDir`), and the vendored
-ripgrep is then looked up relative to that directory. So a package that carries the
-binary and `tools/` but not `prompts/` resolves its root to the working directory
-instead, does not find ripgrep, and drops `grep` — with one line on stderr to say
-so. `tools/release` checks for the directory rather than assuming it.
-
-## The workspace: files and terminals
-
-The workspace is more than where the agent's hands are tied to. A front end can
-also **browse it** and **run shells in it**, and both are the runtime's, not the
-front end's:
-
-```
-file_list   one directory level, workspace-relative
-file_read   one UTF-8 file: a preview plus an artifact reference
-
-terminal_list / terminal_create / terminal_input / terminal_resize / terminal_kill
+```sh
+cd desktop/tudouni-aigo-desktop
+npm install
+npm run dev          # 前端开发模式
+npm run installer    # 出 Windows NSIS 安装包（Go 源码有改动时先在仓库根 make release）
 ```
 
-Three rules hold this together, and each of them is a place where the obvious
-implementation is wrong:
+## 工具
 
-**Runtime is the only state source.** A terminal's process, working directory and
-status live in the runtime; a front end may keep exactly one thing of its own —
-which terminal it is typing into. Anything else it derived would be a second
-answer that drifts, and the drift would show up as a file tree that is out of date
-or a shell drawn as running after it exited.
+| 类别 | 工具 |
+| --- | --- |
+| 文件 | `read_file`、`read_image`、`write_file`、`edit_file`、`list_files`、`present` |
+| 执行 | `shell`、`shell_background`、`job_output`、`job_list`、`job_kill` |
+| 检索 | `grep`（随包分发的 ripgrep）、`code_explore`（工作区代码索引） |
+| Web | `web_search`、`fetch_web` |
+| 记忆 | `memory_search`、`memory_get`、`memory_propose` |
+| 目标 | `create_goal`、`update_goal`、`get_goal` |
+| 其他 | `get_current_time`、`ask_user`、`todo_write`、`load_skill`、`generate_image`、`git_snapshot`、`subagent`、`ssh_connect` / `ssh_write` / `ssh_read` / `ssh_sessions` / `ssh_close` |
 
-**A real PTY, never pipes.** `exec.Command` with stdin/stdout pipes cannot carry a
-terminal: no line discipline, no `isatty`, no job control, no window size — so
-`vim`, `top`, `htop` and a `python` prompt all either refuse to start or draw
-garbage. Unix gets a pty via `creack/pty`; Windows gets a **pseudo console**
-(ConPTY), which is the only thing on that platform a shell will treat as one.
-`terminal_resize` is required rather than a nicety for the same reason: those
-programs lay themselves out from the size, so a pane that never reports one draws
-them at 80 columns for ever.
+`present` 是唯一不读也不写文件的工具：它把已经存在的文件声明为本轮结果，前端据此画出卡片；路径走的是同一工作区边界，工作区之外的路径直接拒绝。
 
-**Terminals outlive sessions.** They belong to the *workspace*, so switching,
-closing or deleting a conversation never ends one. Killing a terminal ends its
-whole process group (`shell → npm → node`), because killing only the shell leaves
-`node` holding the port while the screen says the terminal ended.
+四条规则撑起整个工具系统：
 
-Output is a **coalesced asynchronous stream** — `ui(terminal_output)`, batched on a
-short timer and a size threshold rather than one message per byte, and cut on rune
-boundaries so a multi-byte character is never split across two batches. There is no
-synchronous reply to `terminal_input`: a terminal is `command → PTY → stream`, and
-a front end that waited for a response would never show a prompt. The output
-deliberately enters **nothing** else — not the audit log, not the context, not the
-artifact store. It is unbounded, and writing it into any of those would turn that
-thing into a second terminal.
+1. **缺配置就不注册。** `grep` 没有 vendored ripgrep、`web_search` 没有 key、`generate_image` 没有图片路线、`load_skill` 在没有技能的工作区——每一个都从 schema 里消失，启动时一行说明原因。一个看得见却只会回答"未配置"的工具，每次被尝试都白花一个来回，还会教会模型工具会说谎。
+2. **工具自报风险（low/medium/high），注册表缺声明就拒绝编译**——缺省会静默落到 low。只有 low 可以并行（parallel-safe）；会向人提问的工具永远不并行，这是两个独立的开关。
+3. **审批 fail-closed。** 中、高风险每次停下询问。你回答 "always" 的内容记进工作区的 `.tudouni/permissions.json`——可审查、可提交给团队——而且这个文件只能记**允许**："拒绝"是策略的事，两个地方回答"这算不算拒绝"早晚会不一致。`--autopilot` 不问任何人，并为每次放行记录 `outcome=autopilot`，"这一轮有没有人盯着"在审计里只有一个答案。
+4. **子代理不能绕审批。** `subagent` 派生的子代理跑在父注册表上、摘掉了委派工具，它自己做不了的事被拒绝而不是转发审批。它的完整 transcript 作为独立会话保存（会话列表里不显示）。
 
-Both capabilities are also inside the agent's reach already: the file tools and
-`shell` have always worked in the workspace, and this is the same boundary — one
-`internal/tools.Workspace` object — reached from a front end.
+## 技能与 MCP
 
-## The tools, and the four rules they are built on
+技能是含 `SKILL.md` 的目录，frontmatter 里的 `description` 是模型加载技能前唯一看得见的东西——这一行决定技能会不会被用。扫描优先级从低到高，个人级压过项目级（与 git config 同理）：
 
-`read_file`, `write_file`, `edit_file`, `list_files`, `present`, `shell`, `grep`,
-`get_current_time`, `ask_user`, `todo_write`; `shell_background`, `job_output`,
-`job_list`, `job_kill` for work that outlives one step; `web_search` and
-`fetch_web`; `load_skill`; `generate_image`, when an image route is configured; and
-`subagent`, which hands a self-contained task to a fresh agent. The registry sorts by
-name, so the schema the model sees is stable between runs and a diff of two sessions
-means something.
+| 用户级（跟着人走） | 项目级（跟着工作区走） |
+| --- | --- |
+| `~/.skills` | `<workspace>/.skills` |
+| `~/.agents/skills` | `<workspace>/.agents/skills` |
+| `~/.tudouni/skills` | `<workspace>/.tudouni/skills` |
 
-`present` is the one file tool that reads nothing and writes nothing: it declares
-files that are already there as the turn's result, and the front end draws a card
-for each one under the call. The **path** is what travels — the contents are not
-copied, uploaded or read, so a card always shows the file as it is now rather than
-as it was when it was declared. Paths are resolved through the same workspace
-boundary as every other file tool, which means an out-of-workspace path is refused
-rather than becoming a way to get a person to open something the agent may not
-touch.
+`--skills` 列出识别到的**和被跳过的**（附文件与过错）：格式坏掉的 frontmatter 在别处没有任何症状，技能只是从模型拿到的列表里消失。
 
-A tool is **absent from the schema, never present and broken**. `grep` without a
-vendored ripgrep for the platform, `web_search` without a key, `generate_image`
-without an image route, `load_skill` in a workspace with no skills — each one is left
-out and the startup notice says why. A tool the model can see but that can only answer
-"not configured" costs a round trip every time it is tried, and teaches it that tools
-lie.
+MCP 只认 `~/.tudouni/mcp.json`，这是安全边界而不是不方便：`command` 是启动时执行的代码，工作区级的列表意味着 clone 一个仓库就等于运行了什么。工作区里的 `.tudouni/mcp.json` 被忽略，并在 stderr 上说明，而不是静默。
 
-**A tool declares its own risk** (low/medium/high) and the registry refuses to
-build without one, because a missing level would silently land on low. Only low
-risk may be marked parallel-safe: a parallel batch does not prompt. A tool that
-asks a person can never run in one at all — hence the two separate flags.
+## 会话、上下文与审计
 
-**Approval is fail-closed.** Every medium and high call stops and asks. What you
-answer with "always" is remembered in the workspace's `.tudouni/permissions.json`
-— a reviewable file you can commit for a team — and that file can only ever
-remember an *allowance*: refusals are the policy's job, and two places answering
-"is this refused" would eventually disagree. `--autopilot` asks nobody and records
-`outcome=autopilot` for every call it released, so "was anybody watching during
-this run" has one answer in the audit rather than being inferred.
+- **会话是工作区 `.tudouni/sessions/` 下的 JSONL 文件**，每个项目各自一份历史：项目 A 里的东西在项目 B 看不见。文件追加写——一轮只追加它产生的消息，保存成本是这一轮的大小，不是整个会话的大小。长期目标（Goal）也存在同一个文件里。
+- **上下文超限不是丢弃，是搬走**：大的工具结果变成 `.tudouni/artifacts/<session>/` 下的工件，消息里留一个引用（大小、来源、行数），`--history` 靠索引解析。
+- **审计日志是第二个 append-only 文件**，一行一个事件，协议把这些行原样转发——"审计日志即协议"在字节层面成立。`--audit` 输出汇总：模型调用、token、缓存命中率、工具结果、耗时分解、停止原因。
+- **一条不可协商的不变量**：带 `tool_calls` 的 assistant 消息后面必须跟齐每个 id 的工具结果，否则会话永远发不出去（端点之后每轮 400，报错还像"上下文太长"）。所以会话只在整步之间落盘、`interrupt` 只在步间停、`shutdown` 等当前轮跑完而不是拦腰切断。
 
-**A delegated subagent cannot ask for approval.** It runs on the parent's registry
-with the delegation tools removed, and anything it is not allowed to do on its own
-is refused rather than forwarded — otherwise "delegate" would be a way around the
-approval prompt. Its whole transcript is saved as its own session beside the
-parent's, and the session list hides those, because they are not sessions a person
-resumes.
+工作区终端（前端可浏览文件、可开 shell）也遵循同样的边界：真 PTY 而非管道（Unix 用 `creack/pty`，Windows 用 ConPTY），否则 `vim`、`top`、Python REPL 要么起不来要么画花；终端属于**工作区**而不是会话，切换、关闭、删除会话都不会杀终端；杀终端杀整个进程组（`shell → npm → node`）；输出是按定时与阈值聚合的异步流，在 rune 边界切断，且不进审计、不进上下文、不进工件。
 
-## Skills and MCP
+## 架构
 
-A skill is a directory with a `SKILL.md` in it, and the frontmatter's description
-is the only thing the model sees until it loads the skill — so that one line
-decides whether the skill is ever used. Directories are scanned lowest priority
-first:
+三层，箭头单向：前端只说协议、从不碰 runtime 内部；runtime 通过接口对协议说话、不知道对面是谁。
 
 ```
-~/.skills                       ~/<workspace>/.skills
-~/.agents/skills                <workspace>/.agents/skills
-~/.tudouni/skills               <workspace>/.tudouni/skills
+cmd/tudouni/          唯一入口：参数、--help/--version、子命令分发
+cmd/cg/               代码智能索引的独立 CLI
+internal/protocol/    JSONL 契约：codec、server、client、transport
+internal/runtime/     组装：配置、权限、通知、runtime 本体、goal 驱动
+internal/agent/       循环：模型调用、工具、模型调用，直到答完
+internal/model/       唯一知道"一次补全长什么样"的地方
+internal/imagegen/    图片生成路线与它的方言
+internal/tools/       工具框架、工作区边界、全部内置工具
+internal/security/    策略、闸门、命令规则、审批记忆
+internal/state/       会话存储、模型目录、计数器
+internal/context/     预算、降级、压缩、工件存储
+internal/files/       前端侧的文件能力：file_list / file_read
+internal/terminal/    工作区终端：真 PTY、聚合输出、生命周期、进程组清理
+internal/memory/      工作区记忆：Markdown 事实、候选审核、确定性检索
+internal/codeintel/   代码智能索引（工作区开关，默认关）
+internal/skills/      技能的发现与解析
+internal/mcp/         外部工具服务器的挂载
+internal/subagent/    委派：子注册表、深度规则
+internal/audit/       追加式审计与查看器
+internal/frontends/   tui、cli、ansi
 ```
 
-The first two of each group are shared with other tools; the personal level beats
-the project level, the same way git config does. `--skills` prints the ones that
-were recognised **and the ones that were skipped, with their file and fault** —
-a malformed frontmatter block produces no symptom anywhere else, because the skill
-is simply absent from the list the model is given.
+## 构建与发布
 
-MCP servers are configured in `~/.tudouni/mcp.json` and nothing else. It is
-user-level on purpose, and that is a security boundary rather than a convenience:
-`command` in that file is code executed at start-up, and a workspace-level list
-would mean cloning a repository is enough to run something. A workspace
-`.tudouni/mcp.json` is ignored, and says so on stderr rather than silently.
-
-## Sessions, context, and the audit
-
-A session is a JSONL file under the workspace's `.tudouni/sessions/`, so each
-directory has its own history: what you did in project A is not visible from
-project B. `--list` and the TUI's `/resume` read the same store. The long-running
-goal of a session lives in the same file, which is why "which session still has
-work left in it" is a fact you get by reading one file.
-
-Old context is not thrown away, it is **moved**: a large tool result becomes an
-artifact under `.tudouni/artifacts/<session>/` and the message keeps a reference —
-size, source, line count — that `--history` resolves by reading the index rather
-than the body. An artifact index that cannot be read degrades to one sentence
-instead of failing, because `--history` is a troubleshooting command.
-
-Every turn re-states cumulative usage, this turn's duration and the context
-figure; `--audit` adds the summary block (model calls, tokens, cache hit rate,
-tool outcomes, the timing breakdown, stop reasons). The audit log is a second
-append-only file, one line per event, and the protocol forwards those same lines
-unchanged — which is what makes "the audit log is the protocol" true at the byte
-level.
-
-## Layout
-
-```
-cmd/tudouni/          the entry point and its four jobs
-internal/protocol/    the JSONL contract: codec, server, client, transport
-internal/runtime/     assembly: config, permissions, notices, the runtime itself
-internal/agent/       the loop: model call, tools, model call, until answered
-internal/model/       the one place that knows what a completion looks like
-internal/imagegen/    the same for pictures: the generation route and its dialects
-internal/tools/       the tool framework, the workspace boundary, the builtins
-internal/security/    policy, gate, command rules, the approval memory
-internal/state/       session store, model catalogue, counters, goals
-internal/context/     budget, degradation, compaction, the artifact store
-internal/files/       the workspace's file capability: one listing, one read
-internal/terminal/    the workspace's shells: a real PTY, coalesced output, lifecycles
-internal/skills/      finding and parsing the workspace's procedures
-internal/mcp/         mounting external tool servers
-internal/subagent/    delegation: the child registry, the board, the depth rule
-internal/audit/       the append-only trail, and its viewer
-internal/frontends/   tui, cli, ansi
+```sh
+make build     # 本机平台，版本号编进二进制，产物在 dist/
+make test      # 全量测试（沙箱里没输出时，bash test.sh 直接跑测试二进制）
+make vet
+make release   # 全平台构建 + 校验 + 打包 zip
 ```
 
-Three layers, and the arrows only point one way: a front end talks to the protocol
-and never to the runtime's internals; the runtime talks to the protocol through an
-interface and does not know who is on the other end.
+- 全程 `CGO_ENABLED=0`：静态二进制没有 libc 要配，"解包即用"才成立。
+- **版本号编译进二进制**（`-ldflags`），来源是仓库根的 `VERSION` 文件（或 `$TUDOUNI_VERSION`、`git describe`）。它不是二进制旁边的文件——文件可以比二进制新，"替换可执行文件失败、旧二进制报着新版本号"这种事发生过一次就够了。所以版本相关的改动必须走 `make build` / `make release`，不能只 `go build`。
+- 发布平台只有 **windows/amd64 与 linux/amd64**，因为 `tools/vendor/rg/` 只放了这两个平台的 ripgrep。加平台先加 ripgrep，否则目标机上 `grep` 静默消失。
+- `make release` 会**真的运行**刚构建的二进制：`--help`、`--version`、起一次 `--runtime-stdio`、确认启动日志里没有 `grep.missing_binary`。发布包的典型故障不是"起不来"，而是"起来了但一个功能悄悄不在"，这在源码树的测试里看不见。
+- 四类文件随包走，缺一个不报错、而是缺一个功能：`prompts/`（没有它连系统提示词都没有，它的存在还是程序识别安装根的依据）、`config.example.json`、`protocol/schema/`、`tools/vendor/rg/`。
 
-## Two things worth knowing before reading the code
+### 桌面端安装包
 
-**The session file is append-only.** A turn appends the messages it produced and
-nothing is ever rewritten, so the cost of saving a turn is the size of that turn
-rather than the size of the conversation.
+在 `desktop/tudouni-aigo-desktop/` 下 `npm run installer` 一条命令出 NSIS 安装包（Windows），详见该目录下的文档与 [AGENT.md](AGENT.md)。桌面端版本与 runtime 版本是两个独立的轴，不要混着升。
 
-**One invariant is not negotiable.** An assistant message carrying `tool_calls`
-must be followed by a tool result for every one of those ids. Break it and the
-session can never be sent again: the endpoint answers 400 for every later turn, and
-the error reads like "the context is too long". So the session is only written down
-between whole steps, which is also why `interrupt` stops *between* steps and why
-`shutdown` waits for the current turn instead of cutting it off.
+## 文档
 
-## Protocol
-
-`protocol/schema/*.schema.json` is the shape. `docs/spec/protocol.md` is the semantic
-reference, inherited from the Python project this was rewritten from — it answers
-what a schema cannot: when a message is sent, what to do on receipt, what a client
-is not allowed to decide for itself. Note that it describes the *original* wire
-semantics, so where it and the schema disagree, the schema and the conformance
-test are what this program actually does.
-
-The short version: stdin/stdout, one JSON object per line, UTF-8, flushed per
-line. The envelope version (`v`) is the one place either end fails hard; an unknown
-message kind is ignored and the loop keeps going, because the two ends upgrade on
-their own schedules. A front end that is not the TUI is the reason `--runtime-stdio`
-is a documented entry point rather than an implementation detail: it is the same
-process a web front end or a test harness would start.
+| 入口 | 内容 |
+| --- | --- |
+| [docs/README.md](docs/README.md) | 文档总入口：每份文档今天还有没有权威 |
+| [docs/spec/](docs/spec/) | 权威规格：JSONL 协议 v1 语义、TUI 设计、Responses 线格式 |
+| [docs/design/](docs/design/) | 设计决策与成因（已落地的与还没做的分开标注） |
+| [docs/parity/](docs/parity/) | Go 重写与 Python 原版的逐项对照审查 |
+| [protocol/schema/](protocol/schema/) | 协议的 JSON Schema（形状以此为准，与 spec 打架时听 schema 的） |
+| [AGENT.md](AGENT.md) | 面向改代码的人：目录表、构建测试发布、版本号约定 |
