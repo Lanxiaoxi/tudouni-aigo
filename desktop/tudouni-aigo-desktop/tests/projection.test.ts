@@ -1357,6 +1357,44 @@ test('the equal-step fallback does not overwrite the previous call\'s settled bl
   assert.equal(aBlock?.text, 'call A settled', 'the settled block was not overwritten');
 });
 
+test('a model call settles its own streamed body, not run_finished', () => {
+  // A turn that narrates and then calls a tool: the body's stream is over
+  // the moment the call's audit lands, but `streaming` used to hold until
+  // `run_finished` — and the caret (drawn from it in `EntryView`) kept
+  // blinking over settled text for the rest of the turn.
+  let entries: Entry[] = [];
+  entries = reduceEvent(entries, ev('run_started'), freshOptions({ activeRunId: null })).entries;
+  entries = applyDelta(entries, 'r1', 1, 'text', 'let me check the file first', 'r1', null).entries;
+  let stream = entries.find((entry) => entry.kind === 'stream') as Extract<Entry, { kind: 'stream' }>;
+  assert.equal(stream.streaming, true, 'the body is live while its call streams');
+
+  // The call's record lands: its stream is done, even though the turn has a
+  // tool call and another step ahead of it.
+  entries = reduceEvent(
+    entries,
+    ev('model_call', { status: 'ok', step: 0 }),
+    freshOptions(),
+  ).entries;
+  stream = entries.find((entry) => entry.kind === 'stream') as Extract<Entry, { kind: 'stream' }>;
+  assert.equal(stream.streaming, false, 'the record stops the body');
+  // The text stays: a non-empty final answer supersedes it later, and an
+  // empty one keeps it on screen.
+  assert.equal(stream.text, 'let me check the file first');
+
+  // The turn is not over, so the next step's deltas open a **new** live body
+  // rather than reviving the settled one.
+  entries = applyDelta(entries, 'r1', 2, 'text', 'and now the answer', 'r1', null).entries;
+  const bodies = entries.filter((entry) => entry.kind === 'stream');
+  assert.equal(bodies.length, 2);
+  assert.equal((bodies[0] as Extract<Entry, { kind: 'stream' }>).streaming, false);
+  assert.equal((bodies[1] as Extract<Entry, { kind: 'stream' }>).streaming, true);
+
+  // The final answer still supersedes the settled body, as before.
+  entries = applyFinalAnswer(entries, 'r1', 'the complete answer');
+  assert.equal(entries.filter((entry) => entry.kind === 'stream').length, 0);
+  assert.equal(entries.filter((entry) => entry.kind === 'answer').length, 1);
+});
+
 /* ============================================================
    delta
    ============================================================ */

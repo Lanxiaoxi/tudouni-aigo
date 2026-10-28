@@ -424,14 +424,25 @@ function deliveredFiles(event: LooseEvent): Deliverable[] | null {
  * overwriting it would paste this call's thinking over the last one's — the
  * exact collision the +1 rule avoids, because a call never matches a block
  * below its own number there.
+ *
+ * `reason` and `stream` share the rule: both channels' deltas land on the
+ * same step of the same call, and both belong to the record, not to
+ * `run_finished` — the body used to wait for the latter, and its caret (drawn
+ * from `streaming` in `EntryView`) kept blinking over settled text for the
+ * rest of a turn that was still calling tools.
  */
-function finalizeReasonIndex(entries: Entry[], runId: string, step: number): number {
+function finalizedBlockIndex(
+  entries: Entry[],
+  kind: 'reason' | 'stream',
+  runId: string,
+  step: number,
+): number {
   let at = entries.findIndex(
-    (e) => e.kind === 'reason' && e.runId === runId && e.step === step + 1,
+    (e) => e.kind === kind && e.runId === runId && e.step === step + 1,
   );
   if (at >= 0) return at;
   return entries.findIndex(
-    (e) => e.kind === 'reason' && e.runId === runId && e.step === step && e.streaming,
+    (e) => e.kind === kind && e.runId === runId && e.step === step && e.streaming,
   );
 }
 
@@ -672,15 +683,30 @@ export function reduceEvent(
       const called = (result: { entries: Entry[] }): ReduceResult =>
         failed ? result : { ...result, lastCall };
 
+      // The reply body is settled by **this record**, not by `run_finished`:
+      // the call's own stream is over the moment its audit lands, and the
+      // caret (drawn from `streaming` in `EntryView`) must stop with it. The
+      // text stays — a non-empty final answer still supersedes it later, and
+      // an empty one keeps it on screen, exactly as before.
+      const settleBody = (list: Entry[]): Entry[] => {
+        const at = finalizedBlockIndex(list, 'stream', ev.run_id, ev.step);
+        if (at < 0) return list;
+        const target = list[at];
+        if (target.kind !== 'stream' || !target.streaming) return list;
+        const next = list.slice();
+        next[at] = { ...target, streaming: false } satisfies Entry;
+        return next;
+      };
+
       // The complete thinking text arrives here, untruncated. If a streamed
       // block already exists for this step, the full copy replaces it — that is
       // what makes folding-by-default honest.
       const reasoning = typeof ev.reasoning === 'string' ? ev.reasoning : '';
       if (reasoning === '') {
-        return called(bumpStep(withModel, ev.run_id, ev.step));
+        return called(bumpStep(settleBody(withModel), ev.run_id, ev.step));
       }
 
-      const index = finalizeReasonIndex(withModel, ev.run_id, ev.step);
+      const index = finalizedBlockIndex(withModel, 'reason', ev.run_id, ev.step);
       if (index >= 0) {
         const next = withModel.slice();
         const target = next[index];
@@ -691,7 +717,7 @@ export function reduceEvent(
         // the record row (deltas land first), and replacing it there keeps the
         // transcript in arrival order. Appending the full copy would be the
         // duplicated thinking this edit exists to remove.
-        return called(bumpStep(next, ev.run_id, ev.step));
+        return called(bumpStep(settleBody(next), ev.run_id, ev.step));
       }
 
       const withReason: Entry[] = [
@@ -705,7 +731,7 @@ export function reduceEvent(
           streaming: false,
         },
       ];
-      return called(bumpStep(withReason, ev.run_id, ev.step));
+      return called(bumpStep(settleBody(withReason), ev.run_id, ev.step));
     }
 
     case 'tool_call': {
