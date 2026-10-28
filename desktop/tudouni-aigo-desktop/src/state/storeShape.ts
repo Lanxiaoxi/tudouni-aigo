@@ -507,6 +507,19 @@ export interface AppStore {
    */
   streamSmoothing: boolean;
   /**
+   * The two ends of the pacing curve in characters/second: the steady reading
+   * pace (`streamBaseCps`) and the catch-up cap (`streamMaxCps`).
+   *
+   * Persisted with the switch they tune, and validated by the same clamps
+   * (`streamReveal.ts`) so the record outlives every build. **They take effect
+   * when a reply starts**: the engine paces a row from the values that were in
+   * force at its mount, and a change here reaches the next engine. The row on
+   * screen finishes at the pace it began at, because a speed change mid-sentence
+   * is the kind of jump the pacing exists to prevent.
+   */
+  streamBaseCps: number;
+  streamMaxCps: number;
+  /**
    * What the window's X button does.
    *
    * `ask` → the prompt; `minimize` / `close` → applied directly, with no prompt.
@@ -771,6 +784,14 @@ export interface AppStore {
    * makes the same promise for everything CSS animates).
    */
   setStreamSmoothing(on: boolean): void;
+  /**
+   * Set the pacing curve's two ends (steady pace and catch-up cap), clamped to
+   * the curve's own ranges, and remember it.
+   *
+   * Takes effect when the next reply starts, not on the reply on screen — see
+   * the field docs for the reason.
+   */
+  setStreamPaces(baseCps: number, maxCps: number): void;
   /**
    * Set what the window's X button does, and remember it.
    *

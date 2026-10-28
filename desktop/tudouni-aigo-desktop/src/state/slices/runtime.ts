@@ -14,6 +14,7 @@ import { outcomeOfChildExit, outcomeOfTurnStatus } from '@/task/tasks';
 import { sendTo } from '@/runtime/bus';
 import { samePath } from '@/utils/format';
 import { attachRuntimeListener, quitApp } from '@/runtime/tauri';
+import { clampBaseCps, clampMaxCps } from '@/streamReveal';
 import { STDERR_TAIL } from '../types';
 import { persistPrefs } from '../prefs';
 import { enqueueModal, questionBatchOf, releaseModalsOf } from '../modalQueue';
@@ -49,7 +50,7 @@ function refineReportText(entries: Entry[]): string {
     .join('\n');
 }
 
-export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setStreamSmoothing' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'rememberModel' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
+export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setStreamSmoothing' | 'setStreamPaces' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'rememberModel' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
   const { set, get, patch, patchWith, noteSavedSessions, markSavedSessionsPending, activeKeyForSend } = ctx;
   return {
     send(msg) {
@@ -80,6 +81,17 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
 
     setStreamSmoothing(on) {
       set({ streamSmoothing: on });
+      persistPrefs(get());
+    },
+
+    setStreamPaces(baseCps, maxCps) {
+      // Clamped here as well as at the record boundary: the store is the only
+      // writer of the curve, and a value outside the range must never reach
+      // the engine even transiently. The cap keeps its floor at the base, so
+      // the two settings cannot be stored in a state the curve would ignore.
+      const base = clampBaseCps(baseCps);
+      const cap = clampMaxCps(maxCps, base);
+      set({ streamBaseCps: base, streamMaxCps: cap });
       persistPrefs(get());
     },
 

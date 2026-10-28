@@ -79,6 +79,41 @@ export const REVEAL_MAX_GROWTH_MS = 32;
  */
 export const REVEAL_COMPLETION_CHARS_PER_FRAME = 400;
 
+/**
+ * The bounds a person may choose for the two exposed ends, and the clamps that
+ * enforce them. One definition here because the curve's meaning lives here —
+ * both the settings rows and the record validators import these rather than
+ * each keeping a copy.
+ *
+ * The ranges are generous but bounded: below `MIN` a reply takes a visible
+ * minute to appear at all, and above `MAX` the reveal is no longer paced
+ * (at 60 Hz one frame already carries more text than that would reveal).
+ */
+export const REVEAL_BASE_CPS_MIN = 10;
+export const REVEAL_BASE_CPS_MAX = 300;
+export const REVEAL_MAX_CPS_MIN = 30;
+export const REVEAL_MAX_CPS_MAX = 3000;
+
+/** Clamp one setting into its range. Non-finite and non-integral input maps
+ *  to the fallback: a record outlives every build, and a corrupted field must
+ *  land on a value the curve was tuned around rather than on a guess. */
+function clampCps(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+/** The base pace, clamped to its range. */
+export function clampBaseCps(value: unknown, fallback: number = REVEAL_BASE_CPS): number {
+  return clampCps(value, REVEAL_BASE_CPS_MIN, REVEAL_BASE_CPS_MAX, fallback);
+}
+
+/** The catch-up cap, clamped to its range and to at least the base — a cap
+ *  below the base pace would make the curve's ordinary case run at the cap,
+ *  and the two settings would fight over the same number. */
+export function clampMaxCps(value: unknown, baseCps: number, fallback: number = REVEAL_MAX_CPS): number {
+  return Math.max(clampCps(value, REVEAL_MAX_CPS_MIN, REVEAL_MAX_CPS_MAX, fallback), baseCps);
+}
+
 export interface RevealLimits {
   readonly baseCps: number;
   readonly exponent: number;

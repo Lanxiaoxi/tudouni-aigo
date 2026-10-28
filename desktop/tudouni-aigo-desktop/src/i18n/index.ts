@@ -1308,6 +1308,16 @@ export const en = {
     'Text appears at a steady reading pace instead of in bursts as each network packet lands. Off draws each burst the moment it arrives.',
   'panel.settings.smoothingReduced':
     'Your system asks for reduced motion, so replies are drawn immediately. This switch cannot override that.',
+  /** The two ends of the pacing curve. They say the effect in reading terms,
+   *  and they say **when** the change lands ("the next reply") — "takes
+   *  effect at once" is what the group's hint promises, and this is the one
+   *  row in the group that does not, so the sentence has to. */
+  'panel.settings.paceBase': 'Reading speed',
+  'panel.settings.paceBaseDesc':
+    'How fast text appears while the model is still writing (characters per second). Applies to the next reply.',
+  'panel.settings.paceMax': 'Catch-up speed',
+  'panel.settings.paceMaxDesc':
+    'How fast the text closes the gap after a pause in delivery (characters per second). Applies to the next reply.',
   'panel.settings.close': 'Closing the window',
   'panel.settings.closeDesc': 'What the X button does.',
   'panel.close': 'Close',

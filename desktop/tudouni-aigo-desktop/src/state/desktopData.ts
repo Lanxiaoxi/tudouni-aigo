@@ -39,6 +39,12 @@ import { isHosted, readDesktopData, writeDesktopData } from '@/runtime/tauri';
 import { readClosePolicy, type ClosePolicy } from '@/runtime/windowClose';
 import { readNotifyEnabled } from '@/runtime/notify';
 import {
+  clampBaseCps,
+  clampMaxCps,
+  REVEAL_BASE_CPS,
+  REVEAL_MAX_CPS,
+} from '@/streamReveal';
+import {
   isValidTask,
   isValidTaskRun,
   type Task,
@@ -85,6 +91,21 @@ export interface DesktopData {
    * default.
    */
   streamSmoothing: boolean;
+  /**
+   * The two ends of the pacing curve (`streamReveal.ts`), in characters/second:
+   * the steady reading pace and the catch-up cap. A person's taste in how a
+   * reply should *look*, stored with the switch it tunes.
+   *
+   * **They take effect when a reply starts, not mid-reply.** The engine that
+   * paces a mounted row was constructed with the values that were in force
+   * then; a value written here reaches the curve through the next engine, and
+   * the one on screen finishes with the pace it began at. The alternative —
+   * swapping the limits under a running cursor — would change the speed while
+   * a sentence is on screen, which is the kind of jump the pacing exists to
+   * prevent.
+   */
+  streamBaseCps: number;
+  streamMaxCps: number;
   closePolicy: ClosePolicy;
   /**
    * Task templates and their run links. The runtime has no Task entity and
@@ -125,6 +146,11 @@ export function emptyDesktopData(): DesktopData {
     // what the reply looks like, so a build that shipped it off would be
     // indistinguishable from the build before it.
     streamSmoothing: true,
+    // The curve's own defaults: "nothing chosen" is the values the pacing was
+    // tuned around, so a record that predates these fields runs exactly as it
+    // always has.
+    streamBaseCps: REVEAL_BASE_CPS,
+    streamMaxCps: REVEAL_MAX_CPS,
     // Ask. Neither of the other two is safe to apply without being asked for.
     closePolicy: 'ask',
     tasks: [],
@@ -210,6 +236,8 @@ function extract(s: AppStore): DesktopData {
     maxStepsDefault: s.maxStepsDefault,
     notifyEnabled: s.notifyEnabled,
     streamSmoothing: s.streamSmoothing,
+    streamBaseCps: s.streamBaseCps,
+    streamMaxCps: s.streamMaxCps,
     closePolicy: s.closePolicy,
     tasks: s.tasks,
     taskRuns: s.taskRuns,
@@ -343,6 +371,12 @@ function validate(raw: Record<string, unknown> | null | undefined): DesktopData 
     // is truthy) is dropped rather than honoured, the same boundary the two
     // rail widths use.
     streamSmoothing: raw.streamSmoothing !== false,
+    // Clamped, not dropped: a record a person edited by hand may hold a pace
+    // outside the range, and the honest answer is the nearest value the curve
+    // will actually run, not the default. The base is clamped first because
+    // the cap's own clamp needs it (a cap below the base is meaningless).
+    streamBaseCps: clampBaseCps(raw.streamBaseCps),
+    streamMaxCps: clampMaxCps(raw.streamMaxCps, clampBaseCps(raw.streamBaseCps)),
     closePolicy: readClosePolicy(raw.closePolicy),
     tasks: Array.isArray(raw.tasks) ? raw.tasks.filter(isValidTask) : empty.tasks,
     taskRuns: Array.isArray(raw.taskRuns) ? raw.taskRuns.filter(isValidTaskRun) : empty.taskRuns,

@@ -349,7 +349,9 @@ function UserEntry({ entry }: { entry: Extract<Entry, { kind: 'user' }> }) {
  */
 function StreamEntry({ entry }: { entry: Extract<Entry, { kind: 'stream' }> }) {
   const pacing = useStreamPacing();
-  const shown = useRevealedText(entry.text, entry.streaming, pacing);
+  // The limits are read once at mount (`useRevealedText`): a row starts with
+  // the paces in force then, and a settings change reaches the next reply.
+  const shown = useRevealedText(entry.text, entry.streaming, pacing.enabled, pacing.limits);
   return (
     <div className="e-stream" data-entry={entry.id}>
       {shown}
@@ -805,7 +807,7 @@ function ReasonEntry({ entry }: { entry: Extract<Entry, { kind: 'reason' }> }) {
  */
 function ReasonBody({ text, live, open }: { text: string; live: boolean; open: boolean }) {
   const pacing = useStreamPacing();
-  const shown = useRevealedText(text, live, pacing && open);
+  const shown = useRevealedText(text, live, pacing.enabled && open, pacing.limits);
   return <div className="e-reason-body scroll-fade">{shown}</div>;
 }
 

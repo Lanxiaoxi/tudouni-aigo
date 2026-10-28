@@ -5,6 +5,12 @@ import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { CLOSE_POLICIES, type ClosePolicy } from '@/runtime/windowClose';
+import {
+  clampBaseCps,
+  clampMaxCps,
+  REVEAL_BASE_CPS,
+  REVEAL_MAX_CPS,
+} from '@/streamReveal';
 import { Badge, Info, Tip } from '@/components/ui/kit';
 import { PanelBody, PanelShell } from './PanelShell';
 
@@ -63,6 +69,44 @@ export function SettingsPanel() {
   const setNotifyEnabled = useApp((s) => s.setNotifyEnabled);
   const streamSmoothing = useApp((s) => s.streamSmoothing);
   const setStreamSmoothing = useApp((s) => s.setStreamSmoothing);
+  const streamBaseCps = useApp((s) => s.streamBaseCps);
+  const streamMaxCps = useApp((s) => s.streamMaxCps);
+  const setStreamPaces = useApp((s) => s.setStreamPaces);
+
+  // The pace rows are **semi-controlled**: a number mid-edit ("5" on the way
+  // to "50") must not reach the store, because the setter clamps and "5" would
+  // land as the range floor, eating the rest of the value. While a row is
+  // focused it shows its own draft; unfocused it shows the store directly, so
+  // the value the start-up's `hydrate` applies (the store loads these fields
+  // asynchronously, after this panel's first render) is what the rows draw
+  // without a draft that has gone stale.
+  const [paceDraft, setPaceDraft] = useState<{ field: 'base' | 'max' | null; raw: string }>({ field: null, raw: '' });
+
+  const paceBaseValue =
+    paceDraft.field === 'base' ? paceDraft.raw : String(streamBaseCps);
+  const paceMaxValue =
+    paceDraft.field === 'max' ? paceDraft.raw : String(streamMaxCps);
+
+  /** Commit one row's draft. Empty or non-numeric discards the edit (the
+   *  row falls back to the store value on blur); a number is clamped into
+   *  the curve's range, and the cap's floor at the base keeps the two ends
+   *  from fighting. Both drafts settle on what the store now holds. */
+  function commitPace(field: 'base' | 'max') {
+    const raw = paceDraft.raw;
+    const parsed = raw.trim() === '' ? null : Number(raw);
+    if (parsed !== null && Number.isFinite(parsed) && parsed > 0) {
+      const base = field === 'base' ? clampBaseCps(parsed) : streamBaseCps;
+      const cap = field === 'max' ? clampMaxCps(parsed, base) : streamMaxCps;
+      if (base !== streamBaseCps || cap !== streamMaxCps) setStreamPaces(base, cap);
+      setPaceDraft({ field: null, raw: '' });
+      // The store write lands on the next render; the input's own blur has
+      // already happened, so the drawn value follows the store from there.
+      return;
+    }
+    // Discarded: the row falls back to the store value on blur, so an edit
+    // that wrote nothing leaves the number unchanged.
+    setPaceDraft({ field: null, raw: '' });
+  }
   const closePolicy = useApp((s) => s.closePolicy);
   const setClosePolicy = useApp((s) => s.setClosePolicy);
   // The OS's answer, shown beside the switch rather than acted on silently: when
@@ -282,6 +326,67 @@ export function SettingsPanel() {
               <span>{t('panel.settings.smoothing')}</span>
             </button>
           </Tip>
+        </div>
+
+        {/* ---- the two ends of the pacing curve ----
+            The paces the switch above tunes. Inert together with it (a pace on
+            a reply that is drawn immediately is a number describing nothing),
+            and effective from the **next** reply, which the description says —
+            "applied the moment they are changed" would be a lie about this
+            group's one exception. */}
+        <div className="set-row">
+          <div className="set-main">
+            <div className="set-title">
+              <span>{t('panel.settings.paceBase')}</span>
+            </div>
+            <div className="set-desc">{t('panel.settings.paceBaseDesc')}</div>
+          </div>
+          <div className="set-control">
+            <input
+              type="text"
+              inputMode="numeric"
+              className="set-input"
+              value={paceBaseValue}
+              disabled={!streamSmoothing}
+              placeholder={String(REVEAL_BASE_CPS)}
+              aria-label={t('panel.settings.paceBase')}
+              onFocus={() =>
+                setPaceDraft({ field: 'base', raw: String(streamBaseCps) })
+              }
+              onChange={(e) => setPaceDraft({ field: 'base', raw: e.target.value })}
+              onBlur={() => commitPace('base')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitPace('base');
+              }}
+            />
+          </div>
+        </div>
+        <div className="set-row">
+          <div className="set-main">
+            <div className="set-title">
+              <span>{t('panel.settings.paceMax')}</span>
+            </div>
+            <div className="set-desc">{t('panel.settings.paceMaxDesc')}</div>
+          </div>
+          <div className="set-control">
+            <input
+              type="text"
+              inputMode="numeric"
+              className="set-input"
+              value={paceMaxValue}
+              disabled={!streamSmoothing}
+              placeholder={String(REVEAL_MAX_CPS)}
+              aria-label={t('panel.settings.paceMax')}
+              onFocus={() =>
+                setPaceDraft({ field: 'max', raw: String(streamMaxCps) })
+              }
+              onChange={(e) => setPaceDraft({ field: 'max', raw: e.target.value })}
+              onBlur={() => commitPace('max')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commitPace('max');
+              }}
+            />
+          </div>
         </div>
 
         {/* ---- what the X button does ---- */}

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { FrameClock } from '@/frameClock';
-import { RevealEngine } from '@/streamReveal';
+import { RevealEngine, type RevealLimits } from '@/streamReveal';
 
 /**
  * Draw a growing string at a paced cadence instead of at arrival.
@@ -36,11 +36,23 @@ import { RevealEngine } from '@/streamReveal';
  * @param text - The full accumulated text, as the entry holds it.
  * @param live - Whether the entry can still grow (`entry.streaming`).
  * @param enabled - Whether to pace at all. False is the honest "show it now".
+ * @param limits - The ends of the pacing curve the person chose in the
+ *   settings (the untouched fields run at the curve's own defaults). Read
+ *   **once, at mount**: a row is mounted by its first delta, and an engine
+ *   that changes curve mid-sentence would be a speed change under text that
+ *   is on screen — the jump the pacing exists to prevent. A value changed
+ *   later reaches the next row's engine, which is the "takes effect at the
+ *   next reply" rule the settings panel promises.
  * @returns The prefix of `text` that should be on screen right now.
  */
-export function useRevealedText(text: string, live: boolean, enabled: boolean): string {
+export function useRevealedText(
+  text: string,
+  live: boolean,
+  enabled: boolean,
+  limits?: Partial<RevealLimits>,
+): string {
   const engine = useRef<RevealEngine | null>(null);
-  engine.current ??= new RevealEngine();
+  engine.current ??= new RevealEngine(limits);
 
   /**
    * The last string handed to the engine.
