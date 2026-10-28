@@ -81,6 +81,30 @@ export function writableLevels(probe: ProbeEffortSnapshot | null): string[] {
   return probe.levels.filter((row) => row.result !== 'rejected').map((row) => row.level);
 }
 
+/**
+ * The levels an **actual save** writes: every `ok` level, plus the `uncertain`
+ * ones the person did not uncheck, in the probe's own order.
+ *
+ * The panel draws a checkbox on each `uncertain` row — "unclear" is not a
+ * refusal, so the old default kept them all, but the person may know their
+ * endpoint (a rate-limited key is not the same as a refused level), and the
+ * decision is theirs to make rather than a fixed rule. Refusals have no box:
+ * there is nothing to decide about a level the endpoint turned down.
+ */
+export function saveLevels(
+  probe: ProbeEffortSnapshot | null,
+  excludedUncertain: ReadonlySet<string>,
+): string[] {
+  if (probe === null) return [];
+  return probe.levels
+    .filter((row) => {
+      if (row.result === 'ok') return true;
+      if (row.result === 'uncertain') return !excludedUncertain.has(row.level);
+      return false;
+    })
+    .map((row) => row.level);
+}
+
 /** The three columns, counted once so no two surfaces can disagree. */
 export function probeTally(probe: ProbeEffortSnapshot | null): {
   ok: number;

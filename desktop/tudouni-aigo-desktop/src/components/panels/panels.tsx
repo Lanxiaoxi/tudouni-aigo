@@ -49,8 +49,8 @@ import {
   probeResultExpired,
   probeSaveable,
   probeTally,
+  saveLevels,
   stillProbing,
-  writableLevels,
 } from './effortProbe';
 import {
   readRemoteUserConfig,
@@ -421,6 +421,24 @@ export function EffortPanel() {
   // the old "saved" and claim it had written levels it never did.
   const [written, setWritten] = useState<{ endpoint: string; levels: string } | null>(null);
   const [writeProblem, setWriteProblem] = useState<string | null>(null);
+  // The unclear levels the person decided to leave out of a save. An empty set
+  // is the default — "unclear is not a refusal" — so the checkbox on each
+  // unclear row starts checked, and unchecking is the only way a save drops
+  // one. It is intent, like the arms above: it dies with the panel.
+  const [excludedUncertain, setExcludedUncertain] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleUncertain = (level: string) => {
+    setExcludedUncertain((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  };
+  // A new answer is a new situation: the ticks belong to the rows on screen,
+  // so a fresh result starts from the default (keep every unclear level).
+  useEffect(() => {
+    setExcludedUncertain(new Set());
+  }, [probeAt]);
 
   const { active, setActive } = useListKeys({
     count: levels.length,
@@ -432,19 +450,24 @@ export function EffortPanel() {
   // id. `probeApplies` owns the rule and its reason: one model id can be listed
   // on two routes, and a save writes into `probe.provider`'s entry.
   const probeMatches = probeApplies(probe, { model, provider });
-  // Everything the endpoint did **not** refuse (`ok` and `uncertain`). The rule
-  // and the reason it is not "only ok" live in `writableLevels`.
-  const writable = writableLevels(probe);
   // The three columns, counted once: the head line, the rows and the "nothing
   // here can be saved" sentence all read the same tally, so one of them cannot
   // disagree with the badges beside it.
   const tally = probeTally(probe);
   const noSaveReason = nothingToSaveReason(probe);
+  // What a press of Save would write **right now**: every confirmed level plus
+  // the unclear ones still checked. `probeSaveable` keeps the *offer* honest
+  // (an all-uncertain pass learned nothing and must not be saved at all), and
+  // this list is what the person's ticks actually change.
+  const saveable = probeSaveable(probe);
+  const chosen = saveLevels(probe, excludedUncertain);
   // Saveable needs a **confirmed** level as well as a writable one: a pass that
   // came back entirely `uncertain` learned nothing, and writing it would both
   // claim a result and put a list into the file that no probe vouched for. See
-  // `probeSaveable`.
-  const canOfferWrite = probeMatches && probeSaveable(probe) && !probing && !probeExpired;
+  // `probeSaveable`. Unchecking every unclear level is different: the ok ones
+  // remain, and that is a legitimate save of exactly what was confirmed.
+  const canOfferWrite =
+    saveable && chosen.length > 0 && probeMatches && !probing && !probeExpired;
   // Whether the rows below are six findings or one finding repeated. On the
   // Messages wire the level is translated into a thinking budget and a probe
   // uses the protocol floor, so the endpoint never sees the word — the runtime
@@ -493,7 +516,7 @@ export function EffortPanel() {
           models: route.models.map((entry) => {
             if (entry.id !== probe.model) return entry;
             found = true;
-            return { ...entry, effortLevels: writable };
+            return { ...entry, effortLevels: chosen };
           }),
         };
       });
@@ -519,7 +542,7 @@ export function EffortPanel() {
       // the endpoint it was written for. The sentence below the result is about
       // **that** save; reading the levels off whichever probe is on screen
       // later would let the old confirmation claim a write that never happened.
-      setWritten({ endpoint: `${probe.provider}/${probe.model}`, levels: writable.join(' / ') });
+      setWritten({ endpoint: `${probe.provider}/${probe.model}`, levels: chosen.join(' / ') });
     } catch (err) {
       setWriteProblem(
         t('panel.effort.probeWriteFailed', { problem: err instanceof Error ? err.message : String(err) }),
@@ -622,6 +645,21 @@ export function EffortPanel() {
                     <Badge tone={PROBE_TONE[row.result] ?? 'warning'} dot={false}>
                       {row.result}
                     </Badge>
+                    {row.result === 'uncertain' ? (
+                      // Only the unclear rows carry a box: "accepted" is the
+                      // endpoint's own answer and "refused" is final, but the
+                      // unclear ones are the person's to decide — a rate-limited
+                      // key is not a refusal, and the person may know their
+                      // endpoint better than the probe does.
+                      <label className="cfg-check probe-keep" title={t('panel.effort.probeKeepHint')}>
+                        <input
+                          type="checkbox"
+                          checked={!excludedUncertain.has(row.level)}
+                          onChange={() => toggleUncertain(row.level)}
+                        />
+                        <span>{t('panel.effort.probeKeep')}</span>
+                      </label>
+                    ) : null}
                     {row.result === 'uncertain' && row.note ? (
                       <span className="caption faint probe-note" title={row.note}>
                         {row.note}

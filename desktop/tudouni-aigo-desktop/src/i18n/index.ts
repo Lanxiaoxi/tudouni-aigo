@@ -1026,10 +1026,15 @@ export const en = {
   'panel.effort.probeResult': 'Probe of {model} — {ok} accepted, {rejected} refused, {uncertain} unclear.',
   'panel.effort.probeReadFailed': 'The configuration file could not be read, so nothing was written.',
   'panel.effort.probeNote': 'Accepting the level means the endpoint did not refuse it; a gateway that accepts a level may still ignore it.',
-  'panel.effort.probeWrite': 'Save the levels it did not refuse',
+  'panel.effort.probeWrite': 'Save the selected levels',
   'panel.effort.probeWriting': 'Saving…',
   'panel.effort.probeWriteHint':
-    'Sets this model’s thinking levels in the configuration file to the levels the endpoint did not refuse — the accepted ones and the unclear ones, because “unclear” is not a refusal and dropping it would delete a level nobody asked to remove. Re-reads the file first and writes only this model’s entry.',
+    'Sets this model’s thinking levels in the configuration file to every accepted level plus the unclear ones you left checked. “Unclear” is not a refusal, so those start checked — uncheck one to keep it out. Re-reads the file first and writes only this model’s entry.',
+  /** The checkbox on an unclear probe row: checked by default; it decides whether
+   *  this level goes into the saved list. */
+  'panel.effort.probeKeep': 'save',
+  'panel.effort.probeKeepHint':
+    '“Unclear” is not a refusal, so this level starts checked. Uncheck it to keep it out of the saved list.',
   'panel.effort.probeWritten':
     'Saved: the configuration now lists {levels} for this model. New sessions will offer exactly that list.',
   'panel.effort.probeNotFound':

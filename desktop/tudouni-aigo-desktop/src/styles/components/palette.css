@@ -547,15 +547,23 @@
   color: var(--fg-secondary);
 }
 
-/* A three-column grid rather than flex: the level names differ in width
+/* A four-column grid rather than flex: the level names differ in width
    (`minimal` vs `high`), so flex left the badges and the notes starting at
    different x's. Fixed columns put the badge in the same place on every
-   row, and the note gets the whole remaining width — truncated, one line. */
+   row, the "save" checkbox on the next, and the note gets the whole
+   remaining width — truncated, one line. Rows without a box leave the
+   third column empty, which keeps the note in place anyway. */
 .probe-row {
   display: grid;
-  grid-template-columns: 74px 90px minmax(0, 1fr);
+  grid-template-columns: 74px 90px 84px minmax(0, 1fr);
   align-items: center;
   column-gap: var(--space-2);
+  font-size: var(--text-caption);
+}
+
+/* The unclear level's own keep/discard tick: the shared `.cfg-check` shape,
+   so a checked box means the same thing everywhere in the app. */
+.probe-keep {
   font-size: var(--text-caption);
 }
 

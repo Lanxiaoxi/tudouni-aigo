@@ -21,6 +21,7 @@ import {
   probeResultExpired,
   probeSaveable,
   probeTally,
+  saveLevels,
   stillProbing,
   writableLevels,
 } from '@/components/panels/effortProbe';
@@ -54,6 +55,26 @@ test('a save drops exactly the levels the endpoint refused', () => {
   ]);
   assert.deepEqual(writableLevels(probe), []);
   assert.equal(nothingToSaveReason(probe), 'all-refused');
+});
+
+test('a save keeps every ok level and the unchecked uncertain ones, in probe order', () => {
+  const probe = snapshot([
+    { level: 'low', result: 'ok' },
+    { level: 'medium', result: 'uncertain', note: 'HTTP 429' },
+    { level: 'high', result: 'ok' },
+    { level: 'xhigh', result: 'uncertain', note: 'HTTP 500' },
+    { level: 'max', result: 'rejected' },
+  ]);
+  // Nothing unchecked: same list as the old "not refused" rule.
+  assert.deepEqual(saveLevels(probe, new Set()), ['low', 'medium', 'high', 'xhigh']);
+  // Unchecking one uncertain level drops exactly that one — the ok levels
+  // are not a checkbox, they are the endpoint's own answer.
+  assert.deepEqual(saveLevels(probe, new Set(['xhigh'])), ['low', 'medium', 'high']);
+  // A refusal has no box: excluding it changes nothing.
+  assert.deepEqual(saveLevels(probe, new Set(['max'])), ['low', 'medium', 'high', 'xhigh']);
+  // Order is the probe's order, not a sort.
+  assert.deepEqual(saveLevels(probe, new Set(['medium', 'xhigh'])), ['low', 'high']);
+  assert.deepEqual(saveLevels(null, new Set()), []);
 });
 
 test('no result at all writes nothing', () => {
