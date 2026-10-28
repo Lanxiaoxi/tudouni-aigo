@@ -84,112 +84,11 @@
   cursor: not-allowed;
 }
 
-.set-control {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  width: 96px;
-}
-
-.set-input {
-  width: 100%;
-  height: var(--control-h-compact);
-  padding: 0 var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  font-family: var(--font-mono);
-  font-size: var(--text-caption);
-  color: var(--fg);
-  font-variant-numeric: tabular-nums;
-}
-
-.set-input::placeholder {
-  color: var(--fg-faint);
-}
-
-.set-input.is-invalid {
-  border-color: var(--destructive);
-}
-
-.set-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .set-error {
   font-size: var(--text-caption);
   line-height: var(--leading-tight);
   color: var(--destructive);
   word-break: break-word;
-}
-
-/* What is actually on the command line right now. Mono, and never merged into
-   the controls above: a remembered value must not read as "this is on". */
-.set-running {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin: var(--space-3) 0 0;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--bg-muted);
-  font-size: var(--text-caption);
-}
-
-.set-running dt {
-  flex: none;
-  color: var(--fg-muted);
-}
-
-.set-running dd {
-  margin: 0;
-  min-width: 0;
-  color: var(--fg-secondary);
-  word-break: break-all;
-}
-
-.set-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-}
-
-.set-blocked {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-caption);
-  color: var(--warning);
-}
-
-/* The confirmation, inline. Its own surface and its own border, because it
-   replaces the actions row: there is exactly one thing to decide here. */
-.set-confirm {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--accent-border);
-  border-radius: var(--radius-md);
-  background: var(--accent-subtle);
-}
-
-.set-confirm-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--text-compact);
-  color: var(--fg);
-}
-
-.set-confirm-actions {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 .cmdk-empty {
@@ -395,6 +294,412 @@
 
 .set-choice-item[data-state='checked'] .set-choice-text {
   color: var(--fg);
+}
+
+/* ============================================================
+   §11a Settings — the two-column page
+   ============================================================
+
+   The redesign's shape: the form on the left, and a read-out column on the
+   right that answers the two questions a start-up setting has to answer —
+   *what is running* and *what will change*. `.set-*` is still the row
+   vocabulary (the same titles and descriptions the rest of the panel uses);
+   `.sp-*` is the page, its column, and the three cards.
+
+   The dialog is widened here rather than by a second class, for the same
+   reason the provider route page is: only this page needs the room, and the
+   list surfaces behind it keep the panel's ordinary width. */
+
+.dialog-wide:has(.sp-page) {
+  width: min(1180px, calc(100vw - 48px));
+  background: var(--bg);
+}
+
+.dialog-wide:has(.sp-page) .dialog-head {
+  padding: var(--space-4) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.dialog-wide:has(.sp-page) .dialog-body {
+  padding: var(--space-5) var(--space-8) var(--space-8);
+}
+
+/* The close square is framed on this page, the shape the design gives it: the
+   page is long enough that the head is read as a header rather than as a
+   dialog's title row. */
+.dialog-wide:has(.sp-page) .dialog-head > .btn:last-child {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--fg-secondary);
+}
+
+.dialog-wide:has(.sp-page) .dialog-head > .btn:last-child:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.sp-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+  gap: var(--space-8);
+}
+
+.sp-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.sp-section {
+  min-width: 0;
+}
+
+/* The section label and its rule: the same device the provider page uses, so a
+   section reads as a heading rather than as one more line of description. */
+.sp-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.sp-section-label {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.sp-rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+/* The control column is the row's right edge. It is a column so the step cap's
+   "running 150" line can sit under its input; the switches have one child and
+   look the same either way. */
+.sp-control {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.sp-number-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* `.cfg-input` is the shared field shape (and is imported after this file), so
+   the width, height and mono face are overridden at a specificity that does
+   not depend on the stylesheet order. */
+.sp-page .cfg-input.sp-number {
+  flex: none;
+  width: 96px;
+  height: 34px;
+  font-family: var(--font-mono);
+  font-size: var(--text-compact);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The page is the plane and the fields are the paper, as on the provider page:
+   a field is near-white here even in the light theme, where `--bg` is the pale
+   green. */
+.sp-page .cfg-input {
+  background: var(--bg-card);
+}
+
+.sp-number.is-invalid {
+  border-color: var(--destructive);
+}
+
+.sp-number:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sp-unit {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* The value in force under the step cap, in the amber the design gives it:
+   a running fact, not the draft in the field above. */
+.sp-running-inline {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--warning);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sp-note {
+  margin-top: 2px;
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+.sp-page .tk-switch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sp-pending {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 6px;
+  border: 1px solid var(--warning-border);
+  border-radius: var(--radius-xs);
+  color: var(--warning);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sp-control-choice .set-choice {
+  margin-top: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ---- the read-out column ---- */
+
+.sp-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.sp-side-block {
+  min-width: 0;
+}
+
+.sp-side-label {
+  margin-bottom: var(--space-2);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.sp-card {
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.sp-facts {
+  display: flex;
+  flex-direction: column;
+}
+
+.sp-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px 0;
+  font-size: var(--text-compact);
+}
+
+/* The running card's rows are separated by hairlines; the facts are parallel
+   answers to the same question, and the lines keep them from reading as one
+   sentence. */
+.sp-facts .sp-fact + .sp-fact {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sp-fact-label {
+  color: var(--fg-secondary);
+}
+
+.sp-fact-value {
+  text-align: right;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-fact-value.mono {
+  font-family: var(--font-mono);
+}
+
+.sp-fact-value.is-ok {
+  color: var(--accent-tint-text);
+}
+
+.sp-fact-value.is-warning {
+  color: var(--warning);
+}
+
+.sp-fact-value.is-bad {
+  color: var(--destructive);
+}
+
+.sp-fact-value.is-muted {
+  color: var(--fg-muted);
+}
+
+/* What was actually on the command line, never merged into the draft. Mono,
+   because these are flags rather than prose. */
+.sp-argv {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+  word-break: break-all;
+}
+
+.sp-side-hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+/* ---- the pending card ---- */
+
+.sp-pending-card {
+  padding: var(--space-4);
+}
+
+.sp-diff + .sp-diff {
+  margin-top: var(--space-2);
+}
+
+.sp-diff-arg {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+}
+
+.sp-diff-values {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-compact);
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-diff-old {
+  color: var(--fg-faint);
+}
+
+.sp-diff-arrow {
+  color: var(--fg-faint);
+}
+
+.sp-diff-new {
+  color: var(--accent-tint-text);
+  font-weight: 600;
+}
+
+/* The actions are separated from the diff: what changes is a fact, and the
+   button is the decision about it. */
+.sp-pending-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sp-apply,
+.sp-discard {
+  width: 100%;
+  justify-content: center;
+}
+
+.sp-discard {
+  color: var(--fg-muted);
+}
+
+.sp-blocked {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--warning);
+}
+
+/* ---- applies when ---- */
+
+.sp-applies {
+  border: 0;
+  background: var(--bg-secondary);
+}
+
+.sp-applies .sp-fact {
+  padding: 5px 0;
+}
+
+/* Wider than the provider page's breakpoint on purpose: this side column is
+   360px of prose-and-figures, not a 300px read-out, so the two columns stop
+   fitting sooner. Stacking here keeps the descriptions at a readable measure
+   in a 1000px window instead of squeezing them beside the cards. */
+@media (max-width: 1060px) {
+  .sp-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sp-side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+@media (max-width: 720px) {
+  .dialog-wide:has(.sp-page) .dialog-head {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .dialog-wide:has(.sp-page) .dialog-body {
+    padding: var(--space-3) var(--space-4) var(--space-5);
+  }
+
+  .sp-page .set-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sp-control {
+    align-items: flex-start;
+  }
+
+  .sp-side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sp-control-choice .set-choice {
+    justify-content: flex-start;
+  }
 }
 
 /* ---------------- §12 学习面板（Learn workspace） ----------------

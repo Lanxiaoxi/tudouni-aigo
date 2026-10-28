@@ -1264,16 +1264,14 @@ export const en = {
   /* ---------------- settings ---------------- */
   'panel.settings.title': 'Settings',
   'panel.settings.note':
-    "Start-up arguments for this session's runtime — applying one restarts it.",
-  'panel.settings.launch': 'Start-up arguments',
+    'Runtime start-up arguments, and preferences that apply to this window.',
+  'panel.settings.launch': 'Runtime',
   'panel.settings.launchHint':
-    'These are the arguments the running runtime was started with. Changing one restarts it.',
-  'panel.settings.inForce': 'in force',
-  'panel.settings.notInForce': 'restart to apply',
-  'panel.settings.running': 'Running now',
-  'panel.settings.ericai': 'EricAI token',
+    'These are the arguments the running runtime was started with.',
+  'panel.settings.running': 'Running',
+  'panel.settings.ericai': 'EricAI',
   'panel.settings.ericaiDesc':
-    'Keep this session’s EricAI token fresh: checked at start-up, refreshed before a stale one would be used.',
+    "Keeps this session's token fresh: checked at start-up, refreshed before a stale one is used.",
   /* The long side-effect sentence, behind the `?` rather than in the row: the
      row says what the switch does, the icon says what it is allowed to do to
      the person's machine. */
@@ -1281,15 +1279,32 @@ export const en = {
     'Turning this on lets the runtime rewrite providers.ericai.api_key in your configuration file and keep a refresh token under ~/.tudouni/. It takes effect on the session on screen after the restart, and it is remembered: every session started from then on — new ones, other workspaces, the next launch — comes up with the token managed. Sessions already running are unaffected.',
   'panel.settings.maxSteps': 'Step cap',
   'panel.settings.maxStepsDesc':
-    'How many model calls one turn may take. Empty means the runtime’s own default.',
+    "How many model calls one turn may take. Empty uses the runtime's own default.",
   'panel.settings.maxStepsDefault': 'runtime default',
   'panel.settings.maxStepsInvalid': 'A whole number above zero, or empty.',
+  'panel.settings.calls': 'calls',
+  'panel.settings.charsPerSecond': 'chars/s',
+  'panel.settings.pending': 'Pending',
   'panel.settings.apply': 'Apply and restart',
-  'panel.settings.restart': 'Restart the runtime?',
-  'panel.settings.restartWhy':
-    'The runtime is reading these at open, so it has to be started again. The turn on screen is finished; the session is kept.',
-  'panel.settings.restartYes': 'Restart',
-  'panel.settings.restartNo': 'Cancel',
+  'panel.settings.discard': 'Discard changes',
+  'panel.settings.restart': 'restart',
+  'panel.settings.pendingHint': 'Restarts the runtime. Open streams reconnect.',
+  'panel.settings.runningHint':
+    'Read-only. What the runtime was actually started with.',
+  'panel.settings.status': 'Status',
+  'panel.settings.started': 'Started',
+  'panel.settings.statusRunning': 'running',
+  'panel.settings.statusStarting': 'starting',
+  'panel.settings.statusFailed': 'failed',
+  'panel.settings.statusStopped': 'stopped',
+  'panel.settings.startedJustNow': 'just now',
+  'panel.settings.startedMinutes': '{n} min ago',
+  'panel.settings.startedHours': '{n} h ago',
+  'panel.settings.startedDays': '{n} d ago',
+  'panel.settings.startedUnknown': '—',
+  'panel.settings.on': 'on',
+  'panel.settings.off': 'off',
+  'panel.settings.runningValue': 'running {value}',
   'panel.settings.blockedTurn': 'A turn is in flight — finish or stop it first.',
   'panel.settings.blockedModal': 'Answer the prompt first.',
   'panel.settings.blockedBooting': 'The runtime is still starting.',
@@ -1300,17 +1315,18 @@ export const en = {
    * absence of an Apply button. */
   'panel.settings.window': 'This window',
   'panel.settings.windowHint':
-    'These are kept for this application as a whole and take effect at once — no restart, and nothing is sent to the runtime.',
+    'Saved for the whole application and shared by every session.',
   'panel.settings.notify': 'Session notifications',
   'panel.settings.notifyDesc':
     'A system notification when a session asks for an answer, fails, or finishes while you are looking at something else.',
   /** The pacing switch. It says what changes in reading terms ("as it is
    *  written") rather than naming the technique, because "smooth streaming" is
-   *  not a fact about the reply �?"written out while the model is still
+   *  not a fact about the reply — "written out while the model is still
    *  writing" is. */
+  'panel.settings.pacing': 'Reply pacing',
   'panel.settings.smoothing': 'Reveal replies as they are written',
   'panel.settings.smoothingDesc':
-    'Text appears at a steady reading pace instead of in bursts as each network packet lands. Off draws each burst the moment it arrives.',
+    'Text appears at a steady reading pace instead of in bursts as each packet lands. Off draws each burst the moment it arrives.',
   'panel.settings.smoothingReduced':
     'Your system asks for reduced motion, so replies are drawn immediately. This switch cannot override that.',
   /** The two ends of the pacing curve. They say the effect in reading terms,
@@ -1319,12 +1335,17 @@ export const en = {
    *  row in the group that does not, so the sentence has to. */
   'panel.settings.paceBase': 'Reading speed',
   'panel.settings.paceBaseDesc':
-    'How fast text appears while the model is still writing (characters per second). Applies to the next reply.',
+    'How fast text appears while the model is still writing. Applies to the next reply.',
   'panel.settings.paceMax': 'Catch-up speed',
   'panel.settings.paceMaxDesc':
-    'How fast the text closes the gap after a pause in delivery (characters per second). Applies to the next reply.',
+    'How fast the text closes the gap after a pause in delivery. Applies to the next reply.',
+  'panel.settings.closing': 'Closing',
   'panel.settings.close': 'Closing the window',
   'panel.settings.closeDesc': 'What the X button does.',
+  'panel.settings.appliesWhen': 'Applies when',
+  'panel.settings.startupArgs': 'Start-up arguments',
+  'panel.settings.windowPrefs': 'Window preferences',
+  'panel.settings.instantly': 'instantly',
   'panel.close': 'Close',
   /* The second surface's way back to the first — the head's leading arrow on
      Configuration's editors and on the tasks history. One key, because it means
@@ -1377,16 +1398,41 @@ export const en = {
   'panel.config.editServer': 'Edit server',
   'panel.config.newServer': 'New server',
   'panel.config.editorNote': 'Edits stay in this draft until you press Save.',
+  /* The route editor's own page. Its head carries the route name, a DRAFT chip
+     and the two verbs; its body is grouped by what the fields answer —
+     connection, reasoning, request — rather than by which file section they
+     belong to. The side column repeats what the list row will say, so the form
+     and the row it produces cannot drift. */
+  'panel.config.draft': 'DRAFT',
+  'panel.config.routeNote': 'Route in config.json · edits stay in this draft until you save.',
+  'panel.config.saveChanges': 'Save changes',
+  'panel.config.revertToFile': 'Revert',
+  'panel.config.sectionConnection': 'Connection',
+  'panel.config.sectionReasoning': 'Reasoning',
+  'panel.config.sectionRequest': 'Request',
+  'panel.config.preview': 'Preview',
+  'panel.config.previewHint': 'How this route appears in the routes list.',
+  'panel.config.readOut': 'Read-out',
+  'panel.config.notEditable': 'not editable',
+  'panel.config.oneModel': '1 model',
+  'panel.config.modelCountPlain': '{n} models',
+  'panel.config.factCertificate': 'Certificate',
+  'panel.config.certVerified': 'verified',
+  'panel.config.certUnverified': 'not verified',
+  'panel.config.allModels': 'All {n} models',
+  'panel.config.noModelsYet': 'No models yet',
+  'panel.config.deleteRoute': 'Delete route',
+  'panel.config.inferStyle': 'infer',
   'panel.config.sectionIdentity': 'Identity',
   'panel.config.sectionEndpoint': 'Endpoint',
   'panel.config.sectionAdvanced': 'Advanced',
   'panel.config.sectionServer': 'Server',
   'panel.config.sideStatus': 'Availability',
   'panel.config.sideStatusHint':
-    'A route with no key, or with no models, is in the file and cannot be selected.',
+    'A route with no key, or with no models, stays in the file but can’t be selected.',
   'panel.config.factSelectable': 'Selectable',
   'panel.config.factModels': 'Models',
-  'panel.config.factDefault': 'Default',
+  'panel.config.factDefault': 'Default route',
   'panel.config.routes': 'Routes',
   'panel.config.routesHint':
     'One entry per provider route. The key is the route name; the order is the order the /model list shows, and the first route with a key is the default.',
@@ -1401,7 +1447,7 @@ export const en = {
   'panel.config.mcpHint':
     'Servers the runtime connects at start-up. A command runs locally; a URL is a remote server.',
   'panel.config.name': 'Name',
-  'panel.config.nameHint': 'The key in the file, and what /model and the panels show.',
+  'panel.config.nameHint': 'Key inside the provider file. Models are namespaced under it.',
   /** What the asterisk on a field means, said in words for the readers the
    *  asterisk itself does not reach: `sr-only` for a screen reader, and the same
    *  sentence as the mouse's tooltip. Which fields carry the marker is decided
@@ -1410,9 +1456,11 @@ export const en = {
   'panel.config.requiredHint': 'The save is refused while this is empty.',
   'panel.config.untitled': 'untitled',
   'panel.config.baseUrl': 'Base URL',
+  'panel.config.baseUrlHint': 'Where requests are sent. ${env} is expanded before the call.',
   'panel.config.apiKey': 'API key',
+  'panel.config.apiKeyHint': 'Kept in the local config file. Eye reveals it for this session only.',
   'panel.config.apiStyle': 'Protocol',
-  'panel.config.apiStyleHint': 'Leave it on “infer” unless this endpoint needs otherwise.',
+  'panel.config.apiStyleHint': 'Wire format. Keep infer unless this endpoint needs otherwise.',
   'panel.config.apiStyleAuto': 'infer from the URL',
   'panel.config.displayName': 'Display name',
   'panel.config.displayNameHint': 'Optional. Shown instead of the route name.',
@@ -1421,30 +1469,37 @@ export const en = {
      switch whose *on* state means "do not do the safe thing" is a control people
      misread exactly once each. The hint below still reads correctly against the
      new label, because it says what turning it off means. */
-  'panel.config.verifyCert': 'Verify the certificate',
+  'panel.config.verifyCert': 'Verify certificate',
   'panel.config.verifyHint':
-    'On by default. Only turn this off for an endpoint whose certificate does not check out.',
+    'Only turn this off for an endpoint whose certificate does not check out.',
   'panel.config.transportHint':
     'The runtime refuses a server that names both a command and a URL, so switching transports clears the other one.',
   'panel.config.headers': 'Extra headers',
   'panel.config.headersHint': 'One per line, name = value. Sent with every request to this route.',
+  'panel.config.addHeader': 'Add header',
+  'panel.config.headerName': 'Header name',
+  'panel.config.headerValue': 'Header value',
+  'panel.config.removeHeader': 'Remove this header',
   'panel.config.pairsHint': 'One per line, name = value.',
   'panel.config.effortLevels': 'Thinking levels',
   'panel.config.effortLevelsHint':
-    'One per line; applies to every model on this route. Empty offers the whole vocabulary.',
+    'Levels this route accepts. Empty means the provider’s whole set.',
   'panel.config.models': 'Models',
   /** The count a folded route card still shows. `(s)` rather than a plural
    *  rule, matching `panel.config.blocked` — the catalogue is English-only and
    *  interpolation deliberately stops at `{name}`. */
   'panel.config.modelCount': '{n} model(s)',
   'panel.config.modelsHint':
-    'A route with no models cannot be selected. Leave the context window empty rather than guessing — a wrong percentage is worse than none.',
+    'A route with no models cannot be selected. Add one to make this route usable.',
   'panel.config.modelId': 'Model id',
   'panel.config.modelLabel': 'Label',
+  'panel.config.modelLabelPlaceholder': 'Optional — shown in the model picker',
   'panel.config.contextWindow': 'Context window',
   'panel.config.contextWindowHint':
-    'In tokens. Empty means the interface reports usage without a percentage.',
+    'Empty reports usage as a raw count instead of a percentage.',
   'panel.config.contextWindowAbsent': 'not set',
+  'panel.config.contextWindowTokens': 'tokens',
+  'panel.config.contextMeta': '{n} ctx',
   'panel.config.reasoningEffort': 'Starts at',
   'panel.config.reasoningEffortHint':
     'The thinking level this model starts on. Empty means the default.',
@@ -1453,6 +1508,10 @@ export const en = {
   'panel.config.vision': 'Pictures',
   'panel.config.visionOn': 'This model accepts images',
   'panel.config.visionHint': 'Off unless the model takes them.',
+  'panel.config.acceptsImages': 'Accepts images',
+  'panel.config.acceptsImagesHint': 'Send image messages to this model. Off unless the model takes them.',
+  'panel.config.visionMeta': 'vision',
+  'panel.config.noVisionMeta': 'no vision',
   'panel.config.noKey': 'no key',
   'panel.config.mcpTransport': 'Transport',
   'panel.config.mcpStdio': 'Command',

@@ -517,6 +517,17 @@ export interface SessionRuntime {
   /** The workspace this child was started in. A property of the process. */
   workspace: string;
   /**
+   * When this front end opened the child, in epoch milliseconds.
+   *
+   * A **local** fact, like the bucket itself: the runtime's `init` carries no
+   * start time, and Settings' "Started" line is about *this* child process
+   * rather than about the conversation's history. The placeholder installed
+   * before a child exists takes the timestamp of the click, so a slow attach
+   * reports the wait it actually spent rather than restarting the clock when
+   * the handshake lands.
+   */
+  openedAt: number;
+  /**
    * Which remote workspace this session belongs to, when it is one — `null`
    * for a local session. This is a reference into `remoteWorkspaces`, kept as
    * an id rather than a copy so renaming or editing the saved entry does not

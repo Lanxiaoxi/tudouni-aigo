@@ -246,3 +246,695 @@
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-subtle);
 }
+
+/* ============================================================
+   The route page
+   *
+   * The routes list and the MCP list are still rows; the editor one of those
+   * rows opens is a **page**, not a second card. It is wider than the list (a
+   * label column, a field column and a read-out column need the room), and it
+   * carries its own head: the route's name, the DRAFT chip and the two verbs.
+   * The classes here are `.pc-*` and begin with `pc` because they describe the
+   * provider-config page, not the panel's general vocabulary. Everything a
+   * field is made of is still `.cfg-input` / `.cfg-hint` / `.cfg-required`.
+   * ============================================================ */
+
+/* `:has` rather than a second dialog class: only the route page is this wide,
+   and the list surface behind it keeps the panel's ordinary 860px. The
+   background is the window's own plane here because this page is a form on
+   paper, with the fields as the cards — the opposite of the ordinary dialog,
+   where the card sits on the page. */
+.dialog-wide:has(.pc-page) {
+  width: min(1180px, calc(100vw - 48px));
+  background: var(--bg);
+}
+
+.dialog-wide:has(.pc-page) .dialog-head {
+  padding: var(--space-4) var(--space-8);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.dialog-wide:has(.pc-page) .dialog-body {
+  padding: var(--space-5) var(--space-8) var(--space-8);
+}
+
+/* The way back is a framed square on this page, the shape the design gives it:
+   the page is long enough that the head is read as a header rather than as a
+   dialog's title row. The close button on the far right keeps its ghost shape. */
+.dialog-wide:has(.pc-page) .dialog-head > .btn:first-child {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--fg-secondary);
+}
+
+.dialog-wide:has(.pc-page) .dialog-head > .btn:first-child:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* The route name is a key, so it is set in the mono face. The chip rides in the
+   title element rather than in `actions`: it is a fact about the route, not a
+   control. */
+.pc-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+}
+
+/* The name is the only part that gives way: the DRAFT chip stays visible even
+   when a route is named for three of its own settings. */
+.pc-title > .dialog-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pc-draft {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.pc-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.pc-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--space-8);
+  align-items: start;
+  min-width: 0;
+}
+
+.pc-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.pc-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* A section head is a label with a rule running to the edge of its column.
+   The rule is a span rather than a `::after` so the models head can put its add
+   button after the rule without the line running behind it. */
+.pc-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  min-height: 20px;
+}
+
+.pc-section-label {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.pc-count {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-tint);
+  color: var(--accent-tint-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pc-rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+/* The label column. The label wraps the control, so pressing the word focuses
+   the field; the grid is what makes every row start its control at one x. */
+.pc-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+  padding: var(--space-2) 0;
+  min-width: 0;
+}
+
+.pc-label {
+  padding-top: 8px;
+  font-size: var(--text-compact);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  color: var(--fg-secondary);
+  word-break: break-word;
+}
+
+.pc-control {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+/* This page's fields are a little taller than the compact controls in the
+   list, because they are the only thing in their row. The rest of the app's
+   form fields keep their own height. */
+.pc-control .cfg-input {
+  height: 34px;
+}
+
+/* The page is the plane and the fields are the paper, so a field is near-white
+   here even in the light theme, where `--bg` (the page) is the pale green. */
+.pc-page .cfg-input,
+.pc-page .cfg-textarea {
+  background: var(--bg-card);
+}
+
+.pc-control .cfg-hint {
+  margin-top: 2px;
+}
+
+/* Two fields are shorter than their row: a name and a protocol are keys, not
+   prose, and a 600px input for `openai` reads as a textarea. The hint keeps the
+   row's full width, because it is a sentence. */
+.pc-control > .cfg-input.is-short {
+  max-width: 320px;
+}
+
+.pc-control > .cfg-input.is-tiny {
+  max-width: 220px;
+}
+
+/* Secrets are revealed by the eye in the field, not by a panel-wide switch:
+   the switch used to live in the head, where it revealed every route's key
+   whether or not that route was on screen. */
+.pc-key {
+  position: relative;
+  display: block;
+}
+
+.pc-key .cfg-input {
+  padding-right: 40px;
+}
+
+.pc-key-eye {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.pc-key-eye:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.pc-key-eye:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* A level is a chip because the route's vocabulary is a set, not a line of
+   text. The six the runtime offers are drawn even when the route accepts a
+   custom one; `RouteEditor` appends the custom values. */
+.pc-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.pc-level {
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.pc-level:hover {
+  border-color: var(--fg-faint);
+  color: var(--fg);
+}
+
+.pc-level.is-on {
+  border-color: var(--accent-tint-border);
+  background: var(--accent-tint);
+  color: var(--accent-tint-text);
+}
+
+.pc-level:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* One header: name, value, remove. The value gets the wider track because a
+   bearer token or a URL is the part that needs the room. */
+.pc-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 26px;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-1);
+}
+
+.pc-pair .cfg-input {
+  height: 32px;
+}
+
+.pc-pair .btn-icon {
+  width: 26px;
+  height: 26px;
+}
+
+.pc-add {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-tint-text);
+  font-size: var(--text-compact);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pc-add:hover {
+  text-decoration: underline;
+}
+
+/* ---- the side column: the consequence of the fields ---- */
+
+.pc-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.pc-preview {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.pc-preview-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pc-preview-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.pc-preview-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.pc-preview-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.pc-side-caption {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+.pc-side-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.pc-side-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.pc-side-note {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+/* The read-out is tinted, and the tint is the point: these are facts the
+   runtime computes, not fields, and the panel is careful never to draw a fact
+   as a control. */
+.pc-readout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.pc-readout-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+}
+
+.pc-readout-value {
+  flex: none;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  text-align: right;
+}
+
+.pc-readout-value.is-negative {
+  color: var(--warning);
+}
+
+.pc-readout-value.is-muted {
+  color: var(--fg-faint);
+}
+
+.pc-mini-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.pc-mini-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pc-mini-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.pc-mini-value {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-faint);
+}
+
+.pc-mini-empty {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.pc-allmodels {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-tint-text);
+  font-size: var(--text-compact);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pc-allmodels:hover {
+  text-decoration: underline;
+}
+
+/* The one destructive control on the page. It sits in the side column, away
+   from the fields, and it keeps the app's two-press rule: the first press only
+   arms it, and moving away disarms. */
+.pc-delete {
+  align-self: flex-start;
+  border-color: var(--destructive);
+  color: var(--destructive);
+}
+
+.pc-delete:hover:not(:disabled),
+.pc-delete.btn-outline.is-armed {
+  background: var(--destructive-subtle);
+  border-color: var(--destructive);
+  color: var(--destructive);
+}
+
+/* ---- the models section ---- */
+
+.pc-models {
+  scroll-margin-top: var(--space-3);
+}
+
+.pc-models .pc-section-head {
+  margin-bottom: var(--space-3);
+}
+
+.pc-models-empty {
+  margin: 0;
+  padding: var(--space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+.pc-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.pc-model {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  overflow: hidden;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.pc-model.is-open {
+  border-color: var(--border-strong);
+}
+
+.pc-model-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2) 0 var(--space-4);
+}
+
+.pc-model-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 48px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pc-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-body);
+  color: var(--fg);
+}
+
+.pc-model-meta {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.pc-caret {
+  flex: none;
+  color: var(--fg-faint);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.pc-caret.is-open {
+  transform: rotate(-90deg);
+}
+
+.pc-model-body {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* A model's fields are short — an id, a label, a number, a switch — so they
+   stop before the card's right edge and the eye reads one column of inputs
+   rather than four stretched ones. */
+.pc-model-body .pc-control {
+  max-width: 380px;
+}
+
+/* The hint is a sentence and keeps the control column's width; the inputs are
+   keys and numbers, and stop where the design's do. */
+.pc-model-body .pc-control > .cfg-input {
+  max-width: 320px;
+}
+
+.pc-window {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pc-window-input {
+  flex: none;
+  width: 190px;
+}
+
+.pc-window-suffix {
+  flex: none;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+@media (max-width: 980px) {
+  .pc-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pc-side {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  /* Below the two cards, not in the second cell beside the model list: the
+     destructive control is the end of the page, wherever the page ends. */
+  .pc-delete {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+@media (max-width: 720px) {
+  .dialog-wide:has(.pc-page) .dialog-head {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .dialog-wide:has(.pc-page) .dialog-body {
+    padding: var(--space-3) var(--space-4) var(--space-5);
+  }
+
+  .pc-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+
+  .pc-label {
+    padding-top: 0;
+  }
+
+  .pc-side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pc-pair {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 26px;
+  }
+}

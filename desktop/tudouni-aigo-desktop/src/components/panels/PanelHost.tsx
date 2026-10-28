@@ -31,15 +31,16 @@ import { TaskPanel } from './TaskPanel';
  * palette is different — its input sits at the top and it hugs the top of the
  * window. Esc and clicking the overlay close, handled by the dialog primitive.
  *
- * Three panels take the wide container (`dialog-wide`): the configuration
+ * Four panels take the wide container (`dialog-wide`): the configuration
  * editor, whose field grid needs the room; the task panel, whose rows carry a
  * name, a description, a workspace · model line and a fixed action slot across
  * one line — at 640px the action slot and the meta line collide, which is the
- * whole reason the task design puts them at opposite edges; and Learn this
- * workspace, which is the same two-column editor shape as the task panel's.
- * Usage joins them with its own reason: a year's heatmap is fifty-three week
- * columns, and every column squeezed below that width is a month nobody can
- * point at.
+ * whole reason the task design puts them at opposite edges; Learn this
+ * workspace, which is the same two-column editor shape as the task panel's; and
+ * Settings, whose form and read-out card are columns rather than a form with a
+ * side note. Usage joins them with its own reason: a year's heatmap is
+ * fifty-three week columns, and every column squeezed below that width is a
+ * month nobody can point at.
  *
  * Terminals are on the same rung for the task row's own reason: a terminal row
  * carries an id, a status badge, a cwd path, a shell and an action slot on one
@@ -72,7 +73,12 @@ export function PanelHost() {
         <DialogPrimitive.Overlay className="overlay-mask" />
         <DialogPrimitive.Content
           className={`dialog${panel === 'commands' ? ' cmdk' : ''}${
-            panel === 'config' || panel === 'tasks' || panel === 'learn' || panel === 'usage' || panel === 'terminal'
+            panel === 'config' ||
+            panel === 'tasks' ||
+            panel === 'learn' ||
+            panel === 'usage' ||
+            panel === 'terminal' ||
+            panel === 'settings'
               ? ' dialog-wide'
               : ''
           }${panel === 'files' ? ' dialog-files' : ''}${

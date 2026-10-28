@@ -62,6 +62,8 @@ export function usePanelSurface(): PanelSurface {
 }
 export function PanelShell({
   title,
+  titleAside,
+  titleClass,
   count,
   note,
   info,
@@ -72,6 +74,13 @@ export function PanelShell({
   footer,
 }: {
   title: string;
+  /** A mark that belongs to the title itself — the route editor's DRAFT chip.
+   *  `count` is deliberately not reused for this: a count is a number in the
+   *  shared vocabulary, and a draft is a state of the thing being edited. */
+  titleAside?: ReactNode;
+  /** An extra class on the title element, for the one surface whose title is a
+   *  key rather than a sentence (the route editor's mono route name). */
+  titleClass?: string;
   count?: ReactNode;
   note?: string;
   /** The `?` beside the title. See `PanelInfo`: a definition, not a control. */
@@ -96,13 +105,17 @@ export function PanelShell({
 
   const titleNode =
     surface.kind === 'dialog' ? (
-      <DialogPrimitive.Title className={info ? 'dialog-title tk-title' : 'dialog-title'}>
-        {title}
+      <DialogPrimitive.Title
+        className={`dialog-title${info ? ' tk-title' : ''}${titleClass !== undefined ? ` ${titleClass}` : ''}`}
+      >
+        <span className="dialog-title-text">{title}</span>
+        {titleAside}
         {info}
       </DialogPrimitive.Title>
     ) : (
-      <span className={info ? 'dialog-title tk-title' : 'dialog-title'}>
-        {title}
+      <span className={`dialog-title${info ? ' tk-title' : ''}${titleClass !== undefined ? ` ${titleClass}` : ''}`}>
+        <span className="dialog-title-text">{title}</span>
+        {titleAside}
         {info}
       </span>
     );

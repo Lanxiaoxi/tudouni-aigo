@@ -18,6 +18,7 @@ export function createSessionBucket(
     key,
     sessionId: null,
     workspace,
+    openedAt: Date.now(),
     remoteWorkspaceId,
     connection: remoteWorkspaceId === null ? LOCAL_CONNECTION_STATE : { phase: 'connecting', problem: null },
     ready: false,

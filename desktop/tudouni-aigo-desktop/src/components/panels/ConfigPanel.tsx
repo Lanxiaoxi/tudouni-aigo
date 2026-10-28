@@ -21,10 +21,11 @@ import {
   Sparkles,
   Trash2,
   Waypoints,
+  X,
 } from 'lucide-react';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
-import { Badge, Count, Info, PanelInfo, Tip } from '@/components/ui/kit';
+import { Badge, PanelInfo, Tip } from '@/components/ui/kit';
 import { readRemoteUserConfig, readUserConfig, revealConfigFile, writeRemoteUserConfig, writeUserConfig } from '@/runtime/tauri';
 import { useShallow } from 'zustand/react/shallow';
 import { remoteConnectionOf, useApp } from '@/state/store';
@@ -47,6 +48,7 @@ import {
   type Draft,
   type McpServerView,
   type ModelView,
+  type Pair,
   type Problem,
   type RouteView,
 } from '@/runtime/userConfig';
@@ -285,6 +287,15 @@ export function ConfigPanel() {
     );
   }
 
+  /** Put the form back to the file's own content. One function for the list's
+   *  footer and the route page's head: the two Reverts are the same act. */
+  function revert() {
+    if (doc === null) return;
+    setDraft(draftFrom(doc));
+    setSaveProblem(null);
+    setSaved(false);
+  }
+
   async function save() {
     if (doc === null || draft === null) return;
     setSaving(true);
@@ -372,11 +383,7 @@ export function ConfigPanel() {
         type="button"
         className="btn btn-ghost btn-compact"
         disabled={!dirty || saving}
-        onClick={() => {
-          setDraft(draftFrom(doc));
-          setSaveProblem(null);
-          setSaved(false);
-        }}
+        onClick={revert}
       >
         {t('panel.config.revert')}
       </button>
@@ -403,22 +410,61 @@ export function ConfigPanel() {
         return (
           <PanelShell
             {...back}
-            title={open.isNew ? t('panel.config.newRoute') : t('panel.config.editRoute')}
-            note={t('panel.config.editorNote')}
-            actions={showKeysToggle}
-            footer={footer}
+            title={route.name.trim() === '' ? t('panel.config.untitled') : route.name}
+            titleClass="pc-title"
+            titleAside={<span className="pc-draft">{t('panel.config.draft')}</span>}
+            note={t('panel.config.routeNote')}
+            actions={
+              <>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={!dirty || saving}
+                  onClick={revert}
+                >
+                  {t('panel.config.revertToFile')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!canSave}
+                  onClick={() => void save()}
+                >
+                  {saving ? t('panel.config.saving') : t('panel.config.saveChanges')}
+                </button>
+              </>
+            }
           >
             <PanelBody>
+              <Problems problems={problems} />
+              {saveProblem !== null ? (
+                <div className="cfg-problems">
+                  <div className="cfg-problem is-blocking" role="alert">
+                    {saveProblem}
+                  </div>
+                </div>
+              ) : null}
               <RouteEditor
+                // A different route is a different page: the open model card,
+                // the armed delete and the scroll position all belong to it.
+                key={open.index}
                 route={route}
                 // The default is a property of the **list**, not of a route: it is
                 // whichever route comes first with a key. Computed once here and
-                // handed down so the editor's fact and the row's badge cannot
+                // handed down so the read-out and the row's badge cannot
                 // disagree.
                 isDefault={defaultRouteIndex(draft) === open.index}
                 showKeys={showKeys}
+                onToggleKeys={() => setShowKeys(!showKeys)}
                 onChange={(patch) => updateRoute(open.index, patch)}
                 onModel={(modelIndex, patch) => updateModel(open.index, modelIndex, patch)}
+                onDelete={() => {
+                  editDraft((current) => ({
+                    ...current,
+                    providers: current.providers.filter((_, i) => i !== open.index),
+                  }));
+                  setEditing(null);
+                }}
               />
             </PanelBody>
           </PanelShell>
@@ -510,15 +556,7 @@ export function ConfigPanel() {
         {/* What is wrong, **above** the fields rather than under them: the list
             can be long enough that nobody scrolls to the bottom of it, and the
             first question after a refused save is "what do I fix". */}
-        {problems.length > 0 ? (
-          <div className="cfg-problems">
-            {problems.map((problem, i) => (
-              <div key={i} className={`cfg-problem${problem.blocking ? ' is-blocking' : ''}`}>
-                {problem.text}
-              </div>
-            ))}
-          </div>
-        ) : null}
+        {problems.length > 0 ? <Problems problems={problems} /> : null}
 
         {/* Where the file is, and the one way to it that is not this form. The
             folder button is what a person needs when the file cannot be parsed
@@ -1024,93 +1062,159 @@ function RowMenu({
    The editors: one route, one MCP server.
    ============================================================ */
 
+/** The six levels the runtime offers when a route declares none. See
+ *  `protocol.md`'s effort section — `none` is not one of them (it is thinking
+ *  off, a different control), and a value the file already holds is appended by
+ *  `RouteEditor` rather than dropped here. */
+const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
 /**
- * A route's fields, in the task editor's two-column shape.
+ * A route's fields, on the page the routes list opens into.
  *
- * The main column is what the route *is* — its identity, its endpoint and the
- * settings that change how it is spoken to; the side card is what is *true of*
- * it: whether it can be selected at all, how many models it carries, whether it
- * is the default, and the one switch (certificate verification) that is a
- * decision rather than a value.
+ * **The page is grouped by what the fields answer, not by the file's sections.**
+ * Connection is who the route is and how it is reached; Reasoning is the
+ * vocabulary it accepts; Request is what rides along with each call. The side
+ * column is the *consequence* of those fields: a preview of the row this route
+ * will become, the read-out the runtime will compute from it, and the model
+ * catalogue at a glance. The form and the list therefore cannot disagree about
+ * what saving will produce.
  *
- * **Models start unfolded here**, unlike the folded block they used to be. That
- * fold existed because every route was a card in a stack and the list was the
- * point; in an editor opened for one route, the model list is half of what the
- * person came to change, and making them open it would be a click for nothing.
- * The fold is still there for a route with a long catalogue.
+ * **The models are cards again, and that is not the old stacked-card layout.**
+ * A model has four settings and a summary line that is worth reading when it is
+ * folded; one card is open, the rest are one-line rows in the same list, so a
+ * nine-model route is still a list. The first one starts open because a route
+ * with models is nearly always being edited here for one of them.
  */
 function RouteEditor({
   route,
   isDefault,
   showKeys,
+  onToggleKeys,
   onChange,
   onModel,
+  onDelete,
 }: {
   route: RouteView;
   isDefault: boolean;
   showKeys: boolean;
+  onToggleKeys: () => void;
   onChange: (patch: Partial<RouteView>) => void;
   onModel: (modelIndex: number, patch: Partial<ModelView>) => void;
+  onDelete: () => void;
 }) {
   const t = useT();
-  const [modelsOpen, setModelsOpen] = useState(true);
+  const [openModel, setOpenModel] = useState<number | null>(route.models.length > 0 ? 0 : null);
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const modelsRef = useRef<HTMLDivElement>(null);
 
   // `Provider.Usable()`: a key and at least one model, or the route is in the
   // catalogue and cannot be picked. Shown as the two facts it is rather than as
-  // a verdict, so the side card says *why* it is not selectable.
+  // a verdict, so the read-out says *why* it is not selectable.
   const hasKey = route.apiKey.trim() !== '';
   const selectable = hasKey && route.models.length > 0;
+  const modelCount =
+    route.models.length === 1
+      ? t('panel.config.oneModel')
+      : t('panel.config.modelCountPlain', { n: route.models.length });
+  const style = route.apiStyle.trim() === '' ? t('panel.config.inferStyle') : route.apiStyle;
+  const host = hostOf(route.baseUrl) || t('panel.config.noBaseUrl');
+
+  // The six levels the runtime offers when a route declares none, plus any
+  // custom level this file already carries. The second half matters: a value
+  // the ui cannot draw is a value somebody can no longer remove.
+  const levels = [
+    ...THINKING_LEVELS,
+    ...route.effortLevels.filter((level) => !(THINKING_LEVELS as readonly string[]).includes(level)),
+  ];
+
+  function toggleLevel(level: string) {
+    const on = route.effortLevels.includes(level);
+    onChange({
+      effortLevels: on
+        ? route.effortLevels.filter((current) => current !== level)
+        : [...route.effortLevels, level],
+    });
+  }
+
+  function patchHeader(at: number, patch: Partial<Pair>) {
+    onChange({
+      headers: route.headers.map((pair, i) => (i === at ? { ...pair, ...patch } : pair)),
+    });
+  }
+
+  function addModel() {
+    const at = route.models.length;
+    onChange({ models: [...route.models, emptyModel()] });
+    setOpenModel(at);
+    // The new card is appended below the fold when the route already has a
+    // catalogue. Two frames: one for React's commit, one for the browser to
+    // lay the new card out before it is measured.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        modelsRef.current
+          ?.querySelector('.pc-model:last-child')
+          ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    });
+  }
+
+  function removeModel(at: number) {
+    const models = route.models.filter((_, i) => i !== at);
+    onChange({ models });
+    // Keep the open card pointing at the same model where possible. Without
+    // this, removing the second of three would leave the third's index pointing
+    // past the end, and the next click on it would open nothing.
+    setOpenModel((current) => {
+      if (current === null) return null;
+      if (current === at) return models.length === 0 ? null : Math.min(at, models.length - 1);
+      return current > at ? current - 1 : current;
+    });
+  }
+
+  function showAllModels() {
+    modelsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
   return (
-    <div className="tk-editor">
-      <div className="tk-editor-main">
-        <section className="tk-section">
-          <div className="tk-section-head">
-            <span className="tk-section-label">{t('panel.config.sectionIdentity')}</span>
-          </div>
-          <div className="cfg-grid">
-            <Field label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
+    <div className="pc-page">
+      <div className="pc-columns">
+        <div className="pc-main">
+          <section className="pc-section">
+            <div className="pc-section-head">
+              <span className="pc-section-label">{t('panel.config.sectionConnection')}</span>
+              <span className="pc-rule" />
+            </div>
+
+            <PcField label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
               <input
                 type="text"
-                className="cfg-input mono"
+                className="cfg-input mono is-short"
                 value={route.name}
                 spellCheck={false}
+                autoComplete="off"
                 onChange={(e) => onChange({ name: e.target.value })}
               />
-            </Field>
-            <Field label={t('panel.config.displayName')} hint={t('panel.config.displayNameHint')}>
-              <input
-                type="text"
-                className="cfg-input"
-                value={route.displayName}
-                onChange={(e) => onChange({ displayName: e.target.value })}
-              />
-            </Field>
-          </div>
-        </section>
+            </PcField>
 
-        <section className="tk-section">
-          <div className="tk-section-head">
-            <span className="tk-section-label">{t('panel.config.sectionEndpoint')}</span>
-          </div>
-          <div className="cfg-grid">
-            <Field label={t('panel.config.baseUrl')} required>
+            <PcField label={t('panel.config.baseUrl')} required hint={t('panel.config.baseUrlHint')}>
               <input
                 type="text"
                 className="cfg-input mono"
                 value={route.baseUrl}
                 spellCheck={false}
+                autoComplete="off"
                 placeholder="https://api.example.com"
                 onChange={(e) => onChange({ baseUrl: e.target.value })}
               />
-            </Field>
-            <Field label={t('panel.config.apiStyle')} hint={t('panel.config.apiStyleHint')}>
+            </PcField>
+
+            <PcField label={t('panel.config.apiStyle')} hint={t('panel.config.apiStyleHint')}>
               {/* A select, not a text field: `styleField` refuses a value it
                   does not recognise rather than defaulting, so a fourth one
                   typed here would only ever produce a file the runtime will
                   not open. */}
               <select
-                className="cfg-input"
+                className="cfg-input is-tiny"
                 value={route.apiStyle}
                 onChange={(e) => onChange({ apiStyle: e.target.value })}
               >
@@ -1120,237 +1224,472 @@ function RouteEditor({
                   </option>
                 ))}
               </select>
-            </Field>
-          </div>
-          <Field label={t('panel.config.apiKey')}>
-            <input
-              type={showKeys ? 'text' : 'password'}
-              className="cfg-input mono"
-              value={route.apiKey}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(e) => onChange({ apiKey: e.target.value })}
-            />
-          </Field>
-        </section>
+            </PcField>
 
-        <section className="tk-section">
-          <div className="tk-section-head">
-            <span className="tk-section-label">{t('panel.config.sectionAdvanced')}</span>
-          </div>
-          <div className="cfg-grid">
-            <Field label={t('panel.config.headers')} hint={t('panel.config.headersHint')}>
-              <textarea
-                className="cfg-textarea mono"
-                rows={3}
-                value={textOfPairs(route.headers)}
-                spellCheck={false}
-                onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
-              />
-            </Field>
-            <Field label={t('panel.config.effortLevels')} hint={t('panel.config.effortLevelsHint')}>
-              <textarea
-                className="cfg-textarea mono"
-                rows={3}
-                value={textOfLines(route.effortLevels)}
-                spellCheck={false}
-                onChange={(e) => onChange({ effortLevels: linesOf(e.target.value) })}
-              />
-            </Field>
-          </div>
-        </section>
-
-        <section className="tk-section">
-          <div className="tk-section-head">
-            {/* The fold control wraps the label rather than the whole head: the
-                head also carries the add button, and a wrapper that took the
-                click would fire on its press too. */}
-            <button
-              type="button"
-              className="cfg-fold"
-              aria-expanded={modelsOpen}
-              onClick={() => setModelsOpen(!modelsOpen)}
-            >
-              <ChevronRight size={13} className={`caret${modelsOpen ? ' caret-open' : ''}`} />
-              <span className="tk-section-label">{t('panel.config.models')}</span>
-              <Count value={route.models.length} />
-            </button>
-            <span className="grow" />
-            <Info label={t('panel.config.modelsHint')} />
-            <button
-              type="button"
-              className="btn btn-outline btn-compact"
-              onClick={() => onChange({ models: [...route.models, emptyModel()] })}
-            >
-              <Plus size={12} />
-              {t('panel.config.addModel')}
-            </button>
-          </div>
-
-          <div className={`collapse${modelsOpen ? '' : ' is-collapsed'}`} inert={!modelsOpen}>
-            <div className="tk-subcards">
-              {route.models.map((model, at) => (
-                <ModelCard
-                  key={at}
-                  model={model}
-                  onChange={(patch) => onModel(at, patch)}
-                  onRemove={() => onChange({ models: route.models.filter((_, i) => i !== at) })}
+            <PcField label={t('panel.config.apiKey')} hint={t('panel.config.apiKeyHint')}>
+              <span className="pc-key">
+                <input
+                  type={showKeys ? 'text' : 'password'}
+                  className="cfg-input mono"
+                  value={route.apiKey}
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-label={t('panel.config.apiKey')}
+                  onChange={(e) => onChange({ apiKey: e.target.value })}
                 />
-              ))}
+                <Tip label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}>
+                  <button
+                    type="button"
+                    className="pc-key-eye"
+                    aria-label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}
+                    aria-pressed={showKeys}
+                    onClick={onToggleKeys}
+                  >
+                    {showKeys ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </Tip>
+              </span>
+            </PcField>
+
+            {/* The switch is "verify", not "skip verifying". The file stores the
+                second, and the field used to be labelled with it — a switch whose
+                *on* state means "do not do the safe thing" is a control people
+                misread exactly once each. */}
+            <div className="pc-row">
+              <span className="pc-label">{t('panel.config.verifyCert')}</span>
+              <div className="pc-control">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={route.verify}
+                  aria-label={t('panel.config.verifyCert')}
+                  className={`tk-switch${route.verify ? ' is-on' : ''}`}
+                  onClick={() => onChange({ verify: !route.verify })}
+                >
+                  <span className="tk-switch-knob" />
+                </button>
+                <span className="cfg-hint">{t('panel.config.verifyHint')}</span>
+              </div>
             </div>
-          </div>
-        </section>
-      </div>
+          </section>
 
-      <aside className="tk-editor-side">
-        <div className="tk-side-title">{t('panel.config.sideStatus')}</div>
-        <div className="tk-side-facts">
-          <span className="tk-fact">
-            <span className="tk-fact-label">{t('panel.config.factSelectable')}</span>
-            <span className={`tk-fact-value${selectable ? '' : ' is-negative'}`}>
-              {selectable ? t('common.yes') : t('common.no')}
-            </span>
-          </span>
-          <span className="tk-fact">
-            <span className="tk-fact-label">{t('panel.config.factModels')}</span>
-            <span className="tk-fact-value">{route.models.length}</span>
-          </span>
-          <span className="tk-fact">
-            <span className="tk-fact-label">{t('panel.config.factDefault')}</span>
-            <span className={`tk-fact-value${isDefault ? '' : ' is-muted'}`}>
-              {isDefault ? t('common.yes') : t('common.no')}
-            </span>
-          </span>
+          <section className="pc-section">
+            <div className="pc-section-head">
+              <span className="pc-section-label">{t('panel.config.sectionReasoning')}</span>
+              <span className="pc-rule" />
+            </div>
+
+            <div className="pc-row">
+              <span className="pc-label">{t('panel.config.effortLevels')}</span>
+              <div className="pc-control">
+                <div className="pc-levels" role="group" aria-label={t('panel.config.effortLevels')}>
+                  {levels.map((level) => {
+                    const on = route.effortLevels.includes(level);
+                    return (
+                      <button
+                        key={level}
+                        type="button"
+                        className={`pc-level${on ? ' is-on' : ''}`}
+                        aria-pressed={on}
+                        onClick={() => toggleLevel(level)}
+                      >
+                        {level}
+                      </button>
+                    );
+                  })}
+                </div>
+                <span className="cfg-hint">{t('panel.config.effortLevelsHint')}</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="pc-section">
+            <div className="pc-section-head">
+              <span className="pc-section-label">{t('panel.config.sectionRequest')}</span>
+              <span className="pc-rule" />
+            </div>
+
+            <div className="pc-row">
+              <span className="pc-label">{t('panel.config.headers')}</span>
+              <div className="pc-control">
+                {route.headers.map((pair, at) => (
+                  <div className="pc-pair" key={at}>
+                    <input
+                      type="text"
+                      className="cfg-input mono"
+                      value={pair.key}
+                      spellCheck={false}
+                      autoComplete="off"
+                      aria-label={t('panel.config.headerName')}
+                      placeholder="User-Agent"
+                      onChange={(e) => patchHeader(at, { key: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      className="cfg-input mono"
+                      value={pair.value}
+                      spellCheck={false}
+                      autoComplete="off"
+                      aria-label={t('panel.config.headerValue')}
+                      placeholder="tudouni/0.2"
+                      onChange={(e) => patchHeader(at, { value: e.target.value })}
+                    />
+                    <Tip label={t('panel.config.removeHeader')}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-icon btn-compact cfg-danger"
+                        aria-label={t('panel.config.removeHeader')}
+                        onClick={() =>
+                          onChange({ headers: route.headers.filter((_, i) => i !== at) })
+                        }
+                      >
+                        <X size={14} />
+                      </button>
+                    </Tip>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="pc-add"
+                  onClick={() => onChange({ headers: [...route.headers, { key: '', value: '' }] })}
+                >
+                  <Plus size={13} />
+                  {t('panel.config.addHeader')}
+                </button>
+              </div>
+            </div>
+          </section>
         </div>
-        <p className="tk-field-hint">{t('panel.config.sideStatusHint')}</p>
 
-        {/* The switch is "verify", not "skip verifying". The file stores the
-            second, and the field used to be labelled with it — a switch whose
-            *on* state means "do not do the safe thing" is a control people
-            misread exactly once each. */}
-        <div className="tk-toggle-row">
+        <aside className="pc-side">
+          <div>
+            <div className="pc-side-head">
+              <span className="pc-side-label">{t('panel.config.preview')}</span>
+            </div>
+            <div className="pc-preview">
+              <div className="pc-preview-head">
+                <span className="pc-preview-dot" aria-hidden />
+                <span className="pc-preview-name mono">
+                  {route.name.trim() === '' ? t('panel.config.untitled') : route.name}
+                </span>
+                <span className="grow" />
+                {isDefault ? (
+                  <Badge tone="success" dot={false}>
+                    {t('panel.config.defaultRoute')}
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="pc-preview-sub">
+                <span>{modelCount}</span>
+                <span aria-hidden>·</span>
+                <span>{style}</span>
+                <span aria-hidden>·</span>
+                <span>{host}</span>
+              </div>
+            </div>
+            <p className="pc-side-caption">{t('panel.config.previewHint')}</p>
+          </div>
+
+          <div>
+            <div className="pc-side-head">
+              <span className="pc-side-label">{t('panel.config.readOut')}</span>
+              <span className="pc-side-note">{t('panel.config.notEditable')}</span>
+            </div>
+            <div className="pc-readout">
+              <span className="pc-readout-row">
+                <span>{t('panel.config.factSelectable')}</span>
+                <span className={`pc-readout-value${selectable ? '' : ' is-negative'}`}>
+                  {selectable ? t('common.yes') : t('common.no')}
+                </span>
+              </span>
+              <span className="pc-readout-row">
+                <span>{t('panel.config.factModels')}</span>
+                <span className="pc-readout-value">{route.models.length}</span>
+              </span>
+              <span className="pc-readout-row">
+                <span>{t('panel.config.factDefault')}</span>
+                <span className={`pc-readout-value${isDefault ? '' : ' is-muted'}`}>
+                  {isDefault ? t('common.yes') : t('common.no')}
+                </span>
+              </span>
+              <span className="pc-readout-row">
+                <span>{t('panel.config.factCertificate')}</span>
+                <span className={`pc-readout-value${route.verify ? '' : ' is-negative'}`}>
+                  {route.verify ? t('panel.config.certVerified') : t('panel.config.certUnverified')}
+                </span>
+              </span>
+            </div>
+            <p className="pc-side-caption">{t('panel.config.sideStatusHint')}</p>
+          </div>
+
+          <div>
+            <div className="pc-side-head">
+              <span className="pc-side-label">{t('panel.config.models')}</span>
+              <span className="pc-side-note">{route.models.length}</span>
+            </div>
+            <div className="pc-mini-list">
+              {route.models.length === 0 ? (
+                <span className="pc-mini-empty">{t('panel.config.noModelsYet')}</span>
+              ) : (
+                route.models.slice(0, 3).map((model, at) => (
+                  <span className="pc-mini-row" key={at}>
+                    <span className="pc-mini-name mono">
+                      {model.id.trim() === '' ? t('panel.config.untitled') : model.id}
+                    </span>
+                    <span className="pc-mini-value">
+                      {model.contextWindow === null ? '—' : shortTokens(model.contextWindow)}
+                    </span>
+                  </span>
+                ))
+              )}
+            </div>
+            {route.models.length > 3 ? (
+              <button type="button" className="pc-allmodels" onClick={showAllModels}>
+                {t('panel.config.allModels', { n: route.models.length })}
+              </button>
+            ) : null}
+          </div>
+
           <button
             type="button"
-            role="switch"
-            aria-checked={route.verify}
-            aria-label={t('panel.config.verifyCert')}
-            className={`tk-switch${route.verify ? ' is-on' : ''}`}
-            onClick={() => onChange({ verify: !route.verify })}
+            className={`btn btn-outline pc-delete${deleteArmed ? ' is-armed' : ''}`}
+            onMouseLeave={() => setDeleteArmed(false)}
+            onClick={() => {
+              if (deleteArmed) onDelete();
+              else setDeleteArmed(true);
+            }}
           >
-            <span className="tk-switch-knob" />
+            {deleteArmed ? t('panel.config.removeConfirm') : t('panel.config.deleteRoute')}
           </button>
-          <span className="tk-toggle-text">
-            <span className="tk-toggle-label">{t('panel.config.verifyCert')}</span>
-            <span className="tk-field-hint">{t('panel.config.verifyHint')}</span>
-          </span>
+        </aside>
+      </div>
+
+      <section className="pc-section pc-models" ref={modelsRef}>
+        <div className="pc-section-head">
+          <span className="pc-section-label">{t('panel.config.models')}</span>
+          <span className="pc-count">{route.models.length}</span>
+          <span className="pc-rule" />
+          <button type="button" className="btn btn-outline btn-compact" onClick={addModel}>
+            <Plus size={12} />
+            {t('panel.config.addModel')}
+          </button>
         </div>
-      </aside>
+
+        {route.models.length === 0 ? (
+          <p className="pc-models-empty">{t('panel.config.modelsHint')}</p>
+        ) : (
+          <div className="pc-model-list">
+            {route.models.map((model, at) => (
+              <ModelCard
+                key={at}
+                model={model}
+                open={openModel === at}
+                onToggle={() => setOpenModel((current) => (current === at ? null : at))}
+                onChange={(patch) => onModel(at, patch)}
+                onRemove={() => removeModel(at)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
 
+/** The host of a base URL, for the preview's one-line summary. A URL that has
+ *  not been finished yet is shown verbatim: an empty preview would say less
+ *  than the half-typed value does. */
+function hostOf(baseUrl: string): string {
+  const raw = baseUrl.trim();
+  if (raw === '') return '';
+  try {
+    return new URL(raw).host;
+  } catch {
+    return raw;
+  }
+}
+
+/** `1M`, `256K` — the model catalogue's one-glance sizes for the side card. */
+function shortTokens(n: number): string {
+  if (n >= 1_000_000) {
+    const value = n / 1_000_000;
+    return `${Number.isInteger(value) ? value : value.toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
+/** `1,048,576` — the same number in full, where there is room to read it. */
+function grouped(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
 /**
- * One model: id, label, the window it will be measured against, and how it
- * thinks. All of it is the runtime's catalogue, none of it starts a session.
+ * One model: id, label, the window it will be measured against, and whether it
+ * takes pictures. All of it is the runtime's catalogue, none of it starts a
+ * session.
+ *
+ * Collapsed, the head says everything a reader scanning a nine-model route
+ * needs: the id, its context window and whether it sees. The open card repeats
+ * the window in full because that is the field being typed into.
  */
 function ModelCard({
   model,
+  open,
+  onToggle,
   onChange,
   onRemove,
 }: {
   model: ModelView;
+  open: boolean;
+  onToggle: () => void;
   onChange: (patch: Partial<ModelView>) => void;
   onRemove: () => void;
 }) {
   const t = useT();
+  const meta = [
+    model.contextWindow === null
+      ? null
+      : t('panel.config.contextMeta', { n: grouped(model.contextWindow) }),
+    model.vision ? t('panel.config.visionMeta') : t('panel.config.noVisionMeta'),
+  ]
+    .filter((part) => part !== null)
+    .join(' · ');
+
   return (
-    <div className="tk-subcard">
-      <div className="tk-subcard-head">
-        <span className="mono">{model.id.trim() === '' ? t('panel.config.untitled') : model.id}</span>
-        <span className="grow" />
-        <Tip label={t('panel.config.removeModel')}>
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon btn-compact cfg-danger"
-            aria-label={t('panel.config.removeModel')}
-            onClick={onRemove}
-          >
-            <Trash2 size={12} />
-          </button>
-        </Tip>
+    <div className={`pc-model${open ? ' is-open' : ''}`}>
+      <div className="pc-model-head">
+        <button type="button" className="pc-model-toggle" aria-expanded={open} onClick={onToggle}>
+          <span className="pc-model-name mono">
+            {model.id.trim() === '' ? t('panel.config.untitled') : model.id}
+          </span>
+          <span className="pc-model-meta">{meta}</span>
+          <span className="grow" />
+          <ChevronRight size={15} className={`pc-caret${open ? ' is-open' : ''}`} />
+        </button>
+        {open ? (
+          <Tip label={t('panel.config.removeModel')}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon btn-compact cfg-danger"
+              aria-label={t('panel.config.removeModel')}
+              onClick={onRemove}
+            >
+              <Trash2 size={14} />
+            </button>
+          </Tip>
+        ) : null}
       </div>
 
-      <div className="cfg-grid">
-        <Field label={t('panel.config.modelId')} required>
-          <input
-            type="text"
-            className="cfg-input mono"
-            value={model.id}
-            spellCheck={false}
-            onChange={(e) => onChange({ id: e.target.value })}
-          />
-        </Field>
-        <Field label={t('panel.config.modelLabel')}>
-          <input
-            type="text"
-            className="cfg-input"
-            value={model.label}
-            onChange={(e) => onChange({ label: e.target.value })}
-          />
-        </Field>
-      </div>
-
-      <div className="cfg-grid">
-        <Field label={t('panel.config.contextWindow')} hint={t('panel.config.contextWindowHint')}>
-          {/* Empty is a real answer and not zero: it means "the catalogue does
-              not know", and the interface then reports usage without a
-              percentage. A wrong percentage is worse than none. */}
-          <input
-            type="text"
-            inputMode="numeric"
-            className="cfg-input"
-            value={model.contextWindow === null ? '' : String(model.contextWindow)}
-            placeholder={t('panel.config.contextWindowAbsent')}
-            spellCheck={false}
-            onChange={(e) => onChange({ contextWindow: readNumber(e.target.value) })}
-          />
-        </Field>
-        <Field label={t('panel.config.reasoningEffort')} hint={t('panel.config.reasoningEffortHint')}>
-          <input
-            type="text"
-            className="cfg-input mono"
-            value={model.reasoningEffort}
-            spellCheck={false}
-            onChange={(e) => onChange({ reasoningEffort: e.target.value })}
-          />
-        </Field>
-      </div>
-
-      <div className="cfg-grid">
-        <Field label={t('panel.config.modelEffortLevels')} hint={t('panel.config.modelEffortLevelsHint')}>
-          <textarea
-            className="cfg-textarea mono"
-            rows={2}
-            value={textOfLines(model.effortLevels)}
-            spellCheck={false}
-            onChange={(e) => onChange({ effortLevels: linesOf(e.target.value) })}
-          />
-        </Field>
-        <div className="cfg-field">
-          <span className="cfg-label">{t('panel.config.vision')}</span>
-          <label className="cfg-check">
+      {open ? (
+        <div className="pc-model-body">
+          <PcField label={t('panel.config.modelId')} required>
             <input
-              type="checkbox"
-              checked={model.vision}
-              onChange={(e) => onChange({ vision: e.target.checked })}
+              type="text"
+              className="cfg-input mono"
+              value={model.id}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => onChange({ id: e.target.value })}
             />
-            <span>{t('panel.config.visionOn')}</span>
-          </label>
-          <span className="cfg-hint">{t('panel.config.visionHint')}</span>
+          </PcField>
+
+          <PcField label={t('panel.config.modelLabel')}>
+            <input
+              type="text"
+              className="cfg-input"
+              value={model.label}
+              placeholder={t('panel.config.modelLabelPlaceholder')}
+              autoComplete="off"
+              onChange={(e) => onChange({ label: e.target.value })}
+            />
+          </PcField>
+
+          <PcField label={t('panel.config.contextWindow')} hint={t('panel.config.contextWindowHint')}>
+            {/* Empty is a real answer and not zero: it means "the catalogue does
+                not know", and the interface then reports usage without a
+                percentage. A wrong percentage is worse than none. */}
+            <span className="pc-window">
+              <input
+                type="text"
+                inputMode="numeric"
+                className="cfg-input pc-window-input"
+                value={model.contextWindow === null ? '' : grouped(model.contextWindow)}
+                placeholder={t('panel.config.contextWindowAbsent')}
+                spellCheck={false}
+                aria-label={t('panel.config.contextWindow')}
+                onChange={(e) => onChange({ contextWindow: readTokenCount(e.target.value) })}
+              />
+              <span className="pc-window-suffix">{t('panel.config.contextWindowTokens')}</span>
+            </span>
+          </PcField>
+
+          <div className="pc-row">
+            <span className="pc-label">{t('panel.config.acceptsImages')}</span>
+            <div className="pc-control">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={model.vision}
+                aria-label={t('panel.config.acceptsImages')}
+                className={`tk-switch${model.vision ? ' is-on' : ''}`}
+                onClick={() => onChange({ vision: !model.vision })}
+              >
+                <span className="tk-switch-knob" />
+              </button>
+              <span className="cfg-hint">{t('panel.config.acceptsImagesHint')}</span>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
+}
+
+/** One labelled row: the label in the left column, the control and its hint in
+ *  the right. The label wraps the control, so clicking the word focuses the
+ *  field without a second `for`/`id` to keep in sync. */
+function PcField({
+  label,
+  hint,
+  required = false,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  required?: boolean;
+  children: ReactNode;
+}) {
+  const t = useT();
+  return (
+    <label className="pc-row">
+      <span className="pc-label">
+        {label}
+        {required ? (
+          <>
+            <span className="cfg-required" aria-hidden title={t('panel.config.requiredHint')}>
+              *
+            </span>
+            <span className="sr-only">{t('panel.config.required')}</span>
+          </>
+        ) : null}
+      </span>
+      <span className="pc-control">
+        {children}
+        {hint ? <span className="cfg-hint">{hint}</span> : null}
+      </span>
+    </label>
+  );
+}
+
+/** A whole number of tokens, or null. Commas are stripped rather than refused:
+ *  the field draws a grouped number, so the reader who edits it keeps the
+ *  commas they can see. */
+function readTokenCount(text: string): number | null {
+  const trimmed = text.replace(/[,\s]/g, '');
+  if (trimmed === '') return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 /**
@@ -1512,6 +1851,27 @@ function ServerEditor({
 }
 
 /* ---------------- the small pieces ---------------- */
+
+/**
+ * Everything the draft would be refused for, above the fields.
+ *
+ * A component rather than two copies because the list and the route page show
+ * the same list: the page can be open while a name is blank, and the sentence
+ * that explains the disabled Save has to be on the surface the person is
+ * looking at.
+ */
+function Problems({ problems }: { problems: Problem[] }) {
+  if (problems.length === 0) return null;
+  return (
+    <div className="cfg-problems">
+      {problems.map((problem, i) => (
+        <div key={i} className={`cfg-problem${problem.blocking ? ' is-blocking' : ''}`}>
+          {problem.text}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** The empty state, in the shelf's own shape — a mark, a title, and what to do
  *  about it. `.tk-blank` is the tasks shelf's, so an empty list looks the same

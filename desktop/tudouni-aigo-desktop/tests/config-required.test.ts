@@ -38,14 +38,16 @@ const tsx = readFileSync(
 /**
  * The i18n keys of the fields that carry the marker, as written.
  *
- * Naive on purpose: it finds each `<Field …>` tag and asks whether `required`
- * appears among its props. `required` is only ever used as a bare boolean prop,
- * so a match on the word is a match on the prop — and the `Field` definition's
- * own `required?: boolean` is not a JSX tag, so it is not in scope here.
+ * Naive on purpose: it finds each field tag (`Field`, and the route page's
+ * `PcField`, which is the same control with the label in its own column) and
+ * asks whether `required` appears among its props. `required` is only ever used
+ * as a bare boolean prop, so a match on the word is a match on the prop — and
+ * the `Field` definition's own `required?: boolean` is not a JSX tag, so it is
+ * not in scope here.
  */
 function markedFields(): string[] {
   const keys: string[] = [];
-  for (const tag of tsx.matchAll(/<Field\b[\s\S]*?>/g)) {
+  for (const tag of tsx.matchAll(/<(?:Pc)?Field\b[\s\S]*?>/g)) {
     const props = tag[0];
     const label = props.match(/label=\{t\('([^']+)'\)\}/);
     assert.ok(label !== null, `a <Field> has no t('…') label: ${props.slice(0, 120)}`);
