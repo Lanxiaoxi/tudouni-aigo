@@ -205,6 +205,39 @@
   color: var(--fg-faint);
 }
 
+/* ---- the first-run repository checklist ----
+   One row per candidate, a real `.cfg-check` (the Learn/Configuration checkbox
+   shape, accent-tinted input) per row: the old markup leaned on classes that
+   were never defined, so the rows collapsed into one undivided line with the
+   browser-default blue tick. */
+.ci-repos {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.ci-repos-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-muted);
+}
+
+/* Repository names are paths, so they are mono — the same treatment as every
+   other path in this panel. Long names truncate rather than wrap the row. */
+.ci-repo-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+}
+
 .ci-state-hint {
   margin-top: var(--space-3);
   padding-top: var(--space-3);

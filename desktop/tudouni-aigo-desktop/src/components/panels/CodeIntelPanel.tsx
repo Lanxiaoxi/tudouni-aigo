@@ -439,9 +439,12 @@ function RepoChecklist({
     <div className="ci-repos">
       <div className="wm-legend">{t('panel.codeintel.reposTitle')}</div>
       <p className="ci-hint">{t('panel.codeintel.reposHint')}</p>
+      {/* One row per repository. `.cfg-check` is the checkbox shape the Learn and
+          Configuration panels use — the same native input, tinted with the app's
+          own accent — so a ticked box here means the same thing as there. */}
       <div className="ci-repos-list" role="group" aria-label={t('panel.codeintel.reposTitle')}>
         {candidates.map((repo) => (
-          <label key={repo || '.'} className="ci-repo-row">
+          <label key={repo || '.'} className="cfg-check ci-repo-row">
             <input
               type="checkbox"
               checked={checked.has(repo)}
