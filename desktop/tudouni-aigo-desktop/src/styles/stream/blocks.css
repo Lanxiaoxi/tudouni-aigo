@@ -420,6 +420,21 @@
   word-break: break-word;
 }
 
+/* `.e-answer` 单独一条封顶：它是 `align-items: flex-start` 的 flex 列（`.e-answer-row`）
+   里不被拉伸的 item，交叉轴宽度取 fit-content——而 fit-content 的下限是
+   min-content。正文的 min-content 只是一段话里最长的单词，但 `<pre>` 里的
+   等宽行不换行：一条长命令的 min-content 就是整行的宽度，于是回答行连同
+   代码块被顶出 980px 列、一路顶到窗口右缘（正文能换行，平时看不出来）。
+   上面的 `word-break: break-word` 在这里救不了——它对 `white-space: pre`
+   的文本根本不生效，而长行恰恰都在 pre 里。用户气泡没这个毛病，靠的是
+   那条 `max-width: 78%`。压回 100% 后，超宽的行落在 `pre` 自己的
+   `overflow-x: auto` 里横向滚动——代码块本就该横滚，不该换行。
+   `.e-stream` 不共享这条：它的文本是 `pre-wrap`，min-content 只是最长
+   单词加 `word-break` 的兜底，没有顶宽的路径。 */
+.e-answer {
+  max-width: 100%;
+}
+
 .e-stream {
   white-space: pre-wrap;
 }

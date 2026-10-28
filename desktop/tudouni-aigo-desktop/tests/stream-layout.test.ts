@@ -314,3 +314,31 @@ test('a long terminal line is reachable by the pane\'s horizontal scrollbar', ()
       'the end of a line sit in a box that ends at the last glyph',
   );
 });
+
+/* ============================================================
+   The answer row's width
+   ============================================================ */
+
+test('an answer row cannot be pushed past the transcript column', () => {
+  // `.e-answer` is a non-stretched item in the `.e-answer-row` flex column
+  // (`align-items: flex-start`), so its width resolves to fit-content — whose
+  // *floor* is min-content. Prose min-content is one long word, but a fenced
+  // `<pre>` line never breaks: one long command makes the row's min-content the
+  // whole line's width, and the row (code block included) then grows out of the
+  // 980px column all the way to the window edge. The row's own `word-break:
+  // break-word` cannot save it — it does not apply to `white-space: pre` text,
+  // which is exactly where the long lines live. The user bubble never showed the
+  // bug because it carries `max-width: 78%`.
+  //
+  // Capped back to `max-width: 100%`, an over-wide line scrolls inside the
+  // block's own `pre { overflow-x: auto }` instead of reflowing — which is what
+  // a code block should do.
+  const body = streamRuleBody('.e-answer');
+  assert.ok(body !== null, 'the `.e-answer` rule is gone from the stream stylesheet');
+  assert.match(
+    body,
+    /max-width:\s*100%/,
+    'an answer row with a wide code line again grows to its min-content width ' +
+      'and pushes past the transcript column to the window edge',
+  );
+});
