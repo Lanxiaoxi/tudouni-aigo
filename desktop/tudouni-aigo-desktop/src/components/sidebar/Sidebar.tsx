@@ -520,9 +520,6 @@ function JobRow({ job }: { job: VmJob }) {
           ? t('jobs.killed')
           : t('jobs.done');
 
-  // A narrow rail cannot hold the name and every detail, so details may be
-  // dropped — the full text stays in `title`. "Uncollected" is signalled by
-  // colour *and* by wording, never by colour alone.
   const aside = `${t('jobs.seconds', { n: job.seconds })}${
     job.exitCode !== null ? ` · ${t('jobs.exit', { n: job.exitCode })}` : ''
   }`;
@@ -532,8 +529,12 @@ function JobRow({ job }: { job: VmJob }) {
       <Badge tone={JOB_TONE[job.state]} dot={false}>
         {label}
       </Badge>
-      <span className="sbr-main" title={job.command}>
-        <span className="mono">{oneLine(job.command, 40)}</span>
+      {/* The command is the material a person matches against the transcript,
+          so it is shown whole: it wraps instead of being cut, and the row
+          grows to hold it. "Uncollected" is signalled by colour *and* by
+          wording, never by colour alone. */}
+      <span className="sbr-main sbr-wrap">
+        <span className="mono">{job.command}</span>
       </span>
       <span className="sbr-aside" title={aside}>
         {aside}

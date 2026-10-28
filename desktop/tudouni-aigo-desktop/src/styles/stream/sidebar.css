@@ -114,6 +114,14 @@
   white-space: nowrap;
 }
 
+/* 命令这类主信息有时值得完整展示（如后台任务的命令行）：
+   允许换行并自然增长，而不是截断成一行省略号。行高随之变高。
+   `overflow-wrap: anywhere` 让无空格的长 token（路径、变量名）也能断开。 */
+.sb-row .sbr-main.sbr-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .sb-row .sbr-aside {
   flex: 0 1 auto;
   min-width: 0;
