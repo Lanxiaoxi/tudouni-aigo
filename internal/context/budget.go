@@ -215,19 +215,31 @@ func (b *Budget) Tokens(text string) int {
 func (b *Budget) EstimateItems(items []*ContextItem, render func(*ContextItem) Rendered) int {
 	total := 0
 	for _, item := range items {
-		if item.Removed {
-			continue
-		}
-		total += MessageOverhead + SnippetOverhead
-		rendered := render(item)
-		if rendered.Text != "" {
-			total += b.Tokens(rendered.Text)
-		}
-		// Pictures are priced per picture, not per character. The header a
-		// degraded level adds is already counted in Text above.
-		for _, image := range rendered.Parts.Images() {
-			total += ImageRefCost(image)
-		}
+		total += b.ItemCost(item, render)
+	}
+	return total
+}
+
+// ItemCost is one item's share of EstimateItems.
+//
+// It exists in two forms because two callers ask two questions: the budget asks
+// "what do these items add up to", and the ledger's breakdown asks "which of
+// them cost what". Writing the arithmetic twice would let the two answers drift,
+// and a breakdown that does not add up to the total it is printed under is worse
+// than no breakdown.
+func (b *Budget) ItemCost(item *ContextItem, render func(*ContextItem) Rendered) int {
+	if item == nil || item.Removed {
+		return 0
+	}
+	total := MessageOverhead + SnippetOverhead
+	rendered := render(item)
+	if rendered.Text != "" {
+		total += b.Tokens(rendered.Text)
+	}
+	// Pictures are priced per picture, not per character. The header a
+	// degraded level adds is already counted in Text above.
+	for _, image := range rendered.Parts.Images() {
+		total += ImageRefCost(image)
 	}
 	return total
 }

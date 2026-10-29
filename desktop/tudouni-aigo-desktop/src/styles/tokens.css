@@ -226,6 +226,22 @@
   --usage-m5: #22D3EE;
   --usage-m6: #F472B6;
 
+  /* The context ledger's breakdown palette (the stacked bar in the context
+     panel, and each row's swatch). Nine slots because that is every part the
+     runtime reports — `internal/agent/context.go` `ContextParts`. Keyed by the
+     part's **name**, never by its position: the runtime sorts the rows largest
+     first, so a position-keyed colour repaints the whole legend the moment one
+     session reads a file the previous one did not. */
+  --ctx-system:   #94A3B8;
+  --ctx-messages: #60A5FA;
+  --ctx-tools:    #34D399;
+  --ctx-summary:  #A78BFA;
+  --ctx-note:     #64748B;
+  --ctx-files:    #F59E0B;
+  --ctx-commands: #F472B6;
+  --ctx-search:   #22D3EE;
+  --ctx-images:   #FB923C;
+
   --info:          #60A5FA;  --info-subtle:    rgba(96, 165, 250, 0.14);
   --warning:       #F59E0B;  --warning-subtle: rgba(245, 158, 11, 0.15);
   --warning-border: rgba(245, 158, 11, 0.45);  /* 看板卡片「等你回答」的描边，配对 accent-border */
@@ -398,6 +414,19 @@
   --usage-m4: #7C3AED;
   --usage-m5: #0891B2;
   --usage-m6: #DB2777;
+
+  /* The context ledger's breakdown palette — the dark theme's comment up top
+     applies. Each slot is the light-theme retune of its dark counterpart: the
+     swatch is only 10px, so a pastel one would disappear on a pale card. */
+  --ctx-system:   #64748B;
+  --ctx-messages: #2563EB;
+  --ctx-tools:    #059669;
+  --ctx-summary:  #7C3AED;
+  --ctx-note:     #94A3B8;
+  --ctx-files:    #D97706;
+  --ctx-commands: #DB2777;
+  --ctx-search:   #0891B2;
+  --ctx-images:   #EA580C;
 
   --info:          #2563EB;  --info-subtle:    #EAF1FC;
   --warning:       #A66314;  --warning-subtle: #FBF1E1;

@@ -111,6 +111,30 @@ func (r *Runtime) contextLedger() any {
 	return r.ContextValue.Stats()
 }
 
+// contextParts is the ledger's breakdown as the wire carries it: an ordered
+// list of `{key, tokens}`, largest first.
+//
+// The keys are the agent's own part names (`system`, `messages`, the artifact
+// buckets…) and are **not** translated here. Wording belongs to the front end;
+// a runtime that sent "系统提示词" would pin the protocol to a language.
+//
+// Absent when there is nothing to say (no agent, no parts): an empty array and
+// "this runtime does not break the request down" are different statements.
+func (r *Runtime) contextParts() []any {
+	if r.Agent == nil {
+		return nil
+	}
+	parts := r.Agent.ContextParts()
+	if len(parts) == 0 {
+		return nil
+	}
+	rows := make([]any, 0, len(parts))
+	for _, part := range parts {
+		rows = append(rows, map[string]any{"key": part.Key, "tokens": part.Tokens})
+	}
+	return rows
+}
+
 func (r *Runtime) contextPayload() map[string]any {
 	if r.ContextValue == nil {
 		return nil
@@ -126,6 +150,12 @@ func (r *Runtime) contextPayload() map[string]any {
 	payload := map[string]any{
 		"context": r.ContextValue.Stats(),
 		"window":  r.modelWindow(),
+	}
+	// The breakdown, one row per named share of the request. It is computed
+	// here — after `RefreshEstimate` above — so the rows describe the same walk
+	// that produced `estimated_tokens`: they add up to it.
+	if parts := r.contextParts(); len(parts) > 0 {
+		payload["parts"] = parts
 	}
 	if r.SessionValue != nil {
 		payload["messages"] = r.SessionValue.MessageCount()

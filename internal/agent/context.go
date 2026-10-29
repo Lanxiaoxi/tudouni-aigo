@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -418,6 +419,159 @@ func (a *Agent) Measure() int {
 	// The summary is already counted inside the fixed overhead, which is the only
 	// place that counts it.
 	return total
+}
+
+// ContextPart is one named share of a request's estimated tokens.
+//
+// The `Key` values are a closed set — the parts `Measure` is made of. They are
+// the wire form rather than a display string: the interface owns the wording, so
+// a language change never moves a protocol field.
+type ContextPart struct {
+	Key    string
+	Tokens int
+}
+
+// The parts. Each name is one thing the runtime really sends, not a category
+// invented to make a chart look full: `system` is the system prompt, `messages`
+// the user's and assistant's own words, `toolResults` the reference line each
+// tool message carries, `summary` the folded stretch's stand-in, `note` the
+// per-round line (tasks, skills, jobs), and the four artifact buckets are the
+// bodies the context layer holds, typed the way `ToolResultProcessor` types them.
+const (
+	PartSystem      = "system"
+	PartMessages    = "messages"
+	PartToolResults = "toolResults"
+	PartSummary     = "summary"
+	PartNote        = "note"
+	PartFiles       = "files"
+	PartCommands    = "commands"
+	PartSearch      = "search"
+	PartImages      = "images"
+)
+
+// ContextParts decomposes Measure into named parts, largest first.
+//
+// It is the same walk that produces the total, in the same order, so the parts
+// add up to `Measure` exactly — and `Measure` is what the ledger reports as
+// `estimated_tokens`, which is the number these parts are printed under. A
+// breakdown whose rows do not add up to the figure above them is a chart that
+// teaches the reader to distrust every number on the screen.
+//
+// Zeros are dropped rather than printed: a row saying "0 tok" is a statement
+// about nothing, and the usual session has no images, no compaction and no
+// commands at all.
+func (a *Agent) ContextParts() []ContextPart {
+	if a.Context == nil {
+		return nil
+	}
+	budget := a.Context.Budget
+	totals := map[string]int{}
+	order := []string{
+		PartSystem, PartMessages, PartToolResults, PartSummary, PartNote,
+		PartFiles, PartCommands, PartSearch, PartImages,
+	}
+	add := func(key string, tokens int) {
+		if tokens > 0 {
+			totals[key] += tokens
+		}
+	}
+
+	renderer := a.renderer()
+	messages := a.Session.MessagesSnapshot()
+	if renderer == nil {
+		// No renderer but a ledger: `Measure` prices the raw history, and so
+		// does this. There is nothing to bucket — every token here is history.
+		add(PartMessages, a.Measure())
+	} else {
+		// 1) The artifact half, bucketed by the artifact's own type. The type is
+		//    the processor's (`file` / `text` / `command` / `search` / `web` /
+		//    `image`); unknown types are text bodies and land with the files.
+		for _, item := range a.Context.State.Live() {
+			if item.Removed {
+				continue
+			}
+			key := PartFiles
+			if artifact, known := a.Context.Store.Get(item.ArtifactID); known {
+				key = artifactPart(artifact.Type)
+			}
+			add(key, budget.ItemCost(item, renderer.RenderItem))
+		}
+
+		// 2) The history half, bucketed by role. The summary is a `user`
+		//    message but is not something the person said, so it is taken out by
+		//    position — the same position `FoldedView` puts it in.
+		summary := a.summaryMessage()
+		view, folded, summaryKey := a.foldedViewWithKey(summary)
+		key := a.renderKeyFor(renderer, a.Session.MessageCount(), folded, summaryKey)
+		_, costs := a.cachedRender(renderer, view, key)
+		factor := budget.Factor()
+		summaryIndex := -1
+		if summary != nil {
+			summaryIndex = 0
+			if len(view) > 0 && view[0]["role"] == "system" {
+				summaryIndex = 1
+			}
+		}
+		for index, cost := range costs {
+			tokens := cost.flat
+			if cost.scaled != 0 {
+				tokens += int(float64(cost.scaled) * factor)
+			}
+			switch {
+			case index == summaryIndex:
+				add(PartSummary, tokens)
+			case roleOf(view[index]) == "tool":
+				add(PartToolResults, tokens)
+			default:
+				// The system message prices as zero here; it is counted below.
+				add(PartMessages, tokens)
+			}
+		}
+
+		// 3) The system prompt and the trailing note, exactly as `Measure`
+		//    prices them.
+		if len(messages) > 0 && messages[0]["role"] == "system" {
+			system := content.Parse(messages[0]["content"]).TextOf()
+			add(PartSystem, context.MessageOverhead+budget.Tokens(system))
+		}
+		if note := a.noteText(); note != "" {
+			add(PartNote, context.MessageOverhead+budget.Tokens(note))
+		}
+	}
+
+	parts := make([]ContextPart, 0, len(order))
+	for _, key := range order {
+		if tokens := totals[key]; tokens > 0 {
+			parts = append(parts, ContextPart{Key: key, Tokens: tokens})
+		}
+	}
+	sort.SliceStable(parts, func(i, j int) bool { return parts[i].Tokens > parts[j].Tokens })
+	return parts
+}
+
+// artifactPart maps an artifact type onto the bucket the breakdown prints.
+//
+// `file` and `text` are one bucket on purpose: both are bodies a person asked
+// to see, and the difference between a file read and a written sentence is not
+// a difference in what the window paid for. `search` and `web` are one bucket
+// for the same reason — they are the two shapes of "looked it up".
+func artifactPart(kind string) string {
+	switch kind {
+	case "command":
+		return PartCommands
+	case "search", "web":
+		return PartSearch
+	case context.TypeImage:
+		return PartImages
+	}
+	return PartFiles
+}
+
+// roleOf reads a message's role. Absent and non-string are both "" — a message
+// with no role is not a tool message, which is all this is asked.
+func roleOf(message map[string]any) string {
+	role, _ := message["role"].(string)
+	return role
 }
 
 // RefreshEstimate recomputes the cost now and writes it back. It reports whether

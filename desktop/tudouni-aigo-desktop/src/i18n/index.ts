@@ -1574,6 +1574,20 @@ export const en = {
   'inblock.note': 'Note',
   'inblock.used': 'Used',
   'inblock.window': 'Window',
+  /* The breakdown drawn above the ledger table. The headline is a percentage of
+     the window, and the rows are the request's own parts — the runtime sends the
+     keys, this file owns the words. */
+  'inblock.context.usedPct': '{percent} used',
+  'inblock.context.breakdown': 'What this request is made of ({n} parts)',
+  'inblock.part.system': 'System prompt',
+  'inblock.part.messages': 'Messages',
+  'inblock.part.toolResults': 'Tool results',
+  'inblock.part.summary': 'Compaction summary',
+  'inblock.part.note': 'Session note',
+  'inblock.part.files': 'Files & text',
+  'inblock.part.commands': 'Command output',
+  'inblock.part.search': 'Search & web',
+  'inblock.part.images': 'Images',
   'inblock.before': 'Before',
   'inblock.after': 'After',
   'inblock.folded': 'Folded',

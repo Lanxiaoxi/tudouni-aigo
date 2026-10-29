@@ -301,6 +301,14 @@
           "**没有上下文管理层时**，整个容器是空对象或不发 —— 前端必须说\"这里没有上下文管理\"，",
           "**不能**画一排 0：一排 0 读起来是\"开着但什么也没做\"，那是另一个、并且是假的陈述。",
           "**合并发生在 runtime 里**，前端拿到的是可以直接渲染的一份 —— 它不该知道这两半各自住在谁身上。",
+          "`parts` 是这一格新增的**分项**：`[{\"key\": \"messages\", \"tokens\": 187200}, …]`，按 token 从大到小排。",
+          "key 是**闭集**（`internal/agent/context.go` 的 `Part*` 常量）：`system` / `messages` / `toolResults` /",
+          "`summary` / `note` / `files` / `commands` / `search` / `images`。**它不翻译** —— 措辞属于前端，",
+          "runtime 发中文就把协议钉在了一种语言上；前端遇到不认识的 key 必须照画（key 原文当标签），",
+          "因为丢一行会让下面的等式不成立。**各行之和恒等于 `context.estimated_tokens`**：两者是",
+          "`Agent.Measure()` 的同一次拆解（`ContextParts`），不是两次测量。全 0 的项不发 ——",
+          "一行 \"0 tok\" 是关于空无的陈述。没有 `parts` 这一格（老 runtime）时前端照旧只画 ledger，",
+          "**不要**拿它和\"这次请求没有内容\"混为一谈。",
           "（schema 早先在这里列过 `updated_at`：`contextPayload()` 从来不发这个键，已删。）"
         ]
       },

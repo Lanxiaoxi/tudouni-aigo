@@ -54,6 +54,109 @@
   word-break: break-all;
 }
 
+/* ---------------- context ledger: what the request is made of ---------------- */
+
+/* The block above the raw table: one headline, one stacked bar, one row per
+   part. It is the same component the `/context` block and the status bar's
+   popover draw — one fact, one rendering. */
+.ctx-shares {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ctx-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ctx-headline {
+  font-size: var(--text-h1);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.ctx-window {
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* The track **is the window**, not the used total: a bar filled edge to edge
+   would say "this is all of it", and how much is left is the question this
+   panel answers. The remainder is drawn as its own segment so the two halves
+   share one set of gaps and one set of rounded ends. */
+.ctx-bar {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-muted);
+}
+
+.ctx-seg {
+  flex: 1 1 0;
+  min-width: 3px;
+  border-radius: 2px;
+}
+
+.ctx-seg.is-rest {
+  min-width: 0;
+  background: var(--bg-muted);
+}
+
+.ctx-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Four columns, the two numeric ones right-aligned and fixed: a column that
+   grows with its content makes 9.1k and 187.2k sit at different offsets, and
+   the numbers are the thing being compared. */
+.ctx-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) max-content 3.4em;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--row-h-compact);
+}
+
+.ctx-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.ctx-name {
+  font-size: var(--text-body);
+  color: var(--fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-tok {
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.ctx-pct {
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+  text-align: right;
+  white-space: nowrap;
+}
+
+
 /* ============================================================
    §3 侧栏 5 区块
    ============================================================ */

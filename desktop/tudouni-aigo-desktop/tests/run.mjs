@@ -120,6 +120,13 @@ const SUITES = [
   // session that never exercises the case 鈥?which is why the pure function is
   // asserted here, over events shaped like the real audit stream.
   'stream-blocks.test.ts',
+  // The context ledger's breakdown: the headline, the stacked bar and the rows.
+  // The arithmetic (the parts add up to `estimated_tokens`) is asserted in Go,
+  // where the measurement lives; what is asserted here is what the reader sees
+  // 鈥?that every percentage divides by the same window, that the bar's track is
+  // the window rather than what was sent, and that a runtime sending no parts
+  // still draws the ledger it always did.
+  'context-breakdown.test.tsx',
   // Folding a turn away. Which rows a turn owns (from its head to the next one,
   // and the prompt above it is *not* one of them), what the folded head says its
   // body is doing, and the fact that a finished turn's duration has to be kept on

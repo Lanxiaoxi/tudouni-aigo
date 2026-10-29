@@ -1,11 +1,13 @@
 import { X } from 'lucide-react';
 import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import type { TKey, Translate } from '@/i18n';
 import { Badge, RiskTag } from '@/components/ui/kit';
 import { formatDuration, formatPercent, formatTokens } from '@/utils/format';
 import type { Entry } from '@/state/entries';
 import type {
   ContextLedger,
+  ContextPart,
   StatusGroup,
   ToolRow,
   UiCompactedMsg,
@@ -276,9 +278,17 @@ export function ContextBlock({ p }: { p: UiContextMsg }) {
 
   const used = ledger.estimated_tokens ?? null;
   const window = feature?.window ?? null;
+  // Zero rows are dropped, not drawn: "0 tok" is a claim about nothing, and the
+  // usual session has no images and no compaction at all.
+  const parts = (feature?.parts ?? []).filter((part) => part.tokens > 0);
+  const total = parts.reduce((sum, part) => sum + part.tokens, 0);
 
   return (
     <>
+      {parts.length > 0 ? (
+        <ContextShares parts={parts} used={used} window={window} total={total} />
+      ) : null}
+
       <GroupTable title="ledger" rows={flatten(ledger)} />
 
       <dl className="kv">
@@ -305,6 +315,136 @@ export function ContextBlock({ p }: { p: UiContextMsg }) {
     </>
   );
 }
+
+/**
+ * What the request is made of: one headline, one stacked bar, one row per part.
+ *
+ * **The bar's track is the window, not the used total.** A bar filled edge to
+ * edge says "this is all of it", and "how much of the window is left" is the
+ * question the panel is opened to answer. With no known window the track falls
+ * back to the used total — a full bar then, but an honest one: it is a share of
+ * what was sent, and the percentages in the columns are omitted rather than
+ * divided by a number nobody has.
+ *
+ * Each row's percentage is **of the window**, the same denominator as the
+ * headline, so a row and the headline can be compared directly (187.2k of 1M is
+ * 18.7%, and the rows add up to the 28% above them).
+ */
+function ContextShares({
+  parts,
+  used,
+  window,
+  total,
+}: {
+  parts: ContextPart[];
+  used: number | null;
+  window: number | null;
+  total: number;
+}) {
+  const t = useT();
+  const known = window !== null && window > 0;
+  // The headline is the runtime's own `estimated_tokens`; the segments sum to
+  // the same walk. `rest` is measured from the headline rather than from the
+  // segments: the two are equal by construction (`ContextParts` is `Measure`
+  // decomposed), and if a future runtime ever broke that, the remainder should
+  // follow the number the person reads at the top rather than quietly absorb the
+  // difference into an unlabelled gap.
+  const filled = used ?? total;
+  const track = known ? window : Math.max(total, 1);
+  const rest = Math.max(track - filled, 0);
+  const headline = known ? t('inblock.context.usedPct', { percent: formatPercent(filled / window) }) : formatTokens(filled);
+
+  return (
+    <div className="ctx-shares">
+      <div className="ctx-head">
+        <span className="ctx-headline">{headline}</span>
+        <span className="ctx-window mono">
+          {formatTokens(filled)}
+          {known ? ` / ${formatTokens(window)}` : ''}
+        </span>
+      </div>
+
+      <div
+        className="ctx-bar"
+        role="img"
+        aria-label={t('inblock.context.breakdown', { n: parts.length })}
+      >
+        {parts.map((part) => {
+          const tone = PART_TONE[part.key] ?? 'var(--fg-faint)';
+          return (
+            <span
+              key={part.key}
+              className="ctx-seg"
+              // `flexGrow` in tokens rather than a computed percentage: the
+              // browser does the division once, and no segment is rounded to a
+              // width that disagrees with the number printed beside it.
+              style={{ flexGrow: part.tokens, background: tone }}
+              title={`${partLabel(part.key, t)} · ${formatTokens(part.tokens)}`}
+            />
+          );
+        })}
+        {rest > 0 ? <span className="ctx-seg is-rest" style={{ flexGrow: rest }} /> : null}
+      </div>
+
+      <ul className="ctx-rows">
+        {parts.map((part) => (
+          <li className="ctx-row" key={part.key}>
+            <i
+              className="ctx-dot"
+              style={{ background: PART_TONE[part.key] ?? 'var(--fg-faint)' }}
+              aria-hidden
+            />
+            <span className="ctx-name">{partLabel(part.key, t)}</span>
+            <span className="ctx-tok mono">{formatTokens(part.tokens)}</span>
+            <span className="ctx-pct mono">
+              {known ? formatPercent(part.tokens / window, 1) : ''}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * One colour per part, keyed by the runtime's own name and **not by position**.
+ *
+ * Position would be simpler, but the runtime sorts the rows largest first: a
+ * session that suddenly reads files would repaint Messages orange and every
+ * reader's memory of "blue is messages" would be wrong. An unknown key falls
+ * back to the faint tone and its raw name — the runtime can grow a part before
+ * this file knows about it, and hiding it would make the rows stop adding up.
+ */
+const PART_TONE: Record<string, string> = {
+  system: 'var(--ctx-system)',
+  messages: 'var(--ctx-messages)',
+  toolResults: 'var(--ctx-tools)',
+  summary: 'var(--ctx-summary)',
+  note: 'var(--ctx-note)',
+  files: 'var(--ctx-files)',
+  commands: 'var(--ctx-commands)',
+  search: 'var(--ctx-search)',
+  images: 'var(--ctx-images)',
+};
+
+/** The part labels. A key that is not in here is drawn as the key itself. */
+const PART_LABEL: Record<string, TKey> = {
+  system: 'inblock.part.system',
+  messages: 'inblock.part.messages',
+  toolResults: 'inblock.part.toolResults',
+  summary: 'inblock.part.summary',
+  note: 'inblock.part.note',
+  files: 'inblock.part.files',
+  commands: 'inblock.part.commands',
+  search: 'inblock.part.search',
+  images: 'inblock.part.images',
+};
+
+function partLabel(key: string, t: Translate): string {
+  const label = PART_LABEL[key];
+  return label === undefined ? key : t(label);
+}
+
 
 /** `/compact`. There is no `saved` field — subtracting one here would be
  *  deriving a number the runtime did not send, so before/after are shown. */

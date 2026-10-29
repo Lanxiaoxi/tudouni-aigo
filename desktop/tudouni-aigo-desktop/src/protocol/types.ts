@@ -1183,6 +1183,24 @@ export interface ContextLedger {
 }
 
 /**
+ * One named share of the request's estimated tokens.
+ *
+ * The keys are a closed set the runtime owns — `system`, `messages`,
+ * `toolResults`, `summary`, `note`, `files`, `commands`, `search`, `images` —
+ * and they arrive **untranslated**: wording is the interface's job, so a
+ * language change never moves a protocol field. An unknown key must still be
+ * drawn (the runtime can grow one before this file knows about it); see
+ * `ContextBlock`.
+ *
+ * The rows add up to `estimated_tokens` exactly: both come from the runtime's
+ * one measurement of the request.
+ */
+export interface ContextPart {
+  key: string;
+  tokens: number;
+}
+
+/**
  * The "context feature" container.
  *
  * The nesting is deliberate (`internal/runtime/composition.go` `ContextMessage`
@@ -1209,6 +1227,8 @@ export interface ContextFeature {
   generation?: number;
   summary_id?: string;
   summary_chars?: number;
+  /** Largest first. Absent when the runtime does not break the request down. */
+  parts?: ContextPart[];
 }
 
 export interface UiContextMsg {
