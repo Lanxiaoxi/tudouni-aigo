@@ -256,8 +256,51 @@ func Summarize(events []map[string]any) string {
 		builder.WriteString(i18n.T("audit.summary.stops", "reasons", strings.Join(stops, "  ")) + "\n")
 	}
 
+	// Hooks: invoked / denied / failed / skipped.
+	//
+	// It is a line of its own because it answers a question no other figure does —
+	// "did my guardrail actually run, and did it ever refuse anything". A session with
+	// hooks configured and a line that says 0 invoked is the one symptom a
+	// silently-not-loaded configuration has, and without this line it is invisible.
+	if line := hooksLine(events); line != "" {
+		builder.WriteString(line + "\n")
+	}
+
 	builder.WriteString(i18n.T("audit.summary.cost_tip"))
 	return builder.String()
+}
+
+// hooksLine counts `hook_result` records by what happened to them.
+//
+// Four buckets rather than one total, and the split is the point: "invoked" is work,
+// "denied" is the guardrail doing its job, "failed" is a broken hook, and "skipped"
+// is a short circuit. A single number would make the last two indistinguishable from
+// the first, which is exactly the reading that lets a broken guardrail go unnoticed.
+func hooksLine(events []map[string]any) string {
+	invoked, denied, failed, skipped := 0, 0, 0, 0
+	for _, event := range events {
+		if stringOf(event["kind"]) != KindHookResult {
+			continue
+		}
+		switch stringOf(event["status"]) {
+		case "skipped":
+			skipped++
+		case "denied":
+			denied++
+			invoked++
+		case "ok":
+			invoked++
+		default:
+			// timeout / spawn_error / exit_error / bad_output / truncated
+			failed++
+			invoked++
+		}
+	}
+	if invoked == 0 && skipped == 0 {
+		return ""
+	}
+	return i18n.T("audit.summary.hooks",
+		"invoked", invoked, "denied", denied, "failed", failed, "skipped", skipped)
 }
 
 // timingLine renders the one duration line.

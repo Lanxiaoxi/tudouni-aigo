@@ -73,6 +73,13 @@ func (a *Agent) imagePolicy() func() (bool, string) {
 // session would then carry forever. It also belongs at the very end: the retry's
 // prefix is the failed request's prefix unchanged, so the prompt cache of a long
 // session survives a nudge, which it would not if the line went in earlier.
+//
+// **Hook context goes last, after every other part.** It is the most immediate
+// thing in the tail — it describes this request — and the tail already sits outside
+// the cached prefix, so putting it at the very end costs nothing and puts the hook's
+// words as close to the generation as anything can be. The continuation note comes
+// after even that: "a hook asked you to keep going" is a fact about *this* request,
+// and it has to be the last thing read.
 func (a *Agent) noteText() string {
 	var parts []string
 	if a.Notes != nil {
@@ -82,6 +89,12 @@ func (a *Agent) noteText() string {
 	}
 	if a.emptyNudged {
 		parts = append(parts, emptyNudge)
+	}
+	if hookContext := a.HookContext.Text(); hookContext != "" {
+		parts = append(parts, hookContext)
+	}
+	if a.continueNote != "" {
+		parts = append(parts, a.continueNote)
 	}
 	return strings.Join(parts, "\n\n")
 }
@@ -838,6 +851,16 @@ func (a *Agent) digestPrompt(state context.Compaction, hadState bool, foldedBefo
 		if previous, ok := context.SummaryText(a.Context.Store, state); ok && previous != "" {
 			parts = append(parts,
 				"## 上一版的摘要（它概括的是更早的那一段历史，请在它的基础上接着往下写，不要丢掉里面的事实）\n\n"+previous)
+		}
+	}
+	// The `pre_compact` hook's note goes **before** the skeleton, and it is not a
+	// section of the history: it is an instruction about what matters in the
+	// stretch being folded. Putting it after the skeleton would make it read as a
+	// continuation of the last messages, which is precisely what a summariser is
+	// asked to condense rather than obey.
+	if a.HookPreCompact != nil {
+		if note := a.HookPreCompact(foldedBefore, a.Session.MessageCount(), a.Measure()); note != "" {
+			parts = append(parts, "## pre_compact hook 的提示（不是历史的一部分，是折叠时必须保留的重点）\n\n"+note)
 		}
 	}
 	skeleton := context.DigestMessages(a.Session.MessagesSnapshot(), foldedBefore, &stop, context.DigestMaxChars)

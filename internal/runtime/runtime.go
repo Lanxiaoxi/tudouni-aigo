@@ -9,6 +9,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
 	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/files"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/hooks"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/memory"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/protocol"
@@ -65,6 +66,12 @@ type Options struct {
 
 	// ShouldStop is the per-turn cancellation flag.
 	ShouldStop func() bool
+	// NoHooks is `--no-hooks`: do not read the hooks file at all.
+	//
+	// It exists because a broken hook is the one failure a person cannot work around
+	// from inside a session — the guardrail refuses the very tool calls they would
+	// use to fix it. Switched off, the session starts and the notice says so.
+	NoHooks bool
 	// Report is where an instruction a person has to **act on** goes once the
 	// session is running: today, the device code and verification URI of the
 	// managed-token login (`--ericai`).
@@ -245,6 +252,27 @@ type Runtime struct {
 	// CodeIntel is this workspace's index handle and its panel state. Nil only in
 	// tests that build a Runtime by hand.
 	CodeIntel *codeIntelState
+	// Hooks is the user's configured scripts (see internal/hooks). Nil is the
+	// ordinary state of a machine with no `hooks.json`, and every use is nil-safe.
+	Hooks hooks.Configurable
+	// HookContext is where a hook's `additional_context` collects for the payload
+	// tail, with its two lifetimes (turn and batch). It is created with the runtime
+	// whether or not any hook exists: the agent reads it on every request, and a nil
+	// check there would be a second place to forget.
+	HookContext *hooks.Context
+	// hooksDisabled is `--no-hooks`, kept so `Close` and the notices can say which
+	// state this session is in.
+	hooksDisabled bool
+	// hookNotices are lines the hook layer produced **while a turn was running**,
+	// which cannot go into `notices` (that slice is read once, to build `init`).
+	// They are queued and drained by the front end when the turn ends, the same way
+	// a credential notice is — see DrainHookNotices.
+	hookNoticesMu sync.Mutex
+	hookNotices   []map[string]any
+	// sessionEndOnce makes `session_end` fire exactly once per runtime. A session
+	// switch and a shutdown close the same runtime through two different methods,
+	// and a hook that writes a report must not write it twice.
+	sessionEndOnce sync.Once
 }
 
 // meta is the guarded handle on this session's metadata.

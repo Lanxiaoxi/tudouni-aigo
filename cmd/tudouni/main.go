@@ -25,6 +25,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/context"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/frontends/cli"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/frontends/tui"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/hooks"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
@@ -49,6 +50,9 @@ type options struct {
 	session       string
 	showList      bool
 	showSkills    bool
+	showHooks     bool
+	trustHooks    bool
+	noHooks       bool
 	showAudit     bool
 	showHist      bool
 	autopilot     bool
@@ -89,6 +93,12 @@ func run(argv []string) int {
 	}
 	if opts.showSkills {
 		return showSkills()
+	}
+	if opts.showHooks {
+		return showHooks(opts.noHooks)
+	}
+	if opts.trustHooks {
+		return trustWorkspaceHooks()
 	}
 	if opts.showList {
 		return listSessions()
@@ -165,7 +175,7 @@ func run(argv []string) int {
 		// alternate screen has no scrollback, so the child's error would arrive as a
 		// truncated, unscrollable mess over a dead interface. Asking here is what
 		// makes that sentence readable.
-		if err := runtime.PreflightCheck(); err != nil {
+		if err := runtime.PreflightCheck(opts.noHooks); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
 		}
@@ -188,6 +198,10 @@ func run(argv []string) int {
 			// list — so the flag has to travel with it or the interface would
 			// promise a refresh nobody performs.
 			EricAI: opts.ericai,
+			// The hooks file is read by the child, so the switch has to travel with
+			// it — a `--no-hooks` that stopped at the parent would leave a guardrail
+			// running inside a session whose owner believed it was off.
+			NoHooks: opts.noHooks,
 		})
 	}
 	if opts.stdio {
@@ -290,6 +304,10 @@ func parse(argv []string) (options, error) {
 	flags.StringVar(&opts.session, "session", "", "session id (a new one is created when it does not exist)")
 	flags.BoolVar(&opts.showList, "list", false, "list saved sessions and exit")
 	flags.BoolVar(&opts.showSkills, "skills", false, "list the skills this workspace offers and exit")
+	flags.BoolVar(&opts.showHooks, "hooks", false, "list the hook scripts this machine has configured and exit")
+	flags.BoolVar(&opts.noHooks, "no-hooks", false, "do not read the hooks file at all (every guardrail in it is switched off)")
+	flags.BoolVar(&opts.trustHooks, "trust-workspace-hooks", false,
+		"review this workspace's hooks file, record its hash in trust.json and exit")
 	flags.BoolVar(&opts.showAudit, "audit", false, "print the audit log of a session and exit")
 	flags.BoolVar(&opts.showHist, "history", false, "print a session's messages and exit")
 	flags.BoolVar(&opts.autopilot, "autopilot", false, "do not ask for approval (the audit records every release)")
@@ -345,6 +363,9 @@ func usageText() string {
 		"  --session <id>    use (or create) a session with this id",
 		"  --list            list saved sessions",
 		"  --skills          list this workspace's skills",
+		"  --hooks           list this machine's hook scripts (from " + runtime.HooksFile() + ")",
+		"  --no-hooks        do not read the hooks file at all",
+		"  --trust-workspace-hooks  review this workspace's .tudouni/hooks.json and record it",
 		"  --audit           print a session's audit log",
 		"  --history         print a session's messages",
 		"  --autopilot       do not ask for approval",
@@ -412,6 +433,7 @@ func openRuntime(booted runtime.Booted, sessionID string,
 		MaxSteps:    opts.maxSteps,
 		Resumed:     resumed,
 		EricAI:      opts.ericai,
+		NoHooks:     opts.noHooks,
 		FallbackModel:  opts.fallbackModel,
 		FallbackEffort: opts.fallbackEffort,
 		ShouldStop:  hooks.ShouldStop,
@@ -566,6 +588,105 @@ func showSkills() int {
 	for _, problem := range catalog.Problems {
 		fmt.Println(i18n.T("skills.line.skipped", "item", skills.RenderProblem(problem)))
 	}
+	return 0
+}
+
+// showHooks prints the hooks this machine has configured, and — the half that makes
+// the command worth having — everything that was skipped and why.
+//
+// The shape follows `--skills`, and for the reason stated there: a hook file that
+// half-works produces **no symptom at all**. A hook whose matcher does not compile
+// is not a hook that runs slowly; it is a hook that is not in the list the runtime
+// executes, and the only moment anybody can find out is a command that says so.
+//
+// Three things are printed that a user cannot see anywhere else:
+//
+//   - the resolved timeout and `fail_closed`, because both have defaults that depend
+//     on the event, and "why did a timeout refuse my call" is answered by them;
+//   - the command as written, argv and shell-string forms alike;
+//   - the workspace file, if there is one, with the sentence that says it is not
+//     read. That is the "I put it in the repo and nothing happened" case, which is
+//     otherwise completely silent.
+func showHooks(disabled bool) int {
+	path := runtime.HooksFile()
+
+	if disabled {
+		fmt.Println(i18n.T("notice.hooks.disabled", "path", path))
+		return 0
+	}
+	load, err := runtime.LoadHooks(false)
+	if err != nil {
+		// stdout, not stderr: this command was asked to report on the file, and
+		// splitting one report across two streams makes `--hooks > file` a lie.
+		fmt.Println(err.Error())
+		return 2
+	}
+	if load.Set == nil || load.Set.Len() == 0 {
+		fmt.Println(i18n.T("notice.hooks.listing.empty", "path", path))
+	}
+	rows := 0
+	if load.Set != nil {
+		for _, row := range load.Set.Describe() {
+			if !row.Enabled {
+				fmt.Println(i18n.T("notice.hooks.listing.disabled_row",
+					"event", row.Event, "name", row.Name))
+				continue
+			}
+			rows++
+			fmt.Println(i18n.T("notice.hooks.listing.row",
+				"event", row.Event, "name", row.Name, "matcher", row.Matcher,
+				"timeout", strconv.Itoa(row.TimeoutMs),
+				"fail_closed", strconv.FormatBool(row.FailClosed),
+				"command", row.Command))
+		}
+	}
+	if rows > 0 {
+		// The count line comes **after** the rows here, unlike the start-up notice:
+		// this is a command whose output somebody reads top-down, and a header is
+		// less useful than "these are the N scripts that will run".
+		fmt.Println()
+		fmt.Println(i18n.T("notice.hooks.listing.header", "n", rows, "path", path))
+	}
+	for _, item := range load.Notices {
+		// The `loaded` line repeats the count this command just printed; the rest are
+		// the skips, the warnings and the ignored workspace file, which are the half
+		// worth reading.
+		if code, _ := item["code"].(string); code == "hooks.loaded" {
+			continue
+		}
+		if text, _ := item["text"].(string); text != "" {
+			fmt.Println(text)
+		}
+	}
+	return 0
+}
+
+// trustWorkspaceHooks is `--trust-workspace-hooks`.
+//
+// The command **prints what it is about to trust and then records it**, in that
+// order, and the order is the whole feature: the point of a trust step is that a
+// person read the commands, and a version that recorded first would be an approval
+// prompt with the text hidden.
+//
+// The hash covers `hooks.json` and not the scripts it names. That limit is stated in
+// the output rather than only in the design, because the person approving is the one
+// who has to know it.
+func trustWorkspaceHooks() int {
+	file := runtime.WorkspaceHooksPath()
+	var lines []string
+	err := hooks.TrustCommand(runtime.TrustFile(), paths.WorkspaceDir(), file, "cli",
+		func(line string) { lines = append(lines, line) })
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+	if err != nil {
+		if len(lines) == 0 {
+			fmt.Println(err.Error())
+		}
+		return 2
+	}
+	// Said last, because it qualifies everything above it.
+	fmt.Println(i18n.T("notice.hooks.trust_scope", "file", file))
 	return 0
 }
 

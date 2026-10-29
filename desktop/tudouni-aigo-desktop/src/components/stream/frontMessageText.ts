@@ -116,5 +116,29 @@ export function frontMessageText(t: Translate, message: FrontMessage): string {
             seconds: message.seconds,
             task: message.task,
           });
+    case 'hookDenied':
+      // The hook's own words come last and are kept verbatim: they are the reason
+      // the person wrote the script, and rewording them would be this window
+      // explaining somebody else's rule.
+      return message.reason === ''
+        ? t('note.hook.deniedNoReason', { hook: message.hook, tool: message.tool })
+        : t('note.hook.denied', {
+            hook: message.hook,
+            tool: message.tool,
+            reason: message.reason,
+          });
+    case 'hookFailed':
+      return message.reason === ''
+        ? t('note.hook.failedNoReason', {
+            hook: message.hook,
+            status: message.status,
+            tool: message.tool,
+          })
+        : t('note.hook.failed', {
+            hook: message.hook,
+            status: message.status,
+            tool: message.tool,
+            reason: message.reason,
+          });
   }
 }

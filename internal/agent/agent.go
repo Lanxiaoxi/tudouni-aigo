@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/content"
 	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/hooks"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -225,7 +228,120 @@ type Config struct {
 	// package does not have to know what a catalogue is — the same reason Context
 	// and Ask are injected.
 	Vision func() bool
+
+	// Hooks is the user's configured extension points. Nil is the ordinary state of
+	// a machine with no `hooks.json`, and every call site treats it as "nobody is
+	// listening".
+	//
+	// It is an interface here for the same reason `Ask` is a function: this package
+	// must not know how a hook is executed, only that one may answer. See
+	// `internal/hooks`.
+	Hooks hooks.Runner
+	// HookBase is the envelope every hook fired by this agent is stamped from: the
+	// session id, the workspace, and — for a delegated child — the scope that tells
+	// the hook it is inside one.
+	HookBase hooks.Base
+	// HookContext is where a hook's `additional_context` is collected for the
+	// request tail. It is deliberately **not** a way to write to the session: a
+	// hook describes this request, not anything either party said, and a method
+	// here that could append a message would make that rule unenforceable.
+	HookContext *hooks.Context
+	// HookStop is fired when a turn ends normally and may ask for one more round.
+	//
+	// It is a function rather than an inline call because the decision belongs to
+	// the runtime and not to this loop: the runtime owns the turn count, the front
+	// end's visible answer, and the autonomous-round reservation — and `block`
+	// must not be able to compete with any of them. What the agent does is hand the
+	// facts over and obey the answer, up to a bound it also owns, because "a hook
+	// may not keep a turn alive forever" is a property of the loop.
+	HookStop func(stop StopNotice) bool
+	// HookPreCompact returns extra text for the summarising model's prompt.
+	//
+	// It is consulted **before** the summary is generated and its answer is
+	// appended to the digest prompt — never to the request tail, and never to the
+	// fold boundary. A hook that says "keep the decision about the database" is
+	// telling the compactor what not to lose; moving the boundary would make the
+	// summary and the boundary describe different stretches of history, which is the
+	// one failure this subsystem spends its comments preventing.
+	HookPreCompact func(foldPoint, messages, before int) string
+
+	// GuardrailPaths are the files the model may not write: the hooks file and the
+	// scripts it names. Empty means "there is nothing to guard", which is the state
+	// of a machine with no hooks configured.
+	//
+	// It is a plain list rather than an interface because the answer is data — the
+	// runtime collects it from the loaded configuration, and all this package has to
+	// do is compare paths. See `guardrailRefusal` for what the rule deliberately does
+	// not cover.
+	GuardrailPaths []string
+	// GuardrailRoot is what a relative path in a tool argument resolves against.
+	// Empty means the process's working directory, which is the workspace in every
+	// path that matters but the tests.
+	GuardrailRoot string
 }
+
+// resolvePath turns a tool argument into an absolute, symlink-resolved path.
+//
+// `EvalSymlinks` is the load-bearing half: a rule written against a string is
+// otherwise bypassed by a symlink or a `..` segment, and the bypass is one character.
+// A path that does not exist yet (a `write_file` creating a file) is resolved through
+// its directory, which is the closest thing to an answer available before the write.
+func (a *Agent) resolvePath(raw string) (string, error) {
+	path := raw
+	if !filepath.IsAbs(path) {
+		root := a.GuardrailRoot
+		if root == "" {
+			dir, err := os.Getwd()
+			if err != nil {
+				return "", err
+			}
+			root = dir
+		}
+		path = filepath.Join(root, path)
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved), nil
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(absolute)); err == nil {
+		return filepath.Join(dir, filepath.Base(absolute)), nil
+	}
+	return filepath.Clean(absolute), nil
+}
+
+// sameFile compares two absolute paths the way the platform does.
+//
+// Case-insensitive on Windows only, for the reason `paths.UnsafeWorkspace` folds
+// there and nowhere else: `C:\x` and `c:\x` are one file on one platform and two on
+// the other, and a guard that folded everywhere would protect a path nobody named.
+func sameFile(a, b string) bool {
+	if platformFoldCase {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+// StopNotice is what a `stop` hook is told, and what the runtime needs to decide.
+type StopNotice struct {
+	StopReason string
+	// LastAssistantMessage is the answer this turn produced.
+	LastAssistantMessage string
+	// Autonomous says the turn was an automatic goal round rather than a person's
+	// question, which is what makes a `block` meaningless: the right to continue a
+	// goal belongs to the driver, and two sources of "continue" would disagree.
+	Autonomous bool
+}
+
+// maxStopBlocks bounds how many times a `stop` hook may continue one turn.
+//
+// Three, and the number is a policy: a verify-then-fix hook needs two rounds at
+// most (run the check, fix what it said), and a hook that would still be asking on
+// the fourth is a loop. Ten is the hard ceiling the configuration note allows, so
+// the constant is written once here rather than threaded through.
+const maxStopBlocks = 3
 
 // Agent runs one session's turns.
 type Agent struct {
@@ -259,6 +375,17 @@ type Agent struct {
 	// recoveredFatal is this turn's latch on OnFatal. It is what keeps "a credential
 	// can be replaced" from turning into "a broken route is retried forever".
 	recoveredFatal bool
+
+	// stopBlocks counts how many times a `stop` hook has continued this turn. It is
+	// per turn, reset where the other per-turn latches are: the budget belongs to
+	// the turn it is bounding, and a session-wide count would make a hook work once
+	// and then silently stop.
+	stopBlocks int
+	// continueNote is the tail line that tells the model a `stop` hook asked for
+	// another round. Per request, like the empty-response nudge and for the same
+	// reason: it describes what is happening now, and a copy of it in the history
+	// would be read later as something a person said.
+	continueNote string
 
 	// cache is this turn's rendered history and the per-message costs the budget is
 	// computed from. It is rebuilt when the ledger moves and extended when messages
@@ -370,6 +497,11 @@ func (a *Agent) RunMessages(ctx context.Context, messages []map[string]any) (str
 	// is a fact about one call, and a latch that survived the turn would silently
 	// refuse to recover the next time the token really did expire.
 	a.recoveredFatal = false
+	// And per turn: a `stop` hook may continue a turn, but only this turn, and only
+	// as many times as maxStopBlocks allows. A latch that outlived the turn would
+	// make the hook work once per session and then quietly stop.
+	a.stopBlocks = 0
+	a.continueNote = ""
 	// The render cache is per turn too. It is keyed on the history length, so a
 	// stale one from the previous turn would be extended rather than rebuilt, and
 	// the two turns' histories are not one list: this one starts with whatever was
@@ -435,6 +567,69 @@ func (a *Agent) runStartedData() map[string]any {
 	}
 	return data
 }
+
+// continueTurn asks the `stop` hook whether this turn should get one more round.
+//
+// The mechanics matter more than they look:
+//
+//   - The answer that just arrived is already in history, so nothing is retracted.
+//     What the next round produces is a second assistant message after a note that
+//     says a hook asked for it — a reader of the transcript sees "answered, then
+//     asked to keep going", which is what happened.
+//   - The loop's own counter is left to the `for` statement, so a continuation
+//     **spends a step**. That is the point of borrowing this loop rather than
+//     calling the model directly: the step budget stays the turn's, and a hook that
+//     asked for another round has to share the same budget as the work it is
+//     asking about.
+//   - The per-turn latches are left alone: this is still the same turn. In
+//     particular `emptyNudged` staying set is what stops a continuation into an
+//     empty response from re-arming the nudge that already fired.
+//
+// `autonomous` is read from the history rather than passed in, and that is the
+// honest source: whether this turn was an automatic goal round is a fact the
+// session recorded when the turn's opening message was appended, and a field on
+// the agent would be a second copy of it. A `block` on an automatic round is
+// recorded and then ignored — continuing a goal is the driver's decision, and two
+// sources of "continue" would disagree about the round budget.
+func (a *Agent) continueTurn(answer string) bool {
+	if a.HookStop == nil {
+		return false
+	}
+	// The budget is checked before the hook is fired, not after: a hook that has
+	// already been told "yes" three times should not be asked a fourth time only to
+	// be overruled, because its side effects would have happened.
+	if a.stopBlocks >= maxStopBlocks {
+		return false
+	}
+	notice := StopNotice{
+		StopReason:           StopAnswered,
+		LastAssistantMessage: answer,
+		Autonomous:           a.Session.TurnOrigin() == state.TurnOriginAutomatic,
+	}
+	if !a.HookStop(notice) {
+		return false
+	}
+	a.stopBlocks++
+	// The note is set here rather than by the caller because it is the loop's own
+	// fact: the model is being asked to continue, and it has to be told why. It
+	// rides the payload tail (see noteText) rather than entering history, for the
+	// same reason every other note does — it describes this request, and a copy of
+	// it in the session file would be read later as something a person said.
+	a.continueNote = stopContinueNote
+	return true
+}
+
+// stopContinueNote is what the model is told when a `stop` hook asked for another
+// round.
+//
+// It names the hook as the authority, and it says what to do rather than what
+// happened, because the model can act on the first and not on the second. It
+// deliberately does not repeat the hook's own reason in full: the reason is already
+// in the previous answer's turn and in the audit, and pasting it here would put the
+// hook's words in the runtime's mouth as if they were an instruction from the
+// person.
+const stopContinueNote = "（本轮末尾的 stop hook 要求继续：它还没有接受这次答复。" +
+	"请按它的要求继续处理，不要把同一件事重做一遍；做完了就直接给出结论。）"
 
 func (a *Agent) loop(ctx context.Context) (string, error) {
 	for a.step = 0; a.step < a.MaxSteps; a.step++ {
@@ -541,6 +736,17 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				return "", &EmptyResponse{Step: a.step}
 			}
 			a.Session.Append(assistantMessage(response))
+			// A `stop` hook gets one look at the finished turn before it is
+			// reported, and "block" is how it asks for one more round.
+			//
+			// The answer is already in history and the person will see it (the front
+			// end draws the answer when the turn ends, and the turn has not ended).
+			// What the continuation adds is another assistant message after a note
+			// saying why — so nothing is retracted, and the history still reads as
+			// what happened.
+			if a.continueTurn(answer) {
+				continue
+			}
 			a.finish(StopAnswered)
 			if a.OnCheckpoint != nil {
 				a.OnCheckpoint()
@@ -804,7 +1010,13 @@ type prepared struct {
 	// (failure is set before anything runs) and a stop (nothing was ever started).
 	// Without it, "the handler produced an empty string" and "the handler was never
 	// called" would be the same observation, and one of them owes a result message.
-	ran   bool
+	ran bool
+	// duration is how long the handler ran, for the `post_tool_use` hook's
+	// `duration_ms`. The audit record computes the same number from the same
+	// measurement; it is kept here because the hook fires after the record has been
+	// written and a hook that has to parse an audit line to learn this is a hook
+	// reading the wrong source.
+	duration time.Duration
 	audit map[string]any
 	// images are the pictures this call produced, carried as bytes until
 	// `toolMessage` turns them into artifacts.
@@ -912,12 +1124,37 @@ func (a *Agent) runBatch(ctx context.Context, calls []model.ToolCall) error {
 		a.reportToolResult(&batch[i], 0, false)
 	}
 
+	// **Hook context for the previous batch is finished with.** It described those
+	// calls, and the payload about to be built is about these ones. Clearing here
+	// rather than after the append below is what keeps the two lifetimes honest:
+	// `Turn` notes are the turn's, `Batch` notes are the last batch's, and a note
+	// that outlived its batch would be re-injected into every later request of the
+	// same turn.
+	a.HookContext.ClearBatch()
+
 	// Results are appended in the model's order regardless of the order they
 	// finished in. The session must be reproducible: the same conversation run
 	// twice has to produce byte-identical history, or the audit cannot be trusted.
 	for i := range batch {
 		a.Session.Append(a.toolMessage(&batch[i]))
 	}
+
+	// `post_tool_use` runs **here**, after every result has settled and before the
+	// next request is built, and it runs serially in the model's order.
+	//
+	// Not inside `runOne`, where it would be closer to hand, and the reason is
+	// reproducibility rather than performance: a parallel batch finishes in an
+	// order the scheduler decides, so hooks fired from those goroutines would
+	// produce context in whatever order the goroutines happened to finish — the
+	// same session replayed twice would send two different payloads. The batch's
+	// order is the model's order, and it is the only one that is the same twice.
+	//
+	// It is after the append rather than before because the hook is an observer of
+	// what happened: it sees the settled status and the final text, and nothing it
+	// does can change either. A history that has not been written yet is not a
+	// thing to hand to somebody who is allowed to look at it.
+	a.runPostHooks(batch)
+
 	// The pictures this batch read come **after every result**, in one message. See
 	// imageMessage for why that position rather than inside the tool result, and
 	// why after all of them rather than between two.
@@ -1104,27 +1341,270 @@ func (a *Agent) inspect(index int, call model.ToolCall) prepared {
 	return item
 }
 
-// approve asks the permission gate and validates the arguments, in that order.
+// approve asks the hooks and the permission gate, validates the arguments, and
+// leaves a call either runnable or refused.
+//
+// The order is the one table in the design, and every step exists because the
+// alternative is a different answer to "may this run":
+//
+//  1. **pre_tool_use**, before the gate. A hook's `deny` beats autopilot — automatic
+//     mode removes the question, never the guardrail. Its `ask` forces the question
+//     even where the policy would have released the call.
+//  2. **updated_input**, merged and then re-validated. A rewrite that produces
+//     arguments the tool cannot accept is reported as `invalid_args` and **does not
+//     fall back to the model's original**: a fallback would run something the model
+//     did not ask for while the model believed its own edit had been applied.
+//  3. **security.Check**, with the hook's verdict as one more input. The rewritten
+//     arguments go through the same workspace boundary and the same policy — a
+//     parameter is not exempt because a hook wrote it.
+//  4. **validation**, so a schema rejection is reported as invalid arguments rather
+//     than as the tool failing to run.
 func (a *Agent) approve(item *prepared) {
 	if item.failure != "" {
 		return
 	}
-	// Permission. The verdict is recorded whether or not anybody was asked,
-	// because "why did this not ask" is a question the log has to answer.
-	verdict := security.Check(item.tool.Name, item.tool.Risk, item.arguments,
-		a.Policy, a.Ask, a.Memory, a.Clock, a.autopilot)
-	a.reportPermission(item.tool, item.arguments, verdict)
 
-	if verdict.Denial != "" {
-		*item = failPrepared(*item, "denied", verdict.Denial)
+	// Step 1 and 2: the user's guardrail, and the one event that may rewrite.
+	verdict, rewritten := a.firePreToolUse(item)
+	if rewritten {
+		original := item.arguments
+		merged := hooks.MergeArguments(original, verdict.Updated)
+		normalised, err := tools.Validate(item.tool.Parameters(), merged)
+		if err != nil {
+			a.reportHookRewrite(item, original, merged)
+			*item = failPrepared(*item, statusInvalidArgs,
+				"hook 改写后的参数不合法："+err.Error()+"（原参数没有回退，因为改写被视为已经生效）")
+			return
+		}
+		item.arguments = normalised
+		a.reportHookRewrite(item, original, normalised)
+	}
+
+	// Step 1b: the guardrail guard. A model that could edit the hooks file could
+	// remove the check it is passing through, so a write aimed at one of those files
+	// is refused here rather than left to the honour system.
+	//
+	// It is **not** a security boundary and the sentence says so: `shell` can still
+	// write any of these, because a shell is the authority the user granted. What this
+	// buys is a trace and a raised bar, which is all that can honestly be claimed —
+	// see `BuiltinWriteGuard` and §7.3 of the design.
+	if refusal := a.guardrailRefusal(item); refusal != "" {
+		*item = failPrepared(*item, "denied", refusal)
 		return
 	}
 
-	// Validation runs before execution so a schema rejection is reported as
+	// Step 3: the gate. The verdict is recorded whether or not anybody was asked,
+	// because "why did this not ask" is a question the log has to answer.
+	gateVerdict := security.Verdict{
+		Decision: security.Decision(verdict.Decision),
+		Reason:   verdict.Reason,
+		Hook:     verdict.DeniedBy,
+	}
+	permission := security.Check(item.tool.Name, item.tool.Risk, item.arguments,
+		a.Policy, a.Ask, a.Memory, a.Clock, a.autopilot, gateVerdict, a.askAdvisor(item))
+	a.reportPermission(item.tool, item.arguments, permission)
+
+	if permission.Denial != "" {
+		*item = failPrepared(*item, "denied", permission.Denial)
+		return
+	}
+
+	// Step 4. It runs before execution so a schema rejection is reported as
 	// invalid arguments rather than as the tool failing to run — the model can fix
 	// the first and cannot fix the second.
 	if _, err := tools.Validate(item.tool.Parameters(), item.arguments); err != nil {
 		*item = failPrepared(*item, statusInvalidArgs, "参数不合法："+err.Error())
+	}
+}
+
+// hookBase is the envelope template for this agent, with the mode read **now**.
+//
+// It is a method rather than the `HookBase` field alone because the mode is not
+// fixed for the life of the session: `SetAutopilot` flips it from the interface, and
+// a hook deciding whether "ask a human" is even possible has to see the mode of the
+// call in front of it, not the one the process started with.
+func (a *Agent) hookBase() hooks.Base {
+	base := a.HookBase
+	base.Mode = hooks.ModeFor(a.autopilot)
+	return base
+}
+
+// firesHooks asks whether anybody is listening to this event.
+//
+// It is an **optional** interface rather than a method on `hooks.Runner`, and the
+// difference matters to a test double: a runner written for a test answers every
+// event, while the loaded set knows which events it has. Asking through a type
+// assertion keeps the interface at one method — the thing every caller needs — and
+// still lets the executor answer the question where it can.
+//
+// A runner that cannot answer is assumed to be listening, which is the safe
+// direction: an extra consultation is one process the user configured, while a
+// wrongly skipped one is a guardrail that silently does nothing.
+func (a *Agent) firesHooks(event hooks.Event) bool {
+	if a.Hooks == nil {
+		return false
+	}
+	if filter, ok := a.Hooks.(interface{ Has(hooks.Event) bool }); ok {
+		return filter.Has(event)
+	}
+	return true
+}
+
+// firePreToolUse runs the `pre_tool_use` chain for one call.
+//
+// It reports the aggregated verdict and whether any hook rewrote the arguments.
+// A nil `Hooks` (no configuration) answers `hooks.Result{}` and costs one branch,
+// which is the whole reason the feature does not need a flag threaded through the
+// loop.
+func (a *Agent) firePreToolUse(item *prepared) (hooks.Result, bool) {
+	if !a.firesHooks(hooks.EventPreToolUse) {
+		return hooks.Result{}, false
+	}
+	envelope := a.hookBase().Envelope(hooks.EventPreToolUse)
+	envelope.RunID = a.runID
+	envelope.Step = a.step + 1
+	envelope.Tool = &hooks.ToolPayload{
+		Name:   item.call.Name,
+		Input:  item.arguments,
+		Risk:   string(item.tool.Risk),
+		CallID: item.call.ID,
+	}
+	result := a.Hooks.Fire(context.Background(), envelope)
+	return result, result.Rewritten
+}
+
+// askAdvisor builds the `permission_request` advisor for one call, or nil when no
+// hook listens to it.
+//
+// Nil rather than a closure that answers "ask": the gate asks the advisor only on
+// the path that would have asked a person anyway, and a closure that always
+// answers nothing is one more branch in the hot path for no benefit.
+func (a *Agent) askAdvisor(item *prepared) security.Advisor {
+	if !a.firesHooks(hooks.EventPermissionRequest) {
+		return nil
+	}
+	return func(question security.Question) security.Advice {
+		envelope := a.hookBase().Envelope(hooks.EventPermissionRequest)
+		envelope.RunID = a.runID
+		envelope.Step = a.step + 1
+		envelope.Tool = &hooks.ToolPayload{
+			Name:   question.ToolName,
+			Input:  question.Arguments,
+			Risk:   string(question.Risk),
+			CallID: item.call.ID,
+		}
+		envelope.PolicyDecision = string(question.Decision)
+		result := a.Hooks.Fire(context.Background(), envelope)
+		switch result.Decision {
+		case hooks.DecisionAllow:
+			return security.Advice{Kind: string(security.DecisionAllow), Reason: result.Reason, Hook: result.DeniedBy}
+		case hooks.DecisionDeny:
+			return security.Advice{Kind: string(security.DecisionDeny), Reason: result.Reason, Hook: result.DeniedBy}
+		}
+		// `ask` here means "let the person decide after all", which is the state
+		// the gate is already in — so no advice is the honest answer and the
+		// question proceeds.
+		return security.Advice{}
+	}
+}
+
+// guardrailRefusal reports why this call must not run because it would write a file
+// the hook configuration depends on, or "" when it may.
+//
+// The check is deliberately narrow: **file tools only**, by name, and only for
+// `write_file` / `edit_file` / `list_files`'s siblings that can write. A `shell`
+// command that happens to mention the path is not refused here, because deciding
+// whether a shell command writes a file means parsing a shell, and a parser that
+// gets it wrong would refuse ordinary work while leaving the real hole open.
+//
+// Two paths match: the hooks file itself, and every script the configuration names.
+// Both are compared after `EvalSymlinks`, because a symlink or a `..` segment is
+// otherwise a one-character way around a rule written against a string.
+func (a *Agent) guardrailRefusal(item *prepared) string {
+	if len(a.GuardrailPaths) == 0 {
+		return ""
+	}
+	switch item.tool.Name {
+	case "write_file", "edit_file", "prune_files", "git_restore", "git_snapshot":
+	default:
+		return ""
+	}
+	raw, _ := item.arguments["path"].(string)
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	target, err := a.resolvePath(raw)
+	if err != nil {
+		// An unresolvable path is not this check's business: the tool itself will
+		// report it, and a guard that refuses on "could not resolve" would make every
+		// unusual-but-legal path a refusal here.
+		return ""
+	}
+	for _, guarded := range a.GuardrailPaths {
+		if sameFile(target, guarded) {
+			return "拒绝：" + raw + " 是 hook 的 guardrail 文件（" +
+				"它决定了每次工具调用要过哪些检查），模型不能改写自己的 guardrail。" +
+				"如果确实要改，请让用户自己改 " + guarded + "。不要重试；" +
+				"注意 shell 仍然可以写它 —— 这条只是提高门槛并留下记录，不是边界。"
+		}
+	}
+	return ""
+}
+//
+// Two previews and a length, never the arguments themselves: a `write_file`
+// argument carries a whole file, and an audit log that copies them is a log nobody
+// can hand to anybody. The `permission` record already carries the arguments that
+// actually ran, so nothing is lost.
+func (a *Agent) reportHookRewrite(item *prepared, args map[string]any, merged map[string]any) {
+	if a.Hooks == nil {
+		return
+	}
+	a.emit(audit.Event(audit.KindHookResult, a.Session.SessionID, a.runID, a.step, map[string]any{
+		"event":         string(hooks.EventPreToolUse),
+		"hook":          "rewrite",
+		"status":        "ok",
+		"decision":      "allow",
+		"updated_input": true,
+		"tool":          item.call.Name,
+		"call_id":       item.call.ID,
+		"before":        previewArguments(mustJSON(args)),
+		"after":         previewArguments(mustJSON(merged)),
+		"args_chars":    len([]rune(mustJSON(merged))),
+	}))
+}
+
+// runPostHooks walks one settled batch and hands each call to `post_tool_use`.
+//
+// **One process per matching call, in the batch's order, serially.** The
+// alternative — a hook per batch, or hooks run inside the goroutines that executed
+// the calls — is how `additional_context` ends up in an order the scheduler chose.
+//
+// A failure here never fails the batch: the results are written, the turn can go
+// on, and the only trace is the audit row. That asymmetry (gate events fail
+// closed, observers fail open) is the whole reason the event carries an opinion at
+// all: a formatter that is broken must not be able to stop a conversation.
+func (a *Agent) runPostHooks(batch []prepared) {
+	if !a.firesHooks(hooks.EventPostToolUse) {
+		return
+	}
+	for index := range batch {
+		item := &batch[index]
+		envelope := a.hookBase().Envelope(hooks.EventPostToolUse)
+		envelope.RunID = a.runID
+		envelope.Step = a.step + 1
+		envelope.Tool = &hooks.ToolPayload{
+			Name:       item.call.Name,
+			Input:      item.arguments,
+			Risk:       string(item.tool.Risk),
+			CallID:     item.call.ID,
+			Status:     item.status,
+			Result:     item.result,
+			DurationMs: int(item.duration),
+		}
+		result := a.Hooks.Fire(context.Background(), envelope)
+		if len(result.Parts) > 0 {
+			a.HookContext.AddBatchParts(result.Parts)
+		}
 	}
 }
 
@@ -1145,7 +1625,8 @@ func (a *Agent) runOne(ctx context.Context, item *prepared) {
 	item.ran = true
 	started := time.Now()
 	result, err := item.tool.Execute(ctx, item.arguments)
-	durationMs := int(time.Since(started).Milliseconds())
+	item.duration = time.Since(started)
+	durationMs := int(item.duration.Milliseconds())
 
 	text := result.Text
 	status := statusOK

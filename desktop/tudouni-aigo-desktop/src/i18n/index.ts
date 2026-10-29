@@ -1207,6 +1207,14 @@ export const en = {
     'The runtime did not answer within {seconds} seconds, so this prompt was not sent. Try again once the session is ready.',
   'note.handshake.timeoutTask':
     'The runtime did not answer within {seconds} seconds, so “{task}” was not started. Try again once the session is ready.',
+  /* A user-configured hook (`~/.tudouni/hooks.json`). Two sentences rather than
+     one because "refused" and "could not run" are different facts with different
+     repairs, and the status is the runtime's own word so it is shown untranslated
+     — the person will search the log for exactly that string. */
+  'note.hook.denied': 'Hook {hook} refused {tool}: {reason}',
+  'note.hook.deniedNoReason': 'Hook {hook} refused {tool}',
+  'note.hook.failed': 'Hook {hook} could not check {tool} ({status}): {reason}',
+  'note.hook.failedNoReason': 'Hook {hook} could not check {tool} ({status})',
 
   /* ---- the notice center capsule ----
    *

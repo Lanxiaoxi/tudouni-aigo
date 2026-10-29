@@ -17,6 +17,31 @@ import (
 	"path/filepath"
 )
 
+// Isolate prepares a child this package did not start for tree killing.
+//
+// It exists because the hooks layer needs the same guarantee `Start` provides — kill
+// the hook and everything it started — but builds its own command: it pipes stdin,
+// stdout and stderr rather than redirecting them to a file, and it needs a context
+// for the timeout. Reproducing the two platform calls there instead of asking for
+// them here is how one of the two gets forgotten, and the symptom of the forgotten
+// one is a hook's children surviving a timeout on exactly one platform.
+//
+// Call it before `cmd.Start`; then `Attach` after.
+func Isolate(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	cmd.SysProcAttr = startSysProcAttr()
+}
+
+// Attach completes the isolation of a started child.
+//
+// It is the second half rather than part of `Isolate` because the mechanism needs a
+// pid: on Windows the process is placed in the session's job object once it exists.
+// Off Windows this is a no-op — `Isolate` already put the child in its own process
+// group, which is what `TerminateTree` signals.
+func Attach(cmd *exec.Cmd) { assignToJob(cmd) }
+
 // Start launches a long-lived child process and redirects its stdout and stderr
 // to outputPath, returning it for later reaping. It is meant for processes the
 // caller owns for the whole session, so the child is isolated in its own
@@ -43,12 +68,12 @@ func Start(argv []string, cwd, outputPath string) (*exec.Cmd, error) {
 	cmd.Stdin = nil
 	cmd.Stdout = sink
 	cmd.Stderr = sink
-	cmd.SysProcAttr = startSysProcAttr()
+	Isolate(cmd)
 	if err := cmd.Start(); err != nil {
 		sink.Close()
 		return nil, err
 	}
 	sink.Close()
-	assignToJob(cmd)
+	Attach(cmd)
 	return cmd, nil
 }

@@ -117,22 +117,22 @@ func TestGateRewardsTheOrderOfShortCircuits(t *testing.T) {
 
 	// A denied tool is refused before anything else is considered.
 	if result := Check("shell", RiskHigh, nil,
-		Policy{DenyTools: []string{"shell"}}, AlwaysAllow, memory, clock, true); result.Outcome != OutcomePolicyDenied {
+		Policy{DenyTools: []string{"shell"}}, AlwaysAllow, memory, clock, true, NoVerdict, nil); result.Outcome != OutcomePolicyDenied {
 		t.Fatalf("outcome = %q, want policy_denied", result.Outcome)
 	}
 
 	// Autopilot outranks the rules, so "was anybody watching" stays answerable.
-	if result := Check("shell", RiskHigh, nil, policy, AlwaysAllow, memory, clock, true); result.Outcome != OutcomeAutopilot {
+	if result := Check("shell", RiskHigh, nil, policy, AlwaysAllow, memory, clock, true, NoVerdict, nil); result.Outcome != OutcomeAutopilot {
 		t.Fatalf("outcome = %q, want autopilot", result.Outcome)
 	}
 
 	// A remembered tool is released without asking, and without needing an asker.
-	if result := Check("read_file", RiskHigh, nil, policy, nil, memory, clock, false); result.Outcome != OutcomeRuleAllowed {
+	if result := Check("read_file", RiskHigh, nil, policy, nil, memory, clock, false, NoVerdict, nil); result.Outcome != OutcomeRuleAllowed {
 		t.Fatalf("outcome = %q, want rule_allowed", result.Outcome)
 	}
 
 	// No asker and no rule means refusal, never a release.
-	result := Check("write_file", RiskMedium, nil, policy, nil, memory, clock, false)
+	result := Check("write_file", RiskMedium, nil, policy, nil, memory, clock, false, NoVerdict, nil)
 	if result.Outcome != OutcomeNoAsker || result.Denial == "" {
 		t.Fatalf("outcome = %q denial = %q; a missing channel must fail closed", result.Outcome, result.Denial)
 	}
@@ -141,7 +141,7 @@ func TestGateRewardsTheOrderOfShortCircuits(t *testing.T) {
 func TestAutopilotDoesNotBypassTheDenyList(t *testing.T) {
 	// Autopilot only covers asking. The deny list is "may not", not "should not ask".
 	result := Check("shell", RiskHigh, nil,
-		Policy{DenyTools: []string{"shell"}}, AlwaysAllow, nil, func() float64 { return 0 }, true)
+		Policy{DenyTools: []string{"shell"}}, AlwaysAllow, nil, func() float64 { return 0 }, true, NoVerdict, nil)
 	if result.Outcome != OutcomePolicyDenied {
 		t.Fatalf("outcome = %q, want policy_denied", result.Outcome)
 	}

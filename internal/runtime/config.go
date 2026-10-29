@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/config"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/hooks"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
@@ -61,6 +62,23 @@ func MCPFile() string {
 
 // WebFile returns the configuration file the `web` section is read from.
 func WebFile() string { return config.ConfigFile() }
+
+// HooksFile is where the user's hooks live.
+//
+// It is user-level for exactly the reason `MCPFile` is: `command` in this file is
+// code executed on the user's behalf, and a file inside a workspace arrives with a
+// cloned repository. The workspace's own `.tudouni/hooks.json` is therefore **not
+// read** at all (phase 1); a workspace can only ever be trusted explicitly, and the
+// trust record lives in `TrustFile`.
+func HooksFile() string {
+	return hooks.HooksFile(paths.UserConfigDir())
+}
+
+// TrustFile is where a workspace's hooks approval is recorded, and — with the
+// reader below — where phase 2's "a workspace may only tighten" rule begins.
+func TrustFile() string {
+	return filepath.Join(paths.UserConfigDir(), "trust.json")
+}
 
 // PermissionConfig is the approval policy as read from disk.
 type PermissionConfig struct {

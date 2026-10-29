@@ -66,6 +66,18 @@ const (
 	// still on disk: copying a memory into the log would make the log a second copy of
 	// the corpus, the same rule `context_compacted` follows for summaries.
 	KindMemoryRecall = "memory_recall"
+	// KindHookResult records one execution of one user-configured hook.
+	//
+	// One line per invocation, never one per event: a chain of four hooks is four
+	// processes with four durations, and a single merged line would hide the one
+	// that timed out behind the three that worked. `status` is the vocabulary that
+	// makes a broken hook distinguishable from a refusing one.
+	//
+	// The hook's reason travels as a 200-character preview and its injected context
+	// as a length only — the same rule `memory_recall` and `tool_result` follow, for
+	// the same reason: an audit log that copies what a conversation contained is a
+	// log nobody can hand to anybody.
+	KindHookResult = "hook_result"
 )
 
 // Event builds one audit record with the fields every record carries.

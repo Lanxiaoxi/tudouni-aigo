@@ -323,6 +323,13 @@ const SUITES = [
   // sentences are asserted here — including the one a formatter gets wrong for
   // free, printing a missing figure as zero.
   'front-message.test.ts',
+  // The user's own hook scripts, on screen. This is the half of the feature that
+  // has to be visible: without a row, a hook refusal reaches the model and the
+  // transcript shows only an ordinary tool that returned some text — which reads
+  // exactly like a policy refusal. Four rules: a refusal and a failure each get a
+  // row (a plain `ok` does not), the failure keeps the runtime's status verbatim,
+  // and the record is session-level so it is not dropped as "late".
+  'hook-result.test.ts',
   // When the launch splash may be retired, and the two ends of it that have no
   // type between them. Both wrong rules produce a plausible-looking launch — an
   // empty greeting with "starting" behind it, or a booting shell where the icon

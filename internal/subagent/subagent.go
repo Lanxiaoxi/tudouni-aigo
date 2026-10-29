@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/hooks"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/security"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -130,6 +131,25 @@ type Config struct {
 	Notes func() string
 	// OnEvent receives the child's audit records, marked with its id.
 	OnEvent func(record map[string]any)
+
+	// Hooks are the user's configured scripts, passed through so a child inherits
+	// its parent's guardrails. That inheritance is deliberate and asymmetric:
+	//
+	//   - **tool hooks are inherited**, because a guardrail that a delegation could
+	//     step around would make "delegate the risky part" the obvious workaround;
+	//   - **prompt, stop and session hooks are not**, because a child is not a
+	//     person's turn: it has no prompt to submit, and it cannot be allowed to ask
+	//     for another round when its parent is waiting for an answer.
+	//
+	// The envelope carries `subagent`, so a hook can tell which agent it is looking
+	// at — which is the only way a per-agent policy is expressible at all.
+	Hooks hooks.Runner
+	// HookContext is the child's own tail. It is **not** the parent's: one batch's
+	// note must not leak into the other agent's request.
+	HookContext *hooks.Context
+	// HookBase is the parent's envelope, stamped so a child's copy carries the
+	// `subagent` scope.
+	HookBase hooks.Base
 
 	// Board is the runtime's tally of in-flight delegations, so a front end can
 	// show that a subagent is running. Nil turns the announcement off — the

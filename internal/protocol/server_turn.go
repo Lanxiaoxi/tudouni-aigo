@@ -161,6 +161,17 @@ func (s *Server) runGoalRound(ctx context.Context, runtime Runtime, round GoalRo
 // instant at which "is this session finished?" has a well-defined answer.
 func (s *Server) finishTurn(runtime Runtime, answer string, err error) {
 	if err != nil {
+		// A prompt a hook refused is **not** a failed turn. Nothing ran and nothing
+		// was written; reporting it through the generic failure line would claim a
+		// turn happened and went wrong, which is the story this feature exists to
+		// keep straight. The person gets a notice instead — and no `run_finished`,
+		// because there is no run to finish.
+		if blocked, ok := asPromptBlocked(err); ok {
+			s.notice("info", "hooks", i18n.T("notice.hooks.prompt_blocked",
+				"reason", blocked.Reason))
+			s.Send(s.stateMessage(false))
+			return
+		}
 		if isCancel(err) {
 			s.notice("warn", "cancelled", i18n.T("channels.run_failed", "problem", err.Error()))
 		} else {
@@ -193,6 +204,20 @@ func (s *Server) finishTurn(runtime Runtime, answer string, err error) {
 	// implement it, and this layer stays ignorant of what a credential is.
 	if talker, ok := runtime.(interface{ DrainAuthNotices() []map[string]any }); ok {
 		for _, item := range talker.DrainAuthNotices() {
+			envelope := map[string]any{"v": VERSION, "t": OutNotice}
+			for key, value := range item {
+				envelope[key] = value
+			}
+			s.Send(envelope)
+		}
+	}
+
+	// Whatever the hook layer has to say about the turn that just ended — today, one
+	// line when a `stop` hook asked for another round. Drained here rather than
+	// inside the turn so the line lands **after** the answer it is about, which is
+	// the only place it reads as a comment on that answer instead of a prediction.
+	if talker, ok := runtime.(interface{ DrainHookNotices() []map[string]any }); ok {
+		for _, item := range talker.DrainHookNotices() {
 			envelope := map[string]any{"v": VERSION, "t": OutNotice}
 			for key, value := range item {
 				envelope[key] = value

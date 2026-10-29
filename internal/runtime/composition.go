@@ -11,6 +11,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/codeintel/cggraph"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/files"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/hooks"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
@@ -49,6 +50,18 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		return nil, err
 	}
 	mcpSpecs, mcpNames, err := LoadMcpServers()
+	if err != nil {
+		return nil, err
+	}
+	// The hooks, read once per runtime: the person's file, then — if it is trusted —
+	// the repository's. Read **early**, beside the permission policy and the MCP
+	// list, because a broken file is a start-up error and the sentence belongs on the
+	// terminal before any interface takes it over.
+	//
+	// The workspace root is `paths.WorkspaceDir()` rather than the resolved
+	// `tools.Workspace` because that struct does not exist yet; the trust store
+	// normalises both spellings through `EvalSymlinks`, so the two agree.
+	hookLoad, err := assembleHooks(options.NoHooks, paths.WorkspaceDir())
 	if err != nil {
 		return nil, err
 	}
@@ -139,10 +152,34 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		httpClient: &http.Client{Timeout: 120 * time.Second},
 		startedAt:  time.Now(),
 		report:     options.Report,
+
+		Hooks:         configuredHooks(hookLoad.Set),
+		HookContext:   &hooks.Context{},
+		hooksDisabled: hookLoad.Disabled,
 	}
 	if runtimeValue.MaxSteps == 0 {
 		runtimeValue.MaxSteps = agent.DefaultMaxSteps
 	}
+	// The audit sink is installed on the hook set **here**, before anything can
+	// fire: the set is loaded before the runtime exists, so this is the first
+	// moment a `hook_result` could be written, and it is also the moment the one
+	// exit that already exists (`onEvent`) becomes available. Every hook record —
+	// from this runtime, from a child agent — goes through it, which is what makes
+	// "one row per execution" true rather than per-caller.
+	if runtimeValue.Hooks != nil {
+		runtimeValue.Hooks.SetEmit(runtimeValue.onEvent)
+	}
+	// `--debug` is where `status_message` goes (design §11), and it is installed
+	// beside the audit sink for the same reason: the set is loaded before the
+	// runtime's own diagnostics exist. With `--debug` off this is silent, which is
+	// the ordinary case — a hook's status line is only useful to somebody watching a
+	// slow one.
+	if runtimeValue.Hooks != nil && options.Debug {
+		runtimeValue.Hooks.SetDebug(func(text string) { warn("%s", text) })
+	}
+	// The start-up notices, in the order the file was read: loaded / skipped /
+	// disabled, then the workspace file that was ignored.
+	runtimeValue.notices = append(runtimeValue.notices, hookLoad.Notices...)
 
 	// [memory] The workspace's own memory. Opened **here**, before the tools are
 	// assembled, because the three memory tools are registered from it and a runtime
@@ -626,6 +663,27 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		OnFatal:    runtimeValue.RecoverAuth,
 		Context:    ctxManager,
 		Processor:  processor,
+		// The user's scripts. Assembled last because the agent is what needs them,
+		// and passed down to the child agents through `subagent.Config` so a
+		// delegation inherits the guardrails of the session it was started from.
+		Hooks:       runtimeValue.Hooks,
+		HookContext: runtimeValue.HookContext,
+		HookBase: hooks.Base{
+			SessionID: session.SessionID,
+			Workspace: workspace.Root(),
+			Cwd:       workspace.Root(),
+			Mode:      hooks.ModeFor(options.Autopilot),
+		},
+		HookStop: runtimeValue.stopHook,
+		// Compaction's hook. It carries the note into the summary's own prompt and
+		// has no way to move the fold boundary — see the field's comment.
+		HookPreCompact: runtimeValue.firePreCompact,
+		// The guardrail guard: the files this session's hooks depend on. A model that
+		// could rewrite them could remove the check it is passing through, and this is
+		// the one place the list can be collected — the configuration is loaded, and
+		// the agent is not told how.
+		GuardrailPaths: runtimeValue.guardrailPaths(),
+		GuardrailRoot:  workspace.Root(),
 		// The vision gate, and it is a **function** rather than the value it
 		// returns: the model can be switched mid-session, and a bool captured here
 		// would answer for the model this session started on. The renderer consults
@@ -665,5 +723,21 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	// Past this point the runtime is whole and the caller owns it, so the rollback
 	// above must not run.
 	assembled = true
+
+	// `session_start` fires **here**, at the one instant this function can honestly
+	// promise: every subsystem the session will use exists, and no request has gone
+	// out yet. Firing it earlier would hand a hook a half-built runtime (its
+	// workspace, its tools and its context all arrive at different points above);
+	// firing it later would make "before the first request" false.
+	//
+	// The context it injects is turn-scoped, so it reaches the first request of this
+	// turn and nothing later — see RunTurn's ClearTurn. That is what makes a
+	// `session_start` note a greeting rather than a permanent instruction.
+	source := "startup"
+	if options.Resumed {
+		source = "resume"
+	}
+	runtimeValue.fireSessionStart(source)
+
 	return runtimeValue, nil
 }

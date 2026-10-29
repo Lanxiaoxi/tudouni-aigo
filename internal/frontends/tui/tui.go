@@ -44,6 +44,11 @@ type Options struct {
 	// what the entry point used to do, and it could not work: the refreshed key
 	// never reached the client that was sending requests.
 	EricAI bool
+	// NoHooks is `--no-hooks`, and it travels for the same reason `--ericai` does:
+	// the hooks file is read by the child, so a switch that stayed in the parent
+	// would be a switch that did nothing — with the parent's own help text claiming
+	// otherwise.
+	NoHooks bool
 }
 
 // Run starts the interface and returns the process exit code.
@@ -72,6 +77,12 @@ func Run(options Options) int {
 	// the key it had read before that.
 	if options.EricAI {
 		arguments = append(arguments, "--ericai")
+	}
+	// The hooks switch is read by the child, so it has to travel: `--no-hooks` that
+	// stayed in the parent would leave a guardrail running while the interface showed
+	// a session that believed it had been switched off.
+	if options.NoHooks {
+		arguments = append(arguments, "--no-hooks")
 	}
 	// The limit has to travel with the child, not just sit on the status bar:
 	// showing "up to 5 steps" over a runtime allowed forty is a number the user

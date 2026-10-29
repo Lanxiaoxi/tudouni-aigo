@@ -9,6 +9,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/audit"
 	ctxwin "github.com/Lanxiaoxi/tudouni-aigo/internal/context"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/hooks"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/model"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/paths"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
@@ -82,6 +83,46 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 		"provider":    route.Name,
 		"background":  background,
 	}))
+
+	// The child's own hook tail and scope. Both are per child: a batch may run two
+	// delegations at once, and one child's injected context must never appear in the
+	// other's request. The scope is the same value the audit's `subagent_id` names,
+	// so a hook reading the envelope can correlate its run with the log line.
+	childHookContext := &hooks.Context{}
+	childHookBase := t.HookBase
+	childHookBase.Subagent = &hooks.Scope{
+		ID:    childID,
+		Depth: childDepth,
+		Label: t.callLabel(label),
+	}
+	childHookBase.Mode = hooks.ModeAutopilot
+
+	// `subagent_start` runs **after** the route is resolved and **before** the child
+	// session exists, so a refusal costs nothing: no session file, no board row, no
+	// model client. The answer goes back to the parent as text rather than as an
+	// error, because a delegation a guardrail refused is a fact the parent has to
+	// plan around — not a failure of the tool.
+	if t.Hooks != nil {
+		envelope := childHookBase.Envelope(hooks.EventSubagentStart)
+		envelope.Model = chosen
+		envelope.Provider = route.Name
+		envelope.Background = background
+		envelope.TaskChars = len([]rune(task))
+		verdict := t.Hooks.Fire(ctx, envelope)
+		if verdict.Decision == hooks.DecisionDeny {
+			reason := strings.TrimSpace(verdict.Reason)
+			if reason == "" {
+				reason = "the delegation was refused"
+			}
+			return tools.TextResult("delegation refused: " + reason), nil
+		}
+		if len(verdict.Parts) > 0 {
+			// Context a `subagent_start` hook injects belongs to the child, so it
+			// goes into the child's tail — not the parent's. The parent did not ask
+			// the question the hook is answering.
+			childHookContext.AddTurnParts(verdict.Parts)
+		}
+	}
 
 	session := t.newChildSession(childID, childDepth, label)
 	// The resolved route is written into the child's own session record rather
@@ -185,6 +226,13 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 		Context:      manager,
 		Processor:    calls,
 		Vision:       t.modelVisionFor(chat),
+		// Tool hooks are inherited; prompt, stop and session hooks are not — the
+		// child has no prompt to submit and cannot ask for another round while its
+		// parent waits for an answer. `HookStop` is deliberately absent, which is
+		// what makes a `stop` hook unable to reach a child at all.
+		Hooks:       t.Hooks,
+		HookContext: childHookContext,
+		HookBase:    childHookBase,
 	})
 
 	t.emit(audit.Event(KindDelegationStarted, t.parentID(), childID, 0, map[string]any{
@@ -298,6 +346,27 @@ func (t *Tool) settle(session *state.Session, childID, label string, started tim
 	// The foreground tool result is the rendered answer; the background path has
 	// already stored its rendered text in the settlement and returns nothing
 	// here (its caller is a goroutine nobody is reading).
+	if t.Hooks != nil {
+		// Built here rather than passed in because `settle` already has every fact
+		// the envelope needs — the child's id, its depth and its label — and threading
+		// a second value through would give the caller two ways to get it wrong.
+		base := t.HookBase
+		base.Subagent = &hooks.Scope{
+			ID:    childID,
+			Depth: DepthOf(session),
+			Label: t.callLabel(label),
+		}
+		base.Mode = hooks.ModeAutopilot
+		envelope := base.Envelope(hooks.EventSubagentStop)
+		envelope.StopReason = stopReason
+		envelope.Background = background
+		envelope.Usage = usage
+		// Observed only. Whatever a `subagent_stop` hook says is recorded and
+		// dropped: the delegation is over, and a hook that could change its outcome
+		// would be deciding something after the parent had already been told.
+		t.Hooks.Fire(context.Background(), envelope)
+	}
+
 	if background {
 		return ""
 	}
@@ -584,8 +653,7 @@ func (t *Tool) childSink(childID string) func(map[string]any) {
 // childNotes is the payload tail the child gets.
 //
 // The caller decides what to inject, and the runtime injects only the loaded-skill
-// bodies. Three parts of the parent's tail are deliberately not offered here:
-//
+// bodies. Three parts of the parent's tail are deliberately not offered here://
 //   - **the task list.** A todo list is the parent's stated plan, and the child
 //     has its own task. Showing it the parent's list invites it to mark steps done
 //     that it never ran, which corrupts the one artefact the parent maintains for
@@ -600,7 +668,6 @@ func (t *Tool) childNotes() string {
 	}
 	return t.Notes()
 }
-
 // emit reports an event on the parent's hook.
 func (t *Tool) emit(record map[string]any) {
 	if t.OnEvent == nil {

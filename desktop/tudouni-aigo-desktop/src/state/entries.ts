@@ -185,7 +185,34 @@ export type FrontMessage =
   /** A task's first prompt never left this window: the handshake did not land
    *  inside the wait, so there was nowhere safe to send it. `task` is the
    *  template's title when the caller has one. */
-  | { code: 'handshakeTimeout'; seconds: number; task: string | null };
+  | { code: 'handshakeTimeout'; seconds: number; task: string | null }
+  /** A user-configured hook refused a tool call, or broke.
+   *
+   *  Its own sentence because the alternative is nothing at all: the call row
+   *  shows a tool that returned a *denial*, which reads exactly like a policy
+   *  refusal, and the person who wrote the hook has no way to tell that it was
+   *  theirs. `reason` is the runtime's own preview of what the hook said
+   *  (`hook_result.reason`), empty when it said nothing usable. */
+  | {
+      code: 'hookDenied';
+      hook: string;
+      event: string;
+      tool: string;
+      reason: string;
+    }
+  /** A hook could not run: timeout, crash, bad output, over the output ceiling.
+   *
+   *  Separate from `hookDenied` on purpose — "your guardrail refused this" and
+   *  "your guardrail is broken" call for different repairs, and a single row
+   *  would make a broken hook look like a working one that disagreed. */
+  | {
+      code: 'hookFailed';
+      hook: string;
+      event: string;
+      tool: string;
+      status: string;
+      reason: string;
+    };
 
 /** A system line. Used as a named type by callers that hold notes outside the
  *  stream (the handshake's own notices, which outlive a `session_load`). */
@@ -577,6 +604,21 @@ const TURN_SCOPED_KINDS: ReadonlySet<string> = new Set([
   'context_degraded',
 ]);
 
+/**
+ * `hook_result.status` values that mean "the hook did not do its job".
+ *
+ * The same list `internal/hooks` writes: `ok` and `denied` are successful
+ * invocations, `skipped` is the short circuit after a deny (the deny has its own
+ * row), and everything here is a hook that could not be asked properly.
+ */
+const HOOK_FAILURE_STATUSES: ReadonlySet<string> = new Set([
+  'timeout',
+  'spawn_error',
+  'exit_error',
+  'bad_output',
+  'truncated',
+]);
+
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : [];
 }
@@ -960,6 +1002,44 @@ export function reduceEvent(
 
     case 'image_attached': {
       return { entries: [...entries, imageNote(ev)] };
+    }
+
+    case 'hook_result': {
+      // Only the two outcomes a person needs to see become a row. `ok` is the
+      // ordinary case — a guardrail ran and agreed — and drawing a line for every
+      // one of them would bury the transcript under "checked, fine" on every tool
+      // call. `skipped` is the short circuit after a deny, and the deny itself
+      // already has a row.
+      //
+      // This is the half of the feature that has to be visible somewhere: without
+      // it a hook refusal reaches the model and the screen shows only a normal tool
+      // that came back with some text.
+      const status = typeof ev.status === 'string' ? ev.status : '';
+      if (status !== 'denied' && !HOOK_FAILURE_STATUSES.has(status)) {
+        return { entries };
+      }
+      const hook = typeof ev.hook === 'string' ? ev.hook : '';
+      const event = typeof ev.event === 'string' ? ev.event : '';
+      const tool = typeof ev.tool === 'string' ? ev.tool : '';
+      const reason = typeof ev.reason === 'string' ? ev.reason : '';
+      const denied = status === 'denied';
+      return {
+        entries: [
+          ...entries,
+          {
+            kind: 'note',
+            id: nextId('note'),
+            // A refusal is the guardrail working; a failure is the guardrail
+            // broken. Only the second one is a warning about the setup.
+            tone: denied ? 'info' : 'warn',
+            code: denied ? 'hook_denied' : 'hook_failed',
+            text: '',
+            message: denied
+              ? { code: 'hookDenied', hook, event, tool, reason }
+              : { code: 'hookFailed', hook, event, tool, status, reason },
+          },
+        ],
+      };
     }
 
     case 'goal_round': {

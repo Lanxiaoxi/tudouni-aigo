@@ -43,6 +43,13 @@
   #1 已修复，其余待处理。** 改提示词或工具描述之前先读它。
 - [usage-panel.md](design/usage-panel.md) — 桌面端「使用统计」面板 + home 目录跨工作区
   总账（`internal/usage/`，协议 11）。卡片口径、总账格式、窗口级快照的决定都在这里。
+- [hooks.md](design/hooks.md) — 用户可配置的确定性扩展点：外部命令 hooks 的事件模型、决策协议、
+  与权限系统的优先级、信任边界、审计字段与分阶段落地顺序。**状态：阶段 1 与阶段 2 已实现**
+  （`internal/hooks/`、`internal/agent/hooks_test.go`、`internal/runtime/hooks_config.go`、
+  `internal/runtime/hooks_run.go`）；阶段 3 的三项（`replace_output`、`prompt` 型 hook、
+  `ui(hooks)` 面板）仍未做。读它时注意两处与本文的差异：`--hooks` / `--no-hooks` /
+  `--trust-workspace-hooks` 是命令行开关，`hooks` 面板没有；`stop` 续轮的前端表现按
+  「一条新的 `run_started`」处理（§16 问题的建议做法），而不是续答。
 
 **还没做的方案，别当成现状读：**
 

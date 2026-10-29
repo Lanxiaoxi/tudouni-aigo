@@ -774,6 +774,29 @@ var catalog = map[string]string{
 	"notice.jobs.leftovers":             "[background] the previous session left the output of {n} background jobs behind; they have been cleaned up. That session did not exit cleanly (window closed, or the process was killed), so **those commands may still be running** and they are outside this session's control — check yourself if a port or the CPU does not add up.",
 	"notice.jobs.no_job_object":         "[background] the guarantee that \"closing the window also collects the background jobs\" was not established ({problem}). A normal exit still cleans up, but **killing this process can orphan background commands**.",
 	"notice.subagent.enabled":           "[subagent] {tool} is registered: the model may hand a self-contained task to a fresh agent, up to {depth} levels deep. A subagent cannot ask for approval — it runs in autopilot, so anything not on the policy's deny list runs without asking — and its whole transcript is saved as its own session beside this one.",
+
+	// --- hooks: the user's own scripts -------------------------------------
+	//
+	// Every one of these exists to make a specific silence impossible. A guardrail
+	// that is present and does nothing looks exactly like a session with no hooks at
+	// all from the inside, and the person who configured it has no way to tell the
+	// difference — which is the failure mode the whole feature is written against.
+	"notice.hooks.loaded":   "[hooks] {n} scripts loaded from {path} ({events}). They run in the order the file lists them; a `pre_tool_use` refusal stops the call before the approval gate sees it.",
+	"notice.hooks.disabled": "[hooks] --no-hooks: {path} was NOT read, so every guardrail in it is switched off for this session (the audit will show no hook_result records, which is the only trace this leaves).",
+	"notice.hooks.load_failed": "[hooks] {path} could not be used: {problem} The session will not start with a broken hook configuration, because a guardrail that silently stops guarding is worse than one that was never configured.",
+	"notice.hooks.warning":  "[hooks] {problem}",
+	"notice.hooks.problem":  "[hooks] skipped: {problem}",
+	"notice.hooks.ignored_workspace_file": "[hooks] ignored {path}: hook scripts are only read from the user-level {file}. The reason is that `command` here is code executed on this machine, and files in the workspace can be cloned in with a repository. If you wrote it and trust it, run `{trust}` once in this workspace.",
+	"notice.hooks.workspace_untrusted": "[hooks] ignored {path}: this workspace's hooks file has not been approved. Run --trust-workspace-hooks to review and record it; even then it may only deny or ask, and only on pre_tool_use / post_tool_use.",
+	"notice.hooks.workspace_trusted":   "[hooks] {n} scripts loaded from the trusted workspace file {path}. A workspace hook may only tighten: `allow`, `updated_input` and `additional_context` from it are dropped.",
+	"notice.hooks.listing.header":      "[hooks] {n} scripts in {path}",
+	"notice.hooks.listing.row":         "  {event}  {name}  matcher={matcher}  timeout={timeout}ms  fail_closed={fail_closed}  {command}",
+	"notice.hooks.listing.disabled_row": "  {event}  {name}  (disabled)",
+	"notice.hooks.listing.empty":       "[hooks] no file at {path}. A hook is a script this runtime runs at a fixed point in a turn; see docs/design/hooks.md for the shape.",
+	"notice.hooks.prompt_blocked":      "[hooks] that message was not sent: {reason}. Nothing was added to the session.",
+	"notice.hooks.continue_turn":       "[hooks] the stop hook asked for another round ({reason}).",
+	"notice.hooks.trust_scope":         "[hooks] trusted {file} only — the scripts it names are not hashed, so editing one of them takes effect without another approval.",
+	"audit.summary.hooks":              "hooks: {invoked} invoked  {denied} denied  {failed} failed  {skipped} skipped",
 	// What a delegation reports about itself as it starts, ends and fails. These are
 	// notices rather than stderr diagnostics because the runtime's stderr is the
 	// terminal the front end is drawing on: the same sentence written there would be

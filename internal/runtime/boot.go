@@ -107,7 +107,11 @@ func Boot() (Booted, error) {
 //
 // A nil return means "nothing to report"; it is not a promise that a turn will
 // succeed.
-func PreflightCheck() error {
+//
+// `noHooks` is `--no-hooks`, and it is part of the preflight for the same reason
+// every other switch is: the question this asks is "will the runtime start", and the
+// answer differs depending on whether the broken file is going to be read at all.
+func PreflightCheck(noHooks bool) error {
 	catalog, err := state.Load(catalogPath())
 	if err != nil {
 		return err
@@ -122,6 +126,13 @@ func PreflightCheck() error {
 		return err
 	}
 	if _, _, err := LoadMcpServers(); err != nil {
+		return err
+	}
+	// The hooks file is a start-up error for the same reason the others are, and it
+	// is asked **here** as well as in `OpenRuntime` because this is the function
+	// that runs before the alternate screen: a config error inside a full-screen
+	// interface is a truncated, unscrollable sentence over a dead runtime.
+	if _, err := LoadHooks(noHooks); err != nil {
 		return err
 	}
 	return nil

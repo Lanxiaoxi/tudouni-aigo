@@ -210,6 +210,23 @@ func (r *Runtime) RunTurn(ctx context.Context, text string) (string, error) {
 	// already turned off (or misses one they turned on).
 	r.refreshCodeIntelPermission()
 
+	// `user_prompt_submit` runs **before** anything is appended, and a refusal
+	// leaves the session exactly as it was.
+	//
+	// The ordering is the whole contract: a turn a hook refused did not happen, so
+	// there is no user message, no assistant answer and no run — and a front end
+	// told "that was refused" has a true story to tell. Appending first and
+	// unwinding afterwards would leave a session claiming the person said something
+	// that produced nothing, which is indistinguishable from a crash.
+	if err := r.fireUserPromptSubmit(text); err != nil {
+		return "", err
+	}
+	// The turn's hook context lives exactly as long as the turn, and the defer is
+	// what makes that true on every exit — an answer, a cancellation, a model
+	// failure. A note that survived its turn would be re-injected into a request
+	// that has nothing to do with the tool calls it describes.
+	defer r.HookContext.ClearTurn()
+
 	// [memory] The turn-start retrieval happens **before** the agent runs, so the first
 	// request of the turn already carries what this workspace knows. It is the only
 	// trigger that sees the person's own words rather than an error, and that is where a
@@ -223,6 +240,17 @@ func (r *Runtime) SetAutopilot(on bool) { r.Agent.SetAutopilot(on) }
 
 // Close implements protocol.Runtime.
 func (r *Runtime) Close() error {
+	// `session_end` goes **first**, while the audit sink is still open: the hook's
+	// own `hook_result` record has to land in the same file as everything else it
+	// observed, and a hook fired after the sink closes is a hook whose output nobody
+	// can ever read.
+	//
+	// It is fired on every close path that the runtime itself controls (a session
+	// switch, a delete of the mounted session, process shutdown). `reason` is
+	// `shutdown` rather than `switch` because this method cannot tell the two apart
+	// — see `CloseForSwitch`, which the protocol layer calls instead when it does.
+	r.fireSessionEnd(hookReasonShutdown)
+
 	if r.Jobs != nil {
 		if err := r.Jobs.Close(); err != nil {
 			warn("%s", i18n.T("close.jobs_failed", "problem", err.Error()))
@@ -250,4 +278,26 @@ func (r *Runtime) Close() error {
 		warn("%s", problem)
 	}
 	return nil
+}
+
+// The two values `session_end.reason` can take.
+//
+// They are distinct because a hook that writes a session report, or bumps a
+// counter, needs to tell "this session was put away" from "this person switched to
+// another one and will be back". A single value would make the answer "somebody
+// closed something", which is not worth collecting.
+const (
+	hookReasonShutdown = "shutdown"
+	hookReasonSwitch   = "switch"
+)
+
+// CloseForSwitch closes this runtime because another session is being mounted.
+//
+// It exists so `session_end.reason` can be told apart, and it is the method the
+// protocol layer calls on a switch. `Close` remains the shutdown path, including
+// the one the process exit takes, so a close nobody labelled is never reported as a
+// switch.
+func (r *Runtime) CloseForSwitch() error {
+	r.fireSessionEnd(hookReasonSwitch)
+	return r.Close()
 }

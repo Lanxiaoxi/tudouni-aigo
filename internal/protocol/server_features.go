@@ -314,7 +314,7 @@ func (s *Server) switchSession(message map[string]any) {
 	// fail, and losing the old session to a half-built replacement is worse than
 	// keeping both alive for a moment.
 	if previous != nil {
-		if err := previous.Close(); err != nil {
+		if err := closeForSwitch(previous); err != nil {
 			warn("%s", i18n.T("channels.session.close_failed", "problem", err.Error()))
 		}
 	}
@@ -403,7 +403,7 @@ func (s *Server) deleteSession(message map[string]any) {
 			s.sendSessions()
 			return
 		}
-		if err := current.Close(); err != nil {
+		if err := closeForSwitch(current); err != nil {
 			warn("%s", i18n.T("channels.session.close_failed", "problem", err.Error()))
 		}
 		s.Attach(next)
@@ -508,7 +508,7 @@ func (s *Server) forkSession(message map[string]any) {
 			s.sendSessions()
 			return
 		}
-		if err := previous.Close(); err != nil {
+		if err := closeForSwitch(previous); err != nil {
 			warn("%s", i18n.T("channels.session.close_failed", "problem", err.Error()))
 		}
 		s.Attach(next)
