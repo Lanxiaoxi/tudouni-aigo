@@ -593,15 +593,26 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
             }
             case 'context': {
               const context = projectContext(msg);
+              // A panel on screen is the reply's reader; a command that asked
+              // for a **block** is the exception, and it is one-shot.
+              const wanted = get().contextBlockWanted;
+              if (wanted) set({ contextBlockWanted: false });
               patchWith(key, (current) => ({
                 context,
                 contextMsg: msg,
-                // When the request came from the context panel, the answer goes
-                // to the panel alone — a block inserted into the transcript
-                // behind the open dialog would be a second copy the reader did
-                // not ask for. The palette's `/context` closes no panel and
-                // keeps the block, exactly as it always did.
-                ...(get().panel === 'context'
+                // When a context panel is on screen — the status bar's popover,
+                // the dialog, both of which render `ContextPanel` — the answer
+                // goes to that panel alone and no block is inserted into the
+                // transcript behind it: the same screen twice, one of them
+                // hidden, is a copy nobody asked for. The palette's `/context`
+                // opens no panel and keeps the block, exactly as it always did
+                // (and says so through `contextBlockWanted` when one is open).
+                //
+                // `panel === 'context'` is kept as well as the count: the
+                // count is raised by the panel's own effect, which runs a frame
+                // after the dialog mounts, and the two must never disagree
+                // about a reply arriving in that frame.
+                ...((get().panel === 'context' || get().contextPanels > 0) && !wanted
                   ? {}
                   : { entries: pushBlock(current.entries, 'context', msg) }),
               }));

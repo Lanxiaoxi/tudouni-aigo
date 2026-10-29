@@ -119,6 +119,40 @@ export interface AppStore {
   /** One panel at a time, and that is a window fact rather than a session one. */
   panel: PanelKind | null;
   /**
+   * How many context panels are on screen right now.
+   *
+   * The ledger is drawn in two places — the status bar's popover and the
+   * dialog — and both render the same `ContextPanel`. The runtime's answer to
+   * `t:'context'` carries no request id, so a reply cannot be matched to the
+   * surface that asked; what can be known is whether somebody is already
+   * looking at the ledger. When they are, the reply refreshes it and does
+   * **not** insert a block into the transcript: the same screen twice, one of
+   * them hidden behind the open panel, is a copy nobody asked for.
+   *
+   * A count rather than a flag, because a popover closing while the dialog
+   * opens mounts the second before the first's cleanup runs; whichever
+   * unmounted last would clear a flag that is still true.
+   *
+   * Window-level like `panel`, and **not** cleared on a session switch: the
+   * panel survives one, and it is still the thing the answer should go to.
+   */
+  contextPanels: number;
+  /**
+   * Whether the next `ui(context)` reply must produce a transcript block even
+   * though a panel is on screen.
+   *
+   * `/context` asks for a block — that is what the command is — and it can be
+   * typed while the status bar's popover happens to be open. Without this the
+   * reply would go to the popover and the command would appear to do nothing.
+   * `refreshContext` (the panels' own ask) never raises it, so opening a panel
+   * still cannot leave a block behind.
+   *
+   * One-shot: consumed by the next reply, because it describes one request and
+   * a flag left standing would put a block in the transcript the next time a
+   * panel refreshed.
+   */
+  contextBlockWanted: boolean;
+  /**
    * Whether the files panel is open **as a picker** (the plus menu's
    * "workspace file" entry) rather than as the plain browser.
    *
@@ -1075,6 +1109,16 @@ export interface AppStore {
   requestBlock(which: BlockKind): void;
   /** Ask for `ui(context)` **without** leaving the panel that asked. */
   refreshContext(): void;
+  /**
+   * Say that a `ContextPanel` is mounted, and that it is gone.
+   *
+   * Both surfaces render the same component, so it announces itself rather than
+   * each caller telling the store which one it is: the rule is "a `ui(context)`
+   * reply goes to the panel when one is on screen", and the panel is the only
+   * thing that knows. See `contextPanels`.
+   */
+  enterContextView(): void;
+  leaveContextView(): void;
   /**
    * Ask the active session's child for a fresh `ui(status)`. The breakdown
    * is one turn's, and the turn that just ended is the one a person opens the

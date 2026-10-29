@@ -15,7 +15,7 @@ import { pollNow } from '../polling';
 import { selectModalVisible } from '../selectors/session';
 import { activeWorkspaceOf, remoteConnectionOf } from '../appView';
 
-export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
+export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'enterContextView' | 'leaveContextView' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
   const { set, get, patch, patchWith, markSavedSessionsPending } = ctx;
   return {
     answerPermission(decision) {
@@ -286,6 +286,11 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       const key = get().activeKey;
       set({ panel: null });
       if (key === null) return;
+      // `/context` asks for a **transcript** block, and it can be typed while
+      // the status bar's popover is open. Say so, or the reply would go to that
+      // popover and the command would look like it did nothing (see
+      // `contextBlockWanted`).
+      if (which === 'context') set({ contextBlockWanted: true });
       if (which === 'status') sendTo(key, { v: 1, t: 'status' });
       if (which === 'tools') sendTo(key, { v: 1, t: 'tools' });
       if (which === 'context') sendTo(key, { v: 1, t: 'context' });
@@ -296,6 +301,17 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       const key = get().activeKey;
       if (key === null) return;
       sendTo(key, { v: 1, t: 'context' });
+    },
+
+    enterContextView() {
+      set((state) => ({ contextPanels: state.contextPanels + 1 }));
+    },
+
+    leaveContextView() {
+      // Never below zero: an effect that runs twice with one cleanup (a strict
+      // double mount) must not leave a negative count that later swallows a
+      // `/context` block for the rest of the window's life.
+      set((state) => ({ contextPanels: Math.max(0, state.contextPanels - 1) }));
     },
 
     refreshStatus() {

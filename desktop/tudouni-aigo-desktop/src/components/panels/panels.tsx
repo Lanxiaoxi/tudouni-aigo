@@ -2223,6 +2223,18 @@ export function ContextPanel() {
   const t = useT();
   const contextMsg = useSessionField((rt) => rt.contextMsg, null);
   const refreshContext = useApp((s) => s.refreshContext);
+  const enterContextView = useApp((s) => s.enterContextView);
+  const leaveContextView = useApp((s) => s.leaveContextView);
+
+  // Announce the panel for as long as it is mounted. The runtime's `ui(context)`
+  // answer carries no request id, so this is how the store knows the reply has a
+  // reader already looking at it — and therefore must not also append a block to
+  // the transcript (see `contextPanels`). Both surfaces render this component,
+  // so the popover and the dialog are covered by one rule.
+  useEffect(() => {
+    enterContextView();
+    return leaveContextView;
+  }, [enterContextView, leaveContextView]);
 
   useEffect(() => {
     refreshContext();

@@ -1868,6 +1868,11 @@ function resetStore(): void {
     pendingModals: [],
     questionMinimizedId: null,
     panel: null,
+    // The context panel's presence is window state, so a test that mounted one
+    // would otherwise leave it standing for the next one — and silently change
+    // where that test's `ui(context)` reply goes.
+    contextPanels: 0,
+    contextBlockWanted: false,
   });
 }
 
@@ -3361,3 +3366,75 @@ test('a remembered workspace is what a first attach goes to', () => {
     assert.equal(calls[0]?.workspace, 'C:/remembered');
   });
 });
+
+/* ============================================================
+   the context ledger: one screen, not two
+   ============================================================ */
+
+/** The `ui(context)` payload `contextPayload` sends, trimmed to what matters. */
+function contextReply(used = 281000): unknown {
+  return {
+    v: 1,
+    t: 'ui',
+    kind: 'context',
+    context: {
+      context: { estimated_tokens: used, limit_tokens: 896313, artifacts: 4, items: 9 },
+      window: 1000000,
+      messages: 41,
+      active: false,
+      folded: 0,
+    },
+  };
+}
+
+test('a context panel on screen takes the reply, and no block is left in the transcript', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+  // The handshake itself may leave rows in the transcript; the question here is
+  // only what the `ui(context)` reply adds.
+  const base = rt().entries.length;
+
+  // The status bar's popover and the dialog both mount `ContextPanel`, and it
+  // announces itself while mounted. The runtime's answer carries no request id,
+  // so that announcement is the only thing that can tell the store the reply
+  // already has a reader — and a block behind the open panel is a second copy
+  // nobody asked for.
+  useApp.getState().enterContextView();
+  useApp.getState().applyRuntimeMessage(KEY, contextReply());
+
+  assert.equal(rt().entries.length, base, 'the panel is the screen; nothing goes behind it');
+  assert.notEqual(rt().contextMsg, null, 'the panel still got its numbers');
+
+  // Closing it puts the next answer back in the transcript, which is where
+  // `/context` puts its block.
+  useApp.getState().leaveContextView();
+  useApp.getState().applyRuntimeMessage(KEY, contextReply());
+
+  assert.equal(rt().entries.length, base + 1);
+  const block = rt().entries[rt().entries.length - 1];
+  assert.equal(block?.kind, 'block');
+  assert.equal(block?.kind === 'block' ? block.block : null, 'context');
+});
+
+test('/context asks for a block even while a panel is open', () => {
+  captureOutbound();
+  resetStore();
+  applyInit();
+  const base = rt().entries.length;
+  useApp.getState().enterContextView();
+
+  // The command **is** the request for a block. The popover happening to be up
+  // is not an answer to it, and a command that visibly did nothing is worse
+  // than the duplicate.
+  useApp.getState().requestBlock('context');
+  useApp.getState().applyRuntimeMessage(KEY, contextReply());
+  assert.equal(rt().entries.length, base + 1, '/context must still write its block');
+
+  // One-shot: a panel's own refresh afterwards leaves the transcript alone.
+  useApp.getState().applyRuntimeMessage(KEY, contextReply());
+  assert.equal(rt().entries.length, base + 1, 'the request must not keep producing blocks');
+
+  useApp.getState().leaveContextView();
+});
+

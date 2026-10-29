@@ -100,6 +100,8 @@ export function createAppStore() {
     modal: null,
     pendingModals: [],
     panel: null,
+    contextPanels: 0,
+    contextBlockWanted: false,
     filePick: false,
     fileFocus: false,
     closePrompt: false,
