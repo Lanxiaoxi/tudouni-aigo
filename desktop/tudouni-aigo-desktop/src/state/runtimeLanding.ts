@@ -5,7 +5,7 @@
  * Moved verbatim out of store.ts. `applyStateSnapshot` takes `set`/`get` as
  * arguments — it never closed over them.
  */
-import { type ToolFacts } from '@/state/entries';
+import { presentedFiles, type ToolFacts } from '@/state/entries';
 import { mergeSkills, type VmState } from '@/runtime/adapt';
 import { sendTo } from '@/runtime/bus';
 import { type PastedImage } from '@/runtime/paste';
@@ -114,6 +114,12 @@ export function applyStateSnapshot(
 
   const hasContent: Record<SidebarBlockKey, boolean> = {
     goal: snap.goal.present,
+    // The files block is fed by the transcript rather than by this snapshot, so
+    // it asks the bucket the same question the block itself does. A `present`
+    // that has landed is content even before the turn's own `ui(state)` follows
+    // it — and this gate runs on that later message, which is enough for the
+    // one-time unfold.
+    files: presentedFiles(bucket.entries).length > 0,
     tasks: snap.todos.length > 0,
     skills: snap.skills.length > 0,
     jobs: snap.jobs.length > 0,

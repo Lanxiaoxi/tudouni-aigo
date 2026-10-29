@@ -922,6 +922,7 @@ export const en = {
   'rail.collapse': 'Hide this sidebar',
   'rail.show': 'Show the session runtime sidebar',
   'block.goal': 'Goal',
+  'block.files': 'Presented files',
   'block.tasks': 'Tasks',
   'block.skills': 'Loaded skills',
   'block.jobs': 'Background jobs',
@@ -932,6 +933,8 @@ export const en = {
 
   'empty.goal.title': 'No goal',
   'empty.goal.hint': 'A long-term goal shows its phase and round count here.',
+  'empty.files.title': 'No files presented',
+  'empty.files.hint': 'Files the model presents as a result appear here; click one to open it.',
   'empty.tasks.title': 'No tasks yet',
   'empty.tasks.hint': 'Steps the model breaks out appear here with their status.',
   'empty.skills.title': 'No skill loaded',

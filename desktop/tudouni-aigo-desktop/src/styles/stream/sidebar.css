@@ -183,6 +183,110 @@
   color: var(--fg-secondary);
 }
 
+/* ---------------- presented files ----------------
+ *
+ * The rail-sized twin of the transcript's deliverable card (`.dl-*` in
+ * `stream/blocks.css`). The difference is deliberate: a card has room for a
+ * preview target and an open button, while a 200px rail row has one target and
+ * it is the open. So the whole face is the button, and the trailing glyph only
+ * says which act the press is about to perform (download for a remote file that
+ * is not here yet, open otherwise).
+ */
+.sb-files {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sb-file {
+  min-width: 0;
+}
+
+.sb-file-face {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--row-h-compact);
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.sb-file-face:hover {
+  background: var(--lb-hover);
+}
+
+.sb-file-face:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sb-file-icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--accent);
+}
+
+/* Name over note, the same two lines the card draws. `min-width: 0` is what
+   lets both ellipsise instead of pushing the trailing glyph out of the row. */
+.sb-file-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sb-file-name {
+  font-size: var(--text-compact);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-file-note {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A failed open says why, in place, and may wrap: this is the line a person has
+   to read, and clipping a failure to one line would hide the half that says
+   what to do. */
+.sb-file-note[data-error] {
+  color: var(--destructive);
+  white-space: normal;
+}
+
+.sb-file-trail {
+  flex: none;
+  display: inline-flex;
+  color: var(--fg-faint);
+}
+
+.sb-spin {
+  animation: dl-spin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-spin {
+    animation: none;
+  }
+}
+
 /* The rail's own ghost buttons take the rail's hover wash, not the shell's
    neutral `--bg-muted`: the two rails use one green-grey for the pointer, and a
    third grey inside a block would be the inconsistency this change removes. */

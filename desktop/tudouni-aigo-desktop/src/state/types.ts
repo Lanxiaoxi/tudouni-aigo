@@ -91,7 +91,7 @@ export type PanelKind =
 
 /* `ssh` sits with the workspace-capability blocks (jobs, mcp): it is about
  * things running in the workspace, not about this turn's conversation. */
-export type SidebarBlockKey = 'goal' | 'tasks' | 'skills' | 'jobs' | 'mcp' | 'ssh';
+export type SidebarBlockKey = 'goal' | 'files' | 'tasks' | 'skills' | 'jobs' | 'mcp' | 'ssh';
 
 /**
  * Quiet mode for the transcript.
@@ -104,7 +104,7 @@ export type SidebarBlockKey = 'goal' | 'tasks' | 'skills' | 'jobs' | 'mcp' | 'ss
  */
 export type QuietMode = 'off' | 'normal' | 'simple';
 
-export const SIDEBAR_BLOCKS: SidebarBlockKey[] = ['goal', 'tasks', 'jobs', 'skills', 'mcp', 'ssh'];
+export const SIDEBAR_BLOCKS: SidebarBlockKey[] = ['goal', 'files', 'tasks', 'jobs', 'skills', 'mcp', 'ssh'];
 
 /**
  * One `ask_user` call, accumulated from its `question_request`s.

@@ -1,6 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
+import {
+  NO_ENTRIES,
+  useApp,
+  useSessionField,
+  type SidebarBlockKey,
+} from '@/state/store';
+import { presentedFiles } from '@/state/entries';
 import { useT } from '@/i18n/useT';
 import { PanelBody, PanelShell, PopoverSurface } from '@/components/panels/PanelShell';
 import { SidebarBlockContent } from '@/components/sidebar/Sidebar';
@@ -8,10 +14,10 @@ import { SidebarBlockContent } from '@/components/sidebar/Sidebar';
 /**
  * §1·5 The collapsed summary row.
  *
- * One line standing in for the right rail while it is folded: goal, background
- * jobs, MCP, tasks, skills, SSH — every cell names a block the rail leads
- * with. Rendered only when that rail is folded, so the two never say the same
- * thing twice.
+ * One line standing in for the right rail while it is folded: goal, presented
+ * files, background jobs, MCP, tasks, skills, SSH — every cell names a block the
+ * rail leads with. Rendered only when that rail is folded, so the two never say
+ * the same thing twice.
  *
  * **It is the conversation column's second header, not a window-level strip.**
  * It sits inside `.app-conversation`, directly under `.sessionbar`, so it is
@@ -56,6 +62,8 @@ const HOVER_CLOSE_MS = 150;
 export function CollapsedSummary() {
   const t = useT();
   const snap = useSessionField((rt) => rt.uiState, null);
+  const entries = useSessionField((rt) => rt.entries, NO_ENTRIES);
+  const presented = useMemo(() => presentedFiles(entries), [entries]);
   const openSidebarBlock = useApp((s) => s.openSidebarBlock);
 
   // Before the handshake there is nothing to report. The row is still drawn —
@@ -77,6 +85,12 @@ export function CollapsedSummary() {
     <div className="collapsed-summary">
       <CsItem blockKey="goal" label={t('block.goal')} onOpen={openSidebarBlock}>
         {goalCount}
+      </CsItem>
+
+      {/* The conversation's outputs, counted the same way the rail's block
+          badges them: every file presented at least once, not every card. */}
+      <CsItem blockKey="files" label={t('block.files')} onOpen={openSidebarBlock}>
+        {presented.length}
       </CsItem>
 
       <CsItem

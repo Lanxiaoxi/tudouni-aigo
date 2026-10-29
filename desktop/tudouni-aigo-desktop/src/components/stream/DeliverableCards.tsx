@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   Download,
   ExternalLink,
@@ -14,7 +13,7 @@ import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { baseName } from '@/utils/format';
-import { isHosted, openDeliverable, openLocalDeliverable, downloadDeliverable } from '@/runtime/tauri';
+import { useDeliverableOpen } from '@/hooks/useDeliverableOpen';
 import { isPicturePath } from '@/components/panels/panels';
 import type { Deliverable } from '@/state/entries';
 
@@ -55,115 +54,11 @@ import type { Deliverable } from '@/state/entries';
  */
 export function DeliverableCards({ files }: { files: Deliverable[] }) {
   const t = useT();
-  const workspace = useSessionField((rt) => rt.workspace, '');
-  // A non-null id is the split that decides which door the open uses: the
-  // session's own field, never a guess from the shape of `workspace` (a remote
-  // path can look like a local one, and the rule the connection state follows
-  // is that the UI does not re-derive "is this remote").
+  // The remote half also decides what the control *looks like* (a download
+  // before the copy exists), so it is read here as well as inside the hook.
   const remoteWorkspaceId = useSessionField((rt) => rt.remoteWorkspaceId, null);
-  // The child's key, for the remote doors: they are keyed by the child rather
-  // than by connection parameters, so the destination is the one the bridge
-  // started the session through.
-  const childKey = useSessionField((rt) => rt.key, '');
   // Per file, keyed by path: two cards in one turn are two independent gestures.
-  const [phase, setPhase] = useState<Record<string, 'opening' | 'error'>>({});
-  const [problem, setProblem] = useState<Record<string, string>>({});
-  // The remote half, per file: where the local copy is, once it exists. `null`
-  // (absent) means "not downloaded yet", which the button renders as a
-  // download rather than as an open.
-  const [copied, setCopied] = useState<Record<string, string | null>>({});
-
-  async function open(file: Deliverable) {
-    // **Checked before the call, not inferred from the failure.** With no Tauri
-    // host the IPC import resolves to nothing and the throw is a `TypeError`
-    // about `invoke` — a sentence written for whoever maintains this file, shown
-    // to somebody who pressed a button. The state is knowable up front, so it is
-    // asked up front and the card says what a person can do about it.
-    if (!isHosted()) {
-      setPhase((current) => ({ ...current, [file.path]: 'error' }));
-      setProblem((current) => ({ ...current, [file.path]: t('deliverable.noHost') }));
-      return;
-    }
-    // Remote door: download first, open the copy second. The two are one
-    // gesture here — the button the person pressed means "get me the file" —
-    // and the copied map is what turns the second press into an instant open.
-    if (remoteWorkspaceId !== null) {
-      const existing = copied[file.path];
-      if (existing !== null && existing !== undefined) {
-        await openCopy(file, existing);
-        return;
-      }
-      setPhase((current) => ({ ...current, [file.path]: 'opening' }));
-      try {
-        const downloaded = await downloadDeliverable(childKey, file.path);
-        setCopied((current) => ({ ...current, [file.path]: downloaded.path }));
-        await openCopy(file, downloaded.path);
-      } catch (err) {
-        fail(file, err);
-      }
-      return;
-    }
-    setPhase((current) => ({ ...current, [file.path]: 'opening' }));
-    try {
-      await openDeliverable(workspace, file.path);
-      clear(file);
-    } catch (err) {
-      fail(file, err);
-    }
-  }
-
-  /** The second half of a remote open: hand the local copy to the OS. */
-  async function openCopy(file: Deliverable, localPath: string) {
-    setPhase((current) => ({ ...current, [file.path]: 'opening' }));
-    try {
-      await openLocalDeliverable(localPath);
-      clear(file);
-    } catch (err) {
-      fail(file, err);
-    }
-  }
-
-  function fail(file: Deliverable, err: unknown) {
-    // The failure **stays on the card** rather than becoming a toast. It is
-    // about this file, and a sentence that floats away leaves the card looking
-    // like a button that does nothing.
-    //
-    // The message is passed through **verbatim**: it comes from Rust, it names
-    // the file, and it is the one sentence here that can say *why* — a sentence
-    // this window composed instead would be a second opinion about a fact it
-    // does not have.
-    setPhase((current) => ({ ...current, [file.path]: 'error' }));
-    setProblem((current) => ({ ...current, [file.path]: String(err) }));
-  }
-
-  function clear(file: Deliverable) {
-    // Success clears in place. There is no success sentence to show: the OS
-    // brought a window forward, and a card that also said "opened" would be
-    // telling the person about something they are already looking at.
-    setPhase((current) => {
-      const next = { ...current };
-      delete next[file.path];
-      return next;
-    });
-    setProblem((current) => {
-      const next = { ...current };
-      delete next[file.path];
-      return next;
-    });
-  }
-
-  function dismiss(file: Deliverable) {
-    setPhase((current) => {
-      const next = { ...current };
-      delete next[file.path];
-      return next;
-    });
-    setProblem((current) => {
-      const next = { ...current };
-      delete next[file.path];
-      return next;
-    });
-  }
+  const { phase, problem, copied, open, dismiss } = useDeliverableOpen();
 
   return (
     <ul className="dl-list" aria-label={t('deliverable.label')}>
@@ -286,20 +181,22 @@ export function previewFile(path: string) {
   store.readFile(path);
 }
 
-/** The face of a card, chosen by extension. */
-function FileGlyph({ path }: { path: string }) {
+/** The face of a card, chosen by extension. Exported because the rail's file
+ *  row draws the same glyph — one file type should not have two icons depending
+ *  on which surface happens to be showing it. */
+export function FileGlyph({ path, size = 18 }: { path: string; size?: number }) {
   const ext = extensionOf(path);
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) return <FileImage size={18} />;
-  if (['csv', 'tsv', 'xls', 'xlsx', 'ods'].includes(ext)) return <FileSpreadsheet size={18} />;
-  if (['ppt', 'pptx', 'odp', 'key'].includes(ext)) return <Presentation size={18} />;
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) return <FileImage size={size} />;
+  if (['csv', 'tsv', 'xls', 'xlsx', 'ods'].includes(ext)) return <FileSpreadsheet size={size} />;
+  if (['ppt', 'pptx', 'odp', 'key'].includes(ext)) return <Presentation size={size} />;
   if (
     ['js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'go', 'py', 'rs', 'java', 'c', 'h', 'cpp', 'sh', 'ps1', 'json', 'yaml', 'yml', 'toml'].includes(
       ext,
     )
   ) {
-    return <FileCode size={18} />;
+    return <FileCode size={size} />;
   }
-  return <FileText size={18} />;
+  return <FileText size={size} />;
 }
 
 function extensionOf(path: string): string {
@@ -317,8 +214,11 @@ function extensionOf(path: string): string {
  * is the one place the card has to say *something* when the model wrote no note.
  * Known extensions get a word; anything else keeps its own name, because
  * inventing a category for an unknown extension would be guessing.
+ *
+ * Exported beside {@link FileGlyph}: the rail's file row falls back to the same
+ * words for the same reason.
  */
-function extensionLabel(name: string, t: ReturnType<typeof useT>): string {
+export function extensionLabel(name: string, t: ReturnType<typeof useT>): string {
   const ext = extensionOf(name);
   switch (ext) {
     case 'md':

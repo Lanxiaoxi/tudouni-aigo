@@ -1,15 +1,34 @@
-import type { ReactNode } from 'react';
-import { Bot, CheckCircle2, ChevronRight, CircleDashed, Loader } from 'lucide-react';
-import { NO_SKILLS, NO_SUBAGENTS_DONE, useApp, useSessionField, type SidebarBlockKey } from '@/state/store';
+import { useMemo, type ReactNode } from 'react';
+import {
+  Bot,
+  CheckCircle2,
+  ChevronRight,
+  CircleDashed,
+  Download,
+  ExternalLink,
+  Loader,
+} from 'lucide-react';
+import {
+  NO_ENTRIES,
+  NO_SKILLS,
+  NO_SUBAGENTS_DONE,
+  useApp,
+  useSessionField,
+  type SidebarBlockKey,
+} from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Badge, BusyDots, Count, EmptyState, Progress, Tip } from '@/components/ui/kit';
-import { oneLine } from '@/utils/format';
+import { baseName, oneLine } from '@/utils/format';
+import { useDeliverableOpen } from '@/hooks/useDeliverableOpen';
+import { extensionLabel, FileGlyph } from '@/components/stream/DeliverableCards';
+import { presentedFiles, type Deliverable } from '@/state/entries';
 import type { JobState, SshRow } from '@/protocol/types';
 import type { VmGoal, VmJob, VmMcp, VmSubagentDone, VmTask } from '@/runtime/adapt';
 
 /**
- * §3 Sidebar, six blocks, fixed order:
- * Goal → Tasks → Background jobs → Loaded skills → MCP → SSH sessions.
+ * §3 Sidebar, seven blocks, fixed order:
+ * Goal → Presented files → Tasks → Background jobs → Loaded skills → MCP →
+ * SSH sessions.
  *
  * Each block is: title + count badge + content rows + empty-state text + a
  * pointer.
@@ -44,6 +63,12 @@ export function Sidebar() {
     (rt) => rt.uiState?.subagentsDone ?? NO_SUBAGENTS_DONE,
     NO_SUBAGENTS_DONE,
   );
+  // The files block is fed by the transcript, not by the snapshot: a `present`
+  // result carries the declaration, and `entries` is the one record of them. The
+  // memo is what keeps the derivation off every unrelated render — `entries` is a
+  // stable array between messages.
+  const entries = useSessionField((rt) => rt.entries, NO_ENTRIES);
+  const presented = useMemo(() => presentedFiles(entries), [entries]);
 
   if (!snap) {
     return (
@@ -97,7 +122,25 @@ export function Sidebar() {
           <GoalBody goal={snap.goal} />
         </Block>
 
-        {/* 2 · Tasks */}
+        {/* 2 · Presented files. The conversation's own outputs: every file a
+            `present` call declared, in the order it was first declared. Each row
+            opens the file in the OS default application — the same door the
+            transcript card's open control uses, through the same hook — because
+            "what did this conversation give me" is answered by getting the file,
+            not by reading its name again. */}
+        <Block
+          blockKey="files"
+          title={t('block.files')}
+          count={presented.length}
+          countActive={presented.length > 0}
+          isEmpty={presented.length === 0}
+          emptyTitle={t('empty.files.title')}
+          emptyHint={t('empty.files.hint')}
+        >
+          <PresentedFiles files={presented} />
+        </Block>
+
+        {/* 3 · Tasks */}
         <Block
           blockKey="tasks"
           title={t('block.tasks')}
@@ -118,7 +161,7 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 3 · Background jobs. The block holds both kinds of background work —
+        {/* 4 · Background jobs. The block holds both kinds of background work —
             commands sent to the background and background delegations — because
             it answers one question: what is still running after the turn moved
             on. A background subagent outlives its turn exactly like a
@@ -146,7 +189,7 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 4 · Loaded skills.
+        {/* 5 · Loaded skills.
             `snap.skills` is `ui(state).skills`, which is pointers for whatever
             the snapshot happened to record; the merged store list is what
             `ui(skills).active` says is actually loaded. The sidebar shows the
@@ -171,7 +214,7 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 5 · MCP */}
+        {/* 6 · MCP */}
         <Block
           blockKey="mcp"
           title={t('block.mcp')}
@@ -186,7 +229,7 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 6 · SSH sessions. Display only — the operations stay with the
+        {/* 7 · SSH sessions. Display only — the operations stay with the
             `ssh_*` tools, so unlike the MCP rows above there is no action
             button here. The badge counts live sessions; ended rows stay on
             the list so "what was I connected to" keeps an answer. `active`
@@ -230,6 +273,8 @@ export function SidebarBlockContent({ blockKey }: { blockKey: SidebarBlockKey })
     (rt) => rt.uiState?.subagentsDone ?? NO_SUBAGENTS_DONE,
     NO_SUBAGENTS_DONE,
   );
+  const entries = useSessionField((rt) => rt.entries, NO_ENTRIES);
+  const presented = useMemo(() => presentedFiles(entries), [entries]);
 
   if (!snap) return null;
 
@@ -239,6 +284,13 @@ export function SidebarBlockContent({ blockKey }: { blockKey: SidebarBlockKey })
         <GoalBody goal={snap.goal} />
       ) : (
         <EmptyState compact title={t('empty.goal.title')} hint={t('empty.goal.hint')} />
+      );
+
+    case 'files':
+      return presented.length > 0 ? (
+        <PresentedFiles files={presented} />
+      ) : (
+        <EmptyState compact title={t('empty.files.title')} hint={t('empty.files.hint')} />
       );
 
     case 'tasks': {
@@ -464,6 +516,81 @@ function GoalBody({ goal }: { goal: VmGoal }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/* ---------------- Presented files ---------------- */
+
+/**
+ * The files this conversation declared, one row each, **opening on press**.
+ *
+ * The row is the rail-sized twin of the transcript's deliverable card, and it
+ * differs from that card in exactly one decision. On a card, the face is a
+ * *preview* and the open control beside it is the real act, because a card has
+ * room for two targets. A 200px rail row has room for one, and the question
+ * this block answers — "where is the thing I asked for" — is answered by the
+ * file opening, not by its name being drawn again. So the whole row is the open.
+ *
+ * Everything else is shared: the glyph and the fallback note come from the card
+ * (`FileGlyph`, `extensionLabel`) so a `.pptx` looks the same in both places,
+ * and the open itself goes through `useDeliverableOpen`, which is the single
+ * place that knows about remote downloads and the missing-Tauri-host case. A
+ * failure stays **on the row** that failed (the sentence comes from Rust
+ * verbatim), and pressing it again is the retry.
+ *
+ * Exported for the test that pins the rail's row labels and fallback note.
+ */
+export function PresentedFiles({ files }: { files: Deliverable[] }) {
+  const t = useT();
+  const remoteWorkspaceId = useSessionField((rt) => rt.remoteWorkspaceId, null);
+  // Per block, keyed by path: two files in one list are two independent gestures.
+  const { phase, problem, copied, open } = useDeliverableOpen();
+
+  return (
+    <ul className="sb-files" aria-label={t('block.files')}>
+      {files.map((file) => {
+        const state = phase[file.path];
+        const name = baseName(file.path);
+        // The note is the model's own, or — when it wrote none — the kind of
+        // file, the same fallback the transcript card uses.
+        const note = file.description !== '' ? file.description : extensionLabel(name, t);
+        return (
+          <li key={file.path} className="sb-file">
+            <button
+              type="button"
+              className="sb-file-face"
+              // The full path: the row shows a basename, and "which one is this"
+              // is the question a hover is asking.
+              title={file.path}
+              aria-label={t('deliverable.open', { name })}
+              onClick={() => open(file)}
+            >
+              <span className="sb-file-icon" aria-hidden>
+                <FileGlyph path={file.path} size={14} />
+              </span>
+              <span className="sb-file-body">
+                <span className="sb-file-name">{name}</span>
+                <span className="sb-file-note" data-error={state === 'error' ? '' : undefined}>
+                  {state === 'error' ? problem[file.path] : note}
+                </span>
+              </span>
+              <span className="sb-file-trail" aria-hidden>
+                {state === 'opening' ? (
+                  <Loader size={12} className="sb-spin" />
+                ) : remoteWorkspaceId !== null && copied[file.path] === undefined ? (
+                  // The remote door's first half is a download. The icon says
+                  // which act the press is about to perform, rather than
+                  // promising an open that cannot happen yet.
+                  <Download size={12} />
+                ) : (
+                  <ExternalLink size={12} />
+                )}
+              </span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

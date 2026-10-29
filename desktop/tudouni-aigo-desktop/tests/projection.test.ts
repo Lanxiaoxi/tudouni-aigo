@@ -38,6 +38,7 @@ import {
   clearStream,
   hasRunningTurn,
   lastStopReason,
+  presentedFiles,
   reduceEvent,
   settleAbandonedTurn,
   type Entry,
@@ -1264,6 +1265,90 @@ test('a non-present result has no deliverables field at all', () => {
   const row = entries[0] as Extract<Entry, { kind: 'tool' }>;
   assert.equal(row.result?.preview, 'hello');
   assert.equal(row.result?.deliverables, undefined);
+});
+
+/* ---------------- the rail's list reads the same declarations ---------------- */
+
+/** A settled `present` row in the shape the reducer produces. */
+function presentRow(
+  runId: string,
+  files: { path: string; description: string }[],
+): Entry {
+  return {
+    kind: 'tool',
+    id: `tool-${runId}`,
+    index: 0,
+    tool: 'present',
+    arguments: '{"files":[]}',
+    risk: 'low',
+    runId,
+    step: 0,
+    result: {
+      status: 'ok',
+      chars: 10,
+      durationMs: 1,
+      exitCode: null,
+      parallel: false,
+      preview: null,
+      deliverables: files,
+    },
+  } as Entry;
+}
+
+test('every declaration in the conversation is one row, in first-seen order', () => {
+  // The rail's block answers "what did this conversation produce", so it walks
+  // the transcript rather than keeping a second list: two turns that declared
+  // three files between them are three rows.
+  const entries: Entry[] = [
+    presentRow('r1', [{ path: 'a.md', description: 'first' }]),
+    presentRow('r2', [{ path: 'b.png', description: '' }]),
+    presentRow('r3', [{ path: 'c.csv', description: 'table' }]),
+  ];
+
+  assert.deepEqual(
+    presentedFiles(entries).map((file) => file.path),
+    ['a.md', 'b.png', 'c.csv'],
+  );
+});
+
+test('the same file presented twice is one row, with the later note', () => {
+  // A person asking "what is here" wants the set, not a log — and the note that
+  // survives is the one written about the file as it now stands.
+  const entries: Entry[] = [
+    presentRow('r1', [{ path: 'report.md', description: 'draft' }]),
+    presentRow('r2', [{ path: 'report.md', description: 'final' }]),
+  ];
+
+  assert.deepEqual(presentedFiles(entries), [
+    { path: 'report.md', description: 'final' },
+  ]);
+});
+
+test('rows without a declaration contribute nothing, and order is untouched', () => {
+  const entries: Entry[] = [
+    presentRow('r1', [{ path: 'a.md', description: '' }]),
+    {
+      kind: 'tool',
+      id: 'tool-shell',
+      index: 1,
+      tool: 'shell',
+      arguments: '{}',
+      risk: 'low',
+      runId: 'r1',
+      step: 0,
+      result: {
+        status: 'ok',
+        chars: 2,
+        durationMs: 1,
+        exitCode: 0,
+        parallel: false,
+        preview: null,
+      },
+    } as Entry,
+    { kind: 'answer', id: 'a1', runId: 'r1', text: 'done', userBefore: 1 },
+  ];
+
+  assert.deepEqual(presentedFiles(entries).map((file) => file.path), ['a.md']);
 });
 
 test('a permission verdict without waited_ms means nobody was asked', () => {

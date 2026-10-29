@@ -33,6 +33,7 @@ import type { AppStore, QuietMode, SidebarBlockKey } from './store';
  */
 const EMPTY_BLOCKS: Record<SidebarBlockKey, boolean> = {
   goal: true,
+  files: true,
   tasks: true,
   skills: true,
   jobs: true,

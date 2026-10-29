@@ -292,6 +292,12 @@ const SUITES = [
   // the renderer had decided was detail. Both halves are pinned: that a card is
   // drawn, and that it is drawn even when the rollup line is collapsed.
   'quiet-deliverables.test.tsx',
+  // The right rail's **Presented files** block. The transcript's card and this
+  // row are two faces of one declaration, and the row's whole face is the open.
+  // Pinned: one row per file, the accessible name is the act (not a bare file
+  // name), the note falls back to the file kind, and a remote file advertises
+  // the download its first press performs.
+  'presented-files.test.tsx',
   // The plus menu's second page. The menu is a `max-height: 320px` flex column
   // and the skills page used to be a bare `<div>`: as a flex item it sized itself
   // to its content, so the list never overflowed, never scrolled, and the rows

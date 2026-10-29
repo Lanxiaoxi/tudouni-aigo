@@ -1337,6 +1337,38 @@ export function hasRunningTurn(entries: Entry[]): boolean {
   return false;
 }
 
+/**
+ * Every file this conversation has declared through `present`, in the order it
+ * was first declared.
+ *
+ * The transcript is the record: a `present` result carries the files it
+ * declared, and this walks the entries that are already on screen rather than
+ * keeping a second list that could fall out of step with them. One file
+ * presented twice is **one row** — a person asking "what did this conversation
+ * produce" wants the set, not a log — and the later note wins, because it is the
+ * one written about the file as it stands now.
+ *
+ * The same boundary the transcript's cards have applies here: a session
+ * restored by `session_load` is rebuilt from `{role, content}` messages and
+ * therefore holds no tool results at all, so its list is empty. That is not a
+ * second rule, it is the same one — a file is listed because a declaration is
+ * in the stream.
+ */
+export function presentedFiles(entries: readonly Entry[]): Deliverable[] {
+  const seen = new Map<string, Deliverable>();
+  for (const entry of entries) {
+    if (entry.kind !== 'tool' || entry.result === null) continue;
+    const declared = entry.result.deliverables;
+    if (declared === undefined) continue;
+    for (const file of declared) {
+      // `Map.set` on an existing key keeps its original position, which is what
+      // the first-declared order above asks for, while replacing the note.
+      seen.set(file.path, file);
+    }
+  }
+  return [...seen.values()];
+}
+
 /** The most recent turn head, or null before the first one.
  *
  *  The last head is **the turn above** the one about to open, which is the turn a
