@@ -50,6 +50,7 @@
   `ui(hooks)` 面板）仍未做。读它时注意两处与本文的差异：`--hooks` / `--no-hooks` /
   `--trust-workspace-hooks` 是命令行开关，`hooks` 面板没有；`stop` 续轮的前端表现按
   「一条新的 `run_started`」处理（§16 问题的建议做法），而不是续答。
+  **给写 hook 的人看的是根下的 [hooks.md](../hooks.md)，不是这一份**——这里是决策记录。
 
 **还没做的方案，别当成现状读：**
 
@@ -95,6 +96,12 @@
   配套脚本 `scripts/exploration_cost.py`。
 - [release.md](history/release.md) — 出发布包的流程记录。**当前流程以
   [`../AGENT.md`](../AGENT.md) 和 `Makefile` 为准**。
+
+# docs/ 根下的用户文档
+
+- [hooks.md](hooks.md) — **给写 hook 的人**：事件表、stdin/stdout 契约、聚合规则、
+  与权限系统的先后、三个可跑的例子、常见错误清单。想看每条规则为什么这样，去
+  [design/hooks.md](design/hooks.md)。
 
 ## 不在 docs/ 里的
 

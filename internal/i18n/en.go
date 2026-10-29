@@ -792,7 +792,7 @@ var catalog = map[string]string{
 	"notice.hooks.listing.header":      "[hooks] {n} scripts in {path}",
 	"notice.hooks.listing.row":         "  {event}  {name}  matcher={matcher}  timeout={timeout}ms  fail_closed={fail_closed}  {command}",
 	"notice.hooks.listing.disabled_row": "  {event}  {name}  (disabled)",
-	"notice.hooks.listing.empty":       "[hooks] no file at {path}. A hook is a script this runtime runs at a fixed point in a turn; see docs/design/hooks.md for the shape.",
+	"notice.hooks.listing.empty":       "[hooks] no file at {path}. A hook is a script this runtime runs at a fixed point in a turn; see docs/hooks.md for the shape.",
 	"notice.hooks.prompt_blocked":      "[hooks] that message was not sent: {reason}. Nothing was added to the session.",
 	"notice.hooks.continue_turn":       "[hooks] the stop hook asked for another round ({reason}).",
 	"notice.hooks.trust_scope":         "[hooks] trusted {file} only — the scripts it names are not hashed, so editing one of them takes effect without another approval.",
