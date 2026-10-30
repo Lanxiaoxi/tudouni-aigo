@@ -29,12 +29,12 @@
   background: var(--lb-hover);
 }
 
-/* The block label is the left rail's **shelf label**: 10.5px, sentence case,
+/* The block label is the left rail's **shelf label**: 12px, sentence case,
    `--fg-muted`. It used to be 13px/600 in the reading colour, which made six
    section names compete with the facts under them; at this size the count at
    the row's end is the thing that stands out, which is what it is for. */
 .sb-block-head .sbh-title {
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--fg-muted);
