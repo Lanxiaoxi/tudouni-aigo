@@ -967,6 +967,63 @@ export async function writeDesktopData(text: string): Promise<string> {
   return text;
 }
 
+/* ============================================================
+   The composer's prompt history
+   ============================================================ */
+
+/** One workspace's prompt-history sidecar (`~/.tudouni/prompt-history/<key>.jsonl`),
+ *  as text. `null` when the file does not exist, which is a first launch. */
+export async function readPromptHistory(fileKey: string): Promise<string | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<string | null>('prompt_history_read', { key: fileKey });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Append one sent sentence.
+ *
+ * A rejection is left as a rejection so the caller can say it in the console;
+ * the send it belongs to has already happened and must not be affected.
+ */
+export async function appendPromptHistory(
+  fileKey: string,
+  text: string,
+  at: number,
+): Promise<void> {
+  if (!isHosted()) return;
+  await tauriInvoke<null>('prompt_history_append', { key: fileKey, text, at });
+}
+
+/** Replace one workspace's sidecar — the load-time compaction. */
+export async function writePromptHistory(fileKey: string, text: string): Promise<void> {
+  if (!isHosted()) return;
+  await tauriInvoke<null>('prompt_history_write', { key: fileKey, text });
+}
+
+/**
+ * Seed a workspace's sidecar from its saved sessions, once.
+ *
+ * Answers the file's text when it wrote one, and `null` when there was nothing
+ * to do: the sidecar already had content, or this is a remote workspace whose
+ * sessions are on the other machine. The host does the scan — it is the process
+ * that sees the disk and belongs to no session, the same division
+ * `sessions_search` draws.
+ */
+export async function seedPromptHistory(
+  workspace: string,
+  fileKey: string,
+): Promise<string | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<string | null>('prompt_history_seed', { workspace, key: fileKey });
+  } catch {
+    return null;
+  }
+}
+
 /** Tell the bridge the front end is listening, so it flushes everything every
  *  child queued before that was true. Returns how many lines were released.
  *

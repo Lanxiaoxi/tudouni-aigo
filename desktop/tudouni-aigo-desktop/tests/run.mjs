@@ -74,6 +74,12 @@ const SUITES = [
   // ships, a send that carries a placeholder, a removed chip coming back — so
   // the state in the middle is what these hold still.
   'paste-pending.test.ts',
+  // The composer's prompt history: what a workspace is offered back, and which
+  // one. The matcher, the sidecar's parser and the rule that strips an
+  // attachment path before a sentence is remembered are all pure, which is what
+  // lets a Chinese prefix, a stale record and a picture-only message be asserted
+  // instead of typed into a window.
+  'prompt-history.test.ts',
   'workspace.test.ts',
   // The attach race: a child's opening handshake can be on the wire before the
   // store has built the handle for it, and the layers that hold it only mean

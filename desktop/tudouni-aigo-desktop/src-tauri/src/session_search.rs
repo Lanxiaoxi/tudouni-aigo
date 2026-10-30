@@ -40,26 +40,26 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// The per-workspace state directory (`paths.RuntimeDirName`).
-const RUNTIME_DIR: &str = ".tudouni";
+pub(crate) const RUNTIME_DIR: &str = ".tudouni";
 /// The sessions directory inside it (`state` package).
-const SESSIONS_DIR: &str = "sessions";
+pub(crate) const SESSIONS_DIR: &str = "sessions";
 /// The session file suffix (`state.Suffix`).
-const SUFFIX: &str = ".jsonl";
+pub(crate) const SUFFIX: &str = ".jsonl";
 /// The delegated-subagent prefix (`state.ChildSessionPrefix`). Child sessions
 /// belong to a task in their parent's transcript, and the runtime's
 /// `ListParentIDs` hides them from anything a person picks from — the search
 /// must hide them too, by name, without opening the files.
-const CHILD_PREFIX: &str = "sub-";
+pub(crate) const CHILD_PREFIX: &str = "sub-";
 /// `state.StateVersion`, as this reader knows it. A higher version is a file
 /// a future runtime wrote, and skipping it loudly-ish (no hit, no error) is
 /// the same judgement the runtime's loader makes.
-const KNOWN_STATE_VERSION: u64 = 1;
+pub(crate) const KNOWN_STATE_VERSION: u64 = 1;
 /// How many hits a search answers with, newest first. The rail cannot scroll
 /// a five-hundred-row list, and a keyword in five hundred sessions is an
 /// answer the person has to narrow, not one to be shown.
 const MAX_RESULTS: usize = 50;
 /// The leading bytes of an encoded `ctx` record. See the module comment.
-const CTX_PREFIX: &[u8] = b"{\"context\":";
+pub(crate) const CTX_PREFIX: &[u8] = b"{\"context\":";
 /// How many threads the file scans run on. A handful, not the machine's
 /// full count: this is a search a person is typing, not a batch job.
 const SEARCH_THREADS: usize = 4;
@@ -186,26 +186,39 @@ pub fn search(workspace: &Path, query: &str) -> Result<Vec<SessionSearchHit>, St
 /// `state.sessionIDPattern` as a loop rather than a regex: the ids are ASCII
 /// by construction, and the pattern is the one place they are validated
 /// before being spliced into file names.
-fn valid_session_id(id: &str) -> bool {
+pub(crate) fn valid_session_id(id: &str) -> bool {
     (1..=64).contains(&id.len())
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
-/// Scan one session file for the first matching message.
+/// Visit every complete message record in one session file, in file order.
 ///
-/// Returns `None` for a file with no match and for a file a newer version
-/// wrote — the two are deliberately indistinguishable to the caller, because
-/// the row simply does not appear in either case, and a search that errors
-/// on one unreadable file would hide every hit after it.
-fn scan_file(path: &Path, needle: &str) -> Option<String> {
-    let file = fs::File::open(path).ok()?;
+/// This is the reading half of both cross-session features — the keyword search
+/// and the prompt-history seed — written once. Three rules are shared and none
+/// is optional: a `ctx` record is skipped before the JSON decoder sees it (it is
+/// the bulk of a real file and holds no message), a line that does not parse is
+/// a half line from a killed write and is skipped, and a file whose version is
+/// newer than this reader knows stops the scan rather than being guessed at.
+///
+/// `visit` answers whether to keep going. The search stops at its first match;
+/// the seed reads every message it is given.
+pub(crate) fn for_each_message(
+    path: &Path,
+    mut visit: impl FnMut(&serde_json::Map<String, Value>) -> bool,
+) {
+    let Ok(file) = fs::File::open(path) else {
+        return;
+    };
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
     loop {
         line.clear();
-        if reader.read_until(b'\n', &mut line).ok()? == 0 {
+        let Ok(read) = reader.read_until(b'\n', &mut line) else {
+            return;
+        };
+        if read == 0 {
             break;
         }
         // Strip the line ending and the outer whitespace `Load` skips.
@@ -222,7 +235,7 @@ fn scan_file(path: &Path, needle: &str) -> Option<String> {
             continue;
         }
         // Fast path: a `ctx` record is the bulk of a real file and nothing in
-        // a search reads one.
+        // either reader looks at one.
         if data.starts_with(CTX_PREFIX) {
             continue;
         }
@@ -235,23 +248,38 @@ fn scan_file(path: &Path, needle: &str) -> Option<String> {
             .and_then(Value::as_u64)
             .is_some_and(|v| v > KNOWN_STATE_VERSION)
         {
-            return None;
+            return;
         }
         let Some(message) = record.get("message").and_then(Value::as_object) else {
             continue;
         };
+        if !visit(message) {
+            return;
+        }
+    }
+}
+
+/// Scan one session file for the first matching message.
+///
+/// Returns `None` for a file with no match and for a file a newer version
+/// wrote — the two are deliberately indistinguishable to the caller, because
+/// the row simply does not appear in either case, and a search that errors
+/// on one unreadable file would hide every hit after it.
+fn scan_file(path: &Path, needle: &str) -> Option<String> {
+    let mut found = None;
+    for_each_message(path, |message| {
         let role = message.get("role").and_then(Value::as_str).unwrap_or("");
         if role != "user" && role != "assistant" {
-            continue;
+            return true;
         }
         let text = message_text(message);
         if text.is_empty() {
-            continue;
+            return true;
         }
         let folded: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
         let lower = folded.to_lowercase();
         let Some(pos) = lower.find(needle) else {
-            continue;
+            return true;
         };
         // `find` answers a **byte** offset, and `snippet_around` cuts by
         // `char`. Handing the byte offset over unchanged is what made a
@@ -262,16 +290,17 @@ fn scan_file(path: &Path, needle: &str) -> Option<String> {
         // strings are both in hand, and let `snippet_around` do the clamping.
         let start = lower[..pos].chars().count();
         let len = lower[pos..pos + needle.len()].chars().count();
-        return Some(snippet_around(&folded, start, len));
-    }
-    None
+        found = Some(snippet_around(&folded, start, len));
+        false
+    });
+    found
 }
 
 /// The plain text of a message, by the rules the runtime's `MessageText`
 /// states: a string, or a list of parts where a text part contributes its
 /// text and an image part is **named, not dropped** — a body that quietly
 /// loses its picture reads as a message that never had one.
-fn message_text(message: &serde_json::Map<String, Value>) -> String {
+pub(crate) fn message_text(message: &serde_json::Map<String, Value>) -> String {
     let Some(content) = message.get("content") else {
         return String::new();
     };

@@ -12,6 +12,8 @@ import { sendTo } from '@/runtime/bus';
 import { insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, referencedImages, type AttachedFile, type PastedImage, type PendingImage } from '@/runtime/paste';
 import { stashImages, attachRemoteFile, type StashedImage } from '@/runtime/tauri';
 import { clampRailWidth, persistPrefs } from '../prefs';
+import { promptHistoryKey, rememberablePrompt } from '../promptHistory';
+import { rememberPrompt } from '../promptStore';
 import { selectModalVisible } from '../selectors/session';
 import { activeRuntime, activeWorkspaceOf } from '../appView';
 import { FIND_IDLE } from '../find';
@@ -383,6 +385,20 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         // Whatever was said about this input has been answered by sending it.
         composerNotice: null,
       }));
+      // **The sentence is remembered for the workspace, not the session.** The
+      // history is a habit of the directory — a new session in the same place
+      // should offer the phrase back. The attachment paths come out first
+      // (`rememberablePrompt`): what is worth completing is the prose, while an
+      // absolute path is noise and may name a file the runtime has swept. Fire
+      // and forget: a history file that refused is not a reason to hold a send.
+      const remembered = rememberablePrompt(sent, [
+        ...current.pastedImages.map((image) => image.path),
+        ...current.attachedFiles.map((file) => file.path),
+      ]);
+      const workspace = activeWorkspaceOf(s);
+      if (remembered !== '' && workspace !== '') {
+        rememberPrompt(promptHistoryKey(workspace, current.remoteWorkspaceId), remembered);
+      }
       sendTo(key, { v: 1, t: 'user_message', text: sent });
     },
 

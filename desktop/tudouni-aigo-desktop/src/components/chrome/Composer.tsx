@@ -1,6 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
 import { selectModalVisible, selectPhase, useApp, useSessionField, type ComposerNotice } from '@/state/store';
+import { activeWorkspaceOf } from '@/state/appView';
+import { promptHistoryKey, suggestPrompt } from '@/state/promptHistory';
+import { usePromptHistory } from '@/hooks/usePromptHistory';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { ImageTray } from '@/components/chrome/ImageTray';
@@ -40,10 +43,19 @@ import { useClipboardPaste } from '@/hooks/useClipboardPaste';
  *
  * Keys follow the capability list. This layer is the only place allowed to carry
  * emacs-style bindings:
- *   Enter send · Shift+Enter / Ctrl+J newline · Esc interrupt
+ *   Enter send · Shift+Enter / Ctrl+J newline · Esc interrupt · Tab complete
  *   ↑/↓ history · Ctrl+W delete word · Ctrl+U delete to line start
  *   Ctrl+A line start · Ctrl+E line end · Delete forward · Ctrl+←/→ word move
  *   (the last one is native browser behaviour)
+ *
+ * **Tab is claimed only while a suggestion is showing.** The suggestion is one
+ * sentence this workspace has sent before, matched by what is in the box; the
+ * toolbar row that carries the key hint says what Tab would insert, and the box
+ * itself is never drawn into. That is deliberate: a completion painted into a
+ * `<textarea>` after the caret needs a mirrored copy of its metrics, and the
+ * moment a font, a scroll position or a zoom differs the paint is on the wrong
+ * line — a defect that reads as a broken editor rather than a missed hint. See
+ * `state/promptHistory.ts` for what is remembered and how it is ranked.
  *
  * While a modal is up the composer does not compete: it neither sends nor
  * intercepts.
@@ -85,6 +97,23 @@ export function Composer() {
   const onPaste = useClipboardPaste(taRef);
   const running = phase === 'running' && !blocked;
 
+  // **The suggestion belongs to the workspace, not to this conversation.**
+  // "请 pull 一下" is a habit of the directory; a new session in the same
+  // directory should offer it back. The history is loaded once per workspace
+  // (an append-only sidecar, seeded from the sessions that predate it) and the
+  // matcher below only reads the cached list — no file is opened while typing.
+  const workspace = useApp(activeWorkspaceOf);
+  const remoteWorkspaceId = useSessionField((rt) => rt.remoteWorkspaceId, null);
+  const promptKey = workspace === '' ? null : promptHistoryKey(workspace, remoteWorkspaceId);
+  const prompts = usePromptHistory(promptKey, workspace, remoteWorkspaceId);
+  // The completion replaces the whole draft, so it is only offered while the
+  // caret is at the end of it: mid-sentence, Tab would overwrite what follows.
+  const [caretAtEnd, setCaretAtEnd] = useState(true);
+  const suggestion = useMemo(() => {
+    if (blocked || running || composerNotice !== null || dragging || !caretAtEnd) return null;
+    return suggestPrompt(draft, prompts);
+  }, [blocked, running, composerNotice, dragging, caretAtEnd, draft, prompts]);
+
   /**
    * Put the caret back in the box whenever nothing is covering it.
    *
@@ -112,6 +141,30 @@ export function Composer() {
     });
   }
 
+  /**
+   * Take the suggestion into the box, and leave the caret after it.
+   *
+   * The focus call is for the **click** path: the note is a button, and a press
+   * moves focus to it — without this the sentence lands and the next keystroke
+   * goes to a button. The Tab path is already focused and the call is a no-op.
+   * The caret is re-asked here rather than trusted from the render: if a click
+   * moved it into the sentence between the frame and the press, replacing the
+   * draft would eat the tail.
+   */
+  function acceptSuggestion() {
+    const el = taRef.current;
+    if (el === null || suggestion === null) return;
+    if (el.selectionStart !== el.value.length || el.selectionEnd !== el.value.length) return;
+    el.focus();
+    setValueAndCaret(el, suggestion, suggestion.length);
+    setCaretAtEnd(true);
+  }
+
+  /** Whether the suggestion may be offered: only at the end of the draft. */
+  function noteCaret(el: HTMLTextAreaElement) {
+    setCaretAtEnd(el.selectionStart === el.value.length && el.selectionEnd === el.value.length);
+  }
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (blocked) return;
 
@@ -127,6 +180,15 @@ export function Composer() {
     const s = el.selectionStart;
     const en = el.selectionEnd;
     const mod = e.ctrlKey || e.metaKey;
+
+    // **Tab is the suggestion's, and only while there is one.** Without a
+    // suggestion the key falls through to the browser's focus move — the
+    // behaviour every other control in this window still depends on.
+    if (e.key === 'Tab' && !e.shiftKey && !mod && !e.altKey && suggestion !== null) {
+      e.preventDefault();
+      acceptSuggestion();
+      return;
+    }
 
     if (e.key === 'Enter' && !e.shiftKey && !mod) {
       e.preventDefault();
@@ -248,7 +310,23 @@ export function Composer() {
           className="cp-input"
           rows={1}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            const el = e.currentTarget;
+            setDraft(el.value);
+            // The suggestion is only offered at the end of the draft; a caret
+            // moved back into the sentence must take it away in the same frame
+            // the draft changed, or Tab would overwrite the tail.
+            noteCaret(el);
+          }}
+          onSelect={(e) => noteCaret(e.currentTarget)}
+          // `select` is the event for a caret move, but not every WebView spells
+          // an arrow-key move with one; the two gestures below are the cheap
+          // belt and braces, and `setCaretAtEnd` is a no-op when the value did
+          // not change.
+          onKeyUp={(e) => {
+            if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') noteCaret(e.currentTarget);
+          }}
+          onClick={(e) => noteCaret(e.currentTarget)}
           onKeyDown={onKeyDown}
           // A paste of text is left entirely alone: the handler returns before
           // `preventDefault` unless the clipboard really holds a picture. See
@@ -288,6 +366,26 @@ export function Composer() {
               <span>{t('composer.dropHint')}</span>
             ) : running ? (
               <span>{t('composer.hint.streaming')}</span>
+            ) : suggestion !== null ? (
+              // The suggestion is the sentence, not its remainder: Tab inserts
+              // `suggestion` whole, and a line that showed only `ull代码` would
+              // leave the person guessing what the beginning was. The whole line
+              // is the button, so a click completes it too — Tab is a convenience,
+              // not the only way to accept.
+              <span className="cp-suggest">
+                <button
+                  type="button"
+                  className="cp-suggest-text"
+                  onClick={acceptSuggestion}
+                  aria-label={t('composer.suggestAccept', { text: suggestion })}
+                  title={t('composer.suggestAccept', { text: suggestion })}
+                >
+                  {suggestion}
+                </button>
+                <span className="cp-suggest-key" aria-hidden="true">
+                  Tab
+                </span>
+              </span>
             ) : (
               <span>{t('composer.hint.send')}</span>
             )}

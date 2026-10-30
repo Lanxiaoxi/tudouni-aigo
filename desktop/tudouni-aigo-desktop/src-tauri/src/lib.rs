@@ -46,6 +46,7 @@ mod config_file;
 /// `read_local_config_text` does. See its module doc for why the split out of
 /// the window's localStorage record and why the write is a rename.
 mod desktop_data;
+mod prompt_history;
 
 mod deliverable;
 mod image;
@@ -198,6 +199,14 @@ pub fn run() {
             crate::config_commands::read_local_config_text,
             crate::desktop_data::desktop_data_read,
             crate::desktop_data::desktop_data_write,
+            // The composer's prompt history: one append-only sidecar per
+            // workspace, plus the one-time seed from the sessions that predate
+            // it. The read and append are the keystroke path's neighbours, not
+            // its members — the matcher is the front end's.
+            crate::prompt_history::prompt_history_read,
+            crate::prompt_history::prompt_history_append,
+            crate::prompt_history::prompt_history_write,
+            crate::prompt_history::prompt_history_seed,
             crate::runtime_commands::runtime_attach_listener,
             crate::runtime_commands::runtime_send,
             crate::runtime_commands::runtime_shutdown,

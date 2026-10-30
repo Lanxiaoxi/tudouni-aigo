@@ -1447,6 +1447,51 @@
   }
 }
 
+/* The completion the toolbar is offering, when this workspace has said the
+   sentence before. The line is the **whole** sentence, not its remainder: Tab
+   inserts it whole, and a line showing only `ull代码` would leave the beginning
+   to be guessed. It truncates at the end (the sentence starts at a place the
+   person recognises), and the whole text is the button — Tab is a convenience,
+   not the only way to accept. */
+.composer .cp-note .cp-suggest {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: bottom;
+}
+
+.composer .cp-note .cp-suggest-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  text-align: left;
+}
+
+.composer .cp-note .cp-suggest-text:hover,
+.composer .cp-note .cp-suggest-text:focus-visible {
+  color: var(--fg);
+}
+
+/* The key, not a sentence: small, boxed and quiet, the same shape a shortcut
+   wears elsewhere in the window. */
+.composer .cp-note .cp-suggest-key {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  color: var(--fg-faint);
+  font-size: 10px;
+  line-height: 14px;
+}
+
 .composer .cp-actions {
   grid-area: send;
   align-self: center;
