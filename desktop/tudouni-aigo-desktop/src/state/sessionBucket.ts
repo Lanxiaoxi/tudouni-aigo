@@ -88,6 +88,7 @@ export function createSessionBucket(
     historyCursor: null,
     composerNotice: null,
     pastedImages: [],
+    pendingImages: [],
     attachedFiles: [],
     quiet: prefsQuietDefault(),
   };

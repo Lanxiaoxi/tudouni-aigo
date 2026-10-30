@@ -221,6 +221,79 @@ export interface PastedImage {
   url: string;
 }
 
+/** One clipboard picture, read and identified, before it is written. */
+export interface PastedPicture {
+  bytes: Uint8Array;
+  /** Decided by `classify`, never by what the clipboard claimed. */
+  mime: string;
+}
+
+/**
+ * A pasted picture that is **still being written**.
+ *
+ * The same chip as `PastedImage`, minus the two facts only the bridge can
+ * answer: the path it will be sent as and the name it was given. It exists so
+ * the tray can draw the chip the moment the paste happens — the alternative was
+ * a paste that did nothing visible for as long as a remote upload takes, which
+ * reads as a dropped keystroke.
+ *
+ * **Its placeholder is its identity**, and that is deliberate: the draft is the
+ * surface both lists are read against, and a token minted here is one nobody
+ * else writes. Two lists rather than one list with an optional path, because the
+ * submit path must never be able to send a picture that has no path yet — a
+ * placeholder that reached the runtime would be prose, and the picture would
+ * silently not arrive.
+ */
+export interface PendingImage {
+  placeholder: string;
+  bytes: number;
+  mime: string;
+  /** A `blob:` URL of the clipboard's bytes, so the chip has a thumbnail before
+   *  anything is written. Revoked like a stashed picture's. */
+  url: string;
+}
+
+/**
+ * The body one paste gesture sends to `image_stash`, as bytes.
+ *
+ * The command takes the **raw body** rather than JSON (five megabytes as base64
+ * is 6.7MB of text, as a number array over 20MB), and there is nowhere in a raw
+ * body to put a second argument — so several pictures are framed instead of
+ * being several calls. That is also the latency fix: the remote door dials SSH
+ * once per call, and a paste is one gesture, not one gesture per picture.
+ *
+ * The layout, little-endian, mirrored by `frame_pictures` in
+ * `src-tauri/src/image_stash.rs` — the two must not drift:
+ *
+ * ```text
+ *  0   8   "TUDOIMG1"
+ *  8   4   count
+ * 12  4×n  each picture's length, in order
+ * 12+4n    the pictures' bytes, back to back
+ * ```
+ */
+export function framePictures(pictures: Uint8Array[]): Uint8Array {
+  const header = 12 + pictures.length * 4;
+  let total = header;
+  for (const picture of pictures) total += picture.byteLength;
+
+  const frame = new Uint8Array(total);
+  frame.set(new TextEncoder().encode('TUDOIMG1'), 0);
+  const view = new DataView(frame.buffer);
+  // The count and the lengths are the frame's whole contract with the Rust
+  // side; a length that disagrees with the bytes behind it is refused there
+  // rather than trusted, so a mistake here is a sentence, not a bad file.
+  view.setUint32(8, pictures.length, true);
+  let offset = header;
+  for (let index = 0; index < pictures.length; index++) {
+    const picture = pictures[index];
+    view.setUint32(12 + index * 4, picture.byteLength, true);
+    frame.set(picture, offset);
+    offset += picture.byteLength;
+  }
+  return frame;
+}
+
 /**
  * Identify a picture from its leading bytes.
  *
@@ -336,8 +409,12 @@ export function insertAtCaret(
  *
  * Order of the result follows the **sentence**, not the order they were pasted:
  * that is the order the pictures will appear in the message.
+ *
+ * Generic over anything with a placeholder, because the tray draws two kinds of
+ * chip — a stashed picture and one still being written (`PendingImage`) — and
+ * both answer the same question the same way: is its token still in the text?
  */
-export function referencedImages(draft: string, images: PastedImage[]): PastedImage[] {
+export function referencedImages<T extends { placeholder: string }>(draft: string, images: T[]): T[] {
   if (images.length === 0) return [];
   const placed = images
     .map((image) => ({ image, at: draft.indexOf(image.placeholder) }))

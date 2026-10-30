@@ -157,6 +157,15 @@ fn attach_blocking(
         ATTACH_SUBDIR
     );
     let directory = format!("{base}/{key}");
+    // **One connection for the whole name loop**, including a retry: the
+    // upload takes an already-open channel (`remote_files::upload_if_new`), so a
+    // collision costs a `stat` instead of a second handshake.
+    let session = crate::ssh_backend::dial_session(&target)?;
+    let directory_abs = crate::remote_files::resolve_remote_path(&workspace, &directory)?;
+    crate::remote_install::mkdir_remote_recursive(&session, &directory_abs)?;
+    let sftp = session
+        .sftp()
+        .map_err(|e| format!("could not start an SFTP session: {e}"))?;
     // A taken name gets a counter — the paste's name loop, for the same reason:
     // `.stem-1.ext`, never silently replacing what is already there.
     let mut counter = 1;
@@ -167,7 +176,7 @@ fn attach_blocking(
             count_suffix(&name, counter)
         };
         let relative = format!("{directory}/{candidate_name}");
-        match crate::remote_files::upload_if_new(&target, &workspace, &relative, &bytes) {
+        match crate::remote_files::upload_if_new(&sftp, &workspace, &relative, &bytes) {
             Ok(()) => {
                 return Ok(AttachedRemoteFile {
                     path: relative,

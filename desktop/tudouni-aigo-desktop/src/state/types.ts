@@ -11,7 +11,7 @@ import { type CodeIntelSnapshot, type FileEntry, type MemoryConfig, type MemoryS
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
 import type { TerminalState } from '@/runtime/terminalOutput';
 import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
-import { type AttachedFile, type PastedImage } from '@/runtime/paste';
+import { type AttachedFile, type PastedImage, type PendingImage } from '@/runtime/paste';
 import { type InstallStage, type RemoteConfigStatus } from '@/runtime/tauri';
 
 
@@ -184,6 +184,9 @@ export type ComposerNotice =
   | { code: 'paste-no-vision'; model: string; tone: 'info' }
   /** The bridge refused or failed to write it. The runtime's sentence, verbatim. */
   | { code: 'paste-failed'; reason: string; tone: 'warn' }
+  /** The send was pressed while a picture was still being written. Not a
+   *  refusal — pressing again once the chip stops saying "uploading" sends. */
+  | { code: 'paste-pending'; tone: 'info' }
   /** `/quiet` was given a word that is not one of the three states. */
   | { code: 'quiet-unknown'; reason: string; tone: 'warn' };
 
@@ -969,6 +972,21 @@ export interface SessionRuntime {
    * different place, or nothing at all.
    */
   pastedImages: PastedImage[];
+  /**
+   * Pictures of the draft that are **still being written** — the chips drawn
+   * between the paste and the bridge's answer.
+   *
+   * A list of its own rather than a `PastedImage` with an empty path, because the
+   * submit path must be structurally unable to send one: a picture that has no
+   * path yet is a token in the sentence, and a token that went out would be
+   * prose. `submitDraft` therefore refuses while a *referenced* entry is here,
+   * and `restorePastedPaths` never sees the list at all.
+   *
+   * Per session for the same reason `pastedImages` is: the write lands in *that*
+   * session's workspace, and a chip from another conversation would name a place
+   * this one cannot resolve.
+   */
+  pendingImages: PendingImage[];
   /**
    * Files attached from the plus menu (workspace browser or native dialog).
    *

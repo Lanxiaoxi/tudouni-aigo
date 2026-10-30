@@ -1242,6 +1242,37 @@
   background: var(--bg-muted);
 }
 
+/* A chip whose picture is still being written. The token is already in the
+   sentence and the thumbnail is already here, so the chip is honest — what it
+   cannot say yet is the file's name, and that slot reads "Uploading…". A dashed
+   edge rather than a spinner: the row must not change shape or height when the
+   write lands, and a border style does not. */
+.composer .cp-chip.is-pending {
+  border-style: dashed;
+}
+
+.composer .cp-chip.is-pending .cp-chip-thumb {
+  opacity: 0.55;
+}
+
+/* The one animated thing here, and it is guarded: a pulse is information (this
+   is moving) for people who want it, and noise for people who asked not to. */
+@media (prefers-reduced-motion: no-preference) {
+  .composer .cp-chip.is-pending {
+    animation: cp-chip-writing 1.6s var(--ease-out) infinite;
+  }
+}
+
+@keyframes cp-chip-writing {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+
 /* A fixed box with `object-fit: cover`, so a very wide screenshot and a very tall
    one take the same room. Without it the row's height would depend on which
    picture was pasted, and the input would jump around as chips come and go. */

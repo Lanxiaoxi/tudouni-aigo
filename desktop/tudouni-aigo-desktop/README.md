@@ -169,7 +169,7 @@ src-tauri/src/
   remote_commands.rs     install, remote config, ssh config, probe, browse
   config_commands.rs     the configuration the desktop edits directly
   image.rs               a workspace file as a data: URL (sniff + base64)
-  image_stash.rs         a pasted picture into local or remote staging
+  image_stash.rs         a paste gesture's pictures into local or remote staging
   deliverable.rs         open a declared deliverable
   system.rs              user name, prevent-sleep, resource usage
   window_close.rs        the close prompt, its deadline, and every way out
@@ -297,7 +297,17 @@ a file under `<workspace>/.tudouni/paste/`, and the returned path is written int
 the draft. From there it is the ordinary mechanism: the runtime scans the
 sentence, resolves the path inside the workspace, and attaches the picture.
 
-Five things worth knowing before changing any of it:
+**A paste is one gesture, and it is drawn before it is written.** The chip (and
+its `⟦pimg-0⟧` token) appears the moment the paste happens, from the bytes already
+in this window; the write then happens behind it and the chip only stops saying
+*Uploading…*. On a **remote** session that is the difference between a window that
+answers and a window that looks hung for the length of an SFTP upload — the
+command is `async` and does its I/O on `spawn_blocking`, and every picture of the
+gesture rides **one** SSH connection and one framed body rather than one dial per
+picture. The send is refused while a *referenced* pending chip exists, because a
+token that reached the runtime would be prose where a picture should be.
+
+Six things worth knowing before changing any of it:
 
 - **A paste of text must keep behaving exactly as it did.** The handler returns
   before `preventDefault` unless the clipboard really holds an `image/*` item, so
@@ -316,6 +326,12 @@ Five things worth knowing before changing any of it:
   `referencedImages`). The text is the only thing that gets sent, so deleting a
   path drops its chip, and a chip can never claim a picture that is not going
   anywhere. Dismissing a chip edits the **sentence**, not a list of attachments.
+- **A picture has two lists, and only one of them can be sent.** `pendingImages`
+  is a picture being written — a chip, a token, a thumbnail, no path;
+  `pastedImages` is one that is written. `restorePastedPaths` is handed only the
+  second, and `submitDraft` refuses while a *referenced* entry of the first
+  exists, so a token can never reach the runtime: structurally, not by a check
+  somebody might delete.
 - **`referencedImages` is a port of the runtime's scanner**, not a `includes`
   check. A path in a sentence may be wrapped in punctuation or glued to Chinese
   prose, so the runtime offers several readings and lets the filesystem pick —
@@ -353,7 +369,7 @@ clipboard plugin and would sometimes do nothing — worse than no button.
 | 13 | Streaming is asked for on every attach, because the runtime does not stream its stdio front end unless told to and this interface is built around `delta` | `attachRuntime()` in `runtime/tauri.ts` (`--stream`), `applyDelta` in `state/entries.ts` |
 | 14 | The left sidebar is workspaces + sessions only — no sign-in, no plugin market; the workspace list is a front-end preference while the current workspace is a runtime fact | `components/sidebar/WorkspaceSidebar.tsx`, `workspaces` / `leftbarVisible` in `state/store.ts`, `workspace_check` in `lib.rs` |
 | 15 | Each MCP server in the rail carries its own load/unload button, so mounting one is no longer `/mcp`-only. The rail's row shows **less** than the panel's row on purpose — see below | `McpRow` in `components/sidebar/Sidebar.tsx`, `mcpPending` in `state/store.ts`, `.mcp-act` in `styles/stream.css` |
-| 16 | `Ctrl+V` pastes a picture: the bytes are written into the workspace and the path goes into the sentence. Ten pictures per message, five megabytes each — the runtime's own ceilings, mirrored. For a **remote** session the bytes go up over SFTP into the *remote* workspace's own `.tudouni/paste/` area instead — the sentence still carries a workspace-relative path, resolved by the far-end runtime | `hooks/useClipboardPaste.ts`, `runtime/paste.ts`, `components/chrome/ImageTray.tsx`, `image_stash` in `lib.rs` (both doors), `remote_files` in `lib.rs` |
+| 16 | `Ctrl+V` pastes a picture: the chip appears **at once** (from the clipboard's bytes) and the bytes are written into the workspace behind it; the path goes into the sentence at submit. Ten pictures per message, five megabytes each — the runtime's own ceilings, mirrored. **One gesture is one framed body on one connection**: `image_stash` is `async` and writes on `spawn_blocking`, so a remote upload no longer freezes the window, and three pictures no longer pay three SSH dials. For a **remote** session the bytes go up over SFTP into the *remote* workspace's own `.tudouni/paste/` area instead — the sentence still carries a workspace-relative path, resolved by the far-end runtime | `hooks/useClipboardPaste.ts`, `runtime/paste.ts` (`framePictures`), `components/chrome/ImageTray.tsx`, `pasteImages` in `state/slices/composer.ts`, `image_stash` in `lib.rs` (both doors), `remote_files` in `lib.rs` |
 | 25 | **A remote deliverable downloads before it opens.** `deliverable_open`'s boundary is a local `canonicalize` and cannot reach the far host, so for a remote session the card's open control is a download: SFTP pulls the file into the app's own data directory (one tree per host/user/workspace, the file's relative path kept per segment), then the OS opens the local copy. A second press opens the cached copy without re-downloading; over 512MB is refused by name before a byte moves. The same split fixes the two other remote doors: a picture in the transcript reads its bytes over SFTP (`inline_image_remote`), and the paste uploads them the other way | `remote_files` + `deliverable_download` / `deliverable_open_local` / `inline_image_remote` in `lib.rs`, the download state machine in `components/stream/DeliverableCards.tsx`, `remoteChildKey` in `components/ui/MarkdownImage.tsx` |
 | 17 | Settings holds **start-up arguments only** (`--ericai`, `--max-steps`), at the foot of the left rail; applying one restarts the child, after an inline confirmation. No theme switch, and no eighteenth command | `panels/SettingsPanel.tsx`, `applyLaunch` in `state/store.ts`, `ericai` in `lib.rs` / `runtime/tauri.ts`, `.lb-foot` in `styles/stream.css` |
 | 18 | **A launch opens the workspace last worked in.** Remembered from `init.workspace` (the runtime's own answer), never from a path the front end assembled, and it follows the session on screen rather than the last one opened. With nothing remembered — or nothing that still works — **no child is started** and the first screen says why, instead of falling back to the app's own directory | `lastWorkspace` / `rememberWorkspace` / `resolveAttachWorkspace` in `state/store.ts`, `openFirstSession` in `runtime/useRuntime.ts` (`workspace_check`), `StartupNotice` in `components/Welcome.tsx` |

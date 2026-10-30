@@ -1,7 +1,7 @@
 //! Remote file access for the doors that used to be local-only.
 //!
-//! Three acts, all the same shape — **dial a fresh SSH connection, do one SFTP
-//! act, drop everything** — and none of them may touch the runtime's own
+//! Three acts, and **one SSH connection per act** — up front, then one SFTP
+//! operation after another on it — and none of them may touch the runtime's own
 //! channel:
 //!
 //!   - **download** — a declared deliverable is a path on the far end, and
@@ -29,6 +29,12 @@
 //! round trips, and the act is one that the person just pressed a button for,
 //! not something the runtime's conversation waits on.
 //!
+//! **The upload is the one act that carries several files**, because a paste of
+//! three screenshots is one gesture. So the connection is opened once by the
+//! caller (`image_stash`, `attach_file_remote`) and every picture rides the same
+//! SFTP channel: three handshakes for one gesture was pure latency, and none of
+//! it bought isolation.
+//!
 //! # The boundary
 //!
 //! The local `deliverable_open`/`inline_image` commands canonicalize against
@@ -46,6 +52,8 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+use ssh2::Sftp;
 
 use crate::ssh_backend::{dial_session, SshTarget};
 
@@ -84,6 +92,11 @@ pub fn resolve_remote_path(workspace: &str, relative: &str) -> Result<String, St
 /// `remote_install::parent_of` rather than made `pub` there, because that
 /// module's private helper mirrors a Go-side rule — widening its visibility
 /// for a different job would blur which rules it owns.
+///
+/// **Test-only now**, and that is a fact worth stating: the upload grew a
+/// caller-owned directory (`upload_if_new` no longer makes one), so the only
+/// remaining reader is the assertion below that pins the rule.
+#[cfg(test)]
 fn parent_of(path: &str) -> Option<String> {
     let index = path.rfind('/')?;
     if index == 0 {
@@ -242,35 +255,26 @@ pub enum UploadError {
     Io(String),
 }
 
-/// Like the plain upload, but a taken name is `UploadError::Exists` rather than
-/// a sentence — the caller (the stash's name loop) decides what to do with it.
+/// Pushes one file through an **already open** SFTP channel, refusing a taken
+/// name with `UploadError::Exists` rather than a sentence — the caller (the
+/// stash's name loop) decides what to do with it.
+///
+/// The connection is the caller's rather than dialled here, and that is the
+/// difference a paste of several pictures made: a gesture is one act, so the
+/// handshake is paid once for all of it (`image_stash`), and a collision retry
+/// costs a `stat` rather than a whole dial. The **directory is the caller's
+/// too** — `mkdir_remote_recursive` once, before the first upload — because
+/// every picture of a gesture lands in the same staging slice.
 pub fn upload_if_new(
-    target: &SshTarget,
-    remote_workspace: &str,
-    relative: &str,
-    bytes: &[u8],
-) -> Result<(), UploadError> {
-    upload_bytes_checked(target, remote_workspace, relative, bytes)
-}
-
-fn upload_bytes_checked(
-    target: &SshTarget,
+    sftp: &Sftp,
     remote_workspace: &str,
     relative: &str,
     bytes: &[u8],
 ) -> Result<(), UploadError> {
     let remote_path = resolve_remote_path(remote_workspace, relative).map_err(UploadError::Io)?;
-    let session = dial_session(target).map_err(UploadError::Io)?;
-    let sftp = session
-        .sftp()
-        .map_err(|e| UploadError::Io(format!("could not start an SFTP session: {e}")))?;
 
     if sftp.stat(Path::new(&remote_path)).is_ok() {
         return Err(UploadError::Exists);
-    }
-    if let Some(parent) = parent_of(&remote_path) {
-        crate::remote_install::mkdir_remote_recursive(&session, &parent)
-            .map_err(UploadError::Io)?;
     }
     let mut file = sftp
         .create(Path::new(&remote_path))

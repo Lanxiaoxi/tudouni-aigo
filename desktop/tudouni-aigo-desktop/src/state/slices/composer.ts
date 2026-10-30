@@ -9,15 +9,15 @@ import type { AppStore } from '../storeShape';
 import type { QuietMode } from '../types';
 import { nextId } from '@/state/entries';
 import { sendTo } from '@/runtime/bus';
-import { insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, type AttachedFile, type PastedImage } from '@/runtime/paste';
-import { stashImage, attachRemoteFile } from '@/runtime/tauri';
+import { insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, referencedImages, type AttachedFile, type PastedImage, type PendingImage } from '@/runtime/paste';
+import { stashImages, attachRemoteFile, type StashedImage } from '@/runtime/tauri';
 import { clampRailWidth, persistPrefs } from '../prefs';
 import { selectModalVisible } from '../selectors/session';
 import { activeRuntime, activeWorkspaceOf } from '../appView';
 import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'setDragging' | 'setComposerNotice' | 'stashPastedImage' | 'forgetPastedImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
   return {
     setDraft(v) {
@@ -32,69 +32,137 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
       patchActive({ composerNotice: notice });
     },
 
-    async stashPastedImage(bytes, at) {
+    async pasteImages(pictures, at) {
       const s = get();
       const key = s.activeKey;
       const current = activeRuntime(s);
-      if (key === null || !current) return null;
+      if (key === null || !current || pictures.length === 0) return null;
 
-      // No optimistic chip: the picture does not exist until the bridge has
-      // written it, and a chip drawn before that would name a path the runtime
-      // cannot resolve. So the order is write, then insert, then remember.
-      let stashed;
-      try {
-        // The key travels with the bytes: the picture has to land in *this*
-        // session's workspace, and the bridge refuses rather than guessing.
-        stashed = await stashImage(key, bytes);
-      } catch (err) {
-        // The bridge's own sentence, verbatim. It is already written for a person
-        // ("the clipboard's image data is not a PNG, JPEG or GIF…"), and inventing
-        // a second wording here would be a second fact.
-        patch(key, { composerNotice: { code: 'paste-failed', reason: String(err), tone: 'warn' } });
-        return null;
-      }
-
-      // The draft is re-read here rather than taken from `current`: awaiting the
-      // bridge gave the person time to keep typing, and inserting into the text
-      // as it was would silently drop what they wrote. The placeholder is minted
-      // against the *same* re-read, so a token the person typed since the paste
-      // started cannot be issued twice.
+      // The tokens are minted and inserted **here and now**, in one write, before
+      // the bridge is asked for anything: the chips are the promise, and the
+      // promise must not wait for a remote upload to be drawn. Inserting over a
+      // local copy of the text keeps three pictures in the order they arrived and
+      // lets the caret follow once, at the end.
       const fresh = get().sessions[key]?.draft ?? '';
-      const placeholder = nextPlaceholder(fresh);
-      const { text, caret } = insertAtCaret(fresh, at, placeholder);
-
-      const image: PastedImage = {
-        path: stashed.path,
-        placeholder,
-        name: stashed.name,
-        bytes: stashed.bytes,
-        mime: stashed.mime,
-        // A preview the WebView can render without the asset protocol: the bytes
-        // are already here, and `blob:` is in the CSP's `img-src`. The URL is
-        // owned by this store, so `forgetPastedImage`/`clearPastedImages` revoke
-        // it — a pasted picture that is never sent would otherwise be pinned in
-        // memory for the life of the window.
-        url: URL.createObjectURL(new Blob([bytes as BlobPart], { type: stashed.mime })),
-      };
+      let text = fresh;
+      let caret = at;
+      const pending: PendingImage[] = [];
+      for (const picture of pictures) {
+        const placeholder = nextPlaceholder(text);
+        const placed = insertAtCaret(text, caret, placeholder);
+        text = placed.text;
+        caret = placed.caret;
+        pending.push({
+          placeholder,
+          bytes: picture.bytes.length,
+          mime: picture.mime,
+          // The clipboard's bytes are already in this window, so the thumbnail
+          // does not wait for the write either. The URL is owned by this store:
+          // every path that drops a chip revokes it.
+          url: URL.createObjectURL(new Blob([picture.bytes as BlobPart], { type: picture.mime })),
+        });
+      }
 
       patchWith(key, (bucket) => ({
         draft: text,
         historyCursor: null,
-        pastedImages: [...bucket.pastedImages, image],
+        pendingImages: [...bucket.pendingImages, ...pending],
       }));
+
+      let stashed: StashedImage[];
+      try {
+        // The key travels with the gesture: the pictures have to land in *this*
+        // session's workspace, and the bridge refuses rather than guessing.
+        stashed = await stashImages(
+          key,
+          pictures.map((picture) => picture.bytes),
+        );
+        // The answer is one path per picture, in order. A shorter answer would
+        // leave chips that can never be promoted — a chip saying "Uploading…"
+        // for ever, and a send refused for ever — so it is treated as the
+        // failure it is rather than quietly accepted.
+        if (stashed.length !== pictures.length) {
+          throw new Error(
+            `the bridge answered for ${stashed.length} of ${pictures.length} pictures`,
+          );
+        }
+      } catch (err) {
+        // The bridge refused, or the link did. Nothing was written — the Rust
+        // side validates the whole frame before its first byte — so the chips go
+        // back out with the sentence that says why: a pending chip left on screen
+        // would promise a picture that is not coming, which is this feature's
+        // worst failure. The bridge's sentence is already written for a person
+        // ("the clipboard's image data is not a PNG, JPEG or GIF…"), so it is
+        // passed through rather than re-worded.
+        const doomed = new Set(pending.map((entry) => entry.placeholder));
+        const here = get().sessions[key];
+        if (here) {
+          const leaving = here.pendingImages.filter((entry) => doomed.has(entry.placeholder));
+          releaseImages(leaving);
+          let draft = here.draft;
+          for (const entry of leaving) draft = removePlaceholderFromDraft(draft, entry.placeholder);
+          patch(key, {
+            draft,
+            pendingImages: here.pendingImages.filter((entry) => !doomed.has(entry.placeholder)),
+            composerNotice: { code: 'paste-failed', reason: String(err), tone: 'warn' },
+          });
+        }
+        return null;
+      }
+
+      // The write landed: the same chips become ordinary stashed pictures, in
+      // the order the paste made them. A chip the person dismissed while the
+      // upload ran is simply absent from the bucket, so nothing is promoted for
+      // it — the file stays in staging and the runtime's own sweep forgets it.
+      patchWith(key, (bucket) => {
+        const answers = new Map<string, StashedImage>();
+        pending.forEach((entry, index) => {
+          const answer = stashed[index];
+          if (answer) answers.set(entry.placeholder, answer);
+        });
+        const promoted: PastedImage[] = [];
+        const staying: PendingImage[] = [];
+        for (const entry of bucket.pendingImages) {
+          const answer = answers.get(entry.placeholder);
+          if (!answer) {
+            staying.push(entry);
+            continue;
+          }
+          promoted.push({
+            path: answer.path,
+            placeholder: entry.placeholder,
+            name: answer.name,
+            bytes: answer.bytes,
+            mime: answer.mime,
+            url: entry.url,
+          });
+        }
+        return {
+          pendingImages: staying,
+          pastedImages: [...bucket.pastedImages, ...promoted],
+          // A send pressed while this was in flight was refused with a notice;
+          // the sentence it refused is sendable now, so that notice goes with
+          // it. Any other notice is about something else and stays.
+          composerNotice:
+            bucket.composerNotice?.code === 'paste-pending' ? null : bucket.composerNotice,
+        };
+      });
       return caret;
     },
 
-    forgetPastedImage(path) {
+    forgetImage(placeholder) {
       patchWith(get().activeKey ?? '', (current) => {
-        const doomed = current.pastedImages.find((image) => image.path === path);
-        if (doomed) URL.revokeObjectURL(doomed.url);
+        const pending = current.pendingImages.find((image) => image.placeholder === placeholder);
+        const stashed = current.pastedImages.find((image) => image.placeholder === placeholder);
+        const url = pending?.url ?? stashed?.url;
+        if (url) URL.revokeObjectURL(url);
         // The marker in the sentence comes out with the entry: the tray and the
         // draft are two readings of one list, and a token left where the chip was
         // removed would promise a picture no chip stands for.
         return {
-          pastedImages: current.pastedImages.filter((image) => image.path !== path),
-          draft: doomed ? removePlaceholderFromDraft(current.draft, doomed.placeholder) : current.draft,
+          pendingImages: current.pendingImages.filter((image) => image.placeholder !== placeholder),
+          pastedImages: current.pastedImages.filter((image) => image.placeholder !== placeholder),
+          draft: removePlaceholderFromDraft(current.draft, placeholder),
           historyCursor: null,
         };
       });
@@ -103,8 +171,12 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
     clearPastedImages() {
       const key = get().activeKey;
       if (key === null) return;
-      releaseImages(get().sessions[key]?.pastedImages ?? []);
-      patch(key, { pastedImages: [] });
+      const bucket = get().sessions[key];
+      releaseImages(bucket?.pastedImages ?? []);
+      // In flight as well: the write will settle into nothing, because the
+      // promotion only rewrites entries the bucket still holds.
+      releaseImages(bucket?.pendingImages ?? []);
+      patch(key, { pastedImages: [], pendingImages: [] });
     },
 
     attachFilePath(path, at) {
@@ -267,6 +339,14 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
       // than queued. The draft stays in the input — typing while the child
       // boots is fine, sending is not.
       if (!current.ready) return;
+      // A picture that is still being written has **no path yet**. Sending now
+      // would put its token in the sentence — prose where a picture should be,
+      // and a picture that silently never arrives. So the send waits for the
+      // write and says why, rather than dropping either half.
+      if (referencedImages(current.draft, current.pendingImages).length > 0) {
+        patch(key, { composerNotice: { code: 'paste-pending', tone: 'info' } });
+        return;
+      }
       // What the person wrote and what the runtime receives are **two strings**.
       // The draft carries placeholders; the sentence that goes out carries paths,
       // because a path in the text is the only image channel the runtime has.
@@ -285,7 +365,12 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
       // stash and its preview URLs are released here rather than held — a chip for
       // a message that has already been sent would be a claim about the draft, and
       // the draft is now empty.
+      //
+      // Pending ones go too, and there is at most a dismissed marker's worth of
+      // them here: a *referenced* pending picture refuses the send above, so
+      // anything left is a chip whose token the person already deleted.
       releaseImages(current.pastedImages);
+      releaseImages(current.pendingImages);
       patchWith(key, (bucket) => ({
         entries: [...bucket.entries, { kind: 'user', id: nextId('user'), text, atMs: Date.now() }],
         draft: '',
@@ -293,6 +378,7 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         historyCursor: null,
         hasSpoken: true,
         pastedImages: [],
+        pendingImages: [],
         attachedFiles: [],
         // Whatever was said about this input has been answered by sending it.
         composerNotice: null,

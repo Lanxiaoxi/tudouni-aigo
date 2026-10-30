@@ -11,6 +11,7 @@ import { type Deliverable, type LearnScope } from '@/learn/template';
 import { type RunScope, type Task, type TaskRunLink, type TaskRunOutcome } from '@/task/tasks';
 import { type ClosePolicy } from '@/runtime/windowClose';
 import { type BridgeOptions } from '@/runtime/tauri';
+import { type PastedPicture } from '@/runtime/paste';
 import { type ConfigSyncChoice } from '@/state/configSync';
 import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModelMemoryEntry, type ModalState, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
 import type { RemoteConfigTarget } from '@/runtime/tauri';
@@ -891,27 +892,39 @@ export interface AppStore {
   /** Record (or clear) what the composer is saying about this input. */
   setComposerNotice(notice: ComposerNotice | null): void;
   /**
-   * Write one pasted picture into the active session's workspace and put its
-   * path in that session's draft.
+   * Put a paste gesture's pictures into the active session's draft and start
+   * writing them into its workspace.
    *
-   * `bytes` are the clipboard's, already checked by the caller against the three
+   * **The chips come first.** A picture being written is drawn from
+   * `pendingImages` the moment the paste happens, because the write is a remote
+   * upload measured in seconds and a paste that shows nothing for that long reads
+   * as a dropped keystroke. The draft carries the placeholders from the first
+   * frame, so the person can keep typing and the caret never has to move twice.
+   *
+   * `pictures` have already been read and checked by the caller against the
    * gates in `runtime/paste.ts` — the checks live there because they must produce
    * a sentence, and a store action has no way to render one.
    *
-   * `at` is the caret the insertion goes to. It is passed in rather than read from
-   * the DOM here because this module never touches the DOM, and because the caller
-   * (the paste handler) is the one that knows where the caret was at the moment
-   * the paste happened.
+   * `at` is the caret the insertions go to. It is passed in rather than read from
+   * the DOM here because this module never touches the DOM, and because the
+   * caller (the paste handler) is the one that knows where the caret was at the
+   * moment the paste happened.
    *
    * **Returns where the caret should go**, or `null` when nothing was inserted
-   * (a refusal, or the bridge failing). The caller owns the textarea, so it is the
-   * caller that moves the caret; handing the number back is how the two stay in
-   * step without this module reaching into a DOM node it does not own.
+   * (a refusal, or the bridge failing). The insertion itself is synchronous; the
+   * promise settles when the write does, and the chips move from `pendingImages`
+   * to `pastedImages` then.
    */
-  stashPastedImage(bytes: Uint8Array, at: number): Promise<number | null>;
-  /** Forget one stashed picture. Called when its chip is dismissed. */
-  forgetPastedImage(path: string): void;
-  /** Drop every stashed picture of the active session, releasing their URLs. */
+  pasteImages(pictures: PastedPicture[], at: number): Promise<number | null>;
+  /**
+   * Forget one picture, stashed or still being written, by its placeholder —
+   * what a chip's dismiss button does. Keyed by the token because that is the
+   * only name a picture has while it is being written, and it is the one the
+   * draft can be edited by.
+   */
+  forgetImage(placeholder: string): void;
+  /** Drop every picture of the active session, stashed or in flight, releasing
+   *  their URLs. */
   clearPastedImages(): void;
   /**
    * Attach one file by path and put its placeholder into the active session's

@@ -33,18 +33,30 @@
  * a refusal from there is an error string that has to be turned into a sentence.
  * Checking first means the sentence is written where the wording lives, and the
  * round trip is skipped for something that cannot succeed.
+ *
+ * ## Why every picture is read before the first one is inserted
+ *
+ * One gesture is one body (`stashImages`): the pictures are framed together and
+ * written by one call, which is what keeps a remote paste to a single SSH
+ * handshake instead of one per picture. That also means the refusals have to be
+ * finished first — a batch cannot be half refused — so this loop checks and
+ * reads them all, and only then hands them over. The chips appear at that point,
+ * before the write finishes (`pendingImages`), so the gesture feels immediate
+ * even when the upload takes a second.
  */
 
 import { useCallback, type ClipboardEvent, type RefObject } from 'react';
-import { activeRuntime, useApp, type ComposerNotice } from '@/state/store';
+import { activeRuntime, useApp } from '@/state/store';
 import {
   MAX_IMAGE_BYTES,
   classify,
   formatBytes,
   referencedImages,
   refuseBeforeRead,
+  type PastedPicture,
   type PasteRefusal,
 } from '@/runtime/paste';
+import type { ComposerNotice } from '@/state/store';
 
 export function useClipboardPaste(
   taRef: RefObject<HTMLTextAreaElement | null>,
@@ -77,28 +89,29 @@ export function useClipboardPaste(
       // inside the workspace is a question only that session can answer.
       const rt = activeRuntime(state);
       const workspace = rt?.session?.workspace ?? rt?.workspace ?? '';
-      // The caret is tracked **here** rather than re-read from the DOM inside the
-      // loop. The store's `set` re-renders the textarea, and until that render
-      // lands `selectionStart` still describes the old string — so a second
-      // picture pasted in the same gesture would be inserted at a position that
-      // belongs to the previous text. The store hands back where the caret went,
-      // and that is what the next insertion is placed against.
-      let at = taRef.current?.selectionStart ?? rt?.draft.length ?? 0;
+      // The caret is tracked **here** rather than re-read from the DOM later.
+      // The store's `set` re-renders the textarea, and until that render lands
+      // `selectionStart` still describes the old string — so a paste that lands
+      // while another is in flight would be inserted at a position that belongs
+      // to text the person has already moved past.
+      const at = taRef.current?.selectionStart ?? rt?.draft.length ?? 0;
 
       void (async () => {
         // How many pictures this front end would actually send: the ones still
-        // named in the sentence. Counting stashed-but-deleted ones would refuse a
-        // paste for pictures that are not going anywhere.
+        // named in the sentence, **completed or still being written**. Counting
+        // only the finished ones would let two quick pastes overrun the cap
+        // while the first is still uploading.
         const existingNow = useApp.getState();
-        let existing = referencedImages(
-          activeRuntime(existingNow)?.draft ?? '',
-          activeRuntime(existingNow)?.pastedImages ?? [],
-        ).length;
+        const now = activeRuntime(existingNow);
+        const countOf =
+          referencedImages(now?.draft ?? '', now?.pastedImages ?? []).length +
+          referencedImages(now?.draft ?? '', now?.pendingImages ?? []).length;
 
+        const ready: PastedPicture[] = [];
         for (const picture of pictures) {
           // Before reading a byte: the ceiling exists to keep a large file out of
           // memory, and holding it in memory to measure it defeats that.
-          const refusal = refuseBeforeRead(picture.size, workspace, existing);
+          const refusal = refuseBeforeRead(picture.size, workspace, countOf + ready.length);
           if (refusal) {
             useApp.getState().setComposerNotice(noticeFor(refusal));
             return;
@@ -110,31 +123,31 @@ export function useClipboardPaste(
           // clipboard *claims*, and a `.png` that is really a JPEG is common. The
           // runtime sniffs the same way, so a file refused here is one it would
           // have refused too.
-          if (classify(bytes) === null) {
+          const kind = classify(bytes);
+          if (kind === null) {
             useApp.getState().setComposerNotice({ code: 'paste-not-an-image', tone: 'warn' });
             return;
           }
-
-          const moved = await useApp.getState().stashPastedImage(bytes, at);
-          // A null answer means the store already recorded why nothing was
-          // inserted, so there is nothing left to say here.
-          if (moved === null) return;
-          existing += 1;
-          // The next path goes where this one ended, so several pictures pasted
-          // together read in the order they arrived.
-          at = moved;
-
-          // The caret follows the inserted path. Deferred by a frame because the
-          // store's `set` re-renders the textarea with the new value, and setting
-          // a selection before that lands on the old string.
-          requestAnimationFrame(() => {
-            const element = taRef.current;
-            if (!element) return;
-            element.selectionStart = moved;
-            element.selectionEnd = moved;
-            element.focus();
-          });
+          ready.push({ bytes, mime: kind.mime });
         }
+
+        // The chips and the upload are one act: `pasteImages` inserts every
+        // placeholder immediately and settles when the write does.
+        const moved = await useApp.getState().pasteImages(ready, at);
+        // A null answer means the store already recorded why nothing was
+        // inserted, so there is nothing left to say here.
+        if (moved === null) return;
+
+        // The caret follows the last inserted placeholder. Deferred by a frame
+        // because the store's `set` re-renders the textarea with the new value,
+        // and setting a selection before that lands on the old string.
+        requestAnimationFrame(() => {
+          const element = taRef.current;
+          if (!element) return;
+          element.selectionStart = moved;
+          element.selectionEnd = moved;
+          element.focus();
+        });
 
         // A heads-up, not a refusal: the turn still runs, with the path in the
         // sentence, exactly as the runtime's own `refused` row describes. Saying

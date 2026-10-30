@@ -69,6 +69,11 @@ const SUITES = [
   'polling.test.ts',
   'contract.test.ts',
   'paste.test.ts',
+  // The paste gesture's two lives: the chip drawn before the bridge answers, and
+  // the path it becomes. The failure modes are all silent — a chip that never
+  // ships, a send that carries a placeholder, a removed chip coming back — so
+  // the state in the middle is what these hold still.
+  'paste-pending.test.ts',
   'workspace.test.ts',
   // The attach race: a child's opening handshake can be on the wire before the
   // store has built the handle for it, and the layers that hold it only mean

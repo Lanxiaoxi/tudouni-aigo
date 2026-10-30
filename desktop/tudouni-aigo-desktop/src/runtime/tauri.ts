@@ -28,6 +28,7 @@
 import type { FrontendMsg, RuntimeMsg } from '@/protocol/types';
 import { decodeLine } from '@/protocol/types';
 import type { Runtime } from './bus';
+import { framePictures } from './paste';
 // The panel's own shapes for the two configuration files, which the Rust side
 // produces (`src-tauri/src/config_file.rs`). Imported as types only: the rules
 // that go with them live in that module, and this file is the bridge, not a
@@ -1874,39 +1875,46 @@ export interface StashedImage {
 }
 
 /**
- * Write a pasted picture into **one session's** workspace and get its path back.
+ * Write a paste gesture's pictures into **one session's** workspace and get
+ * their paths back, in the order they were sent.
  *
- * The bytes go as the **raw request body** (`invoke` with a `Uint8Array`), not as
- * base64 inside a JSON argument: five megabytes as base64 is 6.7MB of text, and
- * as a JSON number array it is over 20MB. That also means no second named
- * argument can travel with the call — the payload *is* the picture — so the key
- * goes as a header instead. The Rust side then takes the workspace from *that
- * child* rather than from here, which is what keeps a caller-supplied string from
- * ever reaching the path.
+ * The pictures go as the **raw request body** (`invoke` with a `Uint8Array`),
+ * not as base64 inside a JSON argument: five megabytes as base64 is 6.7MB of
+ * text, and as a JSON number array it is over 20MB. A raw body has no room for a
+ * second named argument, so the ring around each picture lives in the body
+ * (`framePictures` in `runtime/paste.ts`) and the key as a header. The Rust side
+ * then takes the workspace from *that child* rather than from here, which is
+ * what keeps a caller-supplied string from ever reaching the path.
  *
- * The key is not optional and not inferred. Writing the file into another
- * session's workspace would produce a path that looks perfectly ordinary in the
- * sentence and resolves to nothing when the turn runs — a paste that silently
+ * **One call for the whole gesture**, not one per picture: the remote door dials
+ * SSH per call, and a person pasting three screenshots made one gesture. The
+ * answer has one entry per picture, in order, and a failure is the whole call's
+ * — the body is validated before a byte is written, so a paste writes every
+ * picture or none.
+ *
+ * The key is not optional and not inferred. Writing the files into another
+ * session's workspace would produce paths that look perfectly ordinary in the
+ * sentence and resolve to nothing when the turn runs — a paste that silently
  * did nothing, which is this feature's worst failure mode.
  *
  * This is the only place a paste touches the disk, and it deliberately does no
  * checking of its own: the gates (workspace present, format, size) are applied
  * before the call, by `runtime/paste.ts`, so a refusal can be a sentence the
  * person reads immediately instead of an error string from across the IPC. The
- * Rust side re-checks all three anyway — it is a different process, and the first
- * check is in a different language.
+ * Rust side re-checks all of them anyway — it is a different process, and the
+ * first check is in a different language.
  *
  * Rejections are surfaced rather than swallowed: every one of them is a reason
  * the picture did not attach, and a paste that silently does nothing is the
  * failure this feature can least afford.
  */
-export async function stashImage(key: string, bytes: Uint8Array): Promise<StashedImage> {
+export async function stashImages(key: string, pictures: Uint8Array[]): Promise<StashedImage[]> {
   if (!isHosted()) {
     throw new Error('pictures can only be pasted into the desktop application');
   }
   const target = bridgeKey(key);
   if (target === null) throw new Error("that session's runtime is not running");
-  return tauriInvoke<StashedImage>('image_stash', bytes, {
+  return tauriInvoke<StashedImage[]>('image_stash', framePictures(pictures), {
     headers: { 'x-tudouni-key': String(target) },
   });
 }

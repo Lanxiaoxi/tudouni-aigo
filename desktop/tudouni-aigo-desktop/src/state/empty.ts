@@ -9,7 +9,7 @@
  */
 import type { Entry } from '@/state/entries';
 import type { VmInitTool, VmMcp, VmModel, VmSkill } from '@/runtime/adapt';
-import type { AttachedFile, PastedImage } from '@/runtime/paste';
+import type { AttachedFile, PastedImage, PendingImage } from '@/runtime/paste';
 import type { FileEntry, ModelAlias, TerminalRow } from '@/protocol/types';
 import type { SavedSessions } from './store';
 
@@ -45,6 +45,7 @@ export const NO_OUTPUT: string[] = [];
 export const NO_SKILLS: VmSkill[] = [];
 export const NO_MCP_ROWS: VmMcp[] = [];
 export const NO_PASTED: PastedImage[] = [];
+export const NO_PENDING: PendingImage[] = [];
 export const NO_ATTACHED: AttachedFile[] = [];
 export const NO_INIT_TOOLS: VmInitTool[] = [];
 export const NO_MODEL_ROWS: VmModel[] = [];

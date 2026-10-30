@@ -135,7 +135,14 @@ export function isUntouchedSession(s: AppStore, key: string): boolean {
   // out, so it covers the turn that follows it.
   if (rt.hasSpoken || rt.activeRunId !== null || hasRunningTurn(rt.entries)) return false;
   // Typed something, or staged a picture, without sending it.
-  if (rt.draft.trim() !== '' || rt.pastedImages.length > 0 || rt.attachedFiles.length > 0) return false;
+  if (
+    rt.draft.trim() !== '' ||
+    rt.pastedImages.length > 0 ||
+    rt.pendingImages.length > 0 ||
+    rt.attachedFiles.length > 0
+  ) {
+    return false;
+  }
   // A shell is running, made by this session's child — closing the session ends
   // it, and the scrollback this end holds goes with it.
   if (rt.terminals.length > 0 || rt.activeTerminalId !== null) return false;

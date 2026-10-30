@@ -434,8 +434,10 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       if (!s.sessions[key]) return;
 
       // The pictures of the session being closed are nobody's any more, and
-      // their blob URLs would otherwise live until the window did.
+      // their blob URLs would otherwise live until the window did. Pictures
+      // still being written count for the same reason.
       releaseImages(s.sessions[key].pastedImages);
+      releaseImages(s.sessions[key].pendingImages);
       unregisterRuntime(key);
       forgetPolling(key);
 

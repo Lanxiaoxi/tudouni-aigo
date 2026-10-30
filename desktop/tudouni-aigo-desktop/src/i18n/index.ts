@@ -1756,6 +1756,9 @@ export const en = {
    *  visible heading: the chips are self-explanatory beside the box. */
   'composer.images': 'Pasted pictures',
   'composer.removeImage': 'Remove this picture',
+  /** A chip drawn while the write is still in flight — the label in place of the
+   *  file name, which the bridge has not chosen yet. */
+  'composer.imageUploading': 'Uploading…',
   'composer.pasteNoWorkspace': 'no workspace yet, so there is nowhere to put the picture',
   'composer.pasteAtCapacity':
     'this message already carries {limit} pictures, which is the limit for one message',
@@ -1768,6 +1771,11 @@ export const en = {
   'composer.pasteNoVision':
     'the model in use ({model}) cannot be shown pictures — this one is named in the sentence but will not be sent',
   'composer.pasteFailed': 'the picture could not be written: {reason}',
+  /** Said when Enter arrives before the write does. The chip above the box is
+   *  saying "Uploading…" at the same moment; this is the sentence for the send
+   *  that was held back, not a refusal to send at all. */
+  'composer.pastePending':
+    'the picture is still being written — press send again once it stops saying “Uploading…”',
   /** `/quiet` given a word that is not one of its three states. */
   'composer.quietUnknown': '{reason}',
 

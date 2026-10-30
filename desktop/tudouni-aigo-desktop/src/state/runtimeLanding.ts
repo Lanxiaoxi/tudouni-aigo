@@ -8,7 +8,6 @@
 import { presentedFiles, type ToolFacts } from '@/state/entries';
 import { mergeSkills, type VmState } from '@/runtime/adapt';
 import { sendTo } from '@/runtime/bus';
-import { type PastedImage } from '@/runtime/paste';
 import { type AppStore } from './storeShape';
 import { SIDEBAR_BLOCKS, type SessionRuntime, type SidebarBlockKey } from './types';
 import { persistPrefs } from './prefs';
@@ -16,8 +15,9 @@ import { noteOutstanding } from './polling';
 import { applyTerminalList, recomputeModelCurrent } from './terminal';
 
 
-/** Release the preview URLs of a set of stashed pictures. */
-export function releaseImages(images: PastedImage[]): void {
+/** Release the preview URLs of a set of pictures — stashed, or still being
+ *  written (`PendingImage`); both carry a `blob:` URL this store owns. */
+export function releaseImages(images: { url: string }[]): void {
   for (const image of images) URL.revokeObjectURL(image.url);
 }
 
