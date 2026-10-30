@@ -379,6 +379,16 @@
   opacity: 1;
 }
 
+/* Armed: the second press really removes the workspace from the list, so the
+   button says so — the destructive colour, the same rule the session delete's
+   button wears. The directory itself is untouched, but a hover-only icon one
+   press from the wrong row is easy to misclick, hence the two-press rule. */
+.lb-row .lb-row-action.is-armed {
+  opacity: 1;
+  color: var(--destructive);
+  background: var(--destructive-subtle);
+}
+
 /* ---------------- the refusal of a directory ---------------- */
 
 .lb-refusal {

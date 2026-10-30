@@ -250,6 +250,12 @@ export function WorkspaceSidebar() {
    *  press within the row confirms; anything else disarms. Delete is
    *  irreversible, so a single misclick must not be enough. */
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  /** The workspace row whose forget button is armed. Removal is reversible in
+   *  principle (the directory is untouched), but a hover-only icon one press
+   *  from the wrong row is easy to misclick, so it follows the session delete's
+   *  two-press rule. The id is the path for a local row, `${id}` prefixed for
+   *  a remote one, so the two kinds never arm each other. */
+  const [armedForget, setArmedForget] = useState<string | null>(null);
 
   // ---- remote workspaces (Workspace Manager, Phase 2) ----
   const remoteWorkspaces = useApp((s) => s.remoteWorkspaces);
@@ -825,6 +831,7 @@ export function WorkspaceSidebar() {
                 const isCurrent = currentWorkspace !== '' && samePath(currentWorkspace, path);
                 const bookmarked = workspaces.some((p) => samePath(p, path));
                 const attention = attentionByWorkspace.get(path) ?? 0;
+                const forgetArmed = armedForget === path;
                 return (
                   <div
                     key={path}
@@ -864,13 +871,25 @@ export function WorkspaceSidebar() {
                       ) : null}
                     </button>
                     {bookmarked && !isCurrent ? (
-                      <Tip label={t('lb.forgetHint')}>
+                      // Two presses, like the session delete: the icon is hover-only,
+                      // so a single click one row off is a plausible misclick.
+                      <Tip label={forgetArmed ? t('lb.forgetConfirm') : t('lb.forgetHint')}>
                         <button
                           type="button"
-                          className="lb-icon lb-row-action"
-                          aria-label={t('lb.forget')}
+                          className={`lb-icon lb-row-action${forgetArmed ? ' is-armed' : ''}`}
+                          aria-label={forgetArmed ? t('lb.forgetConfirm') : t('lb.forget')}
                           disabled={blocked}
-                          onClick={() => removeWorkspace(path)}
+                          onClick={() => {
+                            if (forgetArmed) {
+                              setArmedForget(null);
+                              removeWorkspace(path);
+                            } else {
+                              setArmedForget(path);
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            if (armedForget === path) setArmedForget(null);
+                          }}
                         >
                           <X size={12} />
                         </button>
@@ -909,6 +928,7 @@ export function WorkspaceSidebar() {
                 const connection = isCurrent ? rt?.connection ?? null : null;
                 const install = installStatus[entry.id] ?? null;
                 const installing = install !== null && install.stage !== 'done';
+                const remoteForgetArmed = armedForget === `remote:${entry.id}`;
                 return (
                   <div
                     key={entry.id}
@@ -969,13 +989,26 @@ export function WorkspaceSidebar() {
                       </button>
                     </Tip>
                     {!isCurrent ? (
-                      <Tip label={t('lb.forgetHint')}>
+                      // Two presses, same rule as the local row. The armed id is
+                      // namespaced with `remote:` so a remote row can never arm
+                      // a local row that happens to share its id with a path.
+                      <Tip label={remoteForgetArmed ? t('lb.forgetConfirm') : t('lb.forgetHint')}>
                         <button
                           type="button"
-                          className="lb-icon lb-row-action"
-                          aria-label={t('lb.forget')}
+                          className={`lb-icon lb-row-action${remoteForgetArmed ? ' is-armed' : ''}`}
+                          aria-label={remoteForgetArmed ? t('lb.forgetConfirm') : t('lb.forget')}
                           disabled={blocked}
-                          onClick={() => removeRemoteWorkspace(entry.id)}
+                          onClick={() => {
+                            if (remoteForgetArmed) {
+                              setArmedForget(null);
+                              removeRemoteWorkspace(entry.id);
+                            } else {
+                              setArmedForget(`remote:${entry.id}`);
+                            }
+                          }}
+                          onMouseLeave={() => {
+                            if (armedForget === `remote:${entry.id}`) setArmedForget(null);
+                          }}
                         >
                           <X size={12} />
                         </button>

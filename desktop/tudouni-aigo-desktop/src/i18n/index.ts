@@ -615,6 +615,7 @@ export const en = {
   'lb.currentHint': 'The runtime is working in this directory',
   'lb.forget': 'Forget',
   'lb.forgetHint': 'Remove from this list. The directory itself is not touched.',
+  'lb.forgetConfirm': 'Remove? Click again to confirm',
   /* The fallback for a saved session whose runtime preview is empty: it never
      spoke, so there is no topic. The name says exactly that and nothing more —
      the id is still on the row (in `title`, and to the screen reader), so the
