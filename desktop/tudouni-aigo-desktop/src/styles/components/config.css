@@ -204,9 +204,16 @@
 }
 
 /* The delete buttons inside a sub-card. Destructive only on hover: a column of
-   red icons reads as a warning about the panel rather than as controls. */
-.cfg-danger:hover:not(:disabled) {
+   red icons reads as a warning about the panel rather than as controls. The
+   armed state is the app's two-press rule — the first press only paints it, so
+   the icon says "press again" rather than acting on a stray click. */
+.cfg-danger:hover:not(:disabled),
+.cfg-danger.is-armed {
   color: var(--destructive);
+}
+
+.cfg-danger.is-armed {
+  background: var(--destructive-subtle);
 }
 
 /* ---- the save row, and the sentence that has to be said ---- */
@@ -264,24 +271,24 @@
    background is the window's own plane here because this page is a form on
    paper, with the fields as the cards — the opposite of the ordinary dialog,
    where the card sits on the page. */
-.dialog-wide:has(.pc-page) {
+.dialog-wide:has(.pc-page:not(.is-inline)) {
   width: min(1180px, calc(100vw - 48px));
   background: var(--bg);
 }
 
-.dialog-wide:has(.pc-page) .dialog-head {
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head {
   padding: var(--space-4) var(--space-8);
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.dialog-wide:has(.pc-page) .dialog-body {
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-body {
   padding: var(--space-5) var(--space-8) var(--space-8);
 }
 
 /* The way back is a framed square on this page, the shape the design gives it:
    the page is long enough that the head is read as a header rather than as a
    dialog's title row. The close button on the far right keeps its ghost shape. */
-.dialog-wide:has(.pc-page) .dialog-head > .btn:first-child {
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head > .btn:first-child {
   flex: none;
   width: 32px;
   height: 32px;
@@ -291,7 +298,7 @@
   color: var(--fg-secondary);
 }
 
-.dialog-wide:has(.pc-page) .dialog-head > .btn:first-child:hover {
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head > .btn:first-child:hover {
   border-color: var(--border-strong);
   background: var(--bg-muted);
   color: var(--fg);
@@ -614,6 +621,17 @@
   background: var(--accent);
 }
 
+/* An absent feature is not an error, so the dot goes quiet rather than red.
+   The preview still draws the row, because "web_search is not registered" is a
+   fact about the configuration, not a missing surface. */
+.pc-preview.is-off .pc-preview-dot {
+  background: var(--fg-faint);
+}
+
+.pc-preview.is-off .pc-preview-name {
+  color: var(--fg-secondary);
+}
+
 .pc-preview-name {
   min-width: 0;
   overflow: hidden;
@@ -638,6 +656,17 @@
   font-size: var(--text-caption);
   line-height: var(--leading-tight);
   color: var(--fg-muted);
+}
+
+/* An MCP server is recognised by its invocation, and a command can be longer
+   than the card. It wraps instead of clipping: the argument that matters is
+   often the last one. */
+.pc-preview-invocation {
+  margin-top: var(--space-2);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
 }
 
 .pc-side-head {
@@ -781,6 +810,10 @@
 }
 
 .pc-models-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
   margin: 0;
   padding: var(--space-4);
   border: 1px dashed var(--border-strong);
@@ -788,6 +821,12 @@
   font-size: var(--text-caption);
   line-height: var(--leading-tight);
   color: var(--fg-muted);
+}
+
+/* The empty state is a column with its own gap; the add link's top margin was
+   for a field list and would double it here. */
+.pc-models-empty .pc-add {
+  margin-top: 0;
 }
 
 .pc-model-list {
@@ -913,11 +952,11 @@
 }
 
 @media (max-width: 720px) {
-  .dialog-wide:has(.pc-page) .dialog-head {
+  .dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head {
     padding: var(--space-3) var(--space-4);
   }
 
-  .dialog-wide:has(.pc-page) .dialog-body {
+  .dialog-wide:has(.pc-page:not(.is-inline)) .dialog-body {
     padding: var(--space-3) var(--space-4) var(--space-5);
   }
 

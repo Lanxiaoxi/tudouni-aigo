@@ -16,6 +16,7 @@ import {
   Pencil,
   Plug,
   Plus,
+  Power,
   Server,
   ShieldOff,
   Sparkles,
@@ -51,6 +52,7 @@ import {
   type Pair,
   type Problem,
   type RouteView,
+  type WebView,
 } from '@/runtime/userConfig';
 import { PanelBody, PanelShell } from './PanelShell';
 
@@ -77,7 +79,10 @@ import { PanelBody, PanelShell } from './PanelShell';
  *
  * **The web-search tab has no second surface**, and that is not an omission: two
  * fields are a form, not a collection, and a list of one row that opens an editor
- * for two fields would be two clicks to type two values.
+ * for two fields would be two clicks to type two values. It still borrows the
+ * editors' page language — a section, the fields, and a side column that says
+ * what the runtime will register — because "the key is empty" is a consequence
+ * worth seeing while it is typed, not only in a sentence under the fields.
  *
  * **Saving applies the reply, not the draft.** `config_write` answers with the
  * files as they are afterwards, and this stores *that*: what the form shows next
@@ -395,9 +400,6 @@ export function ConfigPanel() {
 
   const routeCount = draft.providers.length;
   const serverCount = draft.mcp.length;
-  const showKeysToggle = (
-    <ShowKeysToggle showKeys={showKeys} onToggle={() => setShowKeys(!showKeys)} />
-  );
 
   /* ---- the editor surface ---- */
 
@@ -415,24 +417,13 @@ export function ConfigPanel() {
             titleAside={<span className="pc-draft">{t('panel.config.draft')}</span>}
             note={t('panel.config.routeNote')}
             actions={
-              <>
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  disabled={!dirty || saving}
-                  onClick={revert}
-                >
-                  {t('panel.config.revertToFile')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={!canSave}
-                  onClick={() => void save()}
-                >
-                  {saving ? t('panel.config.saving') : t('panel.config.saveChanges')}
-                </button>
-              </>
+              <EditorActions
+                canSave={canSave}
+                dirty={dirty}
+                saving={saving}
+                onRevert={revert}
+                onSave={() => void save()}
+              />
             }
           >
             <PanelBody>
@@ -476,14 +467,48 @@ export function ConfigPanel() {
         return (
           <PanelShell
             {...back}
-            title={open.isNew ? t('panel.config.newServer') : t('panel.config.editServer')}
-            note={t('panel.config.editorNote')}
-            footer={footer}
+            title={
+              server.name.trim() !== ''
+                ? server.name
+                : open.isNew
+                  ? t('panel.config.newServer')
+                  : t('panel.config.editServer')
+            }
+            titleClass="pc-title"
+            titleAside={<span className="pc-draft">{t('panel.config.draft')}</span>}
+            note={t('panel.config.serverNote')}
+            actions={
+              <EditorActions
+                canSave={canSave}
+                dirty={dirty}
+                saving={saving}
+                onRevert={revert}
+                onSave={() => void save()}
+              />
+            }
           >
             <PanelBody>
+              <Problems problems={problems} />
+              {saveProblem !== null ? (
+                <div className="cfg-problems">
+                  <div className="cfg-problem is-blocking" role="alert">
+                    {saveProblem}
+                  </div>
+                </div>
+              ) : null}
               <ServerEditor
+                // A different server is a different page: the armed delete and
+                // the scroll position belong to it, not to the next one.
+                key={open.index}
                 server={server}
                 onChange={(patch) => updateServer(open.index, patch)}
+                onDelete={() => {
+                  editDraft((current) => ({
+                    ...current,
+                    mcp: current.mcp.filter((_, i) => i !== open.index),
+                  }));
+                  setEditing(null);
+                }}
               />
             </PanelBody>
           </PanelShell>
@@ -515,7 +540,6 @@ export function ConfigPanel() {
       note={note}
       actions={
         <>
-          {tab === 'web' ? showKeysToggle : null}
           {tab === 'routes' ? (
             <button type="button" className="btn btn-primary" onClick={addRoute}>
               <Plus size={13} />
@@ -640,31 +664,14 @@ export function ConfigPanel() {
         ) : null}
 
         {tab === 'web' ? (
-          <>
-            <div className="cfg-grid">
-              <Field label={t('panel.config.tavilyKey')}>
-                <input
-                  type={showKeys ? 'text' : 'password'}
-                  className="cfg-input"
-                  value={draft.web.tavilyApiKey}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(e) => editDraft((current) => ({ ...current, web: { ...current.web, tavilyApiKey: e.target.value } }))}
-                />
-              </Field>
-              <Field label={t('panel.config.tavilyBaseUrl')} hint={t('panel.config.tavilyBaseUrlHint')}>
-                <input
-                  type="text"
-                  className="cfg-input"
-                  value={draft.web.tavilyBaseUrl}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(e) => editDraft((current) => ({ ...current, web: { ...current.web, tavilyBaseUrl: e.target.value } }))}
-                />
-              </Field>
-            </div>
-            <p className="set-hint">{t('panel.config.webAbsent')}</p>
-          </>
+          <WebSearchEditor
+            web={draft.web}
+            showKeys={showKeys}
+            onToggleKeys={() => setShowKeys(!showKeys)}
+            onChange={(patch) =>
+              editDraft((current) => ({ ...current, web: { ...current.web, ...patch } }))
+            }
+          />
         ) : null}
 
         {tab === 'mcp' ? (
@@ -875,9 +882,7 @@ function ServerRow({
 }) {
   const t = useT();
   const remote = server.url.trim() !== '';
-  const invocation = remote
-    ? server.url.trim()
-    : [server.command.trim(), ...server.args].filter((part) => part !== '').join(' ');
+  const invocation = invocationOf(server);
 
   return (
     <div className="tk-row">
@@ -900,6 +905,12 @@ function ServerRow({
         </div>
 
         <div className="tk-row-meta">
+          {server.autoLoad ? (
+            <span className="tk-meta-item">
+              <Power size={12} />
+              {t('panel.config.autoLoadMeta')}
+            </span>
+          ) : null}
           {server.env.length > 0 ? (
             <span className="tk-meta-item">
               <KeyRound size={12} />
@@ -1476,7 +1487,13 @@ function RouteEditor({
         </div>
 
         {route.models.length === 0 ? (
-          <p className="pc-models-empty">{t('panel.config.modelsHint')}</p>
+          <div className="pc-models-empty">
+            <span>{t('panel.config.modelsHint')}</span>
+            <button type="button" className="pc-add" onClick={addModel}>
+              <Plus size={13} />
+              {t('panel.config.addModel')}
+            </button>
+          </div>
         ) : (
           <div className="pc-model-list">
             {route.models.map((model, at) => (
@@ -1547,6 +1564,7 @@ function ModelCard({
   onRemove: () => void;
 }) {
   const t = useT();
+  const [removeArmed, setRemoveArmed] = useState(false);
   const meta = [
     model.contextWindow === null
       ? null
@@ -1555,6 +1573,13 @@ function ModelCard({
   ]
     .filter((part) => part !== null)
     .join(' · ');
+
+  // A fold hides the button, so an armed press must not survive it: the card is
+  // the same component when it opens again, and a red mark left waiting would
+  // remove a model on what looks like the first press.
+  useEffect(() => {
+    if (!open) setRemoveArmed(false);
+  }, [open]);
 
   return (
     <div className={`pc-model${open ? ' is-open' : ''}`}>
@@ -1568,14 +1593,18 @@ function ModelCard({
           <ChevronRight size={15} className={`pc-caret${open ? ' is-open' : ''}`} />
         </button>
         {open ? (
-          <Tip label={t('panel.config.removeModel')}>
+          <Tip label={removeArmed ? t('panel.config.removeConfirm') : t('panel.config.removeModel')}>
             <button
               type="button"
-              className="btn btn-ghost btn-icon btn-compact cfg-danger"
-              aria-label={t('panel.config.removeModel')}
-              onClick={onRemove}
+              className={`btn btn-ghost btn-icon btn-compact cfg-danger${removeArmed ? ' is-armed' : ''}`}
+              aria-label={removeArmed ? t('panel.config.removeConfirm') : t('panel.config.removeModel')}
+              onMouseLeave={() => setRemoveArmed(false)}
+              onClick={() => {
+                if (removeArmed) onRemove();
+                else setRemoveArmed(true);
+              }}
             >
-              <Trash2 size={14} />
+              {removeArmed ? <Check size={14} /> : <Trash2 size={14} />}
             </button>
           </Tip>
         ) : null}
@@ -1693,7 +1722,131 @@ function readTokenCount(text: string): number | null {
 }
 
 /**
- * One MCP server's fields.
+ * The web-search tab, in the editors' page language.
+ *
+ * Two fields are a form, not a collection, so there is no second surface — but
+ * the side column is still worth its room: whether `web_search` is registered
+ * is the consequence of the key field, and it is the fact somebody is looking
+ * for when they open this tab. The read-out repeats it beside the field rather
+ * than in a sentence under the form, where it would be read only after
+ * scrolling past the thing it describes.
+ */
+function WebSearchEditor({
+  web,
+  showKeys,
+  onToggleKeys,
+  onChange,
+}: {
+  web: WebView;
+  showKeys: boolean;
+  onToggleKeys: () => void;
+  onChange: (patch: Partial<WebView>) => void;
+}) {
+  const t = useT();
+  const configured = web.tavilyApiKey.trim() !== '';
+  const base = web.tavilyBaseUrl.trim();
+  const baseLabel = base === '' ? t('panel.config.webDefaultBase') : hostOf(base) || base;
+
+  return (
+    <div className="pc-page is-inline">
+      <div className="pc-columns">
+        <div className="pc-main">
+          <section className="pc-section">
+            <div className="pc-section-head">
+              <span className="pc-section-label">{t('panel.config.sectionSearch')}</span>
+              <span className="pc-rule" />
+            </div>
+
+            <PcField label={t('panel.config.tavilyKey')} hint={t('panel.config.webKeyHint')}>
+              <span className="pc-key">
+                <input
+                  type={showKeys ? 'text' : 'password'}
+                  className="cfg-input mono"
+                  value={web.tavilyApiKey}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => onChange({ tavilyApiKey: e.target.value })}
+                />
+                <Tip label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}>
+                  <button
+                    type="button"
+                    className="pc-key-eye"
+                    aria-label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}
+                    aria-pressed={showKeys}
+                    onClick={onToggleKeys}
+                  >
+                    {showKeys ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
+                </Tip>
+              </span>
+            </PcField>
+
+            <PcField label={t('panel.config.tavilyBaseUrl')} hint={t('panel.config.tavilyBaseUrlHint')}>
+              <input
+                type="text"
+                className="cfg-input mono"
+                value={web.tavilyBaseUrl}
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="https://api.tavily.com"
+                onChange={(e) => onChange({ tavilyBaseUrl: e.target.value })}
+              />
+            </PcField>
+          </section>
+        </div>
+
+        <aside className="pc-side">
+          <div>
+            <div className="pc-side-head">
+              <span className="pc-side-label">{t('panel.config.preview')}</span>
+            </div>
+            <div className={`pc-preview${configured ? '' : ' is-off'}`}>
+              <div className="pc-preview-head">
+                <span className="pc-preview-dot" aria-hidden />
+                <span className="pc-preview-name">{t('panel.config.webProvider')}</span>
+                <span className="grow" />
+                <Badge tone={configured ? 'success' : 'neutral'} dot={false}>
+                  {configured ? t('panel.config.webConfigured') : t('panel.config.webNotConfigured')}
+                </Badge>
+              </div>
+              <div className="pc-preview-sub">
+                <span>web_search</span>
+                <span aria-hidden>·</span>
+                <span>{baseLabel}</span>
+              </div>
+            </div>
+            <p className="pc-side-caption">{t('panel.config.webAbsent')}</p>
+          </div>
+
+          <div>
+            <div className="pc-side-head">
+              <span className="pc-side-label">{t('panel.config.readOut')}</span>
+              <span className="pc-side-note">{t('panel.config.notEditable')}</span>
+            </div>
+            <div className="pc-readout">
+              <ReadoutRow
+                label={t('panel.config.factWebSearch')}
+                value={configured ? t('panel.config.registered') : t('panel.config.notRegistered')}
+                tone={configured ? undefined : 'muted'}
+              />
+              <ReadoutRow
+                label={t('panel.config.factKey')}
+                value={configured ? t('panel.config.keySet') : t('panel.config.keyUnset')}
+                tone={configured ? undefined : 'muted'}
+              />
+              <ReadoutRow label={t('panel.config.factBaseUrl')} value={baseLabel} />
+              <ReadoutRow label={t('panel.config.factFetchWeb')} value={t('panel.config.unaffected')} />
+            </div>
+            <p className="pc-side-caption">{t('panel.config.webReadoutHint')}</p>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One MCP server's fields, on the page its list row opens into.
  *
  * The transport is the side card's business — it decides *where the server runs*,
  * which is the same kind of fact the task editor puts in its own side card — and
@@ -1701,87 +1854,103 @@ function readTokenCount(text: string): number | null {
  * transports **clears the other field**, because the runtime refuses a server
  * that names both: leaving the old one behind would produce exactly that refusal
  * on the next save, about a field that would not even be on screen.
+ *
+ * The side column is the same one the route page has, with the same split: the
+ * transport control, the row this server will become, the facts the runtime
+ * computes, and the destructive verb at the end. That is what makes the two
+ * editors read as one panel rather than as two eras of it.
  */
 function ServerEditor({
   server,
   onChange,
+  onDelete,
 }: {
   server: McpServerView;
   onChange: (patch: Partial<McpServerView>) => void;
+  onDelete: () => void;
 }) {
   const t = useT();
   const remote = server.url.trim() !== '';
+  const invocation = invocationOf(server);
+  const [deleteArmed, setDeleteArmed] = useState(false);
 
   return (
-    <div className="tk-editor">
-      <div className="tk-editor-main">
-        <section className="tk-section">
-          <div className="tk-section-head">
-            <span className="tk-section-label">{t('panel.config.sectionServer')}</span>
-          </div>
-          <Field label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
-            <input
-              type="text"
-              className="cfg-input mono"
-              value={server.name}
-              spellCheck={false}
-              onChange={(e) => onChange({ name: e.target.value })}
-            />
-          </Field>
-
-          {remote ? (
-            <div className="cfg-grid">
-              <Field label={t('panel.config.mcpUrl')} required>
-                <input
-                  type="text"
-                  className="cfg-input mono"
-                  value={server.url}
-                  spellCheck={false}
-                  placeholder="https://mcp.example.com/mcp"
-                  onChange={(e) => onChange({ url: e.target.value })}
-                />
-              </Field>
-              <Field label={t('panel.config.mcpHeaders')} hint={t('panel.config.headersHint')}>
-                <textarea
-                  className="cfg-textarea mono"
-                  rows={2}
-                  value={textOfPairs(server.headers)}
-                  spellCheck={false}
-                  onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
-                />
-              </Field>
+    <div className="pc-page">
+      <div className="pc-columns">
+        <div className="pc-main">
+          <section className="pc-section">
+            <div className="pc-section-head">
+              <span className="pc-section-label">{t('panel.config.sectionServer')}</span>
+              <span className="pc-rule" />
             </div>
-          ) : (
-            <div className="cfg-grid">
-              <Field label={t('panel.config.mcpCommand')} required>
-                <input
-                  type="text"
-                  className="cfg-input mono"
-                  value={server.command}
-                  spellCheck={false}
-                  placeholder="npx"
-                  onChange={(e) => onChange({ command: e.target.value })}
-                />
-              </Field>
-              <Field label={t('panel.config.mcpArgs')} hint={t('panel.config.mcpArgsHint')}>
-                <textarea
-                  className="cfg-textarea mono"
-                  rows={2}
-                  value={textOfLines(server.args)}
-                  spellCheck={false}
-                  onChange={(e) => onChange({ args: linesOf(e.target.value) })}
-                />
-              </Field>
-            </div>
-          )}
-        </section>
 
-        <section className="tk-section">
-          <div className="tk-section-head">
-            <span className="tk-section-label">{t('panel.config.sectionAdvanced')}</span>
-          </div>
-          <div className="cfg-grid">
-            <Field label={t('panel.config.mcpEnv')} hint={t('panel.config.pairsHint')}>
+            <PcField label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
+              <input
+                type="text"
+                className="cfg-input mono"
+                value={server.name}
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(e) => onChange({ name: e.target.value })}
+              />
+            </PcField>
+
+            {remote ? (
+              <>
+                <PcField label={t('panel.config.mcpUrl')} required>
+                  <input
+                    type="text"
+                    className="cfg-input mono"
+                    value={server.url}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="https://mcp.example.com/mcp"
+                    onChange={(e) => onChange({ url: e.target.value })}
+                  />
+                </PcField>
+                <PcField label={t('panel.config.mcpHeaders')} hint={t('panel.config.mcpHeadersHint')}>
+                  <textarea
+                    className="cfg-textarea mono"
+                    rows={2}
+                    value={textOfPairs(server.headers)}
+                    spellCheck={false}
+                    onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
+                  />
+                </PcField>
+              </>
+            ) : (
+              <>
+                <PcField label={t('panel.config.mcpCommand')} required>
+                  <input
+                    type="text"
+                    className="cfg-input mono"
+                    value={server.command}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="npx"
+                    onChange={(e) => onChange({ command: e.target.value })}
+                  />
+                </PcField>
+                <PcField label={t('panel.config.mcpArgs')} hint={t('panel.config.mcpArgsHint')}>
+                  <textarea
+                    className="cfg-textarea mono"
+                    rows={2}
+                    value={textOfLines(server.args)}
+                    spellCheck={false}
+                    onChange={(e) => onChange({ args: linesOf(e.target.value) })}
+                  />
+                </PcField>
+              </>
+            )}
+          </section>
+
+          <section className="pc-section">
+            <div className="pc-section-head">
+              <span className="pc-section-label">{t('panel.config.sectionAdvanced')}</span>
+              <span className="pc-rule" />
+            </div>
+
+            <PcField label={t('panel.config.mcpEnv')} hint={t('panel.config.pairsHint')}>
               <textarea
                 className="cfg-textarea mono"
                 rows={2}
@@ -1789,64 +1958,171 @@ function ServerEditor({
                 spellCheck={false}
                 onChange={(e) => onChange({ env: pairsOfText(e.target.value) })}
               />
-            </Field>
-            <Field label={t('panel.config.mcpTimeout')} hint={t('panel.config.mcpTimeoutHint')}>
+            </PcField>
+
+            <PcField label={t('panel.config.mcpTimeout')} hint={t('panel.config.mcpTimeoutHint')}>
               <input
                 type="text"
                 inputMode="decimal"
-                className="cfg-input"
+                className="cfg-input is-tiny"
                 value={server.timeoutSeconds === null ? '' : String(server.timeoutSeconds)}
-                placeholder={t('panel.config.contextWindowAbsent')}
+                placeholder={t('panel.config.timeoutDefault')}
                 spellCheck={false}
                 onChange={(e) => onChange({ timeoutSeconds: readNumber(e.target.value) })}
               />
-            </Field>
-          </div>
-          {/*
-            Not in the side card with the transport. The side card answers "where
-            does this server run"; this answers "when", and folding the two together
-            would suggest ticking it changes the transport.
-          */}
-          <div className="cfg-field">
-            <span className="cfg-label">{t('panel.config.mcpAutoLoad')}</span>
-            <label className="cfg-check">
-              <input
-                type="checkbox"
-                checked={server.autoLoad}
-                onChange={(e) => onChange({ autoLoad: e.target.checked })}
-              />
-              <span>{t('panel.config.mcpAutoLoadOn')}</span>
-            </label>
-            <span className="cfg-hint">{t('panel.config.mcpAutoLoadHint')}</span>
-          </div>
-        </section>
-      </div>
+            </PcField>
 
-      <aside className="tk-editor-side">
-        <div className="tk-side-title">{t('panel.config.mcpTransport')}</div>
-        <div className="tk-choice">
-          <label className="tk-choice-row">
-            <input
-              type="radio"
-              name="mcp-transport"
-              checked={!remote}
-              onChange={() => onChange({ url: '' })}
-            />
-            <span className="tk-choice-text">{t('panel.config.mcpStdio')}</span>
-          </label>
-          <label className="tk-choice-row">
-            <input
-              type="radio"
-              name="mcp-transport"
-              checked={remote}
-              onChange={() => onChange({ command: '' })}
-            />
-            <span className="tk-choice-text">{t('panel.config.mcpRemote')}</span>
-          </label>
+            {/* Not in the side card with the transport. The side card answers
+                "where does this server run"; this answers "when", and folding
+                the two together would suggest ticking it changes the transport. */}
+            <div className="pc-row">
+              <span className="pc-label">{t('panel.config.mcpAutoLoad')}</span>
+              <div className="pc-control">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={server.autoLoad}
+                  aria-label={t('panel.config.mcpAutoLoad')}
+                  className={`tk-switch${server.autoLoad ? ' is-on' : ''}`}
+                  onClick={() => onChange({ autoLoad: !server.autoLoad })}
+                >
+                  <span className="tk-switch-knob" />
+                </button>
+                <span className="cfg-hint">{t('panel.config.mcpAutoLoadHint')}</span>
+              </div>
+            </div>
+          </section>
         </div>
-        <p className="tk-field-hint">{t('panel.config.transportHint')}</p>
-      </aside>
+
+        <aside className="pc-side">
+          <div>
+            <div className="pc-side-head">
+              <span className="pc-side-label">{t('panel.config.mcpTransport')}</span>
+            </div>
+            <div className="tk-choice">
+              <label className="tk-choice-row">
+                <input
+                  type="radio"
+                  name="mcp-transport"
+                  checked={!remote}
+                  onChange={() => onChange({ url: '' })}
+                />
+                <span className="tk-choice-text">{t('panel.config.mcpStdio')}</span>
+              </label>
+              <label className="tk-choice-row">
+                <input
+                  type="radio"
+                  name="mcp-transport"
+                  checked={remote}
+                  onChange={() => onChange({ command: '' })}
+                />
+                <span className="tk-choice-text">{t('panel.config.mcpRemote')}</span>
+              </label>
+            </div>
+            <p className="pc-side-caption">{t('panel.config.transportHint')}</p>
+          </div>
+
+          <div>
+            <div className="pc-side-head">
+              <span className="pc-side-label">{t('panel.config.preview')}</span>
+            </div>
+            <div className="pc-preview">
+              <div className="pc-preview-head">
+                <span className="pc-preview-dot" aria-hidden />
+                <span className="pc-preview-name mono">
+                  {server.name.trim() === '' ? t('panel.config.untitled') : server.name}
+                </span>
+                <span className="grow" />
+                <Badge tone="neutral" dot={false}>
+                  {remote ? t('panel.config.mcpRemote') : t('panel.config.mcpStdio')}
+                </Badge>
+              </div>
+              <div className="pc-preview-invocation mono">
+                {invocation === '' ? t('panel.config.noInvocation') : invocation}
+              </div>
+            </div>
+            <p className="pc-side-caption">{t('panel.config.serverPreviewHint')}</p>
+          </div>
+
+          <div>
+            <div className="pc-side-head">
+              <span className="pc-side-label">{t('panel.config.readOut')}</span>
+              <span className="pc-side-note">{t('panel.config.notEditable')}</span>
+            </div>
+            <div className="pc-readout">
+              <ReadoutRow
+                label={t('panel.config.factTransport')}
+                value={remote ? t('panel.config.mcpRemote') : t('panel.config.mcpStdio')}
+              />
+              <ReadoutRow
+                label={t('panel.config.factAutoLoad')}
+                value={server.autoLoad ? t('panel.config.autoLoadOn') : t('panel.config.autoLoadOff')}
+                tone={server.autoLoad ? undefined : 'muted'}
+              />
+              <ReadoutRow
+                label={t('panel.config.factTimeout')}
+                value={
+                  server.timeoutSeconds === null
+                    ? t('panel.config.timeoutDefault')
+                    : t('panel.config.timeoutSeconds', { n: server.timeoutSeconds })
+                }
+                tone={server.timeoutSeconds === null ? 'muted' : undefined}
+              />
+              <ReadoutRow
+                label={t('panel.config.factEnv')}
+                value={
+                  server.env.length === 0
+                    ? t('panel.config.envNone')
+                    : t('panel.config.envCount', { n: server.env.length })
+                }
+                tone={server.env.length === 0 ? 'muted' : undefined}
+              />
+            </div>
+            <p className="pc-side-caption">{t('panel.config.serverReadoutHint')}</p>
+          </div>
+
+          <button
+            type="button"
+            className={`btn btn-outline pc-delete${deleteArmed ? ' is-armed' : ''}`}
+            onMouseLeave={() => setDeleteArmed(false)}
+            onClick={() => {
+              if (deleteArmed) onDelete();
+              else setDeleteArmed(true);
+            }}
+          >
+            {deleteArmed ? t('panel.config.removeConfirm') : t('panel.config.deleteServer')}
+          </button>
+        </aside>
+      </div>
     </div>
+  );
+}
+
+/** The invocation a server row and its page both show: the URL for a remote
+ *  server, `command args…` for a local one. One function for both readers, so
+ *  the preview and the row cannot disagree about what the server runs. */
+function invocationOf(server: McpServerView): string {
+  const url = server.url.trim();
+  if (url !== '') return url;
+  return [server.command.trim(), ...server.args].filter((part) => part !== '').join(' ');
+}
+
+/** One read-out row: the label on the left, the fact on the right. A fact that
+ *  is merely absent is `muted`; one that is wrong is `negative`. */
+function ReadoutRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: 'negative' | 'muted';
+}) {
+  return (
+    <span className="pc-readout-row">
+      <span>{label}</span>
+      <span className={`pc-readout-value${tone === undefined ? '' : ` is-${tone}`}`}>{value}</span>
+    </span>
   );
 }
 
@@ -1887,71 +2163,37 @@ function Blank({ icon, title, hint }: { icon: ReactNode; title: string; hint: st
 }
 
 /**
- * One labelled control. `label` wraps the control, so the two are associated.
+ * The two verbs every editor page carries, in its head.
  *
- * `required` draws the asterisk, and **which fields carry it is not decided
- * here**: they are exactly the ones whose emptiness comes back from
- * `validateDraft` as a `blocking` problem, i.e. the ones that grey out Save. A
- * marker keeping a list of its own would be wrong the first time the two
- * drifted, and it is the kind of wrong nobody reports — the field still works,
- * it just promises something else than the save button does.
- *
- * The word is written for the readers an asterisk never reaches: `sr-only` for a
- * screen reader, and the same sentence as the tooltip. `title` rides on the
- * asterisk rather than on the wrapper, so the control's accessible name stays
- * "Model id Required" instead of picking up the whole sentence.
+ * A component because the route and server pages are the same page with
+ * different fields: their Save is the panel's Save, and two copies of the
+ * disabled rules would eventually disagree about which draft can be written.
+ * The list surface keeps the same two verbs in the panel's foot — that surface
+ * has no page head to put them in — and both read the same `dirty`/`canSave`.
  */
-function Field({
-  label,
-  hint,
-  required = false,
-  children,
+function EditorActions({
+  canSave,
+  dirty,
+  saving,
+  onRevert,
+  onSave,
 }: {
-  label: string;
-  hint?: string;
-  required?: boolean;
-  children: ReactNode;
+  canSave: boolean;
+  dirty: boolean;
+  saving: boolean;
+  onRevert: () => void;
+  onSave: () => void;
 }) {
   const t = useT();
   return (
-    <label className="cfg-field">
-      <span className="cfg-label">
-        {label}
-        {required ? (
-          <>
-            <span className="cfg-required" aria-hidden title={t('panel.config.requiredHint')}>
-              *
-            </span>
-            <span className="sr-only">{t('panel.config.required')}</span>
-          </>
-        ) : null}
-      </span>
-      {children}
-      {hint ? <span className="cfg-hint">{hint}</span> : null}
-    </label>
-  );
-}
-
-/**
- * Whether secrets are drawn in the clear.
- *
- * Off by default, and it is **one** switch for the panel rather than one per
- * field: a password input per key would hide the mistake people actually make
- * here (a key pasted with a trailing space, or two keys swapped between routes),
- * and a per-field toggle multiplied that by the number of routes. The panel
- * holds keys, so the default is "not on screen".
- *
- * It sits in the **head**, on the surfaces that hold a secret. It used to live
- * at the foot of the Web-search tab, which meant the only way to read a route's
- * key was to leave the routes tab and go and find it there.
- */
-function ShowKeysToggle({ showKeys, onToggle }: { showKeys: boolean; onToggle: () => void }) {
-  const t = useT();
-  return (
-    <button type="button" className={`set-toggle${showKeys ? ' is-on' : ''}`} aria-pressed={showKeys} onClick={onToggle}>
-      {showKeys ? <EyeOff size={11} /> : <Eye size={11} />}
-      <span>{showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}</span>
-    </button>
+    <>
+      <button type="button" className="btn btn-outline" disabled={!dirty || saving} onClick={onRevert}>
+        {t('panel.config.revertToFile')}
+      </button>
+      <button type="button" className="btn btn-primary" disabled={!canSave} onClick={onSave}>
+        {saving ? t('panel.config.saving') : t('panel.config.saveChanges')}
+      </button>
+    </>
   );
 }
 

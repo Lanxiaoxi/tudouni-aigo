@@ -1449,12 +1449,31 @@ export const en = {
   'panel.config.routesHint':
     'One entry per provider route. The key is the route name; the order is the order the /model list shows, and the first route with a key is the default.',
   'panel.config.web': 'Web search',
-  'panel.config.webHint': 'The keys the web_search tool uses.',
+  'panel.config.webHint': 'The Tavily key the web_search tool uses. Empty leaves the tool unregistered.',
   'panel.config.webAbsent':
     'Leave them empty and web_search is not registered. fetch_web is unaffected — a missing key is not an error there.',
   'panel.config.tavilyKey': 'Tavily API key',
+  'panel.config.webKeyHint': 'Empty leaves web_search unregistered. Eye reveals it for this session only.',
   'panel.config.tavilyBaseUrl': 'Tavily base URL',
   'panel.config.tavilyBaseUrlHint': 'Empty uses the runtime’s own default.',
+  /* The web tab's side column. It says the same thing as `webAbsent` in one
+     glance: the provider, whether the tool is registered, and the three facts
+     the runtime derives from the two fields. */
+  'panel.config.sectionSearch': 'Search',
+  'panel.config.webProvider': 'Tavily',
+  'panel.config.webConfigured': 'configured',
+  'panel.config.webNotConfigured': 'not configured',
+  'panel.config.webDefaultBase': 'runtime default',
+  'panel.config.factWebSearch': 'web_search',
+  'panel.config.registered': 'registered',
+  'panel.config.notRegistered': 'not registered',
+  'panel.config.factKey': 'API key',
+  'panel.config.keySet': 'set',
+  'panel.config.keyUnset': 'not set',
+  'panel.config.factBaseUrl': 'Base URL',
+  'panel.config.factFetchWeb': 'fetch_web',
+  'panel.config.unaffected': 'unaffected',
+  'panel.config.webReadoutHint': 'What the runtime registers when this file is read.',
   'panel.config.mcp': 'MCP servers',
   'panel.config.mcpHint':
     'Servers the runtime connects at start-up. A command runs locally; a URL is a remote server.',
@@ -1540,6 +1559,24 @@ export const en = {
   'panel.config.mcpAutoLoadOn': 'Mount this server when a session opens',
   'panel.config.mcpAutoLoadHint':
     'Off means it waits for /mcp. Mounting only starts the server — every tool it offers is still high risk and every call still needs your approval.',
+  'panel.config.mcpHeadersHint':
+    'One per line, name = value. Sent with every request to this server.',
+  /* The server page's own head and side column: the same sentences the route
+     page has, about the other collection. */
+  'panel.config.serverNote': 'Server in mcp.json · edits stay in this draft until you save.',
+  'panel.config.serverPreviewHint': 'How this server appears in the servers list.',
+  'panel.config.serverReadoutHint': 'Read-only. What the runtime will do when a session opens.',
+  'panel.config.factTransport': 'Transport',
+  'panel.config.factAutoLoad': 'Session start',
+  'panel.config.autoLoadOn': 'mounts at start',
+  'panel.config.autoLoadOff': 'waits for /mcp',
+  'panel.config.factTimeout': 'Timeout',
+  'panel.config.timeoutDefault': 'runtime default',
+  'panel.config.timeoutSeconds': '{n}s',
+  'panel.config.factEnv': 'Environment',
+  'panel.config.envNone': 'none',
+  'panel.config.autoLoadMeta': 'starts with session',
+  'panel.config.deleteServer': 'Delete server',
   'panel.config.addRoute': 'Add a route',
   'panel.config.addModel': 'Add a model',
   'panel.config.addServer': 'Add a server',
