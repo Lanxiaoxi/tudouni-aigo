@@ -292,6 +292,12 @@ const SUITES = [
   // half is read as text, like `stream-layout.test.ts` does: a rule that went
   // back to a hard-coded colour has no behaviour to observe in Node.
   'markdown-fence.test.tsx',
+  // File paths in an answer become clickable links. The rule the first release
+  // missed: models quote paths in backticks far more often than they write them
+  // bare, so the visitor only saw `text` nodes and the feature was a no-op in
+  // real conversations. Inline code spans are scanned now, with the code-chip
+  // look kept on the link's label; fenced blocks and authored links stay plain.
+  'markdown-filepath.test.tsx',
   // Pictures in an answer. A model that generates one hands back a **path**, and
   // a WebView cannot load a path as an `<img>` — so this suite pins the mapping
   // that turns one into pixels, the destinations that are refused instead (a
