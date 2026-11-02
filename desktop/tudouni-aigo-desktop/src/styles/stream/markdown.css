@@ -242,6 +242,52 @@
   font-size: var(--text-code);
 }
 
+/* Tables are wrapped in `.md-tablewrap` (`Markdown.tsx`) so the copy button can
+   sit outside the scrolling `<table>`: inside it, a wide table would scroll the
+   button away with the first column. The wrapper takes over the sizing the table
+   used to do for itself (`fit-content`, capped at the column), and the table
+   inside just fills it. The button is hidden until the table is hovered or
+   something inside it has focus, so it never rests on top of a header cell; it
+   stays reachable by keyboard because `:focus-within` shows it. */
+.md-tablewrap {
+  position: relative;
+  max-width: 100%;
+  width: fit-content;
+}
+
+.md-tablewrap > table {
+  width: 100%;
+}
+
+.md-table-copy {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  height: 22px;
+  width: 22px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--fg-faint);
+  background: var(--bg-card);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.md-tablewrap:hover .md-table-copy,
+.md-tablewrap:focus-within .md-table-copy,
+.md-table-copy.is-copied {
+  opacity: 1;
+}
+
+.md-table-copy:hover:not(:disabled) {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.md-table-copy.is-copied {
+  color: var(--success);
+}
+
 .md th,
 .md td {
   padding: 5px 10px;

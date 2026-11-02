@@ -1895,6 +1895,9 @@ export const en = {
   /** Copy button on a fenced code block (`Markdown.tsx`). */
   'md.codeCopy': 'Copy code',
   'md.codeCopied': 'Copied',
+  /** Copy button on a table (`Markdown.tsx`): copies it as tab-separated text. */
+  'md.tableCopy': 'Copy table',
+  'md.tableCopied': 'Copied',
   /** A picture the model named but this window will not draw: an unsupported
    *  scheme or media type (`MarkdownImage.tsx`). Shown as the picture's tooltip,
    *  so it has to read as the reason, not as a label. */

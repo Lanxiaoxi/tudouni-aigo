@@ -292,6 +292,11 @@ const SUITES = [
   // half is read as text, like `stream-layout.test.ts` does: a rule that went
   // back to a hard-coded colour has no behaviour to observe in Node.
   'markdown-fence.test.tsx',
+  // The copy button on a table: the TSV that reaches the clipboard (a tab or
+  // newline left inside a cell shifts every cell after it), the markup the real
+  // renderer wraps a table in, and the rules that keep the button outside the
+  // scrolling `<table>`.
+  'markdown-table.test.tsx',
   // File paths in an answer become clickable links. The rule the first release
   // missed: models quote paths in backticks far more often than they write them
   // bare, so the visitor only saw `text` nodes and the feature was a no-op in

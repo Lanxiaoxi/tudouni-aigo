@@ -7,6 +7,7 @@ import { useT } from '@/i18n/useT';
 import { useSessionField } from '@/state/store';
 import { copyText } from '@/utils/clipboard';
 import { fenceLanguage, fenceLayout } from './fence';
+import { tableToTsv } from './tableText';
 import { MarkdownImage } from './MarkdownImage';
 import { imageUrlTransform } from './imageUrl';
 import { remarkFilePath } from './remarkFilePath';
@@ -73,6 +74,25 @@ function useHighlight(): Highlight | null {
 }
 
 /**
+ * Copy `text`, and report "just copied" for a moment so the button can swap its
+ * icon for a check. Shared by the code block and the table: both need the same
+ * feedback, and a failed copy must not flash a success.
+ */
+function useCopyFlash(): [boolean, (text: string) => Promise<void>] {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  const copy = async (text: string) => {
+    const ok = await copyText(text);
+    if (ok) {
+      setCopied(true);
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => setCopied(false), 1500);
+    }
+  };
+  return [copied, copy];
+}
+
+/**
  * A fenced block: a language bar on top (the tag itself, plus the copy button)
  * over the code. `pre` is the mapping below, so the bar sits above the `<pre>`
  * rather than inside it — a `<pre>` is one scrolling box, and a bar inside it
@@ -91,19 +111,10 @@ function useHighlight(): Highlight | null {
 function CodeBlock({ children }: { children?: ReactNode }) {
   const t = useT();
   const preRef = useRef<HTMLPreElement>(null);
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<number | undefined>(undefined);
+  const [copied, copyFlash] = useCopyFlash();
   const { bar, language } = fenceLayout(fenceLanguage(children));
 
-  const copy = async () => {
-    const text = preRef.current?.innerText ?? '';
-    const ok = await copyText(text);
-    if (ok) {
-      setCopied(true);
-      window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => setCopied(false), 1500);
-    }
-  };
+  const copy = () => copyFlash(preRef.current?.innerText ?? '');
 
   const icon = copied ? <Check size={14} /> : <Copy size={14} />;
   const button = (
@@ -130,6 +141,39 @@ function CodeBlock({ children }: { children?: ReactNode }) {
       {/* Untagged blocks have no bar to hold the button, so it floats over the
           code there instead (`stream.css`, `.md-codeblock:not(:has(.md-lang))`). */}
       {bar ? null : button}
+    </div>
+  );
+}
+
+/**
+ * A table with a copy button, copied as tab-separated text (`tableText.ts`).
+ *
+ * The `<table>` is `display: block` with its own horizontal scroll (see `.md
+ * table`), so a button placed inside it would scroll away with a wide table's
+ * first column. The wrapper holds the button instead, the same reason a code
+ * block's bar sits outside its `<pre>`. The button is only shown on hover or
+ * focus (`.md-table-copy`) so it never sits permanently over a header cell.
+ */
+function TableBlock({ children }: { children?: ReactNode }) {
+  const t = useT();
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [copied, copyFlash] = useCopyFlash();
+
+  const label = copied ? t('md.tableCopied') : t('md.tableCopy');
+  return (
+    <div className="md-tablewrap">
+      <table ref={tableRef}>{children}</table>
+      <button
+        type="button"
+        className={`btn btn-ghost btn-icon md-table-copy${copied ? ' is-copied' : ''}`}
+        aria-label={label}
+        title={label}
+        onClick={() => {
+          if (tableRef.current) void copyFlash(tableToTsv(tableRef.current));
+        }}
+      >
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+      </button>
     </div>
   );
 }
@@ -198,6 +242,7 @@ const components: Components = {
   // `code` has no `pre` ancestor), so the bar and the copy button land on
   // exactly the things they apply to.
   pre: CodeBlock,
+  table: TableBlock,
   // A model ending text with two spaces used to force a line break the old
   // renderer silently dropped; keep that behaviour visible here too.
   // Two kinds of link pass through here:
