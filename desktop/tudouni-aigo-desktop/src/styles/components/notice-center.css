@@ -2,7 +2,7 @@
  *
  * The floating capsule that gathers every note entry the session holds —
  * runtime diagnostics, panel replies, front-end event lines — into one
- * surface. It docks to the **bottom left** of `.app-stream` (which is
+ * surface. It docks to the **bottom right** of `.app-stream` (which is
  * `position: relative`; the capsule is the only absolutely-positioned occupant
  * there, overlaying rather than replacing the view under it), and opens
  * upward as a Radix popover.
@@ -24,7 +24,7 @@
 .nc-dock {
   position: absolute;
   bottom: var(--space-3);
-  left: var(--space-3);
+  right: var(--space-3);
   z-index: var(--z-sticky);
   /* A hover shield, not a click target: the stream scrolls under the dock's
      empty half, and only the capsule itself takes the pointer. */
