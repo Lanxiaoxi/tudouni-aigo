@@ -1985,33 +1985,46 @@ export interface AttachedRemoteFile {
   bytes: number;
 }
 
+/** What became of one path of a drop: the file that landed, or why it did not.
+ *  Exactly one of the two is set. `localPath` is echoed so the caller can match
+ *  an outcome to the chip it drew without trusting the order alone. */
+export interface AttachOutcome {
+  localPath: string;
+  file: AttachedRemoteFile | null;
+  error: string | null;
+}
+
 /**
- * Copy one file on **this** machine into a remote session's workspace, and
- * answer with the workspace-relative path.
+ * Copy files on **this** machine into a remote session's workspace, and answer
+ * with one outcome per path, in order.
  *
- * The sibling of `stashImage`, for the other OS entry point: a drop and the
- * native file dialog both hand over a path that only means something here. On a
- * remote screen that path is meaningless to the far runtime — its `SafePath`
- * refuses it, and the far shell cannot see this machine either — so the bytes
- * are uploaded and the sentence names the relative path instead, exactly as a
+ * The sibling of `stashImages`, for the other OS entry point: a drop and the
+ * native file dialog both hand over paths that only mean something here. On a
+ * remote screen those paths are meaningless to the far runtime — its `SafePath`
+ * refuses them, and the far shell cannot see this machine either — so the bytes
+ * are uploaded and the sentence names the relative paths instead, exactly as a
  * pasted picture does.
+ *
+ * **One call for the whole gesture**, as for pictures: the Rust side dials SSH
+ * once and every file rides the same SFTP channel. Unlike pictures the answer is
+ * **per file** — a directory in the drop says nothing about the file beside it —
+ * so a refusal of one path is an entry in the answer, not a rejection of the
+ * call. A rejection means the call as a whole could not be made (the session is
+ * gone, or is not remote).
  *
  * **The key, not a target.** The host and workspace come from the child the
  * bridge already started; a front end that could name them could upload into a
  * machine the session does not run on. It is also what keeps credentials out of
  * this layer: `remoteConnectionOf` deliberately carries none.
- *
- * Rejections are surfaced: every one of them is a reason the file did not
- * attach, and the caller turns them into the composer's notice.
  */
-export async function attachRemoteFile(key: string, localPath: string): Promise<AttachedRemoteFile> {
+export async function attachRemoteFiles(key: string, localPaths: string[]): Promise<AttachOutcome[]> {
   if (!isHosted()) {
     throw new Error('remote file attach needs the desktop application');
   }
   const target = bridgeKey(key);
   if (target === null) throw new Error("that session's runtime is not running");
-  return tauriInvoke<AttachedRemoteFile>('attach_file_remote', {
+  return tauriInvoke<AttachOutcome[]>('attach_files_remote', {
     key: target,
-    localPath,
+    localPaths,
   });
 }

@@ -31,7 +31,7 @@
 //!
 //! **The upload is the one act that carries several files**, because a paste of
 //! three screenshots is one gesture. So the connection is opened once by the
-//! caller (`image_stash`, `attach_file_remote`) and every picture rides the same
+//! caller (`image_stash`, `attach_files_remote`) and every picture rides the same
 //! SFTP channel: three handshakes for one gesture was pure latency, and none of
 //! it bought isolation.
 //!

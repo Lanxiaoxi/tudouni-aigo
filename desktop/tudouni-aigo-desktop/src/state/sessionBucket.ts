@@ -90,6 +90,7 @@ export function createSessionBucket(
     pastedImages: [],
     pendingImages: [],
     attachedFiles: [],
+    pendingFiles: [],
     quiet: prefsQuietDefault(),
   };
 }

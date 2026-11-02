@@ -1817,6 +1817,10 @@ export const en = {
    *  that was held back, not a refusal to send at all. */
   'composer.pastePending':
     'the picture is still being written — press send again once it stops saying “Uploading…”',
+  /** The file twin of `composer.pastePending`: Enter arrived before the upload
+   *  did, and the chip above the box is saying "Uploading…" at the same moment. */
+  'composer.attachPending':
+    'a file is still being uploaded — press send again once it stops saying “Uploading…”',
   /** `/quiet` given a word that is not one of its three states. */
   'composer.quietUnknown': '{reason}',
 

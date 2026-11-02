@@ -307,6 +307,20 @@ gesture rides **one** SSH connection and one framed body rather than one dial pe
 picture. The send is refused while a *referenced* pending chip exists, because a
 token that reached the runtime would be prose where a picture should be.
 
+**A file dropped on a remote session follows the same rules.** The drop and the
+plus menu's "choose a file" hand over paths on *this* machine, so on a remote
+screen each file is uploaded into `.tudouni/attach/<key>/` and the sentence
+carries the workspace-relative path. Like a picture, it is drawn first
+(`pendingFiles`, `⟦file-0⟧`, "Uploading…") and the send is refused while a
+referenced pending chip exists (`attach-pending`). The whole drop is **one**
+`attach_files_remote` call — one SSH connection, one staging directory, one SFTP
+channel — and the answer is **per file**, because unlike a picture frame a file
+list is not validated as a whole: a directory in the drop must not swallow the
+file beside it. Two things differ from pictures on purpose. Drops are queued per
+session (the host's name check is a `stat` then a `create`, which two concurrent
+uploads could both pass), and a late answer is matched to its chip by an `id`,
+not by its token, because `⟦file-0⟧` is minted again for the next message.
+
 Six things worth knowing before changing any of it:
 
 - **A paste of text must keep behaving exactly as it did.** The handler returns

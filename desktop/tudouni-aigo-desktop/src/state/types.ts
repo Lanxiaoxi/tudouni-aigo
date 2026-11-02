@@ -11,7 +11,7 @@ import { type CodeIntelSnapshot, type FileEntry, type MemoryConfig, type MemoryS
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
 import type { TerminalState } from '@/runtime/terminalOutput';
 import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
-import { type AttachedFile, type PastedImage, type PendingImage } from '@/runtime/paste';
+import { type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
 import { type InstallStage, type RemoteConfigStatus } from '@/runtime/tauri';
 
 
@@ -187,6 +187,10 @@ export type ComposerNotice =
   /** The send was pressed while a picture was still being written. Not a
    *  refusal — pressing again once the chip stops saying "uploading" sends. */
   | { code: 'paste-pending'; tone: 'info' }
+  /** The send was pressed while a dropped file was still being uploaded. The
+   *  file's twin of `paste-pending`: pressing again once the chip stops saying
+   *  "uploading" sends. */
+  | { code: 'attach-pending'; tone: 'info' }
   /** `/quiet` was given a word that is not one of the three states. */
   | { code: 'quiet-unknown'; reason: string; tone: 'warn' };
 
@@ -997,6 +1001,18 @@ export interface SessionRuntime {
    * conversation would name a different place or nothing at all.
    */
   attachedFiles: AttachedFile[];
+  /**
+   * Files dropped on a **remote** screen that are **still being uploaded** — the
+   * chips drawn between the drop and the bridge's answer.
+   *
+   * The pending picture's twin (`pendingImages`), kept apart from
+   * `attachedFiles` for the same reason: a file with no path on the host yet is
+   * a token in the sentence, and a token that went out would be prose.
+   * `submitDraft` refuses while a *referenced* entry is here, and
+   * `restorePastedPaths` never sees the list. Per session, because the upload
+   * lands in *that* session's workspace.
+   */
+  pendingFiles: PendingFile[];
   /**
    * Quiet mode for this session's stream.
    *

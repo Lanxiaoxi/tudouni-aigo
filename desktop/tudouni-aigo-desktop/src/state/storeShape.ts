@@ -946,13 +946,18 @@ export interface AppStore {
    * one, and for why the old "the model would go through shell" sentence was
    * false there.
    *
-   * `at` is the caret for the local branch; the remote branch appends, because
-   * the draft can change while an upload is in flight. Answers how many paths
-   * were attached.
+   * `at` is the caret both branches insert at. The remote branch draws its chips
+   * (`pendingFiles`) and tokens **before** the upload, as a paste does, so the
+   * insertion is synchronous and the caret is honoured; the promise settles when
+   * the host has answered, and the chips move to `attachedFiles` then. Answers
+   * how many paths were attached.
    */
   attachFiles(paths: string[], at?: number): Promise<number>;
   /** Forget one attached file. Called when its chip is dismissed. */
   forgetAttachedFile(path: string): void;
+  /** Forget one file that is still being uploaded, by its placeholder — the
+   *  token is the only name it has before the host has chosen a path. */
+  forgetPendingFile(placeholder: string): void;
 
   /**
    * Open one panel.

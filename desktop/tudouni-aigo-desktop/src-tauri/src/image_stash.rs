@@ -232,7 +232,7 @@ fn frame_pictures(body: &[u8]) -> Result<Vec<Picture>, String> {
 /// gesture people make while still typing.
 ///
 /// So the I/O moves to `spawn_blocking`, exactly as every other remote door in
-/// this crate does it (`attach_file_remote`, `deliverable_download`,
+/// this crate does it (`attach_files_remote`, `deliverable_download`,
 /// `inline_image_remote`, `install_remote_runtime`). The refusals stay on this
 /// side of the hop: they are a header lookup and a sniff of eight bytes per
 /// picture, and a sentence about a paste should not need a task boundary to be

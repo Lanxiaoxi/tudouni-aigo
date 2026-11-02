@@ -193,11 +193,37 @@ export interface AttachedFile {
 }
 
 /**
- * The files the draft still carries — the same rule as `referencedImages`,
- * reading a different list. Kept as a separate function rather than one generic
- * so each call site names what it is counting.
+ * A file dropped on a **remote** screen that is still being uploaded.
+ *
+ * The file twin of `PendingImage`, and for the same reason it is a list of its
+ * own rather than an `AttachedFile` with an empty path: the submit path must be
+ * structurally unable to send a file that has no path on the host yet. A token
+ * that reached the runtime would be prose, and the file would silently not
+ * arrive. `submitDraft` refuses while a *referenced* entry is here, and
+ * `restorePastedPaths` is never handed the list.
+ *
+ * `name` is the local file's own name — all that is known before the host has
+ * chosen one (a taken name gets a counter there).
+ *
+ * **`id` is what an upload's answer is matched by, not the placeholder.** The
+ * placeholder is only unique within the draft *as it is now*: send the message,
+ * drop another file, and `⟦file-0⟧` is minted again while the first upload may
+ * still be in flight. Matching the late answer by token would promote the new
+ * chip with the old file's path.
  */
-export function referencedFiles(draft: string, files: AttachedFile[]): AttachedFile[] {
+export interface PendingFile {
+  id: string;
+  placeholder: string;
+  name: string;
+}
+
+/**
+ * The files the draft still carries — the same rule as `referencedImages`,
+ * reading a different list. Kept as a separate function rather than one name so
+ * each call site says what it is counting; generic because the tray draws two
+ * kinds of file chip, an attached one and one still being uploaded.
+ */
+export function referencedFiles<T extends { placeholder: string }>(draft: string, files: T[]): T[] {
   if (files.length === 0) return [];
   const placed = files
     .map((file) => ({ file, at: draft.indexOf(file.placeholder) }))

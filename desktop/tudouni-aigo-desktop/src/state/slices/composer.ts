@@ -9,8 +9,8 @@ import type { AppStore } from '../storeShape';
 import type { QuietMode } from '../types';
 import { nextId } from '@/state/entries';
 import { sendTo } from '@/runtime/bus';
-import { insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, referencedImages, type AttachedFile, type PastedImage, type PendingImage } from '@/runtime/paste';
-import { stashImages, attachRemoteFile, type StashedImage } from '@/runtime/tauri';
+import { insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, referencedFiles, referencedImages, type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
+import { stashImages, attachRemoteFiles, type AttachedRemoteFile, type StashedImage } from '@/runtime/tauri';
 import { clampRailWidth, persistPrefs } from '../prefs';
 import { promptHistoryKey, rememberablePrompt } from '../promptHistory';
 import { rememberPrompt } from '../promptStore';
@@ -19,8 +19,36 @@ import { activeRuntime, activeWorkspaceOf } from '../appView';
 import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
+
+  /**
+   * One remote upload at a time **per session**.
+   *
+   * The name-collision loop on the host is a `stat` followed by a `create`, which
+   * is not atomic: two uploads in flight at once could both be told that
+   * `report.pdf` is free, and the second would overwrite the first. Chips are
+   * drawn the moment a drop happens, so a second drop while the first is still
+   * uploading is now an ordinary thing to do — it simply waits its turn, with its
+   * chips already on screen.
+   *
+   * The stored tail never rejects, so a failed job cannot wedge the queue.
+   */
+  const uploadTails = new Map<string, Promise<void>>();
+  function enqueueUpload<T>(key: string, job: () => Promise<T>): Promise<T> {
+    const before = uploadTails.get(key) ?? Promise.resolve();
+    const run = before.then(job);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    uploadTails.set(key, tail);
+    void tail.then(() => {
+      if (uploadTails.get(key) === tail) uploadTails.delete(key);
+    });
+    return run;
+  }
+
   return {
     setDraft(v) {
       patchActive({ draft: v, historyCursor: null });
@@ -227,6 +255,12 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
      *     exactly what a pasted picture does, and exactly what the far
      *     `SafePath` resolves.
      *
+     * **The chips are drawn before the upload, as a pasted picture's are.** Each
+     * path gets a token in the sentence and a chip (`pendingFiles`) in the same
+     * synchronous write; the chip stops saying "uploading" when the host answers.
+     * The send is refused while a *referenced* pending chip exists, and the one
+     * call carries the whole drop, so the host is dialled once.
+     *
      * The upload is keyed by the child, never by a destination: the bridge owns
      * the host and workspace, and a front end that could name them could upload
      * into a machine the session does not run on.
@@ -258,41 +292,145 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         return paths.length;
       }
 
-      // **Sequential, not `Promise.all`.** Each upload is a fresh SSH dial plus
-      // an SFTP round trip, and the name-collision loop has to see the previous
-      // one's result: two files with the same name uploaded at once would both
-      // be told "free" and one would overwrite the other.
+      // **The chips come first**, exactly as for a pasted picture. An upload is
+      // measured in seconds (up to 64MB per file), and a drop that shows nothing
+      // for that long reads as a dropped event — and, worse, leaves a window in
+      // which the person presses send and the message goes out without the file,
+      // after which the path lands in a draft that was already emptied.
+      //
+      // So the tokens are minted and inserted here, synchronously, in one write,
+      // over a local copy of the text (three files keep the order they arrived
+      // in, and the caret follows once). The caret is honoured now that the
+      // insertion is synchronous: the old "append, because the draft may change
+      // while the upload runs" was a consequence of inserting *after* the wait.
+      const fresh = bucket.draft;
+      let text = fresh;
+      let caret = at ?? fresh.length;
+      const pending: PendingFile[] = [];
+      for (const path of paths) {
+        const placeholder = nextPlaceholder(text, 'file');
+        const placed = insertAtCaret(text, caret, placeholder);
+        text = placed.text;
+        caret = placed.caret;
+        pending.push({ id: nextId('upload'), placeholder, name: nameOfPath(path) });
+      }
+      patchWith(key, (current) => ({
+        draft: text,
+        historyCursor: null,
+        pendingFiles: [...current.pendingFiles, ...pending],
+      }));
+
+      // **One call for the whole gesture, and one gesture at a time per
+      // session** (`enqueueUpload`): the Rust side dials once for every file in
+      // the call, and the queue keeps two calls from racing the host's
+      // stat-then-create name check.
+      type Answer = { file: AttachedRemoteFile } | { error: string };
+      const answers = await enqueueUpload(key, async () => {
+        const settled = new Map<string, Answer>();
+        // A chip dismissed while this gesture waited its turn is not uploaded at
+        // all: nothing has started for it, so there is nothing to sweep later.
+        const alive = new Set((get().sessions[key]?.pendingFiles ?? []).map((entry) => entry.id));
+        const wanted = pending
+          .map((entry, index) => ({ entry, path: paths[index] }))
+          .filter(({ entry }) => alive.has(entry.id));
+        if (wanted.length === 0) return settled;
+        try {
+          const outcomes = await attachRemoteFiles(
+            key,
+            wanted.map(({ path }) => path),
+          );
+          // A shorter answer would leave chips that can never be promoted — a
+          // chip saying "uploading" for ever and a send refused for ever — so it
+          // is the failure it is rather than something quietly accepted.
+          if (outcomes.length !== wanted.length) {
+            throw new Error(`the bridge answered for ${outcomes.length} of ${wanted.length} files`);
+          }
+          wanted.forEach(({ entry }, index) => {
+            const outcome = outcomes[index];
+            settled.set(
+              entry.id,
+              outcome.file !== null
+                ? { file: outcome.file }
+                : { error: outcome.error ?? 'the file was not uploaded' },
+            );
+          });
+        } catch (err) {
+          // The call as a whole failed (the session is gone, or the link is):
+          // every file of it shares the sentence.
+          const message = err instanceof Error ? err.message : String(err);
+          for (const { entry } of wanted) settled.set(entry.id, { error: message });
+        }
+        return settled;
+      });
+
+      // Settle the chips. Matched by **id**, not by token: `⟦file-0⟧` is minted
+      // again for the next message, and a late answer for the first must not be
+      // promoted onto the second's chip. A chip the person dismissed (or a
+      // message they sent) while the upload ran is simply absent from the
+      // bucket, so nothing is promoted for it — the file stays in staging and
+      // the runtime's own sweep forgets it.
       const failed: string[] = [];
       let reason = '';
       let attached = 0;
-      for (const path of paths) {
-        try {
-          const uploaded = await attachRemoteFile(key, path);
-          // Inserted at the end each time rather than at the caller's caret:
-          // the draft may have been edited while the upload ran, and an index
-          // captured before it would cut a word in half.
-          const fresh = get().sessions[key]?.draft ?? '';
-          get().attachFilePath(uploaded.path, fresh.length);
-          attached += 1;
-        } catch (err) {
-          failed.push(nameOfPath(path));
-          // The bridge's sentence, verbatim — it is already written for a
-          // person ("… is a directory — attach a file, or put it in the
-          // workspace first"), and a second wording here would be a second fact.
-          reason = err instanceof Error ? err.message : String(err);
+      patchWith(key, (current) => {
+        const staying: PendingFile[] = [];
+        const promoted: AttachedFile[] = [];
+        let draft = current.draft;
+        for (const entry of current.pendingFiles) {
+          const answer = answers.get(entry.id);
+          if (!answer) {
+            staying.push(entry);
+            continue;
+          }
+          if ('file' in answer) {
+            promoted.push({
+              path: answer.file.path,
+              placeholder: entry.placeholder,
+              // The name the host chose: a taken name comes back numbered.
+              name: answer.file.name,
+            });
+            attached += 1;
+          } else {
+            // A chip that will never ship comes out with its token — a pending
+            // chip left on screen would promise a file that is not coming.
+            draft = removePlaceholderFromDraft(draft, entry.placeholder);
+            failed.push(entry.name);
+            // The bridge's sentence, verbatim — it is already written for a
+            // person ("… is a directory — attach a file, or put it in the
+            // workspace first"), and a second wording here would be a second fact.
+            reason = answer.error;
+          }
         }
-      }
-      if (failed.length > 0) {
-        patch(key, {
-          composerNotice: { code: 'attach-remote-failed', names: failed, reason, tone: 'warn' },
-        });
-      } else if (attached > 0) {
-        // Nothing to say: the files are in the workspace and the sentence names
-        // them. Clearing rather than leaving a previous warning up is the same
-        // rule the drop's own "inserted" branch follows.
-        patch(key, { composerNotice: null });
-      }
+        const stale =
+          current.composerNotice?.code === 'attach-pending' ||
+          current.composerNotice?.code === 'attach-remote-failed';
+        return {
+          draft,
+          pendingFiles: staying,
+          attachedFiles: [...current.attachedFiles, ...promoted],
+          composerNotice:
+            failed.length > 0
+              ? { code: 'attach-remote-failed', names: failed, reason, tone: 'warn' }
+              : // A send held back while this was in flight is sendable now, so
+                // that notice goes with it, and so does a warning about an
+                // earlier drop. Any other notice is about something else.
+                attached > 0 && stale
+                ? null
+                : current.composerNotice,
+        };
+      });
       return attached;
+    },
+
+    forgetPendingFile(placeholder) {
+      patchWith(get().activeKey ?? '', (current) => ({
+        // The upload cannot be cancelled once it has started, but a file the
+        // person removed must not reappear as a chip when it lands: the answer
+        // is matched against this list, and the entry is gone from it.
+        pendingFiles: current.pendingFiles.filter((entry) => entry.placeholder !== placeholder),
+        draft: removePlaceholderFromDraft(current.draft, placeholder),
+        historyCursor: null,
+      }));
     },
 
     forgetAttachedFile(path) {
@@ -349,6 +487,14 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         patch(key, { composerNotice: { code: 'paste-pending', tone: 'info' } });
         return;
       }
+      // The same rule for a dropped file still being uploaded: it has no path on
+      // the host yet, and a token that went out would be prose. Without this the
+      // message left without the file, and the path then landed in a draft that
+      // had already been emptied.
+      if (referencedFiles(current.draft, current.pendingFiles).length > 0) {
+        patch(key, { composerNotice: { code: 'attach-pending', tone: 'info' } });
+        return;
+      }
       // What the person wrote and what the runtime receives are **two strings**.
       // The draft carries placeholders; the sentence that goes out carries paths,
       // because a path in the text is the only image channel the runtime has.
@@ -382,6 +528,10 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         pastedImages: [],
         pendingImages: [],
         attachedFiles: [],
+        // Like the pending pictures, at most a dismissed marker's worth: a
+        // *referenced* pending file refused the send above. Clearing the list is
+        // also what makes a late answer for it land on nothing.
+        pendingFiles: [],
         // Whatever was said about this input has been answered by sending it.
         composerNotice: null,
       }));

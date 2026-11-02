@@ -206,9 +206,9 @@ function FilePage({ t, onBack, onDone }: { t: T; onBack: () => void; onDone: () 
               const at = el?.selectionStart ?? draft.length;
               // **`attachFiles`, not `attachFilePath`.** They are not the same
               // act: this path is on *this* machine, so a remote session has to
-              // upload it into its workspace and insert the relative path. The
-              // local branch keeps the caret; the remote one appends, because the
-              // draft can change while the upload runs.
+              // upload it into its workspace and insert the relative path. Both
+              // branches insert at the caret: the remote one draws its chip and
+              // token first, as a pasted picture does, and uploads behind them.
               void s.attachFiles([path], at);
             })();
           }}

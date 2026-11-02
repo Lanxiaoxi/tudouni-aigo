@@ -232,7 +232,7 @@ pub fn run() {
             crate::config_commands::config_write,
             crate::runtime_commands::sessions_search,
             crate::image_stash::image_stash,
-            crate::attach::attach_file_remote,
+            crate::attach::attach_files_remote,
             crate::image::inline_image,
             crate::window_close::close_prompt_answer,
             crate::window_close::close_prompt_ack,

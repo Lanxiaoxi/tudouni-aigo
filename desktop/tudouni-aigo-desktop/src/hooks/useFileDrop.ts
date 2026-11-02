@@ -70,7 +70,9 @@ export function useFileDrop(): void {
           if ((rt?.remoteWorkspaceId ?? null) !== null) {
             // Insertion *and* upload are one act here, so the drop's notice is
             // the store's to write (it is the layer that knows the bridge's own
-            // refusal sentence). The drop only hands over the paths.
+            // refusal sentence). The drop only hands over the paths, all of
+            // them in one call: the chips are drawn at once and the host is
+            // dialled once for the whole drop.
             void s.attachFiles(paths);
             return;
           }

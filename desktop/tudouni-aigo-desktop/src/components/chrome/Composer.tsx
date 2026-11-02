@@ -472,6 +472,8 @@ function noticeText(t: ReturnType<typeof useT>, notice: ComposerNotice): string 
       return t('composer.pasteFailed', { reason: notice.reason });
     case 'paste-pending':
       return t('composer.pastePending');
+    case 'attach-pending':
+      return t('composer.attachPending');
     case 'quiet-unknown':
       return t('composer.quietUnknown', { reason: notice.reason });
   }
