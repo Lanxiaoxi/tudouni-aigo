@@ -76,7 +76,7 @@
 
 .set-toggle.is-on {
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .set-toggle:disabled {
@@ -87,7 +87,7 @@
 .set-error {
   font-size: var(--text-caption);
   line-height: var(--leading-tight);
-  color: var(--destructive);
+  color: var(--destructive-text);
   word-break: break-word;
 }
 
@@ -95,7 +95,7 @@
   padding: var(--space-6) var(--space-4);
   text-align: center;
   font-size: var(--text-compact);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ============================================================
@@ -164,7 +164,7 @@
    choices read as equally available. */
 .close-choice-danger .close-choice-icon {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 /* The "remember this answer" row. Named for the close prompt because that is
@@ -442,7 +442,7 @@
 .sp-running-inline {
   font-family: var(--font-mono);
   font-size: var(--text-caption);
-  color: var(--warning);
+  color: var(--warning-text);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -466,7 +466,7 @@
   padding: 0 6px;
   border: 1px solid var(--warning-border);
   border-radius: var(--radius-xs);
-  color: var(--warning);
+  color: var(--warning-text);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -548,11 +548,11 @@
 }
 
 .sp-fact-value.is-warning {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .sp-fact-value.is-bad {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .sp-fact-value.is-muted {
@@ -605,7 +605,7 @@
 }
 
 .sp-diff-old {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .sp-diff-arrow {
@@ -645,7 +645,7 @@
   margin-top: var(--space-2);
   font-size: var(--text-caption);
   line-height: var(--leading-tight);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* ---- applies when ---- */

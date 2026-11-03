@@ -223,7 +223,7 @@ export function Welcome() {
                 </button>
               ) : (
                 <div key={`empty-${index}`} className="recent-slot is-empty">
-                  <span className="faint caption">{t('welcome.slotEmpty')}</span>
+                  <span className="muted caption">{t('welcome.slotEmpty')}</span>
                 </div>
               ),
             )}

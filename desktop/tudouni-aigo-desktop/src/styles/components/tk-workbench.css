@@ -129,7 +129,7 @@
    dialog rather than a control. */
 .tk-discard {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---- the parts every editor is built from ----
@@ -288,7 +288,7 @@
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .tk-choice-row:has(input:checked) .tk-choice-count {
@@ -362,11 +362,11 @@
    worth a colour: it is the difference between a route in the file and a route
    the /model list will offer. */
 .tk-fact-value.is-negative {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .tk-fact-value.is-muted {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* A path row inside the side card: the card's own gap already spaces its

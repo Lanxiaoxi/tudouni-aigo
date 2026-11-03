@@ -177,8 +177,13 @@
 
   --fg:            #F2F3F6;
   --fg-secondary:  #B9BFC9;
-  --fg-muted:      #878E99;
-  --fg-faint:      #5F6774;  /* placeholder / disabled 文字 */
+  /* `--fg-muted` is the lowest rung for text a person has to read: it holds
+     4.5:1 on every surface, down to the left rail's selected capsule
+     (`--lb-selected`, the tightest one at 4.6:1). `--fg-faint` sits below that
+     on purpose and is only for placeholders, decorative icons, carets and
+     separators - never for a sentence, a time or a count. */
+  --fg-muted:      #9097A2;
+  --fg-faint:      #5F6774;  /* placeholder / 装饰图标 / 分隔符，不承载要读的文字 */
   --fg-on-accent:  #06251B;
 
   --border:        #2A3039;  /* 常规描边 */
@@ -247,6 +252,22 @@
   --warning-border: rgba(245, 158, 11, 0.45);  /* 看板卡片「等你回答」的描边，配对 accent-border */
   --destructive:   #F0565C;  --destructive-subtle: rgba(240, 86, 92, 0.14);
   --success:       #2DD4BF;  --success-subtle: rgba(45, 212, 191, 0.14);
+  /* Semantic colours as *text*. The base tokens above stay the colour of dots,
+     borders and fills; these are the rung that reads at 4.5:1 on every surface
+     and on the matching `*-subtle` badge. In the dark theme only destructive
+     needs to differ - the light theme is where the base colours fall short. */
+  --accent-text:      #34D399;
+  --success-text:     #2DD4BF;
+  --warning-text:     #F59E0B;
+  --destructive-text: #F4686E;
+  --info-text:        #60A5FA;
+  /* A destructive *fill* that carries white text (the destructive button, the
+     window's close hover): `--destructive` itself is a text colour, and white
+     on it is 3.4:1. */
+  --destructive-solid: #C0343A;
+  /* An accent *fill* that carries `--fg-on-accent` (the send button, "jump to
+     latest"): 8.5:1 here with the dark ink. */
+  --accent-solid:      #34D399;
   /* The scrim behind a dialog. Heavier than the light theme's: the wash that
      separates a dialog from the pale canvas is nearly invisible on a near-black
      one, so the dark theme needs more of it, not less. */
@@ -285,7 +306,10 @@
   --scrollbar-thumb-strong: #4E5866;  /* 悬停加深的滑块色（.scroll-fade / .terminal / .files-view 共用） */
 
   /* ---------- 装饰层（光晕 / 渐变主按钮 / 卡片浮起） ---------- */
-  --accent-grad:   linear-gradient(180deg, #10B981 0%, #059669 100%);
+  /* The primary fill carries `--fg-on-accent` (dark ink here): 8.5:1 at the
+     top, 6.4:1 at the bottom. The old #10B981 to #059669 walk with white text
+     was 2.5 to 3.8:1. */
+  --accent-grad:   linear-gradient(180deg, #34D399 0%, #10B981 100%);
   --shadow-accent: 0 4px 14px rgba(16, 185, 129, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.16);
   --halo-green:    rgba(52, 211, 153, 0.055);
   --halo-warm:     rgba(217, 119, 6, 0.045);
@@ -369,7 +393,9 @@
 
   --fg:            #1A1D21;
   --fg-secondary:  #5C626B;
-  --fg-muted:      #878E99;
+  /* Its own value, not the dark theme's: #878E99 was 2.8 to 3.3:1 on the pale
+     green surfaces. This one holds 4.5:1 down to `--lb-selected`. */
+  --fg-muted:      #646A73;
   --fg-faint:      #A2A8B1;
   --fg-on-accent:  #FFFFFF;
 
@@ -433,6 +459,16 @@
   --warning-border: rgba(166, 99, 20, 0.40);  /* 看板卡片「等你回答」的描边，配对 accent-border */
   --destructive:   #DC3D43;  --destructive-subtle: #FCE9EA;
   --success:       #0E9384;  --success-subtle: #E4F5F1;
+  /* Text rungs of the semantic colours - see the dark theme. Each is the base
+     hue one step darker, which is what 4.5:1 on a pale green surface takes. */
+  --accent-text:      #047857;
+  --success-text:     #08756A;
+  --warning-text:     #8F5410;
+  --destructive-text: #B42F35;
+  --info-text:        #1D4ED8;
+  --destructive-solid: #B42F35;
+  /* White on #059669 was 3.8:1; one step deeper is 5.5:1. */
+  --accent-solid:      #047857;
   --overlay-scrim: rgba(2, 6, 23, 0.35);
 
   --ring:          rgba(5, 150, 105, 0.45);
@@ -450,7 +486,9 @@
   --shadow-modal:   0 16px 48px rgba(23, 26, 31, 0.18), 0 4px 12px rgba(23, 26, 31, 0.10);
 
   /* ---------- 装饰层（光晕 / 渐变主按钮 / 卡片浮起），取自设计稿 ---------- */
-  --accent-grad:   linear-gradient(180deg, #059669 0%, #047857 100%);
+  /* One step deeper than the reference so the white label holds 4.5:1 at the
+     top of the gradient (5.5:1; #059669 was 3.8:1). */
+  --accent-grad:   linear-gradient(180deg, #047857 0%, #065F46 100%);
   --shadow-accent: 0 4px 12px rgba(5, 150, 105, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.20);
   --halo-green:    rgba(5, 150, 105, 0.08);
   --halo-warm:     rgba(217, 131, 36, 0.07);  /* = 设计稿 .aurora.warm 的原值 */

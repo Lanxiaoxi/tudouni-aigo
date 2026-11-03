@@ -20,12 +20,12 @@
 
 .risk-medium {
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .risk-high {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 @keyframes pop-in {
@@ -261,7 +261,7 @@
 }
 
 .connecting-toast .ct-icon {
-  color: var(--info);
+  color: var(--info-text);
   flex: none;
 }
 
@@ -302,7 +302,7 @@
 }
 
 .qmp .qmp-icon {
-  color: var(--info);
+  color: var(--info-text);
   flex: none;
 }
 
@@ -394,7 +394,7 @@
 /* Answered: the tick is the same column the model picker's options carry, so
    "answered" and "picked an option" read as one visual language. */
 .qnav-item.is-answered {
-  color: var(--info);
+  color: var(--info-text);
 }
 
 .qnav-num {
@@ -440,7 +440,7 @@
 
 .timing-total .mono {
   font-size: var(--text-body);
-  color: var(--fg-primary);
+  color: var(--fg);
 }
 
 .timing-row {
@@ -481,7 +481,7 @@
 
 .timing-note {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   padding-top: var(--space-1);
 }
 

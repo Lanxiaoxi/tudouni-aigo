@@ -65,7 +65,7 @@ button:disabled {
 }
 
 a {
-  color: var(--info);
+  color: var(--info-text);
   text-decoration: none;
 }
 

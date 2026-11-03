@@ -500,9 +500,9 @@ function GoalBody({ goal }: { goal: VmGoal }) {
         <Badge tone={goal.armed ? 'success' : 'neutral'} dot={false}>
           {goal.armed ? t('goal.armed') : t('goal.disarmed')}
         </Badge>
-        {goal.phase ? <span className="caption faint">{goal.phase}</span> : null}
+        {goal.phase ? <span className="caption muted">{goal.phase}</span> : null}
         {goal.roundsText ? (
-          <span className="caption faint">{t('goal.rounds', { text: goal.roundsText })}</span>
+          <span className="caption muted">{t('goal.rounds', { text: goal.roundsText })}</span>
         ) : null}
         {goal.limitReached ? (
           <Badge tone="warning" dot={false}>
@@ -603,9 +603,9 @@ function TaskRow({ task }: { task: VmTask }) {
   const t = useT();
   const icon: ReactNode =
     task.status === 'completed' ? (
-      <CheckCircle2 size={12} color="var(--accent)" />
+      <CheckCircle2 size={12} color="var(--success-text)" />
     ) : task.status === 'in_progress' ? (
-      <Loader size={12} color="var(--info)" className="sb-spinner" aria-hidden />
+      <Loader size={12} color="var(--info-text)" className="sb-spinner" aria-hidden />
     ) : (
       <CircleDashed size={12} color="var(--fg-faint)" />
     );
@@ -844,7 +844,7 @@ function McpRow({ server }: { server: VmMcp }) {
       <span className="sbr-main" title={server.where}>
         <span className="mono">{server.name}</span>
         {server.state === 'failed' && server.error ? (
-          <span className="faint"> · {oneLine(server.error, 28)}</span>
+          <span className="muted"> · {oneLine(server.error, 28)}</span>
         ) : null}
       </span>
       <Badge tone={tone} dot={false}>

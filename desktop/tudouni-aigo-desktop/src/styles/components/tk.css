@@ -283,7 +283,7 @@
    colour — a fact reported, not an alarm raised: the row is still runnable and
    the template is not what failed. */
 .tk-meta-failed {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 /* The counterpart in the warning colour: a fact that is not a failure but that
@@ -291,7 +291,7 @@
    whose TLS certificate is not verified — which is why it is amber rather than
    red: the route works, and what it costs is a guarantee. */
 .tk-meta-warn {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* **The fixed action slot.** Reserved at the height of a control whether or
@@ -424,12 +424,12 @@
 
 .tk-run-dot.is-ok {
   background: var(--success-subtle);
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .tk-run-dot.is-failed {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .tk-run-dot.is-running {
@@ -449,7 +449,7 @@
    wore the filled primary would have no primary left. */
 .tk-retry {
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 500;
   border-color: transparent;
 }
@@ -485,7 +485,7 @@
 
 .tk-day-count {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---------------- Empty and problem states ---------------- */
@@ -521,7 +521,7 @@
   border: 1px solid var(--warning-border);
   border-radius: var(--radius-md);
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
   font-size: var(--text-compact);
 }
 
@@ -580,7 +580,7 @@
 }
 
 .tk-menu-item.is-destructive {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .tk-menu-item.is-destructive:hover,
@@ -591,14 +591,14 @@
 /* A menu entry that cannot act — "Move up" on the first row. Dimmed rather
    than removed: the row's order is one of the things the menu is for, and an
    item that vanishes at the top of the list reads as a different menu. */
+/* component-states s0: disabled is opacity, the text keeps its token. */
 .tk-menu-item:disabled {
-  color: var(--fg-faint);
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .tk-menu-item:disabled:hover {
   background: transparent;
-  color: var(--fg-faint);
 }
 
 .tk-menu-label {
@@ -606,7 +606,7 @@
   font-size: var(--text-caption);
   text-transform: uppercase;
   letter-spacing: var(--tracking-label);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* The model catalogue can be long, so this menu is the one that scrolls. It
@@ -632,7 +632,7 @@
   flex: none;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* The free-text escape hatch inside the model menu. */
@@ -643,7 +643,7 @@
 .tk-menu-empty {
   padding: var(--space-2);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---------------- The editor ---------------- */
@@ -694,12 +694,12 @@
   display: block;
   margin-top: var(--space-1);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .tk-field-error {
   display: block;
   margin-top: var(--space-1);
   font-size: var(--text-caption);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }

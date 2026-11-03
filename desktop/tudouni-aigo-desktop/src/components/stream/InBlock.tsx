@@ -47,7 +47,7 @@ export function InBlock({ entry }: { entry: Extract<Entry, { kind: 'block' }> })
     <section className="inblock">
       <header className="inblock-head">
         <span className="ibh-title">{title}</span>
-        <span className="mono faint">/{entry.block}</span>
+        <span className="mono muted">/{entry.block}</span>
         <button
           type="button"
           className="btn btn-ghost btn-icon btn-compact ibh-close"
@@ -95,17 +95,17 @@ function FileBlock({ p }: { p: UiFileReadMsg }) {
     <>
       <div className="row" style={{ gap: 'var(--space-2)', alignItems: 'baseline' }}>
         <span className="mono strong">{path === '' ? t('panel.files.root') : path}</span>
-        <span className="caption faint">
+        <span className="caption muted">
           {t('panel.files.lines', { n: p.total_lines ?? 0 })}
         </span>
         {/* Bytes and characters are two numbers on purpose: a UTF-8 file of CJK
             text is three times the bytes of its characters, and "how long is
             this" asks the first while "how big is this" asks the second. */}
-        <span className="caption faint mono">{p.bytes ?? 0} B</span>
+        <span className="caption muted mono">{p.bytes ?? 0} B</span>
       </div>
 
       {p.truncated ? (
-        <div className="caption" style={{ color: 'var(--warning)' }}>
+        <div className="caption" style={{ color: 'var(--warning-text)' }}>
           {t('panel.files.truncated', { chars: p.chars ?? 0, id: p.artifact_id ?? '' })}
         </div>
       ) : null}
@@ -122,7 +122,7 @@ function StatusBlock({ p }: { p: UiStatusMsg }) {
   const groups = p.status as StatusGroup | undefined;
 
   if (!groups) {
-    return <div className="caption faint">{t('common.unknown')}</div>;
+    return <div className="caption muted">{t('common.unknown')}</div>;
   }
 
   return (
@@ -147,7 +147,7 @@ function StatusBlock({ p }: { p: UiStatusMsg }) {
       </dl>
 
       {groups.context === null ? (
-        <div className="caption faint">{t('inblock.noContextLayer')}</div>
+        <div className="caption muted">{t('inblock.noContextLayer')}</div>
       ) : (
         <GroupTable title="context" rows={flatten(groups.context)} />
       )}
@@ -183,7 +183,7 @@ function GroupTable({ title, rows }: { title: string; rows: Array<[string, strin
         <tbody>
           {rows.map(([key, value]) => (
             <tr key={key}>
-              <td className="mono faint" style={{ width: 220 }}>
+              <td className="mono muted" style={{ width: 220 }}>
                 {key}
               </td>
               <td className="mono">{value}</td>
@@ -202,7 +202,7 @@ function ToolsBlock({ p }: { p: UiToolsMsg }) {
   const rows: ToolRow[] = p.tools ?? [];
 
   if (rows.length === 0) {
-    return <div className="caption faint">{t('common.none')}</div>;
+    return <div className="caption muted">{t('common.none')}</div>;
   }
 
   return (
@@ -273,7 +273,7 @@ export function ContextBlock({ p }: { p: UiContextMsg }) {
   const ledger: ContextLedger | undefined = feature?.context;
 
   if (!ledger) {
-    return <div className="caption faint">{t('inblock.noContext')}</div>;
+    return <div className="caption muted">{t('inblock.noContext')}</div>;
   }
 
   const used = ledger.estimated_tokens ?? null;
@@ -453,7 +453,7 @@ function CompactBlock({ p }: { p: UiCompactedMsg }) {
   const c = projectCompaction(p.compaction);
 
   if (!c) {
-    return <div className="caption faint">{t('common.unknown')}</div>;
+    return <div className="caption muted">{t('common.unknown')}</div>;
   }
 
   return (

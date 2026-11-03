@@ -72,15 +72,15 @@ import { PanelBody, PanelRow, PanelShell, PopoverSurface, usePanelSurface } from
  */
 
 const PHASE_TONE: Record<Phase, string> = {
-  booting: 'var(--info)',
+  booting: 'var(--info-text)',
   idle: 'var(--fg-muted)',
-  running: 'var(--success)',
-  done: 'var(--success)',
-  step_limit: 'var(--warning)',
-  failed: 'var(--destructive)',
-  interrupted: 'var(--warning)',
-  empty: 'var(--warning)',
-  runtime_gone: 'var(--destructive)',
+  running: 'var(--success-text)',
+  done: 'var(--success-text)',
+  step_limit: 'var(--warning-text)',
+  failed: 'var(--destructive-text)',
+  interrupted: 'var(--warning-text)',
+  empty: 'var(--warning-text)',
+  runtime_gone: 'var(--destructive-text)',
 };
 
 const PHASE_KEY: Record<Phase, TKey> = {
@@ -220,7 +220,7 @@ export function StatusBar() {
         </span>
 
         {runtimeExit && !runtimeExit.requested ? (
-          <span className="st-action" style={{ color: 'var(--destructive)' }}>
+          <span className="st-action" style={{ color: 'var(--destructive-text)' }}>
             {t('status.runtimeGone', { code: runtimeExit.code })}
           </span>
         ) : action ? (
@@ -452,7 +452,7 @@ export function StatusBar() {
           >
             <span className="st-chip hide-b1050">
               <Layers size={11} />
-              <span className="st-metric faint">~{formatTokens(usage.estimated)}</span>
+              <span className="st-metric muted">~{formatTokens(usage.estimated)}</span>
             </span>
           </Tip>
         ) : null}

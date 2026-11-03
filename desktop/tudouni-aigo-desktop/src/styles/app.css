@@ -77,7 +77,7 @@
 }
 
 .wc-close:hover {
-  background: var(--destructive);
+  background: var(--destructive-solid);
   color: var(--fg-on-solid);
 }
 
@@ -279,7 +279,7 @@
 
 .sessionbar .sb-label {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   white-space: nowrap;
 }
 
@@ -323,9 +323,9 @@
   color: var(--accent-tint-text);
 }
 
-/* `.faint` pins its own colour, so the label span ("effort") would stay grey
+/* `.muted` pins its own colour, so the label span ("effort") would stay grey
    while the value turns green — the hover would read as half-applied. */
-.sessionbar .sb-group .btn-ghost:hover:not(:disabled) .faint {
+.sessionbar .sb-group .btn-ghost:hover:not(:disabled) .muted {
   color: inherit;
   opacity: 0.72;
 }
@@ -613,7 +613,7 @@
    button emphasise: the figure takes the warning colour, label and rest stay
    as they were — colour, not a second word. */
 .collapsed-summary .cs-item.is-attention b {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .collapsed-summary .cs-item b {
@@ -708,7 +708,7 @@
   transform: translateX(-50%);
   bottom: var(--space-4);
   z-index: var(--z-popover);
-  background: var(--accent);
+  background: var(--accent-solid);
   color: var(--fg-on-accent);
   font-weight: 600;
 }
@@ -812,7 +812,7 @@
 }
 
 .statusbar .st-toggle.is-on {
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-subtle);
 }
 
@@ -827,11 +827,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: var(--font-mono);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .st-attention {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* ---------------- 状态栏 chip 的浮窗 ----------------
@@ -1312,7 +1312,7 @@
 .composer .cp-chip-size {
   flex: none;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-family: var(--font-mono);
 }
 
@@ -1421,12 +1421,12 @@
   white-space: nowrap;
   text-align: right;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   animation: cp-note-in 160ms var(--ease-out) 60ms both;
 }
 
 .composer .cp-note .is-warn {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* The dismiss button inside a notice sits after the sentence, not in a row of
@@ -1487,7 +1487,7 @@
   padding: 0 4px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: 10px;
   line-height: 14px;
 }
@@ -1517,7 +1517,7 @@
   /* A real colour, not the `clearRoles` sentinel: this glyph sits *on* the
      accent, and a sentinel would leave the default foreground on it — the
      hardest combination to read in a dark terminal, and just as wrong here. */
-  background: var(--accent);
+  background: var(--accent-solid);
   color: var(--fg-on-accent);
   transition:
     background-color var(--motion-fast) var(--ease-out),
@@ -1574,9 +1574,9 @@
 .composer .cp-send.is-stop {
   border-radius: 8px;
   background: var(--accent-active);
-  /* White, not `--fg-on-accent` (which is dark green in the light theme): the
-     square should match the send arrow, a white glyph on the accent fill. */
-  color: var(--fg-on-solid);
+  /* The same ink as the send arrow (`--fg-on-accent`): white on the dark
+     theme's #10B981 was 2.5:1. */
+  color: var(--fg-on-accent);
 }
 
 .composer .cp-send.is-stop:hover {
@@ -1661,7 +1661,7 @@
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .welcome-id .wi-notice .wi-notice-text {
@@ -1822,14 +1822,14 @@
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .recent-slot .rs-time {
   flex: none;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1882,7 +1882,7 @@
 
 .booting .bt-2nd {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---------------- 渲染崩溃 ---------------- */
@@ -1898,7 +1898,7 @@
 .crash .crash-head {
   font-size: var(--text-h1);
   font-weight: 600;
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .crash .crash-detail {
@@ -1930,7 +1930,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .startup-problem .sp-head h2 {
@@ -1953,7 +1953,7 @@
 
 .startup-problem .sp-tail-label {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
 }

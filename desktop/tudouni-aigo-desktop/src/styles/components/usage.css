@@ -54,7 +54,7 @@
    "when" attached, because "峰值" without a day names nothing. */
 .usage-fact-sub {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
@@ -181,7 +181,7 @@
   margin-top: var(--space-2);
   width: fit-content;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .usage-months span {
@@ -195,7 +195,7 @@
   gap: 4px;
   margin-top: var(--space-2);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .usage-legend .usage-cell {
@@ -288,7 +288,7 @@
 }
 
 .usage-model-total {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 

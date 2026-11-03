@@ -86,7 +86,7 @@
 }
 
 .md del {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* `<u>` 会原样穿过 react-markdown（没有开 `skipHtml`），所以 HTML 下划线
@@ -99,7 +99,7 @@
 /* 链接：稿子的青绿换 `--accent`，下划线用 accent 的淡化描边色，offset 4px
    与 `<u>` 一致——同一种标记不该有两种离线距离。 */
 .md a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: underline;
   text-decoration-color: var(--accent-border);
   text-underline-offset: 4px;
@@ -134,7 +134,7 @@
   background: var(--bg-muted);
   font-family: var(--font-mono);
   font-size: var(--text-code);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* 引用：稿子是"左侧 3px 青绿竖线 + 淡底 + 右下圆角"。两处调整——底色改用
@@ -192,7 +192,7 @@
 
 .md ul li::marker {
   content: '\2022'; /* • */
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .md ul ul li::marker {
@@ -206,7 +206,7 @@
 }
 
 .md ol li::marker {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -285,7 +285,7 @@
 }
 
 .md-table-copy.is-copied {
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .md th,
@@ -439,7 +439,7 @@
 
 /* 还在读的图片：安静地显示 alt，像一张正在加载的图，而不是一行错误。 */
 .md-img-alt {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-style: italic;
 }
 
@@ -456,7 +456,7 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: 12px;
   cursor: help;
 }
@@ -552,7 +552,7 @@
 
 /* The check swap after a successful copy. */
 .md-copy-btn.is-copied {
-  color: var(--success);
+  color: var(--success-text);
 }
 
 /* Syntax highlighting (rehype-highlight, `Markdown.tsx`). One Dark hues —

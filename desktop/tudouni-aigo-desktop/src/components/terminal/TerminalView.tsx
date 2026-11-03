@@ -554,13 +554,13 @@ function AttachedPane({ row, onLeave }: { row: TerminalRow; onLeave: () => void 
             )}
           </div>
         ))}
-        {lines.length === 0 ? <div className="term-line faint">{t('common.loading')}</div> : null}
+        {lines.length === 0 ? <div className="term-line muted">{t('common.loading')}</div> : null}
       </div>
       {/* The footer states **both** halves of the contract: what the keys do
           (the runtime's own sentence), and how to get out. The way out used to
           be undocumented — the only one was clicking the current tab again, and
           nothing on screen said so. */}
-      <div className="term-foot caption faint">
+      <div className="term-foot caption muted">
         {/* **How the shell ended, in the pane that is showing it.**
             The ending is also written into the transcript as a note, and while a
             terminal is attached the transcript is *replaced by this view* — so

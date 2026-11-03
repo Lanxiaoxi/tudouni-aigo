@@ -54,12 +54,12 @@
 
 .sb-block-head .count.count-active {
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .sb-block-head .count.count-attention {
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .sb-block-body {
@@ -75,13 +75,13 @@
 
 .sb-empty .se-title {
   font-size: var(--text-compact);
-  color: var(--fg-muted);
+  color: var(--fg-secondary);
 }
 
 .sb-empty .se-hint {
   margin-top: 2px;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .sb-row {
@@ -130,7 +130,7 @@
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -139,7 +139,7 @@
 }
 
 .sb-row.is-uncollected .sbr-aside {
-  color: var(--warning);
+  color: var(--warning-text);
   font-weight: 600;
 }
 
@@ -234,7 +234,7 @@
 .sb-file-icon {
   flex: none;
   display: inline-flex;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* Name over note, the same two lines the card draws. `min-width: 0` is what
@@ -267,14 +267,14 @@
    to read, and clipping a failure to one line would hide the half that says
    what to do. */
 .sb-file-note[data-error] {
-  color: var(--destructive);
+  color: var(--destructive-text);
   white-space: normal;
 }
 
 .sb-file-trail {
   flex: none;
   display: inline-flex;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .sb-spin {
@@ -326,5 +326,5 @@
 .sb-goal .sg-blocked {
   margin-top: var(--space-1);
   font-size: var(--text-caption);
-  color: var(--warning);
+  color: var(--warning-text);
 }

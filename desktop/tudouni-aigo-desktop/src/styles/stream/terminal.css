@@ -63,15 +63,15 @@
 /* The status word is the runtime's, and it is coloured by which
    ending it was — not by anything computed here. */
 .term-tab[data-status='running'] .term-tab-state {
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .term-tab[data-status='killed'] .term-tab-state {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .term-tab[data-status='exited'] .term-tab-state {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .term-tab-state {
@@ -122,7 +122,7 @@
   border: 0;
   padding: 0;
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
   font: inherit;
   font-size: var(--text-caption);
   cursor: pointer;
@@ -139,7 +139,7 @@
    the button says so — the destructive colour, and the tooltip and aria-label
    both change too. Colour never carries it alone. */
 .term-tab-close.is-armed {
-  color: var(--destructive);
+  color: var(--destructive-text);
   background: var(--destructive-subtle);
 }
 
@@ -332,7 +332,7 @@
    shell printed. Warning-toned rather than faint, because the failure it
    prevents is somebody reading a truncated log as a complete one. */
 .term-dropped {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* ---- the file the browser is reading, in the panel's lower half ---- */
@@ -423,7 +423,7 @@
   border: 1px solid var(--destructive-subtle);
   border-radius: var(--radius-sm);
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
   font-size: var(--text-caption);
   line-height: var(--leading-tight);
   word-break: break-word;

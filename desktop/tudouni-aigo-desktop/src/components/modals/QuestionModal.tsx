@@ -211,7 +211,7 @@ export function QuestionModal() {
                     flex: 'none',
                     borderRadius: 'var(--radius-md)',
                     background: 'var(--info-subtle)',
-                    color: 'var(--info)',
+                    color: 'var(--info-text)',
                   }}
                 >
                   <MessageCircleQuestion size={15} />
@@ -382,7 +382,7 @@ export function QuestionModal() {
               </div>
 
               <div className="dialog-foot">
-                <span className="caption faint">
+                <span className="caption muted">
                   {draft.text.trim() !== ''
                     ? t('q.freeTextPriority')
                     : drafts.length > 1

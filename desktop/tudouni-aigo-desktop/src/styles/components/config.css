@@ -121,7 +121,7 @@
    would read as one of those. */
 .cfg-required {
   margin-left: 2px;
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* The counterpart marker: a field the save does **not** require.
@@ -213,7 +213,7 @@
    the icon says "press again" rather than acting on a stray click. */
 .cfg-danger:hover:not(:disabled),
 .cfg-danger.is-armed {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .cfg-danger.is-armed {
@@ -234,19 +234,19 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  color: var(--success);
+  color: var(--success-text);
 }
 
 /* The refusal from Rust, verbatim. It is the authority on why nothing was
    written, so it is shown as it arrived rather than rephrased here — and it can
    be a whole sentence plus a path, which is why it wraps rather than clips. */
 .cfg-status-error {
-  color: var(--destructive);
+  color: var(--destructive-text);
   word-break: break-word;
 }
 
 .cfg-status-pending {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* The one sentence that has to be said somewhere: when the file takes effect. At
@@ -691,7 +691,7 @@
 
 .pc-side-note {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* The read-out is tinted, and the tint is the point: these are facts the
@@ -724,11 +724,11 @@
 }
 
 .pc-readout-value.is-negative {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .pc-readout-value.is-muted {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .pc-mini-list {
@@ -763,12 +763,12 @@
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .pc-mini-empty {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .pc-allmodels {
@@ -793,14 +793,14 @@
 .pc-delete {
   align-self: flex-start;
   border-color: var(--destructive);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .pc-delete:hover:not(:disabled),
 .pc-delete.btn-outline.is-armed {
   background: var(--destructive-subtle);
   border-color: var(--destructive);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 /* ---- the models section ---- */

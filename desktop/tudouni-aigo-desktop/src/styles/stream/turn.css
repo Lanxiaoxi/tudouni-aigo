@@ -24,7 +24,7 @@
   border-radius: var(--radius-xs);
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   flex: none;
 }
 
@@ -84,7 +84,7 @@
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* 回合头左边的折叠键：整轮的回答就靠它收成一行。

@@ -176,7 +176,7 @@
 .wm-num-range {
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   white-space: nowrap;
 }
 
@@ -340,13 +340,13 @@
   flex: 1 1 auto;
   min-width: 0;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* Unsaved typing is the one thing in this row that is not a status: it is a
    warning that what is on screen is not what the runtime is using. */
 .wm-save-note.is-dirty {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* ---- files that could not be read ---- */
@@ -361,7 +361,7 @@
 .wm-unreadable-line {
   font-size: var(--text-caption);
   line-height: 1.4;
-  color: var(--warning);
+  color: var(--warning-text);
   word-break: break-word;
 }
 
@@ -445,7 +445,7 @@
 .wm-side-empty {
   padding: var(--space-3) 0 var(--space-1);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---- one proposal ---- */
@@ -627,7 +627,7 @@
 }
 
 .wm-conf-verified {
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .wm-conf-observed {
@@ -635,7 +635,7 @@
 }
 
 .wm-conf-inferred {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .wm-entry-meta {
@@ -657,7 +657,7 @@
   flex-wrap: wrap;
   gap: var(--space-1) var(--space-2);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .wm-tag {
@@ -697,7 +697,7 @@
 
 .wm-action:hover {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .wm-arm {
@@ -743,7 +743,7 @@
   max-width: 240px;
   font-size: var(--text-caption);
   line-height: 1.5;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* Pinned to the card's foot: the index is a fact about the whole corpus, and it
@@ -760,5 +760,5 @@
   border-top: 1px solid var(--border);
   font-size: var(--text-caption);
   line-height: 1.5;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }

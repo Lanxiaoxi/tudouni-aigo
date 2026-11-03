@@ -169,9 +169,11 @@ test('the restyle takes its colours from the theme, not from fixed hex values', 
   // The typography this follows is a single fixed palette (light + teal); these
   // four are the ones that would go illegible in the dark theme if a hex value
   // were pasted in instead of a token.
-  assert.match(ruleBody('.md a'), /color: var\(--accent\)/);
+  // Text uses the accent's text rung (4.5:1 on the light theme's pale surfaces);
+  // the quote rule is a border, so it keeps the base accent.
+  assert.match(ruleBody('.md a'), /color: var\(--accent-text\)/);
   assert.match(ruleBody('.md blockquote'), /border-left: 3px solid var\(--accent\)/);
-  assert.match(ruleBody('.md :not(pre) > code'), /color: var\(--accent\)/);
+  assert.match(ruleBody('.md :not(pre) > code'), /color: var\(--accent-text\)/);
   assert.match(ruleBody('.md strong'), /color: var\(--fg\)/);
 });
 

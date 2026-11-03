@@ -270,7 +270,7 @@ export function ModelPanel() {
                     <span className="mp-seq" />
                     <span className="mp-name">
                       <span className="mono muted">{alias.id}</span>
-                      <span className="caption faint">→ {alias.of}</span>
+                      <span className="caption muted">→ {alias.of}</span>
                     </span>
                     <span />
                     <span />
@@ -586,7 +586,7 @@ export function EffortPanel() {
         {/* Thinking can be off while an effort is still recorded — that is the
             user's intent, so it is stated rather than corrected. */}
         {!thinking ? (
-          <div className="caption faint" style={{ padding: 'var(--space-2) var(--space-3)' }}>
+          <div className="caption muted" style={{ padding: 'var(--space-2) var(--space-3)' }}>
             {t('session.thinking')}: {t('session.thinkingOff')} —{' '}
             {t('cmd.thinking.desc')}
           </div>
@@ -661,7 +661,7 @@ export function EffortPanel() {
                       </label>
                     ) : null}
                     {row.result === 'uncertain' && row.note ? (
-                      <span className="caption faint probe-note" title={row.note}>
+                      <span className="caption muted probe-note" title={row.note}>
                         {row.note}
                       </span>
                     ) : null}
@@ -671,23 +671,23 @@ export function EffortPanel() {
                     a heading that says "probe of <model>" would claim the
                     endpoint answered about each level. */}
                 {rowsAreOneAnswer ? (
-                  <div className="caption faint">{t('panel.effort.probeOneAnswer')}</div>
+                  <div className="caption muted">{t('panel.effort.probeOneAnswer')}</div>
                 ) : null}
                 {/* Why nothing can be saved, in the one sentence that is true:
                     "refused every level" only when the endpoint refused every
                     level, and "no answer" when it never answered readably. See
                     `nothingToSaveReason`. */}
                 {noSaveReason === 'all-refused' ? (
-                  <div className="caption faint">{t('panel.effort.probeAllRefused')}</div>
+                  <div className="caption muted">{t('panel.effort.probeAllRefused')}</div>
                 ) : noSaveReason === 'no-answer' ? (
-                  <div className="caption faint">{t('panel.effort.probeNoAnswer')}</div>
+                  <div className="caption muted">{t('panel.effort.probeNoAnswer')}</div>
                 ) : null}
                 {/* A result past its TTL keeps its rows and loses its save: the
                     list describes the endpoint as it was, and a stale list
                     written into the file would delete levels the endpoint has
                     since started taking. */}
                 {probeExpired && probeMatches ? (
-                  <div className="caption faint">{t('panel.effort.probeExpired')}</div>
+                  <div className="caption muted">{t('panel.effort.probeExpired')}</div>
                 ) : null}
                 <div className="probe-actions">
                   {canOfferWrite ? (
@@ -715,7 +715,7 @@ export function EffortPanel() {
                 {writeProblem !== null ? (
                   <div className="caption probe-problem">{writeProblem}</div>
                 ) : null}
-                <div className="caption faint probe-fineprint">{t('panel.effort.probeNote')}</div>
+                <div className="caption muted probe-fineprint">{t('panel.effort.probeNote')}</div>
               </div>
             ) : null}
 
@@ -934,12 +934,12 @@ export function ResumePanel() {
                       (`YYYYMMDD-HHMMSS`) and the topic above is what identifies the
                       conversation. It stays because it is the name `/resume` and the
                       rail's own row use. */}
-                  <span className="mono faint">{item.id}</span>
-                  <span className="caption faint">{t('panel.resume.messages', { n: item.messages })}</span>
-                  <span className="caption faint">{t('panel.resume.steps', { n: item.steps })}</span>
+                  <span className="mono muted">{item.id}</span>
+                  <span className="caption muted">{t('panel.resume.messages', { n: item.messages })}</span>
+                  <span className="caption muted">{t('panel.resume.steps', { n: item.steps })}</span>
                   {/* `todos` is ready-made progress text; an empty string means
                       there is no task list, which is not the same as zero. */}
-                  {item.todos ? <span className="caption faint">{item.todos}</span> : null}
+                  {item.todos ? <span className="caption muted">{item.todos}</span> : null}
                 </div>
               </PanelRow>
             );
@@ -1026,7 +1026,7 @@ export function McpPanel() {
                     {label}
                   </Badge>
                   {server.state === 'failed' ? null : (
-                    <span className="caption faint">{t('mcp.tools', { n: server.tools })}</span>
+                    <span className="caption muted">{t('mcp.tools', { n: server.tools })}</span>
                   )}
                 </div>
                 {/* `where` reaches `scheme://host` for remote servers only: a URL
@@ -1035,7 +1035,7 @@ export function McpPanel() {
                   {server.where}
                 </div>
                 {server.error ? (
-                  <div className="caption" style={{ color: 'var(--destructive)' }}>
+                  <div className="caption" style={{ color: 'var(--destructive-text)' }}>
                     {server.error}
                   </div>
                 ) : null}
@@ -1044,7 +1044,7 @@ export function McpPanel() {
                     loaded" from "we tried and it failed" — the two carry the same
                     `state` on the wire. */}
                 {(perServer.get(server.name) ?? []).map((note, n) => (
-                  <div key={`n-${n}`} className="caption" style={{ color: 'var(--warning)' }}>
+                  <div key={`n-${n}`} className="caption" style={{ color: 'var(--warning-text)' }}>
                     {note}
                   </div>
                 ))}
@@ -1113,7 +1113,7 @@ export function SkillsPanel() {
                 <span className="mono strong">{skill.name}</span>
                 {/* Empty means the runtime did not send a digest for this one —
                     unknown, not "no digest". */}
-                {skill.digest !== '' ? <span className="caption faint mono">{skill.digest}</span> : null}
+                {skill.digest !== '' ? <span className="caption muted mono">{skill.digest}</span> : null}
               </div>
               <div className="caption muted clamp-2">
                 {skill.description ?? t('common.unknown')}
@@ -1134,7 +1134,7 @@ export function SkillsPanel() {
                 <div className="skill-row-main">
                   <span className="mono">{row.name}</span>
                 </div>
-                {row.description ? <div className="caption faint clamp-2">{row.description}</div> : null}
+                {row.description ? <div className="caption muted clamp-2">{row.description}</div> : null}
               </PanelRow>
             ))}
           </>
@@ -1145,7 +1145,7 @@ export function SkillsPanel() {
             <div className="cmdk-group">{t('panel.skills.problems')}</div>
             {problems.map((problem, i) => (
               <PanelRow key={`p-${i}`}>
-                <span className="caption" style={{ color: 'var(--warning)' }}>
+                <span className="caption" style={{ color: 'var(--warning-text)' }}>
                   {problem}
                 </span>
               </PanelRow>
@@ -1158,7 +1158,7 @@ export function SkillsPanel() {
             <div className="cmdk-group">{t('panel.skills.shadowed')}</div>
             {shadowed.map((line, i) => (
               <PanelRow key={`s-${i}`}>
-                <span className="caption faint">{line}</span>
+                <span className="caption muted">{line}</span>
               </PanelRow>
             ))}
           </>
@@ -1283,7 +1283,7 @@ export function SubagentsPanel() {
   const stopButton = (id: string) => (
     <button
       type="button"
-      className="caption faint"
+      className="caption muted"
       style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer' }}
       onClick={() => stopSubagent(id)}
     >
@@ -1318,7 +1318,7 @@ export function SubagentsPanel() {
                 <span className="strong">{agent.label}</span>
                 {/* `provider` is shown next to the model because a name can exist
                     on more than one route. */}
-                <span className="mono caption faint">
+                <span className="mono caption muted">
                   {agent.provider}/{agent.model} · depth {agent.depth} · {agent.steps} steps ·{' '}
                   {agent.toolCalls} calls
                 </span>
@@ -1355,7 +1355,7 @@ export function SubagentsPanel() {
                 <div className="row" style={{ gap: 'var(--space-2)' }}>
                   <Bot size={12} className="muted" />
                   <span className="strong">{row.label}</span>
-                  <span className="mono caption faint">
+                  <span className="mono caption muted">
                     {row.provider}/{row.model} · {row.steps} steps
                   </span>
                 </div>
@@ -1522,7 +1522,7 @@ export function FilesPanel() {
                 entry.type === 'directory' ? (
                   <Folder size={12} className="muted" />
                 ) : (
-                  <span className="caption faint mono">{formatBytes(entry.size)}</span>
+                  <span className="caption muted mono">{formatBytes(entry.size)}</span>
                 )
               }
             >
@@ -1563,7 +1563,7 @@ export function FilesPanel() {
                check below: a picture never has an `answer`, so the text arm
                would sit on "reading…" forever. */
             view.image === null ? (
-              <div className="files-view-head caption faint">
+              <div className="files-view-head caption muted">
                 <span className="mono">{view.path}</span> · {t('panel.files.reading')}
               </div>
             ) : (
@@ -1572,7 +1572,7 @@ export function FilesPanel() {
               </div>
             )
           ) : view.answer === null ? (
-            <div className="files-view-head caption faint">
+            <div className="files-view-head caption muted">
               <span className="mono">{view.path}</span> · {t('panel.files.reading')}
             </div>
           ) : (

@@ -228,7 +228,7 @@
    rely on. */
 .board-col-close.lb-icon:hover:not(:disabled) {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 /* The number is a **quantity**, the dot is the state. The redesign's board
@@ -334,12 +334,12 @@
 
 .board-card-flag.is-asking {
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .board-card-flag.is-new {
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* Two lines, like the rail's row: a preview is a reminder of which conversation
@@ -414,7 +414,7 @@
 .board-card .board-card-meta,
 .board-card .board-card-time {
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .board-card .board-card-meta {
@@ -482,7 +482,7 @@
 }
 
 .board-card .board-card-ctx.is-danger {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 /* A card in flight wears the theme's pale green on the arc: the working state
@@ -577,13 +577,13 @@
    destructive pair, the icon already swapped to an X, and the label changed
    with it — colour is never the only signal. */
 .board-menu-item.is-destructive {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .board-menu-item.is-destructive:hover,
 .board-menu-item.is-destructive.is-armed {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 /* The empty column: dashed, centred, honest. A blank column reads as a
@@ -594,7 +594,7 @@
   padding: var(--space-5) var(--space-3);
   text-align: center;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* The card that is waiting on a person. The dot has already moved it into
@@ -621,9 +621,9 @@
   margin-bottom: var(--space-1);
   font-size: var(--text-caption);
   font-weight: 600;
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .board-card.is-current .board-card-nudge {
-  color: var(--warning);
+  color: var(--warning-text);
 }

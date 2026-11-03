@@ -44,7 +44,7 @@
 }
 
 .kv dt {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   white-space: nowrap;
 }
 

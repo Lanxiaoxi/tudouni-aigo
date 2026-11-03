@@ -83,7 +83,7 @@ export function PermissionModal() {
                     borderRadius: 'var(--radius-md)',
                     background:
                       req.risk === 'high' ? 'var(--destructive-subtle)' : 'var(--warning-subtle)',
-                    color: req.risk === 'high' ? 'var(--destructive)' : 'var(--warning)',
+                    color: req.risk === 'high' ? 'var(--destructive-text)' : 'var(--warning-text)',
                   }}
                 >
                   {req.risk === 'high' ? <AlertOctagon size={15} /> : <ShieldCheck size={15} />}
@@ -184,7 +184,7 @@ export function PermissionModal() {
               </div>
 
               <div className="dialog-foot">
-                <span className="caption faint">{t('perm.denySameAsClose')}</span>
+                <span className="caption muted">{t('perm.denySameAsClose')}</span>
                 <span className="grow" />
 
                 <button type="button" className="btn btn-outline" onClick={() => answer('deny')}>

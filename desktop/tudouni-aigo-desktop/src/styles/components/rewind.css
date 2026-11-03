@@ -33,7 +33,7 @@
   gap: var(--space-2);
   min-width: 0;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* The connector between steps: a rule, not an arrow glyph — it reads at any
@@ -180,7 +180,7 @@
   padding: 1px var(--space-1);
   border-radius: var(--radius-xs);
   border: 1px dashed var(--warning-border);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* ---- the "add a new host" disclosure ---- */
@@ -302,15 +302,15 @@
 }
 
 .rw-note.is-bad {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .rw-note.is-warn {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .rw-note.is-ok {
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .rw-caption {
@@ -334,7 +334,7 @@
 
 .rw-facts .fact.is-warn {
   border-color: var(--warning-border);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* ---- the directory browser ---- */

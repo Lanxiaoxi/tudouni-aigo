@@ -78,7 +78,10 @@
 /* Primary —— 一屏最多 1 个。设计稿形态：emerald 渐变实底 + 白字 + 彩色投影 */
 .btn-primary {
   background: var(--accent-grad);
-  color: var(--fg-on-solid); /* 渐变两端（#059669/#047857 及暗色对应档）上白字对比度稳定，不随 --fg-on-accent 翻转 */
+  /* The gradient is pale in the dark theme and deep in the light one, so the
+     label follows it (dark ink / white); white on the old dark-theme walk was
+     2.5 to 3.8:1. */
+  color: var(--fg-on-accent);
   font-weight: 600;
   box-shadow: var(--shadow-accent);
 }
@@ -122,7 +125,7 @@
 
 /* Destructive */
 .btn-destructive {
-  background: var(--destructive);
+  background: var(--destructive-solid);
   color: var(--fg-on-solid);
   font-weight: 600;
 }
@@ -168,7 +171,7 @@
 .btn-ghost.is-armed,
 .btn-ghost.is-armed:hover:not(:disabled) {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 /* Disabled —— 保持 token 文字色，靠透明度，不吃 hover */
@@ -268,13 +271,13 @@
 
 .list-empty .le-title {
   font-size: var(--text-compact);
-  color: var(--fg-muted);
+  color: var(--fg-secondary);
 }
 
 .list-empty .le-hint {
   margin-top: var(--space-1);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 table.table {
@@ -402,22 +405,22 @@ table.table td.mono {
 
 .badge-success {
   background: var(--success-subtle);
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .badge-warning {
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .badge-destructive {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .badge-info {
   background: var(--info-subtle);
-  color: var(--info);
+  color: var(--info-text);
 }
 
 .badge-neutral {
@@ -451,7 +454,7 @@ table.table td.mono {
 
 .count-attention {
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* 该块有内容、值得留意（如 goal 已设置的轮次计数）：从 muted 灰升到 accent。
@@ -459,7 +462,7 @@ table.table td.mono {
    「这里有东西在跑」，所以各占一个状态色，不共用 warning。 */
 .count-active {
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* Panel tab strip — the library's two views. A tab is a view switch, not an

@@ -54,7 +54,7 @@
 .cmdk-group {
   padding: 6px 8px 2px;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: var(--tracking-label);
 }
@@ -143,7 +143,7 @@
 
 .cmdk-item .cmd-hint {
   margin-left: auto;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: var(--text-caption);
   flex: none;
@@ -224,7 +224,7 @@
 
 /* 子页的返回行：贴列表头、弱化，读作路径而非动作。 */
 .plus-item-back {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   border-bottom: 1px solid var(--border-subtle);
   border-radius: 0;
   margin-bottom: var(--space-1);
@@ -246,7 +246,7 @@
 
 .plus-item-hint {
   flex: none;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-size: var(--text-caption);
 }
 
@@ -263,7 +263,7 @@
 .plus-menu-empty {
   padding: var(--space-3);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   text-align: center;
 }
 
@@ -319,7 +319,7 @@
 .mp-search-count {
   flex: none;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -387,7 +387,7 @@
   margin-left: auto;
   flex: none;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* 模型行。行内左移 28px：序号落在组名之下，名称再右一档。 */
@@ -419,7 +419,7 @@
   justify-self: end;
   font-family: var(--font-mono);
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -445,14 +445,14 @@
 
 .mp-flag {
   flex: none;
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .mp-current {
   flex: none;
   font-size: var(--text-caption);
   font-weight: 500;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .mp-window {
@@ -464,7 +464,7 @@
 
 /* 目录给这一行写了 note：窗口数字随「!」一起读作警示色。 */
 .mp-window.is-flagged {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .mp-effort {
@@ -580,11 +580,11 @@
 }
 
 .probe-written {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .probe-problem {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .probe-fineprint {

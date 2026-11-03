@@ -616,7 +616,7 @@ export function SessionBoard() {
                     {card.preview !== '' ? (
                       <span className="board-card-preview">{card.preview}</span>
                     ) : (
-                      <span className="board-card-preview faint">
+                      <span className="board-card-preview muted">
                         {card.id === null ? t('lb.sessionPending') : t('board.noPreview')}
                       </span>
                     )}

@@ -35,7 +35,7 @@ export function QuietGroup({ entries }: { entries: Entry[] }) {
       >
         <ChevronRight size={12} className={`caret${open ? ' caret-open' : ''}`} />
         {t('entry.quietRollup', { n: entries.length })}
-        <span className="faint">· {open ? t('block.collapse') : t('entry.quietHint')}</span>
+        <span className="muted">· {open ? t('block.collapse') : t('entry.quietHint')}</span>
       </button>
 
       {open ? (
@@ -145,7 +145,7 @@ function QuietLine({
               {result.exitCode !== null ? ` · ${t('entry.toolExit', { n: result.exitCode })}` : ''}
             </>
           ) : (
-            <span className="faint">{t('entry.modelNoMetrics')}</span>
+            <span className="muted">{t('entry.modelNoMetrics')}</span>
           )}
         </span>
       </div>

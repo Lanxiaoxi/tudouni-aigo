@@ -68,7 +68,7 @@
   border-bottom-width: 2px;
   border-radius: var(--radius-xs);
   background: var(--bg-elevated);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: 10px;
   white-space: nowrap;

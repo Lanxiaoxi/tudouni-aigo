@@ -71,7 +71,7 @@
 
 /* The check swap after a successful copy. */
 .entry-copy.is-copied {
-  color: var(--success);
+  color: var(--success-text);
 }
 
 /* The reply's two buttons sit side by side: copy, then fork. The group is a
@@ -133,7 +133,7 @@
 }
 
 .e-model.is-retry {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .e-model .em-retry {
@@ -238,7 +238,7 @@
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: var(--text-caption);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -287,7 +287,7 @@
 
 .e-step.is-running .e-step-icon {
   background: var(--accent-grad);
-  color: var(--fg-on-solid);
+  color: var(--fg-on-accent);
 }
 
 /* 进行中的头部图标：换成 Loader 并旋转，复用 global.css 的 `spin`——
@@ -299,7 +299,7 @@
 }
 
 .e-step.is-running .e-step-metrics {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* 风险等级抬升的调用：卡片边沿带 warning / destructive 的细色，与工具行

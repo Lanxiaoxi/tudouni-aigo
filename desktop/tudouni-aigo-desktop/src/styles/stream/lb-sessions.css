@@ -21,7 +21,7 @@
    never carries it: the tooltip, the aria-label and the icon all change too. */
 .lb-session-wrap .lb-row-action.is-armed {
   opacity: 1;
-  color: var(--destructive);
+  color: var(--destructive-text);
   background: var(--destructive-subtle);
 }
 
@@ -141,7 +141,7 @@ html[data-input-mode='keyboard'] .lb-session-search-input:focus-visible {
 .lb-note-hint {
   margin-top: 2px;
   font-size: 10.5px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---------------- session status dots ---------------- */
@@ -221,7 +221,7 @@ html[data-input-mode='keyboard'] .lb-session-search-input:focus-visible {
   padding: 0 4px;
   border-radius: var(--radius-xs);
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
   font-size: var(--text-caption);
   font-variant-numeric: tabular-nums;
   line-height: 16px;
@@ -241,17 +241,17 @@ html[data-input-mode='keyboard'] .lb-session-search-input:focus-visible {
 
 .lb-connection-success {
   background: var(--success-subtle);
-  color: var(--success);
+  color: var(--success-text);
 }
 
 .lb-connection-warning {
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .lb-connection-destructive {
   background: var(--destructive-subtle);
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 .lb-connection-neutral {
@@ -368,7 +368,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--bg-card);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   font-family: var(--font-mono);
   font-size: 9.5px;
   line-height: 1.4;
@@ -393,7 +393,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.02em;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .lb-workbench-items {
@@ -491,7 +491,7 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
   padding: 0 4px;
   border-radius: var(--radius-xs);
   background: var(--accent-subtle);
-  color: var(--accent);
+  color: var(--accent-text);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
@@ -503,13 +503,13 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
 
 .lb-workbench-item-badge.is-attention {
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .lb-workbench-empty {
   padding: 10px 8px;
   font-size: 11px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 /* ---- the handle ---- */

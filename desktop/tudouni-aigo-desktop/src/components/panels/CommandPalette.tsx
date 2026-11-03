@@ -157,7 +157,7 @@ function CommandRow({
       {isArg ? (
         <span className="cmd-desc mono">
           {arg}
-          <span className="faint"> ← {t('panel.commands.runWith')}</span>
+          <span className="muted"> ← {t('panel.commands.runWith')}</span>
         </span>
       ) : (
         <span className="cmd-desc">{t(cmd.descKey)}</span>

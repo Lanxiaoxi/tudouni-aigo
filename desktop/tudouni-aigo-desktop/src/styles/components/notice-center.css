@@ -75,7 +75,7 @@
   gap: var(--space-2);
   background: var(--accent-subtle);
   border-color: var(--accent-border);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .nc-capsule .nc-label {
@@ -105,7 +105,7 @@
    hung from its crown (transform-origin at the top), so it swings rather
    than spins. */
 .nc-capsule[data-state='open'] svg {
-  color: var(--accent);
+  color: var(--accent-text);
   transform-origin: 50% 1px;
   animation: nc-ring var(--motion-slow) var(--ease-out) 1;
 }
@@ -129,7 +129,7 @@
   border-radius: 999px;
   border: 2px solid var(--bg-elevated);
   background: var(--info-subtle);
-  color: var(--info);
+  color: var(--info-text);
   font-size: var(--text-caption);
   font-weight: 600;
   text-align: center;
@@ -137,7 +137,7 @@
 
 .nc-badge.is-warn {
   background: var(--warning-subtle);
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* ---------------- the open panel ----------------
@@ -236,7 +236,7 @@
 
 .nc-row.is-warn svg,
 .nc-row.is-degraded svg {
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 .nc-row.is-error {
@@ -246,7 +246,7 @@
 }
 
 .nc-row.is-error svg {
-  color: var(--destructive);
+  color: var(--destructive-text);
 }
 
 /* Compacted is the info family: a quiet tint, the row's own text stays
@@ -256,7 +256,7 @@
 }
 
 .nc-row.is-compacted svg {
-  color: var(--info);
+  color: var(--info-text);
 }
 
 .nc-row.is-image svg {

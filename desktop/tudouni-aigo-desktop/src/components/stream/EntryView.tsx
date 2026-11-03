@@ -248,7 +248,7 @@ function TurnHead({
           ` · ${badgeDetail}`
         )}
       </Badge>
-      {rawIsInformative ? <span className="faint caption mono">{entry.status}</span> : null}
+      {rawIsInformative ? <span className="muted caption mono">{entry.status}</span> : null}
       <span className="th-step">
         {t('status.step', { n: entry.step, max: entry.maxSteps })}
       </span>
@@ -536,7 +536,7 @@ function ToolEntry({ entry }: { entry: Extract<Entry, { kind: 'tool' }> }) {
         <ChevronRight size={13} className={`caret${open ? ' caret-open' : ''}`} />
         <span className="seq">{entry.index}</span>
         {files.length > 0 ? (
-          <FileCheck size={12} color="var(--accent)" aria-hidden />
+          <FileCheck size={12} color="var(--accent-text)" aria-hidden />
         ) : (
           <Wrench size={12} className="muted" />
         )}
@@ -597,7 +597,7 @@ export function ToolBody({ entry }: { entry: Extract<Entry, { kind: 'tool' }> })
         {/* Every one of these is a registry fact looked up by name, so an
             unanswered lookup reads "unknown" rather than defaulting to a
             comfortable value. */}
-        <span className="faint">
+        <span className="muted">
           {entry.external === null
             ? t('entry.unknown')
             : entry.external
@@ -605,15 +605,15 @@ export function ToolBody({ entry }: { entry: Extract<Entry, { kind: 'tool' }> })
               : t('entry.builtin')}
         </span>
         <span className="sep" />
-        <span className="faint">{entry.risk ? t(`risk.${entry.risk}` as TKey) : t('entry.unknown')}</span>
+        <span className="muted">{entry.risk ? t(`risk.${entry.risk}` as TKey) : t('entry.unknown')}</span>
         <span className="sep" />
-        <span className="faint">
+        <span className="muted">
           {entry.parallelSafe === null
             ? t('entry.unknown')
             : `${entry.parallelSafe ? '✓' : '✗'} ${t('entry.parallelSafe')}`}
         </span>
         <span className="sep" />
-        <span className="faint">
+        <span className="muted">
           {entry.interactive === null
             ? t('entry.unknown')
             : `${entry.interactive ? '✓' : '✗'} ${t('entry.occupiesInput')}`}
@@ -709,7 +709,7 @@ function PermEntry({ entry }: { entry: Extract<Entry, { kind: 'perm' }> }) {
       <span className="mono">{entry.tool}</span>
       {/* `waited_ms` is present only when a person was actually asked — a
           verdict is written for every call. Its absence is the signal. */}
-      <span className="faint">
+      <span className="muted">
         {entry.waitedMs !== null
           ? t('entry.permWaited', { ms: formatDuration(entry.waitedMs) })
           : t('entry.permNoWait')}

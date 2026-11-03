@@ -240,7 +240,7 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
             {/* The provider is shown separately on purpose: two routes can carry
                 the same model name, and "where the request went" is a different
                 fact from "which model". A qualifier, so the first tier folds it. */}
-            <span className="faint sb-extra">@{session.provider || '—'}</span>
+            <span className="muted sb-extra">@{session.provider || '—'}</span>
           </button>
         </div>
 
@@ -258,7 +258,7 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
               className="btn btn-ghost btn-compact"
               onClick={() => openPanel('effort')}
             >
-              <span className="faint">{t('session.effort')}</span>
+              <span className="muted">{t('session.effort')}</span>
               {/* Shown as set, never converted: thinking can be off while an
                   effort is still recorded, and that is the user's intent. */}
               <span className="mono">{session.effort || '—'}</span>
