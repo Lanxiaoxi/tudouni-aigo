@@ -183,10 +183,14 @@
   color: var(--fg-faint);
 }
 
+/* The field focus of component-states §2, the same one `.input` draws: a
+   softened accent border plus the ring. A bare solid-accent border was a
+   second focus language for the densest forms in the app. */
 .cfg-input:focus,
 .cfg-textarea:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
 }
 
 .cfg-check {

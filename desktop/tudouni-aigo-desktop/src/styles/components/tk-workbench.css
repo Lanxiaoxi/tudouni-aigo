@@ -217,6 +217,12 @@
   background: var(--bg-muted);
 }
 
+/* The checkboxes beside these rows (`.cfg-check`) are accent-tinted; an
+   untinted radio is the browser's blue in the same form. */
+.tk-choice-row input[type='radio'] {
+  accent-color: var(--accent);
+}
+
 .tk-choice-row:has(input:checked) {
   position: relative;
   z-index: 1;
@@ -259,11 +265,9 @@
   color: var(--fg-faint);
 }
 
+/* component-states §0: disabled is opacity alone - the colours stay tokens. */
 .tk-choice-num:disabled {
-  border-color: var(--border);
-  background: transparent;
-  color: var(--fg-faint);
-  opacity: 0.6;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 

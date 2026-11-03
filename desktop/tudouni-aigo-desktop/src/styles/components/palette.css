@@ -291,9 +291,11 @@
     background-color var(--motion-fast) var(--ease-out);
 }
 
+/* Same focus as the other filled search field (`.tk-search`). */
 .mp-search:focus-within {
   background: var(--bg-elevated);
-  border-color: var(--border-strong);
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
 }
 
 .mp-search input {

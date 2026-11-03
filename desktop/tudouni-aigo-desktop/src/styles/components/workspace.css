@@ -193,8 +193,12 @@
   overflow: hidden;
 }
 
-.wm-stepper:focus-within {
-  border-color: var(--accent);
+/* Field focus (component-states §2) on the box, keyed to the value field only:
+   `:focus-within` would also light up when the +/- buttons are clicked, and a
+   mouse click must not draw the ring (§0). */
+.wm-stepper:has(.wm-step-value:focus) {
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
 }
 
 .wm-step {
