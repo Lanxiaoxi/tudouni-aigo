@@ -27,8 +27,8 @@ import type { VmGoal, VmJob, VmMcp, VmSubagentDone, VmTask } from '@/runtime/ada
 
 /**
  * §3 Sidebar, seven blocks, fixed order:
- * Goal → Presented files → Tasks → Background jobs → Loaded skills → MCP →
- * SSH sessions.
+ * Goal → Tasks → Background jobs → Loaded skills → MCP → SSH sessions →
+ * Presented files.
  *
  * Each block is: title + count badge + content rows + empty-state text + a
  * pointer.
@@ -122,25 +122,7 @@ export function Sidebar() {
           <GoalBody goal={snap.goal} />
         </Block>
 
-        {/* 2 · Presented files. The conversation's own outputs: every file a
-            `present` call declared, in the order it was first declared. Each row
-            opens the file in the OS default application — the same door the
-            transcript card's open control uses, through the same hook — because
-            "what did this conversation give me" is answered by getting the file,
-            not by reading its name again. */}
-        <Block
-          blockKey="files"
-          title={t('block.files')}
-          count={presented.length}
-          countActive={presented.length > 0}
-          isEmpty={presented.length === 0}
-          emptyTitle={t('empty.files.title')}
-          emptyHint={t('empty.files.hint')}
-        >
-          <PresentedFiles files={presented} />
-        </Block>
-
-        {/* 3 · Tasks */}
+        {/* 2 · Tasks */}
         <Block
           blockKey="tasks"
           title={t('block.tasks')}
@@ -161,7 +143,7 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 4 · Background jobs. The block holds both kinds of background work —
+        {/* 3 · Background jobs. The block holds both kinds of background work —
             commands sent to the background and background delegations — because
             it answers one question: what is still running after the turn moved
             on. A background subagent outlives its turn exactly like a
@@ -189,7 +171,7 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 5 · Loaded skills.
+        {/* 4 · Loaded skills.
             `snap.skills` is `ui(state).skills`, which is pointers for whatever
             the snapshot happened to record; the merged store list is what
             `ui(skills).active` says is actually loaded. The sidebar shows the
@@ -214,7 +196,7 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 6 · MCP */}
+        {/* 5 · MCP */}
         <Block
           blockKey="mcp"
           title={t('block.mcp')}
@@ -229,7 +211,7 @@ export function Sidebar() {
           ))}
         </Block>
 
-        {/* 7 · SSH sessions. Display only — the operations stay with the
+        {/* 6 · SSH sessions. Display only — the operations stay with the
             `ssh_*` tools, so unlike the MCP rows above there is no action
             button here. The badge counts live sessions; ended rows stay on
             the list so "what was I connected to" keeps an answer. `active`
@@ -248,6 +230,27 @@ export function Sidebar() {
           {snap.ssh.map((row) => (
             <SshSessionRow key={row.id} row={row} />
           ))}
+        </Block>
+
+        {/* 7 · Presented files. The conversation's own outputs: every file a
+            `present` call declared, in the order it was first declared. Each row
+            opens the file in the OS default application — the same door the
+            transcript card's open control uses, through the same hook — because
+            "what did this conversation give me" is answered by getting the file,
+            not by reading its name again. Trailing the rail: the outputs are the
+            block a person comes back for, and keeping them clear of the live
+            state above (goal, tasks, jobs) stops the most-changed block from
+            shoving the most-watched ones down. */}
+        <Block
+          blockKey="files"
+          title={t('block.files')}
+          count={presented.length}
+          countActive={presented.length > 0}
+          isEmpty={presented.length === 0}
+          emptyTitle={t('empty.files.title')}
+          emptyHint={t('empty.files.hint')}
+        >
+          <PresentedFiles files={presented} />
         </Block>
       </div>
     </aside>
