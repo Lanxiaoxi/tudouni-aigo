@@ -1,7 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { ArrowDown, Loader, Sparkles } from 'lucide-react';
-import { NO_ENTRIES, useApp, useSessionField } from '@/state/store';
+import { ArrowDown, CornerDownLeft, Copy, Loader, Sparkles } from 'lucide-react';
+import { NO_ENTRIES, selectModalVisible, useApp, useSessionField } from '@/state/store';
+import { insertAtCaret } from '@/runtime/paste';
+import { copyText } from '@/utils/clipboard';
 import { DeliverableCards } from './DeliverableCards';
 import { useT } from '@/i18n/useT';
 import { useFindInStream } from '@/find/useFindInStream';
@@ -99,6 +101,39 @@ export function StreamView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
+  // The selection's context menu: the text a right-click was over, at the
+  // click's coordinates. Only opened when there is a selection — a right-click
+  // on nothing has no menu here, so the default stays (the same rule the
+  // board's card menu applies to cards without an id).
+  const [selectionMenu, setSelectionMenu] = useState<{ text: string; x: number; y: number } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (selectionMenu === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // A visible prompt is still above the menu, the board's menu's rule.
+      if (selectModalVisible(useApp.getState())) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectionMenu(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectionMenu]);
+
+  const onContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const text = window.getSelection()?.toString() ?? '';
+    if (text === '') return;
+    e.preventDefault();
+    // Clamped so the menu never opens off the window edge: ~its own footprint.
+    setSelectionMenu({
+      text,
+      x: Math.min(e.clientX, window.innerWidth - 200),
+      y: Math.min(e.clientY, window.innerHeight - 110),
+    });
+  }, []);
   // True from a programmatic stick until its scroll event has been delivered;
   // `onScroll` skips and clears those. See `stickToBottom`.
   const followWrite = useRef(false);
@@ -287,6 +322,7 @@ export function StreamView() {
           onScroll={onScroll}
           onKeyDown={onKeyDown}
           onPointerDown={onPointerDown}
+          onContextMenu={onContextMenu}
           tabIndex={0}
           role="log"
           aria-live="polite"
@@ -320,6 +356,65 @@ export function StreamView() {
 
         {rail ? <TurnRail turns={turns} scrollRef={scrollRef} /> : null}
       </div>
+
+      {/* The selection's context menu, fixed at the right-click's coordinates,
+          over a full-viewport scrim, the board's card-menu pattern (see
+          `SessionBoard.tsx`): a fixed scrim folds "click elsewhere" and a
+          second right-click into one mechanism. The selection itself is read
+          at click time into `text`, because the scrim's own pointer events
+          drop the live selection before the click on a row could.
+          Two rows: copy (what the default menu gave, minus inspect) and
+          add-to-input — the selection lands in this conversation's draft at
+          its end, as its own word, and the composer's focus effect puts the
+          caret back in the box. */}
+      {selectionMenu !== null ? (
+        <div
+          className="stream-menu-scrim"
+          onClick={() => setSelectionMenu(null)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setSelectionMenu(null);
+          }}
+        >
+          <div
+            className="stream-menu"
+            role="menu"
+            aria-label={t('stream.menu.title')}
+            style={{ left: selectionMenu.x, top: selectionMenu.y }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="stream-menu-item"
+              onClick={() => {
+                void copyText(selectionMenu.text);
+                setSelectionMenu(null);
+              }}
+            >
+              <Copy size={13} />
+              {t('stream.menu.copy')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="stream-menu-item"
+              onClick={() => {
+                const s = useApp.getState();
+                const key = s.activeKey;
+                if (key !== null) {
+                  const draft = s.sessions[key]?.draft ?? '';
+                  const moved = insertAtCaret(draft, draft.length, selectionMenu.text);
+                  s.setDraft(moved.text);
+                }
+                setSelectionMenu(null);
+              }}
+            >
+              <CornerDownLeft size={13} />
+              {t('stream.menu.addToInput')}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

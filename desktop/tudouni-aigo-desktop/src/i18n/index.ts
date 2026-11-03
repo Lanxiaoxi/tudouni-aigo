@@ -1919,6 +1919,12 @@ export const en = {
   /** The scroll region's accessible name. It is also the `aria-live` region, so
    *  new answers and notices are announced rather than silently appearing. */
   'stream.label': 'Session transcript',
+  /** The selection's context menu (`StreamView.tsx`): right-click over selected
+   *  text in the transcript. Two rows — the default menu's copy, and the one
+   *  this build adds, which lands the selection in this conversation's draft. */
+  'stream.menu.title': 'Selected text',
+  'stream.menu.copy': 'Copy',
+  'stream.menu.addToInput': 'Add to input',
   /** Copy button on a fenced code block (`Markdown.tsx`). */
   'md.codeCopy': 'Copy code',
   'md.codeCopied': 'Copied',
