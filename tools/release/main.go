@@ -115,6 +115,13 @@ func run(argv []string) error {
 			CgParser:      filepath.Join(root, "dist", release.StageDirName(version, target), "tools", "vendor", "cg", target.Triple, target.CgName()),
 			ExampleConfig: filepath.Join(root, "dist", release.StageDirName(version, target), "config.example.json"),
 		}
+		// Only the targets that ship the document extractor list it as required; on the
+		// others its absence is the design (see Target.HasAnymd), and requiring it would
+		// make the Linux archive — the one a remote workspace runs — 28 MB heavier for a
+		// tool that is not registered there.
+		if target.HasAnymd() {
+			layout.AnymdBinary = filepath.Join(root, "dist", release.StageDirName(version, target), "tools", "vendor", "anymd", target.Triple, target.AnymdName())
+		}
 		if !*skipBuild {
 			if err := buildTarget(root, version, target, layout.Binary); err != nil {
 				return err
@@ -267,6 +274,20 @@ func stageTarget(root string, target release.Target, layout release.Layout) erro
 		return fmt.Errorf("the vendored code-index parser for %s is missing (%s) — vendor it before shipping this platform: %w",
 			target.Triple, sourceCg, err)
 	}
+	// The document extractor, Windows only (Target.HasAnymd). It is copied from the same
+	// triple-keyed directory the others use, so the runtime finds it with the lookup it
+	// already has for ripgrep.
+	if target.HasAnymd() {
+		sourceAnymd := filepath.Join(root, "tools", "vendor", "anymd", target.Triple, target.AnymdName())
+		if err := copyFile(sourceAnymd, layout.AnymdBinary, 0o755); err != nil {
+			return fmt.Errorf("the vendored document extractor for %s is missing (%s) — vendor it before shipping this platform: %w",
+				target.Triple, sourceAnymd, err)
+		}
+		if err := copyFile(filepath.Join(root, "tools", "vendor", "anymd", "LICENSE-MIT"),
+			filepath.Join(filepath.Dir(filepath.Dir(layout.AnymdBinary)), "LICENSE-MIT"), 0o644); err != nil {
+			return fmt.Errorf("tools/vendor/anymd/LICENSE-MIT is missing — the MIT notice has to travel with the binary: %w", err)
+		}
+	}
 	for _, name := range []string{"install.ps1", "install.sh", "README.txt"} {
 		mode := os.FileMode(0o644)
 		if name == "install.sh" {
@@ -351,6 +372,53 @@ func verifyRuns(layout release.Layout) error {
 		}
 	}
 	fmt.Printf("      · %s: --help, --version and --runtime-stdio all ran; ripgrep registered\n", layout.Target.Triple)
+	if layout.AnymdBinary != "" {
+		if err := verifyDocumentExtractor(layout, scratch); err != nil {
+			return err
+		}
+		fmt.Printf("      · %s: the staged document extractor converted a generated docx\n", layout.Target.Triple)
+	}
+	return nil
+}
+
+// verifyDocumentExtractor runs the *staged* anymd on a generated docx, the way
+// `read_document` calls it (argument array, OCR and image export off, star hint off).
+//
+// It is the counterpart of the "grep registered" check: a package whose extractor is
+// the wrong version, truncated, or blocked from starting is a package where
+// `read_document` is registered and every call fails — the half-working shape this
+// program refuses to ship. The sample is generated rather than committed so there is
+// no binary fixture to rot.
+func verifyDocumentExtractor(layout release.Layout, scratch string) error {
+	const marker = "release-verify-sentinel"
+	raw, err := release.SampleDocx("Release check", marker)
+	if err != nil {
+		return err
+	}
+	sample := filepath.Join(scratch, "sample.docx")
+	if err := os.WriteFile(sample, raw, 0o600); err != nil {
+		return err
+	}
+	env := append(os.Environ(), "ANYMD_NO_STAR_HINT=1")
+
+	stdout, stderr, code, err := release.RunCaptured(scratch, env, layout.AnymdBinary, "version")
+	if err != nil {
+		return fmt.Errorf("cannot run the packaged document extractor: %w", err)
+	}
+	if code != 0 || !strings.Contains(stdout, release.AnymdVersion) {
+		return fmt.Errorf("the packaged document extractor said %q (exit %d), want version %s\n  stderr: %s",
+			strings.TrimSpace(stdout), code, release.AnymdVersion, tail(stderr, 400))
+	}
+
+	stdout, stderr, code, err = release.RunCaptured(scratch, env, layout.AnymdBinary,
+		"--no-ocr", "--images", "none", "--", sample)
+	if err != nil {
+		return fmt.Errorf("cannot run the packaged document extractor: %w", err)
+	}
+	if code != 0 || !strings.Contains(stdout, marker) {
+		return fmt.Errorf("the packaged document extractor did not convert the sample docx (exit %d)\n  stdout: %s\n  stderr: %s",
+			code, tail(stdout, 400), tail(stderr, 600))
+	}
 	return nil
 }
 

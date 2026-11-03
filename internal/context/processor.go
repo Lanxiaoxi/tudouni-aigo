@@ -127,6 +127,29 @@ func FilesystemStrategy(store *ArtifactStore, execution ToolExecution) (Artifact
 		ArtifactSource{Tool: execution.Tool, Path: path}, metadata)
 }
 
+// DocumentStrategy records which document, and which part of it, a read_document result is.
+//
+// Path alone is not an identity here: the same file read at pages 1-3 and at pages 8-9 are
+// two different bodies, and once either degrades to its metadata line the pages are the only
+// thing that tells the model which stretch it has already read and which it would have to
+// read again. The line count is what the range level slices by, as for a file.
+//
+// The artifact is typed `document`, not `file`: its lines are rewritten Markdown, not the
+// file's own, so a range of "lines 40-80" must never be mistaken for a range of the .docx.
+func DocumentStrategy(store *ArtifactStore, execution ToolExecution) (Artifact, error) {
+	path := stringArg(execution.Arguments, "path")
+	metadata := baseMetadata(execution)
+	metadata["path"] = path
+	metadata["lines"] = CountLines(execution.Text)
+	for _, key := range []string{"pages", "node", "cursor"} {
+		if value := stringArg(execution.Arguments, key); value != "" {
+			metadata[key] = value
+		}
+	}
+	return store.Create(execution.Text, "document",
+		ArtifactSource{Tool: execution.Tool, Path: path}, metadata)
+}
+
 // SearchStrategy records what was searched for.
 func SearchStrategy(store *ArtifactStore, execution ToolExecution) (Artifact, error) {
 	metadata := baseMetadata(execution)
@@ -177,6 +200,7 @@ func DefaultProcessor() *ToolResultProcessor {
 		processor.Register(name, CommandStrategy)
 	}
 	processor.Register("fetch_web", WebStrategy)
+	processor.Register("read_document", DocumentStrategy)
 	return processor
 }
 
@@ -221,6 +245,8 @@ func typeOf(tool string) string {
 		return "search"
 	case "fetch_web":
 		return "web"
+	case "read_document":
+		return "document"
 	default:
 		return "text"
 	}

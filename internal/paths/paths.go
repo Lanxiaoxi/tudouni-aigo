@@ -148,6 +148,15 @@ func VendorCG() string {
 	return filepath.Join(PackageDir(), "tools", "vendor", "cg")
 }
 
+// VendorAnymd returns the directory holding the document-extraction builds.
+//
+// Unlike VendorRG there is no Linux entry beneath it, on purpose: read_document is a
+// Windows-only tool, and a remote workspace runs the Linux runtime, so the tool is simply
+// absent there (see builtin.AnymdBinary).
+func VendorAnymd() string {
+	return filepath.Join(PackageDir(), "tools", "vendor", "anymd")
+}
+
 // SchemaDir returns the directory holding the protocol schema files.
 func SchemaDir() string {
 	return filepath.Join(PackageDir(), "protocol", "schema")

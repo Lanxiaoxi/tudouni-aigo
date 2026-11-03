@@ -138,7 +138,7 @@ func TestTheMissingListIsNotReportedAsAMissingRipgrep(t *testing.T) {
 	// inheriting the default branch.
 	for _, name := range result.Missing {
 		switch name {
-		case builtin.GenerateImageToolName, "grep", builtin.CodeExploreToolName:
+		case builtin.GenerateImageToolName, "grep", builtin.CodeExploreToolName, builtin.DocumentToolName:
 		default:
 			t.Errorf("the missing list holds %q, which has no case in the notice dispatch", name)
 		}

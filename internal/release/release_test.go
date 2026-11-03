@@ -71,6 +71,65 @@ func TestTargetsHaveAVendoredRipgrep(t *testing.T) {
 	}
 }
 
+// TestTargetsThatShipTheDocumentExtractorHaveItVendored is the same gate for the third
+// vendored binary, with one difference: only the targets that say HasAnymd are checked,
+// because read_document is Windows-only by design. The reverse is checked as well — a Linux
+// binary appearing in the tree without HasAnymd being flipped would ship nowhere and rot.
+func TestTargetsThatShipTheDocumentExtractorHaveItVendored(t *testing.T) {
+	root := repoRoot(t)
+	for _, target := range Targets {
+		path := filepath.Join(root, "tools", "vendor", "anymd", target.Triple, target.AnymdName())
+		info, err := os.Stat(path)
+		if !target.HasAnymd() {
+			if err == nil {
+				t.Errorf("%s: %s exists but the target does not ship the extractor — flip HasAnymd or delete it",
+					target.Triple, path)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: no vendored document extractor at %s", target.Triple, path)
+			continue
+		}
+		if info.Size() < 1_000_000 {
+			t.Errorf("%s: %s is only %d bytes, which is not an anymd build", target.Triple, path, info.Size())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "tools", "vendor", "anymd", "LICENSE-MIT")); err != nil {
+		t.Errorf("the MIT notice must travel with the binary: %v", err)
+	}
+}
+
+// TestLayoutRequiresTheExtractorOnlyWhenItIsListed: an empty AnymdBinary (the Linux layout)
+// adds nothing to the required list; a set one is checked like the other binaries.
+func TestLayoutRequiresTheExtractorOnlyWhenItIsListed(t *testing.T) {
+	root := t.TempDir()
+	layout := Layout{Root: root, Target: Targets[1]}
+	if _, ok := layout.RequiredFiles()["the vendored anymd"]; ok {
+		t.Error("a layout with no extractor path must not require one")
+	}
+	layout.AnymdBinary = filepath.Join(root, "tools", "vendor", "anymd", Targets[0].Triple, "anymd.exe")
+	if _, ok := layout.RequiredFiles()["the vendored anymd"]; !ok {
+		t.Error("a layout that lists the extractor must require it")
+	}
+}
+
+// TestSampleDocxIsAValidZipWithTheText: the release self-check depends on it.
+func TestSampleDocxIsAValidZipWithTheText(t *testing.T) {
+	raw, err := SampleDocx("one", "a < b & c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "s.docx")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	names, err := ArchiveNames(path)
+	if err != nil || len(names) != 3 {
+		t.Fatalf("names=%v err=%v", names, err)
+	}
+}
+
 // TestTargetsAreTheTwoWeShip — Windows and Linux, x86_64. Adding one is fine, but
 // it has to come with a ripgrep (see the test above).
 func TestTargetsAreTheTwoWeShip(t *testing.T) {

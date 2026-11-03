@@ -43,6 +43,8 @@ var metadataLabels = []struct{ key, label string }{
 	{"path", "路径"},
 	{"url", "网址"},
 	{"command", "命令"},
+	{"pages", "页"},
+	{"node", "节点"},
 	{"pattern", "模式"},
 	{"query", "查询"},
 	{"lines", "行数"},
@@ -584,7 +586,15 @@ func whereOf(artifact Artifact) string {
 		{"pattern", "模式 "}, {"query", "查询 "},
 	} {
 		if value, present := artifact.Metadata[entry.key]; present && value != nil && value != "" {
-			return entry.label + fmt.Sprint(value) + "，"
+			where := entry.label + fmt.Sprint(value)
+			// A document's path alone would read as "the whole file"; the part it is
+			// belongs in the same clause.
+			for _, part := range []struct{ key, label string }{{"pages", "页 "}, {"node", "节点 "}} {
+				if extra, ok := artifact.Metadata[part.key]; ok && extra != nil && extra != "" {
+					where += " " + part.label + fmt.Sprint(extra)
+				}
+			}
+			return where + "，"
 		}
 	}
 	if artifact.Source.Path != "" {

@@ -81,6 +81,13 @@ const required = [
   join('tools', 'vendor', 'cg', triple, process.platform === 'win32' ? 'cg-parse.exe' : 'cg-parse'),
 ];
 
+// The document extractor behind `read_document` ships on Windows only (the Linux package a
+// remote workspace runs does not carry it, by design), so it is required exactly there.
+if (process.platform === 'win32') {
+  required.push(join('tools', 'vendor', 'anymd', triple, 'anymd.exe'));
+  required.push(join('tools', 'vendor', 'anymd', 'LICENSE-MIT'));
+}
+
 for (const item of required) {
   if (!existsSync(join(source, item))) {
     console.error(`the staged build is missing ${item}`);

@@ -202,7 +202,7 @@ func readFile(workspace *tools.Workspace, args map[string]any) (tools.Result, er
 			return tools.TextResult("无法读取：" + path + "（" + readErr.Error() + "）"), nil
 		}
 		if !utf8.Valid(raw) {
-			return tools.TextResult("不是 UTF-8 文本，读不了：" + path), nil
+			return tools.TextResult("不是 UTF-8 文本，读不了：" + path + nonTextHint(path)), nil
 		}
 		return readOutline(path, string(raw)), nil
 	}
@@ -222,7 +222,9 @@ func readFile(workspace *tools.Workspace, args map[string]any) (tools.Result, er
 		return tools.TextResult("无法读取：" + path + "（" + readErr.Error() + "）"), nil
 	}
 	if !utf8.Valid(raw) {
-		return tools.TextResult("不是 UTF-8 文本，读不了：" + path), nil
+		// The pointer to read_document is added only when that tool is registered on this
+		// machine (see nonTextHint): naming a tool the model cannot call is worse than silence.
+		return tools.TextResult("不是 UTF-8 文本，读不了：" + path + nonTextHint(path)), nil
 	}
 
 	text := string(raw)

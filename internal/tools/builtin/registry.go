@@ -173,6 +173,22 @@ func CreateRegistry(assembly Assembly) (*Result, error) {
 		result.Missing = append(result.Missing, "grep")
 	}
 
+	// read_document depends on a vendored extractor that ships on Windows only. Where the
+	// platform does not ship it (Linux, and therefore every remote workspace, which runs the
+	// Linux runtime on the far host) the tool is absent and **nothing is reported**: it was
+	// never promised there, and a warning on every remote session would be noise about a
+	// design decision. Where the platform should have it and the file is gone, that is a
+	// broken install, and it is reported like a missing ripgrep.
+	if AnymdPlatformSupported() {
+		if documentTool, ok := NewReadDocument(assembly.Workspace, assembly.Vision, assembly.RunID); ok {
+			if err := registry.Register(documentTool); err != nil {
+				return nil, err
+			}
+		} else {
+			result.Missing = append(result.Missing, DocumentToolName)
+		}
+	}
+
 	// The code index is optional twice over: the person has to turn the capability on,
 	// and an index has to exist. Either being false means no tool, and only the second
 	// of the two is worth a notice — "you have not enabled this" is a setting, not a

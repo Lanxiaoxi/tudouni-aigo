@@ -29,6 +29,7 @@
 | `desktop/tudouni-aigo-desktop/` | 独立的桌面客户端（Tauri 2 + React）；出安装包见下文「桌面端安装包」一节 |
 | `prompts/` | 系统提示词（运行时按目录是否存在来判定「这是不是安装包根目录」） |
 | `tools/vendor/rg/` | 随包分发的 ripgrep，按平台各一份 |
+| `tools/vendor/anymd/` | 随包分发的文档抽取器（anymd 8.5.7，MIT），`read_document` 工具的引擎。**只有 Windows 一份，Linux 不支持**：远程工作区在远端跑 Linux runtime，所以那边没有这个工具，也不报警。哪些 target 带它由 `release.Target.HasAnymd()` 唯一决定；版本 pin 在 `release.AnymdVersion`。工具本身在 `internal/tools/builtin/document*.go`，设计与实测见 `docs/design/read-document.md` |
 | `packaging/` | `install.ps1`、`install.sh`、`README.txt` |
 | `docs/` | 为什么这样写：`spec/` 是权威规格，`design/` 是决策与成因，`parity/` 是 Go↔Python 的对照审查（已完成），`history/` 是已归档的调查和账本。**入口是 `docs/README.md`** —— 每份文档今天还有没有权威都写在那里，别拿已实现或已推翻的当依据 |
 

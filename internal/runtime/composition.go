@@ -487,6 +487,13 @@ func OpenRuntime(options Options) (*Runtime, error) {
 			runtimeValue.notices = append(runtimeValue.notices, notice("warn", "codeintel",
 				i18n.T("notice.codeintel.no_index",
 					"path", filepath.ToSlash(cggraph.IndexDirName+"/"+cggraph.DefaultDBName))))
+		case builtin.DocumentToolName:
+			// Only reachable on a platform that ships the extractor (the registry does not
+			// list the tool as missing anywhere else), so this is a damaged install and a
+			// warning. Own case for the usual reason: the default branch would send the
+			// person to re-vendor a ripgrep that is fine.
+			runtimeValue.notices = append(runtimeValue.notices, notice("warn", "document",
+				i18n.T("notice.document.missing_binary")))
 		case builtin.GenerateImageToolName:
 			// **Info, not a warning.** Image generation was never promised, so
 			// a machine without it is not broken — it is a machine where that

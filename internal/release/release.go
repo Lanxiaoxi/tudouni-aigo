@@ -74,6 +74,31 @@ func (t Target) CgName() string {
 	return "cg-parse"
 }
 
+// AnymdVersion is the pinned version of the vendored document extractor. The same number
+// is written in internal/tools/builtin/document.go and tools/vendor/anymd/README.md; a
+// test in the builtin package keeps the first two equal, and `verifyRuns` asks the
+// staged binary what it says it is.
+const AnymdVersion = "8.5.7"
+
+// HasAnymd reports whether this target ships the document extractor behind
+// `read_document`.
+//
+// **Windows only, on purpose.** The tool is not offered on Linux, and a remote workspace
+// runs the *Linux* runtime on the far host — so the remote package must not carry 28 MB
+// of binary nobody will ever call. This is the one place that says which targets ship
+// it; the registry gate (`builtin.AnymdBinary`), the staging step and the layout check
+// all follow it, so adding a platform is a change here plus a vendored binary.
+func (t Target) HasAnymd() bool { return t.GOOS == "windows" }
+
+// AnymdName is the extractor's file name for this target. Only meaningful when
+// HasAnymd is true.
+func (t Target) AnymdName() string {
+	if t.GOOS == "windows" {
+		return "anymd.exe"
+	}
+	return "anymd"
+}
+
 // CommandName is what the program is installed as and typed as. The platforms differ
 // only in the suffix, so the name itself has exactly one definition — the same one
 // the help text and the flag set use.
@@ -130,6 +155,10 @@ type Layout struct {
 	// on the required list anyway, because a package that ships the feature half-working
 	// is the failure mode this file exists to prevent.
 	CgParser string
+	// AnymdBinary is the document extractor behind `read_document`. **Empty for a target
+	// that does not ship it** (see Target.HasAnymd), and an empty path is then simply not
+	// required — unlike ripgrep, its absence on those platforms is the design, not a gap.
+	AnymdBinary string
 	// ExampleConfig is the configuration template. Its bytes are compiled in, so a
 	// package without it still works — which is exactly why it belongs on the
 	// required list: "it starts and one thing is missing" is this package's
@@ -144,7 +173,7 @@ type Layout struct {
 // feature, so the list is checked against the staged tree rather than assumed from
 // the build having succeeded.
 func (l Layout) RequiredFiles() map[string]string {
-	return map[string]string{
+	required := map[string]string{
 		"the executable":        l.Binary,
 		"the prompts directory": l.PromptsDir,
 		"the vendored ripgrep":  l.RgBinary,
@@ -154,6 +183,10 @@ func (l Layout) RequiredFiles() map[string]string {
 		"install.sh":            filepath.Join(l.Root, "install.sh"),
 		"README.txt":            filepath.Join(l.Root, "README.txt"),
 	}
+	if l.AnymdBinary != "" {
+		required["the vendored anymd"] = l.AnymdBinary
+	}
+	return required
 }
 
 // CheckLayout reports what a staged directory is missing, sorted by label.

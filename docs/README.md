@@ -32,6 +32,9 @@
   已实现：`internal/imagegen/`）。
 - [vision-input.md](design/vision-input.md) — 图片作为**输入**进入 Context 的九阶段方案
   （`read_image`、`ImagePart`、多模态 Content 抽象，已实现）。
+- [read-document.md](design/read-document.md) — `read_document` 工具（docx / pptx / xlsx / pdf 文本抽取，
+  vendor anymd，**仅 Windows**，Linux 与远程工作区不提供）的方案、PoC 实测与实现差异
+  （`internal/tools/builtin/document*.go`）。
 - [startup-baseline.md](design/startup-baseline.md) — 桌面端启动耗时基线与白屏修复的实测对比。
 - [ericai-proxy.md](design/ericai-proxy.md) — EricAI 认证要代理、本地模型要直连的冲突调查与
   解法（`internal/proxy` 的 `NO_PROXY` 支持就是照方案 A 补上的）。
