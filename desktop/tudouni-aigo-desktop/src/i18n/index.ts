@@ -456,6 +456,33 @@ export const en = {
      The panel is one dialog with three surfaces — the shelf, the history and
      the editor — so the keys below are grouped that way: the shelf's header
      and rows, the history's own header and rows, then the editor's fields. */
+  /* Subagent presets: the rail's entry and the panel. The panel edits the
+     `subagents` section of config.json — the person's decision about which
+     model a delegation runs on — so its sentences are about cost and choice. */
+  'lb.subagentPresets': 'Subagents',
+  'lb.subagentPresetsHint': 'Presets for delegated agents: which model and effort each one runs on.',
+  'panel.sp.title': 'Subagent presets',
+  'panel.sp.note': 'Named routes a delegation may run on. The model picks a preset by its purpose, never a model.',
+  'panel.sp.about':
+    'Each preset is a route, a model, an optional effort and a purpose. The subagent tool offers the preset names to the model; a call that names none uses the default below. With no presets, delegations follow the current session’s model.',
+  'panel.sp.default': 'Default preset',
+  'panel.sp.defaultHint': 'Used when a delegation names no preset.',
+  'panel.sp.followSession': 'Follow the session (current model and effort)',
+  'panel.sp.add': 'Add a preset',
+  'panel.sp.cap': 'At most {n} presets.',
+  'panel.sp.empty': 'No presets yet',
+  'panel.sp.emptyHint': 'Delegations follow the session’s model. Add a preset to give them a cheaper or stronger one.',
+  'panel.sp.name': 'Name',
+  'panel.sp.nameHint': 'What the model passes as `preset`: letters, digits, - or _.',
+  'panel.sp.route': 'Route',
+  'panel.sp.model': 'Model',
+  'panel.sp.effort': 'Effort',
+  'panel.sp.effortDefault': 'Model default',
+  'panel.sp.purpose': 'Purpose',
+  'panel.sp.purposeHint': 'Shown to the model so it can choose, e.g. “search, locate, read large files”.',
+  'panel.sp.pick': 'Choose…',
+  'panel.sp.remove': 'Remove this preset',
+  'panel.sp.noRoutes': 'No routes are configured. Add one in Config first.',
   'lb.task': 'Tasks',
   'lb.taskHint': 'Reusable session launchers: a saved prompt, workspace and model, one click to run.',
   'panel.task.title': 'Tasks',

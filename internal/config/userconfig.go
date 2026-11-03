@@ -62,7 +62,11 @@ var topKeys = map[string]bool{
 	// model*: putting `gpt-image-1` there would make it show up in `/model`,
 	// let it be picked, and then fail every single chat request.
 	"image_generation": true,
-	"$comment":         true,
+	// subagents holds the delegation presets: which route a delegated agent
+	// runs on is the person's decision (it is their bill and their keys), so
+	// it lives here beside the routes rather than in a tool argument.
+	"subagents": true,
+	"$comment":  true,
 }
 
 // Error is raised when the configuration cannot be understood.
@@ -114,6 +118,10 @@ type UserConfig struct {
 	// to override — is the state layer's business, and a second reader of the
 	// same map would be a second answer to "which endpoint generates pictures".
 	ImageGeneration map[string]any
+	// Subagents is the raw `subagents` section, uninterpreted for the same
+	// reason as ImageGeneration: the presets name routes, and only the state
+	// layer knows what a route is.
+	Subagents map[string]any
 	// UI is the raw `ui` section. Retained only so UiLanguageIgnored can say
 	// whether it was present.
 	UI map[string]string
@@ -234,7 +242,7 @@ func Read(path string) (UserConfig, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		known := []string{"providers", "web", "ui", "image_generation"}
+		known := []string{"providers", "web", "ui", "image_generation", "subagents"}
 		return UserConfig{}, errorf(
 			"%s has unknown top-level keys: %s\n  the ones it knows are: %s\n  (a misspelled key that silently does nothing is the worst kind of failure, so this stops here)",
 			target, strings.Join(unknown, ", "), strings.Join(known, ", "))
@@ -271,10 +279,21 @@ func Read(path string) (UserConfig, error) {
 		imageGeneration = object
 	}
 
+	subagents := map[string]any{}
+	if value, ok := raw["subagents"]; ok && value != nil {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return UserConfig{}, errorf(
+				"\"subagents\" in %s must be an object (the delegation presets)", target)
+		}
+		subagents = object
+	}
+
 	return UserConfig{
 		Path: target, Found: true,
 		Providers: providers, ProviderOrder: order, Web: web, UI: ui,
 		ImageGeneration: imageGeneration,
+		Subagents:       subagents,
 		LegacyEnvPath:   legacyEnvPath(),
 	}, nil
 }

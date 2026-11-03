@@ -432,6 +432,9 @@ func OpenRuntime(options Options) (*Runtime, error) {
 		MaxSteps:      runtimeValue.MaxSteps,
 		Thinking:      modelState.Thinking(),
 		Effort:        modelState.Effort(),
+		// Read once at open, like the rest of the catalogue: a preset edited in
+		// the panel takes effect in the next session, never mid-conversation.
+		Presets:       catalog.Subagents,
 		Debug:         options.Debug,
 		Clock:         security.PerfClock,
 	}); ok {

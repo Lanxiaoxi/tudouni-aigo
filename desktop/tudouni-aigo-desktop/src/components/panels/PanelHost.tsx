@@ -23,6 +23,7 @@ import { UsagePanel } from './UsagePanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ConfigPanel } from './ConfigPanel';
 import { TaskPanel } from './TaskPanel';
+import { SubagentPresetsPanel } from './SubagentPresetsPanel';
 
 /**
  * §5 Panel host.
@@ -75,6 +76,7 @@ export function PanelHost() {
           className={`dialog${panel === 'commands' ? ' cmdk' : ''}${
             panel === 'config' ||
             panel === 'tasks' ||
+            panel === 'subagentPresets' ||
             panel === 'learn' ||
             panel === 'usage' ||
             panel === 'terminal' ||
@@ -106,6 +108,7 @@ export function PanelHost() {
           {panel === 'memory' ? <MemoryPanel /> : null}
           {panel === 'codeintel' ? <CodeIntelPanel /> : null}
           {panel === 'usage' ? <UsagePanel /> : null}
+          {panel === 'subagentPresets' ? <SubagentPresetsPanel /> : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

@@ -146,6 +146,28 @@ pub struct ConfigDocument {
     pub providers: Vec<RouteView>,
     pub web: WebView,
     pub mcp: McpDocumentView,
+    pub subagents: SubagentsView,
+}
+
+/// One delegation preset, mirroring `state.SubagentPreset` in the runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SubagentPresetView {
+    pub name: String,
+    pub provider: String,
+    pub model: String,
+    /// Empty means "the model's declared default, else the session's level".
+    pub effort: String,
+    pub purpose: String,
+}
+
+/// The `subagents` section. An empty `default` means "follow the parent
+/// session", which is also what a file without the section means.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SubagentsView {
+    pub default: String,
+    pub presets: Vec<SubagentPresetView>,
 }
 
 /* ============================================================
@@ -217,6 +239,7 @@ pub struct ConfigPatch {
     pub providers: Option<Vec<RoutePatch>>,
     pub web: Option<WebPatch>,
     pub mcp: Option<Vec<McpPatch>>,
+    pub subagents: Option<SubagentsView>,
 }
 
 /* ============================================================
@@ -440,7 +463,119 @@ fn structural_problem(object: &Map<String, Value>) -> Option<String> {
         Some(_) => return Some("\"web\" is not an object".to_string()),
     }
 
+    match object.get("subagents") {
+        None | Some(Value::Null) => {}
+        Some(Value::Object(section)) => {
+            if matches!(section.get("presets"), Some(item) if !item.is_null() && !item.is_array()) {
+                return Some("\"presets\" in \"subagents\" is not a list".to_string());
+            }
+            if let Some(Value::Array(items)) = section.get("presets") {
+                if items.iter().any(|item| !item.is_object()) {
+                    return Some("a preset in \"subagents\" is not an object".to_string());
+                }
+            }
+        }
+        Some(_) => return Some("\"subagents\" is not an object".to_string()),
+    }
+
     None
+}
+
+/// Read the `subagents` section. Only called once the structural check passed.
+fn subagents_view(object: &Map<String, Value>) -> SubagentsView {
+    let Some(Value::Object(section)) = object.get("subagents") else {
+        return SubagentsView::default();
+    };
+    let presets = match section.get("presets") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_object)
+            .map(|entry| SubagentPresetView {
+                name: text_of(entry, "name"),
+                provider: text_of(entry, "provider"),
+                model: text_of(entry, "model"),
+                effort: text_of(entry, "effort"),
+                purpose: text_of(entry, "purpose"),
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    SubagentsView {
+        default: text_of(section, "default"),
+        presets,
+    }
+}
+
+/// The runtime's cap (`state.MaxSubagentPresets`). Checked here too so a save
+/// the runtime would refuse at the next open never reaches the disk.
+const MAX_SUBAGENT_PRESETS: usize = 8;
+
+/// Write the `subagents` section.
+///
+/// Presets are matched to the file's existing objects **by name**, and each
+/// one is mutated in place, so a `$comment` on a preset survives the save —
+/// the same field-wise rule the routes follow. An empty list with no default
+/// removes the section: that is the "follow the parent" state, and an empty
+/// section is a line in the file that says nothing.
+fn apply_subagents(object: &mut Map<String, Value>, patch: &SubagentsView) -> Result<(), String> {
+    if patch.presets.len() > MAX_SUBAGENT_PRESETS {
+        return Err(format!(
+            "at most {MAX_SUBAGENT_PRESETS} subagent presets are allowed, got {}",
+            patch.presets.len()
+        ));
+    }
+    let default = patch.default.trim();
+    if patch.presets.is_empty() && default.is_empty() {
+        object.remove("subagents");
+        return Ok(());
+    }
+
+    let section = child_object(object, "subagents")?;
+    let mut kept: Vec<Map<String, Value>> = match section.remove("presets") {
+        Some(Value::Array(items)) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                Value::Object(map) => Some(map),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for preset in &patch.presets {
+        let name = preset.name.trim();
+        if name.is_empty() {
+            return Err("a subagent preset needs a name".to_string());
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(format!("two subagent presets are both named \"{name}\""));
+        }
+        if preset.provider.trim().is_empty() || preset.model.trim().is_empty() {
+            return Err(format!("the subagent preset \"{name}\" needs a route and a model"));
+        }
+        let mut entry = match kept
+            .iter()
+            .position(|item| matches!(item.get("name"), Some(Value::String(n)) if n.trim() == name))
+        {
+            Some(at) => kept.remove(at),
+            None => Map::new(),
+        };
+        entry.insert("name".to_string(), Value::String(name.to_string()));
+        entry.insert("provider".to_string(), Value::String(preset.provider.trim().to_string()));
+        entry.insert("model".to_string(), Value::String(preset.model.trim().to_string()));
+        set_optional_text(&mut entry, "effort", &preset.effort);
+        set_optional_text(&mut entry, "purpose", &preset.purpose);
+        out.push(Value::Object(entry));
+    }
+
+    if !default.is_empty() && !seen.contains(default) {
+        return Err(format!("the default subagent preset \"{default}\" is not one of the presets"));
+    }
+    set_optional_text(section, "default", default);
+    section.insert("presets".to_string(), Value::Array(out));
+    Ok(())
 }
 
 fn mcp_structural_problem(object: &Map<String, Value>) -> Option<String> {
@@ -608,6 +743,11 @@ pub fn document_from(
         Some(Value::Object(map)) => map.clone(),
         _ => Map::new(),
     };
+    let subagents = if problem.is_none() {
+        subagents_view(&object)
+    } else {
+        SubagentsView::default()
+    };
 
     let mcp_document = match read_file(mcp.as_deref(), &paths.mcp) {
         ReadFile::Parsed(object) => {
@@ -656,6 +796,7 @@ pub fn document_from(
             tavily_base_url: text_of(&web_entry, "tavily_base_url"),
         },
         mcp: mcp_document,
+        subagents,
     })
 }
 
@@ -1066,13 +1207,16 @@ pub fn merge(
     paths: &ConfigPaths,
 ) -> Result<MergeOutput, String> {
     let mut config_out = None;
-    if patch.providers.is_some() || patch.web.is_some() {
+    if patch.providers.is_some() || patch.web.is_some() || patch.subagents.is_some() {
         let mut object = merge_base(current.config.as_deref(), &paths.config, structural_problem)?;
         if let Some(routes) = &patch.providers {
             apply_providers(&mut object, routes)?;
         }
         if let Some(web) = &patch.web {
             apply_web(&mut object, web)?;
+        }
+        if let Some(subagents) = &patch.subagents {
+            apply_subagents(&mut object, subagents)?;
         }
         config_out = Some(encode_object(&object)?);
     }
@@ -1207,6 +1351,7 @@ mod tests {
             providers: Some(vec![]),
             web: None,
             mcp: None,
+            subagents: None,
         };
         let out = merge(MergeInput { config: None, mcp: None }, &patch, &paths()).unwrap();
         assert!(out.config.is_some(), "the touched file is written");
@@ -1221,6 +1366,7 @@ mod tests {
             providers: Some(vec![]),
             web: None,
             mcp: None,
+            subagents: None,
         };
         let err = merge(
             MergeInput {
@@ -1244,6 +1390,7 @@ mod tests {
             providers: Some(vec![]),
             web: Some(WebPatch::default()),
             mcp: None,
+            subagents: None,
         };
         let out = merge(
             MergeInput {
@@ -1257,6 +1404,56 @@ mod tests {
         let text = String::from_utf8(out.config.expect("written")).unwrap();
         assert!(text.contains("keep me"), "a key the form has no field for survives: {text}");
         assert!(text.ends_with('\n'), "and the file keeps its trailing newline");
+    }
+
+    #[test]
+    fn subagent_presets_round_trip_and_keep_their_comments() {
+        let raw = br#"{"providers":{"a":{"api_key":"k"}},"subagents":{"presets":[{"name":"fast","provider":"a","model":"m","$comment":"keep"}]}}"#;
+        let doc = document_from(Some(raw.to_vec()), None, &paths()).unwrap();
+        assert_eq!(doc.subagents.presets.len(), 1);
+        assert_eq!(doc.subagents.default, "");
+
+        let patch = ConfigPatch {
+            subagents: Some(SubagentsView {
+                default: "fast".to_string(),
+                presets: vec![SubagentPresetView {
+                    name: "fast".to_string(),
+                    provider: "a".to_string(),
+                    model: "m".to_string(),
+                    effort: "low".to_string(),
+                    purpose: String::new(),
+                }],
+            }),
+            ..ConfigPatch::default()
+        };
+        let out = merge(MergeInput { config: Some(raw.to_vec()), mcp: None }, &patch, &paths()).unwrap();
+        let text = String::from_utf8(out.config.expect("written")).unwrap();
+        assert!(text.contains("keep"), "a preset's own comment survives: {text}");
+        assert!(text.contains("\"default\": \"fast\""));
+        assert!(text.contains("\"effort\": \"low\""));
+        assert!(!text.contains("purpose"), "an empty optional field is not written");
+        assert!(out.mcp.is_none());
+    }
+
+    #[test]
+    fn clearing_every_preset_removes_the_section() {
+        let raw = br#"{"subagents":{"presets":[{"name":"fast","provider":"a","model":"m"}]}}"#;
+        let patch = ConfigPatch {
+            subagents: Some(SubagentsView::default()),
+            ..ConfigPatch::default()
+        };
+        let out = merge(MergeInput { config: Some(raw.to_vec()), mcp: None }, &patch, &paths()).unwrap();
+        let text = String::from_utf8(out.config.unwrap()).unwrap();
+        assert!(!text.contains("subagents"), "{text}");
+    }
+
+    #[test]
+    fn a_default_that_names_no_preset_is_refused() {
+        let patch = ConfigPatch {
+            subagents: Some(SubagentsView { default: "ghost".to_string(), presets: vec![] }),
+            ..ConfigPatch::default()
+        };
+        assert!(merge(MergeInput { config: None, mcp: None }, &patch, &paths()).is_err());
     }
 
     #[test]

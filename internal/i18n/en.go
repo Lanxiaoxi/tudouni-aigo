@@ -929,6 +929,17 @@ var catalog = map[string]string{
 	"catalog.error.imagegen_no_provider": "{where} names provider {provider}, which is not a configured route; the routes are: {routes}",
 	"notice.imagegen.unconfigured":       "[image] no image-generation route is configured, so generate_image is not registered. To enable it, add an \"image_generation\" section to {path}: {\"provider\": \"<a chat route>\", \"model\": \"gpt-image-1\"}",
 
+	// --- subagent presets --------------------------------------------------
+	"catalog.where.subagents":             "subagents in {file}",
+	"catalog.where.subagent_preset":       "presets[{index}] in {where}",
+	"catalog.error.subagents_not_list":    "\"presets\" in {where} must be an array of presets",
+	"catalog.error.subagents_too_many":    "{where} lists {count} presets; at most {max} are allowed",
+	"catalog.error.subagent_duplicate":    "{spot} repeats the preset name {name}",
+	"catalog.error.subagent_bad_name":     "{spot} has the name {name}; a preset name is 1–32 letters, digits, '-' or '_'",
+	"catalog.error.subagent_no_route":     "{spot} must name both \"provider\" (a configured route) and \"model\" (a model on that route)",
+	"catalog.error.subagent_no_model":     "{spot} names model {model}, which is not one of the models on route {provider}",
+	"catalog.error.subagent_bad_default":  "\"default\" in {where} names {name}, which is not a preset; the presets are: {names} (delete the line to follow the parent session)",
+
 	// --- configuration validation ------------------------------------------
 	"config.error.unknown_keys":         "{where} has unknown keys: {names}\n  the known ones are: {known}\n  (a misspelled key that silently does nothing is the worst kind of failure, so this stops here)",
 	"config.error.unknown_web_keys":     "the \"web\" section of {path} has unknown keys: {names}\n  the known ones are: {known}\n  (a misspelled key that silently does nothing is the worst kind of failure, so this stops here)",

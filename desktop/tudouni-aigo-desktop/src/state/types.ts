@@ -87,7 +87,12 @@ export type PanelKind =
    * in the home directory, so switching workspaces must not reset it. It reads
    * through the runtime (the ledger's only writer and reader), which is why it
    * gates on a live session like Memory and Code intelligence do. */
-  | 'usage';
+  | 'usage'
+  /* The delegation presets: which route and effort a subagent runs on. A panel
+   * for the same reason Config is — it edits `~/.tudouni/config.json`, which is
+   * read when a session starts, so it opens with no session at all. Distinct
+   * from `subagents`, which is the live list of running delegations. */
+  | 'subagentPresets';
 
 /* `ssh` sits with the workspace-capability blocks (jobs, mcp): it is about
  * things running in the workspace, not about this turn's conversation. */

@@ -182,6 +182,9 @@ type Registry struct {
 	// The zero value means "no image generation is configured", which is a
 	// normal state rather than a problem: the capability was never promised.
 	Image ImageRoute
+	// Subagents are the delegation presets. The zero value means none are
+	// configured and every delegation follows the parent's route.
+	Subagents SubagentPresets
 }
 
 // Provider looks up a route by name.
@@ -422,6 +425,13 @@ func Load(path string) (Registry, error) {
 		return Registry{}, err
 	}
 	registry.Image = image
+	// The delegation presets name routes, so they too are read after the
+	// providers and checked against them.
+	subagents, err := ParseSubagentPresets(cfg, registry)
+	if err != nil {
+		return Registry{}, err
+	}
+	registry.Subagents = subagents
 	if cfg.LegacyEnvPath != "" {
 		registry.Notes = append(registry.Notes, i18nText("notice.config.legacy_env",
 			"path", cfg.LegacyEnvPath, "config", source))

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Activity, Archive, ArchiveRestore, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
+import { Activity, Archive, ArchiveRestore, Bot, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Wrench, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -659,6 +659,17 @@ export function WorkspaceSidebar() {
       icon: <ListChecks size={14} />,
       disabled: blocked,
       run: () => openPanel('tasks'),
+    },
+    {
+      key: 'subagentPresets',
+      group: 'settings',
+      label: t('lb.subagentPresets'),
+      hint: t('lb.subagentPresetsHint'),
+      icon: <Bot size={14} />,
+      // `blocked` alone, like Config: the presets are read when a session
+      // starts, so the person setting them up may have no session yet.
+      disabled: blocked,
+      run: () => openPanel('subagentPresets'),
     },
     {
       key: 'board',

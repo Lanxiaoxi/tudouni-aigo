@@ -98,7 +98,31 @@ export interface ConfigDocument {
   providers: RouteView[];
   web: WebView;
   mcp: McpDocumentView;
+  /** The delegation presets (`subagents` in config.json). Edited by the
+   *  subagent presets panel, not by this one. */
+  subagents: SubagentsView;
 }
+
+/** One delegation preset, mirroring `state.SubagentPreset` in the runtime. */
+export interface SubagentPresetView {
+  name: string;
+  provider: string;
+  model: string;
+  /** Empty means "the model's declared default, else the session's level". */
+  effort: string;
+  /** What the preset is for. The delegating model reads this to choose, so it
+   *  is the one field about the task rather than the route. */
+  purpose: string;
+}
+
+/** The `subagents` section. An empty `default` means "follow the session". */
+export interface SubagentsView {
+  default: string;
+  presets: SubagentPresetView[];
+}
+
+/** The runtime's cap (`state.MaxSubagentPresets`). */
+export const MAX_SUBAGENT_PRESETS = 8;
 
 /**
  * The three wire protocols, mirroring `state.styles` in the Go catalogue.
@@ -121,6 +145,7 @@ export interface ConfigPatch {
   providers?: RouteView[];
   web?: WebView;
   mcp?: McpServerView[];
+  subagents?: SubagentsView;
 }
 
 export interface Draft {

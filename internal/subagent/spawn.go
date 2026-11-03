@@ -40,7 +40,7 @@ import (
 // the work Esc interrupts: its lifetime is the board's, not the turn's.
 // label is this call's own, passed in by execute: the tool holds no per-call
 // state, because two invocations may be in flight at once.
-func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (tools.Result, error) {
+func (t *Tool) spawn(ctx context.Context, task, label, presetName string, background bool) (tools.Result, error) {
 	started := time.Now()
 	childID, err := t.mintChildID()
 	if err != nil {
@@ -55,7 +55,7 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 		parentModel, parentProvider = t.Chat.ModelName(), t.Chat.ProviderName()
 	}
 
-	resolved, err := t.resolveChild(parentModel, parentProvider)
+	resolved, err := t.resolveChild(parentModel, parentProvider, presetName)
 	if err != nil {
 		return tools.TextResult(fmt.Sprintf("delegation failed: %v. Do this step yourself, or explain in your final answer why a subagent was needed.", err)), nil
 	}
@@ -81,6 +81,7 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 		"depth":       childDepth,
 		"model":       chosen,
 		"provider":    route.Name,
+		"preset":      presetName,
 		"background":  background,
 	}))
 
@@ -129,12 +130,19 @@ func (t *Tool) spawn(ctx context.Context, task, label string, background bool) (
 	// than left implicit. A child session that does not say which model produced
 	// it is a transcript somebody will later misattribute, and the resolution may
 	// have picked a route the configuration did not name explicitly.
+	// The effort is the one the client was built with when the resolver says
+	// so: a preset may set its own level, and recording the parent's would be
+	// a session file naming a level the child never ran at.
+	childEffort := t.Effort
+	if resolved.Effort != "" {
+		childEffort = resolved.Effort
+	}
 	session.Meta().Write(func(metadata map[string]any) {
 		state.StoreSelection(metadata, state.Selection{
 			Provider: route.Name,
 			Model:    chosen,
 			Thinking: t.Thinking,
-			Effort:   t.Effort,
+			Effort:   childEffort,
 		}, 0)
 	})
 
@@ -535,15 +543,30 @@ func (t *Tool) toolsForChild() *tools.Registry {
 // whichever agent answers it. A resolver may override that, and when it does the
 // child's session records the resolved route rather than the requested one — a
 // session that names a route it did not use is worse than no record at all.
-func (t *Tool) resolveChild(parentModel, parentProvider string) (ChildChat, error) {
+//
+// presetName is the preset this call resolved to (the argument, or the
+// configured default). Empty means no preset applies, and the fixed Child*
+// fields — empty in every current caller — decide, which is the parent's route.
+func (t *Tool) resolveChild(parentModel, parentProvider, presetName string) (ChildChat, error) {
 	if t.Resolver == nil {
 		return ChildChat{}, fmt.Errorf("no route resolver is configured for subagents")
 	}
-	resolved, err := t.Resolver.ResolveChild(Route{
+	request := Route{
 		Model:    t.ChildModel,
 		Provider: t.ChildProvider,
 		Effort:   t.ChildEffort,
-	}, parentModel, parentProvider)
+	}
+	if presetName != "" {
+		preset, found := t.Presets.Find(presetName)
+		if !found {
+			// execute has already refused unknown names, so this is a default that
+			// names nothing — the config parser refuses that too. Refusing here as
+			// well keeps "never silently fall back" true without relying on both.
+			return ChildChat{}, fmt.Errorf("preset %q is not configured", presetName)
+		}
+		request = Route{Provider: preset.Provider, Model: preset.Model, Effort: preset.Effort}
+	}
+	resolved, err := t.Resolver.ResolveChild(request, parentModel, parentProvider)
 	if err != nil {
 		return ChildChat{}, err
 	}

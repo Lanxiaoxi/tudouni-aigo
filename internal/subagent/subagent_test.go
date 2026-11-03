@@ -234,6 +234,14 @@ func (h *harness) warningsSeen() []string {
 // workspace so the child's artifact store lands somewhere disposable.
 func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harness {
 	t.Helper()
+	return newHarnessWithPresets(t, child, state.SubagentPresets{}, extraTools...)
+}
+
+// newHarnessWithPresets is newHarness with delegation presets configured. The
+// presets have to be there at build time: they decide the schema, and setting
+// them afterwards would leave a tool that refuses the `preset` argument.
+func newHarnessWithPresets(t *testing.T, child *fakeModel, presets state.SubagentPresets, extraTools ...tools.Tool) *harness {
+	t.Helper()
 	// The child's artifact directory is derived from the working directory, so the
 	// test runs somewhere disposable rather than in the repository. t.Chdir
 	// restores it even if the test fails.
@@ -315,6 +323,7 @@ func newHarness(t *testing.T, child *fakeModel, extraTools ...tools.Tool) *harne
 		// The tool has to be in the parent's registry for the clone test to mean
 		// anything, so it is registered after Build and before the call.
 		MaxDepth: DefaultMaxDepth,
+		Presets:  presets,
 	})
 	if !ok {
 		t.Fatal("Build returned no tool for a depth of three")

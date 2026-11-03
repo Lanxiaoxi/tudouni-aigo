@@ -76,6 +76,9 @@ type ChildChat struct {
 	Chat     model.ChatModel
 	Model    string
 	Provider state.Provider
+	// Effort is the reasoning level the child's client was built with. Empty
+	// means the resolver did not say, and the parent's level is recorded.
+	Effort string
 }
 
 // RouteResolver turns a requested route into a usable client.
@@ -184,6 +187,13 @@ type Config struct {
 	ChildProvider string
 	ChildModel    string
 	ChildEffort   string
+
+	// Presets are the person's named routes for delegations (the `subagents`
+	// section of config.json). With none configured the tool offers no
+	// `preset` argument at all; with some, the model picks a name off this
+	// list and never a model. A call that names no preset gets Presets.Default,
+	// and an empty default is "the parent's route" — the pre-preset behaviour.
+	Presets state.SubagentPresets
 
 	// Thinking and Effort are the parent's reasoning settings, inherited by the
 	// child so a delegation does not silently change how hard the model thinks.
@@ -301,27 +311,39 @@ func BuildWithHandle(config Config) (*Tool, tools.Tool, bool) {
 		maxBG = 0
 	}
 
+	properties := map[string]any{
+		"description": tools.StringSchema(
+			"这次委派要做什么，3–5 个词，只给界面显示用"),
+		"prompt": tools.StringSchema(
+			"子 agent 的完整任务。**它看不到这次对话** —— 它开在全新会话里，"+
+				"所以要说清背景、目标、约束、验收标准，以及你已知的、它自己查不到的结论。"+
+				"只写你真正需要的那一件事，不要写成一个大纲。",
+			tools.MinLength(1)),
+		"background": tools.BoolSchema(
+			"true = 后台委派：调用立即返回子 agent 的 id，它跑它的，你继续你的回合；"+
+				"完成后用收取工具取结果。只在你接下来的步骤**不依赖**这个结果时用；"+
+				"默认 false（前台等待答复）。"),
+	}
+	// The preset argument exists only when the person configured presets: a
+	// parameter whose every value would be refused is a parameter that teaches
+	// the model to make failing calls. The enum is the configured names, so
+	// the model can pick a name and never invent a model.
+	if names := config.Presets.Names(); len(names) > 0 {
+		properties["preset"] = tools.StringSchema(
+			"子 agent 用哪个预设（模型和推理强度由用户配好）。按任务性质对照工具描述里每个预设的用途来选；"+
+				"不填就用用户设置的默认预设。",
+			tools.Enum(names...))
+	}
+
 	built := tools.Tool{
 		Name:        config.Name,
-		Description: description(config.MaxDepth, maxBG),
+		Description: description(config.MaxDepth, maxBG) + presetsParagraph(config.Presets),
 		// High risk, and it is not a formality. This tool runs a whole agent,
 		// which means it can run any other tool as many times as it likes; a
 		// permission system that rated it low would be granting that entire
 		// subtree on the strength of one approval.
-		Risk: security.RiskHigh,
-		Schema: tools.ObjectSchema(map[string]any{
-			"description": tools.StringSchema(
-				"这次委派要做什么，3–5 个词，只给界面显示用"),
-			"prompt": tools.StringSchema(
-				"子 agent 的完整任务。**它看不到这次对话** —— 它开在全新会话里，"+
-					"所以要说清背景、目标、约束、验收标准，以及你已知的、它自己查不到的结论。"+
-					"只写你真正需要的那一件事，不要写成一个大纲。",
-				tools.MinLength(1)),
-			"background": tools.BoolSchema(
-				"true = 后台委派：调用立即返回子 agent 的 id，它跑它的，你继续你的回合；"+
-					"完成后用收取工具取结果。只在你接下来的步骤**不依赖**这个结果时用；"+
-					"默认 false（前台等待答复）。"),
-		}, "prompt"),
+		Risk:   security.RiskHigh,
+		Schema: tools.ObjectSchema(properties, "prompt"),
 		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			return tool.execute(ctx, arguments)
 		},
@@ -366,6 +388,18 @@ func (t *Tool) execute(ctx context.Context, arguments map[string]any) (tools.Res
 	// validates it), so the zero value is genuinely "the argument was left out".
 	background, _ := arguments["background"].(bool)
 
+	// An unknown preset is refused, never replaced by the default or the
+	// parent's route: the person chose what each name costs, and a silent
+	// substitute would bill a route nobody picked for this call.
+	presetName := strings.TrimSpace(stringArg(arguments, "preset"))
+	if presetName != "" {
+		if _, found := t.Presets.Find(presetName); !found {
+			return tools.TextResult(presetRefusal(presetName, t.Presets)), nil
+		}
+	} else {
+		presetName = t.Presets.Default
+	}
+
 	if refusal := t.depthRefusal(); refusal != "" {
 		return tools.TextResult(refusal), nil
 	}
@@ -374,7 +408,7 @@ func (t *Tool) execute(ctx context.Context, arguments map[string]any) (tools.Res
 			return tools.TextResult(refusal), nil
 		}
 	}
-	return t.spawn(ctx, prompt, label, background)
+	return t.spawn(ctx, prompt, label, presetName, background)
 }
 
 // depthRefusal reports why this delegation is not allowed, or "" when it is.
@@ -582,6 +616,44 @@ func description(maxDepth, maxBackground int) string {
 3. **它不能再往下委派，也碰不到父会话的待办、目标和技能。** 当前深度上限是 %d 层，子 agent 到顶之后只能自己做完；它有自己的会话，父会话的 todo、goal 和已加载技能对它既不显示也不可改。
 
 它返回的是它的最终文本，不是它的中间步骤；失败、被中断或步数用尽时会明确标出来，并附上它已经产出的部分。`, background, maxDepth)
+}
+
+// presetsParagraph is the part of the description that lists the presets.
+//
+// It names each preset by its purpose and **not** by its model: the model is
+// meant to choose by what the task is, and a line that said "gpt-x" would
+// invite it to choose by which model it believes is stronger. Empty when no
+// presets are configured, for the same reason the background paragraph is
+// conditional.
+func presetsParagraph(presets state.SubagentPresets) string {
+	if len(presets.Presets) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n预设（preset 参数）：用户配好了下面这些子 agent 预设，每个对应一个模型和推理强度。按任务性质选一个：\n")
+	for _, preset := range presets.Presets {
+		purpose := strings.TrimSpace(preset.Purpose)
+		if purpose == "" {
+			purpose = "（未写用途）"
+		}
+		fmt.Fprintf(&b, "- %s：%s\n", preset.Name, purpose)
+	}
+	if presets.Default != "" {
+		fmt.Fprintf(&b, "不填 preset 时用默认预设 %s。", presets.Default)
+	} else {
+		b.WriteString("不填 preset 时子 agent 跟随你当前的模型。")
+	}
+	return b.String()
+}
+
+// presetRefusal is the answer to a preset name that is not configured.
+func presetRefusal(name string, presets state.SubagentPresets) string {
+	names := presets.Names()
+	if len(names) == 0 {
+		return fmt.Sprintf("preset %q does not exist: no subagent presets are configured. Leave preset out and the subagent follows your current model.", name)
+	}
+	return fmt.Sprintf("preset %q does not exist; the configured presets are: %s. Pick one of them, or leave preset out to use the default.",
+		name, strings.Join(names, ", "))
 }
 
 // delegationScopeMessage is the declaration the child gets in its own history.

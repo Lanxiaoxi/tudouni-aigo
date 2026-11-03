@@ -87,13 +87,17 @@ func (r *Runtime) ResolveChild(route subagent.Route, parentModel, parentProvider
 
 	thinking, effort := modelState.Thinking(), modelState.Effort()
 	if route.Effort == "" {
-		// An explicit reasoning level for the child would need `reasoning_effort`
-		// handling on the request path, which the parent's own `/model` command
-		// already covers. Until a caller can actually set ChildEffort, the
-		// session's level is the honest answer — and it is the predictable one,
-		// since changing a route here would otherwise silently change how hard the
-		// model thinks.
+		// No level was asked for. A preset that moved the child to another model
+		// takes that model's declared default when it has one — the session's
+		// level was chosen for a different model. Otherwise the session's level
+		// is the predictable answer: following the parent's route must not
+		// silently change how hard the model thinks.
 		effort = r.ModelState.Effort()
+		if route.Model != "" {
+			if ref, ok := r.Catalog.Find(chosen, provider.Name); ok && ref.DefaultEffort != "" {
+				effort = ref.DefaultEffort
+			}
+		}
 	}
 
 	// The **parent's** session id, deliberately, not the child's own. A delegated
@@ -117,6 +121,7 @@ func (r *Runtime) ResolveChild(route subagent.Route, parentModel, parentProvider
 		Chat:     childChat,
 		Model:    chosen,
 		Provider: provider,
+		Effort:   effort,
 	}, nil
 }
 
