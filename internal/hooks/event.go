@@ -109,6 +109,13 @@ func (e Event) Gate() bool {
 	return e == EventPreToolUse || e == EventPermissionRequest
 }
 
+// CanDecide reports whether a hook on this event may answer allow / ask / deny. It is
+// what makes `fail_closed` mean anything: an event whose answer has nowhere to go cannot
+// refuse a call, so a failure there is only ever recorded.
+func (e Event) CanDecide() bool {
+	return e.Params().decide
+}
+
 // ToolEvent reports whether a tool name is what the matcher is matched against.
 func (e Event) ToolEvent() bool {
 	return e == EventPreToolUse || e == EventPostToolUse || e == EventPermissionRequest

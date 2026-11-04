@@ -139,7 +139,16 @@ const VERSION = 1
 // requests to learn nothing. The absence rule keeps the old reading (no key
 // means the rows are per level), which is what a runtime below 15 means by
 // sending rows at all. Purely additive for the same reason 13 was.
-const PROTOCOL = 15
+//
+// 16 adds the hooks panel: `hooks_list` / `hooks_action` inbound and a `hooks` kind on the
+// `ui` channel carrying the panel's whole snapshot (the user's hooks file as editable
+// rows, the state of each hook against the running session, how each script's latest run
+// ended, and the workspace's own file read-only). Additive in the same way 6 was: a front
+// end that knows neither never asks, and nothing about a session's behaviour depends on
+// the panel being drawn. A front end that draws the panel gates it on this number — a
+// runtime below 16 would answer with nothing, and a button that answers with nothing is a
+// promise the runtime cannot keep.
+const PROTOCOL = 16
 
 // Message keys used by every envelope.
 const (
@@ -213,6 +222,15 @@ const (
 	// vocabularies.
 	InMemoryList   = "memory_list"
 	InMemoryAction = "memory_action"
+
+	// The user's hooks file. Two verbs shaped like memory's, for the same reasons:
+	// `hooks_list` reads everything the panel draws, `hooks_action` carries one change.
+	//
+	// The change is a person's, not the model's. A hook is a command this machine runs on
+	// every tool call, so editing the list is editing what runs with the person's authority;
+	// the model has no tool that reaches it, and its own file tools refuse the path.
+	InHooksList   = "hooks_list"
+	InHooksAction = "hooks_action"
 
 	// The workspace's code index. **One verb**, unlike memory's two: `status` is one of
 	// this message's actions rather than its own kind, because the panel asks for the
@@ -308,6 +326,13 @@ const (
 	// notice alone. The panel is a modal layer over the transcript, so a notice lands
 	// behind the thing that is covering it — the trap the files panel hit first.
 	UIMemory = "memory"
+
+	// The hooks panel: the answer to `hooks_list`, and to every `hooks_action` — the same
+	// snapshot taken again after the change, so the panel redraws from one message rather
+	// than patching its own copy. A refusal carries `problem` beside the snapshot, for the
+	// reason memory's does: the panel is a layer over the transcript, so a notice would be
+	// printed behind the thing that is asking.
+	UIHooks = "hooks"
 
 	// The workspace's code index: the panel's whole snapshot, and the progress of a
 	// build in flight.
@@ -418,6 +443,16 @@ const (
 // MemoryActions is the accepted list, for the error message that names them.
 var MemoryActions = []string{MemoryPublish, MemoryReject, MemoryDeprecate, MemoryRebuild, MemoryConfig}
 
+// Actions a `hooks_action` message accepts. One: the panel edits a form and writes the
+// whole document, because a per-field verb would let two edits interleave into a file
+// neither of them described.
+const (
+	HooksSave = "save"
+)
+
+// HooksActions is the accepted list, for the error message that names them.
+var HooksActions = []string{HooksSave}
+
 // Actions a `codeintel_action` message accepts.
 //
 // The spellings live here for the same reason the memory ones do: the wire's vocabulary
@@ -502,6 +537,10 @@ var RequiredKeys = map[string][]string{
 	// `action` is the verb; the rest of the message is that verb's arguments and is
 	// validated by the runtime, which is the side that knows what publishing needs.
 	InMemoryAction: {"v", "t", "action"},
+
+	// Same split as memory: the verb is required, its arguments are the runtime's to judge.
+	InHooksList:   {"v", "t"},
+	InHooksAction: {"v", "t", "action"},
 
 	// `action` is the verb and the arguments are that verb's. `status` takes none, and
 	// `config` carries `enabled` — validated by the runtime for the same reason the

@@ -22,6 +22,7 @@
 @import './components/config.css';
 @import './components/rewind.css';
 @import './components/workspace.css';
+@import './components/hooks.css';
 @import './components/codeintel.css';
 @import './components/usage.css';
 @import './components/notice-center.css';

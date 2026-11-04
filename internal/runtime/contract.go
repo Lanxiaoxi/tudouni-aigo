@@ -52,6 +52,9 @@ var _ protocol.UsageService = (*Runtime)(nil)
 // MemoryService answers the workspace-memory commands.
 var _ protocol.MemoryService = (*Runtime)(nil)
 
+// HooksService answers the hooks panel's commands.
+var _ protocol.HooksService = (*Runtime)(nil)
+
 // AuthStartup runs the credential check at the moment the handshake is out.
 var _ protocol.AuthStartup = (*Runtime)(nil)
 

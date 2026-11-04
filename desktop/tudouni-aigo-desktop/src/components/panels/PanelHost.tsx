@@ -24,6 +24,7 @@ import { SettingsPanel } from './SettingsPanel';
 import { ConfigPanel } from './ConfigPanel';
 import { TaskPanel } from './TaskPanel';
 import { SubagentPresetsPanel } from './SubagentPresetsPanel';
+import { HooksPanel } from './HooksPanel';
 
 /**
  * §5 Panel host.
@@ -77,6 +78,7 @@ export function PanelHost() {
             panel === 'config' ||
             panel === 'tasks' ||
             panel === 'subagentPresets' ||
+            panel === 'hooks' ||
             panel === 'learn' ||
             panel === 'usage' ||
             panel === 'terminal' ||
@@ -109,6 +111,7 @@ export function PanelHost() {
           {panel === 'codeintel' ? <CodeIntelPanel /> : null}
           {panel === 'usage' ? <UsagePanel /> : null}
           {panel === 'subagentPresets' ? <SubagentPresetsPanel /> : null}
+          {panel === 'hooks' ? <HooksPanel /> : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

@@ -392,6 +392,9 @@ const SUITES = [
   // that owed the reply died. The functions are pure, which is what lets the
   // rate-limit and two-routes cases be constructed instead of staged.
   'effort-probe.test.ts',
+  // The hooks panel's form as data: dirty tracking, event-scoped moves, when a
+  // refused save keeps the typing, and which result may sit beside which command.
+  'hooks-draft.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

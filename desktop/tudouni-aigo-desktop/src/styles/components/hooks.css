@@ -1,0 +1,290 @@
+/* ============================================================
+   Hooks
+   ============================================================
+   One card per hook, collapsed to a single line until it is opened.
+
+   **Nothing in here is a new vocabulary.** The buttons are `.btn`, the fields are
+   `.cfg-input` laid out by `.pc-row`, the problem banners are `.cfg-problem`, the
+   switch is `.tk-switch`, the badges are `.badge`. What is added is the card, the
+   one-line summary, and the line that says how the script's last run ended.
+
+   Three things on a card are facts about different times, and the layout keeps them
+   apart: the badge in the head is how the *file* relates to the *running session*,
+   the run line is what the script *did* in that session, and the form below is what
+   the person is *editing now*. */
+
+.hk-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.hk-card {
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+
+.hk-card.is-open {
+  border-color: var(--border-strong);
+}
+
+/* A hook that is switched off is still a row to read and to switch back on, so it
+   is dimmed rather than hidden; the head keeps full strength so the switch and the
+   name stay easy to find. */
+.hk-card.is-off .hk-summary,
+.hk-card.is-off .hk-run {
+  opacity: 0.6;
+}
+
+.hk-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* The whole text block is the fold control. A button around the label rather than a
+   click on the row, because the row also carries the switch, and a wrapper that took
+   the click would fire on the switch's presses too. */
+.hk-fold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hk-caret {
+  flex: none;
+  color: var(--fg-muted);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.hk-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.hk-fold:hover .hk-caret {
+  color: var(--fg);
+}
+
+.hk-fold:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--focus-ring);
+}
+
+.hk-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hk-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.hk-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hk-event {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+/* The command is the one thing a person scans the list for, so it gets the room the
+   name does not need; clipped, with the full text on hover. */
+.hk-summary {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hk-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* ---- how the last run ended ---- */
+
+.hk-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 var(--space-4) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.hk-run > span + span::before {
+  content: '·';
+  margin-right: var(--space-2);
+  color: var(--fg-faint);
+}
+
+/* The executor's own word, untranslated: it is what the audit log says, and what the
+   person will search for. */
+.hk-run-status {
+  font-family: var(--font-mono);
+  color: var(--fg-secondary);
+}
+
+/* What the script said (a crash's stderr, a refusal's reason). On its own line because
+   it can be a sentence, and wrapped rather than clipped: it is the thing the person
+   opened the panel to read. */
+.hk-run-reason {
+  flex: 1 1 100%;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-secondary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.hk-run.is-failed,
+.hk-run.is-crashed {
+  background: var(--destructive-subtle);
+}
+
+.hk-run-note {
+  margin: 0 var(--space-4) var(--space-3);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+/* ---- the form inside an open card ---- */
+
+.hk-body {
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.hk-body .pc-row {
+  grid-template-columns: 140px minmax(0, 1fr);
+}
+
+.hk-warn {
+  margin: 0;
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--warning-text);
+}
+
+/* The foot of a card: reorder and delete. Quiet until aimed at, the way every
+   destructive control in this app is. */
+.hk-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.hk-actions .grow {
+  flex: 1 1 auto;
+}
+
+/* ---- the repository's own file, read-only ---- */
+
+.hk-ws {
+  margin-top: var(--space-6);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--bg-muted);
+}
+
+.hk-ws-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.hk-ws-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.hk-ws-note {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-caption);
+  line-height: var(--leading-tight);
+  color: var(--fg-muted);
+}
+
+.hk-ws-path {
+  display: block;
+  margin-bottom: var(--space-2);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hk-ws-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-2) 0;
+}
+
+.hk-ws-row + .hk-ws-row {
+  border-top: 1px solid var(--border);
+}
+
+.hk-ws-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.hk-ws-why {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.hk-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-secondary);
+}

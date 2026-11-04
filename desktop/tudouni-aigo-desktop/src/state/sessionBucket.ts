@@ -77,6 +77,8 @@ export function createSessionBucket(
     fileView: null,
     memory: null,
     memoryProblem: null,
+    hooks: null,
+    hooksProblem: null,
     codeintel: null,
     codeintelProblem: null,
     probeEffort: null,

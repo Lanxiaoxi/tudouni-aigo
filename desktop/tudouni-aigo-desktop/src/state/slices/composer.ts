@@ -620,6 +620,12 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         // not something every turn needs to redraw.
         get().requestMemory();
       }
+      if (p === 'hooks') {
+        // Asked for on open, and not carried on `ui(state)`: which hooks a session
+        // loaded and how their scripts have done is not something every turn needs
+        // to redraw.
+        get().requestHooks();
+      }
       if (p === 'codeintel') {
         // Same rule as memory: the counts are the panel's own snapshot. The switch is
         // also on `ui(state)`, but "how far behind is it" is not, and that is the

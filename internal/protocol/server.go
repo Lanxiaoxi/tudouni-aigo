@@ -533,6 +533,12 @@ func (s *Server) Dispatch(message map[string]any) bool {
 	case InMemoryAction:
 		s.handleMemoryAction(message)
 
+	case InHooksList:
+		s.handleHooksList()
+
+	case InHooksAction:
+		s.handleHooksAction(message)
+
 	case InUserMessage:
 		text, _ := String(message, "text")
 		s.startTurn(text)

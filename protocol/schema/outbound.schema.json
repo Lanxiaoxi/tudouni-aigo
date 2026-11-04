@@ -137,7 +137,7 @@
       "t": {"type": "string", "const": "ui"},
       "kind": {
         "type": "string",
-        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "terminals", "terminal_created", "terminal_output", "terminal_exit", "memory", "codeintel", "usage", "probe_effort"],
+        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "terminals", "terminal_created", "terminal_output", "terminal_exit", "memory", "hooks", "codeintel", "usage", "probe_effort"],
         "doc": "run_finished = 这一轮的正文（answer + run_id）；state = 面板数据快照（todos/skills/skill_catalog/jobs/mcp/agents_md/messages/steps/model/**terminals**）；status = `/status` 要的那一屏（回答入站的 status）；tools = `/tools` 的清单（回答入站的 tools）；mcp = `/mcp` 的清单（回答入站的 mcp）；skills = `/skills` 的清单（回答入站的 skills：`skills` 是这个会话**能加载**的全量目录，`active` 才是**已加载**的名字 —— 两者不能混，详见 `skills` 那条）；compacted = `/compact` 那一次的结果（回答入站的 compact，字段 `compaction`）；context = `/context` 那一屏（回答入站的 context，字段 `context`）；files = 一层目录的清单（回答入站的 `file_list`）；file_read = 一个文件的读取结果（回答入站的 `file_read`）；terminals = 这个 workspace 的全量 Terminal 清单（回答入站的 `terminal_list`，也是 `terminal_create` **失败**时的回答）；terminal_created = `terminal_create` 成功，带新建的那一条；terminal_output = 终端输出的**异步增量**（没有对应的入站消息 —— 它是对 `terminal_input` 那一次写的后续，而不是它的答案）；terminal_exit = shell 结束（自己退的或被杀的，靠 `reason` 分）；codeintel = 工作区代码索引面板（回答入站的 `codeintel_action`，也承载构建进度的推送）；usage = 跨工作区用量总账的汇总（回答入站的 `usage_stats`，字段 `usage`）。这些 kind 都不进审计 —— 终端输出尤其不能：它是无限流，写进审计等于把日志变成第二个终端。"
       },
       "answer": {
@@ -369,6 +369,20 @@
         "type": "string",
         "doc": "**只有 kind=terminal_exit 有**。`exited`（shell 自己退的）还是 `killed`（有人在 `terminal_kill` 里结束了它）。**这个区分不能让前端猜**：一个 `exit` 命令和一个被杀的进程在 UI 上应该长得不一样，而两者的退出码可能都是 0 —— 实际上被杀的那个往往**没有**退出码（null）。"
       },
+      "hooks": {
+        "type": "object",
+        "doc": [
+          "**kind=hooks 有**（protocol 16）。用户级 hooks 文件的**全量**快照，同一个 kind 既回答 `hooks_list` 也回答每一次 `hooks_action`。",
+          "`path`（文件路径）、`scripts_dir`、`disabled`（本会话是不是 `--no-hooks`）、`file`（`{exists, revision, problem}`，`problem` 非空 = 文件读不了，面板要说是哪个文件、且不能覆盖它）、",
+          "`defaults`、`entries`（文件里的每个 hook，外加 runtime 解出来的 `timeout_effective` / `fail_closed_effective`、`executable_found`、`state` 和 `activity`）、",
+          "`events`（十个事件及其默认超时、能不能做决定）、`scripts`（脚本目录里的文件和建议的命令行）、`workspace`（仓库自带的那份，**只读**）、`limits`。",
+          "**`state` 说的是文件与本会话的关系**：`active`（一致，在跑）/ `pending`（不一致，新会话才按文件来）/ `off`（关着）/ `bypassed`（会话带了 `--no-hooks`）。",
+          "**`activity` 只在 `state=active` 时有**：改过之后记录下来的结果属于旧命令，摆在新命令旁边就是在描述一个没跑过的脚本。",
+          "`activity.last.class` 是结论：`success` / `refused`（脚本说了不——护栏在工作，不算失败）/ `failed`（起不来、超时、输出不是决定、输出超限）/ `crashed`（异常退出码）/ `cancelled`（轮次被打断，不是脚本的错）；",
+          "`status` 是执行器自己的词，原样给，因为那是审计日志里搜得到的字符串。",
+          "**全量而非增量**，理由和 `memory` 一样：前端每次按全量重画。"
+        ]
+      },
       "memory_pending": {
         "type": "integer",
         "doc": [
@@ -393,7 +407,7 @@
       "problem": {
         "type": "string",
         "doc": [
-          "**kind=memory / codeintel / usage / probe_effort 有**（可选）。上一次 `memory_action` / `codeintel_action` 为什么没成，或者 `usage_stats` 为什么答不出（没有会话 / 没有账本 / 读不出来），或者 `probe_effort` 为什么跑不了（runtime 不支持探测 / 探测中途失败），runtime 自己的整句。",
+          "**kind=memory / hooks / codeintel / usage / probe_effort 有**（可选）。上一次 `memory_action` / `hooks_action` / `codeintel_action` 为什么没成，或者 `usage_stats` 为什么答不出（没有会话 / 没有账本 / 读不出来），或者 `probe_effort` 为什么跑不了（runtime 不支持探测 / 探测中途失败），runtime 自己的整句。",
           "**它必须在这条消息里**，不能只发 notice：面板是盖在会话流上的一层，notice 会写在它背后 —— 文件面板踩过这个坑。",
           "带 `problem` 时 `memory` / `codeintel` 可能仍然在（拒绝之后快照照发，因为「现在有什么」还是要知道的）；`usage` 在读不出账本时没有快照可带，是唯一「只有 problem」的情形；`probe_effort` 跑不了时同样只有 problem。"
         ]

@@ -134,6 +134,8 @@ func (s *Set) Fire(ctx context.Context, envelope Envelope) Result {
 		// depend on which call site fired the hook.
 		s.emitHookResult(outcome, envelope)
 		s.debugLine(hook, outcome)
+		// The same fact, kept for whoever asks "how did my hook do" without an audit file.
+		s.remember(outcome)
 
 		if outcome.Status != StatusOK && outcome.Status != StatusDenied {
 			// The hook failed. Whether that ends the call is the event's decision,

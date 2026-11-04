@@ -15,7 +15,7 @@ import { pollNow } from '../polling';
 import { selectModalVisible } from '../selectors/session';
 import { activeWorkspaceOf, remoteConnectionOf } from '../appView';
 
-export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'enterContextView' | 'leaveContextView' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
+export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'enterContextView' | 'leaveContextView' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestHooks' | 'saveHooks' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
   const { set, get, patch, patchWith, markSavedSessionsPending } = ctx;
   return {
     answerPermission(decision) {
@@ -471,6 +471,26 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       // what publishing takes, and a second check here would be a second answer that
       // eventually disagrees with it.
       sendTo(key, { v: 1, t: 'memory_action', action, ...(args ?? {}) });
+    },
+
+    requestHooks() {
+      const key = get().activeKey;
+      if (key === null) return;
+      // No loading flag, for the reason `requestMemory` has none: the panel draws
+      // `hooks === null` as its loading state.
+      sendTo(key, { v: 1, t: 'hooks_list' });
+    },
+
+    saveHooks(revision, document) {
+      const key = get().activeKey;
+      if (key === null) return;
+      // The previous refusal is cleared here, not on the answer: a new save
+      // supersedes it the moment it is asked for.
+      patch(key, { hooksProblem: null });
+      // Whether the document is acceptable is the **runtime's** judgement — it runs
+      // the validator start-up uses over the bytes it would write. A second check
+      // here would be a second answer that eventually disagrees with it.
+      sendTo(key, { v: 1, t: 'hooks_action', action: 'save', revision, document });
     },
 
     requestCodeIntel() {

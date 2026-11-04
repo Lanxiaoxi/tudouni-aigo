@@ -95,8 +95,15 @@ export const ENVELOPE_VERSION = 1;
  * `ProbeEffortSnapshot.levels_are_one_answer`, present only when true. The
  * Messages wire has no field for a level, so the endpoint never sees it and
  * every row is the same finding — absent keeps the old reading (per level).
+ *
+ * **16** adds the hooks panel: `hooks_list` / `hooks_action` inbound and a `hooks`
+ * kind on the `ui` channel carrying the user's hooks file as editable rows, the
+ * state of each hook against the running session, and how each script's latest
+ * run ended. Additive like 6 was. A front end that draws the panel gates it on
+ * this number: a runtime below 16 would answer with nothing, and a button that
+ * answers with nothing is a promise the runtime cannot keep.
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;
 
 /* ============================================================
    Shared vocabulary
@@ -579,6 +586,172 @@ export interface UiMemoryMsg {
   kind: 'memory';
   memory?: MemorySnapshot;
   problem?: string;
+}
+
+/* ============================================================
+   Hooks
+   ============================================================ */
+
+/** How the file's version of a hook relates to what the running session loaded.
+ *
+ *  Hooks are read once when a session opens, so a saved edit is not running yet:
+ *  `pending` is the honest word for that, and it is why the panel never says
+ *  "active" about a hook it only knows the file for. `bypassed` is an enabled hook
+ *  in a session started with `--no-hooks`. */
+export type HookState = 'active' | 'pending' | 'off' | 'bypassed';
+
+/** How a run ended, as a verdict. `refused` is a guardrail working and is never a
+ *  failure; `cancelled` is the person pressing stop, not the script being slow.
+ *  The executor's own word travels beside it as `status`. */
+export type HookRunClass = 'success' | 'refused' | 'failed' | 'crashed' | 'cancelled';
+
+export interface HookLastRun {
+  class: HookRunClass;
+  /** The executor's own word (`ok`, `denied`, `timeout`, `spawn_error`,
+   *  `exit_error`, `bad_output`, `truncated`, `cancelled`) — what the audit log
+   *  says, so what a person will search for. Shown untranslated. */
+  status: string;
+  /** RFC 3339, UTC. */
+  at: string;
+  duration_ms: number;
+  /** `null` when the process never produced one; null and 0 are different facts. */
+  exit_code: number | null;
+  /** The executor's own preview of why: for a crash, the exit code and the start of stderr. */
+  reason: string;
+  tool: string;
+}
+
+export interface HookActivity {
+  runs: number;
+  failures: number;
+  /** `null` until the hook has run in this session. */
+  last: HookLastRun | null;
+}
+
+/** One hook of the user's file, with what the runtime resolved for it. */
+export interface HookRow {
+  event: string;
+  name: string;
+  matcher: string;
+  /** The command as one editable line. */
+  command: string;
+  /** True = the line goes to the platform shell; false = it is split into words
+   *  by quotes and run directly. */
+  shell: boolean;
+  /** `null` = not written in the file, so it follows the default. */
+  timeout_ms: number | null;
+  max_output_bytes: number | null;
+  fail_closed: boolean | null;
+  enabled: boolean;
+  status_message: string;
+
+  state: HookState;
+  /** Only while `state` is `active`: a result recorded before an edit belongs to
+   *  the old command. */
+  activity: HookActivity | null;
+  timeout_effective: number | null;
+  fail_closed_effective: boolean | null;
+  /** `null` for a shell line, where "found" would be a claim about nothing the
+   *  person wrote. */
+  executable_found: boolean | null;
+}
+
+export interface HookEventInfo {
+  name: string;
+  /** A gate fails closed by default: a broken guardrail must not become transparent. */
+  gate: boolean;
+  tool_event: boolean;
+  can_decide: boolean;
+  default_timeout_ms: number;
+  /** Whether a workspace's hooks file may listen to it. */
+  workspace_allowed: boolean;
+}
+
+export interface HookScript {
+  name: string;
+  path: string;
+  /** The suggested command line for it, quoted so the form reads it back. */
+  command: string;
+}
+
+export interface WorkspaceHookRow {
+  event: string;
+  name: string;
+  matcher: string;
+  command: string;
+  enabled: boolean;
+  allowed: boolean;
+  /** Runs in this session: trusted, enabled, on an event a workspace may use. */
+  effective: boolean;
+  activity: HookActivity | null;
+}
+
+export interface HooksSnapshot {
+  path: string;
+  scripts_dir: string;
+  /** This session was started with `--no-hooks`. */
+  disabled: boolean;
+  file: {
+    exists: boolean;
+    /** Identifies the bytes the form was drawn from; a save carries it so two
+     *  windows cannot silently overwrite each other. `""` when there is no file. */
+    revision: string;
+    /** Non-empty = the file cannot be used. The panel says which file and never
+     *  overwrites it. */
+    problem: string;
+  };
+  defaults: { timeout_ms: number | null; max_output_bytes: number | null };
+  entries: HookRow[];
+  events: HookEventInfo[];
+  scripts: HookScript[];
+  workspace: {
+    path: string;
+    exists: boolean;
+    trusted: boolean;
+    problem: string;
+    entries: WorkspaceHookRow[];
+    trust_command: string;
+  };
+  limits: {
+    max_timeout_ms: number;
+    max_per_event: number;
+    max_output_bytes: number;
+    default_output: number;
+    gate_timeout_ms: number;
+    default_timeout: number;
+    stderr_reason_cap: number;
+  };
+}
+
+/** `ui(hooks)`. A refusal arrives here too, as `problem` with the snapshot still
+ *  attached: the panel is a layer over the transcript, so a notice would be
+ *  printed behind the thing that is asking. */
+export interface UiHooksMsg {
+  v: number;
+  t: 'ui';
+  kind: 'hooks';
+  hooks?: HooksSnapshot;
+  problem?: string;
+}
+
+/** One entry of the document `hooks_action(save)` carries. */
+export interface HookDraftEntry {
+  event: string;
+  name: string;
+  matcher: string;
+  command: string;
+  shell: boolean;
+  timeout_ms: number | null;
+  max_output_bytes: number | null;
+  fail_closed: boolean | null;
+  enabled: boolean;
+  status_message: string;
+}
+
+/** The document `hooks_action(save)` carries: the whole form. */
+export interface HooksDocument {
+  defaults: { timeout_ms: number | null; max_output_bytes: number | null };
+  entries: HookDraftEntry[];
 }
 
 /* ============================================================
@@ -1344,6 +1517,7 @@ export type UiMsg =
   | UiTerminalOutputMsg
   | UiTerminalExitMsg
   | UiMemoryMsg
+  | UiHooksMsg
   | UiCodeIntelMsg
   | UiUsageMsg
   | UiProbeEffortMsg;
@@ -1585,6 +1759,22 @@ export type FrontendMsg =
       entry_id?: string;
       reason?: string;
       config?: Partial<MemoryConfig>;
+    }
+  /** Ask for the hooks panel's whole snapshot (`ui(hooks)`). Gate on protocol 16. */
+  | { v: number; t: 'hooks_list' }
+  /** Write the user's hooks file. One verb, the whole document: a per-field verb
+   *  would let two edits interleave into a file neither described.
+   *
+   *  `revision` is the `file.revision` the form was drawn from. The runtime checks
+   *  the bytes with the validator start-up uses and writes nothing it would refuse.
+   *  Saving changes the file and **not** the running session. The answer is always
+   *  a fresh `ui(hooks)`. */
+  | {
+      v: number;
+      t: 'hooks_action';
+      action: 'save';
+      revision: string;
+      document: HooksDocument;
     }
   /** One verb on the workspace's code index.
    *

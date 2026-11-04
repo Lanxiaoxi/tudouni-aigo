@@ -165,6 +165,12 @@ type Set struct {
 	// debug prints one line per invocation when `--debug` asked for it. Nil is
 	// "nobody is reading", which is the ordinary case.
 	debug func(text string)
+
+	// stats is what each hook has done in this process (see stats.go). It has a lock of
+	// its own rather than sharing `emitMu`: the audit sink is called while a record is
+	// being written, and a reader of the stats must never wait behind that.
+	statsMu sync.Mutex
+	stats   map[statKey]*Stats
 }
 
 // Empty is the "no hooks configured" set.
@@ -599,6 +605,26 @@ func Parse(path string, raw []byte) (*Set, error) {
 	return set, nil
 }
 
+// DefaultTimeoutFor is the timeout a hook on `event` gets when it does not name one.
+//
+// It is a function and not an inline expression because two readers need the same answer:
+// the loader, which stamps it on each hook, and the settings panel, which shows it as the
+// placeholder of an empty timeout field. A panel that worked it out for itself would be one
+// release away from promising a number the runtime does not use.
+func DefaultTimeoutFor(event Event, defaults Defaults) int {
+	timeout := defaults.TimeoutMs
+	if timeout <= 0 {
+		timeout = DefaultTimeoutMs
+	}
+	if event.Gate() && timeout > GateTimeoutMs {
+		// The gate's default is tighter than the file's default, and a hook on the
+		// hot path inherits the tighter one. A configuration that asks for more
+		// explicitly still gets it: this is a default, not a cap.
+		timeout = GateTimeoutMs
+	}
+	return timeout
+}
+
 // hookKeys is everything one hook object may contain. An unknown key is refused:
 // a misspelled `fail_closed` silently taking the default is the failure this check
 // exists for.
@@ -696,13 +722,7 @@ func parseHook(set *Set, event Event, entry map[string]any, index int) (*Hook, e
 			"`%s.command` must be a string or a list of strings", name)}
 	}
 
-	hook.TimeoutMs = set.Defaults.TimeoutMs
-	if event.Gate() && hook.TimeoutMs > GateTimeoutMs {
-		// The gate's default is tighter than the file's default, and a hook on the
-		// hot path inherits the tighter one. A configuration that asks for more
-		// explicitly still gets it: this is a default, not a cap.
-		hook.TimeoutMs = GateTimeoutMs
-	}
+	hook.TimeoutMs = DefaultTimeoutFor(event, set.Defaults)
 	if rawTimeout, present := entry["timeout_ms"]; present && rawTimeout != nil {
 		value, err := intField(rawTimeout)
 		if err != nil || value < 1 || value > MaxTimeoutMs {
@@ -781,7 +801,9 @@ func shellArgv(command string) []string {
 func joinCommand(argv []string) string {
 	var parts []string
 	for _, item := range argv {
-		if strings.ContainsAny(item, " \t\"") {
+		// An empty word has to be written as `""`, or the line has one word fewer than the
+		// list it came from.
+		if item == "" || strings.ContainsAny(item, " \t\"") {
 			parts = append(parts, `"`+strings.ReplaceAll(item, `"`, `\"`)+`"`)
 			continue
 		}

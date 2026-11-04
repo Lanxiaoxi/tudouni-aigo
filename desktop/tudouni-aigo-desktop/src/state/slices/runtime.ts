@@ -6,7 +6,7 @@
  */
 import type { StoreContext } from '../storeContext';
 import type { AppStore } from '../storeShape';
-import { type CodeIntelSnapshot, type MemorySnapshot, type ProbeEffortSnapshot } from '@/protocol/types';
+import { type CodeIntelSnapshot, type HooksSnapshot, type MemorySnapshot, type ProbeEffortSnapshot } from '@/protocol/types';
 import { appendBlock, applyDelta, applyFinalAnswer, clearStream, lastStopReason, lastTurnHead, newTurnStartsFolded, nextId, pushBlock, reduceEvent, settleAbandonedTurn, type Entry, type LooseEvent, type NoteEntry } from '@/state/entries';
 import { mergeSkills, projectCompacted, projectContext, projectHistory, projectInit, projectMcpMsg, projectSessionList, projectSkillsMsg, projectState, projectStatus, projectToolsMsg } from '@/runtime/adapt';
 import { extractRefinePrompts } from '@/learn/refineTemplate';
@@ -704,6 +704,22 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
                     : null,
                 };
               });
+              break;
+            }
+            case 'hooks': {
+              // **The snapshot replaces, never merges**: it is the runtime's whole
+              // answer about what the file says, what this session loaded and how each
+              // script has done. `problem` arrives on a refusal together with the
+              // snapshot, so the panel can say what failed and still draw the state it
+              // failed in.
+              const snapshot = msg.hooks;
+              patchWith(key, () => ({
+                ...(snapshot && typeof snapshot === 'object'
+                  ? { hooks: snapshot as HooksSnapshot }
+                  : {}),
+                hooksProblem:
+                  typeof msg.problem === 'string' && msg.problem !== '' ? msg.problem : null,
+              }));
               break;
             }
             case 'codeintel': {

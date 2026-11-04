@@ -7,7 +7,7 @@
  * re-exported by `store.ts`, so every `import ... from '@/state/store'` keeps
  * working.
  */
-import { type CodeIntelSnapshot, type FileEntry, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type ProbeEffortSnapshot, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
+import { type CodeIntelSnapshot, type FileEntry, type HooksSnapshot, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type ProbeEffortSnapshot, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
 import type { TerminalState } from '@/runtime/terminalOutput';
 import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
@@ -75,6 +75,12 @@ export type PanelKind =
    * the workspace, not the conversation — it opens from the same drawer as
    * Config and Tasks, and what it edits outlives every session. */
   | 'memory'
+  /* The user's hooks: the scripts this machine runs at fixed points in a turn,
+   * edited as a form and written to `~/.tudouni/hooks.json`. A panel rather than a
+   * view for the reason Config is — what it edits outlives every session — but it
+   * gates on a live session, unlike Config, because the runtime is the only thing
+   * that knows which hooks the session loaded and how each script has been doing. */
+  | 'hooks'
   /* The code index: whether the model may use it, whether one exists, and the
    * two buttons that make one. A panel for the same reason Memory is — its
    * subject is the workspace rather than the conversation, and what it configures
@@ -912,6 +918,20 @@ export interface SessionRuntime {
    * request that has been superseded.
    */
   memoryProblem: string | null;
+
+  /* ---------------- hooks ----------------
+   *
+   * The panel's whole subject, in one snapshot, per session: which hooks the
+   * session loaded and how their scripts have done are facts about *this* runtime.
+   * `null` means "not asked yet" — the panel draws its loading state.
+   */
+  hooks: HooksSnapshot | null;
+  /**
+   * Why the last `hooks_action` did **not** take effect, verbatim from the runtime.
+   * Here rather than in the notice stream for the reason `memoryProblem` is: the
+   * panel is a layer over the transcript, so a notice would print behind it.
+   */
+  hooksProblem: string | null;
 
   /* ---------------- the code index ----------------
    *

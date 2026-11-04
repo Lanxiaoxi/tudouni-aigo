@@ -193,13 +193,15 @@ test('the envelope version is the one hard failure point', () => {
   // channel — the effort panel's probe. 14 gives the code index a repository
   // selection (`config.repos`, plus `repos` / `candidates` / `new_repos` on
   // the `codeintel` snapshot). 15 adds `levels_are_one_answer` to the probe
-  // snapshot, present only when the wire never carried the level. All four are
+  // snapshot, present only when the wire never carried the level. 16 adds the
+  // user's hooks: `hooks_list` / `hooks_action` inbound and the `hooks` kind on
+  // the `ui` channel. All five are
   // additive, and this number has to match the runtime's `protocol.PROTOCOL` in
   // the same commit: a front end that gates a control on 13 while the runtime
   // reports 12 draws a button whose message the runtime drops, and this
   // assertion is the one that caught the code index's bump being forgotten
   // here.
-  assert.equal(PROTOCOL_VERSION, 15);
+  assert.equal(PROTOCOL_VERSION, 16);
 
   // Decoding an `init` from a **3** runtime still works: the field is documented
   // as survivable, and the capture in `tests/fixtures/opening.jsonl` is one, so

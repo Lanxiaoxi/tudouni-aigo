@@ -592,6 +592,44 @@
     },
     "required": ["v", "t", "action"]
   },
+  "hooks_list": {
+    "summary": "要一份用户级 hooks 文件的全量快照（出站 ui(hooks)，protocol 16）。面板打开时发一次。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "hooks_list"}
+    },
+    "required": ["v", "t"]
+  },
+  "hooks_action": {
+    "summary": "对用户级 hooks 文件的一次修改（protocol 16）。**回答永远是 ui(hooks) 的全量快照**，成功失败都发。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "hooks_action"},
+      "action": {
+        "type": "string",
+        "enum": ["save"],
+        "doc": [
+          "save 写整份文档（不是逐字段）：表单里的所有 hook 一次提交，因为逐字段的动词会让两次编辑交错成一份谁也没描述过的文件。",
+          "保存前 runtime 用和启动时同一个校验器检查字节，**启动会拒绝的文件一个字节都不写**；",
+          "保存只改文件，**不改正在运行的会话**（hooks 在会话打开时读一次），新会话才生效。",
+          "这是人的动词：hook 是这台机器每次工具调用都会执行的命令，模型没有任何工具能到这里，它自己的 write_file 对这个路径也被守卫拒绝。"
+        ]
+      },
+      "revision": {
+        "type": "string",
+        "doc": "action=save 必填。这份表单所依据的文件版本（快照里 `file.revision`；文件不存在时是空串）。文件在此之后被改过（别的窗口，或文本编辑器）就拒绝保存并回新快照，而不是静默覆盖别人的修改。"
+      },
+      "document": {
+        "type": "object",
+        "doc": [
+          "action=save 必填。`{defaults: {timeout_ms, max_output_bytes}, entries: [...]}`。",
+          "每条 entry：`event`、`name`、`matcher`、`command`（一行文本）、`shell`（true = 这行交给平台 shell，false = 按引号拆成 argv）、",
+          "`timeout_ms` / `max_output_bytes` / `fail_closed`（null = 文件里不写，跟随默认）、`enabled`、`status_message`。"
+        ]
+      }
+    },
+    "required": ["v", "t", "action"]
+  },
   "codeintel_action": {
     "summary": "对工作区代码索引的一次操作。**回答永远是 ui(codeintel) 的全量快照**，成功失败都发；`init` / `sync` 只是受理，构建本身靠推送的同类消息汇报进度。",
     "fields": {

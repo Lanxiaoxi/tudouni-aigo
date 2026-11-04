@@ -958,7 +958,7 @@ func (e *PromptBlocked) Error() string { ... }
 
 ### 18.3 已知未做 / 已知限制
 
-- **桌面端没有 hooks 面板**（阶段 3）。`--hooks` 是命令行开关，TUI 与桌面端都没有对应面板。启动通知会到桌面的 NoticeCenter（`notice.hooks.*` 走 `stream: "err"`）。
+- **桌面端的 hooks 面板已做**（协议 16：`hooks_list` / `hooks_action` 入站，`ui(hooks)` 出站；运行时 6.33.0 / 桌面端 5.14.0）。面板编辑的是用户级 `~/.tudouni/hooks.json`，整张表单一次保存，由运行时用启动时同一套校验把关，`file.revision` 不一致则拒绝；工作区 hooks 只读展示。**TUI 仍没有对应面板**，`--hooks` 仍是命令行开关。启动通知照旧到桌面的 NoticeCenter（`notice.hooks.*` 走 `stream: "err"`）。
 - **`hook_result` 只在桌面端有可见行**：`denied` → 一条 info 行，五种失败状态 → 一条 warn 行（`status` 不翻译，便于搜日志）；`ok` / `skipped` 不画。**TUI 侧未做对应行**——它按决定只做运行时与协议，界面行是阶段 3 的事，这是留下的不对称。
 - **`stop` 续轮的前端表现**按 §16 问题 3 的建议途径 A：第二轮是新的 `run_started`，不是同一轮的续答。桌面端的回合头会因此多一个 turn；`notice.hooks.continue_turn` 是在轮次结束之后 drain 的（`protocol.Server.finishTurn`），提示会落在答案之后。
 - **`replace_output`（脱敏）没有做**，`post_tool_use` 只能加 `additional_context`。
@@ -973,7 +973,7 @@ func (e *PromptBlocked) Error() string { ... }
 | --- | --- | --- |
 | 1 | config/matcher/runner/decision/context + 六个事件 + `--hooks`/`--no-hooks` + 审计 + 子代理继承 | 全部做完 |
 | 2 | `permission_request`、`subagent_start`/`subagent_stop`、`pre_compact`、`trust.json` + `--trust-workspace-hooks`、`--audit` 汇总、`/hooks reload` | 除 `/hooks reload` 外做完，另加桌面端 `hook_result` 的两种可见行 |
-| 3 | `replace_output`、`prompt` hook、`ui(hooks)` 面板、异步 observe | 一项都没做 |
+| 3 | `replace_output`、`prompt` hook、`ui(hooks)` 面板、异步 observe | 只做了桌面端 `ui(hooks)` 面板；其余没做 |
 
 ### 18.5 测试落点
 

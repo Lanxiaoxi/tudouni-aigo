@@ -5,7 +5,7 @@
  * shares. It lives apart from the actions so a slice can be read — or tested —
  * without importing the store that assembles them.
  */
-import { type CodeIntelActionKind, type FrontendMsg, type MemoryActionKind, type PermissionDecision, type RuntimeMsg, type UsageSnapshot } from '@/protocol/types';
+import { type CodeIntelActionKind, type FrontendMsg, type HooksDocument, type MemoryActionKind, type PermissionDecision, type RuntimeMsg, type UsageSnapshot } from '@/protocol/types';
 import { type BlockKind, type ToolFacts } from '@/state/entries';
 import { type Deliverable, type LearnScope } from '@/learn/template';
 import { type RunScope, type Task, type TaskRunLink, type TaskRunOutcome } from '@/task/tasks';
@@ -1193,6 +1193,26 @@ export interface AppStore {
    * itself — it redraws from the runtime's answer.
    */
   memoryAction(action: MemoryActionKind, args?: MemoryActionArgs): void;
+
+  /* ---------------- hooks ---------------- */
+
+  /**
+   * Ask for the panel's whole snapshot (`ui(hooks)`).
+   *
+   * One request for everything, for the reason `requestMemory` is: the file's rows,
+   * the session's view of them and each script's latest result describe one
+   * configuration, and a panel assembled from several replies could show a result
+   * beside a command it did not come from.
+   */
+  requestHooks(): void;
+  /**
+   * Write the user's hooks file. The document is the whole form, not a field: a
+   * per-field verb would let two edits interleave into a file neither described.
+   *
+   * `revision` is the `file.revision` the form was drawn from. The answer is always
+   * a fresh snapshot, so this store never patches the panel's view itself.
+   */
+  saveHooks(revision: string, document: HooksDocument): void;
 
   /* ---------------- the code index ---------------- */
 
