@@ -775,6 +775,10 @@ func NewJobs(workspace *tools.Workspace, sessionID string) (*JobBoard, []tools.T
 				"任务被终止过的话，这里会说明它是被谁收掉的 —— 那种输出不能当结论用。",
 			DocumentedWaitSeconds, MaxWaitSeconds, MaxOutputChars),
 		Risk: security.RiskLow,
+		// Parallel safe: it reads one job through the board's own locks. The one
+		// state it changes (marking the result collected) is idempotent, and
+		// waiting on a job beside an unrelated read is the common case.
+		ParallelSafe: true,
 		Schema: tools.ObjectSchema(map[string]any{
 			"job_id":       tools.StringSchema("shell_background 返回的那个 id", tools.MinLength(1)),
 			"wait":         tools.BoolSchema("true（默认）表示它还没结束就等一会儿；false 表示立刻返回**到目前为止**的输出 —— 看一个不会结束的服务（dev server）跑到哪儿了就用 false", tools.Default(true)),
@@ -797,8 +801,9 @@ func NewJobs(workspace *tools.Workspace, sessionID string) (*JobBoard, []tools.T
 				"到上限时要先收掉旧的才能起新的。\n"+
 				"收尾之前用它核对一遍：标着「结果还没收」的那些，你现在**还不知道**它们成没成。",
 			MaxJobs, MaxLiveJobs),
-		Risk:   security.RiskLow,
-		Schema: tools.EmptySchema(),
+		Risk:         security.RiskLow,
+		ParallelSafe: true,
+		Schema:       tools.EmptySchema(),
 		Handler: func(ctx context.Context, arguments map[string]any) (tools.Result, error) {
 			return board.List(), nil
 		},

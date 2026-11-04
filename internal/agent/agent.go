@@ -990,10 +990,10 @@ type prepared struct {
 	call      model.ToolCall
 	tool      tools.Tool
 	arguments map[string]any
-	// parallel says the batch this call belongs to ran together. It is recorded
-	// on the result, because whether a batch runs in parallel is only known once
-	// every call in it has been inspected — one tool that is not parallel-safe
-	// demotes the whole batch — and the call event is written before that.
+	// parallel says this call ran overlapped with the calls next to it. It is
+	// recorded on the result, because which calls form a parallel segment is only
+	// known once every call in the batch has been inspected — a neighbour that is
+	// not parallel-safe splits the run — and the call event is written before that.
 	parallel bool
 	// failure is set when the call cannot run; the text is what the model sees.
 	failure     string
@@ -1028,76 +1028,121 @@ type prepared struct {
 	images []tools.ImageContent
 }
 
+// segment is a run of consecutive calls in a batch that are scheduled together.
+// [start, end) indexes the batch. A parallel segment always holds two or more
+// calls; a serial one holds exactly one.
+type segment struct {
+	start, end int
+	parallel   bool
+}
+
+// runsInParallel says whether a call may overlap with its neighbours. An unknown
+// tool has no declaration to trust, so it never does.
+func runsInParallel(item prepared) bool {
+	return item.tool.Name != "" && item.tool.ParallelSafe && !item.tool.Interactive
+}
+
+// planSegments cuts a batch into segments **without reordering anything**.
+//
+// Consecutive parallel-safe calls form one parallel segment; every other call is a
+// segment of its own. Order is the cut line, not tool identity: a `shell` that comes
+// before a `read_file` may well have written the file the read is about, so the two
+// can never be swapped or overlapped, whereas two reads next to each other have
+// nothing to say to one another. Grouping all the safe calls together regardless of
+// position would be faster and would quietly break exactly that dependency.
+//
+// A lone parallel-safe call between two serial ones has nothing to overlap with and
+// is scheduled as a serial segment, so it is not marked parallel either.
+func planSegments(batch []prepared) []segment {
+	var plan []segment
+	for i := 0; i < len(batch); {
+		if !runsInParallel(batch[i]) {
+			plan = append(plan, segment{start: i, end: i + 1})
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(batch) && runsInParallel(batch[j]) {
+			j++
+		}
+		plan = append(plan, segment{start: i, end: j, parallel: j-i > 1})
+		i = j
+	}
+	return plan
+}
+
 // runBatch executes every call the model asked for in one turn.
 //
-// The whole batch is prepared first — parsed, looked up, approved — and only then
-// executed. Two consequences follow from that order, and both are wanted: the
-// runBatch decides whether one step's calls can run together, and runs them.
+// The batch is cut into segments (see planSegments) and the segments run **in the
+// model's order**, one after the other. What differs is how a segment treats its own
+// calls, and the two shapes are deliberately opposite:
 //
-// The parallel path prepares the **whole batch first** — parsed, looked up, approved
-// — and only then executes. That order is what a concurrent batch needs: nothing may
-// start before the last question has been answered, because a person's yes to the
+// A parallel segment prepares **all of its calls first** — looked up, approved — and
+// only then executes. That order is what a concurrent group needs: nothing in it may
+// start before its last question has been answered, because a person's yes to the
 // third call must not be given while the first two are already writing files.
 //
-// The serial path is the opposite on purpose: **report → decide → run → report, one
-// call at a time**. A person asked about call *n+1* has to be able to see the result
-// of call *n* first — that result is part of what they are judging with, and the
-// previous generation states it as a rule. It also keeps the audit interleaved the
-// way a reader expects: call, permission, result, call, permission, result.
+// A serial segment is **report → decide → run → report, one call at a time**. A
+// person asked about a call has to be able to see the result of the call before it
+// first — that result is part of what they are judging with, and the previous
+// generation states it as a rule. It also keeps the audit interleaved the way a
+// reader expects: call, permission, result, call, permission, result.
+//
+// Because segments follow one another, the same holds across the boundary: a call
+// in a later segment is asked about only after every result of the earlier ones.
 func (a *Agent) runBatch(ctx context.Context, calls []model.ToolCall) error {
 	batch := make([]prepared, 0, len(calls))
-	parallel := len(calls) > 1
-
 	for index, call := range calls {
 		item := a.inspect(index, call)
 		if item.tool.Name != "" {
 			a.toolsUsed = append(a.toolsUsed, item.tool.Name)
-			if !item.tool.ParallelSafe || item.tool.Interactive {
-				parallel = false
-			}
-		} else {
-			parallel = false
 		}
 		batch = append(batch, item)
 	}
 
-	// The mode is a property of the whole batch, so it is written down only now
-	// that nothing can change it. The audit's timing reads it from the results:
-	// a parallel batch's per-call durations overlap, and a summary that took them
-	// for serial work counted the batch twice.
-	for i := range batch {
-		batch[i].parallel = parallel
+	// Which calls run together is a property of the whole plan, so it is written
+	// down only now that nothing can change it. The audit's timing reads it from
+	// the results: a parallel segment's per-call durations overlap, and a summary
+	// that took them for serial work counted the segment twice.
+	plan := planSegments(batch)
+	for _, group := range plan {
+		if !group.parallel {
+			continue
+		}
+		for i := group.start; i < group.end; i++ {
+			batch[i].parallel = true
+		}
 	}
 
-	if parallel {
-		for i := range batch {
-			a.approve(&batch[i])
+	for _, group := range plan {
+		// A stop during the previous segment ends the batch here. The calls that
+		// were never reached are settled below rather than skipped: see the
+		// settlement pass, which is the invariant rather than tidiness.
+		if a.stopped(ctx) {
+			break
 		}
-		a.runParallel(ctx, batch)
+		// A sub-slice, not a copy: the pointers below must reach the batch itself,
+		// because `approve` and `runOne` rewrite the item in place.
+		members := batch[group.start:group.end]
+		if group.parallel {
+			for i := range members {
+				a.approve(&members[i])
+			}
+			a.runParallel(ctx, members)
+		} else {
+			// Adjacent, always: the question about this call comes after the
+			// previous call's result has been shown.
+			a.approve(&members[0])
+			a.runOne(ctx, &members[0])
+		}
 		// A call that never ran still produced a result as far as the audit is
 		// concerned: the model asked for it, and "it was refused" or "its arguments
 		// were invalid" is the outcome. Recording only the executions would leave
 		// the log showing a tool_call with nothing after it, which reads like a
 		// crash.
-		for i := range batch {
-			if batch[i].failure != "" {
-				a.reportToolResult(&batch[i], 0, false)
-			}
-		}
-	} else {
-		for i := range batch {
-			// A stop during the previous call ends the batch here. The calls that
-			// were never reached are settled below rather than skipped: see the
-			// settlement pass, which is the invariant rather than tidiness.
-			if a.stopped(ctx) {
-				break
-			}
-			// Adjacent, always: the question about this call comes after the
-			// previous call's result has been shown.
-			a.approve(&batch[i])
-			a.runOne(ctx, &batch[i])
-			if batch[i].failure != "" {
-				a.reportToolResult(&batch[i], 0, false)
+		for i := range members {
+			if members[i].failure != "" {
+				a.reportToolResult(&members[i], 0, false)
 			}
 		}
 	}

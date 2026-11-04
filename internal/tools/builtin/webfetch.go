@@ -166,6 +166,11 @@ func NewFetchWeb(client *http.Client) tools.Tool {
 		// Medium: gentler than shell, but not auto-approved — the argument is a
 		// channel that sends data out.
 		Risk: security.RiskMedium,
+		// Parallel safe: it touches no workspace or session state, and a batch of
+		// fetches is exactly the case where waiting for each in turn costs the most.
+		// Approval is unaffected — a parallel batch is still decided call by call
+		// before anything runs.
+		ParallelSafe: true,
 		Schema: tools.ObjectSchema(map[string]any{
 			// Only minLength is declared: the real test is the scheme and
 			// reachability, and both are only known once a request is attempted.

@@ -230,7 +230,12 @@ func newSSHWrite(manager *sshlib.Manager) tools.Tool {
 				},
 			}, nil
 		},
-		ParallelSafe: true,
+		// Not parallel safe. Under segment scheduling a write can sit next to a read
+		// or another write of the **same** session, and the bytes arriving in
+		// whatever order the scheduler picks is not "the same command twice": two
+		// writes interleave, and a read can run before the write it was meant to
+		// follow. Order is the whole contract of a terminal.
+		ParallelSafe: false,
 	}
 }
 

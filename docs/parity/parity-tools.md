@@ -20,13 +20,13 @@ fetch_web、web_search）；**15/16 的工具描述逐字节相同**。差异集
 | get_current_time | 无 | LOW / true 同 | **等价** |
 | shell | 同（`command` 描述丢了方言那句） | HIGH / false 同 | **Windows 实现退步**（pwsh / -NonInteractive / UTF-8 前置声明） |
 | shell_background | 同 | HIGH / false 同 | 描述逐字节同；上限/门禁语义有 4 处偏差（见下） |
-| job_output | 同 | LOW / false 同 | 少了 `命令：` 行、等待说明、收尾指引段 |
-| job_list | 无 | LOW / false 同 | 被终止的任务与"已收"合并成一格；计数与脚注丢失 |
+| job_output | 同 | LOW / **true**（原版 false，连续段调度后放开） | 少了 `命令：` 行、等待说明、收尾指引段 |
+| job_list | 无 | LOW / **true**（同上） | 被终止的任务与"已收"合并成一格；计数与脚注丢失 |
 | job_kill | 同 | LOW / false 同 | 少了等待/退出码，文案更短；不再置 `collected` |
 | ask_user | 同（参数描述有别） | LOW / interactive / false 同 | **终端多选解析退步** |
 | todo_write | 同 | LOW / false 同 | **等价**（`$defs/$ref` 改成内联） |
-| load_skill | 同 | LOW / false 同 | **等价** |
-| fetch_web | 同 | MEDIUM / false 同 | **编码白名单退步**；UA 变了；不再忽略 `HTTP_PROXY` |
+| load_skill | 同 | LOW / **true**（原版 false；`SkillBoard.Call` 加了 `callMu` 保证读-改-写原子） | **等价** |
+| fetch_web | 同 | MEDIUM / **true**（原版 false，连续段调度后放开；审批照旧逐个问） | **编码白名单退步**；UA 变了；不再忽略 `HTTP_PROXY` |
 | web_search | 同 | LOW / **true** 同 | 渲染与审计键等价；UA 变了；不再忽略 `HTTP_PROXY` |
 
 ## BLOCKER

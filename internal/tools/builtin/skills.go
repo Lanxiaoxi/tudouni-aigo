@@ -26,8 +26,10 @@ import (
 //     Demanding an approval to read an instruction sheet is backwards — it trains
 //     people to press y, and an approval that is a formality is no longer a
 //     protection.
-//   - **It is not parallel safe.** It writes session metadata, and two of those in
-//     one batch is a textbook lost update where both report success.
+//   - **It is parallel safe only because the board serialises it.** It writes
+//     session metadata with a read-then-write, and two of those in one batch would
+//     be a textbook lost update where both report success; `Call` takes `callMu`
+//     so the pair runs one after the other and the second sees the first.
 //
 // The text it returns **deliberately carries no body**: the body is rendered by the
 // payload tail every round. Copying it into the tool result would store the same
@@ -58,6 +60,9 @@ type SkillBoard struct {
 	// mu guards catalog: Catalog() writes it on rescan, and the parent's payload
 	// tail reads it at the same time a delegated subagent builds its request.
 	mu sync.Mutex
+	// callMu makes one load_skill call atomic. It is separate from mu on purpose:
+	// Load calls Catalog(), which takes mu, so reusing it would deadlock.
+	callMu sync.Mutex
 }
 
 // NewSkillBoard builds a board over a session's metadata.
@@ -125,6 +130,8 @@ func (b *SkillBoard) ActiveLine() string {
 
 // Call is the tool handler: it dispatches on the arguments.
 func (b *SkillBoard) Call(name string, unload bool) tools.Result {
+	b.callMu.Lock()
+	defer b.callMu.Unlock()
 	if unload {
 		return b.Unload()
 	}
@@ -279,8 +286,10 @@ func NewLoadSkill(board *SkillBoard) tools.Tool {
 		Name:        "load_skill",
 		Description: description,
 		Risk:        security.RiskLow,
-		// Not parallel safe: it writes session metadata, and two of those at once
-		// is a lost update where both sides report success.
+		// Parallel safe because Call is serialised by the board (see callMu): the
+		// load is a read-then-write on session metadata, and without that lock two
+		// of them at once would be a lost update where both sides report success.
+		ParallelSafe: true,
 		Schema: tools.ObjectSchema(map[string]any{
 			// `name` has a default, so it is not required: an empty call lists what
 			// exists. That lets the model look before choosing without a second

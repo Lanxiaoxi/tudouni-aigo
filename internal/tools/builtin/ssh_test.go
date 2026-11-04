@@ -255,17 +255,18 @@ func TestConnectIsHighRiskAndNotParallelSafe(t *testing.T) {
 	}
 }
 
-// TestWriteIsLowRiskAndParallelSafe: the useful moment to refuse is before the
+// TestWriteIsLowRiskAndNotParallelSafe: the useful moment to refuse is before the
 // session exists, and the audit — not a per-call prompt — is what records what was
-// typed.
-func TestWriteIsLowRiskAndParallelSafe(t *testing.T) {
+// typed. It is not parallel-safe because segment scheduling would otherwise let a
+// write run beside a read or another write of the same terminal.
+func TestWriteIsLowRiskAndNotParallelSafe(t *testing.T) {
 	manager := sshManagerForTests(t, newFakeRemote())
 	tool := toolNamed(t, manager, "ssh_write")
 	if tool.Risk != security.RiskLow {
 		t.Errorf("Risk = %s, want low: the connect approval already covers this", tool.Risk)
 	}
-	if !tool.ParallelSafe {
-		t.Error("ssh_write is not parallel-safe; writing to two sessions in one batch is legitimate")
+	if tool.ParallelSafe {
+		t.Error("ssh_write is parallel-safe; two writes or a write and a read of one terminal must stay in order")
 	}
 	if tool.CommandParam != "" {
 		t.Errorf("CommandParam = %q, want empty: prefix rules match command lines, and this sends raw bytes to a shell that is already open",
