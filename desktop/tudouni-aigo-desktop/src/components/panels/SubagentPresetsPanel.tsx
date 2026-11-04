@@ -253,7 +253,7 @@ export function SubagentPresetsPanel() {
         <section className="pc-section">
           <Field label={t('panel.sp.default')} hint={t('panel.sp.defaultHint')}>
             <select
-              className="cfg-input"
+              className="cfg-input is-short"
               value={draft.default}
               onChange={(e) => edit((current) => ({ ...current, default: e.target.value }))}
             >
@@ -350,7 +350,7 @@ function PresetCard({
 
       <Field label={t('panel.sp.route')}>
         <select
-          className="cfg-input"
+          className="cfg-input is-short"
           value={preset.provider}
           onChange={(e) => {
             // A route change resets the model to that route's first one: a model
@@ -371,7 +371,7 @@ function PresetCard({
 
       <Field label={t('panel.sp.model')}>
         <select
-          className="cfg-input mono"
+          className="cfg-input mono is-short"
           value={preset.model}
           onChange={(e) => onChange({ model: e.target.value, effort: '' })}
         >
@@ -385,7 +385,7 @@ function PresetCard({
       </Field>
 
       <Field label={t('panel.sp.effort')}>
-        <select className="cfg-input is-tiny" value={preset.effort} onChange={(e) => onChange({ effort: e.target.value })}>
+        <select className="cfg-input is-short" value={preset.effort} onChange={(e) => onChange({ effort: e.target.value })}>
           <option value="">{t('panel.sp.effortDefault')}</option>
           {levels.map((level) => (
             <option key={level} value={level}>
@@ -398,7 +398,7 @@ function PresetCard({
       <Field label={t('panel.sp.purpose')} hint={t('panel.sp.purposeHint')}>
         <input
           type="text"
-          className="cfg-input"
+          className="cfg-input is-short"
           value={preset.purpose}
           autoComplete="off"
           onChange={(e) => onChange({ purpose: e.target.value })}
