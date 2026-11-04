@@ -1,0 +1,1099 @@
+
+/* ============================================================
+   The workbench panel family — one geometry, one type scale
+   ============================================================
+
+   `design/workbench-light-v2/` is one sheet of foundations plus eleven panel
+   sheets, and the sheets say the same thing eleven times: *these panels share one
+   shell, one section label, one field, one card, one footer.* This file is that
+   shared set, and it is loaded **last** among the component styles so it can
+   retune the vocabularies the panels already had (`.cfg-*`, `.tk-*`, `.pc-*`,
+   `.sp-*`, `.wm-*`, `.hk-*`, `.ci-*`) instead of adding a sixth one. The rules
+   below are written in the design's own order, so a reader can hold the sheet
+   beside them.
+
+   **What changed from the previous round, and why it is a change of degree.**
+   The panels had already been aligned to an earlier sheet, so most selectors
+   exist and most comments still hold. What the v2 sheet moves is *scale*: the
+   panel title is 15/600 and nothing else tries to be a page heading, section
+   labels are 11/600 uppercase rather than 13/600 sentence case, every workbench
+   panel is the same 1180px wide rather than four different rungs, and the padding
+   is 28 on all four sides rather than 16 with a wider variant. A panel that keeps
+   the old sizes now reads as a different application beside one that does not —
+   which is exactly what a foundations sheet is for.
+
+   **Colour tokens are untouched.** `tokens.css` already carries the light
+   theme's Canvas / Surface / Sunken rungs the sheet names (`--bg` #F1F5EF,
+   `--bg-card` #FCFEFB, `--bg-secondary` #EDF1EB), plus the accent
+   (#047857 solid, #DFF0E3 tint) and the semantic pairs. The one rung the sheet
+   adds is the read-only rail's own surface, `--wb-rail`, because `--bg-rail`
+   belongs to the window's side rails and moving it would repaint the app.
+   ============================================================ */
+
+:root {
+  /* Panel geometry, named once. 1180 is the sheet's own proportion at the
+     window's 1280 default — every panel sheet, measured edge to edge, comes out
+     at the same 92% of the canvas. */
+  --wb-w: 1180px;
+  --wb-pad: 28px;
+  --wb-rail: 340px;
+  --wb-gap: 32px;
+  --wb-card-radius: var(--radius-lg);
+  --wb-ctrl-radius: var(--radius-sm);
+  --wb-row-h: 32px;
+  --wb-field-gap: 20px;
+  --wb-label-gap: 6px;
+}
+
+/* The rail's surface ("只读面"). It is a shade under the panel's own surface and
+   above the canvas, so a read-only column reads as attached to the panel rather
+   than as a second card floating on it. The value lives in `tokens.css` with the
+   rest of the theme's colours. */
+
+/* ---------------- 1 · the shell ----------------
+ *
+ * Four fixed regions — head, body, (rail), foot — and one width for all of them.
+ * `.dialog-wide`, `.dialog-memory` and the route/settings pages used to be four
+ * rungs (820 / 1000 / 1180 / 1180); the sheet draws all eleven panels at one
+ * width, so the rungs collapse. The command palette keeps its own width and its
+ * own top-hung position: it is not a workbench panel.
+ */
+.dialog-wide,
+.dialog-memory,
+.dialog.wb-panel {
+  width: min(var(--wb-w), calc(100vw - 48px));
+}
+
+/* The surface is the panel's, not the window's, everywhere. The route page and
+   Settings used to paint the canvas because their fields were paper on a page;
+   the sheet puts every panel on the same surface and lets the *cards* be the
+   paper. */
+.dialog-wide,
+.dialog-memory,
+.dialog.wb-panel,
+.dialog-wide:has(.pc-page:not(.is-inline)),
+.dialog-wide:has(.sp-page) {
+  background: var(--bg-card);
+}
+
+/* ---- head ---- */
+
+.dialog-head,
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head,
+.dialog-wide:has(.sp-page) .dialog-head {
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 24px var(--wb-pad) 4px;
+  border-bottom: none;
+}
+
+/* A head drawn by `PanelShell` is a **column**, because a panel's second surface
+   puts its way back on a row of its own and the title under it. The panels that
+   draw their own head (the task shelf, the hook list) keep the row they were
+   written as — they are lists with a filter strip beside the title, not pages
+   with a heading.
+   
+   **The `:has` variants are not decoration.** The two page-scoped selectors
+   above are specificity (0,4,0) — a class plus `:has()`'s own argument, which
+   counts twice — so a plain `.dialog-head.wb-head` (0,2,0) loses to them and the
+   head stays a `flex-start` row: the title block shrinks to its text and the
+   close lands beside the back link instead of at the far edge. Measured, not
+   guessed (`scripts/probe-backrow.mjs`). */
+.dialog-head.wb-head,
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head.wb-head,
+.dialog-wide:has(.sp-page) .dialog-head.wb-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+/* The back row: `← Routes` at the leading edge, the close at the trailing one.
+   The design gives the two the same row so the title line can be the page's
+   heading. */
+.wb-head-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin-bottom: 2px;
+}
+
+.wb-head-main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.wb-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* A compact ghost button that names where it goes. It is a link with a chevron,
+   so it takes the text size and no height. */
+.wb-back.btn {
+  height: 22px;
+  padding: 0 6px 0 2px;
+  gap: 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-compact);
+  font-weight: 400;
+  color: var(--fg-secondary);
+}
+
+.wb-back.btn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--fg);
+}
+
+.wb-back.btn svg {
+  color: var(--fg-muted);
+}
+
+.dialog-title {
+  font-size: var(--text-h1);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+  color: var(--fg);
+}
+
+/* The one-line description under the title: 12/400, one shade down, and it is
+   allowed to be a sentence — the sheet's "一句话说明" is the whole reason the
+   title no longer carries it. */
+.dialog-desc {
+  margin-top: 3px;
+  font-size: var(--text-compact);
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+/* The head's controls: a close, and at most one secondary action beside it. The
+   framed square the route page gave the close was a page-header device; on a
+   panel that is 15px type and 28px controls, a framed 32px square is the largest
+   thing in the head. */
+.dialog-head > .btn-icon,
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head > .btn:first-child,
+.dialog-wide:has(.sp-page) .dialog-head > .btn:last-child {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.dialog-head > .btn-icon:hover:not(:disabled),
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head > .btn:first-child:hover,
+.dialog-wide:has(.sp-page) .dialog-head > .btn:last-child:hover {
+  background: var(--bg-muted);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+/* The head's own count chip. It is a number beside a title, not a metric. */
+.dialog-head > .count {
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+/* ---- body ---- */
+
+.dialog-body {
+  padding: 0 var(--wb-pad) var(--wb-pad);
+}
+
+.dialog-wide:has(.pc-page:not(.is-inline)) .dialog-body,
+.dialog-wide:has(.sp-page) .dialog-body {
+  padding: 0 var(--wb-pad) var(--wb-pad);
+}
+
+/* A body with a rail splits into the two columns the sheet calls BODY · 主列 and
+   RAIL · 340. `minmax(0, 1fr)` on the main column is what lets a long path
+   truncate instead of pushing the rail off the panel. */
+.wb-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--wb-rail);
+  gap: var(--wb-gap);
+  align-items: start;
+  min-width: 0;
+}
+
+.wb-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* The rail's own column. Its cards are already spaced by the pattern they use,
+   so this only holds the two apart from each other. */
+.wb-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* The footer's leading slot: a validation state or one sentence. It shrinks
+   before the actions do — a sentence can wrap, a button cannot. */
+.wb-foot-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-compact);
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
+/* ---------------- 2 · the footer ----------------
+ *
+ * "左：验证状态 / 提示（不是按钮）。右：[Ghost][Primary]，主按钮高度 30."
+ * It is a band with a hairline above it, not a card: the panel's own foot is the
+ * edge of the page, and a floating bar would be a fifth surface.
+ */
+.dialog-foot {
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 56px;
+  padding: var(--space-3) var(--wb-pad);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-foot);
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+.dialog-foot .btn {
+  height: 30px;
+  padding: 0 14px;
+  font-size: var(--text-compact);
+}
+
+.dialog-foot .btn-ghost {
+  color: var(--fg-secondary);
+}
+
+/* ---------------- 3 · type: five rungs, one writing each ----------------
+ *
+ * "区块标题只有一种写法" — one section label, everywhere, and it is the only
+ * thing in a panel that is uppercase. It replaces three tones the panels had
+ * grown for the same job (13/600 sentence case in the task editor, 10/600 at
+ * 0.12em on the route page, 11/600 sentence case in Settings).
+ */
+.wb-label,
+.tk-section-label,
+.pc-section-label,
+.pc-side-label,
+.sp-section-label,
+.sp-side-label,
+.wm-legend,
+.hk-ws-title {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  line-height: 1.3;
+}
+
+/* The label's own row: label, an optional `?`, an optional count, and a rule
+   running to the column's edge. The rule is what separates one subject from the
+   next without a border around every group. */
+.wb-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.wb-section + .wb-section {
+  margin-top: var(--space-6);
+}
+
+.wb-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 18px;
+}
+
+.wb-label-row .wb-rule,
+.pc-rule,
+.sp-rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+/* A count beside a label: the sheet's `KEYS · 9` shape. */
+.wb-label-count {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Field label: 12/500, above its control, control full width. */
+.wb-field .cfg-label,
+.cfg-label,
+.pc-label {
+  font-size: var(--text-compact);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--fg-secondary);
+}
+
+/* Help text: 12/400, one shade down, and one sentence — the sheet's max width
+   keeps it from running the width of a 1124px column. */
+.wb-field > .cfg-hint,
+.tk-field-hint,
+.cfg-hint,
+.set-hint,
+.set-desc,
+.sp-side-hint,
+.tk-field-hint {
+  font-size: var(--text-compact);
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--fg-muted);
+  max-width: 74ch;
+}
+
+/* Value: 12.5 mono, right-aligned in a read-out. Every path, number and
+   yes/no answer in the rail wears this rung. */
+.wb-value,
+.pc-readout-value,
+.tk-fact-value,
+.sp-fact-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+/* ---------------- 4 · cards ----------------
+ *
+ * "一组字段一张卡". One border, radius 10, the panel's surface one step up, and
+ * rows inside it separated by hairlines — never a card per row.
+ */
+.wb-card,
+.sp-card,
+.pc-preview,
+.pc-mini-list,
+.pc-model,
+.hk-card,
+.wm-cand,
+.wm-entry {
+  border: 1px solid var(--border);
+  border-radius: var(--wb-card-radius);
+  background: var(--bg-elevated);
+}
+
+.sp-card,
+.pc-preview,
+.pc-mini-list {
+  padding: var(--space-4);
+}
+
+/* A label above a card (`ENVIRONMENT`, `LIVE CHECKS`) is outside the card: the
+   label names the group, the card is its fields. */
+.wb-card-above {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* A name is a key and a description is a sentence: one share and two shares of
+   the same row. */
+.wb-grid.tk-name-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+/* A card whose rows own their own padding gets none. */
+.wb-card-flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* A row: title + hint on the left, the control at the right edge, 14px of air.
+   The hairline is `+` rather than the first child's `border-top` so a card's own
+   top edge is never doubled. */
+.wb-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: 14px var(--space-4);
+  min-width: 0;
+}
+
+.wb-row + .wb-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.wb-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wb-row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-compact);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--fg);
+}
+
+.wb-row-hint {
+  font-size: var(--text-compact);
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+.wb-row-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+}
+
+/* ---------------- 5 · fields ----------------
+ *
+ * "label 在上，控件占满列宽；字段间距 20，label 与控件 6."
+ *
+ * The three fixed label widths the older forms used (96 / 130 / 240) are gone:
+ * the sheet puts every label above its control and lets the control take the
+ * column. A form that still wants two fields side by side uses `.wb-grid`, whose
+ * columns are equal.
+ */
+.wb-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wb-label-gap);
+  min-width: 0;
+}
+
+.wb-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wb-field-gap);
+  min-width: 0;
+}
+
+.wb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--wb-field-gap);
+  align-items: start;
+  min-width: 0;
+}
+
+/* A control is 28 high and its border is the sheet's `#C7D1C4` — the strong
+   border, because a field on a near-white surface needs the edge to be visible
+   at rest rather than only on hover. */
+.cfg-input,
+.cfg-textarea,
+.tk-select,
+.wb-input {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--wb-ctrl-radius);
+  /* The sheet's "SUNKEN · 路径条 / 输入底": the input's fill is one step under
+     the card it sits on, which is what makes an empty field read as a well
+     rather than as a white box that happens to have an outline. */
+  background: var(--bg-card);
+  font-family: var(--font-sans);
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.cfg-input,
+.tk-select,
+.wb-input {
+  height: var(--control-h);
+  padding: 0 10px;
+}
+
+.cfg-textarea {
+  padding: 8px 10px;
+  line-height: var(--leading-body);
+}
+
+/* The route page's taller field (34px) was a page-header decision made before
+   every panel was one column of fields. */
+.pc-control .cfg-input,
+.pc-page .cfg-input,
+.pc-pair .cfg-input,
+.sp-page .cfg-input {
+  height: var(--control-h);
+}
+
+.pc-page .cfg-input,
+.pc-page .cfg-textarea {
+  background: var(--bg-card);
+}
+
+/* Focus: the accent edge plus the ring, one language for every field. */
+.cfg-input:focus,
+.cfg-textarea:focus,
+.tk-select:focus-visible {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+.cfg-input:disabled,
+.cfg-textarea:disabled,
+.tk-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* A field is invalid in exactly one of two ways, never both: a red edge with one
+   11px sentence under it, or a whole block's alert above the form (`.wb-alert`).
+   The sentence is the sheet's "字段下方 11px 红字". */
+.cfg-input.is-error,
+.cfg-input.is-invalid,
+.cfg-textarea.is-error,
+.tk-field-error,
+.set-error {
+  border-color: var(--destructive);
+  font-size: var(--text-caption);
+  color: var(--destructive-text);
+}
+
+.cfg-input.is-error,
+.cfg-input.is-invalid,
+.cfg-textarea.is-error {
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.cfg-input.is-error:focus,
+.cfg-input.is-invalid:focus,
+.cfg-textarea.is-error:focus {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 3px var(--destructive);
+}
+
+/* An `Optional` chip beside a field label — a chip and not "(optional)" set as
+   prose, because the sentence-case parenthesis reads as part of the name. */
+.cfg-optional,
+.wb-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  vertical-align: middle;
+}
+
+/* ---------------- 6 · the path bar ----------------
+ *
+ * "PathBar · 一条路径只有一个写法". A sunken bar with the folder glyph at the far
+ * right, the path itself in mono, and nothing that looks like a button — the
+ * copy action is the row's own icon at the end.
+ */
+.wb-path,
+.cfg-path-row,
+.wm-path {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: 0 var(--space-3) 0 10px;
+  border: none;
+  border-radius: var(--wb-ctrl-radius);
+  background: var(--bg-secondary);
+}
+
+.wb-path-text,
+.cfg-path,
+.wm-path-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--fg-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-path .btn-icon,
+.cfg-path-row .btn-icon {
+  width: 22px;
+  height: 22px;
+  color: var(--fg-muted);
+}
+
+/* ---------------- 7 · selection ----------------
+ *
+ * Four shapes, each its own: a checkbox, a radio, a toggle and a segmented
+ * strip. "各自只管自己，不再整行铺绿" — a row's tint is for the row that *is*
+ * the choice, and a checkbox inside a form tint nothing.
+ */
+
+/* Toggle · 32×18. */
+.tk-switch {
+  flex: none;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  transition: background-color var(--motion-base) var(--ease-out);
+}
+
+.tk-switch.is-on {
+  background: var(--accent-solid);
+}
+
+.tk-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-knob);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.tk-switch.is-on .tk-switch-knob {
+  transform: translateX(14px);
+}
+
+.tk-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Checkbox and radio are **not styled here**. `check.css` owns the one look —
+   its own `appearance: none` box, the tick drawn from tokens, and the row
+   classes (`.cfg-check`, `.tk-choice-row`, …) the inputs have to sit in. This
+   file used to tint them with `accent-color`, which reaches the fill but not the
+   shape: the WebView's square, its dot and its size came back, and two panels
+   grew checkboxes that did not look like the rest of the app. The panel family
+   therefore has no selection chrome of its own beyond the segmented strip and
+   the toggle below. */
+
+/* A segmented strip: one sunken track, the chosen item lifted onto the card's
+   surface. Used for the panel tabs and for the tasks list's filters — the sheet
+   draws both as the same control. */
+.wb-seg,
+.tk-chips,
+.panel-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  border: none;
+}
+
+.wb-seg-item,
+.tk-chip,
+.panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 26px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--font-sans);
+  font-size: var(--text-compact);
+  font-weight: 400;
+  color: var(--fg-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.wb-seg-item:hover,
+.tk-chip:hover,
+.panel-tab:hover {
+  color: var(--fg);
+}
+
+.wb-seg-item.is-on,
+.tk-chip.is-on,
+.panel-tab.is-on {
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-weight: 500;
+  box-shadow: var(--shadow-chip-hover);
+}
+
+/* The trail count inside a segment keeps its muted value in both states: the
+   chip's job is to say which filter is on, and a number that changed colour with
+   it would be a second statement. */
+.wb-seg-count,
+.tk-chip-count,
+.panel-tab .count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+/* ---------------- 8 · feedback ----------------
+ *
+ * "错误只有一个位置：要么整条 Alert，要么字段下方 11px 红字." An alert is a
+ * tinted band with a 2px rule at its leading edge — a rule and a wash, not a
+ * bordered box, because the box competes with the cards around it.
+ */
+/* An alert is as wide as the column it reports on — the sheet draws a band
+   across the form, not a note in the corner. Its sentence is not body copy: in
+   the error case the text takes the destructive rung as well as the rule, which
+   is what makes "this blocks the save" readable without a second mark. */
+.wb-alert,
+.cfg-problem,
+.cfg-file-problem {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+  border: none;
+  border-left: 2px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--warning-subtle);
+  font-size: var(--text-compact);
+  line-height: 1.45;
+  color: var(--fg-secondary);
+}
+
+.wb-alert-icon,
+.cfg-problem svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--warning-text);
+}
+
+.wb-alert.is-error,
+.cfg-problem.is-blocking,
+.cfg-file-problem {
+  border-left-color: var(--destructive-solid);
+  background: var(--destructive-subtle);
+  color: var(--destructive-text);
+}
+
+.wb-alert.is-error .wb-alert-icon {
+  color: var(--destructive-text);
+}
+
+/* ---------------- 9 · the read-out ----------------
+ *
+ * The rail's facts: `label ····· value`, both 12, the value in mono and
+ * right-aligned so a column of numbers reads down its right edge. This is the
+ * sheet's "KV 行（值 mono 右对齐）".
+ */
+.wb-kv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.wb-kv-row,
+.tk-fact,
+.sp-fact,
+.pc-readout-row,
+.wm-entry-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  font-size: var(--text-compact);
+}
+
+.wb-kv-label,
+.tk-fact-label,
+.sp-fact-label,
+.pc-readout-row > span:first-child,
+.wm-entry-meta > span:first-child {
+  min-width: 0;
+  color: var(--fg-muted);
+}
+
+.wb-value.is-ok,
+.pc-readout-value.is-ok,
+.sp-fact-value.is-ok,
+.tk-fact-value.is-ok {
+  color: var(--accent-text);
+}
+
+.wb-value.is-warning,
+.pc-readout-value.is-warning,
+.sp-fact-value.is-warning,
+.tk-fact-value.is-warning,
+.pc-readout-value.is-negative,
+.tk-fact-value.is-negative {
+  color: var(--warning-text);
+}
+
+.wb-value.is-bad,
+.sp-fact-value.is-bad {
+  color: var(--destructive-text);
+}
+
+.wb-value.is-muted,
+.pc-readout-value.is-muted,
+.sp-fact-value.is-muted,
+.tk-fact-value.is-muted {
+  color: var(--fg-muted);
+}
+
+/* The tinted read-out group: facts the runtime computed, never fields. */
+.pc-readout,
+.wb-readout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--wb-card-radius);
+  background: var(--bg-secondary);
+}
+
+/* ---------------- 10 · empty states ----------------
+ *
+ * "一个图标、一句标题、一句能说清后果的说明." No action button: the primary
+ * action lives in the head, and a second copy of it here would be two doors to
+ * one room.
+ */
+.list-empty,
+.tk-blank,
+.wb-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 40px var(--space-4);
+  text-align: center;
+}
+
+.list-empty > .muted,
+.tk-blank-icon,
+.wb-empty-icon {
+  color: var(--fg-faint);
+}
+
+/* The sheet's icon: 32px, stroke 1.6, #A2A8B1 — the faint rung, so the icon and
+   the title are not competing. It is matched both as a wrapper around the glyph
+   and as the glyph itself, because the panels have both shapes in the tree
+   (`<div class="tk-blank-icon"><Icon/></div>` and `<Icon class="tk-blank-icon"/>`). */
+.list-empty > .muted svg,
+.tk-blank-icon svg,
+.wb-empty-icon svg,
+svg.tk-blank-icon,
+svg.wb-empty-icon {
+  width: 32px;
+  height: 32px;
+  stroke-width: 1.6;
+}
+
+.le-title,
+.tk-blank-title,
+.wb-empty-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--fg);
+}
+
+.le-hint,
+.tk-blank-hint,
+.wb-empty-hint {
+  max-width: 320px;
+  font-size: var(--text-compact);
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+/* ---------------- 11 · list rows ----------------
+ *
+ * "1px 分割线 · 仅列表行之间" and "32 · 列表行高". A list is one card with
+ * hairlines between its rows, and the row's own action slot keeps a fixed width
+ * so nothing reflows on hover.
+ */
+.tk-list,
+.wb-list {
+  border: 1px solid var(--border);
+  border-radius: var(--wb-card-radius);
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.tk-row {
+  min-height: 56px;
+  padding: 10px var(--space-4);
+}
+
+.tk-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-muted);
+  border: 1px solid transparent;
+  color: var(--fg-secondary);
+}
+
+.tk-row-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.tk-row-name {
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.tk-row-meta,
+.tk-row-desc {
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+/* ---------------- 12 · buttons, inside a panel ----------------
+ *
+ * "四档，一屏只有一个 Primary." The sheet draws the primary as a **flat** solid
+ * (#047857) with a white label: the gradient-plus-glow the older sheet used
+ * turned every panel's Save into a light source. Scoped to `.dialog` on purpose —
+ * the composer and the board still wear the app's gradient, and this file is the
+ * panel family's, not the window's.
+ */
+.dialog .btn-primary {
+  background: var(--accent-solid);
+  color: var(--fg-on-accent);
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.dialog .btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  filter: none;
+}
+
+.dialog .btn-primary:active:not(:disabled) {
+  background: var(--accent-active);
+  filter: none;
+}
+
+/* Disabled is a muted fill, not a half-transparent one: "不再半透明". A faded
+   primary still reads as the primary, and a screen whose only filled control is
+   switched off has no primary at all. */
+.dialog .btn:disabled,
+.dialog .btn[data-disabled] {
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.dialog .btn-primary:disabled {
+  background: var(--bg-muted);
+  color: var(--fg-faint);
+  box-shadow: none;
+}
+
+.dialog .btn-outline:disabled {
+  border-color: var(--border);
+  color: var(--fg-faint);
+}
+
+.dialog .btn-ghost:disabled,
+.dialog .btn-icon:disabled {
+  color: var(--fg-faint);
+}
+
+/* The destructive control is **text**, never a filled red button: "危险 · 永远
+   不用实心红". It sits at the foot's leading edge, away from Save. */
+.dialog .btn-destructive {
+  background: transparent;
+  color: var(--destructive-text);
+  font-weight: 500;
+}
+
+.dialog .btn-destructive:hover:not(:disabled) {
+  background: var(--destructive-subtle);
+  filter: none;
+}
+
+/* ---------------- 13 · the sidebar's quiet sub-page ----------------
+ *
+ * Panels open a second surface (`onBack`). The sheet draws it as one more panel,
+ * so it inherits everything above and only the back control is its own.
+ */
+.wb-back {
+  align-self: flex-start;
+  color: var(--fg-secondary);
+}
+
+/* ---------------- 14 · a narrower window ----------------
+ *
+ * The sheet is drawn at the window's 1280 default. At the app's 960 minimum the
+ * two columns stop fitting: 340 of rail plus 32 of gap leaves under 500 for the
+ * fields, and a workspace path cut to four characters is not a fact any more. So
+ * the rail folds under the main column rather than shrinking — the same rule the
+ * editors already had, stated once for all of them.
+ */
+@media (max-width: 1000px) {
+  .wb-split,
+  .tk-editor,
+  .pc-columns,
+  .sp-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Two fields side by side stop being readable before the columns do: 220 is
+     the width at which a label and its value still fit on one line. */
+  .wb-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --wb-pad: 16px;
+    --wb-gap: 20px;
+  }
+
+  .dialog-head,
+  .dialog-wide:has(.pc-page:not(.is-inline)) .dialog-head,
+  .dialog-wide:has(.sp-page) .dialog-head {
+    padding-top: 16px;
+  }
+
+  .wb-grid.tk-name-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

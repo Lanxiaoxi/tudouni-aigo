@@ -473,6 +473,9 @@ export const en = {
   'panel.sp.empty': 'No presets yet',
   'panel.sp.emptyHint': 'Delegations follow the session’s model. Add a preset to give them a cheaper or stronger one.',
   'panel.sp.name': 'Name',
+  /* The label the preset page opens its own fields with, beside the count chip
+     that says which preset this is — the sheet's `PRESET · 1`. */
+  'panel.sp.section': 'Preset',
   'panel.sp.nameHint': 'What the model passes as `preset`: letters, digits, - or _.',
   'panel.sp.route': 'Route',
   'panel.sp.model': 'Model',
@@ -513,6 +516,7 @@ export const en = {
   'panel.task.disable': 'Disable this task',
   'panel.task.enable': 'Enable this task',
   'panel.task.disabled': 'Disabled',
+  'panel.task.disabledHint': 'Disabled — shown in the list, cannot be run',
   'panel.task.workspaceMissing': 'workspace unavailable',
   'panel.task.modelDefault': 'Inherit model',
   'panel.task.running': 'Running',
@@ -2170,6 +2174,15 @@ export const en = {
   'panel.hooks.disabledBanner': 'This session was started with hooks switched off, so none of them are running.',
   'panel.hooks.defaults': 'File-wide defaults: timeout {timeout} ms, output {output} bytes.',
   'panel.hooks.effect': 'Hooks are read once when a session opens. A saved change applies to sessions opened after it.',
+  /* The editor's two section labels and the rail's two, plus the rail's two row
+     labels. They are the design's own wording (`design/workbench-light-v2/08`),
+     which is why they are short enough to be uppercased at render. */
+  'panel.hooks.section.when': 'When it runs',
+  'panel.hooks.section.what': 'What it runs',
+  'panel.hooks.rail.glance': 'At a glance',
+  'panel.hooks.rail.recent': 'Recent',
+  'panel.hooks.rail.runs': 'Runs',
+  'panel.hooks.rail.last': 'Last',
   'panel.hooks.noCommand': 'no command yet',
   'panel.hooks.notFound': '“{program}” was not found on PATH, so this hook fails every time it is triggered.',
   'panel.hooks.order': 'Hooks of one event run in this order.',

@@ -303,28 +303,18 @@ function TaskShelf({
             {t('panel.task.note')}
           </DialogPrimitive.Description>
         </div>
-        <button type="button" className="btn btn-outline" onClick={onHistory}>
-          <Clock size={13} />
-          {t('panel.task.history')}
-        </button>
-        <div className="tk-search">
-          <Search size={13} className="tk-search-icon" />
-          <input
-            className="tk-search-input"
-            value={query}
-            spellCheck={false}
-            placeholder={t('panel.task.search')}
-            aria-label={t('panel.task.search')}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-        <button type="button" className="btn btn-primary" onClick={onNew}>
-          <Plus size={13} />
-          {t('panel.task.new')}
-        </button>
+        <DialogPrimitive.Close asChild>
+          <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')}>
+            <X size={14} />
+          </button>
+        </DialogPrimitive.Close>
       </div>
 
-      <div className="tk-filters">
+      {/* The toolbar: the filter strip at the leading edge, and the three things
+          that act on the whole list at the trailing one. The design puts them on
+          one band under the title rather than in the head, because the head is a
+          heading and this row is a working surface. */}
+      <div className="tk-toolbar">
         <div className="tk-chips" role="tablist" aria-label={t('panel.task.title')}>
           {(['all', 'enabled', 'disabled'] as const).map((key) => (
             <button
@@ -340,6 +330,26 @@ function TaskShelf({
             </button>
           ))}
         </div>
+        <span className="grow" />
+        <div className="tk-search">
+          <Search size={13} className="tk-search-icon" />
+          <input
+            className="tk-search-input"
+            value={query}
+            spellCheck={false}
+            placeholder={t('panel.task.search')}
+            aria-label={t('panel.task.search')}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+        <button type="button" className="btn btn-outline" onClick={onHistory}>
+          <Clock size={13} />
+          {t('panel.task.history')}
+        </button>
+        <button type="button" className="btn btn-primary" onClick={onNew}>
+          <Plus size={13} />
+          {t('panel.task.new')}
+        </button>
       </div>
 
       <PanelBody>
@@ -473,7 +483,9 @@ function TaskRow({
           <button type="button" className="tk-row-name" onClick={onEdit}>
             {task.name.trim() === '' ? t('panel.task.unnamed') : task.name}
           </button>
-          {!task.enabled ? <span className="badge badge-neutral">{t('panel.task.disabled')}</span> : null}
+          {/* No "Disabled" chip: the meta line says it in a sentence, and a chip
+              beside the name would make a state of the row look like a property
+              of the template. */}
           {task.autopilot === true ? (
             <span className="badge badge-neutral" title={t('panel.task.field.autopilotHint')}>
               {t('panel.task.autopilotBadge')}
@@ -488,24 +500,40 @@ function TaskRow({
           <div className="tk-row-desc">{task.description}</div>
         ) : null}
 
+        {/* The meta line: where it runs and on what, separated by the design's
+            faint interpunct. A disabled template says so here instead — the two
+            facts it would otherwise carry are not what the row is about, and the
+            sentence is the one thing a person needs before pressing Run. */}
         <div className="tk-row-meta">
-          <span className="tk-meta-item" title={label ?? undefined}>
-            <Folder size={12} />
-            {label === null ? t('panel.task.workspaceMissing') : baseName(label) || label}
-          </span>
-          <span className="tk-meta-item">
-            <Sparkles size={12} />
-            {task.model.trim() === '' ? t('panel.task.modelDefault') : task.model}
-          </span>
-          {/* The last run's verdict, when it was a failure. A caption rather
-              than a badge, and it sits in the meta line with the workspace and
-              model: those three answer "what is this task now", while the
-              verdict is a fact about what *was*. A second badge beside the
-              name would read as a property of the template — which it is
-              not, and which is why the full ledger lives in History. */}
-          {failed && !running ? (
-            <span className="tk-meta-item tk-meta-failed">{t('panel.task.lastRunFailed')}</span>
-          ) : null}
+          {!task.enabled ? (
+            <span className="tk-meta-item">{t('panel.task.disabledHint')}</span>
+          ) : (
+            <>
+              <span className="tk-meta-item" title={label ?? undefined}>
+                {label === null ? t('panel.task.workspaceMissing') : baseName(label) || label}
+              </span>
+              <span className="tk-meta-dot" aria-hidden>
+                ·
+              </span>
+              <span className="tk-meta-item">
+                {task.model.trim() === '' ? t('panel.task.modelDefault') : task.model}
+              </span>
+              {/* The last run's verdict, when it was a failure. A caption rather
+                  than a badge, and it sits in the meta line with the workspace and
+                  model: those three answer "what is this task now", while the
+                  verdict is a fact about what *was*. A second badge beside the
+                  name would read as a property of the template — which it is
+                  not, and which is why the full ledger lives in History. */}
+              {failed && !running ? (
+                <>
+                  <span className="tk-meta-dot" aria-hidden>
+                    ·
+                  </span>
+                  <span className="tk-meta-item tk-meta-failed">{t('panel.task.lastRunFailed')}</span>
+                </>
+              ) : null}
+            </>
+          )}
         </div>
       </div>
 
@@ -517,21 +545,28 @@ function TaskRow({
             </span>
             <span className="tk-running-label">{t('panel.task.running')}</span>
           </span>
-        ) : task.enabled ? (
+        ) : (
           <Tip label={blocked ?? t('panel.task.runHint')}>
             {/* The wrapper keeps the design's fixed slot: a disabled button is
-                still a button, and removing it would move the overflow menu. */}
+                still a button, and removing it would move the overflow menu.
+
+                **A disabled template shows its Run at rest**, not on hover. The
+                design draws it that way, and it is the honest state: the control
+                is present and refuses, which says "this row cannot run" without
+                anybody having to hover it to find out. An enabled row's Run still
+                waits for the hover, so a list of ten templates is not ten filled
+                primaries. */}
             <button
               type="button"
-              className="btn btn-primary tk-row-cta"
-              disabled={!runnable || busy}
+              className={`btn btn-primary tk-row-cta${!task.enabled || !runnable || busy ? ' is-shown' : ''}`}
+              disabled={!task.enabled || !runnable || busy}
               onClick={onRun}
             >
               <Play size={12} />
               {t('panel.task.run')}
             </button>
           </Tip>
-        ) : null}
+        )}
 
         <TaskMenu
           enabled={task.enabled}
@@ -1117,35 +1152,42 @@ function TaskEditor({
       <PanelBody>
         <div className="tk-editor">
           <div className="tk-editor-main">
-            <label className="cfg-field">
-              <span className="cfg-label">
-                {t('panel.task.field.name')} <span className="cfg-required">*</span>
-              </span>
-              <input
-                className={`cfg-input${touched && missing.includes('name') ? ' is-error' : ''}`}
-                value={draft.name}
-                autoFocus
-                spellCheck={false}
-                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                onBlur={() => setTouched(true)}
-              />
-              {touched && missing.includes('name') ? (
-                <span className="tk-field-error">{t('panel.task.error.name')}</span>
-              ) : null}
-            </label>
+            {/* Name and description share one row: a name is a short key and a
+                description is a sentence, so they take one and two shares of the
+                same line rather than two full-width rows that push the prompt
+                below the fold. */}
+            <div className="wb-grid tk-name-row">
+              <label className="cfg-field">
+                <span className="cfg-label">
+                  {t('panel.task.field.name')} <span className="cfg-required">*</span>
+                </span>
+                <input
+                  className={`cfg-input${touched && missing.includes('name') ? ' is-error' : ''}`}
+                  value={draft.name}
+                  autoFocus
+                  spellCheck={false}
+                  onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  onBlur={() => setTouched(true)}
+                />
+                {touched && missing.includes('name') ? (
+                  <span className="tk-field-error">{t('panel.task.error.name')}</span>
+                ) : null}
+              </label>
 
-            <label className="cfg-field">
-              <span className="cfg-label">
-                {t('panel.task.field.desc')} <span className="cfg-optional">{t('panel.task.optional')}</span>
-              </span>
-              <input
-                className="cfg-input"
-                value={draft.description}
-                spellCheck={false}
-                placeholder={t('panel.task.field.descPlaceholder')}
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-              />
-            </label>
+              <label className="cfg-field">
+                <span className="cfg-label">
+                  {t('panel.task.field.desc')}{' '}
+                  <span className="cfg-optional">{t('panel.task.optional')}</span>
+                </span>
+                <input
+                  className="cfg-input"
+                  value={draft.description}
+                  spellCheck={false}
+                  placeholder={t('panel.task.field.descPlaceholder')}
+                  onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                />
+              </label>
+            </div>
 
             <label className="cfg-field">
               <span className="cfg-label">
@@ -1168,62 +1210,69 @@ function TaskEditor({
             </label>
           </div>
 
-          {/* The environment column. Grouped and tinted because these three
-              fields are not part of the prompt: they decide *where* the session
-              opens and *whether* Run is offered, and the design sets them apart
-              for exactly that reason. */}
+          {/* The environment column. The design sets the two pickers in a card
+              and the two switches below it: the card is *where the session
+              opens*, the switches are *how it runs*, and a card around all four
+              would say they are the same kind of field. */}
           <aside className="tk-editor-side">
-            <div className="tk-side-title">{t('panel.task.field.environment')}</div>
+            <div className="wb-label">{t('panel.task.field.environment')}</div>
 
-            <label className="cfg-field">
-              <span className="cfg-label">{t('panel.task.field.workspace')}</span>
-              <WorkspacePicker
-                value={draft.workspace}
-                localPaths={localPaths}
-                remoteLabels={remoteLabels}
-                onChange={(workspace) => setDraft({ ...draft, workspace })}
-              />
-            </label>
+            <div className="tk-env">
+              <label className="cfg-field">
+                <span className="cfg-label">{t('panel.task.field.workspace')}</span>
+                <WorkspacePicker
+                  value={draft.workspace}
+                  localPaths={localPaths}
+                  remoteLabels={remoteLabels}
+                  onChange={(workspace) => setDraft({ ...draft, workspace })}
+                />
+              </label>
 
-            <label className="cfg-field">
-              <span className="cfg-label">
-                {t('panel.task.field.model')} <span className="cfg-optional">{t('panel.task.optional')}</span>
+              <label className="cfg-field">
+                <span className="cfg-label">
+                  {t('panel.task.field.model')}{' '}
+                  <span className="cfg-optional">{t('panel.task.optional')}</span>
+                </span>
+                <ModelPicker value={draft.model} onChange={(model) => setDraft({ ...draft, model })} />
+                <span className="tk-field-hint">{t('panel.task.field.modelHint')}</span>
+              </label>
+            </div>
+
+            <div className="wb-row tk-switch-row">
+              <span className="wb-row-main">
+                <span className="wb-row-title">{t('panel.task.field.autopilot')}</span>
+                <span className="wb-row-hint">{t('panel.task.field.autopilotHint')}</span>
               </span>
-              <ModelPicker value={draft.model} onChange={(model) => setDraft({ ...draft, model })} />
-              <span className="tk-field-hint">{t('panel.task.field.modelHint')}</span>
-            </label>
-
-            <div className="tk-toggle-row">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={draft.autopilot === true}
-                aria-label={t('panel.task.field.autopilot')}
-                className={`tk-switch${draft.autopilot === true ? ' is-on' : ''}`}
-                onClick={() => setDraft({ ...draft, autopilot: draft.autopilot !== true })}
-              >
-                <span className="tk-switch-knob" />
-              </button>
-              <span className="tk-toggle-text">
-                <span className="tk-toggle-label">{t('panel.task.field.autopilot')}</span>
-                <span className="tk-field-hint">{t('panel.task.field.autopilotHint')}</span>
+              <span className="wb-row-control">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={draft.autopilot === true}
+                  aria-label={t('panel.task.field.autopilot')}
+                  className={`tk-switch${draft.autopilot === true ? ' is-on' : ''}`}
+                  onClick={() => setDraft({ ...draft, autopilot: draft.autopilot !== true })}
+                >
+                  <span className="tk-switch-knob" />
+                </button>
               </span>
             </div>
 
-            <div className="tk-toggle-row">
-              <button
-                type="button"
-                role="switch"
-                aria-checked={draft.enabled}
-                aria-label={t('panel.task.field.enabled')}
-                className={`tk-switch${draft.enabled ? ' is-on' : ''}`}
-                onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}
-              >
-                <span className="tk-switch-knob" />
-              </button>
-              <span className="tk-toggle-text">
-                <span className="tk-toggle-label">{t('panel.task.field.enabled')}</span>
-                <span className="tk-field-hint">{t('panel.task.field.enabledHint')}</span>
+            <div className="wb-row tk-switch-row">
+              <span className="wb-row-main">
+                <span className="wb-row-title">{t('panel.task.field.enabled')}</span>
+                <span className="wb-row-hint">{t('panel.task.field.enabledHint')}</span>
+              </span>
+              <span className="wb-row-control">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={draft.enabled}
+                  aria-label={t('panel.task.field.enabled')}
+                  className={`tk-switch${draft.enabled ? ' is-on' : ''}`}
+                  onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}
+                >
+                  <span className="tk-switch-knob" />
+                </button>
               </span>
             </div>
           </aside>

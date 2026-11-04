@@ -1,57 +1,82 @@
-
-
-/* The dialog is `min(1000px, 100vw - 48px)`, so below ~900px the two columns stop
-   fitting: the label and the stepper would meet in the middle. Stack them instead
-   — the settings first, the corpus under them. Measured on the viewport because
-   that is the only width available to a media query; the dialog's own width is
-   derived from it. */
-@media (max-width: 900px) {
-  .wm {
-    grid-template-columns: minmax(0, 1fr);
-    /* **Two rows, and both must be declared.** Only the first row is covered by
-       the rule above; a second one would be implicit and therefore `auto`, which
-       is content height — with the panel capped by `.dialog`'s `max-height` and
-       the body's `overflow: hidden`, the lower half would then be clipped rather
-       than scrollable. Stacked, the two halves split the height and each scrolls
-       on its own. */
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-    gap: var(--space-4);
-  }
-}
-
-
 /* ============================================================
-   Code intelligence — the index facts, the build's progress, and
-   the one sentence that says which of the four states you are in.
+   Code intelligence — the index, the repository choice, and the
+   two facts in the rail.
+
+   **The sheet's geometry is the shared one.** The panel is one column of
+   sections beside `RAIL · 340`; the sections are `.wb-section`, the cards are
+   `.wb-card`, and the only things this file adds are the shapes inside them
+   (four counts, the checkbox rows, the toggle's place inside the permission
+   card). That is why there is no grid here any more: `PanelShell` draws the
+   design's two columns, and a second grid inside the main one would be a
+   layout nested in a layout.
    ============================================================ */
 
-/* The four counts, one row. `auto-fit` rather than four equal columns: the panel is
-   also drawn at the memory dialog's 1000px, and four fixed cells would leave the
-   numbers marooned in the middle at narrower widths. */
+.ci-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  /* The head's own bottom padding is 4; a section label needs a little more
+     air under the workspace line than a bare margin would give it. */
+  padding-top: var(--space-2);
+  min-width: 0;
+}
+
+/* `.wb-section + .wb-section` already spaces two sections apart; with the
+   page column's own gap that would be two gaps where the sheet draws one. */
+.ci-page .wb-section + .wb-section,
+.wb-rail .ci-rail-section + .ci-rail-section {
+  margin-top: 0;
+}
+
+/* The workspace path under the title: the sheet's one mono line, not a path bar.
+   Scoped through `.ci-page` so the panel's loading and no-session heads — whose
+   description is a sentence — keep the ordinary description rung. */
+.dialog:has(.ci-page) .dialog-desc {
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--fg-secondary);
+}
+
+/* ---------------- the index card ---------------- */
+
+.ci-index-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+/* "No index yet": the state's title, one rung under the panel title. */
+.ci-index-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--fg);
+}
+
+.ci-index-card > .cfg-hint {
+  margin: 0;
+}
+
+/* The four counts, one row. No boxes: the card is already the border, and a
+   bordered cell per number would be four cards inside one. */
 .ci-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-
-.ci-facts-empty {
-  display: block;
-  margin-top: var(--space-3);
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .ci-fact {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-muted);
+  min-width: 0;
 }
 
 .ci-fact-value {
-  font-size: 18px;
+  font-size: var(--text-h1);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
@@ -63,19 +88,13 @@
   color: var(--fg-muted);
 }
 
-.ci-fact-line {
-  font-size: var(--text-body);
-  font-weight: 600;
-  color: var(--fg);
-}
-
-/* Where it lives and how big it is — one quiet line, because it is reference rather
-   than news. The path is the long part, so it is the part that truncates. */
+/* Where it lives and how big it is — one quiet line, because it is reference
+   rather than news. The path is the long part, so it is the part that truncates. */
 .ci-meta {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  margin-top: var(--space-2);
+  min-width: 0;
   font-size: var(--text-caption);
   color: var(--fg-muted);
 }
@@ -93,42 +112,21 @@
   color: var(--fg-faint);
 }
 
-/* "up to date" and "behind by N" share a shape so the change reads as a change of
-   state rather than of layout. */
-.ci-fresh,
-.ci-warn {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-caption);
-  line-height: var(--leading-body);
-}
-
+/* "up to date" is a quiet line with a dot, not an alert: nothing is wrong. A
+   stale index is a `.wb-alert`, because something is. */
 .ci-fresh {
-  background: var(--success-subtle);
-  color: var(--fg);
-}
-
-.ci-warn {
-  background: var(--warning-subtle);
-  border-left: 2px solid var(--warning);
-  color: var(--fg);
-}
-
-.ci-warn svg {
-  flex: none;
-  margin-top: 1px;
-  color: var(--warning-text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-compact);
+  line-height: 1.45;
+  color: var(--fg-muted);
 }
 
 .ci-fresh-dot {
   flex: none;
   width: 6px;
   height: 6px;
-  margin-top: 6px;
   border-radius: 999px;
   background: var(--success);
 }
@@ -136,7 +134,9 @@
 /* The build in flight. The track is always drawn, so the bar's appearance is the
    only thing that changes when a build starts. */
 .ci-progress {
-  margin-top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .ci-progress-row {
@@ -144,7 +144,6 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
-  margin-bottom: 6px;
   font-size: var(--text-caption);
 }
 
@@ -185,80 +184,113 @@
   100% { margin-left: 100%; }
 }
 
-/* The two verbs, at the foot of the left column: the primary is the one the current
-   state is missing (initialize when there is no index), and the destructive one is
-   only ever a rebuild of something that already exists. */
+/* Files the parsers could not read. A sub-block of the index card: the label
+   names the group, the two sentences are the group's content. */
+.ci-coverage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ci-coverage .cfg-hint {
+  margin: 0;
+}
+
+/* ---------------- repositories ---------------- */
+
+.ci-repos-card {
+  overflow: hidden;
+}
+
+/* One row per candidate. 14px of air, and the hairline between rows only — the
+   same rhythm as `.wb-row`, which a checkbox row cannot use because its control
+   sits at the leading edge. `.cfg-check` is inline-flex, hence the more specific
+   selector: these are rows in a column, not chips on a line. */
+.ci-repos-card .ci-repo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 10px var(--space-4);
+  cursor: pointer;
+}
+
+.ci-repo-row + .ci-repo-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.ci-repo-row:has(input:disabled) {
+  cursor: default;
+}
+
+/* A repository name is a row title, not a path: the sheet sets these in the
+   sans face (only the workspace line is mono), and long ones truncate. */
+.ci-repo-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-body);
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The confirm is the screen's one primary, and the sheet draws it the full width
+   of the card it confirms. */
+.ci-confirm {
+  width: 100%;
+  height: 30px;
+}
+
+/* The two verbs that wait for the choice, at the card's leading edge. */
 .ci-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-5);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border-subtle);
+  gap: var(--space-3);
 }
 
-.ci-hint {
+.ci-actions .btn {
+  height: 30px;
+}
+
+/* ---------------- the rail ---------------- */
+
+.ci-perm-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.ci-perm-title {
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--fg);
+}
+
+.ci-perm-card .cfg-hint {
   margin: 0;
-  font-size: var(--text-caption);
-  line-height: var(--leading-body);
-  color: var(--fg-muted);
 }
 
-/* ---- the first-run repository checklist ----
-   One row per candidate, a real `.cfg-check` (the Learn/Configuration checkbox
-   shape, accent-tinted input) per row: the old markup leaned on classes that
-   were never defined, so the rows collapsed into one undivided line with the
-   browser-default blue tick. */
-.ci-repos {
+/* The tag at the label's trailing edge names the switch's state before the card
+   repeats it; it is a quiet chip, not a badge with a tone. */
+.ci-rail-section .wb-tag {
+  flex: none;
+}
+
+.ci-last-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
+  gap: 6px;
+  padding: 14px var(--space-4);
 }
 
-.ci-repos-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-muted);
-}
-
-/* Repository names are paths, so they are mono — the same treatment as every
-   other path in this panel. Long names truncate rather than wrap the row. */
-.ci-repo-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--text-code);
-}
-
-.ci-state-hint {
-  margin-top: var(--space-3);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border-subtle);
-  color: var(--fg-muted);
-}
-
-.ci-side-head {
-  margin-top: var(--space-5);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border);
-}
-
-.ci-last {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+.ci-last-card .cfg-hint {
+  margin: 0;
 }
 
 .ci-last-row {
@@ -266,7 +298,8 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-2);
-  font-size: var(--text-caption);
+  min-width: 0;
+  font-size: var(--text-compact);
 }
 
 .ci-last-ok {
@@ -277,14 +310,4 @@
 .ci-last-bad {
   font-weight: 600;
   color: var(--destructive-text);
-}
-
-.ci-last-when {
-  color: var(--fg-muted);
-}
-
-.ci-last-body {
-  font-size: var(--text-caption);
-  line-height: var(--leading-body);
-  color: var(--fg-muted);
 }

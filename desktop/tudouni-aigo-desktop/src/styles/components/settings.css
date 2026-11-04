@@ -1,5 +1,4 @@
 
-
 /* ---------------- §11 设置面板（启动参数） ----------------
 
    One group, and it is a start-up group: `--ericai` and `--max-steps` are read
@@ -7,81 +6,24 @@
    rule below is in service of that being legible rather than surprising:
    the value in force is stated separately from the draft, and the confirmation is
    inline (component-states.md §danger: a destructive confirm is a popover, not a
-   modal — the two modals belong to questions the runtime is waiting on). */
+   modal — the two modals belong to questions the runtime is waiting on).
 
+   **The page itself is the shared shell's now.** `design/workbench-light-v2/06`
+   draws Settings as every other workbench panel: a section label with a rule, one
+   bordered card of rows per group, a `.wb-rail` of read-out cards and a footer
+   with one secondary action. That geometry lives in `workbench.css`, so what is
+   left here is only the part the shared layer does not have — the pending card's
+   diff, the step cap's field-plus-unit line, the close-policy strip — and those
+   are `.sp-*`, this panel's own. */
+
+/* Section explanations and the one error sentence a field can own. They are
+   shared with the panels that still use the sentence-case `.set-*` vocabulary, so
+   they stay here rather than moving into the panel's block. */
 .set-hint {
   margin: 0 0 var(--space-3);
   font-size: var(--text-caption);
   line-height: var(--leading-tight);
   color: var(--fg-muted);
-}
-
-.set-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-  border-top: 1px solid var(--border-subtle);
-}
-
-.set-main {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.set-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-body);
-  font-weight: 600;
-  color: var(--fg);
-}
-
-.set-desc {
-  font-size: var(--text-caption);
-  line-height: var(--leading-tight);
-  color: var(--fg-secondary);
-  word-break: break-word;
-}
-
-/* The switch. Deliberately **not** `.st-toggle`: that shape is defined as
-   `.statusbar .st-toggle`, so borrowing the name would produce a button with no
-   rule at all — and the class audit cannot see it, because the name *is* defined
-   somewhere in the stylesheet. */
-.set-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex: none;
-  height: var(--control-h-compact);
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--bg-muted);
-  font-size: var(--text-caption);
-  color: var(--fg-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out),
-    opacity var(--motion-fast) var(--ease-out);
-}
-
-.set-toggle:hover:not(:disabled) {
-  color: var(--fg);
-}
-
-.set-toggle.is-on {
-  background: var(--accent-subtle);
-  color: var(--accent-text);
-}
-
-.set-toggle:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .set-error {
@@ -241,7 +183,6 @@
   flex-direction: row;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-2);
 }
 
 .set-choice-item {
@@ -290,137 +231,80 @@
 }
 
 /* ============================================================
-   §11a Settings — the two-column page
+   §11a Settings — what the shared rows do not cover
    ============================================================
 
-   The redesign's shape: the form on the left, and a read-out column on the
-   right that answers the two questions a start-up setting has to answer —
-   *what is running* and *what will change*. `.set-*` is still the row
-   vocabulary (the same titles and descriptions the rest of the panel uses);
-   `.sp-*` is the page, its column, and the three cards.
+   The body is `.wb-section`s of `.wb-card`s and the rail is `.wb-card` read-outs;
+   both are `workbench.css`. Four things here are this page's own:
 
-   The dialog is widened here rather than by a second class, for the same
-   reason the provider route page is: only this page needs the room, and the
-   list surfaces behind it keep the panel's ordinary width. */
+   - the rail card's inner rhythm (`.sp-rail-card`) — `.wb-card` draws the border
+     and deliberately leaves the padding to its contents;
+   - the argv line (`.sp-argv`), which is a sunken bar and the one place the
+     actual command line appears;
+   - the step cap's field-plus-unit line (`.sp-step`, `.sp-step-line`), because
+     the unit sits outside the box and the value in force under it;
+   - the pending card's diff (`.sp-diff*`), which is the inline confirmation the
+     page's module note describes and which no sheet draws, because no sheet
+     shows the pending state. */
 
-.dialog-wide:has(.sp-page) {
-  width: min(1180px, calc(100vw - 48px));
-  background: var(--bg);
-}
-
-.dialog-wide:has(.sp-page) .dialog-head {
-  padding: var(--space-4) var(--space-8);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.dialog-wide:has(.sp-page) .dialog-body {
-  padding: var(--space-5) var(--space-8) var(--space-8);
-}
-
-/* The close square is framed on this page, the shape the design gives it: the
-   page is long enough that the head is read as a header rather than as a
-   dialog's title row. */
-.dialog-wide:has(.sp-page) .dialog-head > .btn:last-child {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-  color: var(--fg-secondary);
-}
-
-.dialog-wide:has(.sp-page) .dialog-head > .btn:last-child:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-muted);
-  color: var(--fg);
-}
-
-.sp-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  align-items: start;
-  gap: var(--space-8);
-}
-
-.sp-main {
+/* The rail card: padding and the rhythm between its own rows. `.wb-card` is the
+   border, the radius and the surface — this is what a card of read-out rows needs
+   on top of that, and nothing more. */
+.sp-rail-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-6);
-  min-width: 0;
-}
-
-.sp-section {
-  min-width: 0;
-}
-
-/* The section label and its rule: the same device the provider page uses, so a
-   section reads as a heading rather than as one more line of description. */
-.sp-section-head {
-  display: flex;
-  align-items: center;
   gap: var(--space-3);
-  margin-bottom: var(--space-2);
+  padding: var(--space-4);
+  min-width: 0;
 }
 
-.sp-section-label {
-  flex: none;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+/* What was actually on the command line, never merged into the draft: a sunken
+   mono line at the card's foot, the same rung a path bar wears. One line, and it
+   is allowed to clip — the facts above it are the summary, this is the evidence. */
+.sp-argv {
+  padding: 6px var(--space-3);
+  border-radius: var(--wb-ctrl-radius);
+  background: var(--bg-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
   color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.sp-rule {
-  flex: 1 1 auto;
-  height: 1px;
-  background: var(--border-subtle);
-}
-
-/* The control column is the row's right edge. It is a column so the step cap's
-   "running 150" line can sit under its input; the switches have one child and
-   look the same either way. */
-.sp-control {
+/* The step cap's control column: the boxed number with its unit beside it, and
+   the value in force under the box. It is a column because the second line
+   belongs to the field rather than to the row, and it is right-aligned so both
+   sit on the card's edge. */
+.sp-step {
   flex: none;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--space-2);
+  gap: 6px;
 }
 
-.sp-number-row {
+.sp-step-line {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-/* `.cfg-input` is the shared field shape (and is imported after this file), so
-   the width, height and mono face are overridden at a specificity that does
-   not depend on the stylesheet order. */
-.sp-page .cfg-input.sp-number {
+/* The two number fields and the step cap: one boxed figure, mono and centred, its
+   unit beside the box rather than inside it. `.cfg-input` supplies the border,
+   the height and the fill; this is only the width, the alignment and the face.
+   The width is the box the sheet draws *and* the room the fallback needs — the
+   step cap's empty state reads "runtime default", which is a sentence, and a
+   narrower box would clip it mid-word. */
+.cfg-input.sp-number {
   flex: none;
-  width: 96px;
-  height: 34px;
+  width: 136px;
+  padding: 0 var(--space-2);
   font-family: var(--font-mono);
   font-size: var(--text-compact);
   font-variant-numeric: tabular-nums;
-}
-
-/* The page is the plane and the fields are the paper, as on the provider page:
-   a field is near-white here even in the light theme, where `--bg` is the pale
-   green. */
-.sp-page .cfg-input {
-  background: var(--bg-card);
-}
-
-.sp-number.is-invalid {
-  border-color: var(--destructive);
-}
-
-.sp-number:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+  text-align: center;
 }
 
 .sp-unit {
@@ -447,132 +331,27 @@
   color: var(--fg-muted);
 }
 
-.sp-page .tk-switch:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
+/* A row whose value is pending an apply. It is a tag, not a sentence, and it is
+   set in the warning pair because the change is waiting rather than wrong. The
+   section labels are the only uppercase type in a panel, so this one is not. */
 .sp-pending {
   display: inline-flex;
   align-items: center;
   height: 16px;
-  padding: 0 6px;
-  border: 1px solid var(--warning-border);
+  padding: 0 5px;
   border-radius: var(--radius-xs);
+  background: var(--warning-subtle);
   color: var(--warning-text);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.sp-control-choice .set-choice {
-  margin-top: 0;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-/* ---- the read-out column ---- */
-
-.sp-side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  min-width: 0;
-}
-
-.sp-side-block {
-  min-width: 0;
-}
-
-.sp-side-label {
-  margin-bottom: var(--space-2);
   font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--fg-muted);
+  font-weight: 500;
+  letter-spacing: 0;
 }
 
-.sp-card {
-  padding: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-}
-
-.sp-facts {
-  display: flex;
-  flex-direction: column;
-}
-
-.sp-fact {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: 6px 0;
-  font-size: var(--text-compact);
-}
-
-/* The running card's rows are separated by hairlines; the facts are parallel
-   answers to the same question, and the lines keep them from reading as one
-   sentence. */
-.sp-facts .sp-fact + .sp-fact {
-  border-top: 1px solid var(--border-subtle);
-}
-
-.sp-fact-label {
-  color: var(--fg-secondary);
-}
-
-.sp-fact-value {
-  text-align: right;
-  color: var(--fg);
-  font-variant-numeric: tabular-nums;
-}
-
-.sp-fact-value.mono {
-  font-family: var(--font-mono);
-}
-
-.sp-fact-value.is-ok {
-  color: var(--accent-tint-text);
-}
-
-.sp-fact-value.is-warning {
-  color: var(--warning-text);
-}
-
-.sp-fact-value.is-bad {
-  color: var(--destructive-text);
-}
-
-.sp-fact-value.is-muted {
-  color: var(--fg-muted);
-}
-
-/* What was actually on the command line, never merged into the draft. Mono,
-   because these are flags rather than prose. */
-.sp-argv {
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border-subtle);
-  font-family: var(--font-mono);
-  font-size: var(--text-caption);
-  color: var(--fg-secondary);
-  word-break: break-all;
-}
-
-.sp-side-hint {
-  margin: var(--space-2) 0 0;
-  font-size: var(--text-caption);
-  line-height: var(--leading-tight);
-  color: var(--fg-muted);
-}
-
-/* ---- the pending card ---- */
-
+/* ---- the pending card ----
+   The sheet does not draw it because the sheet has nothing pending; the page's
+   module note is why it exists. Its shape is the rail's cards' — one border, the
+   diff inside — so a pending state reads as one more read-out rather than as a
+   second language. */
 .sp-pending-card {
   padding: var(--space-4);
 }
@@ -641,60 +420,6 @@
   color: var(--warning-text);
 }
 
-/* ---- applies when ---- */
-
-.sp-applies {
-  border: 0;
-  background: var(--bg-secondary);
-}
-
-.sp-applies .sp-fact {
-  padding: 5px 0;
-}
-
-/* Wider than the provider page's breakpoint on purpose: this side column is
-   360px of prose-and-figures, not a 300px read-out, so the two columns stop
-   fitting sooner. Stacking here keeps the descriptions at a readable measure
-   in a 1000px window instead of squeezing them beside the cards. */
-@media (max-width: 1060px) {
-  .sp-columns {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sp-side {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-  }
-}
-
-@media (max-width: 720px) {
-  .dialog-wide:has(.sp-page) .dialog-head {
-    padding: var(--space-3) var(--space-4);
-  }
-
-  .dialog-wide:has(.sp-page) .dialog-body {
-    padding: var(--space-3) var(--space-4) var(--space-5);
-  }
-
-  .sp-page .set-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .sp-control {
-    align-items: flex-start;
-  }
-
-  .sp-side {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .sp-control-choice .set-choice {
-    justify-content: flex-start;
-  }
-}
-
 /* ---------------- §12 学习面板（Learn workspace） ----------------
 
    The learning run's configuration form.
@@ -702,23 +427,164 @@
    **It is the task editor's shape, because it is the same kind of screen.** A
    form holding two kinds of content: what you decide (the scope, the deliverable
    types, the focus) and what is *true* of the run (which workspace it studies,
-   how many sessions that comes to, the model it inherits). The left column holds
-   the first and the tinted side card the second, exactly as `TaskEditor`
-   separates "what the run says" from "where it says it". It used to be five
-   stacked blocks, which made every fact look like one more field.
+   how many sessions that comes to, the model it inherits). The body holds the
+   first and the rail the second, exactly as `TaskEditor` separates "what the run
+   says" from "where it says it". It used to be five stacked blocks, which made
+   every fact look like one more field.
 
-   **The parts are the app's.** A section is `.tk-section`; the three exclusive
-   options are `.tk-choice` rows, which is the same radio list the MCP transport
-   is chosen from; a tick box is `.cfg-check`, the textarea `.cfg-textarea`, the
-   workspace path `.cfg-path-row`, and something wrong a `.cfg-problem`. What is
-   left here is the one thing this panel owns: four file names on a wrapped row. */
+   **The parts are the app's.** A group is a `.wb-section`, a section label a
+   `.wb-label`, a tick box `.cfg-check`, the textarea `.cfg-textarea`, and the run's
+   facts are the rail's `.wb-kv` rows. What is left here is the one shape the
+   shared layer does not have — a radio list whose rows each own a field — plus
+   the four file names on a wrapped row. */
 
-/* The folder glyph on the workspace row. A flex item inside
-   `.cfg-path-row`, so it must not shrink and must not be pushed onto its
-   own line by a long path — the ellipsis on `.cfg-path` is what yields. */
+/* The form's own rhythm. The body's `.wb-main` already spaces its children at 20,
+   and the shared `.wb-section` puts another 24 between two of them; these groups
+   are four short ones, not four long ones, so the form takes the 24 once and the
+   section margin off. */
+.learn-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.learn-form > .wb-section + .wb-section {
+  margin-top: 0;
+}
+
+/* The three exclusive options: one bordered row each, the chosen one tinted.
+   The shared `.tk-choice` joins its rows by a shared hairline, which is right for
+   a list of plain options; here each option owns a number field of its own, and a
+   field inside a joined group reads as a second control floating between two
+   settings. Separate cards keep each option's field inside the option. */
+.learn-scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.learn-scope-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: 8px var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--wb-card-radius);
+  background: var(--bg-elevated);
+  font-size: var(--text-compact);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.learn-scope-row:hover {
+  border-color: var(--border-strong);
+}
+
+/* The row *is* the choice, so the row is what gets tinted — the same rule the
+   sheet's checkbox and radio sections state. */
+.learn-scope-row:has(input[type='radio']:checked) {
+  border-color: var(--accent-tint-border);
+  background: var(--accent-tint);
+}
+
+.learn-scope-radio {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.learn-scope-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--fg);
+}
+
+/* The chosen option's own parameter. **Disabled until its option is the chosen
+   one** — an input that accepts a value the form is not using is a control that
+   lies about having an effect. Clicking it still selects the row, because the
+   whole row is the label. */
+.learn-scope-num {
+  flex: none;
+  width: 84px;
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--wb-ctrl-radius);
+  background: var(--bg-card);
+  font-family: var(--font-mono);
+  font-size: var(--text-compact);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  text-align: center;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.learn-scope-num::placeholder {
+  color: var(--fg-faint);
+}
+
+/* component-states §0: disabled is opacity alone — the colours stay tokens. */
+.learn-scope-num:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.learn-scope-num:focus-visible {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+/* The preview count. A fixed column so the three numbers line up down the right
+   edge — they are the same fact in the same place, n times. */
+.learn-scope-count {
+  flex: none;
+  width: 32px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+.learn-scope-row:has(input[type='radio']:checked) .learn-scope-count {
+  color: var(--accent-text);
+}
+
+/* The workspace path at the head of THIS RUN. It is **not** a `.wb-path` bar: the
+   sheet draws it as the card's first row, on the card's own surface, because the
+   whole card is the read-out and a sunken bar inside it would read as one more
+   field. The folder glyph is a flex item, so it must not shrink and must not be
+   pushed onto its own line by a long path — the ellipsis is what yields. */
+.learn-workspace {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .learn-workspace-ic {
   flex: none;
   color: var(--fg-muted);
+}
+
+.learn-workspace-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  color: var(--fg-secondary);
 }
 
 /* ---- deliverables ----
@@ -728,12 +594,12 @@
    hidden input behind a painted chip. The chip shape was prettier and it
    was not a checkbox: it hid a 1px input under a label, so the keyboard
    could reach it but nothing ever showed that it had.
-   No margin of its own: it is a `.tk-section`'s body, and the section's own
+   No margin of its own: it is a `.wb-section`'s body, and the section's own
    gap is the rhythm. */
 .learn-deliverables {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2) var(--space-5);
+  gap: var(--space-2) var(--space-8);
 }
 
 /* The type names are file names, so they are mono — the same treatment the
@@ -745,4 +611,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The focus box is the one field that is allowed to be tall: it holds a
+   sentence or two of the person's own words, and the sheet draws it as the
+   largest control on the page. `rows` sets the floor; this keeps it from
+   collapsing when the field's own line-height is retuned. */
+.learn-focus {
+  min-height: 88px;
 }

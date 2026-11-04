@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Pause } from 'lucide-react';
 import { selectModalVisible, selectPhase, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
@@ -12,7 +13,7 @@ import {
   REVEAL_MAX_CPS,
 } from '@/streamReveal';
 import { Info, Tip } from '@/components/ui/kit';
-import { PanelBody, PanelShell } from './PanelShell';
+import { PanelShell } from './PanelShell';
 
 /**
  * Settings.
@@ -34,14 +35,14 @@ import { PanelBody, PanelShell } from './PanelShell';
  * first group would have borrowed its whole apparatus ("Apply and restart" for
  * a checkbox about toasts) and taught people to distrust both.
  *
- * The page draws that split twice: the left column says what each setting does,
- * and the right column says what is **in force** and what an apply will change.
- * Three rules shape the rest of this file:
+ * The page draws that split twice: the body says what each setting does, and the
+ * rail says what is **in force** and what an apply will change. Three rules shape
+ * the rest of this file:
  *
  *   1. **It shows what is in force, not what is remembered.** `launch` records the
  *      argv this session's child was actually given, which is a fact this window
  *      has. A remembered default is not, and the two are never merged — a value
- *      kept for next time must not read as "this is on now". The right column's
+ *      kept for next time must not read as "this is on now". The rail's
  *      RUNNING card is that fact; the PENDING card is the difference.
  *   2. **Nothing is applied optimistically.** The controls move when the person
  *      chooses, and the RUNNING card moves only when a new child has been
@@ -51,6 +52,14 @@ import { PanelBody, PanelShell } from './PanelShell';
  *      says that applying restarts the child. The two blocking modals exist for
  *      questions *the runtime* is waiting on; borrowing one here would freeze
  *      the global keys and the sidebar for an ordinary local decision.
+ *
+ * **The foot has one button, and it closes.** Nothing on this page is submitted:
+ * the start-up arguments apply through the PENDING card's own Apply, and a
+ * window preference is already saved by the time its switch settles. A Save in
+ * the footer would be a third way of saying those two things, and a Cancel would
+ * be a way of losing them that nothing needs. So the foot carries the sentence
+ * that says what the page above it *is* — a record of how the runtime was
+ * started — and the one action it has, which is to leave.
  */
 export function SettingsPanel() {
   const t = useT();
@@ -207,402 +216,392 @@ export function SettingsPanel() {
 
   const smoothingActive = streamSmoothing && !reducedMotion;
 
+  /* One row of a card: the title (and its `?`) over the sentence that explains
+     it, the control at the card's right edge. It is a function rather than four
+     copies of the same six elements because the row is the sheet's unit and the
+     four groups below must not drift apart from each other. */
+  const row = (title: ReactNode, hint: ReactNode, control: ReactNode) => (
+    <div className="wb-row">
+      <div className="wb-row-main">
+        <div className="wb-row-title">{title}</div>
+        <div className="wb-row-hint">{hint}</div>
+      </div>
+      <div className="wb-row-control">{control}</div>
+    </div>
+  );
+
+  const pendingChip = <span className="sp-pending">{t('panel.settings.pending')}</span>;
+
   return (
-    <PanelShell title={t('panel.settings.title')} note={t('panel.settings.note')}>
-      <PanelBody>
-        <div className="sp-page">
-          <div className="sp-columns">
-            <div className="sp-main">
-              {/* ============================================================
-                  Runtime
-                  ============================================================
-                  The start-up group. Its two values are the ones the PENDING
-                  card can carry, and its header is the sentence that explains
-                  why changing either one starts another child. */}
-              <section className="sp-section">
-                <div className="sp-section-head">
-                  <span className="sp-section-label">{t('panel.settings.launch')}</span>
-                  <span className="sp-rule" />
+    <PanelShell
+      title={t('panel.settings.title')}
+      note={t('panel.settings.note')}
+      // The read-out's own rule, in the foot: the page above it is a record of
+      // the argv the child was given, and the foot is where a panel says what
+      // it is rather than offering to submit it.
+      footHint={t('panel.settings.runningHint')}
+      footer={
+        <DialogPrimitive.Close asChild>
+          <button type="button" className="btn btn-outline">
+            {t('panel.close')}
+          </button>
+        </DialogPrimitive.Close>
+      }
+      rail={
+        <>
+          <div className="wb-card-above">
+            <div className="wb-label">{t('panel.settings.running')}</div>
+            <div className="wb-card sp-rail-card">
+              <div className="wb-kv">
+                <div className="wb-kv-row">
+                  <span className="wb-kv-label">{t('panel.settings.status')}</span>
+                  <span className={`wb-value ${statusTone}`}>{statusText}</span>
                 </div>
-                <p className="set-hint">{t('panel.settings.launchHint')}</p>
-
-                {/* ---- EricAI ---- */}
-                <div className="set-row">
-                  <div className="set-main">
-                    <div className="set-title">
-                      <span>{t('panel.settings.ericai')}</span>
-                      {/* The side effect is stated, not implied — but in the icon, not
-                          the row: the row says what the switch does, the `?` says what
-                          it is allowed to do to the person's machine. */}
-                      <Info label={t('panel.settings.ericaiDetail')} side="top" />
-                      {ericaiChanged ? (
-                        <span className="sp-pending">{t('panel.settings.pending')}</span>
-                      ) : null}
-                    </div>
-                    <div className="set-desc">{t('panel.settings.ericaiDesc')}</div>
-                  </div>
-                  <div className="sp-control">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={ericai}
-                      aria-label={t('panel.settings.ericai')}
-                      className={`tk-switch${ericai ? ' is-on' : ''}`}
-                      disabled={blocked !== null}
-                      onClick={() => setEricai(!ericai)}
-                    >
-                      <span className="tk-switch-knob" />
-                    </button>
-                  </div>
+                <div className="wb-kv-row">
+                  <span className="wb-kv-label">{t('panel.settings.started')}</span>
+                  <span className="wb-value">{startedText}</span>
                 </div>
-
-                {/* ---- step cap ---- */}
-                <div className="set-row">
-                  <div className="set-main">
-                    <div className="set-title">
-                      <span>{t('panel.settings.maxSteps')}</span>
-                      {maxStepsChanged ? (
-                        <span className="sp-pending">{t('panel.settings.pending')}</span>
-                      ) : null}
-                    </div>
-                    <div className="set-desc">{t('panel.settings.maxStepsDesc')}</div>
-                  </div>
-                  <div className="sp-control">
-                    <div className="sp-number-row">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        className={`cfg-input sp-number${invalid ? ' is-invalid' : ''}`}
-                        value={maxSteps}
-                        disabled={blocked !== null}
-                        placeholder={t('panel.settings.maxStepsDefault')}
-                        aria-label={t('panel.settings.maxSteps')}
-                        aria-invalid={invalid}
-                        onChange={(e) => setMaxSteps(e.target.value)}
-                      />
-                      <span className="sp-unit">{t('panel.settings.calls')}</span>
-                    </div>
-                    {invalid ? (
-                      <div className="set-error">{t('panel.settings.maxStepsInvalid')}</div>
-                    ) : (
-                      <div className="sp-running-inline">
-                        {t('panel.settings.runningValue', { value: stepText })}
-                      </div>
-                    )}
-                  </div>
+                <div className="wb-kv-row">
+                  <span className="wb-kv-label">{t('panel.settings.maxSteps')}</span>
+                  {/* The runtime's own default is a sentence, not a number, so
+                      it keeps the mono rung but takes the muted tone — the two
+                      circumstances must not look like the same fact. */}
+                  <span className={`wb-value${launch.maxSteps === null ? ' is-muted' : ''}`}>
+                    {stepText}
+                  </span>
                 </div>
-              </section>
-
-              {/* ============================================================
-                  This window
-                  ============================================================
-                  A separate group because it is a separate kind of decision.
-                  Nothing here reaches the runtime, nothing here needs a restart,
-                  and so none of it borrows the PENDING card above. */}
-              <section className="sp-section">
-                <div className="sp-section-head">
-                  <span className="sp-section-label">{t('panel.settings.window')}</span>
-                  <span className="sp-rule" />
-                </div>
-                <p className="set-hint">{t('panel.settings.windowHint')}</p>
-
-                <div className="set-row">
-                  <div className="set-main">
-                    <div className="set-title">
-                      <span>{t('panel.settings.notify')}</span>
-                    </div>
-                    <div className="set-desc">{t('panel.settings.notifyDesc')}</div>
-                  </div>
-                  <div className="sp-control">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={notifyEnabled}
-                      aria-label={t('panel.settings.notify')}
-                      className={`tk-switch${notifyEnabled ? ' is-on' : ''}`}
-                      onClick={() => setNotifyEnabled(!notifyEnabled)}
-                    >
-                      <span className="tk-switch-knob" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="set-row">
-                  <div className="set-main">
-                    <div className="set-title">
-                      <span>{t('panel.settings.suggestions')}</span>
-                    </div>
-                    <div className="set-desc">{t('panel.settings.suggestionsDesc')}</div>
-                  </div>
-                  <div className="sp-control">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={suggestionsEnabled}
-                      aria-label={t('panel.settings.suggestions')}
-                      className={`tk-switch${suggestionsEnabled ? ' is-on' : ''}`}
-                      onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
-                    >
-                      <span className="tk-switch-knob" />
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              {/* ============================================================
-                  Reply pacing
-                  ============================================================
-                  A section of its own now that it is three rows: the switch and
-                  the two ends of the curve it tunes. The paces are inert with
-                  the switch (a pace on a reply drawn immediately is a number
-                  describing nothing), and effective from the **next** reply,
-                  which the descriptions say. */}
-              <section className="sp-section">
-                <div className="sp-section-head">
-                  <span className="sp-section-label">{t('panel.settings.pacing')}</span>
-                  <span className="sp-rule" />
-                </div>
-
-                <div className="set-row">
-                  <div className="set-main">
-                    <div className="set-title">
-                      <span>{t('panel.settings.smoothing')}</span>
-                    </div>
-                    <div className="set-desc">{t('panel.settings.smoothingDesc')}</div>
-                    {reducedMotion ? (
-                      <div className="sp-note">{t('panel.settings.smoothingReduced')}</div>
-                    ) : null}
-                  </div>
-                  <div className="sp-control">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={smoothingActive}
-                      aria-label={t('panel.settings.smoothing')}
-                      className={`tk-switch${smoothingActive ? ' is-on' : ''}`}
-                      disabled={reducedMotion}
-                      onClick={() => setStreamSmoothing(!streamSmoothing)}
-                    >
-                      <span className="tk-switch-knob" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="set-row">
-                  <div className="set-main">
-                    <div className="set-title">
-                      <span>{t('panel.settings.paceBase')}</span>
-                    </div>
-                    <div className="set-desc">{t('panel.settings.paceBaseDesc')}</div>
-                  </div>
-                  <div className="sp-control">
-                    <div className="sp-number-row">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        className="cfg-input sp-number"
-                        value={paceBaseValue}
-                        disabled={!smoothingActive}
-                        placeholder={String(REVEAL_BASE_CPS)}
-                        aria-label={t('panel.settings.paceBase')}
-                        onFocus={() =>
-                          setPaceDraft({ field: 'base', raw: String(streamBaseCps) })
-                        }
-                        onChange={(e) => setPaceDraft({ field: 'base', raw: e.target.value })}
-                        onBlur={() => commitPace('base')}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') commitPace('base');
-                        }}
-                      />
-                      <span className="sp-unit">{t('panel.settings.charsPerSecond')}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="set-row">
-                  <div className="set-main">
-                    <div className="set-title">
-                      <span>{t('panel.settings.paceMax')}</span>
-                    </div>
-                    <div className="set-desc">{t('panel.settings.paceMaxDesc')}</div>
-                  </div>
-                  <div className="sp-control">
-                    <div className="sp-number-row">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        className="cfg-input sp-number"
-                        value={paceMaxValue}
-                        disabled={!smoothingActive}
-                        placeholder={String(REVEAL_MAX_CPS)}
-                        aria-label={t('panel.settings.paceMax')}
-                        onFocus={() =>
-                          setPaceDraft({ field: 'max', raw: String(streamMaxCps) })
-                        }
-                        onChange={(e) => setPaceDraft({ field: 'max', raw: e.target.value })}
-                        onBlur={() => commitPace('max')}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') commitPace('max');
-                        }}
-                      />
-                      <span className="sp-unit">{t('panel.settings.charsPerSecond')}</span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              {/* ============================================================
-                  Closing
-                  ============================================================
-                  The design's visible page ends with the pacing rows; this row
-                  is kept below them rather than folded into "This window", so
-                  the top of the page reads exactly as the design does. It is
-                  still a window preference: saved for the whole application,
-                  applied at once. */}
-              <section className="sp-section">
-                <div className="sp-section-head">
-                  <span className="sp-section-label">{t('panel.settings.closing')}</span>
-                  <span className="sp-rule" />
-                </div>
-
-                <div className="set-row">
-                  <div className="set-main">
-                    <div className="set-title">
-                      <span>{t('panel.settings.close')}</span>
-                    </div>
-                    <div className="set-desc">{t('panel.settings.closeDesc')}</div>
-                  </div>
-                  <div className="sp-control sp-control-choice">
-                    <div className="set-choice" role="radiogroup" aria-label={t('panel.settings.close')}>
-                      {CLOSE_POLICIES.map((policy) => (
-                        <Tip key={policy} label={t(CLOSE_POLICY_SUMMARY[policy])} side="top">
-                          <label
-                            className="set-choice-item"
-                            role="radio"
-                            aria-checked={closePolicy === policy}
-                            data-state={closePolicy === policy ? 'checked' : 'unchecked'}
-                          >
-                            <input
-                              type="radio"
-                              name="close-policy"
-                              checked={closePolicy === policy}
-                              onChange={() => setClosePolicy(policy)}
-                            />
-                            <span className="set-choice-text">{t(CLOSE_POLICY_LABEL[policy])}</span>
-                          </label>
-                        </Tip>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </section>
+              </div>
+              {/* The argv itself, in the sunken rung the design gives a path or a
+                  command: the facts above say what it comes to, this says what
+                  was actually typed. */}
+              <div className="sp-argv" title={argv}>
+                {argv}
+              </div>
             </div>
+          </div>
 
-            {/* ============================================================
-                The read-out column
-                ============================================================
-                What is running, what an apply would change, and when each kind
-                of change lands. It never merges the draft into the running
-                facts: the RUNNING card is the only one that claims to describe
-                the child, and the PENDING card names the difference. */}
-            <aside className="sp-side">
-              <div className="sp-side-block">
-                <div className="sp-side-label">{t('panel.settings.running')}</div>
-                <div className="sp-card">
-                  <div className="sp-facts">
-                    <div className="sp-fact">
-                      <span className="sp-fact-label">{t('panel.settings.status')}</span>
-                      <span className={`sp-fact-value ${statusTone}`}>{statusText}</span>
-                    </div>
-                    <div className="sp-fact">
-                      <span className="sp-fact-label">{t('panel.settings.started')}</span>
-                      <span className="sp-fact-value">{startedText}</span>
-                    </div>
-                    <div className="sp-fact">
-                      <span className="sp-fact-label">{t('panel.settings.maxSteps')}</span>
-                      <span className={`sp-fact-value${launch.maxSteps !== null ? ' mono' : ''}`}>
-                        {stepText}
+          {changed ? (
+            <div className="wb-card-above">
+              <div className="wb-label">{t('panel.settings.pending')}</div>
+              <div className="wb-card sp-pending-card">
+                {ericaiChanged ? (
+                  <div className="sp-diff">
+                    <div className="sp-diff-arg">--ericai</div>
+                    <div className="sp-diff-values">
+                      <span className="sp-diff-old">
+                        {launch.ericai ? t('panel.settings.on') : t('panel.settings.off')}
+                      </span>
+                      <span className="sp-diff-arrow" aria-hidden="true">
+                        →
+                      </span>
+                      <span className="sp-diff-new">
+                        {ericai ? t('panel.settings.on') : t('panel.settings.off')}
                       </span>
                     </div>
                   </div>
-                  <div className="sp-argv">{argv}</div>
-                </div>
-                <p className="sp-side-hint">{t('panel.settings.runningHint')}</p>
-              </div>
-
-              {changed ? (
-                <div className="sp-side-block">
-                  <div className="sp-side-label">{t('panel.settings.pending')}</div>
-                  <div className="sp-card sp-pending-card">
-                    {ericaiChanged ? (
-                      <div className="sp-diff">
-                        <div className="sp-diff-arg">--ericai</div>
-                        <div className="sp-diff-values">
-                          <span className="sp-diff-old">
-                            {launch.ericai ? t('panel.settings.on') : t('panel.settings.off')}
-                          </span>
-                          <span className="sp-diff-arrow" aria-hidden="true">
-                            →
-                          </span>
-                          <span className="sp-diff-new">
-                            {ericai ? t('panel.settings.on') : t('panel.settings.off')}
-                          </span>
-                        </div>
-                      </div>
-                    ) : null}
-                    {maxStepsChanged ? (
-                      <div className="sp-diff">
-                        <div className="sp-diff-arg">--max-steps</div>
-                        <div className="sp-diff-values">
-                          <span className="sp-diff-old">{oldStep}</span>
-                          <span className="sp-diff-arrow" aria-hidden="true">
-                            →
-                          </span>
-                          <span className="sp-diff-new">{newStep}</span>
-                        </div>
-                      </div>
-                    ) : null}
-                    <div className="sp-pending-actions">
-                      <button
-                        type="button"
-                        className="btn btn-primary sp-apply"
-                        disabled={disabled}
-                        onClick={apply}
-                      >
-                        {t('panel.settings.apply')}
-                      </button>
-                      <button type="button" className="btn btn-ghost sp-discard" onClick={discard}>
-                        {t('panel.settings.discard')}
-                      </button>
-                      {blocked !== null ? (
-                        <div className="sp-blocked">
-                          <Pause size={11} />
-                          <span>{blockedText}</span>
-                        </div>
-                      ) : null}
+                ) : null}
+                {maxStepsChanged ? (
+                  <div className="sp-diff">
+                    <div className="sp-diff-arg">--max-steps</div>
+                    <div className="sp-diff-values">
+                      <span className="sp-diff-old">{oldStep}</span>
+                      <span className="sp-diff-arrow" aria-hidden="true">
+                        →
+                      </span>
+                      <span className="sp-diff-new">{newStep}</span>
                     </div>
                   </div>
-                  <p className="sp-side-hint">{t('panel.settings.pendingHint')}</p>
-                </div>
-              ) : null}
-
-              <div className="sp-side-block">
-                <div className="sp-side-label">{t('panel.settings.appliesWhen')}</div>
-                <div className="sp-card sp-applies">
-                  <div className="sp-fact">
-                    <span className="sp-fact-label">{t('panel.settings.startupArgs')}</span>
-                    <span className="sp-fact-value is-warning">{t('panel.settings.restart')}</span>
-                  </div>
-                  <div className="sp-fact">
-                    <span className="sp-fact-label">{t('panel.settings.windowPrefs')}</span>
-                    <span className="sp-fact-value is-ok">{t('panel.settings.instantly')}</span>
-                  </div>
+                ) : null}
+                <div className="sp-pending-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary sp-apply"
+                    disabled={disabled}
+                    onClick={apply}
+                  >
+                    {t('panel.settings.apply')}
+                  </button>
+                  <button type="button" className="btn btn-ghost sp-discard" onClick={discard}>
+                    {t('panel.settings.discard')}
+                  </button>
+                  {blocked !== null ? (
+                    <div className="sp-blocked">
+                      <Pause size={11} />
+                      <span>{blockedText}</span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
-            </aside>
+              <p className="cfg-hint">{t('panel.settings.pendingHint')}</p>
+            </div>
+          ) : null}
+
+          <div className="wb-card-above">
+            <div className="wb-label">{t('panel.settings.appliesWhen')}</div>
+            <div className="wb-card sp-rail-card">
+              <div className="wb-kv-row">
+                <span className="wb-kv-label">{t('panel.settings.startupArgs')}</span>
+                <span className="wb-value is-warning">{t('panel.settings.restart')}</span>
+              </div>
+              <div className="wb-kv-row">
+                <span className="wb-kv-label">{t('panel.settings.windowPrefs')}</span>
+                <span className="wb-value is-ok">{t('panel.settings.instantly')}</span>
+              </div>
+            </div>
+          </div>
+        </>
+      }
+    >
+      {/* ============================================================
+          Runtime
+          ============================================================
+          The start-up group. Its two values are the ones the PENDING card can
+          carry, and its label row is the sentence that explains why changing
+          either one starts another child. */}
+      <section className="wb-section">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.settings.launch')}</span>
+          <span className="wb-rule" />
+        </div>
+        <p className="cfg-hint">{t('panel.settings.launchHint')}</p>
+
+        <div className="wb-card wb-card-flush">
+          {row(
+            <>
+              <span>{t('panel.settings.ericai')}</span>
+              {/* The side effect is stated, not implied — but in the icon, not
+                  the row: the row says what the switch does, the `?` says what
+                  it is allowed to do to the person's machine. */}
+              <Info label={t('panel.settings.ericaiDetail')} side="top" />
+              {ericaiChanged ? pendingChip : null}
+            </>,
+            t('panel.settings.ericaiDesc'),
+            <button
+              type="button"
+              role="switch"
+              aria-checked={ericai}
+              aria-label={t('panel.settings.ericai')}
+              className={`tk-switch${ericai ? ' is-on' : ''}`}
+              disabled={blocked !== null}
+              onClick={() => setEricai(!ericai)}
+            >
+              <span className="tk-switch-knob" />
+            </button>,
+          )}
+
+          {/* The step cap's control is a column: the field is one boxed number
+              with its unit outside it, and the value in force is a line under
+              the box rather than beside it — it is a fact about the running
+              child, not the draft in the field. */}
+          <div className="wb-row">
+            <div className="wb-row-main">
+              <div className="wb-row-title">
+                <span>{t('panel.settings.maxSteps')}</span>
+                {maxStepsChanged ? pendingChip : null}
+              </div>
+              <div className="wb-row-hint">{t('panel.settings.maxStepsDesc')}</div>
+            </div>
+            <div className="sp-step">
+              <div className="sp-step-line">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  className={`cfg-input sp-number${invalid ? ' is-invalid' : ''}`}
+                  value={maxSteps}
+                  disabled={blocked !== null}
+                  placeholder={t('panel.settings.maxStepsDefault')}
+                  aria-label={t('panel.settings.maxSteps')}
+                  aria-invalid={invalid}
+                  onChange={(e) => setMaxSteps(e.target.value)}
+                />
+                <span className="sp-unit">{t('panel.settings.calls')}</span>
+              </div>
+              {invalid ? (
+                <div className="set-error">{t('panel.settings.maxStepsInvalid')}</div>
+              ) : (
+                <div className="sp-running-inline">
+                  {t('panel.settings.runningValue', { value: stepText })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </PanelBody>
+      </section>
+
+      {/* ============================================================
+          This window
+          ============================================================
+          A separate group because it is a separate kind of decision. Nothing
+          here reaches the runtime, nothing here needs a restart, and so none of
+          it borrows the PENDING card above. */}
+      <section className="wb-section">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.settings.window')}</span>
+          <span className="wb-rule" />
+        </div>
+        <p className="cfg-hint">{t('panel.settings.windowHint')}</p>
+
+        <div className="wb-card wb-card-flush">
+          {row(
+            t('panel.settings.notify'),
+            t('panel.settings.notifyDesc'),
+            <button
+              type="button"
+              role="switch"
+              aria-checked={notifyEnabled}
+              aria-label={t('panel.settings.notify')}
+              className={`tk-switch${notifyEnabled ? ' is-on' : ''}`}
+              onClick={() => setNotifyEnabled(!notifyEnabled)}
+            >
+              <span className="tk-switch-knob" />
+            </button>,
+          )}
+          {row(
+            t('panel.settings.suggestions'),
+            t('panel.settings.suggestionsDesc'),
+            <button
+              type="button"
+              role="switch"
+              aria-checked={suggestionsEnabled}
+              aria-label={t('panel.settings.suggestions')}
+              className={`tk-switch${suggestionsEnabled ? ' is-on' : ''}`}
+              onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
+            >
+              <span className="tk-switch-knob" />
+            </button>,
+          )}
+        </div>
+      </section>
+
+      {/* ============================================================
+          Reply pacing
+          ============================================================
+          A group of its own now that it is three rows: the switch and the two
+          ends of the curve it tunes. The paces are inert with the switch (a pace
+          on a reply drawn immediately is a number describing nothing), and
+          effective from the **next** reply, which the descriptions say. */}
+      <section className="wb-section">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.settings.pacing')}</span>
+          <span className="wb-rule" />
+        </div>
+
+        <div className="wb-card wb-card-flush">
+          {row(
+            t('panel.settings.smoothing'),
+            <>
+              {t('panel.settings.smoothingDesc')}
+              {reducedMotion ? (
+                <div className="sp-note">{t('panel.settings.smoothingReduced')}</div>
+              ) : null}
+            </>,
+            <button
+              type="button"
+              role="switch"
+              aria-checked={smoothingActive}
+              aria-label={t('panel.settings.smoothing')}
+              className={`tk-switch${smoothingActive ? ' is-on' : ''}`}
+              disabled={reducedMotion}
+              onClick={() => setStreamSmoothing(!streamSmoothing)}
+            >
+              <span className="tk-switch-knob" />
+            </button>,
+          )}
+
+          {row(
+            t('panel.settings.paceBase'),
+            t('panel.settings.paceBaseDesc'),
+            <div className="sp-step-line">
+              <input
+                type="text"
+                inputMode="numeric"
+                className="cfg-input sp-number"
+                value={paceBaseValue}
+                disabled={!smoothingActive}
+                placeholder={String(REVEAL_BASE_CPS)}
+                aria-label={t('panel.settings.paceBase')}
+                onFocus={() => setPaceDraft({ field: 'base', raw: String(streamBaseCps) })}
+                onChange={(e) => setPaceDraft({ field: 'base', raw: e.target.value })}
+                onBlur={() => commitPace('base')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitPace('base');
+                }}
+              />
+              <span className="sp-unit">{t('panel.settings.charsPerSecond')}</span>
+            </div>,
+          )}
+
+          {row(
+            t('panel.settings.paceMax'),
+            t('panel.settings.paceMaxDesc'),
+            <div className="sp-step-line">
+              <input
+                type="text"
+                inputMode="numeric"
+                className="cfg-input sp-number"
+                value={paceMaxValue}
+                disabled={!smoothingActive}
+                placeholder={String(REVEAL_MAX_CPS)}
+                aria-label={t('panel.settings.paceMax')}
+                onFocus={() => setPaceDraft({ field: 'max', raw: String(streamMaxCps) })}
+                onChange={(e) => setPaceDraft({ field: 'max', raw: e.target.value })}
+                onBlur={() => commitPace('max')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitPace('max');
+                }}
+              />
+              <span className="sp-unit">{t('panel.settings.charsPerSecond')}</span>
+            </div>,
+          )}
+        </div>
+      </section>
+
+      {/* ============================================================
+          Closing
+          ============================================================
+          The design's visible page ends with the pacing rows; this row is kept
+          below them rather than folded into "This window", so the top of the
+          page reads as the design does. It is still a window preference: saved
+          for the whole application, applied at once. */}
+      <section className="wb-section">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.settings.closing')}</span>
+          <span className="wb-rule" />
+        </div>
+
+        <div className="wb-card wb-card-flush">
+          <div className="wb-row">
+            <div className="wb-row-main">
+              <div className="wb-row-title">
+                <span>{t('panel.settings.close')}</span>
+              </div>
+              <div className="wb-row-hint">{t('panel.settings.closeDesc')}</div>
+            </div>
+            <div className="wb-row-control">
+              <div className="set-choice" role="radiogroup" aria-label={t('panel.settings.close')}>
+                {CLOSE_POLICIES.map((policy) => (
+                  <Tip key={policy} label={t(CLOSE_POLICY_SUMMARY[policy])} side="top">
+                    <label
+                      className="set-choice-item"
+                      role="radio"
+                      aria-checked={closePolicy === policy}
+                      data-state={closePolicy === policy ? 'checked' : 'unchecked'}
+                    >
+                      <input
+                        type="radio"
+                        name="close-policy"
+                        checked={closePolicy === policy}
+                        onChange={() => setClosePolicy(policy)}
+                      />
+                      <span className="set-choice-text">{t(CLOSE_POLICY_LABEL[policy])}</span>
+                    </label>
+                  </Tip>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </PanelShell>
   );
 }

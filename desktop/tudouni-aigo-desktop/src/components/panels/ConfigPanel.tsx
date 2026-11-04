@@ -1,27 +1,20 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import {
   ArrowDown,
   ArrowUp,
   Check,
   ChevronRight,
-  Clock,
   Copy,
   Eye,
   EyeOff,
   FolderOpen,
-  KeyRound,
-  Link2,
   MoreHorizontal,
   Pencil,
   Plug,
   Plus,
-  Power,
   Server,
-  ShieldOff,
-  Sparkles,
   Trash2,
-  Waypoints,
   X,
 } from 'lucide-react';
 import { useT } from '@/i18n/useT';
@@ -75,15 +68,22 @@ import { PanelBody, PanelShell } from './PanelShell';
  * The panel used to draw every route as a card that unfolded in place, and its
  * own comment admitted the result: "with every card open, the list of routes is
  * not a list". The editor is where the fields went — the same fields, in the same
- * order, grouped into sections, with a tinted side card for the facts and the one
- * switch that is not a field.
+ * order, in one column of sections.
+ *
+ * **The read-only column is the shell's rail.** Every surface here splits into
+ * the fields and a 340px column of facts — a preview of the row, the read-out the
+ * runtime computes, the model catalogue — and the split belongs to `PanelShell`
+ * (`rail`), not to a grid of this file's. That is what keeps a route's page, a
+ * server's page and all three tabs at one geometry, and it is why the rail's
+ * cards are the shared `.wb-*` / `.pc-readout` vocabulary: a fact is drawn one
+ * way in this panel, whichever surface is read.
  *
  * **The web-search tab has no second surface**, and that is not an omission: two
  * fields are a form, not a collection, and a list of one row that opens an editor
- * for two fields would be two clicks to type two values. It still borrows the
- * editors' page language — a section, the fields, and a side column that says
- * what the runtime will register — because "the key is empty" is a consequence
- * worth seeing while it is typed, not only in a sentence under the fields.
+ * for two fields would be two clicks to type two values. It takes the list
+ * surface's shape — the same tabs, path bar and rail — because "the key is empty"
+ * is a consequence worth seeing while it is typed, not only in a sentence under
+ * the fields.
  *
  * **Saving applies the reply, not the draft.** `config_write` answers with the
  * files as they are afterwards, and this stores *that*: what the form shows next
@@ -128,6 +128,14 @@ export function ConfigPanel() {
    *  an untouched new row is discarded on the way back, the rule
    *  `TaskPanel`'s editor established for its own "New". */
   const [editing, setEditing] = useState<Editor | null>(null);
+  /** The row the list's rail describes. `null` means "nobody is pointing at
+   *  one", and the rail falls back to the route the runtime would use — which
+   *  is why the preview and the `default` badge can never disagree. */
+  const [hovered, setHovered] = useState<number | null>(null);
+  /** The models section, so the route page's rail can reach it. It is declared
+   *  here rather than in `RouteEditor` because the rail and the section are
+   *  drawn by two different components — see `RoutePageRail`. */
+  const modelsRef = useRef<HTMLDivElement>(null);
 
   // Read once, on open. There is nothing to poll: the file changes when somebody
   // changes it, and the panel is the only writer acting on behalf of this window
@@ -365,35 +373,41 @@ export function ConfigPanel() {
     );
   }
 
+  /* The footer's leading sentence: what just happened to the draft, or — when
+     nothing has — when the file is read.
+     **One slot, and it is the footer's.** The sentence used to sit at the foot
+     of the body, after the list; the sheet moves it into the footer's leading
+     edge, where it is read beside the Save it is about. It is the same slot the
+     route page uses to say "Unsaved changes", so a person moving between the
+     two surfaces keeps looking in one place. */
+  const status: ReactNode =
+    saveProblem !== null ? (
+      <span className="cfg-status-error" role="alert">
+        {saveProblem}
+      </span>
+    ) : saved ? (
+      <span className="cfg-status-ok">
+        <Check size={12} /> {t('panel.config.saved')}
+      </span>
+    ) : doc.problem !== null ? (
+      <span className="cfg-status-error">{t('panel.config.readOnly')}</span>
+    ) : blocking.length > 0 ? (
+      <span className="cfg-status-error">{t('panel.config.blocked', { n: blocking.length })}</span>
+    ) : dirty ? (
+      <span className="cfg-status-pending">{t('panel.config.unsaved')}</span>
+    ) : null;
+
+  const footHint = status ?? <>{t('panel.config.effect')}</>;
+
+  /* `[Ghost][Primary]` at the trailing edge, and nothing else: the hint is the
+     shell's `footHint`, and the destructive verb — when a surface has one — is
+     passed beside this in the footer's own slot. */
   const footer = (
     <>
-      <span className="cfg-status">
-        {saveProblem !== null ? (
-          <span className="cfg-status-error" role="alert">
-            {saveProblem}
-          </span>
-        ) : saved ? (
-          <span className="cfg-status-ok">
-            <Check size={12} /> {t('panel.config.saved')}
-          </span>
-        ) : doc.problem !== null ? (
-          <span className="cfg-status-error">{t('panel.config.readOnly')}</span>
-        ) : blocking.length > 0 ? (
-          <span className="cfg-status-error">{t('panel.config.blocked', { n: blocking.length })}</span>
-        ) : dirty ? (
-          <span className="cfg-status-pending">{t('panel.config.unsaved')}</span>
-        ) : null}
-      </span>
-      <span className="grow" />
-      <button
-        type="button"
-        className="btn btn-ghost btn-compact"
-        disabled={!dirty || saving}
-        onClick={revert}
-      >
+      <button type="button" className="btn btn-ghost" disabled={!dirty || saving} onClick={revert}>
         {t('panel.config.revert')}
       </button>
-      <button type="button" className="btn btn-primary btn-compact" disabled={!canSave} onClick={() => void save()}>
+      <button type="button" className="btn btn-primary" disabled={!canSave} onClick={() => void save()}>
         {saving ? t('panel.config.saving') : t('panel.config.save')}
       </button>
     </>
@@ -401,64 +415,84 @@ export function ConfigPanel() {
 
   const routeCount = draft.providers.length;
   const serverCount = draft.mcp.length;
+  const firstWithKey = defaultRouteIndex(draft);
+
+  /* A refused save is a `.wb-alert` **above the fields, and only there**: the
+     contract lets an error stand in one position, and repeating the sentence in
+     the footer would be the second. Validation problems and the refusal are the
+     same kind of thing to a reader — reasons the file cannot be written — so
+     they share one list, in the order they would be fixed. */
+  const alerts: Problem[] =
+    saveProblem === null ? problems : [...problems, { text: saveProblem, blocking: true }];
 
   /* ---- the editor surface ---- */
 
   const open = editing;
   if (open !== null) {
-    const back = { onBack: closeEditor, backLabel: t('panel.back') };
+    const isDefault = open.kind === 'route' && firstWithKey === open.index;
     if (open.kind === 'route') {
       const route = draft.providers[open.index];
       if (route !== undefined) {
         return (
           <PanelShell
-            {...back}
+            onBack={closeEditor}
+            // The way back names the collection it returns to, which is what the
+            // sheet's `← Routes` says: "back" is already in the arrow, and the
+            // noun is the half worth the room.
+            backLabel={t('panel.config.routes')}
             title={route.name.trim() === '' ? t('panel.config.untitled') : route.name}
             titleClass="pc-title"
-            titleAside={<span className="pc-draft">{t('panel.config.draft')}</span>}
+            titleAside={
+              // The title's own mark is a state of the thing being edited, and
+              // `default` is the one this route has. The DRAFT chip that used to
+              // sit here said something true of every page in this panel, and so
+              // distinguished none of them.
+              isDefault ? (
+                <Badge tone="success" dot={false}>
+                  {t('panel.config.defaultRoute')}
+                </Badge>
+              ) : undefined
+            }
             note={t('panel.config.routeNote')}
-            actions={
-              <EditorActions
-                canSave={canSave}
-                dirty={dirty}
-                saving={saving}
-                onRevert={revert}
-                onSave={() => void save()}
-              />
+            rail={<RoutePageRail route={route} modelsRef={modelsRef} />}
+            footer={
+              <>
+                <DeleteAction
+                  label={t('panel.config.deleteRoute')}
+                  onDelete={() => {
+                    editDraft((current) => ({
+                      ...current,
+                      providers: current.providers.filter((_, i) => i !== open.index),
+                    }));
+                    setEditing(null);
+                  }}
+                />
+                <span className="grow" />
+                <span className="cfg-status">{status}</span>
+                <EditorActions
+                  canSave={canSave}
+                  dirty={dirty}
+                  saving={saving}
+                  onRevert={revert}
+                  onSave={() => void save()}
+                />
+              </>
             }
           >
-            <PanelBody>
-              <Problems problems={problems} />
-              {saveProblem !== null ? (
-                <div className="cfg-problems">
-                  <div className="cfg-problem is-blocking" role="alert">
-                    {saveProblem}
-                  </div>
-                </div>
-              ) : null}
+            <div className="pc-page">
+              <Problems problems={alerts} />
               <RouteEditor
-                // A different route is a different page: the open model card,
-                // the armed delete and the scroll position all belong to it.
+                // A different route is a different page: the open model card and
+                // the scroll position all belong to it.
                 key={open.index}
                 route={route}
-                // The default is a property of the **list**, not of a route: it is
-                // whichever route comes first with a key. Computed once here and
-                // handed down so the read-out and the row's badge cannot
-                // disagree.
-                isDefault={defaultRouteIndex(draft) === open.index}
+                modelsRef={modelsRef}
                 showKeys={showKeys}
                 onToggleKeys={() => setShowKeys(!showKeys)}
                 onChange={(patch) => updateRoute(open.index, patch)}
                 onModel={(modelIndex, patch) => updateModel(open.index, modelIndex, patch)}
-                onDelete={() => {
-                  editDraft((current) => ({
-                    ...current,
-                    providers: current.providers.filter((_, i) => i !== open.index),
-                  }));
-                  setEditing(null);
-                }}
               />
-            </PanelBody>
+            </div>
           </PanelShell>
         );
       }
@@ -467,7 +501,8 @@ export function ConfigPanel() {
       if (server !== undefined) {
         return (
           <PanelShell
-            {...back}
+            onBack={closeEditor}
+            backLabel={t('panel.config.mcp')}
             title={
               server.name.trim() !== ''
                 ? server.name
@@ -476,42 +511,53 @@ export function ConfigPanel() {
                   : t('panel.config.editServer')
             }
             titleClass="pc-title"
-            titleAside={<span className="pc-draft">{t('panel.config.draft')}</span>}
+            titleAside={
+              // The sheet's tag is a live connection state, which nothing in
+              // this app reports. What the server does have is a start rule, and
+              // that is what the slot says — the same way the route page's slot
+              // says `default`.
+              server.autoLoad ? (
+                <Badge tone="success" dot={false}>
+                  {t('panel.config.autoLoadMeta')}
+                </Badge>
+              ) : undefined
+            }
             note={t('panel.config.serverNote')}
-            actions={
-              <EditorActions
-                canSave={canSave}
-                dirty={dirty}
-                saving={saving}
-                onRevert={revert}
-                onSave={() => void save()}
-              />
+            rail={<ServerPageRail server={server} onChange={(patch) => updateServer(open.index, patch)} />}
+            footer={
+              <>
+                <DeleteAction
+                  label={t('panel.config.deleteServer')}
+                  onDelete={() => {
+                    editDraft((current) => ({
+                      ...current,
+                      mcp: current.mcp.filter((_, i) => i !== open.index),
+                    }));
+                    setEditing(null);
+                  }}
+                />
+                <span className="grow" />
+                <span className="cfg-status">{status}</span>
+                <EditorActions
+                  canSave={canSave}
+                  dirty={dirty}
+                  saving={saving}
+                  onRevert={revert}
+                  onSave={() => void save()}
+                />
+              </>
             }
           >
-            <PanelBody>
-              <Problems problems={problems} />
-              {saveProblem !== null ? (
-                <div className="cfg-problems">
-                  <div className="cfg-problem is-blocking" role="alert">
-                    {saveProblem}
-                  </div>
-                </div>
-              ) : null}
+            <div className="pc-page">
+              <Problems problems={alerts} />
               <ServerEditor
-                // A different server is a different page: the armed delete and
-                // the scroll position belong to it, not to the next one.
+                // A different server is a different page: the scroll position
+                // belongs to it, not to the next one.
                 key={open.index}
                 server={server}
                 onChange={(patch) => updateServer(open.index, patch)}
-                onDelete={() => {
-                  editDraft((current) => ({
-                    ...current,
-                    mcp: current.mcp.filter((_, i) => i !== open.index),
-                  }));
-                  setEditing(null);
-                }}
               />
-            </PanelBody>
+            </div>
           </PanelShell>
         );
       }
@@ -532,7 +578,186 @@ export function ConfigPanel() {
       : tab === 'web'
         ? t('panel.config.webHint')
         : t('panel.config.mcpHint');
-  const firstWithKey = defaultRouteIndex(draft);
+
+  // Which row the rail describes: the one under the cursor, else the route the
+  // runtime would use, else the first. `defaultRouteIndex` is the same answer the
+  // list's `default` badge wears, so the preview and the badge cannot disagree
+  // about which route is the subject — and a list nobody is pointing at still has
+  // something to say about where saving would take effect. Clamped, so a hovered
+  // index from a longer list (a tab that was just switched) cannot describe a row
+  // that is not there.
+  const routeSubject = Math.min(hovered ?? (firstWithKey >= 0 ? firstWithKey : 0), routeCount - 1);
+  const serverSubject = Math.min(hovered ?? 0, serverCount - 1);
+  const railRoute = tab === 'routes' ? draft.providers[routeSubject] : undefined;
+  const railServer = tab === 'mcp' ? draft.mcp[serverSubject] : undefined;
+  const rail =
+    tab === 'web' ? (
+      <WebRail web={draft.web} />
+    ) : tab === 'routes' ? (
+      railRoute === undefined ? undefined : (
+        <RouteRail route={railRoute} isDefault={routeSubject === firstWithKey} />
+      )
+    ) : railServer === undefined ? undefined : (
+      <ServerRail server={railServer} />
+    );
+
+  const body = (
+    <div className="cfg-surface">
+      {/* The tabs are the panel's first working row, at the panel's own padding:
+          they used to sit outside the body, on the narrower gutter the tasks
+          shelf gives its filter strip, and read as chrome above a different
+          panel. */}
+      <div className="tk-filters cfg-tabs">
+        <div className="tk-chips" role="tablist" aria-label={t('panel.config.title')}>
+          {CONFIG_TABS.map((which) => (
+            <button
+              key={which}
+              type="button"
+              role="tab"
+              aria-selected={tab === which}
+              className={`tk-chip${tab === which ? ' is-on' : ''}`}
+              onClick={() => {
+                setTab(which);
+                // A hovered row is a row of the tab that was up: carrying its
+                // index into another collection would describe the wrong one.
+                setHovered(null);
+              }}
+            >
+              {t(TAB_LABEL[which])}
+              {which === 'web' ? null : (
+                <span className="tk-chip-count">{which === 'routes' ? routeCount : serverCount}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* What is wrong, **above the fields** rather than under them: the list can
+          be long enough that nobody scrolls to the bottom of it, and the first
+          question after a refused save is "what do I fix". */}
+      <Problems problems={alerts} />
+
+      {/* Where the file is, and the one way to it that is not this form. The
+          folder button is what a person needs when the file cannot be parsed —
+          that is precisely the case this panel cannot fix for them. It follows
+          the tab, because the two tabs are two files.
+
+          **On a remote screen the two halves split.** The path is still the
+          host's own (`/home/deploy/.tudouni/config.json`), and it is shown with
+          the `user@host` beside it so "whose file is this" is answered on
+          screen. The reveal button goes: `revealItemInDir` opens **this**
+          machine's file manager, and pointing it at a remote path either fails
+          or — where the path also exists here — shows a different file with the
+          same name, which is the worst of the two. The honest alternative is to
+          say why it is not offered, which the tooltip does.
+
+          It is in the main column rather than across the panel because
+          `PanelShell` makes the whole body the two-column split as soon as a
+          rail is set: a bar spanning both columns would need a second body
+          above the split, which the shell does not have. */}
+      <div className="cfg-path-row">
+        {remote !== null ? (
+          <Badge tone="neutral">
+            {remote.user}@{remote.host}
+          </Badge>
+        ) : null}
+        <span className="cfg-path mono" title={file.path}>
+          {file.path}
+        </span>
+        {remote === null ? (
+          <Tip label={t('panel.config.reveal')}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon btn-compact"
+              aria-label={t('panel.config.reveal')}
+              onClick={() => void revealConfigFile(file.path)}
+            >
+              <FolderOpen size={13} />
+            </button>
+          </Tip>
+        ) : (
+          <Tip label={t('panel.config.revealRemote', { where: `${remote.user}@${remote.host}` })}>
+            {/* Rendered rather than omitted: a control that is simply missing
+                from a panel that always had one reads as a bug. Disabled with
+                the reason in the tooltip is the sentence. */}
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon btn-compact"
+              aria-label={t('panel.config.revealRemote', { where: `${remote.user}@${remote.host}` })}
+              disabled
+            >
+              <FolderOpen size={13} />
+            </button>
+          </Tip>
+        )}
+      </div>
+      {!file.exists ? <p className="set-hint">{t('panel.config.missing')}</p> : null}
+      {file.problem !== null ? <p className="cfg-file-problem">{file.problem}</p> : null}
+
+      {tab === 'routes' ? (
+        routeCount === 0 ? (
+          <Blank icon={<Server size={20} />} title={t('panel.config.routeEmpty')} hint={t('panel.config.routeEmptyHint')} />
+        ) : (
+          <div className="tk-list" onMouseLeave={() => setHovered(null)}>
+            {draft.providers.map((route, index) => (
+              <RouteRow
+                key={index}
+                route={route}
+                index={index}
+                total={routeCount}
+                isDefault={index === firstWithKey}
+                onHover={() => setHovered(index)}
+                onOpen={() => setEditing({ kind: 'route', index, isNew: false })}
+                onMove={(to) =>
+                  editDraft((current) => ({ ...current, providers: moved(current.providers, index, to) }))
+                }
+                onDuplicate={() => duplicateRoute(index)}
+                onRemove={() =>
+                  editDraft((current) => ({
+                    ...current,
+                    providers: current.providers.filter((_, i) => i !== index),
+                  }))
+                }
+              />
+            ))}
+          </div>
+        )
+      ) : null}
+
+      {tab === 'web' ? (
+        <WebSearchFields
+          web={draft.web}
+          showKeys={showKeys}
+          onToggleKeys={() => setShowKeys(!showKeys)}
+          onChange={(patch) => editDraft((current) => ({ ...current, web: { ...current.web, ...patch } }))}
+        />
+      ) : null}
+
+      {tab === 'mcp' ? (
+        serverCount === 0 ? (
+          <Blank icon={<Plug size={20} />} title={t('panel.config.mcpEmpty')} hint={t('panel.config.mcpEmptyHint')} />
+        ) : (
+          <div className="tk-list" onMouseLeave={() => setHovered(null)}>
+            {draft.mcp.map((server, index) => (
+              <ServerRow
+                key={index}
+                server={server}
+                index={index}
+                total={serverCount}
+                onHover={() => setHovered(index)}
+                onOpen={() => setEditing({ kind: 'server', index, isNew: false })}
+                onMove={(to) => editDraft((current) => ({ ...current, mcp: moved(current.mcp, index, to) }))}
+                onDuplicate={() => duplicateServer(index)}
+                onRemove={() =>
+                  editDraft((current) => ({ ...current, mcp: current.mcp.filter((_, i) => i !== index) }))
+                }
+              />
+            ))}
+          </div>
+        )
+      ) : null}
+    </div>
+  );
 
   return (
     <PanelShell
@@ -555,154 +780,14 @@ export function ConfigPanel() {
           ) : null}
         </>
       }
+      // With a rail the shell draws the body's two columns around `children`;
+      // without one (an empty collection) the children are the whole panel, so
+      // they bring their own body. Hence the two wrappings.
+      rail={rail}
+      footHint={footHint}
       footer={footer}
     >
-      <div className="tk-filters">
-        <div className="tk-chips" role="tablist" aria-label={t('panel.config.title')}>
-          {CONFIG_TABS.map((which) => (
-            <button
-              key={which}
-              type="button"
-              role="tab"
-              aria-selected={tab === which}
-              className={`tk-chip${tab === which ? ' is-on' : ''}`}
-              onClick={() => setTab(which)}
-            >
-              {t(TAB_LABEL[which])}
-              <span className="tk-chip-count">
-                {which === 'routes' ? routeCount : which === 'mcp' ? serverCount : '·'}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <PanelBody>
-        {/* What is wrong, **above** the fields rather than under them: the list
-            can be long enough that nobody scrolls to the bottom of it, and the
-            first question after a refused save is "what do I fix". */}
-        {problems.length > 0 ? <Problems problems={problems} /> : null}
-
-        {/* Where the file is, and the one way to it that is not this form. The
-            folder button is what a person needs when the file cannot be parsed
-            — that is precisely the case this panel cannot fix for them. It
-            follows the tab, because the two tabs are two files.
-
-            **On a remote screen the two halves split.** The path is still the
-            host's own (`/home/deploy/.tudouni/config.json`), and it is shown
-            with the `user@host` beside it so "whose file is this" is answered
-            on screen. The reveal button goes: `revealItemInDir` opens **this**
-            machine's file manager, and pointing it at a remote path either
-            fails or — where the path also exists here — shows a different file
-            with the same name, which is the worst of the two. The honest
-            alternative is to say why it is not offered, which the tooltip does. */}
-        <div className="cfg-path-row">
-          {remote !== null ? (
-            <Badge tone="neutral">
-              {remote.user}@{remote.host}
-            </Badge>
-          ) : null}
-          <span className="cfg-path mono" title={file.path}>
-            {file.path}
-          </span>
-          {remote === null ? (
-            <Tip label={t('panel.config.reveal')}>
-              <button
-                type="button"
-                className="btn btn-ghost btn-icon btn-compact"
-                aria-label={t('panel.config.reveal')}
-                onClick={() => void revealConfigFile(file.path)}
-              >
-                <FolderOpen size={13} />
-              </button>
-            </Tip>
-          ) : (
-            <Tip label={t('panel.config.revealRemote', { where: `${remote.user}@${remote.host}` })}>
-              {/* Rendered rather than omitted: a control that is simply missing
-                  from a panel that always had one reads as a bug. Disabled with
-                  the reason in the tooltip is the sentence. */}
-              <button
-                type="button"
-                className="btn btn-ghost btn-icon btn-compact"
-                aria-label={t('panel.config.revealRemote', { where: `${remote.user}@${remote.host}` })}
-                disabled
-              >
-                <FolderOpen size={13} />
-              </button>
-            </Tip>
-          )}
-        </div>
-        {!file.exists ? <p className="set-hint">{t('panel.config.missing')}</p> : null}
-        {file.problem !== null ? <p className="cfg-file-problem">{file.problem}</p> : null}
-
-        {tab === 'routes' ? (
-          routeCount === 0 ? (
-            <Blank icon={<Server size={20} />} title={t('panel.config.routeEmpty')} hint={t('panel.config.routeEmptyHint')} />
-          ) : (
-            <div className="tk-list">
-              {draft.providers.map((route, index) => (
-                <RouteRow
-                  key={index}
-                  route={route}
-                  index={index}
-                  total={routeCount}
-                  isDefault={index === firstWithKey}
-                  onOpen={() => setEditing({ kind: 'route', index, isNew: false })}
-                  onMove={(to) =>
-                    editDraft((current) => ({ ...current, providers: moved(current.providers, index, to) }))
-                  }
-                  onDuplicate={() => duplicateRoute(index)}
-                  onRemove={() =>
-                    editDraft((current) => ({
-                      ...current,
-                      providers: current.providers.filter((_, i) => i !== index),
-                    }))
-                  }
-                />
-              ))}
-            </div>
-          )
-        ) : null}
-
-        {tab === 'web' ? (
-          <WebSearchEditor
-            web={draft.web}
-            showKeys={showKeys}
-            onToggleKeys={() => setShowKeys(!showKeys)}
-            onChange={(patch) =>
-              editDraft((current) => ({ ...current, web: { ...current.web, ...patch } }))
-            }
-          />
-        ) : null}
-
-        {tab === 'mcp' ? (
-          serverCount === 0 ? (
-            <Blank icon={<Plug size={20} />} title={t('panel.config.mcpEmpty')} hint={t('panel.config.mcpEmptyHint')} />
-          ) : (
-            <div className="tk-list">
-              {draft.mcp.map((server, index) => (
-                <ServerRow
-                  key={index}
-                  server={server}
-                  index={index}
-                  total={serverCount}
-                  onOpen={() => setEditing({ kind: 'server', index, isNew: false })}
-                  onMove={(to) => editDraft((current) => ({ ...current, mcp: moved(current.mcp, index, to) }))}
-                  onDuplicate={() => duplicateServer(index)}
-                  onRemove={() =>
-                    editDraft((current) => ({ ...current, mcp: current.mcp.filter((_, i) => i !== index) }))
-                  }
-                />
-              ))}
-            </div>
-          )
-        ) : null}
-
-        {/* The one sentence that has to be said somewhere. It is at the foot of
-            every surface rather than in the head, because it only matters *after*
-            somebody has understood what they are looking at. */}
-        <p className="set-hint cfg-takes-effect">{t('panel.config.effect')}</p>
-      </PanelBody>
+      {rail === undefined ? <PanelBody>{body}</PanelBody> : body}
     </PanelShell>
   );
 }
@@ -769,6 +854,7 @@ function RouteRow({
   index,
   total,
   isDefault,
+  onHover,
   onOpen,
   onMove,
   onDuplicate,
@@ -778,6 +864,7 @@ function RouteRow({
   index: number;
   total: number;
   isDefault: boolean;
+  onHover: () => void;
   onOpen: () => void;
   onMove: (to: number) => void;
   onDuplicate: () => void;
@@ -788,7 +875,7 @@ function RouteRow({
   const baseUrl = route.baseUrl.trim();
 
   return (
-    <div className="tk-row">
+    <div className="tk-row" onMouseEnter={onHover}>
       <span className="tk-mark" aria-hidden>
         <Server size={15} />
       </span>
@@ -799,7 +886,7 @@ function RouteRow({
             {route.name.trim() === '' ? t('panel.config.untitled') : route.name}
           </button>
           {isDefault ? (
-            <Badge tone="info" dot={false}>
+            <Badge tone="success" dot={false}>
               {t('panel.config.defaultRoute')}
             </Badge>
           ) : null}
@@ -814,32 +901,45 @@ function RouteRow({
           <div className="tk-row-desc">{route.displayName}</div>
         ) : null}
 
+        {/* `url · n models · protocol`, the way the sheet writes a row's meta:
+            interpuncts instead of an icon per fact, because four small glyphs
+            are four things to decode and a dot is none. The URL is the only
+            value on the line, so it is the only one in the mono face. */}
         <div className="tk-row-meta">
-          <span className="tk-meta-item" title={baseUrl}>
-            <Link2 size={12} />
+          <span className="tk-meta-item mono" title={baseUrl}>
             {baseUrl === '' ? t('panel.config.noBaseUrl') : baseUrl}
           </span>
-          <span className="tk-meta-item">
-            <Sparkles size={12} />
-            {t('panel.config.modelCount', { n: route.models.length })}
+          <span className="tk-meta-dot" aria-hidden>
+            ·
           </span>
+          <span className="tk-meta-item">{t('panel.config.modelCount', { n: route.models.length })}</span>
           {route.apiStyle !== '' ? (
-            <span className="tk-meta-item">
-              <Waypoints size={12} />
-              {route.apiStyle}
-            </span>
+            <>
+              <span className="tk-meta-dot" aria-hidden>
+                ·
+              </span>
+              <span className="tk-meta-item">{route.apiStyle}</span>
+            </>
           ) : null}
           {!route.verify ? (
-            <span className="tk-meta-item tk-meta-warn">
-              <ShieldOff size={12} />
-              {t('panel.config.tlsOff')}
-            </span>
+            <>
+              <span className="tk-meta-dot" aria-hidden>
+                ·
+              </span>
+              {/* The one security-relevant value in the file, so it keeps the
+                  warning colour rather than becoming one more grey fact. */}
+              <span className="tk-meta-item tk-meta-warn">{t('panel.config.tlsOff')}</span>
+            </>
           ) : null}
         </div>
       </div>
 
       <div className="tk-row-actions">
-        <button type="button" className="btn btn-primary tk-row-cta" onClick={onOpen}>
+        {/* Secondary, not primary: the head already has the screen's one Primary
+            (Add a route), and a list whose every row wore a filled button has no
+            primary left to point at. It still reveals on hover, so ten routes
+            are not ten framed buttons either. */}
+        <button type="button" className="btn btn-outline tk-row-cta" onClick={onOpen}>
           <Pencil size={12} />
           {t('panel.config.edit')}
         </button>
@@ -868,6 +968,7 @@ function ServerRow({
   server,
   index,
   total,
+  onHover,
   onOpen,
   onMove,
   onDuplicate,
@@ -876,6 +977,7 @@ function ServerRow({
   server: McpServerView;
   index: number;
   total: number;
+  onHover: () => void;
   onOpen: () => void;
   onMove: (to: number) => void;
   onDuplicate: () => void;
@@ -886,7 +988,7 @@ function ServerRow({
   const invocation = invocationOf(server);
 
   return (
-    <div className="tk-row">
+    <div className="tk-row" onMouseEnter={onHover}>
       <span className="tk-mark" aria-hidden>
         <Plug size={15} />
       </span>
@@ -905,30 +1007,33 @@ function ServerRow({
           {invocation === '' ? t('panel.config.noInvocation') : invocation}
         </div>
 
+        {/* The route row's meta line, about a server: interpuncts, no icons. The
+            transport is not repeated here — it is the line above, as the badge. */}
         <div className="tk-row-meta">
           {server.autoLoad ? (
-            <span className="tk-meta-item">
-              <Power size={12} />
-              {t('panel.config.autoLoadMeta')}
+            <span className="tk-meta-item">{t('panel.config.autoLoadMeta')}</span>
+          ) : null}
+          {server.autoLoad && server.env.length > 0 ? (
+            <span className="tk-meta-dot" aria-hidden>
+              ·
             </span>
           ) : null}
           {server.env.length > 0 ? (
-            <span className="tk-meta-item">
-              <KeyRound size={12} />
-              {t('panel.config.envCount', { n: server.env.length })}
+            <span className="tk-meta-item">{t('panel.config.envCount', { n: server.env.length })}</span>
+          ) : null}
+          {(server.autoLoad || server.env.length > 0) && server.timeoutSeconds !== null ? (
+            <span className="tk-meta-dot" aria-hidden>
+              ·
             </span>
           ) : null}
           {server.timeoutSeconds !== null ? (
-            <span className="tk-meta-item">
-              <Clock size={12} />
-              {t('panel.config.timeoutValue', { n: server.timeoutSeconds })}
-            </span>
+            <span className="tk-meta-item">{t('panel.config.timeoutValue', { n: server.timeoutSeconds })}</span>
           ) : null}
         </div>
       </div>
 
       <div className="tk-row-actions">
-        <button type="button" className="btn btn-primary tk-row-cta" onClick={onOpen}>
+        <button type="button" className="btn btn-outline tk-row-cta" onClick={onOpen}>
           <Pencil size={12} />
           {t('panel.config.edit')}
         </button>
@@ -1085,11 +1190,17 @@ const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as 
  *
  * **The page is grouped by what the fields answer, not by the file's sections.**
  * Connection is who the route is and how it is reached; Reasoning is the
- * vocabulary it accepts; Request is what rides along with each call. The side
- * column is the *consequence* of those fields: a preview of the row this route
- * will become, the read-out the runtime will compute from it, and the model
- * catalogue at a glance. The form and the list therefore cannot disagree about
- * what saving will produce.
+ * vocabulary it accepts; Request is what rides along with each call. The rail —
+ * drawn by the shell from `RoutePageRail` — is the *consequence* of those
+ * fields: the read-out the runtime computes from them, and the model catalogue
+ * at a glance. The form and the list therefore cannot disagree about what saving
+ * will produce.
+ *
+ * **One column of fields.** The fields used to be a two-column grid with a fixed
+ * 160px label column, so every control started at the same x and every label sat
+ * beside the value it named. The sheet sets the label *above* its control and
+ * lets the control take the column, which is what makes a route's page read as a
+ * form rather than as a table — and what gives a base URL the width it needs.
  *
  * **The models are cards again, and that is not the old stacked-card layout.**
  * A model has four settings and a summary line that is worth reading when it is
@@ -1099,37 +1210,21 @@ const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as 
  */
 function RouteEditor({
   route,
-  isDefault,
+  modelsRef,
   showKeys,
   onToggleKeys,
   onChange,
   onModel,
-  onDelete,
 }: {
   route: RouteView;
-  isDefault: boolean;
+  modelsRef: RefObject<HTMLDivElement | null>;
   showKeys: boolean;
   onToggleKeys: () => void;
   onChange: (patch: Partial<RouteView>) => void;
   onModel: (modelIndex: number, patch: Partial<ModelView>) => void;
-  onDelete: () => void;
 }) {
   const t = useT();
   const [openModel, setOpenModel] = useState<number | null>(route.models.length > 0 ? 0 : null);
-  const [deleteArmed, setDeleteArmed] = useState(false);
-  const modelsRef = useRef<HTMLDivElement>(null);
-
-  // `Provider.Usable()`: a key and at least one model, or the route is in the
-  // catalogue and cannot be picked. Shown as the two facts it is rather than as
-  // a verdict, so the read-out says *why* it is not selectable.
-  const hasKey = route.apiKey.trim() !== '';
-  const selectable = hasKey && route.models.length > 0;
-  const modelCount =
-    route.models.length === 1
-      ? t('panel.config.oneModel')
-      : t('panel.config.modelCountPlain', { n: route.models.length });
-  const style = route.apiStyle.trim() === '' ? t('panel.config.inferStyle') : route.apiStyle;
-  const host = hostOf(route.baseUrl) || t('panel.config.noBaseUrl');
 
   // The six levels the runtime offers when a route declares none, plus any
   // custom level this file already carries. The second half matters: a value
@@ -1183,302 +1278,188 @@ function RouteEditor({
     });
   }
 
-  function showAllModels() {
-    modelsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
   return (
-    <div className="pc-page">
-      <div className="pc-columns">
-        <div className="pc-main">
-          <section className="pc-section">
-            <div className="pc-section-head">
-              <span className="pc-section-label">{t('panel.config.sectionConnection')}</span>
-              <span className="pc-rule" />
-            </div>
+    <>
+      <section className="pc-section">
+        <SectionLabel>{t('panel.config.sectionConnection')}</SectionLabel>
 
-            <PcField label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
-              <input
-                type="text"
-                className="cfg-input mono is-short"
-                value={route.name}
-                spellCheck={false}
-                autoComplete="off"
-                onChange={(e) => onChange({ name: e.target.value })}
-              />
-            </PcField>
+        {/* Name and protocol share a row: both are short keys rather than prose,
+            and the sheet draws them side by side above the URL they belong to. */}
+        <div className="wb-grid">
+          <PcField label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
+            <input
+              type="text"
+              className="cfg-input mono"
+              value={route.name}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => onChange({ name: e.target.value })}
+            />
+          </PcField>
 
-            <PcField label={t('panel.config.baseUrl')} required hint={t('panel.config.baseUrlHint')}>
+          <PcField label={t('panel.config.apiStyle')} hint={t('panel.config.apiStyleHint')}>
+            {/* A select, not a text field: `styleField` refuses a value it does
+                not recognise rather than defaulting, so a fourth one typed here
+                would only ever produce a file the runtime will not open. */}
+            <Select
+              size="tiny"
+              value={route.apiStyle}
+              options={API_STYLES.map((style) => ({
+                value: style,
+                label: style === '' ? t('panel.config.apiStyleAuto') : style,
+              }))}
+              onChange={(apiStyle) => onChange({ apiStyle })}
+            />
+          </PcField>
+        </div>
+
+        <PcField label={t('panel.config.baseUrl')} required hint={t('panel.config.baseUrlHint')}>
+          <input
+            type="text"
+            className="cfg-input mono"
+            value={route.baseUrl}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="https://api.example.com"
+            onChange={(e) => onChange({ baseUrl: e.target.value })}
+          />
+        </PcField>
+
+        <PcField label={t('panel.config.apiKey')} hint={t('panel.config.apiKeyHint')}>
+          <span className="pc-key">
+            <input
+              type={showKeys ? 'text' : 'password'}
+              className="cfg-input mono"
+              value={route.apiKey}
+              spellCheck={false}
+              autoComplete="off"
+              aria-label={t('panel.config.apiKey')}
+              onChange={(e) => onChange({ apiKey: e.target.value })}
+            />
+            <Tip label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}>
+              <button
+                type="button"
+                className="pc-key-eye"
+                aria-label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}
+                aria-pressed={showKeys}
+                onClick={onToggleKeys}
+              >
+                {showKeys ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </Tip>
+          </span>
+        </PcField>
+
+        {/* The switch is "verify", not "skip verifying". The file stores the
+            second, and the field used to be labelled with it — a switch whose
+            *on* state means "do not do the safe thing" is a control people
+            misread exactly once each. The sentence is under the title rather
+            than under the switch, because it is about what the switch means. */}
+        <div className="wb-row pc-switch">
+          <span className="wb-row-main">
+            <span className="wb-row-title">{t('panel.config.verifyCert')}</span>
+            <span className="wb-row-hint">{t('panel.config.verifyHint')}</span>
+          </span>
+          <span className="wb-row-control">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={route.verify}
+              aria-label={t('panel.config.verifyCert')}
+              className={`tk-switch${route.verify ? ' is-on' : ''}`}
+              onClick={() => onChange({ verify: !route.verify })}
+            >
+              <span className="tk-switch-knob" />
+            </button>
+          </span>
+        </div>
+      </section>
+
+      <section className="pc-section">
+        <SectionLabel>{t('panel.config.sectionReasoning')}</SectionLabel>
+
+        {/* No field label over the chips: the section is already labelled
+            `REASONING`, and a second label for the same group would be two names
+            for one thing. The group keeps its accessible name. */}
+        <div className="wb-field">
+          <div className="pc-levels" role="group" aria-label={t('panel.config.effortLevels')}>
+            {levels.map((level) => {
+              const on = route.effortLevels.includes(level);
+              return (
+                <button
+                  key={level}
+                  type="button"
+                  className={`pc-level${on ? ' is-on' : ''}`}
+                  aria-pressed={on}
+                  onClick={() => toggleLevel(level)}
+                >
+                  {level}
+                </button>
+              );
+            })}
+          </div>
+          <span className="cfg-hint">{t('panel.config.effortLevelsHint')}</span>
+        </div>
+      </section>
+
+      <section className="pc-section">
+        <SectionLabel>{t('panel.config.sectionRequest')}</SectionLabel>
+
+        <div className="wb-field">
+          <span className="cfg-label">{t('panel.config.headers')}</span>
+          {route.headers.map((pair, at) => (
+            <div className="pc-pair" key={at}>
               <input
                 type="text"
                 className="cfg-input mono"
-                value={route.baseUrl}
+                value={pair.key}
                 spellCheck={false}
                 autoComplete="off"
-                placeholder="https://api.example.com"
-                onChange={(e) => onChange({ baseUrl: e.target.value })}
+                aria-label={t('panel.config.headerName')}
+                placeholder="User-Agent"
+                onChange={(e) => patchHeader(at, { key: e.target.value })}
               />
-            </PcField>
-
-            <PcField label={t('panel.config.apiStyle')} hint={t('panel.config.apiStyleHint')}>
-              {/* A select, not a text field: `styleField` refuses a value it
-                  does not recognise rather than defaulting, so a fourth one
-                  typed here would only ever produce a file the runtime will
-                  not open. */}
-              <Select
-                size="tiny"
-                value={route.apiStyle}
-                options={API_STYLES.map((style) => ({
-                  value: style,
-                  label: style === '' ? t('panel.config.apiStyleAuto') : style,
-                }))}
-                onChange={(apiStyle) => onChange({ apiStyle })}
+              <input
+                type="text"
+                className="cfg-input mono"
+                value={pair.value}
+                spellCheck={false}
+                autoComplete="off"
+                aria-label={t('panel.config.headerValue')}
+                placeholder="tudouni/0.2"
+                onChange={(e) => patchHeader(at, { value: e.target.value })}
               />
-            </PcField>
-
-            <PcField label={t('panel.config.apiKey')} hint={t('panel.config.apiKeyHint')}>
-              <span className="pc-key">
-                <input
-                  type={showKeys ? 'text' : 'password'}
-                  className="cfg-input mono"
-                  value={route.apiKey}
-                  spellCheck={false}
-                  autoComplete="off"
-                  aria-label={t('panel.config.apiKey')}
-                  onChange={(e) => onChange({ apiKey: e.target.value })}
-                />
-                <Tip label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}>
-                  <button
-                    type="button"
-                    className="pc-key-eye"
-                    aria-label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}
-                    aria-pressed={showKeys}
-                    onClick={onToggleKeys}
-                  >
-                    {showKeys ? <EyeOff size={15} /> : <Eye size={15} />}
-                  </button>
-                </Tip>
-              </span>
-            </PcField>
-
-            {/* The switch is "verify", not "skip verifying". The file stores the
-                second, and the field used to be labelled with it — a switch whose
-                *on* state means "do not do the safe thing" is a control people
-                misread exactly once each. */}
-            <div className="pc-row">
-              <span className="pc-label">{t('panel.config.verifyCert')}</span>
-              <div className="pc-control">
+              <Tip label={t('panel.config.removeHeader')}>
                 <button
                   type="button"
-                  role="switch"
-                  aria-checked={route.verify}
-                  aria-label={t('panel.config.verifyCert')}
-                  className={`tk-switch${route.verify ? ' is-on' : ''}`}
-                  onClick={() => onChange({ verify: !route.verify })}
+                  className="btn btn-ghost btn-icon btn-compact cfg-danger"
+                  aria-label={t('panel.config.removeHeader')}
+                  onClick={() => onChange({ headers: route.headers.filter((_, i) => i !== at) })}
                 >
-                  <span className="tk-switch-knob" />
+                  <X size={14} />
                 </button>
-                <span className="cfg-hint">{t('panel.config.verifyHint')}</span>
-              </div>
+              </Tip>
             </div>
-          </section>
-
-          <section className="pc-section">
-            <div className="pc-section-head">
-              <span className="pc-section-label">{t('panel.config.sectionReasoning')}</span>
-              <span className="pc-rule" />
-            </div>
-
-            <div className="pc-row">
-              <span className="pc-label">{t('panel.config.effortLevels')}</span>
-              <div className="pc-control">
-                <div className="pc-levels" role="group" aria-label={t('panel.config.effortLevels')}>
-                  {levels.map((level) => {
-                    const on = route.effortLevels.includes(level);
-                    return (
-                      <button
-                        key={level}
-                        type="button"
-                        className={`pc-level${on ? ' is-on' : ''}`}
-                        aria-pressed={on}
-                        onClick={() => toggleLevel(level)}
-                      >
-                        {level}
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="cfg-hint">{t('panel.config.effortLevelsHint')}</span>
-              </div>
-            </div>
-          </section>
-
-          <section className="pc-section">
-            <div className="pc-section-head">
-              <span className="pc-section-label">{t('panel.config.sectionRequest')}</span>
-              <span className="pc-rule" />
-            </div>
-
-            <div className="pc-row">
-              <span className="pc-label">{t('panel.config.headers')}</span>
-              <div className="pc-control">
-                {route.headers.map((pair, at) => (
-                  <div className="pc-pair" key={at}>
-                    <input
-                      type="text"
-                      className="cfg-input mono"
-                      value={pair.key}
-                      spellCheck={false}
-                      autoComplete="off"
-                      aria-label={t('panel.config.headerName')}
-                      placeholder="User-Agent"
-                      onChange={(e) => patchHeader(at, { key: e.target.value })}
-                    />
-                    <input
-                      type="text"
-                      className="cfg-input mono"
-                      value={pair.value}
-                      spellCheck={false}
-                      autoComplete="off"
-                      aria-label={t('panel.config.headerValue')}
-                      placeholder="tudouni/0.2"
-                      onChange={(e) => patchHeader(at, { value: e.target.value })}
-                    />
-                    <Tip label={t('panel.config.removeHeader')}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-icon btn-compact cfg-danger"
-                        aria-label={t('panel.config.removeHeader')}
-                        onClick={() =>
-                          onChange({ headers: route.headers.filter((_, i) => i !== at) })
-                        }
-                      >
-                        <X size={14} />
-                      </button>
-                    </Tip>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  className="pc-add"
-                  onClick={() => onChange({ headers: [...route.headers, { key: '', value: '' }] })}
-                >
-                  <Plus size={13} />
-                  {t('panel.config.addHeader')}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-
-        <aside className="pc-side">
-          <div>
-            <div className="pc-side-head">
-              <span className="pc-side-label">{t('panel.config.preview')}</span>
-            </div>
-            <div className="pc-preview">
-              <div className="pc-preview-head">
-                <span className="pc-preview-dot" aria-hidden />
-                <span className="pc-preview-name mono">
-                  {route.name.trim() === '' ? t('panel.config.untitled') : route.name}
-                </span>
-                <span className="grow" />
-                {isDefault ? (
-                  <Badge tone="success" dot={false}>
-                    {t('panel.config.defaultRoute')}
-                  </Badge>
-                ) : null}
-              </div>
-              <div className="pc-preview-sub">
-                <span>{modelCount}</span>
-                <span aria-hidden>·</span>
-                <span>{style}</span>
-                <span aria-hidden>·</span>
-                <span>{host}</span>
-              </div>
-            </div>
-            <p className="pc-side-caption">{t('panel.config.previewHint')}</p>
-          </div>
-
-          <div>
-            <div className="pc-side-head">
-              <span className="pc-side-label">{t('panel.config.readOut')}</span>
-              <span className="pc-side-note">{t('panel.config.notEditable')}</span>
-            </div>
-            <div className="pc-readout">
-              <span className="pc-readout-row">
-                <span>{t('panel.config.factSelectable')}</span>
-                <span className={`pc-readout-value${selectable ? '' : ' is-negative'}`}>
-                  {selectable ? t('common.yes') : t('common.no')}
-                </span>
-              </span>
-              <span className="pc-readout-row">
-                <span>{t('panel.config.factModels')}</span>
-                <span className="pc-readout-value">{route.models.length}</span>
-              </span>
-              <span className="pc-readout-row">
-                <span>{t('panel.config.factDefault')}</span>
-                <span className={`pc-readout-value${isDefault ? '' : ' is-muted'}`}>
-                  {isDefault ? t('common.yes') : t('common.no')}
-                </span>
-              </span>
-              <span className="pc-readout-row">
-                <span>{t('panel.config.factCertificate')}</span>
-                <span className={`pc-readout-value${route.verify ? '' : ' is-negative'}`}>
-                  {route.verify ? t('panel.config.certVerified') : t('panel.config.certUnverified')}
-                </span>
-              </span>
-            </div>
-            <p className="pc-side-caption">{t('panel.config.sideStatusHint')}</p>
-          </div>
-
-          <div>
-            <div className="pc-side-head">
-              <span className="pc-side-label">{t('panel.config.models')}</span>
-              <span className="pc-side-note">{route.models.length}</span>
-            </div>
-            <div className="pc-mini-list">
-              {route.models.length === 0 ? (
-                <span className="pc-mini-empty">{t('panel.config.noModelsYet')}</span>
-              ) : (
-                route.models.slice(0, 3).map((model, at) => (
-                  <span className="pc-mini-row" key={at}>
-                    <span className="pc-mini-name mono">
-                      {model.id.trim() === '' ? t('panel.config.untitled') : model.id}
-                    </span>
-                    <span className="pc-mini-value">
-                      {model.contextWindow === null ? '—' : shortTokens(model.contextWindow)}
-                    </span>
-                  </span>
-                ))
-              )}
-            </div>
-            {route.models.length > 3 ? (
-              <button type="button" className="pc-allmodels" onClick={showAllModels}>
-                {t('panel.config.allModels', { n: route.models.length })}
-              </button>
-            ) : null}
-          </div>
-
+          ))}
           <button
             type="button"
-            className={`btn btn-outline pc-delete${deleteArmed ? ' is-armed' : ''}`}
-            onMouseLeave={() => setDeleteArmed(false)}
-            onClick={() => {
-              if (deleteArmed) onDelete();
-              else setDeleteArmed(true);
-            }}
+            className="pc-add"
+            onClick={() => onChange({ headers: [...route.headers, { key: '', value: '' }] })}
           >
-            {deleteArmed ? t('panel.config.removeConfirm') : t('panel.config.deleteRoute')}
+            <Plus size={13} />
+            {t('panel.config.addHeader')}
           </button>
-        </aside>
-      </div>
+        </div>
+      </section>
 
+      {/* The catalogue is the page's own section rather than the rail's: a
+          read-out names what is there, an editor changes it, and the same
+          subject in two places would be two answers about one list. */}
       <section className="pc-section pc-models" ref={modelsRef}>
-        <div className="pc-section-head">
-          <span className="pc-section-label">{t('panel.config.models')}</span>
-          <span className="pc-count">{route.models.length}</span>
-          <span className="pc-rule" />
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.models')}</span>
+          <span className="wb-label-count">{route.models.length}</span>
+          <span className="grow" />
           <button type="button" className="btn btn-outline btn-compact" onClick={addModel}>
             <Plus size={12} />
             {t('panel.config.addModel')}
@@ -1508,7 +1489,172 @@ function RouteEditor({
           </div>
         )}
       </section>
+    </>
+  );
+}
+
+/**
+ * The read-out both route rails show: the facts the runtime computes from a
+ * route, never the fields that produce them. One component rather than two,
+ * because the list's preview and the route's own page are the same statement
+ * about the same route — and two copies of it would eventually disagree.
+ *
+ * `default` is deliberately absent: it is a property of the *list* (whichever
+ * route comes first with a key), and both surfaces already say it in the one
+ * place where it is about this route — the `default` tag beside its name.
+ */
+function RouteReadout({ route }: { route: RouteView }) {
+  const t = useT();
+  // `Provider.Usable()`: a key and at least one model, or the route is in the
+  // catalogue and cannot be picked. Shown as the fact it is rather than as a
+  // verdict, so the read-out says *why* it is not selectable.
+  const selectable = route.apiKey.trim() !== '' && route.models.length > 0;
+  const host = hostOf(route.baseUrl) || t('panel.config.noBaseUrl');
+  const style = route.apiStyle.trim() === '' ? t('panel.config.inferStyle') : route.apiStyle;
+
+  return (
+    <div className="pc-readout">
+      <ReadoutRow
+        label={t('panel.config.factSelectable')}
+        value={selectable ? t('common.yes') : t('common.no')}
+        tone={selectable ? undefined : 'negative'}
+      />
+      <ReadoutRow label={t('panel.config.factBaseUrl')} value={host} />
+      <ReadoutRow label={t('panel.config.apiStyle')} value={style} />
+      <ReadoutRow label={t('panel.config.factModels')} value={route.models.length} />
+      <ReadoutRow
+        label={t('panel.config.factCertificate')}
+        value={route.verify ? t('panel.config.certVerified') : t('panel.config.certUnverified')}
+        tone={route.verify ? undefined : 'negative'}
+      />
     </div>
+  );
+}
+
+/**
+ * The list's rail: what the row under the cursor will look like once saved.
+ *
+ * It is the *hovered* row, not a fixed one, because the question a list of
+ * routes raises is "which of these is the one that…" — and the answer is longer
+ * than a row's meta line. With nothing hovered it describes the route the
+ * runtime would use, so an untouched panel still answers "where does a session
+ * go" without a click.
+ */
+function RouteRail({ route, isDefault }: { route: RouteView; isDefault: boolean }) {
+  const t = useT();
+  const noKey = route.apiKey.trim() === '';
+  const selectable = !noKey && route.models.length > 0;
+  const host = hostOf(route.baseUrl) || t('panel.config.noBaseUrl');
+  const style = route.apiStyle.trim() === '' ? t('panel.config.inferStyle') : route.apiStyle;
+  const modelCount =
+    route.models.length === 1
+      ? t('panel.config.oneModel')
+      : t('panel.config.modelCountPlain', { n: route.models.length });
+
+  return (
+    <>
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.preview')}</span>
+        </div>
+        <div className={`pc-preview${selectable ? '' : ' is-off'}`}>
+          <div className="pc-preview-head">
+            <span className="pc-preview-dot" aria-hidden />
+            <span className="pc-preview-name mono">
+              {route.name.trim() === '' ? t('panel.config.untitled') : route.name}
+            </span>
+            <span className="grow" />
+            {isDefault ? (
+              <Badge tone="success" dot={false}>
+                {t('panel.config.defaultRoute')}
+              </Badge>
+            ) : noKey ? (
+              <Badge tone="warning" dot={false}>
+                {t('panel.config.noKey')}
+              </Badge>
+            ) : null}
+          </div>
+          <div className="pc-preview-sub">
+            <span>{modelCount}</span>
+            <span aria-hidden>·</span>
+            <span>{style}</span>
+            <span aria-hidden>·</span>
+            <span>{host}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.readOut')}</span>
+          <span className="grow" />
+          <span className="pc-side-note">{t('panel.config.notEditable')}</span>
+        </div>
+        <RouteReadout route={route} />
+      </div>
+    </>
+  );
+}
+
+/**
+ * The route page's rail: the facts the runtime computes, then the catalogue the
+ * page edits below.
+ *
+ * There is no preview card here, and that is the difference between the two
+ * rails: on this surface the title *is* the route's name and its `default` tag,
+ * so a card repeating them would be a second title. The models card stays,
+ * because it is a way *into* the section below — `All n models` scrolls to it.
+ */
+function RoutePageRail({
+  route,
+  modelsRef,
+}: {
+  route: RouteView;
+  modelsRef: RefObject<HTMLDivElement | null>;
+}) {
+  const t = useT();
+
+  return (
+    <>
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.readOut')}</span>
+          <span className="grow" />
+          <span className="pc-side-note">{t('panel.config.notEditable')}</span>
+        </div>
+        <RouteReadout route={route} />
+        <p className="pc-side-caption">{t('panel.config.sideStatusHint')}</p>
+      </div>
+
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.models')}</span>
+          <span className="wb-label-count">{route.models.length}</span>
+        </div>
+        <div className="pc-mini-list">
+          {route.models.length === 0 ? (
+            <span className="pc-mini-empty">{t('panel.config.noModelsYet')}</span>
+          ) : (
+            route.models.slice(0, 3).map((model, at) => (
+              <span className="pc-mini-row" key={at}>
+                <span className="pc-mini-name mono">
+                  {model.id.trim() === '' ? t('panel.config.untitled') : model.id}
+                </span>
+              </span>
+            ))
+          )}
+        </div>
+        {route.models.length > 3 ? (
+          <button
+            type="button"
+            className="pc-allmodels"
+            onClick={() => modelsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            {t('panel.config.allModels', { n: route.models.length })}
+          </button>
+        ) : null}
+      </div>
+    </>
   );
 }
 
@@ -1523,16 +1669,6 @@ function hostOf(baseUrl: string): string {
   } catch {
     return raw;
   }
-}
-
-/** `1M`, `256K` — the model catalogue's one-glance sizes for the side card. */
-function shortTokens(n: number): string {
-  if (n >= 1_000_000) {
-    const value = n / 1_000_000;
-    return `${Number.isInteger(value) ? value : value.toFixed(1).replace(/\.0$/, '')}M`;
-  }
-  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
-  return String(n);
 }
 
 /** `1,048,576` — the same number in full, where there is room to read it. */
@@ -1611,27 +1747,29 @@ function ModelCard({
 
       {open ? (
         <div className="pc-model-body">
-          <PcField label={t('panel.config.modelId')} required>
-            <input
-              type="text"
-              className="cfg-input mono"
-              value={model.id}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(e) => onChange({ id: e.target.value })}
-            />
-          </PcField>
+          <div className="wb-grid">
+            <PcField label={t('panel.config.modelId')} required>
+              <input
+                type="text"
+                className="cfg-input mono"
+                value={model.id}
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(e) => onChange({ id: e.target.value })}
+              />
+            </PcField>
 
-          <PcField label={t('panel.config.modelLabel')}>
-            <input
-              type="text"
-              className="cfg-input"
-              value={model.label}
-              placeholder={t('panel.config.modelLabelPlaceholder')}
-              autoComplete="off"
-              onChange={(e) => onChange({ label: e.target.value })}
-            />
-          </PcField>
+            <PcField label={t('panel.config.modelLabel')}>
+              <input
+                type="text"
+                className="cfg-input"
+                value={model.label}
+                placeholder={t('panel.config.modelLabelPlaceholder')}
+                autoComplete="off"
+                onChange={(e) => onChange({ label: e.target.value })}
+              />
+            </PcField>
+          </div>
 
           <PcField label={t('panel.config.contextWindow')} hint={t('panel.config.contextWindowHint')}>
             {/* Empty is a real answer and not zero: it means "the catalogue does
@@ -1652,9 +1790,12 @@ function ModelCard({
             </span>
           </PcField>
 
-          <div className="pc-row">
-            <span className="pc-label">{t('panel.config.acceptsImages')}</span>
-            <div className="pc-control">
+          <div className="wb-row pc-switch">
+            <span className="wb-row-main">
+              <span className="wb-row-title">{t('panel.config.acceptsImages')}</span>
+              <span className="wb-row-hint">{t('panel.config.acceptsImagesHint')}</span>
+            </span>
+            <span className="wb-row-control">
               <button
                 type="button"
                 role="switch"
@@ -1665,8 +1806,7 @@ function ModelCard({
               >
                 <span className="tk-switch-knob" />
               </button>
-              <span className="cfg-hint">{t('panel.config.acceptsImagesHint')}</span>
-            </div>
+            </span>
           </div>
         </div>
       ) : null}
@@ -1674,9 +1814,13 @@ function ModelCard({
   );
 }
 
-/** One labelled row: the label in the left column, the control and its hint in
- *  the right. The label wraps the control, so clicking the word focuses the
- *  field without a second `for`/`id` to keep in sync. */
+/** One field: the label **above** the control, the control the column's full
+ *  width, the hint under it. The label wraps the control, so pressing the word
+ *  focuses the field without a second `for`/`id` to keep in sync.
+ *
+ *  It used to be a row with a fixed 160px label column, which is the shape the
+ *  sheet retires: a label beside a control is a table's cell, and a route's
+ *  fields are not a table. */
 function PcField({
   label,
   hint,
@@ -1690,8 +1834,8 @@ function PcField({
 }) {
   const t = useT();
   return (
-    <label className="pc-row">
-      <span className="pc-label">
+    <label className="wb-field">
+      <span className="cfg-label">
         {label}
         {required ? (
           <>
@@ -1702,11 +1846,21 @@ function PcField({
           </>
         ) : null}
       </span>
-      <span className="pc-control">
-        {children}
-        {hint ? <span className="cfg-hint">{hint}</span> : null}
-      </span>
+      {children}
+      {hint ? <span className="cfg-hint">{hint}</span> : null}
     </label>
+  );
+}
+
+/** A section label. It is the only uppercase writing in the panel, and it names
+ *  the group under it — the hairline rule the older page ran to the column's
+ *  edge is gone, because the sheet separates subjects with space. */
+function SectionLabel({ children, count }: { children: ReactNode; count?: ReactNode }) {
+  return (
+    <div className="wb-label-row">
+      <span className="wb-label">{children}</span>
+      {count !== undefined ? <span className="wb-label-count">{count}</span> : null}
+    </div>
   );
 }
 
@@ -1721,16 +1875,15 @@ function readTokenCount(text: string): number | null {
 }
 
 /**
- * The web-search tab, in the editors' page language.
+ * The web-search tab's fields.
  *
- * Two fields are a form, not a collection, so there is no second surface — but
- * the side column is still worth its room: whether `web_search` is registered
- * is the consequence of the key field, and it is the fact somebody is looking
- * for when they open this tab. The read-out repeats it beside the field rather
- * than in a sentence under the form, where it would be read only after
- * scrolling past the thing it describes.
+ * Two fields are a form, not a collection, so there is no second surface — and
+ * the sheet draws it as the routes list with a different body: the same tabs,
+ * the same path bar, the same `SEARCH` label, and a rail that says what the
+ * runtime registers. That is why this component is only the fields: the rail is
+ * `WebRail`, drawn by the panel's own body.
  */
-function WebSearchEditor({
+function WebSearchFields({
   web,
   showKeys,
   onToggleKeys,
@@ -1742,358 +1895,399 @@ function WebSearchEditor({
   onChange: (patch: Partial<WebView>) => void;
 }) {
   const t = useT();
+
+  return (
+    <section className="pc-section">
+      <SectionLabel>{t('panel.config.sectionSearch')}</SectionLabel>
+
+      <PcField label={t('panel.config.tavilyKey')} hint={t('panel.config.webKeyHint')}>
+        <span className="pc-key">
+          <input
+            type={showKeys ? 'text' : 'password'}
+            className="cfg-input mono"
+            value={web.tavilyApiKey}
+            spellCheck={false}
+            autoComplete="off"
+            aria-label={t('panel.config.tavilyKey')}
+            onChange={(e) => onChange({ tavilyApiKey: e.target.value })}
+          />
+          <Tip label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}>
+            <button
+              type="button"
+              className="pc-key-eye"
+              aria-label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}
+              aria-pressed={showKeys}
+              onClick={onToggleKeys}
+            >
+              {showKeys ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          </Tip>
+        </span>
+      </PcField>
+
+      <PcField label={t('panel.config.tavilyBaseUrl')} hint={t('panel.config.tavilyBaseUrlHint')}>
+        <input
+          type="text"
+          className="cfg-input mono"
+          value={web.tavilyBaseUrl}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="https://api.tavily.com"
+          onChange={(e) => onChange({ tavilyBaseUrl: e.target.value })}
+        />
+      </PcField>
+    </section>
+  );
+}
+
+/**
+ * The web-search tab's rail: the two facts the fields produce, and what the
+ * runtime does with them.
+ *
+ * The paragraph between the two cards is the sheet's: "leave them empty and
+ * `web_search` is not registered" is the consequence of the key field, and it is
+ * read beside that field rather than under the form — which is the whole reason
+ * this tab has a rail although it has only two fields.
+ */
+function WebRail({ web }: { web: WebView }) {
+  const t = useT();
   const configured = web.tavilyApiKey.trim() !== '';
   const base = web.tavilyBaseUrl.trim();
   const baseLabel = base === '' ? t('panel.config.webDefaultBase') : hostOf(base) || base;
 
   return (
-    <div className="pc-page is-inline">
-      <div className="pc-columns">
-        <div className="pc-main">
-          <section className="pc-section">
-            <div className="pc-section-head">
-              <span className="pc-section-label">{t('panel.config.sectionSearch')}</span>
-              <span className="pc-rule" />
-            </div>
-
-            <PcField label={t('panel.config.tavilyKey')} hint={t('panel.config.webKeyHint')}>
-              <span className="pc-key">
-                <input
-                  type={showKeys ? 'text' : 'password'}
-                  className="cfg-input mono"
-                  value={web.tavilyApiKey}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(e) => onChange({ tavilyApiKey: e.target.value })}
-                />
-                <Tip label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}>
-                  <button
-                    type="button"
-                    className="pc-key-eye"
-                    aria-label={showKeys ? t('panel.config.hideKeys') : t('panel.config.showKeys')}
-                    aria-pressed={showKeys}
-                    onClick={onToggleKeys}
-                  >
-                    {showKeys ? <EyeOff size={15} /> : <Eye size={15} />}
-                  </button>
-                </Tip>
-              </span>
-            </PcField>
-
-            <PcField label={t('panel.config.tavilyBaseUrl')} hint={t('panel.config.tavilyBaseUrlHint')}>
-              <input
-                type="text"
-                className="cfg-input mono"
-                value={web.tavilyBaseUrl}
-                spellCheck={false}
-                autoComplete="off"
-                placeholder="https://api.tavily.com"
-                onChange={(e) => onChange({ tavilyBaseUrl: e.target.value })}
-              />
-            </PcField>
-          </section>
+    <>
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.preview')}</span>
         </div>
-
-        <aside className="pc-side">
-          <div>
-            <div className="pc-side-head">
-              <span className="pc-side-label">{t('panel.config.preview')}</span>
-            </div>
-            <div className={`pc-preview${configured ? '' : ' is-off'}`}>
-              <div className="pc-preview-head">
-                <span className="pc-preview-dot" aria-hidden />
-                <span className="pc-preview-name">{t('panel.config.webProvider')}</span>
-                <span className="grow" />
-                <Badge tone={configured ? 'success' : 'neutral'} dot={false}>
-                  {configured ? t('panel.config.webConfigured') : t('panel.config.webNotConfigured')}
-                </Badge>
-              </div>
-              <div className="pc-preview-sub">
-                <span>web_search</span>
-                <span aria-hidden>·</span>
-                <span>{baseLabel}</span>
-              </div>
-            </div>
-            <p className="pc-side-caption">{t('panel.config.webAbsent')}</p>
+        <div className={`pc-preview${configured ? '' : ' is-off'}`}>
+          <div className="pc-preview-head">
+            <span className="pc-preview-dot" aria-hidden />
+            <span className="pc-preview-name">{t('panel.config.webProvider')}</span>
+            <span className="grow" />
+            <Badge tone={configured ? 'success' : 'neutral'} dot={false}>
+              {configured ? t('panel.config.webConfigured') : t('panel.config.webNotConfigured')}
+            </Badge>
           </div>
-
-          <div>
-            <div className="pc-side-head">
-              <span className="pc-side-label">{t('panel.config.readOut')}</span>
-              <span className="pc-side-note">{t('panel.config.notEditable')}</span>
-            </div>
-            <div className="pc-readout">
-              <ReadoutRow
-                label={t('panel.config.factWebSearch')}
-                value={configured ? t('panel.config.registered') : t('panel.config.notRegistered')}
-                tone={configured ? undefined : 'muted'}
-              />
-              <ReadoutRow
-                label={t('panel.config.factKey')}
-                value={configured ? t('panel.config.keySet') : t('panel.config.keyUnset')}
-                tone={configured ? undefined : 'muted'}
-              />
-              <ReadoutRow label={t('panel.config.factBaseUrl')} value={baseLabel} />
-              <ReadoutRow label={t('panel.config.factFetchWeb')} value={t('panel.config.unaffected')} />
-            </div>
-            <p className="pc-side-caption">{t('panel.config.webReadoutHint')}</p>
+          <div className="pc-preview-sub">
+            <span>web_search</span>
+            <span aria-hidden>·</span>
+            <span>{baseLabel}</span>
           </div>
-        </aside>
+        </div>
+        <p className="pc-side-caption">{t('panel.config.webAbsent')}</p>
       </div>
-    </div>
+
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.readOut')}</span>
+          <span className="grow" />
+          <span className="pc-side-note">{t('panel.config.notEditable')}</span>
+        </div>
+        <div className="pc-readout">
+          <ReadoutRow
+            label={t('panel.config.factWebSearch')}
+            value={configured ? t('panel.config.registered') : t('panel.config.notRegistered')}
+            tone={configured ? undefined : 'muted'}
+          />
+          <ReadoutRow
+            label={t('panel.config.factKey')}
+            value={configured ? t('panel.config.keySet') : t('panel.config.keyUnset')}
+            tone={configured ? undefined : 'muted'}
+          />
+          <ReadoutRow label={t('panel.config.factBaseUrl')} value={baseLabel} />
+          <ReadoutRow label={t('panel.config.factFetchWeb')} value={t('panel.config.unaffected')} />
+        </div>
+        <p className="pc-side-caption">{t('panel.config.webReadoutHint')}</p>
+      </div>
+    </>
   );
 }
 
 /**
  * One MCP server's fields, on the page its list row opens into.
  *
- * The transport is the side card's business — it decides *where the server runs*,
- * which is the same kind of fact the task editor puts in its own side card — and
- * the main column holds what the server is and what it is given. Switching
+ * The transport is the rail's business — it decides *where the server runs*,
+ * which is a fact about the server rather than a field of the launch — and the
+ * main column holds what the server is and what it is given. Switching
  * transports **clears the other field**, because the runtime refuses a server
  * that names both: leaving the old one behind would produce exactly that refusal
  * on the next save, about a field that would not even be on screen.
- *
- * The side column is the same one the route page has, with the same split: the
- * transport control, the row this server will become, the facts the runtime
- * computes, and the destructive verb at the end. That is what makes the two
- * editors read as one panel rather than as two eras of it.
  */
 function ServerEditor({
   server,
   onChange,
-  onDelete,
 }: {
   server: McpServerView;
   onChange: (patch: Partial<McpServerView>) => void;
-  onDelete: () => void;
 }) {
   const t = useT();
   const remote = server.url.trim() !== '';
-  const invocation = invocationOf(server);
-  const [deleteArmed, setDeleteArmed] = useState(false);
 
   return (
-    <div className="pc-page">
-      <div className="pc-columns">
-        <div className="pc-main">
-          <section className="pc-section">
-            <div className="pc-section-head">
-              <span className="pc-section-label">{t('panel.config.sectionServer')}</span>
-              <span className="pc-rule" />
-            </div>
+    <>
+      <section className="pc-section">
+        <SectionLabel>{t('panel.config.sectionServer')}</SectionLabel>
 
-            <PcField label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
+        <PcField label={t('panel.config.name')} required hint={t('panel.config.nameHint')}>
+          <input
+            type="text"
+            className="cfg-input mono"
+            value={server.name}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => onChange({ name: e.target.value })}
+          />
+        </PcField>
+
+        {remote ? (
+          <>
+            <PcField label={t('panel.config.mcpUrl')} required>
               <input
                 type="text"
                 className="cfg-input mono"
-                value={server.name}
+                value={server.url}
                 spellCheck={false}
                 autoComplete="off"
-                onChange={(e) => onChange({ name: e.target.value })}
+                placeholder="https://mcp.example.com/mcp"
+                onChange={(e) => onChange({ url: e.target.value })}
               />
             </PcField>
-
-            {remote ? (
-              <>
-                <PcField label={t('panel.config.mcpUrl')} required>
-                  <input
-                    type="text"
-                    className="cfg-input mono"
-                    value={server.url}
-                    spellCheck={false}
-                    autoComplete="off"
-                    placeholder="https://mcp.example.com/mcp"
-                    onChange={(e) => onChange({ url: e.target.value })}
-                  />
-                </PcField>
-                <PcField label={t('panel.config.mcpHeaders')} hint={t('panel.config.mcpHeadersHint')}>
-                  <textarea
-                    className="cfg-textarea mono"
-                    rows={2}
-                    value={textOfPairs(server.headers)}
-                    spellCheck={false}
-                    onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
-                  />
-                </PcField>
-              </>
-            ) : (
-              <>
-                <PcField label={t('panel.config.mcpCommand')} required>
-                  <input
-                    type="text"
-                    className="cfg-input mono"
-                    value={server.command}
-                    spellCheck={false}
-                    autoComplete="off"
-                    placeholder="npx"
-                    onChange={(e) => onChange({ command: e.target.value })}
-                  />
-                </PcField>
-                <PcField label={t('panel.config.mcpArgs')} hint={t('panel.config.mcpArgsHint')}>
-                  <textarea
-                    className="cfg-textarea mono"
-                    rows={2}
-                    value={textOfLines(server.args)}
-                    spellCheck={false}
-                    onChange={(e) => onChange({ args: linesOf(e.target.value) })}
-                  />
-                </PcField>
-              </>
-            )}
-          </section>
-
-          <section className="pc-section">
-            <div className="pc-section-head">
-              <span className="pc-section-label">{t('panel.config.sectionAdvanced')}</span>
-              <span className="pc-rule" />
-            </div>
-
-            <PcField label={t('panel.config.mcpEnv')} hint={t('panel.config.pairsHint')}>
+            <PcField label={t('panel.config.mcpHeaders')} hint={t('panel.config.mcpHeadersHint')}>
               <textarea
                 className="cfg-textarea mono"
                 rows={2}
-                value={textOfPairs(server.env)}
+                value={textOfPairs(server.headers)}
                 spellCheck={false}
-                onChange={(e) => onChange({ env: pairsOfText(e.target.value) })}
+                onChange={(e) => onChange({ headers: pairsOfText(e.target.value) })}
               />
             </PcField>
-
-            <PcField label={t('panel.config.mcpTimeout')} hint={t('panel.config.mcpTimeoutHint')}>
+          </>
+        ) : (
+          <>
+            <PcField label={t('panel.config.mcpCommand')} required>
               <input
                 type="text"
-                inputMode="decimal"
-                className="cfg-input is-tiny"
-                value={server.timeoutSeconds === null ? '' : String(server.timeoutSeconds)}
-                placeholder={t('panel.config.timeoutDefault')}
+                className="cfg-input mono"
+                value={server.command}
                 spellCheck={false}
-                onChange={(e) => onChange({ timeoutSeconds: readNumber(e.target.value) })}
+                autoComplete="off"
+                placeholder="npx"
+                onChange={(e) => onChange({ command: e.target.value })}
               />
             </PcField>
+            <PcField label={t('panel.config.mcpArgs')} hint={t('panel.config.mcpArgsHint')}>
+              <textarea
+                className="cfg-textarea mono"
+                rows={2}
+                value={textOfLines(server.args)}
+                spellCheck={false}
+                onChange={(e) => onChange({ args: linesOf(e.target.value) })}
+              />
+            </PcField>
+          </>
+        )}
+      </section>
 
-            {/* Not in the side card with the transport. The side card answers
-                "where does this server run"; this answers "when", and folding
-                the two together would suggest ticking it changes the transport. */}
-            <div className="pc-row">
-              <span className="pc-label">{t('panel.config.mcpAutoLoad')}</span>
-              <div className="pc-control">
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={server.autoLoad}
-                  aria-label={t('panel.config.mcpAutoLoad')}
-                  className={`tk-switch${server.autoLoad ? ' is-on' : ''}`}
-                  onClick={() => onChange({ autoLoad: !server.autoLoad })}
-                >
-                  <span className="tk-switch-knob" />
-                </button>
-                <span className="cfg-hint">{t('panel.config.mcpAutoLoadHint')}</span>
-              </div>
-            </div>
-          </section>
+      <section className="pc-section">
+        <SectionLabel>{t('panel.config.sectionAdvanced')}</SectionLabel>
+
+        <PcField label={t('panel.config.mcpEnv')} hint={t('panel.config.pairsHint')}>
+          <textarea
+            className="cfg-textarea mono"
+            rows={2}
+            value={textOfPairs(server.env)}
+            spellCheck={false}
+            onChange={(e) => onChange({ env: pairsOfText(e.target.value) })}
+          />
+        </PcField>
+
+        {/* Timeout and the start rule share one row, the way the sheet draws
+            them: both answer "when does this server run", and neither is a
+            consequence of the other. The switch is *not* in the rail with the
+            transport — that card answers "where", and folding the two together
+            would suggest ticking it changes the transport. */}
+        <div className="wb-grid">
+          <PcField label={t('panel.config.mcpTimeout')} hint={t('panel.config.mcpTimeoutHint')}>
+            <input
+              type="text"
+              inputMode="decimal"
+              className="cfg-input"
+              value={server.timeoutSeconds === null ? '' : String(server.timeoutSeconds)}
+              placeholder={t('panel.config.timeoutDefault')}
+              spellCheck={false}
+              onChange={(e) => onChange({ timeoutSeconds: readNumber(e.target.value) })}
+            />
+          </PcField>
+
+          <div className="wb-row pc-switch">
+            <span className="wb-row-main">
+              <span className="wb-row-title">{t('panel.config.mcpAutoLoad')}</span>
+              <span className="wb-row-hint">{t('panel.config.mcpAutoLoadHint')}</span>
+            </span>
+            <span className="wb-row-control">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={server.autoLoad}
+                aria-label={t('panel.config.mcpAutoLoad')}
+                className={`tk-switch${server.autoLoad ? ' is-on' : ''}`}
+                onClick={() => onChange({ autoLoad: !server.autoLoad })}
+              >
+                <span className="tk-switch-knob" />
+              </button>
+            </span>
+          </div>
         </div>
+      </section>
+    </>
+  );
+}
 
-        <aside className="pc-side">
-          <div>
-            <div className="pc-side-head">
-              <span className="pc-side-label">{t('panel.config.mcpTransport')}</span>
-            </div>
-            <div className="tk-choice">
-              <label className="tk-choice-row">
-                <input
-                  type="radio"
-                  name="mcp-transport"
-                  checked={!remote}
-                  onChange={() => onChange({ url: '' })}
-                />
-                <span className="tk-choice-text">{t('panel.config.mcpStdio')}</span>
-              </label>
-              <label className="tk-choice-row">
-                <input
-                  type="radio"
-                  name="mcp-transport"
-                  checked={remote}
-                  onChange={() => onChange({ command: '' })}
-                />
-                <span className="tk-choice-text">{t('panel.config.mcpRemote')}</span>
-              </label>
-            </div>
-            <p className="pc-side-caption">{t('panel.config.transportHint')}</p>
-          </div>
+/** The read-out both server rails show: the facts the runtime computes from a
+ *  server, which are the same four on the list and on its page. */
+function ServerReadout({ server }: { server: McpServerView }) {
+  const t = useT();
+  const remote = server.url.trim() !== '';
 
-          <div>
-            <div className="pc-side-head">
-              <span className="pc-side-label">{t('panel.config.preview')}</span>
-            </div>
-            <div className="pc-preview">
-              <div className="pc-preview-head">
-                <span className="pc-preview-dot" aria-hidden />
-                <span className="pc-preview-name mono">
-                  {server.name.trim() === '' ? t('panel.config.untitled') : server.name}
-                </span>
-                <span className="grow" />
-                <Badge tone="neutral" dot={false}>
-                  {remote ? t('panel.config.mcpRemote') : t('panel.config.mcpStdio')}
-                </Badge>
-              </div>
-              <div className="pc-preview-invocation mono">
-                {invocation === '' ? t('panel.config.noInvocation') : invocation}
-              </div>
-            </div>
-            <p className="pc-side-caption">{t('panel.config.serverPreviewHint')}</p>
-          </div>
-
-          <div>
-            <div className="pc-side-head">
-              <span className="pc-side-label">{t('panel.config.readOut')}</span>
-              <span className="pc-side-note">{t('panel.config.notEditable')}</span>
-            </div>
-            <div className="pc-readout">
-              <ReadoutRow
-                label={t('panel.config.factTransport')}
-                value={remote ? t('panel.config.mcpRemote') : t('panel.config.mcpStdio')}
-              />
-              <ReadoutRow
-                label={t('panel.config.factAutoLoad')}
-                value={server.autoLoad ? t('panel.config.autoLoadOn') : t('panel.config.autoLoadOff')}
-                tone={server.autoLoad ? undefined : 'muted'}
-              />
-              <ReadoutRow
-                label={t('panel.config.factTimeout')}
-                value={
-                  server.timeoutSeconds === null
-                    ? t('panel.config.timeoutDefault')
-                    : t('panel.config.timeoutSeconds', { n: server.timeoutSeconds })
-                }
-                tone={server.timeoutSeconds === null ? 'muted' : undefined}
-              />
-              <ReadoutRow
-                label={t('panel.config.factEnv')}
-                value={
-                  server.env.length === 0
-                    ? t('panel.config.envNone')
-                    : t('panel.config.envCount', { n: server.env.length })
-                }
-                tone={server.env.length === 0 ? 'muted' : undefined}
-              />
-            </div>
-            <p className="pc-side-caption">{t('panel.config.serverReadoutHint')}</p>
-          </div>
-
-          <button
-            type="button"
-            className={`btn btn-outline pc-delete${deleteArmed ? ' is-armed' : ''}`}
-            onMouseLeave={() => setDeleteArmed(false)}
-            onClick={() => {
-              if (deleteArmed) onDelete();
-              else setDeleteArmed(true);
-            }}
-          >
-            {deleteArmed ? t('panel.config.removeConfirm') : t('panel.config.deleteServer')}
-          </button>
-        </aside>
-      </div>
+  return (
+    <div className="pc-readout">
+      <ReadoutRow
+        label={t('panel.config.factTransport')}
+        value={remote ? t('panel.config.mcpRemote') : t('panel.config.mcpStdio')}
+      />
+      <ReadoutRow
+        label={t('panel.config.factAutoLoad')}
+        value={server.autoLoad ? t('panel.config.autoLoadOn') : t('panel.config.autoLoadOff')}
+        tone={server.autoLoad ? undefined : 'muted'}
+      />
+      <ReadoutRow
+        label={t('panel.config.factTimeout')}
+        value={
+          server.timeoutSeconds === null
+            ? t('panel.config.timeoutDefault')
+            : t('panel.config.timeoutSeconds', { n: server.timeoutSeconds })
+        }
+        tone={server.timeoutSeconds === null ? 'muted' : undefined}
+      />
+      <ReadoutRow
+        label={t('panel.config.factEnv')}
+        value={
+          server.env.length === 0 ? t('panel.config.envNone') : t('panel.config.envCount', { n: server.env.length })
+        }
+        tone={server.env.length === 0 ? 'muted' : undefined}
+      />
     </div>
+  );
+}
+
+/** The MCP list's rail. The sheet does not draw this list, so it borrows the
+ *  routes list's rail exactly: a preview of the row under the cursor, then the
+ *  facts. Keeping the two tabs on one geometry is worth more than inventing a
+ *  third shape for a list the design never drew. */
+function ServerRail({ server }: { server: McpServerView }) {
+  const t = useT();
+  const remote = server.url.trim() !== '';
+  const invocation = invocationOf(server);
+
+  return (
+    <>
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.preview')}</span>
+        </div>
+        <div className="pc-preview">
+          <div className="pc-preview-head">
+            <span className="pc-preview-dot" aria-hidden />
+            <span className="pc-preview-name mono">
+              {server.name.trim() === '' ? t('panel.config.untitled') : server.name}
+            </span>
+            <span className="grow" />
+            <Badge tone="neutral" dot={false}>
+              {remote ? t('panel.config.mcpRemote') : t('panel.config.mcpStdio')}
+            </Badge>
+          </div>
+          <div className="pc-preview-invocation mono">
+            {invocation === '' ? t('panel.config.noInvocation') : invocation}
+          </div>
+        </div>
+      </div>
+
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.readOut')}</span>
+          <span className="grow" />
+          <span className="pc-side-note">{t('panel.config.notEditable')}</span>
+        </div>
+        <ServerReadout server={server} />
+      </div>
+    </>
+  );
+}
+
+/**
+ * The server page's rail: **the transport first**, because it decides which
+ * fields the page's main column even has, then the facts the runtime computes.
+ *
+ * There is no preview card here — the title already says the name, and the
+ * launch fields below say what the server runs — so a card repeating either
+ * would be a second answer. The transport card stays on the rail because
+ * changing it rewrites a field in the column beside it, and a control that
+ * changes other controls belongs where the consequences are read.
+ */
+function ServerPageRail({
+  server,
+  onChange,
+}: {
+  server: McpServerView;
+  onChange: (patch: Partial<McpServerView>) => void;
+}) {
+  const t = useT();
+  const remote = server.url.trim() !== '';
+
+  return (
+    <>
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.mcpTransport')}</span>
+        </div>
+        <div className="tk-choice">
+          <label className="tk-choice-row">
+            <input
+              type="radio"
+              name="mcp-transport"
+              checked={!remote}
+              // The runtime refuses a server that names both, so choosing one
+              // clears the other — the consequence the hint under this card
+              // explains, performed in the one place it is decided.
+              onChange={() => onChange({ url: '' })}
+            />
+            <span className="tk-choice-text">{t('panel.config.mcpStdio')}</span>
+          </label>
+          <label className="tk-choice-row">
+            <input
+              type="radio"
+              name="mcp-transport"
+              checked={remote}
+              onChange={() => onChange({ command: '' })}
+            />
+            <span className="tk-choice-text">{t('panel.config.mcpRemote')}</span>
+          </label>
+        </div>
+        <p className="pc-side-caption">{t('panel.config.transportHint')}</p>
+      </div>
+
+      <div className="wb-card-above">
+        <div className="wb-label-row">
+          <span className="wb-label">{t('panel.config.readOut')}</span>
+          <span className="grow" />
+          <span className="pc-side-note">{t('panel.config.notEditable')}</span>
+        </div>
+        <ServerReadout server={server} />
+        <p className="pc-side-caption">{t('panel.config.serverReadoutHint')}</p>
+      </div>
+    </>
   );
 }
 
@@ -2130,10 +2324,10 @@ function ReadoutRow({
 /**
  * Everything the draft would be refused for, above the fields.
  *
- * A component rather than two copies because the list and the route page show
- * the same list: the page can be open while a name is blank, and the sentence
- * that explains the disabled Save has to be on the surface the person is
- * looking at.
+ * A component rather than three copies because the list and both pages show the
+ * same list: a page can be open while a name is blank, and the sentence that
+ * explains the disabled Save has to be on the surface the person is looking at.
+ * A refused save is folded into the same list — one error, one position.
  */
 function Problems({ problems }: { problems: Problem[] }) {
   if (problems.length === 0) return null;
@@ -2162,13 +2356,17 @@ function Blank({ icon, title, hint }: { icon: ReactNode; title: string; hint: st
 }
 
 /**
- * The two verbs every editor page carries, in its head.
+ * The two verbs every editor page carries, in the panel's foot.
  *
  * A component because the route and server pages are the same page with
  * different fields: their Save is the panel's Save, and two copies of the
  * disabled rules would eventually disagree about which draft can be written.
- * The list surface keeps the same two verbs in the panel's foot — that surface
- * has no page head to put them in — and both read the same `dirty`/`canSave`.
+ * The list surface keeps the same two verbs in the same band — with its own
+ * labels for them — and both read the same `dirty`/`canSave`.
+ *
+ * The sheet's `[Ghost][Primary]`: a bordered Revert beside the primary was two
+ * frames in one corner, and the outline weight belongs to something a reader has
+ * to find rather than to the way out of a form.
  */
 function EditorActions({
   canSave,
@@ -2186,13 +2384,42 @@ function EditorActions({
   const t = useT();
   return (
     <>
-      <button type="button" className="btn btn-outline" disabled={!dirty || saving} onClick={onRevert}>
+      <button type="button" className="btn btn-ghost" disabled={!dirty || saving} onClick={onRevert}>
         {t('panel.config.revertToFile')}
       </button>
       <button type="button" className="btn btn-primary" disabled={!canSave} onClick={onSave}>
         {saving ? t('panel.config.saving') : t('panel.config.saveChanges')}
       </button>
     </>
+  );
+}
+
+/**
+ * The destructive verb, at the footer's leading edge and as **text**, never a
+ * filled red button: "危险 · 永远不用实心红". It keeps the app's two-press rule —
+ * the first press only arms it, and moving away disarms — which is what makes a
+ * one-press-looking control safe to reach for.
+ *
+ * It moved here from the side column. The sheet puts the way out of a page at
+ * the page's foot, as far from Save as one band allows, rather than at the end
+ * of a column of facts.
+ */
+function DeleteAction({ label, onDelete }: { label: string; onDelete: () => void }) {
+  const t = useT();
+  const [armed, setArmed] = useState(false);
+
+  return (
+    <button
+      type="button"
+      className={`btn btn-destructive cfg-foot-delete${armed ? ' is-armed' : ''}`}
+      onMouseLeave={() => setArmed(false)}
+      onClick={() => {
+        if (armed) onDelete();
+        else setArmed(true);
+      }}
+    >
+      {armed ? t('panel.config.removeConfirm') : label}
+    </button>
   );
 }
 

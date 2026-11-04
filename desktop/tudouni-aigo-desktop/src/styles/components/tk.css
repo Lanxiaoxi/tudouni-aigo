@@ -39,20 +39,21 @@
   gap: var(--space-1);
 }
 
-/* The search field. The design puts it on a tinted fill with no visible border
-   at rest and an accent ring on focus — the app's own `.input` chrome (a
-   strong border at rest) is for form fields, and this is a filter beside a
-   title. */
+/* The search field. The design's shape: a bordered well on the panel's own
+   surface, 32 high — the same control height the list's rows use, so the strip
+   above a list of 32px rows is not taller than one. It used to be a tinted fill
+   with no border at rest; the sheet draws the border, and a filter beside a
+   filled primary needs the edge to hold its own. */
 .tk-search {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  width: 220px;
-  height: var(--control-h);
+  width: 260px;
+  height: var(--wb-row-h);
   padding: 0 var(--control-pad-x);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  background: var(--bg-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
   transition:
     background-color var(--motion-fast) var(--ease-out),
     border-color var(--motion-fast) var(--ease-out),
@@ -60,9 +61,23 @@
 }
 
 .tk-search:focus-within {
-  background: var(--bg-elevated);
   border-color: var(--accent-border);
   box-shadow: var(--focus-ring);
+}
+
+/* The toolbar: the filter strip and the row's three trailing controls on one
+   band under the head. `.dialog-head` is the heading; this is the working
+   surface, and keeping them apart is what lets the head stay 15px/one-line. */
+.tk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: 0 var(--wb-pad) var(--space-4);
+}
+
+.tk-toolbar .btn {
+  height: var(--wb-row-h);
 }
 
 .tk-search-icon {
@@ -279,6 +294,14 @@
   color: var(--fg-faint);
 }
 
+/* The design's interpunct between two facts on one meta line: a faint mark that
+   separates without drawing a second kind of bullet. */
+.tk-meta-dot {
+  flex: none;
+  color: var(--fg-faint);
+  user-select: none;
+}
+
 /* The last run's verdict, in the meta line. Destructive ink, faint icon
    colour — a fact reported, not an alarm raised: the row is still runnable and
    the template is not what failed. */
@@ -320,14 +343,16 @@
 }
 
 .tk-row:hover .tk-row-cta,
-.tk-row:focus-within .tk-row-cta {
+.tk-row:focus-within .tk-row-cta,
+.tk-row-cta.is-shown {
   opacity: 1;
   visibility: visible;
 }
 
-/* A disabled task keeps the Run slot empty on every state: the design says Run
-   is hidden, and a disabled button that still appeared on hover would be a
-   control that asks to be pressed and refuses. (`TaskRow` does not render it.) */
+/* A disabled task keeps the Run slot filled on every state: the design draws it,
+   and a control that is present and refuses is the honest way to say a row
+   cannot run. (An *enabled* row still reveals its Run on hover, so ten templates
+   are not ten filled primaries.) */
 
 .tk-row.is-disabled .tk-row-name,
 .tk-row.is-disabled .tk-row-desc,
@@ -648,40 +673,66 @@
 
 /* ---------------- The editor ---------------- */
 
-/* Two columns, split by a hairline: what the run says on the left, where it
-   says it on the right. The right column is a *card* — tinted, bordered,
-   rounded — because those three fields are not part of the prompt, and the
-   design separates them for exactly that reason. */
+/* Two columns, split by space rather than a hairline: what the run says on the
+   left, where it runs and how on the right. The right column is the design's
+   `RAIL · 340`. */
 .tk-editor {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) var(--wb-rail);
+  gap: var(--wb-gap);
   align-items: start;
 }
 
 .tk-editor-main {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--wb-field-gap);
   min-width: 0;
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border-subtle);
 }
 
+/* The right column is a stack of "a card, then two switches", not one card
+   around all four — see `TaskEditor`. */
 .tk-editor-side {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
+  background: transparent;
+}
+
+/* A name is a key and a description is a sentence: one share and two shares of
+   the same row. */
+.tk-name-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+/* The environment card: where the session opens, and on what. */
+.tk-env {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
   padding: var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--wb-card-radius);
+  background: var(--bg-elevated);
+}
+
+/* A switch row's own hairlines: the two sit under the card as one group of two,
+   so the rule between them is the only one that belongs. */
+.tk-switch-row {
+  padding: 0;
+}
+
+.tk-switch-row + .tk-switch-row {
+  padding-top: var(--space-3);
 }
 
 .tk-side-title {
-  font-size: var(--text-compact);
+  font-size: var(--text-caption);
   font-weight: 600;
-  color: var(--fg-secondary);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--fg-muted);
 }
 
 /* The prompt is the payload, so it gets the tallest box in the panel. */

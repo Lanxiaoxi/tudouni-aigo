@@ -1570,12 +1570,27 @@ async function main() {
   // something.
   await apply({ v: 1, t: 'session_load', messages: [] });
 
+  // **The note is read from the notice center now, not from the stream.**
+  // `.e-note` has not existed since `362d5e6` gathered every note into the
+  // floating capsule, so this assertion had been reading `null` off a class that
+  // is nowhere in the source — it could not pass on any tree, changed or not. The
+  // claim being made is unchanged ("the runtime's sentence is shown verbatim");
+  // only the surface that shows it moved. The capsule is opened first, because
+  // the rows live in its popover.
+  await evaluate(`(() => {
+    const capsule = document.querySelector('.nc-capsule');
+    if (capsule) capsule.click();
+    return true;
+  })()`);
+  await sleep(250);
+
   const afterLoad = await evaluate(`(() => {
     const q = (s) => document.querySelector(s);
-    const txt = (s) => (q(s) ? q(s).innerText.replace(/\\s+/g,' ').slice(0,200) : null);
+    const txt = (s) => (q(s) ? q(s).innerText.replace(/\\s+/g,' ').slice(0,400) : null);
     return JSON.stringify({
       welcome: !!q('.welcome'),
-      note: txt('.e-note'),
+      note: txt('.nc-list'),
+      capsule: !!q('.nc-capsule'),
       notes: ${RT}.entries.filter((e) => e.kind === 'note').length,
     });
   })()`);
@@ -1669,14 +1684,24 @@ async function main() {
   })()`);
   console.log('sidebar:', sidebar);
   const sb = JSON.parse(sidebar ?? '{}');
-  // Six blocks, in the fixed order. **SSH is the sixth** (see the Sidebar's own
-  // order comment): a display-only block added after this probe was written,
-  // which is why the count check below used to read five.
-  if (sb.blockCount !== 6) throw new Error(`expected 6 sidebar blocks, got ${sb.blockCount}`);
+  // Seven blocks, in the fixed order. **SSH is the sixth** (see the Sidebar's own
+  // order comment) and **Presented files the seventh** — both were added after
+  // this probe was written, which is why the count used to read five and then
+  // six. The count is here on purpose: a block that stops rendering, or one that
+  // appears in the wrong place, is otherwise invisible.
+  if (sb.blockCount !== 7) throw new Error(`expected 7 sidebar blocks, got ${sb.blockCount}`);
   if ((sb.blockEdges ?? []).some((w) => w !== '1px')) {
     throw new Error(`a right-rail block has no list-card border: ${JSON.stringify(sb.blockEdges)}`);
   }
-  const expected = ['Goal', 'Tasks', 'Background jobs', 'Loaded skills', 'MCP', 'SSH sessions'];
+  const expected = [
+    'Goal',
+    'Tasks',
+    'Background jobs',
+    'Loaded skills',
+    'MCP',
+    'SSH sessions',
+    'Presented files',
+  ];
   if (JSON.stringify(sb.titles) !== JSON.stringify(expected)) {
     throw new Error(`block order/titles wrong: ${JSON.stringify(sb.titles)}`);
   }
@@ -2466,7 +2491,11 @@ async function main() {
       open: true,
       body: d.innerText.replace(/\\s+/g,' ').slice(0, 500),
       buttons: [...d.querySelectorAll('.dialog-foot button')].map((b) => b.innerText.trim()),
-      options: [...d.querySelectorAll('.radio-item')].map((o) => o.innerText.replace(/\\s+/g,' ').trim()),
+      // The options are a list of [role=option] buttons wearing the command
+      // menu's row, not the retired Radix .radio-item — that class was removed
+      // when the question modal stopped drawing its own radio, and this probe
+      // kept reading an empty list from it.
+      options: [...d.querySelectorAll('[role="option"]')].map((o) => o.innerText.replace(/\\s+/g,' ').trim()),
     });
   })()`);
   console.log('question modal:', question);
