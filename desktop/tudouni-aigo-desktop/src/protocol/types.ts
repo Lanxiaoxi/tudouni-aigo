@@ -1501,8 +1501,21 @@ export interface UiRunFinishedMsg {
   run_id: string;
 }
 
+/** Quick replies for one finished turn (protocol 17). Arrives **after** that
+ *  turn's `ui(run_finished)`, from a side request that is not part of the
+ *  conversation, and only when nothing continues on its own. A click is the
+ *  person sending the text — approved like anything else they type. */
+export interface UiSuggestionsMsg {
+  v: number;
+  t: 'ui';
+  kind: 'suggestions';
+  run_id: string;
+  replies: string[];
+}
+
 export type UiMsg =
   | UiStateMsg
+  | UiSuggestionsMsg
   | UiStatusMsg
   | UiToolsMsg
   | UiMcpMsg
@@ -1733,6 +1746,9 @@ export type FrontendMsg =
   | { v: number; t: 'set_model'; model: string }
   | { v: number; t: 'set_thinking'; on: boolean }
   | { v: number; t: 'set_effort'; effort: string }
+  /** Suggested replies on or off. Absolute state; the runtime holds it per
+   *  process, so it is re-sent after every `init` while the person has it off. */
+  | { v: number; t: 'set_suggestions'; on: boolean }
   | { v: number; t: 'status' }
   | { v: number; t: 'tools' }
   | { v: number; t: 'context' }

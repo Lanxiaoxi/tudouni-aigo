@@ -40,6 +40,7 @@ export function createSessionBucket(
     notesReadCount: 0,
     activeRunId: null,
     lastRunId: null,
+    suggestions: null,
     dropped: 0,
     lateDropped: 0,
     unseen: false,

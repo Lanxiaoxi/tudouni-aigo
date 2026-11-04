@@ -70,6 +70,8 @@ func (s *Server) startTurnWith(text string, round GoalRound) bool {
 
 	s.mu.Lock()
 	s.stop = false
+	// Suggestions for the previous answer are now about the wrong turn.
+	s.cancelSuggestionLocked()
 	// A fresh context per turn, created in the same critical section that clears the
 	// flag, so the two can never disagree about which turn they describe. The
 	// previous one is released here rather than left to the garbage collector: it
@@ -130,12 +132,14 @@ func (s *Server) runTurn(runtime Runtime, text string) {
 		if !ran {
 			return
 		}
-		s.finishTurn(runtime, answer, err)
+		// No prompt: an automatic round is not something a person said, so
+		// there is nothing to suggest a reply to.
+		s.finishTurn(runtime, "", answer, err)
 		return
 	}
 
 	answer, err := runtime.RunTurn(ctx, text)
-	s.finishTurn(runtime, answer, err)
+	s.finishTurn(runtime, text, answer, err)
 }
 
 // runGoalRound runs one reserved round, or reports that it was refused.
@@ -159,7 +163,7 @@ func (s *Server) runGoalRound(ctx context.Context, runtime Runtime, round GoalRo
 // agent: by this point the answer has been sent, the session file holds the turn,
 // the message list is consistent, and no other turn is running. That is the only
 // instant at which "is this session finished?" has a well-defined answer.
-func (s *Server) finishTurn(runtime Runtime, answer string, err error) {
+func (s *Server) finishTurn(runtime Runtime, prompt, answer string, err error) {
 	if err != nil {
 		// A prompt a hook refused is **not** a failed turn. Nothing ran and nothing
 		// was written; reporting it through the generic failure line would claim a
@@ -232,6 +236,7 @@ func (s *Server) finishTurn(runtime Runtime, answer string, err error) {
 	// function has not closed yet.
 	scheduler, ok := runtime.(GoalRoundScheduler)
 	if !ok {
+		s.suggestAfter(runtime, prompt, answer, err)
 		return
 	}
 	// **Before** the driver is asked, and this order is the whole point: a goal the
@@ -245,6 +250,10 @@ func (s *Server) finishTurn(runtime Runtime, answer string, err error) {
 	}
 	round := s.reservedGoalRound(scheduler, err)
 	if round == nil {
+		// Only now is "nothing will continue on its own" known, which is the
+		// condition the suggestions wait for: buttons drawn under an answer that
+		// an automatic round is about to follow would be offering to speak over it.
+		s.suggestAfter(runtime, prompt, answer, err)
 		return
 	}
 	done := s.currentTurnDone()

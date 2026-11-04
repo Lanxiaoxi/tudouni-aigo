@@ -9,6 +9,7 @@ import { useT } from '@/i18n/useT';
 import { useFindInStream } from '@/find/useFindInStream';
 import { EntryView } from './EntryView';
 import { FindBar } from './FindBar';
+import { SuggestedReplies } from './SuggestedReplies';
 import { QuietGroup } from './QuietGroup';
 import { TurnRail } from './TurnRail';
 import { MIN_RAIL_TURNS, turnRail, LANDING_PX } from '@/turnRail';
@@ -340,6 +341,7 @@ export function StreamView() {
                 </Fragment>
               ),
             )}
+            <SuggestedReplies />
           </div>
 
           {!pinned ? (

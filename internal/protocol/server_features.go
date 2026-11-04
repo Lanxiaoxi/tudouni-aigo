@@ -339,6 +339,7 @@ func (s *Server) resetTurnState() {
 	s.stop = false
 	s.lastRunID = ""
 	s.lastStep = 0
+	s.cancelSuggestionLocked()
 	if s.turnCancel != nil {
 		s.turnCancel()
 		s.turnCtx, s.turnCancel = nil, nil

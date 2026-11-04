@@ -72,6 +72,8 @@ export function SettingsPanel() {
   // (`closePolicy`) is not about any process at all.
   const notifyEnabled = useApp((s) => s.notifyEnabled);
   const setNotifyEnabled = useApp((s) => s.setNotifyEnabled);
+  const suggestionsEnabled = useApp((s) => s.suggestionsEnabled);
+  const setSuggestionsEnabled = useApp((s) => s.setSuggestionsEnabled);
   const streamSmoothing = useApp((s) => s.streamSmoothing);
   const setStreamSmoothing = useApp((s) => s.setStreamSmoothing);
   const streamBaseCps = useApp((s) => s.streamBaseCps);
@@ -319,6 +321,27 @@ export function SettingsPanel() {
                       aria-label={t('panel.settings.notify')}
                       className={`tk-switch${notifyEnabled ? ' is-on' : ''}`}
                       onClick={() => setNotifyEnabled(!notifyEnabled)}
+                    >
+                      <span className="tk-switch-knob" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="set-row">
+                  <div className="set-main">
+                    <div className="set-title">
+                      <span>{t('panel.settings.suggestions')}</span>
+                    </div>
+                    <div className="set-desc">{t('panel.settings.suggestionsDesc')}</div>
+                  </div>
+                  <div className="sp-control">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={suggestionsEnabled}
+                      aria-label={t('panel.settings.suggestions')}
+                      className={`tk-switch${suggestionsEnabled ? ' is-on' : ''}`}
+                      onClick={() => setSuggestionsEnabled(!suggestionsEnabled)}
                     >
                       <span className="tk-switch-knob" />
                     </button>

@@ -541,6 +541,8 @@ export interface AppStore {
    * person's eyes rather than about this window's state.
    */
   streamSmoothing: boolean;
+  /** Whether quick replies are asked for after a turn. See `DesktopData`. */
+  suggestionsEnabled: boolean;
   /**
    * The two ends of the pacing curve in characters/second: the steady reading
    * pace (`streamBaseCps`) and the catch-up cap (`streamMaxCps`).
@@ -819,6 +821,8 @@ export interface AppStore {
    * makes the same promise for everything CSS animates).
    */
   setStreamSmoothing(on: boolean): void;
+  /** Turn quick replies on or off, remember it, and tell every running child. */
+  setSuggestionsEnabled(on: boolean): void;
   /**
    * Set the pacing curve's two ends (steady pace and catch-up cap), clamped to
    * the curve's own ranges, and remember it.
@@ -884,6 +888,12 @@ export interface AppStore {
   quit(): Promise<void>;
 
   setDraft(v: string): void;
+  /**
+   * A quick reply was clicked. `fill` puts the text in the draft for editing
+   * (a modifier-click); otherwise it is sent exactly as if the person typed it
+   * and pressed Enter — the same path, the same approvals.
+   */
+  applySuggestion(text: string, fill: boolean): void;
   historyNav(dir: -1 | 1): void;
   submitDraft(): void;
   interrupt(): void;

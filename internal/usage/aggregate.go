@@ -115,11 +115,17 @@ func Aggregate(path string, now time.Time) (Report, error) {
 		report.Cached += intOf(row["cached"])
 		report.Miss += intOf(row["miss"])
 		report.Completion += intOf(row["completion"])
-		report.Turns++
 		report.Calls += intOf(row["calls"])
-		if duration := int64Of(row["duration_ms"]); duration > report.LongestRunMs {
-			report.LongestRunMs = duration
-			report.HasLongestRun = true
+		// A suggestion row is spend, not a turn: its tokens and its call count,
+		// but it neither adds a turn nor competes for the longest one. Counting
+		// it would double the turn count of every session that drew buttons.
+		isTurn := stringOf(row["kind"]) != KindSuggestion
+		if isTurn {
+			report.Turns++
+			if duration := int64Of(row["duration_ms"]); duration > report.LongestRunMs {
+				report.LongestRunMs = duration
+				report.HasLongestRun = true
+			}
 		}
 		if day := dayOf(stringOf(row["ts"])); day != "" {
 			agg := days[day]

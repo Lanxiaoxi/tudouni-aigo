@@ -167,6 +167,18 @@
     },
     "required": ["v", "t", "on"]
   },
+  "set_suggestions": {
+    "summary": "**开关建议回复**（protocol 17）。默认开。开着时，用户发起的一轮正常答完、且后面没有 goal 自动续行，runtime 会另起一个不进上下文的小请求，回一条 `ui` / `kind=suggestions`。关掉也会取消正在跑的那一次。",
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "set_suggestions"},
+      "on": {
+        "type": "boolean",
+        "doc": "true = 开，false = 关。**绝对状态，不是开关动作**（和 set_autopilot 同一条）。这个开关只在进程内有效：前端在每次 init 之后按自己保存的设置重发一次。"
+      }
+    },
+    "required": ["v", "t", "on"]
+  },
   "set_model": {
     "summary": "**换这个会话用哪个模型**（TUI 的 `/model`）。模型名必须在 runtime 那份目录里（`init.model_catalog`），不在就拒绝并回一条 notice。",
     "fields": {

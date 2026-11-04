@@ -50,7 +50,7 @@ function refineReportText(entries: Entry[]): string {
     .join('\n');
 }
 
-export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setStreamSmoothing' | 'setStreamPaces' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'rememberModel' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
+export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNotesRead' | 'setRuntimeInfo' | 'setNotifyEnabled' | 'setStreamSmoothing' | 'setSuggestionsEnabled' | 'setStreamPaces' | 'setClosePolicy' | 'setStartupProblem' | 'setStartupNotice' | 'rememberWorkspace' | 'rememberRemoteWorkspace' | 'rememberModel' | 'pushStderr' | 'countDrop' | 'setSessionProblem' | 'retrySession' | 'retryStartup' | 'quit' | 'applyRuntimeMessage'> {
   const { set, get, patch, patchWith, noteSavedSessions, markSavedSessionsPending, activeKeyForSend } = ctx;
   return {
     send(msg) {
@@ -82,6 +82,19 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
     setStreamSmoothing(on) {
       set({ streamSmoothing: on });
       persistPrefs(get());
+    },
+
+    setSuggestionsEnabled(on) {
+      set({ suggestionsEnabled: on });
+      persistPrefs(get());
+      // Every running child holds the switch per process, so each one is told.
+      // Turning it off also clears buttons already drawn: the person just said
+      // they do not want them.
+      const s = get();
+      for (const key of Object.keys(s.sessions)) {
+        sendTo(key, { v: 1, t: 'set_suggestions', on });
+        if (!on) patch(key, { suggestions: null });
+      }
     },
 
     setStreamPaces(baseCps, maxCps) {
@@ -325,7 +338,14 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
             probeEffortAt: null,
             probeEffortStartedAt: null,
             probeEffortProblem: null,
+            // A new process has answered nothing yet.
+            suggestions: null,
           });
+          // The runtime starts with suggestions on; a person who turned them
+          // off has that choice re-applied to every new process.
+          if (!s.suggestionsEnabled) {
+            sendTo(key, { v: 1, t: 'set_suggestions', on: false });
+          }
           // The runtime's own answer about where this session is, which is what
           // the next launch should open — **when this is the session on screen.**
           // A background session's `init` must not move the remembered workspace
@@ -922,6 +942,25 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
               if (pendingClose) {
                 sendTo(key, { v: 1, t: 'terminal_close', terminal_id: msg.terminal_id });
               }
+              break;
+            }
+            case 'suggestions': {
+              // Kept only for the run that is still the last one and only while
+              // nothing is running: a late answer for an earlier turn, or one
+              // that lands after the person already sent something, would offer
+              // to reply to a turn that is no longer the one on screen.
+              const replies = Array.isArray(msg.replies)
+                ? msg.replies.filter((r): r is string => typeof r === 'string' && r.trim() !== '').slice(0, 3)
+                : [];
+              if (
+                replies.length === 0 ||
+                typeof msg.run_id !== 'string' ||
+                bucket.activeRunId !== null ||
+                msg.run_id !== bucket.lastRunId
+              ) {
+                break;
+              }
+              patch(key, { suggestions: { runId: msg.run_id, replies } });
               break;
             }
             case 'run_finished': {

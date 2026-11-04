@@ -47,6 +47,20 @@ const FileVersion = 1
 // record wants to share the file — then every old line already says what it is.
 const KindRun = "run"
 
+// KindSuggestion is the row a suggested-replies side request writes.
+//
+// It is a row of its own rather than a fold into the turn it followed, because
+// the side request is a feature of the program and not part of the turn: it runs
+// after the turn's `run_finished` has already been written, and a reader asking
+// "what did my conversations cost" and "what did the buttons cost" are asking two
+// questions. `Aggregate` counts its tokens and calls but not a turn.
+const KindSuggestion = "suggestion"
+
+// KindSuggestionCall is the audit record kind the runtime emits for one
+// suggested-replies request. It is not `model_call`: `/status` folds that kind
+// as the conversation's own spend, and this request is not the conversation.
+const KindSuggestionCall = "suggestion_call"
+
 // timeLayout is the audit log's own timestamp layout: local time, no zone.
 // The ledger keeps it so a record's day is the calendar day the user was on.
 const timeLayout = "2006-01-02T15:04:05.000"
@@ -169,6 +183,25 @@ func (l *Ledger) Observe(record map[string]any) {
 			return
 		}
 		l.append(runRow(record, f, durationMs, ts))
+
+	case KindSuggestionCall:
+		// One record is the whole request: there is no turn to wait for, so the
+		// row goes out at once. A failed request writes no record at all.
+		if stringOf(record["status"]) != "ok" {
+			return
+		}
+		f := &fold{
+			prompt:     intOf(record["prompt_tokens"]),
+			cached:     intOf(record["cached_tokens"]),
+			miss:       intOf(record["miss_tokens"]),
+			completion: intOf(record["completion_tokens"]),
+			modelMs:    int64Of(record["duration_ms"]),
+			calls:      1,
+			model:      stringOf(record["model"]),
+		}
+		row := runRow(record, f, int64Of(record["duration_ms"]), stringOf(record["ts"]))
+		row["kind"] = KindSuggestion
+		l.append(row)
 	}
 }
 

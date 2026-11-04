@@ -92,6 +92,12 @@ export interface DesktopData {
    */
   streamSmoothing: boolean;
   /**
+   * Whether the runtime is asked for quick replies after a turn. On by
+   * default (the person's choice); off is sent to every child as
+   * `set_suggestions`, which also stops the side request's spend.
+   */
+  suggestionsEnabled: boolean;
+  /**
    * The two ends of the pacing curve (`streamReveal.ts`), in characters/second:
    * the steady reading pace and the catch-up cap. A person's taste in how a
    * reply should *look*, stored with the switch it tunes.
@@ -146,6 +152,7 @@ export function emptyDesktopData(): DesktopData {
     // what the reply looks like, so a build that shipped it off would be
     // indistinguishable from the build before it.
     streamSmoothing: true,
+    suggestionsEnabled: true,
     // The curve's own defaults: "nothing chosen" is the values the pacing was
     // tuned around, so a record that predates these fields runs exactly as it
     // always has.
@@ -236,6 +243,7 @@ function extract(s: AppStore): DesktopData {
     maxStepsDefault: s.maxStepsDefault,
     notifyEnabled: s.notifyEnabled,
     streamSmoothing: s.streamSmoothing,
+    suggestionsEnabled: s.suggestionsEnabled,
     streamBaseCps: s.streamBaseCps,
     streamMaxCps: s.streamMaxCps,
     closePolicy: s.closePolicy,
@@ -371,6 +379,8 @@ function validate(raw: Record<string, unknown> | null | undefined): DesktopData 
     // is truthy) is dropped rather than honoured, the same boundary the two
     // rail widths use.
     streamSmoothing: raw.streamSmoothing !== false,
+    // Same rule as the line above: only an explicit `false` turns it off.
+    suggestionsEnabled: raw.suggestionsEnabled !== false,
     // Clamped, not dropped: a record a person edited by hand may hold a pace
     // outside the range, and the honest answer is the nearest value the curve
     // will actually run, not the default. The base is clamped first because

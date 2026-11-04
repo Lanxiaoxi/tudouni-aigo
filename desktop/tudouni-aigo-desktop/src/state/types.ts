@@ -705,6 +705,14 @@ export interface SessionRuntime {
   activeRunId: string | null;
   lastRunId: string | null;
   /**
+   * The quick replies the runtime offered for one finished turn, or `null`.
+   *
+   * Kept with the run they answer: they are drawn only while that run is still
+   * the last one and nothing is running, and any send clears them — a button
+   * left over from an earlier answer would offer to reply to the wrong turn.
+   */
+  suggestions: { runId: string; replies: string[] } | null;
+  /**
    * Lines the decoder refused, for this session.
    *
    * Kept apart from `lateDropped` because the two answer different questions and

@@ -141,6 +141,14 @@ type Server struct {
 	turnCtx    context.Context
 	turnCancel context.CancelFunc
 
+	// suggestCtx / suggestCancel are the suggested-replies side request in
+	// flight (see server_suggest.go). Guarded by mu, like the turn's pair, and
+	// cancelled by every path that starts or abandons a turn. suggestionsOff is
+	// the person's switch; the zero value is "on", which is the default they chose.
+	suggestCtx     context.Context
+	suggestCancel  context.CancelFunc
+	suggestionsOff bool
+
 	// pending holds the two kinds of request that block until a front end answers.
 	pending *pendingTable
 
@@ -423,6 +431,10 @@ func (s *Server) Dispatch(message map[string]any) bool {
 	case InSetThinking:
 		on, _ := Bool(message, "on")
 		s.setThinking(on)
+
+	case InSetSuggestions:
+		on, _ := Bool(message, "on")
+		s.SetSuggestionsEnabled(on)
 
 	case InSetEffort:
 		level, ok := String(message, "effort")

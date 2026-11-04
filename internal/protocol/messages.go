@@ -148,7 +148,15 @@ const VERSION = 1
 // the panel being drawn. A front end that draws the panel gates it on this number — a
 // runtime below 16 would answer with nothing, and a button that answers with nothing is a
 // promise the runtime cannot keep.
-const PROTOCOL = 16
+//
+// 17 adds suggested replies: a `suggestions` kind on the `ui` channel carrying
+// `run_id` and `replies` (0 to 3 strings the person is likely to send next), and
+// `set_suggestions` inbound with `on`. The kind arrives **after** that turn's
+// `ui(run_finished)`, from a side request that is not part of the conversation, and
+// only when no automatic round follows; a front end that does not know it ignores
+// it, and one that draws the buttons treats a click as the person sending the text.
+// Additive in the same way 13 was.
+const PROTOCOL = 17
 
 // Message keys used by every envelope.
 const (
@@ -176,6 +184,9 @@ const (
 	InSetModel     = "set_model"
 	InSetThinking  = "set_thinking"
 	InSetEffort    = "set_effort"
+	// InSetSuggestions turns suggested replies on or off (`on`). Absolute state,
+	// like set_autopilot.
+	InSetSuggestions = "set_suggestions"
 	InStatus       = "status"
 	InTools        = "tools"
 	InMCP          = "mcp"
@@ -294,6 +305,9 @@ const (
 	UISkills      = "skills"
 	UICompacted   = "compacted"
 	UIRunFinished = "run_finished"
+	// UISuggestions carries the quick replies for one finished turn. See
+	// server_suggest.go for when it is (and is not) sent.
+	UISuggestions = "suggestions"
 
 	// Files. The answer to `file_list`; `file_read` reuses the artifact
 	// machinery and answers with its own kind.
@@ -505,6 +519,7 @@ var RequiredKeys = map[string][]string{
 	InSetModel:           {"v", "t", "model"},
 	InSetThinking:        {"v", "t", "on"},
 	InSetEffort:          {"v", "t", "effort"},
+	InSetSuggestions:     {"v", "t", "on"},
 	InStatus:             {"v", "t"},
 	InTools:              {"v", "t"},
 	InMCP:                {"v", "t", "action"},

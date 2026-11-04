@@ -346,6 +346,49 @@ func TestAggregateDropsRowsWithoutADay(t *testing.T) {
 	}
 }
 
+// TestASuggestionIsSpendNotATurn: the side request's row carries its tokens and
+// its call, and is never counted as a turn or as the longest one.
+func TestASuggestionIsSpendNotATurn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.jsonl")
+	ledger, err := NewLedger(path)
+	if err != nil {
+		t.Fatalf("NewLedger: %v", err)
+	}
+	defer ledger.Close()
+
+	ledger.Observe(modelCall("s1", "r1", "m-a", 100, 0, 100, 10, 500))
+	ledger.Observe(runFinished("s1", "r1", "2026-10-25T10:00:00.000", 1000))
+	suggestion := modelCall("s1", "r1", "m-a", 300, 0, 300, 20, 9000)
+	suggestion["kind"] = KindSuggestionCall
+	ledger.Observe(suggestion)
+	failed := modelCall("s1", "r1", "m-a", 999, 0, 999, 999, 1)
+	failed["kind"] = KindSuggestionCall
+	failed["status"] = "error"
+	ledger.Observe(failed)
+
+	rows := readRows(t, path)
+	if len(rows) != 2 {
+		t.Fatalf("want a turn row and a suggestion row, got %v", jsonMust(t, rows))
+	}
+	if rows[1]["kind"] != KindSuggestion {
+		t.Errorf("second row kind = %v, want %q", rows[1]["kind"], KindSuggestion)
+	}
+
+	report, err := Aggregate(path, time.Date(2026, 10, 25, 18, 0, 0, 0, time.Local))
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if report.Turns != 1 {
+		t.Errorf("turns = %d, want 1: a suggestion is not a turn", report.Turns)
+	}
+	if report.Calls != 2 || report.Tokens != 430 {
+		t.Errorf("calls = %d, tokens = %d; want 2 and 430 (the suggestion's spend counts)", report.Calls, report.Tokens)
+	}
+	if report.LongestRunMs != 1000 {
+		t.Errorf("longest run = %d, want the turn's 1000, not the suggestion's", report.LongestRunMs)
+	}
+}
+
 // rowDay builds one ledger row as it sits in the file, for the read-side tests.
 // One row is one finished turn; a day's turn count is how many rows carry it.
 func rowDay(t *testing.T, day string, tokens, turns int) string {

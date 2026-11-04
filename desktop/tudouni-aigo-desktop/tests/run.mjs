@@ -395,6 +395,9 @@ const SUITES = [
   // The hooks panel's form as data: dirty tracking, event-scoped moves, when a
   // refused save keeps the typing, and which result may sit beside which command.
   'hooks-draft.test.ts',
+  // Quick replies: which run they belong to, when they are dropped, and that a
+  // click goes through the ordinary send path rather than a second one.
+  'suggested-replies.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

@@ -19,7 +19,7 @@ import { activeRuntime, activeWorkspaceOf } from '../appView';
 import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
 
   /**
@@ -52,6 +52,18 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
   return {
     setDraft(v) {
       patchActive({ draft: v, historyCursor: null });
+    },
+
+    applySuggestion(text, fill) {
+      const reply = text.trim();
+      if (reply === '') return;
+      // Put in the draft either way, then — for a plain click — sent through
+      // `submitDraft`, so a clicked reply takes exactly the path a typed one
+      // does: the readiness and modal checks, the echo, the history, the same
+      // `user_message`. A second send path is how the two drift apart.
+      // The buttons are only drawn over an empty draft, so nothing is lost.
+      patchActive({ draft: reply, historyCursor: null });
+      if (!fill) get().submitDraft();
     },
 
     setDragging(on) {
@@ -534,6 +546,9 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 's
         pendingFiles: [],
         // Whatever was said about this input has been answered by sending it.
         composerNotice: null,
+        // The quick replies answered the previous turn; anything sent — typed or
+        // clicked — makes them about the wrong one.
+        suggestions: null,
       }));
       // **The sentence is remembered for the workspace, not the session.** The
       // history is a habit of the directory — a new session in the same place

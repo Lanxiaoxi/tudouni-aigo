@@ -1362,6 +1362,9 @@ export const en = {
    *  written") rather than naming the technique, because "smooth streaming" is
    *  not a fact about the reply — "written out while the model is still
    *  writing" is. */
+  'panel.settings.suggestions': 'Suggest replies',
+  'panel.settings.suggestionsDesc':
+    'After an answer that offers a next step, show up to three one-click replies. Uses one small extra model request per turn, kept out of the conversation.',
   'panel.settings.pacing': 'Reply pacing',
   'panel.settings.smoothing': 'Reveal replies as they are written',
   'panel.settings.smoothingDesc':
@@ -1925,6 +1928,11 @@ export const en = {
   'stream.menu.title': 'Selected text',
   'stream.menu.copy': 'Copy',
   'stream.menu.addToInput': 'Add to input',
+  /** Quick replies under the last answer. The hint names the modifier-click,
+   *  because "fill the input instead of sending" is invisible otherwise. */
+  'stream.suggestions.label': 'Suggested replies',
+  'stream.suggestions.send': 'Send “{reply}”',
+  'stream.suggestions.hint': 'Click to send. Ctrl+click to put it in the input first.',
   /** Copy button on a fenced code block (`Markdown.tsx`). */
   'md.codeCopy': 'Copy code',
   'md.codeCopied': 'Copied',
