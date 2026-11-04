@@ -175,37 +175,40 @@ function TerminalTabs({
                 stays in the list on purpose (it is what answers "what was I
                 running"), so the only thing that could ever take it off was the
                 control that was greyed out. */}
-            <button
-              type="button"
-              className={`term-tab-close${isArmed ? ' is-armed' : ''}`}
-              aria-label={
+            <Tip
+              label={
                 running
                   ? isArmed
                     ? t('panel.term.closeRunningConfirm')
                     : t('panel.term.closeRunning')
                   : t('panel.term.close')
               }
-              title={
-                running
-                  ? isArmed
-                    ? t('panel.term.closeRunningConfirm')
-                    : t('panel.term.closeRunning')
-                  : t('panel.term.close')
-              }
-              onClick={() => {
-                if (running && !isArmed) {
-                  setArmed(row.id);
-                  return;
-                }
-                setArmed(null);
-                onClose(row.id);
-              }}
-              onBlur={() => {
-                if (isArmed) setArmed(null);
-              }}
             >
-              <X size={11} />
-            </button>
+              <button
+                type="button"
+                className={`term-tab-close${isArmed ? ' is-armed' : ''}`}
+                aria-label={
+                  running
+                    ? isArmed
+                      ? t('panel.term.closeRunningConfirm')
+                      : t('panel.term.closeRunning')
+                    : t('panel.term.close')
+                }
+                onClick={() => {
+                  if (running && !isArmed) {
+                    setArmed(row.id);
+                    return;
+                  }
+                  setArmed(null);
+                  onClose(row.id);
+                }}
+                onBlur={() => {
+                  if (isArmed) setArmed(null);
+                }}
+              >
+                <X size={11} />
+              </button>
+            </Tip>
           </div>
         );
       })}
@@ -228,15 +231,12 @@ function TerminalTabs({
           because that is where the person already is, and it is only drawn while
           a terminal has the screen — there is nothing to leave otherwise. */}
       {attachedId !== null ? (
-        <button
-          type="button"
-          className="term-leave"
-          title={t('panel.term.leaveHint')}
-          onClick={onLeave}
-        >
-          <ArrowLeft size={12} />
-          {t('panel.term.leave')}
-        </button>
+        <Tip label={t('panel.term.leaveHint')}>
+          <button type="button" className="term-leave" onClick={onLeave}>
+            <ArrowLeft size={12} />
+            {t('panel.term.leave')}
+          </button>
+        </Tip>
       ) : null}
     </div>
   );

@@ -20,6 +20,8 @@
 @import './components/tk-workbench.css';
 @import './components/terminal.css';
 @import './components/config.css';
+@import './components/select.css';
+@import './components/check.css';
 @import './components/rewind.css';
 @import './components/workspace.css';
 @import './components/hooks.css';

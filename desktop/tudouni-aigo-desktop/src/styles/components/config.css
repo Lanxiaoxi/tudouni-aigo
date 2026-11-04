@@ -202,11 +202,6 @@
   cursor: pointer;
 }
 
-.cfg-check input {
-  flex: none;
-  accent-color: var(--accent);
-}
-
 /* The delete buttons inside a sub-card. Destructive only on hover: a column of
    red icons reads as a warning about the panel rather than as controls. The
    armed state is the app's two-press rule — the first press only paints it, so

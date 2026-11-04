@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderToStaticMarkup } from 'react-dom/server.browser';
+import { renderWithTooltip } from './with-tooltip';
 import { Markdown } from '@/components/ui/Markdown';
 import { tableToTsv } from '@/components/ui/tableText';
 import { streamCss as readStreamCss } from './stream-css';
@@ -47,7 +47,7 @@ test('an empty cell or a missing text is an empty column, not "null"', () => {
 });
 
 test('the real renderer wraps a table and puts the button beside it', () => {
-  const html = renderToStaticMarkup(<Markdown text={'| a | b |\n| - | - |\n| 1 | 2 |'} />);
+  const html = renderWithTooltip(<Markdown text={'| a | b |\n| - | - |\n| 1 | 2 |'} />);
   assert.match(html, /<div class="md-tablewrap"><table>/);
   assert.match(html, /<\/table><button[^>]*md-table-copy/);
   assert.match(html, /aria-label="Copy table"/);
@@ -57,7 +57,7 @@ test('the real renderer wraps a table and puts the button beside it', () => {
 });
 
 test('an answer with no table gets no table button', () => {
-  const html = renderToStaticMarkup(<Markdown text={'just text'} />);
+  const html = renderWithTooltip(<Markdown text={'just text'} />);
   assert.doesNotMatch(html, /md-table-copy/);
 });
 

@@ -753,26 +753,27 @@ export function SessionBoard() {
               {menu.archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
               {menu.archived ? t('panel.resume.unarchive') : t('panel.resume.archive')}
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              className={`board-menu-item is-destructive${menu.armed ? ' is-armed' : ''}`}
-              aria-label={menu.armed ? t('lb.deleteConfirm') : t('lb.deleteSession')}
-              title={menu.armed ? t('lb.deleteConfirm') : t('board.menu.deleteArm')}
-              onClick={() => {
-                if (menu.armed) {
-                  menuAct('delete');
-                } else {
-                  // Arms, and stays: the next press is the delete. Anything
-                  // else — the scrim, Escape, another card — closes the menu
-                  // and disarms with it, so a stray first press costs nothing.
-                  setMenu({ ...menu, armed: true });
-                }
-              }}
-            >
-              {menu.armed ? <X size={13} /> : <Trash2 size={13} />}
-              {menu.armed ? t('lb.deleteConfirm') : t('board.menu.delete')}
-            </button>
+            <Tip label={menu.armed ? t('lb.deleteConfirm') : t('board.menu.deleteArm')}>
+              <button
+                type="button"
+                role="menuitem"
+                className={`board-menu-item is-destructive${menu.armed ? ' is-armed' : ''}`}
+                aria-label={menu.armed ? t('lb.deleteConfirm') : t('lb.deleteSession')}
+                onClick={() => {
+                  if (menu.armed) {
+                    menuAct('delete');
+                  } else {
+                    // Arms, and stays: the next press is the delete. Anything
+                    // else — the scrim, Escape, another card — closes the menu
+                    // and disarms with it, so a stray first press costs nothing.
+                    setMenu({ ...menu, armed: true });
+                  }
+                }}
+              >
+                {menu.armed ? <X size={13} /> : <Trash2 size={13} />}
+                {menu.armed ? t('lb.deleteConfirm') : t('board.menu.delete')}
+              </button>
+            </Tip>
           </div>
         </div>
       ) : null}

@@ -1949,30 +1949,30 @@ function TermListRow({
             absent: a row whose only way out was hidden behind its own status
             left ended terminals with no way off the list at all. */}
         {running ? (
-          <button
-            type="button"
-            className={`btn btn-ghost btn-icon btn-compact${armed ? ' is-armed' : ''}`}
-            aria-label={armed ? t('panel.term.killConfirm') : t('panel.term.kill')}
-            title={armed ? t('panel.term.killConfirm') : t('panel.term.kill')}
-            disabled={killPending}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (armed) onKill();
-              else onArm();
-            }}
-            onMouseLeave={() => {
-              if (armed) onDisarm();
-            }}
-          >
-            <X size={12} />
-          </button>
+          <Tip label={armed ? t('panel.term.killConfirm') : t('panel.term.kill')}>
+            <button
+              type="button"
+              className={`btn btn-ghost btn-icon btn-compact${armed ? ' is-armed' : ''}`}
+              aria-label={armed ? t('panel.term.killConfirm') : t('panel.term.kill')}
+              disabled={killPending}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (armed) onKill();
+                else onArm();
+              }}
+              onMouseLeave={() => {
+                if (armed) onDisarm();
+              }}
+            >
+              <X size={12} />
+            </button>
+          </Tip>
         ) : (
           <Tip label={t('panel.term.removeHint')}>
             <button
               type="button"
               className="btn btn-ghost btn-icon btn-compact"
               aria-label={t('panel.term.remove')}
-              title={t('panel.term.remove')}
               onClick={(e) => {
                 e.stopPropagation();
                 onRemove();

@@ -1,6 +1,7 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import { selectMenuIsOpen } from '@/components/ui/Select';
 import { CommandPalette } from './CommandPalette';
 import {
   AuditPanel,
@@ -89,6 +90,11 @@ export function PanelHost() {
             panel === 'memory' ? ' dialog-memory dialog-split' : ''
           }${panel === 'codeintel' ? ' dialog-memory' : ''}`}
           aria-label={t('topbar.commands')}
+          // Esc with a dropdown menu up closes the menu, not the panel. Radix
+          // sees the key first (capture on `document`), so it has to be told.
+          onEscapeKeyDown={(e) => {
+            if (selectMenuIsOpen()) e.preventDefault();
+          }}
         >
           {panel === 'commands' ? <CommandPalette /> : null}
           {panel === 'model' ? <ModelPanel /> : null}

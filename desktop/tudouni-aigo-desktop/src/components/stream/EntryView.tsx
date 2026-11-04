@@ -19,7 +19,7 @@ import { useTurnClock } from '@/hooks/useTurnClock';
 import { useRevealedText } from '@/hooks/useRevealedText';
 import { useStreamPacing } from '@/hooks/useStreamPacing';
 import { copyText } from '@/utils/clipboard';
-import { Badge, RiskTag } from '@/components/ui/kit';
+import { Badge, RiskTag, Tip } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
 import { InBlock } from './InBlock';
 import { DeliverableCards } from './DeliverableCards';
@@ -223,16 +223,17 @@ function TurnHead({
           because the whole row is theirs; this one is a heading whose text a
           reader may want to select, so the control is a real button beside it —
           focusable, announced with its state, and inert to a drag. */}
-      <button
-        type="button"
-        className="caret th-fold"
-        aria-expanded={!folded}
-        aria-label={folded ? t('entry.turnUnfold') : t('entry.turnFold')}
-        title={folded ? t('entry.turnUnfold') : t('entry.turnFold')}
-        onClick={() => toggleFold(entry.id)}
-      >
-        <ChevronRight size={13} className={folded ? '' : 'caret-open'} />
-      </button>
+      <Tip label={folded ? t('entry.turnUnfold') : t('entry.turnFold')}>
+        <button
+          type="button"
+          className="caret th-fold"
+          aria-expanded={!folded}
+          aria-label={folded ? t('entry.turnUnfold') : t('entry.turnFold')}
+          onClick={() => toggleFold(entry.id)}
+        >
+          <ChevronRight size={13} className={folded ? '' : 'caret-open'} />
+        </button>
+      </Tip>
       <span className="th-num">{t('entry.turn', { n: entry.ordinal })}</span>
       <Badge tone={tone}>
         {badgeLabel}
@@ -289,15 +290,16 @@ function CopyButton({
   };
 
   return (
-    <button
-      type="button"
-      className={`entry-copy${copied ? ' is-copied' : ''}`}
-      aria-label={copied ? copiedLabel : copyLabel}
-      title={copied ? copiedLabel : copyLabel}
-      onClick={() => void onCopy()}
-    >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
-    </button>
+    <Tip label={copied ? copiedLabel : copyLabel}>
+      <button
+        type="button"
+        className={`entry-copy${copied ? ' is-copied' : ''}`}
+        aria-label={copied ? copiedLabel : copyLabel}
+        onClick={() => void onCopy()}
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+      </button>
+    </Tip>
   );
 }
 
@@ -399,15 +401,16 @@ function ForkButton({
   const protocol = useSessionField((rt) => rt.session?.protocol ?? 0, 0);
   if (protocol < 7) return null;
   return (
-    <button
-      type="button"
-      className="entry-fork"
-      aria-label={label}
-      title={label}
-      onClick={() => forkSession(text, userBefore)}
-    >
-      <GitFork size={13} />
-    </button>
+    <Tip label={label}>
+      <button
+        type="button"
+        className="entry-fork"
+        aria-label={label}
+        onClick={() => forkSession(text, userBefore)}
+      >
+        <GitFork size={13} />
+      </button>
+    </Tip>
   );
 }
 

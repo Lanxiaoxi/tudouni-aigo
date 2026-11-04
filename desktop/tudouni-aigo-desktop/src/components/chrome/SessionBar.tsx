@@ -230,18 +230,15 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
 
         <div className="sb-group">
           <span className="sb-label">{t('session.model')}</span>
-          <button
-            type="button"
-            className="btn btn-ghost btn-compact"
-            onClick={() => openPanel('model')}
-            title={t('panel.model.title')}
-          >
-            <span className="mono sb-model">{session.model || '—'}</span>
-            {/* The provider is shown separately on purpose: two routes can carry
-                the same model name, and "where the request went" is a different
-                fact from "which model". A qualifier, so the first tier folds it. */}
-            <span className="muted sb-extra">@{session.provider || '—'}</span>
-          </button>
+          <Tip label={t('panel.model.title')}>
+            <button type="button" className="btn btn-ghost btn-compact" onClick={() => openPanel('model')}>
+              <span className="mono sb-model">{session.model || '—'}</span>
+              {/* The provider is shown separately on purpose: two routes can carry
+                  the same model name, and "where the request went" is a different
+                  fact from "which model". A qualifier, so the first tier folds it. */}
+              <span className="muted sb-extra">@{session.provider || '—'}</span>
+            </button>
+          </Tip>
         </div>
 
         <div className="sb-group">

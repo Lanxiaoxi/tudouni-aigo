@@ -28,11 +28,11 @@ import { streamCss as readStreamCss } from './stream-css';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { renderToStaticMarkup } from 'react-dom/server.browser';
+import { renderWithTooltip } from './with-tooltip';
 import { Markdown } from '@/components/ui/Markdown';
 
 function html(markdown: string): string {
-  return renderToStaticMarkup(<Markdown text={markdown} />);
+  return renderWithTooltip(<Markdown text={markdown} />);
 }
 
 /* ---------------- the renderer mapping ---------------- */

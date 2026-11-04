@@ -182,13 +182,6 @@
   cursor: pointer;
 }
 
-.close-remember input,
-.cfgsync-remember input {
-  flex: none;
-  margin-top: 2px;
-  accent-color: var(--accent);
-}
-
 .close-remember-text,
 .cfgsync-remember-text {
   display: flex;

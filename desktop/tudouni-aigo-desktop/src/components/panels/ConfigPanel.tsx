@@ -27,6 +27,7 @@ import {
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { Badge, PanelInfo, Tip } from '@/components/ui/kit';
+import { Select } from '@/components/ui/Select';
 import { readRemoteUserConfig, readUserConfig, revealConfigFile, writeRemoteUserConfig, writeUserConfig } from '@/runtime/tauri';
 import { useShallow } from 'zustand/react/shallow';
 import { remoteConnectionOf, useApp } from '@/state/store';
@@ -1224,17 +1225,15 @@ function RouteEditor({
                   does not recognise rather than defaulting, so a fourth one
                   typed here would only ever produce a file the runtime will
                   not open. */}
-              <select
-                className="cfg-input is-tiny"
+              <Select
+                size="tiny"
                 value={route.apiStyle}
-                onChange={(e) => onChange({ apiStyle: e.target.value })}
-              >
-                {API_STYLES.map((style) => (
-                  <option key={style} value={style}>
-                    {style === '' ? t('panel.config.apiStyleAuto') : style}
-                  </option>
-                ))}
-              </select>
+                options={API_STYLES.map((style) => ({
+                  value: style,
+                  label: style === '' ? t('panel.config.apiStyleAuto') : style,
+                }))}
+                onChange={(apiStyle) => onChange({ apiStyle })}
+              />
             </PcField>
 
             <PcField label={t('panel.config.apiKey')} hint={t('panel.config.apiKeyHint')}>

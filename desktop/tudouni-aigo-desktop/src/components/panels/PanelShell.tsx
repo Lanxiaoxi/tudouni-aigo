@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { ArrowLeft, X } from 'lucide-react';
 import { useT } from '@/i18n/useT';
+import { Tip } from '@/components/ui/kit';
 
 /**
  * 弹层面板统一外壳。
@@ -136,15 +137,16 @@ export function PanelShell({
     <>
       <div className="dialog-head tk-head">
         {onBack !== undefined ? (
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon"
-            aria-label={backLabel ?? t('panel.back')}
-            title={backLabel ?? t('panel.back')}
-            onClick={onBack}
-          >
-            <ArrowLeft size={15} />
-          </button>
+          <Tip label={backLabel ?? t('panel.back')}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon"
+              aria-label={backLabel ?? t('panel.back')}
+              onClick={onBack}
+            >
+              <ArrowLeft size={15} />
+            </button>
+          </Tip>
         ) : null}
         <div className="grow">
           {titleNode}

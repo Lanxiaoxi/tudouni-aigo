@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Bot, Check, Plus, Trash2 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useT } from '@/i18n/useT';
-import { Badge, PanelInfo } from '@/components/ui/kit';
+import { Badge, PanelInfo, Tip } from '@/components/ui/kit';
+import { Select } from '@/components/ui/Select';
 import { readRemoteUserConfig, readUserConfig, writeRemoteUserConfig, writeUserConfig } from '@/runtime/tauri';
 import { remoteConnectionOf, useApp } from '@/state/store';
 import {
@@ -252,20 +253,15 @@ export function SubagentPresetsPanel() {
 
         <section className="pc-section">
           <Field label={t('panel.sp.default')} hint={t('panel.sp.defaultHint')}>
-            <select
-              className="cfg-input is-short"
+            <Select
+              size="short"
               value={draft.default}
-              onChange={(e) => edit((current) => ({ ...current, default: e.target.value }))}
-            >
-              <option value="">{t('panel.sp.followSession')}</option>
-              {draft.presets
-                .filter((p) => p.name.trim() !== '')
-                .map((p) => (
-                  <option key={p.name} value={p.name}>
-                    {p.name}
-                  </option>
-                ))}
-            </select>
+              options={[
+                { value: '', label: t('panel.sp.followSession') },
+                ...draft.presets.filter((p) => p.name.trim() !== '').map((p) => ({ value: p.name, label: p.name })),
+              ]}
+              onChange={(next) => edit((current) => ({ ...current, default: next }))}
+            />
           </Field>
         </section>
 
@@ -326,15 +322,16 @@ function PresetCard({
           </Badge>
         ) : null}
         <span className="pc-rule" />
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon btn-compact cfg-danger"
-          aria-label={t('panel.sp.remove')}
-          title={t('panel.sp.remove')}
-          onClick={onRemove}
-        >
-          <Trash2 size={13} />
-        </button>
+        <Tip label={t('panel.sp.remove')}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon btn-compact cfg-danger"
+            aria-label={t('panel.sp.remove')}
+            onClick={onRemove}
+          >
+            <Trash2 size={13} />
+          </button>
+        </Tip>
       </div>
 
       <Field label={t('panel.sp.name')} hint={t('panel.sp.nameHint')}>
@@ -349,50 +346,58 @@ function PresetCard({
       </Field>
 
       <Field label={t('panel.sp.route')}>
-        <select
-          className="cfg-input is-short"
+        <Select
+          size="short"
           value={preset.provider}
-          onChange={(e) => {
+          placeholder={t('panel.sp.pick')}
+          options={[
+            // A saved route that is no longer configured stays visible, so the
+            // field shows what the file says instead of silently going blank.
+            ...(route === undefined && preset.provider !== ''
+              ? [{ value: preset.provider, label: preset.provider }]
+              : []),
+            ...routes.map((r) => ({
+              value: r.name,
+              label: r.displayName.trim() !== '' ? `${r.displayName} (${r.name})` : r.name,
+            })),
+          ]}
+          onChange={(provider) => {
             // A route change resets the model to that route's first one: a model
             // id from the old route is almost never on the new one, and the
             // runtime refuses a preset whose model is not on its route.
-            const next = routes.find((r) => r.name === e.target.value);
-            onChange({ provider: e.target.value, model: next?.models[0]?.id ?? '', effort: '' });
+            const next = routes.find((r) => r.name === provider);
+            onChange({ provider, model: next?.models[0]?.id ?? '', effort: '' });
           }}
-        >
-          {route === undefined ? <option value={preset.provider}>{preset.provider || t('panel.sp.pick')}</option> : null}
-          {routes.map((r) => (
-            <option key={r.name} value={r.name}>
-              {r.displayName.trim() !== '' ? `${r.displayName} (${r.name})` : r.name}
-            </option>
-          ))}
-        </select>
+        />
       </Field>
 
       <Field label={t('panel.sp.model')}>
-        <select
-          className="cfg-input mono is-short"
+        <Select
+          size="short"
+          mono
           value={preset.model}
-          onChange={(e) => onChange({ model: e.target.value, effort: '' })}
-        >
-          {model === undefined ? <option value={preset.model}>{preset.model || t('panel.sp.pick')}</option> : null}
-          {(route?.models ?? []).map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.label.trim() !== '' ? `${m.label} (${m.id})` : m.id}
-            </option>
-          ))}
-        </select>
+          placeholder={t('panel.sp.pick')}
+          options={[
+            ...(model === undefined && preset.model !== '' ? [{ value: preset.model, label: preset.model }] : []),
+            ...(route?.models ?? []).map((m) => ({
+              value: m.id,
+              label: m.label.trim() !== '' ? `${m.label} (${m.id})` : m.id,
+            })),
+          ]}
+          onChange={(next) => onChange({ model: next, effort: '' })}
+        />
       </Field>
 
       <Field label={t('panel.sp.effort')}>
-        <select className="cfg-input is-short" value={preset.effort} onChange={(e) => onChange({ effort: e.target.value })}>
-          <option value="">{t('panel.sp.effortDefault')}</option>
-          {levels.map((level) => (
-            <option key={level} value={level}>
-              {level}
-            </option>
-          ))}
-        </select>
+        <Select
+          size="short"
+          value={preset.effort}
+          options={[
+            { value: '', label: t('panel.sp.effortDefault') },
+            ...levels.map((level) => ({ value: level, label: level })),
+          ]}
+          onChange={(effort) => onChange({ effort })}
+        />
       </Field>
 
       <Field label={t('panel.sp.purpose')} hint={t('panel.sp.purposeHint')}>

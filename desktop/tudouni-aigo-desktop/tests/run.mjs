@@ -398,6 +398,14 @@ const SUITES = [
   // Quick replies: which run they belong to, when they are dropped, and that a
   // click goes through the ordinary send path rather than a second one.
   'suggested-replies.test.ts',
+  // The shared dropdown: which label the closed control shows, the picker with
+  // no value, and the Esc / stylesheet wiring that only a window would show.
+  'select.test.tsx',
+  // The drawn checkbox / radio: that the stylesheet is wired, that every input
+  // in a component sits in a row it draws, and that the pieces a screenshot
+  // would be needed to notice (the radio's shape under the focus ring, a raw
+  // colour, a leftover `accent-color`) are held by assertion instead.
+  'check-style.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

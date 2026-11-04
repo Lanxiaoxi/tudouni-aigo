@@ -18,11 +18,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderToStaticMarkup } from 'react-dom/server.browser';
+import { renderWithTooltip } from './with-tooltip';
 import { Markdown } from '@/components/ui/Markdown';
 
 function html(markdown: string): string {
-  return renderToStaticMarkup(<Markdown text={markdown} />);
+  return renderWithTooltip(<Markdown text={markdown} />);
 }
 
 function filepathLinkCount(out: string): number {

@@ -631,10 +631,9 @@
   font-weight: 600;
 }
 
-/* GFM 任务列表的勾选框。勾选色取 `--accent`：它是这一列里唯一一个真实控件，
-   也是唯一有原生着色入口（`accent-color`）的元素。 */
+/* GFM 任务列表的勾选框。外观（方框、勾、配色）由 `components/check.css`
+   统一绘制，这里只管它在正文行内的位置。 */
 .md input[type='checkbox'] {
-  accent-color: var(--accent);
   margin-right: 6px;
   vertical-align: middle;
 }

@@ -1,0 +1,157 @@
+/* ---------------- Checkbox and radio ----------------
+   One look for every tick box and radio in the forms. They used to be the
+   browser's own controls tinted with `accent-color`: the tint reached the fill
+   but not the shape, so the square, the dot and the size were whatever the
+   WebView drew, and three layouts (`.cfg-check`, the remember rows, the choice
+   list) each added their own spacing around them.
+
+   The control is still a real `<input>`: `appearance: none` keeps focus, the
+   keyboard, form semantics and `:checked`, and the mark is drawn by `::after`.
+   The selectors name the rows the inputs live in rather than matching every
+   `input[type=checkbox]`, because the settings segment hides its radio on
+   purpose (`.set-choice-item input`) and must not get a box drawn back in.
+
+   Colours are tokens only, so both themes follow. The mark on a filled box is
+   `--fg-on-accent`: dark ink on the pale dark-theme accent, white on the deep
+   light-theme one. */
+
+:is(
+  .cfg-check input[type='checkbox'],
+  .close-remember input[type='checkbox'],
+  .cfgsync-remember input[type='checkbox'],
+  .md input[type='checkbox'],
+  .tk-choice-row input[type='radio']
+) {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  display: inline-grid;
+  place-content: center;
+  width: 16px;
+  height: 16px;
+  /* The native control carries a 3-4px margin of its own; the rows above own
+     the spacing now. */
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+:is(
+  .cfg-check input[type='checkbox'],
+  .close-remember input[type='checkbox'],
+  .cfgsync-remember input[type='checkbox'],
+  .md input[type='checkbox']
+) {
+  border-radius: var(--radius-xs);
+}
+
+.tk-choice-row input[type='radio'] {
+  border-radius: 50%;
+}
+
+/* The tick: two borders of a rotated box. `scale` is its own property so the
+   pop-in does not fight the `rotate` that shapes it. */
+:is(
+  .cfg-check input[type='checkbox'],
+  .close-remember input[type='checkbox'],
+  .cfgsync-remember input[type='checkbox'],
+  .md input[type='checkbox']
+)::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid var(--fg-on-accent);
+  border-width: 0 2px 2px 0;
+  rotate: 45deg;
+  translate: 0 -1px;
+  scale: 0;
+  transition: scale var(--motion-fast) var(--ease-out);
+}
+
+.tk-choice-row input[type='radio']::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  scale: 0;
+  transition: scale var(--motion-fast) var(--ease-out);
+}
+
+:is(
+  .cfg-check input[type='checkbox'],
+  .close-remember input[type='checkbox'],
+  .cfgsync-remember input[type='checkbox'],
+  .md input[type='checkbox']
+):checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.tk-choice-row input[type='radio']:checked {
+  border-color: var(--accent);
+}
+
+:is(
+  .cfg-check input[type='checkbox'],
+  .close-remember input[type='checkbox'],
+  .cfgsync-remember input[type='checkbox'],
+  .md input[type='checkbox'],
+  .tk-choice-row input[type='radio']
+):checked::after {
+  scale: 1;
+}
+
+/* Hover is read off the whole row: the label is the target the hand is aiming
+   at, and the box is only 16px of it. */
+:is(.cfg-check, .close-remember, .cfgsync-remember, .tk-choice-row):hover
+  input:is([type='checkbox'], [type='radio']):not(:disabled):not(:checked) {
+  border-color: var(--accent-border-strong);
+}
+
+:is(
+  .cfg-check input[type='checkbox'],
+  .close-remember input[type='checkbox'],
+  .cfgsync-remember input[type='checkbox'],
+  .md input[type='checkbox'],
+  .tk-choice-row input[type='radio']
+):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A task list in a reply is a record, not a form: its boxes are always
+   disabled, and dimming every one of them would read as "unavailable" instead
+   of "done". */
+.md input[type='checkbox']:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+/* The global keyboard ring (`global.css`) also sets `border-radius: --radius-sm`,
+   which would turn a radio into a rounded square the moment Tab lands on it.
+   Say the shape again at a higher specificity; the ring itself is left alone. */
+html[data-input-mode='keyboard']
+  :is(
+    .cfg-check input[type='checkbox'],
+    .close-remember input[type='checkbox'],
+    .cfgsync-remember input[type='checkbox'],
+    .md input[type='checkbox']
+  ):focus-visible {
+  border-radius: var(--radius-xs);
+}
+
+html[data-input-mode='keyboard'] .tk-choice-row input[type='radio']:focus-visible {
+  border-radius: 50%;
+}
+
+/* In a two-line row (the remember prompts) the box sits against the first
+   line, not centred on both. */
+.close-remember input[type='checkbox'],
+.cfgsync-remember input[type='checkbox'] {
+  margin-top: 1px;
+}

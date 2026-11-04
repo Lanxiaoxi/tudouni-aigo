@@ -25,7 +25,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createElement, type ReactNode } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server.browser';
+import { renderWithTooltip } from './with-tooltip';
 import { Markdown, ensureHighlightLoaded } from '@/components/ui/Markdown';
 import { fenceLanguage, fenceLayout } from '@/components/ui/fence';
 
@@ -43,7 +43,7 @@ import { fenceLanguage, fenceLayout } from '@/components/ui/fence';
  * from nowhere else.
  */
 function codeClasses(markdown: string): string | null {
-  const html = renderToStaticMarkup(<Markdown text={markdown} />);
+  const html = renderWithTooltip(<Markdown text={markdown} />);
   const match = /<pre><code[^>]*\sclass="([^"]*)"/.exec(html);
   return match ? match[1] : null;
 }
@@ -120,7 +120,7 @@ test('the rendered answer keeps the fence text intact under the bar', async () =
   // and the module-level slot it fills is what the component reads at render
   // time, effects or no effects.
   await ensureHighlightLoaded();
-  const html = renderToStaticMarkup(<Markdown text={'```go\nfunc main() {}\n```'} />);
+  const html = renderWithTooltip(<Markdown text={'```go\nfunc main() {}\n```'} />);
   assert.match(html, /hljs-keyword/);
   assert.match(html, /func/);
   assert.match(html, /main/);
@@ -131,7 +131,7 @@ test('the rendered answer keeps the fence text intact under the bar', async () =
 });
 
 test('an untagged fence is drawn without the bar', () => {
-  const html = renderToStaticMarkup(<Markdown text={'```\nplain\n```'} />);
+  const html = renderWithTooltip(<Markdown text={'```\nplain\n```'} />);
   assert.doesNotMatch(html, /class="md-lang"/);
   // The copy button is still there 鈥?it just floats over the block instead.
   assert.match(html, /md-copy-btn/);

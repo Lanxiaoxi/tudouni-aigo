@@ -32,7 +32,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server.browser';
+import { renderWithTooltip } from './with-tooltip';
 import { findAll, locateRange, FIND_CONTENT_SELECTORS, FIND_ROW_ATTRIBUTE } from '@/find/matches';
 import type { Segment } from '@/find/matches';
 import { EntryView } from '@/components/stream/EntryView';
@@ -170,7 +170,7 @@ const SEARCHABLE: [keyof typeof ENTRIES, string][] = [
 for (const [kind, selector] of SEARCHABLE) {
   test(`the ${kind} row carries ${FIND_ROW_ATTRIBUTE}, and the classes the allowlist names`, () => {
     const entry = ENTRIES[kind];
-    const html = renderToStaticMarkup(createElement(EntryView, { entry }));
+    const html = renderWithTooltip(createElement(EntryView, { entry }));
     assert.match(
       html,
       new RegExp(`${FIND_ROW_ATTRIBUTE}="${entry.id}"`),
@@ -205,7 +205,7 @@ test('a row that v1 does not search carries no link, so the walk skips it', () =
     completionTokens: null,
     retry: null,
   };
-  assert.doesNotMatch(renderToStaticMarkup(createElement(EntryView, { entry: model })), /data-entry/);
+  assert.doesNotMatch(renderWithTooltip(createElement(EntryView, { entry: model })), /data-entry/);
 });
 
 /* ---------------- 4. the registry names the stylesheet must match ---------------- */

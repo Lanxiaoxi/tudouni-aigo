@@ -326,59 +326,6 @@ table.table td.mono {
   font-size: var(--text-caption);
 }
 
-.radio-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--row-h);
-  padding: 5px 8px;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-compact);
-  color: var(--fg-secondary);
-  cursor: pointer;
-  /* Radix RadioGroupItem 渲染成 <button>，浏览器默认 text-align:center，
-     会把右侧说明文字顶到中间 —— 显式压回左对齐 */
-  text-align: left;
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.radio-item:hover {
-  background: var(--bg-muted);
-  color: var(--fg);
-}
-
-.radio-item[data-state='checked'] {
-  color: var(--fg);
-}
-
-.radio-outer {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 14px;
-  height: 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-}
-
-.radio-item[data-state='checked'] .radio-outer {
-  border-color: var(--accent);
-}
-
-.radio-inner {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  transform: scale(0);
-  transition: transform var(--motion-fast) var(--ease-out);
-}
-
-.radio-item[data-state='checked'] .radio-inner {
-  transform: scale(1);
-}
-
 /* ---------------- §7 Badge / 状态点 ---------------- */
 .badge {
   display: inline-flex;

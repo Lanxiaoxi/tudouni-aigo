@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { useT } from '@/i18n/useT';
+import { Tip } from '@/components/ui/kit';
 
 /**
  * The transcript's find bar (`Ctrl+F`).
@@ -121,35 +122,38 @@ export const FindBar = memo(function FindBar({
         {status}
       </span>
 
-      <button
-        type="button"
-        className="btn btn-ghost btn-icon"
-        onClick={onPrev}
-        disabled={count === 0}
-        aria-label={t('find.prev')}
-        title={t('find.prev')}
-      >
-        <ChevronUp size={14} />
-      </button>
-      <button
-        type="button"
-        className="btn btn-ghost btn-icon"
-        onClick={onNext}
-        disabled={count === 0}
-        aria-label={t('find.next')}
-        title={t('find.next')}
-      >
-        <ChevronDown size={14} />
-      </button>
-      <button
-        type="button"
-        className="btn btn-ghost btn-icon"
-        onClick={onClose}
-        aria-label={t('find.close')}
-        title={t('find.close')}
-      >
-        <X size={14} />
-      </button>
+      <Tip label={t('find.prev')}>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          onClick={onPrev}
+          disabled={count === 0}
+          aria-label={t('find.prev')}
+        >
+          <ChevronUp size={14} />
+        </button>
+      </Tip>
+      <Tip label={t('find.next')}>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          onClick={onNext}
+          disabled={count === 0}
+          aria-label={t('find.next')}
+        >
+          <ChevronDown size={14} />
+        </button>
+      </Tip>
+      <Tip label={t('find.close')}>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          onClick={onClose}
+          aria-label={t('find.close')}
+        >
+          <X size={14} />
+        </button>
+      </Tip>
     </div>
   );
 });

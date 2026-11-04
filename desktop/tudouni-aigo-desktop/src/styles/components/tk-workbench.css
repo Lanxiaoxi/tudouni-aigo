@@ -217,12 +217,6 @@
   background: var(--bg-muted);
 }
 
-/* The checkboxes beside these rows (`.cfg-check`) are accent-tinted; an
-   untinted radio is the browser's blue in the same form. */
-.tk-choice-row input[type='radio'] {
-  accent-color: var(--accent);
-}
-
 .tk-choice-row:has(input:checked) {
   position: relative;
   z-index: 1;

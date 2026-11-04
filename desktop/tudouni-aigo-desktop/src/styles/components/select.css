@@ -1,0 +1,181 @@
+/* ---------------- Select (react-select, unstyled) ----------------
+   `components/ui/Select.tsx` renders react-select with `unstyled`, which strips
+   its colours and spacing but keeps the structural rules it needs (grid value
+   container, absolute menu, `min-height: 38px` on the control). Those arrive as
+   single-class emotion rules injected after this file, so every selector here
+   leads with `.rs-select` to win on specificity rather than on order.
+
+   The menu is drawn inline under the control, not portalled; see the note in
+   Select.tsx for why. */
+.rs-select {
+  position: relative;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.rs-select.is-short {
+  max-width: 320px;
+}
+
+.rs-select.is-tiny {
+  max-width: 220px;
+}
+
+/* A control does not inherit the page's face on its own; `.mono` on a field
+   names a key (an id, an event), the same reason `.cfg-input.mono` exists. */
+.rs-select.is-mono {
+  font-family: var(--font-mono);
+}
+
+/* The paper colour the Config page gives its fields, even in the light theme
+   where `--bg` is the pale green. */
+.rs-select .rs__control {
+  height: 34px;
+  min-height: 34px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.rs-select .rs__control:hover {
+  border-color: var(--fg-faint);
+}
+
+/* The field focus of component-states §2, the same one `.cfg-input` draws. */
+.rs-select .rs__control--is-focused,
+.rs-select .rs__control--is-focused:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--focus-ring);
+}
+
+.rs-select .rs__control--is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rs-select .rs__value-container {
+  min-width: 0;
+  padding: 0;
+}
+
+.rs-select .rs__single-value {
+  color: var(--fg);
+}
+
+.rs-select .rs__placeholder {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-faint);
+}
+
+.rs-select .rs__input-container {
+  margin: 0;
+  padding: 0;
+  color: var(--fg);
+}
+
+.rs-select .rs__dropdown-indicator {
+  align-items: center;
+  padding: 0 0 0 var(--space-2);
+  color: var(--fg-muted);
+}
+
+.rs-select .rs__dropdown-indicator svg {
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.rs-select .rs__control--menu-is-open .rs__dropdown-indicator svg {
+  transform: rotate(180deg);
+}
+
+/* The surface is the app's popover surface (`.st-popover`, `.plus-menu`):
+   elevated, strong edge, soft shadow. */
+.rs-select .rs__menu {
+  z-index: var(--z-popover);
+  margin: var(--space-1) 0;
+  padding: var(--space-1);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+  overflow: hidden;
+  animation: rs-menu-in var(--motion-fast) var(--ease-out) 1;
+}
+
+@keyframes rs-menu-in {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.rs-select .rs__menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.rs-select .rs__menu-notice {
+  padding: var(--space-2) var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  text-align: left;
+}
+
+/* Rows are the `.plus-item` rhythm: 32px tall, 6px radius, the accent tint for
+   the row under the pointer or the arrow keys. */
+.rs-select .rs__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+
+.rs-select .rs__option--is-focused {
+  background: var(--accent-subtle);
+  color: var(--fg);
+}
+
+.rs-select .rs__option--is-selected {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.rs-select .rs__option--is-selected svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.rs-select .rs__option--is-disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.rs-select .rs-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

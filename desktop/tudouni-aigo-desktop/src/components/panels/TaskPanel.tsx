@@ -826,15 +826,16 @@ function TaskHistory({
   return (
     <>
       <div className="dialog-head tk-head">
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon"
-          aria-label={t('panel.task.historyBack')}
-          title={t('panel.task.historyBack')}
-          onClick={onBack}
-        >
-          <ArrowLeft size={15} />
-        </button>
+        <Tip label={t('panel.task.historyBack')}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label={t('panel.task.historyBack')}
+            onClick={onBack}
+          >
+            <ArrowLeft size={15} />
+          </button>
+        </Tip>
         <div className="grow">
           <DialogPrimitive.Title className="dialog-title tk-title">
             {t('panel.task.historyTitle')}
@@ -1020,24 +1021,25 @@ function HistoryMenu({ onClear }: { onClear: () => void }) {
           aria-label={t('panel.task.more')}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
-          <button
-            type="button"
-            role="menuitem"
-            className={`tk-menu-item is-destructive${armed ? ' is-armed' : ''}`}
-            title={t('panel.task.clearHistoryHint')}
-            onClick={() => {
-              if (armed) {
-                onClear();
-                setOpen(false);
-                requestAnimationFrame(() => triggerRef.current?.focus());
-              } else {
-                setArmed(true);
-              }
-            }}
-          >
-            <Trash2 size={13} />
-            {armed ? t('panel.task.clearHistoryConfirm') : t('panel.task.clearHistory')}
-          </button>
+          <Tip label={t('panel.task.clearHistoryHint')}>
+            <button
+              type="button"
+              role="menuitem"
+              className={`tk-menu-item is-destructive${armed ? ' is-armed' : ''}`}
+              onClick={() => {
+                if (armed) {
+                  onClear();
+                  setOpen(false);
+                  requestAnimationFrame(() => triggerRef.current?.focus());
+                } else {
+                  setArmed(true);
+                }
+              }}
+            >
+              <Trash2 size={13} />
+              {armed ? t('panel.task.clearHistoryConfirm') : t('panel.task.clearHistory')}
+            </button>
+          </Tip>
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>
     </PopoverPrimitive.Root>
@@ -1566,15 +1568,16 @@ function RefineDialog({
   return (
     <>
       <div className="dialog-head tk-head">
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon"
-          aria-label={t('panel.task.historyBack')}
-          title={t('panel.task.historyBack')}
-          onClick={onBack}
-        >
-          <ArrowLeft size={15} />
-        </button>
+        <Tip label={t('panel.task.historyBack')}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            aria-label={t('panel.task.historyBack')}
+            onClick={onBack}
+          >
+            <ArrowLeft size={15} />
+          </button>
+        </Tip>
         <div className="grow">
           <DialogPrimitive.Title className="dialog-title tk-title">
             {t('panel.task.refine.title', { name: task.name })}

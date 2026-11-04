@@ -1,6 +1,7 @@
 import { CornerDownLeft } from 'lucide-react';
 import { useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
+import { Tip } from '@/components/ui/kit';
 
 /**
  * Quick replies under the last answer (protocol 17).
@@ -32,17 +33,17 @@ export function SuggestedReplies() {
   return (
     <div className="suggested-replies" role="group" aria-label={t('stream.suggestions.label')}>
       {suggestions!.replies.map((reply) => (
-        <button
-          key={reply}
-          type="button"
-          className="suggested-reply"
-          title={t('stream.suggestions.hint')}
-          aria-label={t('stream.suggestions.send', { reply })}
-          onClick={(e) => applySuggestion(reply, e.ctrlKey || e.metaKey || e.altKey)}
-        >
-          <CornerDownLeft size={12} aria-hidden />
-          <span>{reply}</span>
-        </button>
+        <Tip key={reply} label={t('stream.suggestions.hint')}>
+          <button
+            type="button"
+            className="suggested-reply"
+            aria-label={t('stream.suggestions.send', { reply })}
+            onClick={(e) => applySuggestion(reply, e.ctrlKey || e.metaKey || e.altKey)}
+          >
+            <CornerDownLeft size={12} aria-hidden />
+            <span>{reply}</span>
+          </button>
+        </Tip>
       ))}
     </div>
   );

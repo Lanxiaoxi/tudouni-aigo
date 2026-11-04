@@ -4,6 +4,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { useT } from '@/i18n/useT';
+import { Tip } from '@/components/ui/kit';
 import { useSessionField } from '@/state/store';
 import { copyText } from '@/utils/clipboard';
 import { fenceLanguage, fenceLayout } from './fence';
@@ -118,15 +119,16 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
   const icon = copied ? <Check size={14} /> : <Copy size={14} />;
   const button = (
-    <button
-      type="button"
-      className={`btn btn-ghost btn-icon md-copy-btn${copied ? ' is-copied' : ''}`}
-      aria-label={copied ? t('md.codeCopied') : t('md.codeCopy')}
-      title={copied ? t('md.codeCopied') : t('md.codeCopy')}
-      onClick={() => void copy()}
-    >
-      {icon}
-    </button>
+    <Tip label={copied ? t('md.codeCopied') : t('md.codeCopy')}>
+      <button
+        type="button"
+        className={`btn btn-ghost btn-icon md-copy-btn${copied ? ' is-copied' : ''}`}
+        aria-label={copied ? t('md.codeCopied') : t('md.codeCopy')}
+        onClick={() => void copy()}
+      >
+        {icon}
+      </button>
+    </Tip>
   );
 
   return (
@@ -163,17 +165,18 @@ function TableBlock({ children }: { children?: ReactNode }) {
   return (
     <div className="md-tablewrap">
       <table ref={tableRef}>{children}</table>
-      <button
-        type="button"
-        className={`btn btn-ghost btn-icon md-table-copy${copied ? ' is-copied' : ''}`}
-        aria-label={label}
-        title={label}
-        onClick={() => {
-          if (tableRef.current) void copyFlash(tableToTsv(tableRef.current));
-        }}
-      >
-        {copied ? <Check size={14} /> : <Copy size={14} />}
-      </button>
+      <Tip label={label}>
+        <button
+          type="button"
+          className={`btn btn-ghost btn-icon md-table-copy${copied ? ' is-copied' : ''}`}
+          aria-label={label}
+          onClick={() => {
+            if (tableRef.current) void copyFlash(tableToTsv(tableRef.current));
+          }}
+        >
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+        </button>
+      </Tip>
     </div>
   );
 }

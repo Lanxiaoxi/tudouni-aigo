@@ -481,6 +481,7 @@ export const en = {
   'panel.sp.purpose': 'Purpose',
   'panel.sp.purposeHint': 'Shown to the model so it can choose, e.g. “search, locate, read large files”.',
   'panel.sp.pick': 'Choose…',
+  'select.noOptions': 'No matches',
   'panel.sp.remove': 'Remove this preset',
   'panel.sp.noRoutes': 'No routes are configured. Add one in Config first.',
   'lb.task': 'Tasks',

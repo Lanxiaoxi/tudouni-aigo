@@ -373,15 +373,16 @@ export function Composer() {
               // is the button, so a click completes it too — Tab is a convenience,
               // not the only way to accept.
               <span className="cp-suggest">
-                <button
-                  type="button"
-                  className="cp-suggest-text"
-                  onClick={acceptSuggestion}
-                  aria-label={t('composer.suggestAccept', { text: suggestion })}
-                  title={t('composer.suggestAccept', { text: suggestion })}
-                >
-                  {suggestion}
-                </button>
+                <Tip label={t('composer.suggestAccept', { text: suggestion })}>
+                  <button
+                    type="button"
+                    className="cp-suggest-text"
+                    onClick={acceptSuggestion}
+                    aria-label={t('composer.suggestAccept', { text: suggestion })}
+                  >
+                    {suggestion}
+                  </button>
+                </Tip>
                 <span className="cp-suggest-key" aria-hidden="true">
                   Tab
                 </span>

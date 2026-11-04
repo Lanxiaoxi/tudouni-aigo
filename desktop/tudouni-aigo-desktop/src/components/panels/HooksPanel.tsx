@@ -33,7 +33,8 @@ import {
   type DraftProblem,
   type DraftRow,
 } from '@/state/hooksDraft';
-import { Badge, EmptyState, PanelInfo, type BadgeTone } from '@/components/ui/kit';
+import { Badge, EmptyState, PanelInfo, Tip, type BadgeTone } from '@/components/ui/kit';
+import { Select } from '@/components/ui/Select';
 import { formatDuration, formatRelative } from '@/utils/format';
 import { PanelBody, PanelShell } from './PanelShell';
 
@@ -458,18 +459,14 @@ function HookCard({
           ) : null}
 
           <Field id={id('event')} label={t('panel.hooks.f.event')} hint={EVENT_HINT[row.event] ? t(EVENT_HINT[row.event] as TKey) : undefined}>
-            <select
+            <Select
               id={id('event')}
-              className="cfg-input mono is-short"
+              size="short"
+              mono
               value={row.event}
-              onChange={(e) => onPatch({ event: e.target.value })}
-            >
-              {snapshot.events.map((event) => (
-                <option key={event.name} value={event.name}>
-                  {event.name}
-                </option>
-              ))}
-            </select>
+              options={snapshot.events.map((event) => ({ value: event.name, label: event.name }))}
+              onChange={(event) => onPatch({ event })}
+            />
           </Field>
 
           <Field id={id('name')} label={t('panel.hooks.f.name')} hint={t('panel.hooks.f.nameHint')}>
@@ -546,22 +543,21 @@ function HookCard({
 
           {info?.can_decide ? (
             <Field id={id('fail')} label={t('panel.hooks.f.failClosed')} hint={t('panel.hooks.f.failClosedHint')}>
-              <select
+              <Select
                 id={id('fail')}
-                className="cfg-input"
                 value={row.fail_closed === null ? '' : row.fail_closed ? 'closed' : 'open'}
-                onChange={(e) =>
-                  onPatch({ fail_closed: e.target.value === '' ? null : e.target.value === 'closed' })
-                }
-              >
-                <option value="">
-                  {t('panel.hooks.f.fail.default', {
-                    value: info.gate ? t('panel.hooks.f.fail.closed') : t('panel.hooks.f.fail.open'),
-                  })}
-                </option>
-                <option value="closed">{t('panel.hooks.f.fail.closed')}</option>
-                <option value="open">{t('panel.hooks.f.fail.open')}</option>
-              </select>
+                options={[
+                  {
+                    value: '',
+                    label: t('panel.hooks.f.fail.default', {
+                      value: info.gate ? t('panel.hooks.f.fail.closed') : t('panel.hooks.f.fail.open'),
+                    }),
+                  },
+                  { value: 'closed', label: t('panel.hooks.f.fail.closed') },
+                  { value: 'open', label: t('panel.hooks.f.fail.open') },
+                ]}
+                onChange={(next) => onPatch({ fail_closed: next === '' ? null : next === 'closed' })}
+              />
             </Field>
           ) : null}
 
@@ -594,26 +590,28 @@ function HookCard({
           </Field>
 
           <div className="hk-actions">
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon btn-compact"
-              aria-label={t('panel.hooks.moveUp')}
-              title={t('panel.hooks.moveUp')}
-              disabled={!canMove(draft, index, -1)}
-              onClick={() => onMove(-1)}
-            >
-              <ArrowUp size={13} />
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon btn-compact"
-              aria-label={t('panel.hooks.moveDown')}
-              title={t('panel.hooks.moveDown')}
-              disabled={!canMove(draft, index, 1)}
-              onClick={() => onMove(1)}
-            >
-              <ArrowDown size={13} />
-            </button>
+            <Tip label={t('panel.hooks.moveUp')}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon btn-compact"
+                aria-label={t('panel.hooks.moveUp')}
+                disabled={!canMove(draft, index, -1)}
+                onClick={() => onMove(-1)}
+              >
+                <ArrowUp size={13} />
+              </button>
+            </Tip>
+            <Tip label={t('panel.hooks.moveDown')}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon btn-compact"
+                aria-label={t('panel.hooks.moveDown')}
+                disabled={!canMove(draft, index, 1)}
+                onClick={() => onMove(1)}
+              >
+                <ArrowDown size={13} />
+              </button>
+            </Tip>
             <span className="cfg-hint grow">{t('panel.hooks.order')}</span>
             {/* The app's two-press rule: the first press only arms the button, so a stray
               * click cannot delete a hook. Leaving the button disarms it. */}
@@ -671,22 +669,18 @@ function ScriptPicker({
 }) {
   const t = useT();
   return (
-    <select
-      className="cfg-input"
-      aria-label={t('panel.hooks.f.script')}
-      value=""
-      onChange={(e) => {
-        const script = scripts.find((item) => item.path === e.target.value);
+    // `value={null}`: this is a picker, not a field. It acts on the click and
+    // keeps showing the prompt, like the native select with `value=""` did.
+    <Select
+      ariaLabel={t('panel.hooks.f.script')}
+      value={null}
+      placeholder={t('panel.hooks.f.scriptPick', { dir })}
+      options={scripts.map((script) => ({ value: script.path, label: script.name }))}
+      onChange={(path) => {
+        const script = scripts.find((item) => item.path === path);
         if (script !== undefined) onPick(script);
       }}
-    >
-      <option value="">{t('panel.hooks.f.scriptPick', { dir })}</option>
-      {scripts.map((script) => (
-        <option key={script.path} value={script.path}>
-          {script.name}
-        </option>
-      ))}
-    </select>
+    />
   );
 }
 
