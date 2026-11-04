@@ -13,12 +13,35 @@ adding a sixth one.
 
 | region | rule |
 | --- | --- |
-| width | one rung for every workbench panel: `min(1180px, 100vw - 48px)` — `PanelHost` puts `wb-panel` on them |
-| padding | 28 on all four sides (`--wb-pad`); the head is `20px 28px 4px` |
+| width | **two rungs**: `800` for the family (`wb-panel`), `1180` for Configuration and Settings (`wb-wide`). Both are `min(rung, 100vw - 48px)` |
+| padding | 28 on all four sides (`--wb-pad`); the head is `24px 28px 4px` |
 | head | title 15/600, one-line description 12/400, then at most one secondary action and the close (28×28 ghost) |
-| body | the main column, optionally split: `.wb-split` = `minmax(0,1fr) 340px`, gap 32 |
-| rail | `.wb-rail`: facts the runtime computed. Never mixed into the fields |
+| body | the main column, optionally split: `.wb-split` = `minmax(0,1fr) <rail>`, gap `<gap>` |
+| rail | `.wb-rail`: facts the runtime computed. Never mixed into the fields. 340 at the wide rung, 232 at the default one |
 | footer | `.dialog-foot`: hint at the leading edge, `[Ghost][Primary]` at the trailing one, primary 30 high |
+
+**Why 800 rather than the sheet's 1180.** The sheets draw all eleven panels at
+92% of a 1280 window. That is right for the two whose job is a long form beside a
+read-out, and too wide for a six-row list or a five-field editor: those read as a
+dialog that was stretched rather than as a page. So the family's default is 800
+and `wb-wide` is the opt-in. The rail scales with the rung (340 → 232) rather
+than staying fixed, because 340 of a 800px panel is a different proportion and
+would leave the main column 480.
+
+**The narrowing is verified, not assumed.** Three scripts measure it, because a
+resize fails in ways a screenshot does not show:
+
+```
+node scripts/probe-width.mjs 9333 http://127.0.0.1:5178/ 1280 800   # rung + columns + overflow
+node scripts/probe-pages.mjs 9333 http://127.0.0.1:5178/ 1280 800   # the second surfaces
+node scripts/probe-rail.mjs  9333 http://127.0.0.1:5178/ 1280 800   # clipped rail labels
+```
+
+`probe-pages.mjs` is what caught the one real regression in the narrowing: the
+task editor's name/description row is 1:2, which at the narrow rung is 155px for
+a name field. It is a **container query** on the main column now, so the pair
+stacks at any width where the ratio stops being legible — a media query would be
+right at one window size and wrong at every other.
 
 `PanelShell` takes `rail` (the right column), `footHint` (the leading sentence)
 and `footer` (the actions). A panel's **second surface** passes `onBack` — the
@@ -244,5 +267,7 @@ node scripts/panel-shots.mjs .tmp/shots/mine 9333 http://127.0.0.1:5178/ config
 node scripts/app-shots.mjs .tmp/shots/app 9334
 ```
 
-The design's canvas is **1280×800 with a 1180px panel** — the same window the
-Tauri config opens at — so a screenshot of the real window is 1:1 with the sheet.
+The design's canvas is **1280×800**, the same window the Tauri config opens at.
+The panel inside it is 1180 in the sheets and 800 here for everything but
+Configuration and Settings, so a screenshot at that window size is the closest
+comparison the sheets allow — see "Why 800" above for the difference.

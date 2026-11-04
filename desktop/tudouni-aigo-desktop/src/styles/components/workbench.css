@@ -31,10 +31,22 @@
    ============================================================ */
 
 :root {
-  /* Panel geometry, named once. 1180 is the sheet's own proportion at the
-     window's 1280 default — every panel sheet, measured edge to edge, comes out
-     at the same 92% of the canvas. */
-  --wb-w: 1180px;
+  /* Panel geometry, and **two widths rather than one**.
+   *
+   * The sheet draws all eleven panels at 92% of a 1280 window, which is 1180.
+   * That is the right width for the two panels whose job is a long form beside a
+   * read-out — Configuration and Settings — and it is too wide for the rest: a
+   * six-row list or a five-field editor stranded in 1180px of paper reads as a
+   * dialog that was stretched, not as a page. So the family has a default rung
+   * (800) and a wide one (1180), and a panel opts into the wide rung with
+   * `wb-wide` rather than the sheet's proportion deciding for every panel.
+   *
+   * **The rail scales with the rung.** 340 at 1180 is 29% of the panel; the same
+   * share of 800 is ~232, and the gap tightens with it. Keeping 340 on the narrow
+   * rung would leave 480 for the main column — a workspace path and a stepper in
+   * 480 is the exact squeeze the two-column shape exists to avoid. */
+  --wb-w: 800px;
+  --wb-w-wide: 1180px;
   --wb-pad: 28px;
   --wb-rail: 340px;
   --wb-gap: 32px;
@@ -52,16 +64,31 @@
 
 /* ---------------- 1 · the shell ----------------
  *
- * Four fixed regions — head, body, (rail), foot — and one width for all of them.
- * `.dialog-wide`, `.dialog-memory` and the route/settings pages used to be four
- * rungs (820 / 1000 / 1180 / 1180); the sheet draws all eleven panels at one
- * width, so the rungs collapse. The command palette keeps its own width and its
- * own top-hung position: it is not a workbench panel.
+ * Four fixed regions — head, body, (rail), foot — and one width per rung.
+ * `.dialog-wide` and `.dialog-memory` used to be separate rungs (820 / 1000 /
+ * 1180); every workbench panel now wears `wb-panel`, which is 800, and the two
+ * that need the room wear `wb-wide` as well, which is 1180. The command palette
+ * keeps its own width and its own top-hung position: it is not a workbench panel.
  */
 .dialog-wide,
 .dialog-memory,
 .dialog.wb-panel {
   width: min(var(--wb-w), calc(100vw - 48px));
+}
+
+/* Configuration and Settings: a form column beside a read-out column, which is
+   what the sheet's 1180 is drawn for. The rail keeps the sheet's own 340 there. */
+.dialog.wb-wide {
+  width: min(var(--wb-w-wide), calc(100vw - 48px));
+  --wb-rail: 340px;
+  --wb-gap: 32px;
+}
+
+/* The narrow rung's rail: the same ~29% share of the panel, and a gap that
+   leaves the main column 32 more pixels of text than the wide rung's would. */
+.dialog.wb-panel:not(.wb-wide) {
+  --wb-rail: 232px;
+  --wb-gap: 24px;
 }
 
 /* The surface is the panel's, not the window's, everywhere. The route page and
@@ -414,11 +441,30 @@
   gap: var(--space-2);
   min-width: 0;
 }
-
 /* A name is a key and a description is a sentence: one share and two shares of
-   the same row. */
+   the same row.
+   
+   **The ratio is a preference, not a rule.** At the wide rung the main column is
+   740 and 1:2 gives 240/480, which is what the sheet draws. At the narrow rung it
+   is 486 — and 1:2 there is 155/310, a name field too short to read its own
+   value. So the pair stacks below the width at which the ratio stops being
+   legible. It is a **container** query and not a media query on purpose: the
+   column's width is decided by the panel's rung (`wb-panel` / `wb-wide`), not by
+   the viewport, so a media query would be right at 1280 and wrong at every other
+   window size. */
+.tk-editor-main {
+  container-type: inline-size;
+  container-name: tkeditor;
+}
+
 .wb-grid.tk-name-row {
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+@container tkeditor (max-width: 620px) {
+  .wb-grid.tk-name-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* A card whose rows own their own padding gets none. */

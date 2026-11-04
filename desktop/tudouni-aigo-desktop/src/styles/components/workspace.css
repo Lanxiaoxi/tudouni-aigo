@@ -425,9 +425,18 @@
   overflow-wrap: anywhere;
 }
 
+/* **The meta line wraps; the op is the part that moves.** At the wide rung this
+   row is one line — when it was proposed, what approving does, and the Read
+   disclosure — and the op truncates at the end for the longest id in the corpus.
+   At the narrow rung (232 of rail) that same line leaves the op 37px, which is an
+   ellipsis in the middle of the word "adds" — a fact that is no longer reported,
+   which is worse than a second line. `flex-wrap` with the Read button on its own
+   line is the shape that survives both: the op gets whatever the first line has
+   left, and truncation stays a fallback rather than the normal case. */
 .wm-cand-meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   font-size: var(--text-caption);
   color: var(--fg-muted);
@@ -442,6 +451,7 @@
    the buttons below it are two more, and a meta line that wrapped would push them
    apart for the longest id in the corpus. */
 .wm-cand-op {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
