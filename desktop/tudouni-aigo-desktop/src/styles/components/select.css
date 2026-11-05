@@ -5,6 +5,12 @@
    single-class emotion rules injected after this file, so every selector here
    leads with `.rs-select` to win on specificity rather than on order.
 
+   Emotion inserts them as a `<style>` element while the app runs, which needs a
+   CSP that allows inline styles. `tauri.conf.json` therefore turns off Tauri's
+   `style-src` nonce injection: a nonce source makes `'unsafe-inline'` inert, and
+   the blocked rules collapse the control into a plain vertical stack (chevron
+   under the box, menu in flow, live region visible).
+
    The menu is drawn inline under the control, not portalled; see the note in
    Select.tsx for why. */
 .rs-select {
