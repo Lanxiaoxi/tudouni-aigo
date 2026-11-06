@@ -1490,8 +1490,8 @@ export function WorkspaceSidebar() {
                     <div className="lb-workbench-group-label">{group.label}</div>
                     <div className="lb-workbench-items">
                       {group.items.map((item) => (
-                        <Tip key={item.key} label={item.hint}>
                           <button
+                            key={item.key}
                             type="button"
                             className={`lb-workbench-item${item.active ? ' is-active' : ''}`}
                             // The stagger is the row's own index in the whole
@@ -1501,6 +1501,7 @@ export function WorkspaceSidebar() {
                             style={{ '--i': navOrder.get(item.key) ?? 0 } as CSSProperties}
                             disabled={item.disabled}
                             aria-pressed={item.active === undefined ? undefined : item.active}
+                            aria-label={item.hint}
                             onClick={item.run}
                           >
                             <span className="lb-workbench-item-icon">{item.icon}</span>
@@ -1518,7 +1519,6 @@ export function WorkspaceSidebar() {
                               </span>
                             ) : null}
                           </button>
-                        </Tip>
                       ))}
                     </div>
                   </div>
