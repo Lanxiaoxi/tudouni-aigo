@@ -147,12 +147,20 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
    * — `selectBoardAvailable` (which asks for a live child) would lock a person
    * out of exactly the list that says what to start next. No count here: this
    * row is 34px of compact facts; the workbench row carries the badge.
+   *
+   * `sb-ticket` is not decoration. The two doors share `.sb-board` on purpose —
+   * they are one pair, one square each — but the engage turn is chosen per
+   * glyph: the grid turns a quarter (four squares, fourfold symmetric), and this
+   * Ticket turns a half, because `lucide`'s ticket has its notches on the left
+   * and right edges and 90° would stand the stub on its end. Both transitions
+   * are the same duration, so the pair pivots together. This class is also the
+   * hook every "which door" selector outside this file uses.
    */
   const ticketButton = (
     <Tip label={t('board.tickets.openHint')}>
       <button
         type="button"
-        className={`sb-board${board === 'tickets' ? ' is-active' : ''}`}
+        className={`sb-board sb-ticket${board === 'tickets' ? ' is-active' : ''}`}
         aria-label={t('board.tickets.title')}
         aria-pressed={board === 'tickets'}
         disabled={blocked}
@@ -214,89 +222,92 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
     </Tip>
   ) : null;
 
-  if (!session) {
-    // The toggles are rendered in this state too. Before the handshake lands
-    // there are no facts to show, and leaving them out of the placeholder would
-    // make them appear only once a runtime answered — which is exactly when
-    // somebody who hid a rail is least likely to look here for it.
-    return (
-      <div className="sessionbar">
-        {leftToggle}
-        {boardButton}
-        {ticketButton}
-        <div className="sb-scroll">
-          <span className="sb-label">{t('session.label')}</span>
-          <span className="muted">—</span>
-        </div>
-        {findButton}
-        {rightToggle}
+  /**
+   * The facts, in their own scroller so the four controls stay put. The
+   * `<span className="sep" />` rules that used to sit between the four groups
+   * are gone with the change to cards: a 1px line separates flat text, and
+   * between two cards it is a second edge drawn where the cards already have
+   * one.
+   *
+   * **One shell, not two.** This row used to have a second `return`: a
+   * placeholder branch for "no handshake yet" and a full one after it, each
+   * spelling out `leftToggle / boardButton / … / rightToggle` by hand. They
+   * drifted the first time a control was added to one of them — the ticket
+   * board's door was written into the placeholder and nowhere else, so it
+   * appeared before a runtime answered and vanished at the moment a session
+   * became real. Only the facts differ between those two states, so only the
+   * facts are branched on.
+   */
+  const facts = session ? (
+    <div className="sb-scroll">
+      <div className="sb-group">
+        <span className="sb-label">{t('session.label')}</span>
+        <Fact mono title="session id" className="sb-id">
+          {session.id || '—'}
+        </Fact>
+        {/* Every group keeps its value on the row at any width; what the two
+            container tiers in `app.css` remove are the qualifiers around it —
+            this fact is one of them. */}
+        <Fact className="sb-extra">{session.resumed ? t('session.resumed') : t('session.fresh')}</Fact>
       </div>
-    );
-  }
+
+      <div className="sb-group">
+        <span className="sb-label">{t('session.model')}</span>
+        <Tip label={t('panel.model.title')}>
+          <button type="button" className="btn btn-ghost btn-compact" onClick={() => openPanel('model')}>
+            <span className="mono sb-model">{session.model || '—'}</span>
+            {/* The provider is shown separately on purpose: two routes can carry
+                the same model name, and "where the request went" is a different
+                fact from "which model". A qualifier, so the first tier folds it. */}
+            <span className="muted sb-extra">@{session.provider || '—'}</span>
+          </button>
+        </Tip>
+      </div>
+
+      <div className="sb-group">
+        <span className="sb-label">{t('session.thinking')}</span>
+        {/* Degraded, this group's value is the **effort level**, not on/off:
+            the level is the decision a reader acts on, and the effort button
+            stays as the row's control while this fact folds first. */}
+        <Fact mono className="sb-extra">
+          {session.thinking ? t('session.thinkingOn') : t('session.thinkingOff')}
+        </Fact>
+        <Tip label={t('panel.effort.note')}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-compact"
+            onClick={() => openPanel('effort')}
+          >
+            <span className="muted">{t('session.effort')}</span>
+            {/* Shown as set, never converted: thinking can be off while an
+                effort is still recorded, and that is the user's intent. */}
+            <span className="mono">{session.effort || '—'}</span>
+          </button>
+        </Tip>
+      </div>
+
+      <div className="sb-group">
+        <span className="sb-label">{t('session.maxSteps')}</span>
+        <Fact mono className="sb-cap">{session.maxSteps}</Fact>
+      </div>
+    </div>
+  ) : (
+    // Before the handshake lands there are no facts to show. The controls are
+    // still drawn — a toggle, the two board doors or the rail's own frame that
+    // appeared only once a runtime answered would be missing exactly when
+    // somebody who hid something is least likely to look here for it.
+    <div className="sb-scroll">
+      <span className="sb-label">{t('session.label')}</span>
+      <span className="muted">—</span>
+    </div>
+  );
 
   return (
     <div className="sessionbar">
       {leftToggle}
       {boardButton}
-
-      {/* The facts, in their own scroller so the two toggles stay put. The
-          `<span className="sep" />` rules that used to sit between the four
-          groups are gone with the change to cards: a 1px line separates flat
-          text, and between two cards it is a second edge drawn where the cards
-          already have one. */}
-      <div className="sb-scroll">
-        <div className="sb-group">
-          <span className="sb-label">{t('session.label')}</span>
-          <Fact mono title="session id" className="sb-id">
-            {session.id || '—'}
-          </Fact>
-          {/* Every group keeps its value on the row at any width; what the two
-              container tiers in `app.css` remove are the qualifiers around it —
-              this fact is one of them. */}
-          <Fact className="sb-extra">{session.resumed ? t('session.resumed') : t('session.fresh')}</Fact>
-        </div>
-
-        <div className="sb-group">
-          <span className="sb-label">{t('session.model')}</span>
-          <Tip label={t('panel.model.title')}>
-            <button type="button" className="btn btn-ghost btn-compact" onClick={() => openPanel('model')}>
-              <span className="mono sb-model">{session.model || '—'}</span>
-              {/* The provider is shown separately on purpose: two routes can carry
-                  the same model name, and "where the request went" is a different
-                  fact from "which model". A qualifier, so the first tier folds it. */}
-              <span className="muted sb-extra">@{session.provider || '—'}</span>
-            </button>
-          </Tip>
-        </div>
-
-        <div className="sb-group">
-          <span className="sb-label">{t('session.thinking')}</span>
-          {/* Degraded, this group's value is the **effort level**, not on/off:
-              the level is the decision a reader acts on, and the effort button
-              stays as the row's control while this fact folds first. */}
-          <Fact mono className="sb-extra">
-            {session.thinking ? t('session.thinkingOn') : t('session.thinkingOff')}
-          </Fact>
-          <Tip label={t('panel.effort.note')}>
-            <button
-              type="button"
-              className="btn btn-ghost btn-compact"
-              onClick={() => openPanel('effort')}
-            >
-              <span className="muted">{t('session.effort')}</span>
-              {/* Shown as set, never converted: thinking can be off while an
-                  effort is still recorded, and that is the user's intent. */}
-              <span className="mono">{session.effort || '—'}</span>
-            </button>
-          </Tip>
-        </div>
-
-        <div className="sb-group">
-          <span className="sb-label">{t('session.maxSteps')}</span>
-          <Fact mono className="sb-cap">{session.maxSteps}</Fact>
-        </div>
-      </div>
-
+      {ticketButton}
+      {facts}
       {findButton}
       {rightToggle}
     </div>

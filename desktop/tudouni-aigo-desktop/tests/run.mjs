@@ -406,6 +406,14 @@ const SUITES = [
   // would be needed to notice (the radio's shape under the focus ring, a raw
   // colour, a leftover `accent-color`) are held by assertion instead.
   'check-style.test.ts',
+  // The session bar's two board doors, and the structural reason one of them
+  // used to exist only before the handshake: the row was spelled out twice, one
+  // `return` per "has a session" state, so a control added to one was simply
+  // absent from the other. A static render cannot reach that second branch
+  // (zustand answers a server render from the initial state), so what is pinned
+  // is the source's shape — one shell, one place per control, and the pair
+  // distinguishable (`.sb-board` shared, `.sb-ticket` only on the ticket door).
+  'session-bar-doors.test.ts',
   // Tickets (docs/design/ticket.md §4, §6): the state machine's table and its
   // seven invariants, the entity helpers and the guard; and the file/slice half
   // — read-only on a newer schema, ordered writes, idempotent reconcile, and no

@@ -353,7 +353,15 @@ board: null | 'sessions' | 'tickets';
   | done / dropped | 重新打开 |
 
   非终态都可以放弃。删除沿用 app 的"两次按下"确认。
-- 新建 Ticket：board 顶部一个 composer 式的输入框，加上一个编辑器，字段有标题（可选）、brief、工作区、模型。现在 composer 里"存为 todo"（`openTodoDraft` / `todoSeed`）改为"存为 Ticket"，打开的是 Ticket board 的新建框。
+- 新建 Ticket：**board 头部一个「New Ticket」按钮，点开是一个对话框**，字段有 brief（必填）、标题（可选）、工作区、模型，四个一次全显示。现在 composer 里"存为 todo"（`openTodoDraft` / `todoSeed`）改为"存为 Ticket"，打开的是同一个对话框并带入 brief。
+
+  最初实现成 board 顶部常驻的 composer 式输入框，改掉了，理由三条：
+
+  1. **它每次进来都要占用 board 的高度**。四列工作被一个没人要用的输入框往下压。
+  2. **它把最要紧的字段藏起来了**。工作区和模型——决定*活儿在哪跑*的两个答案——放在默认收起的「Details」后面，于是默认值（跟着当前屏幕）成了绝大多数 Ticket 唯一拿到过的值。对话框有地方一次显示全部四个字段，没有任何东西在第二次点击后面。
+  3. **它的形状像 composer**，读起来像"往里打一条消息"，而新建 Ticket 是一个有始有终的动作。
+
+  保留的：brief 仍是唯一必填，`Ctrl+Enter` 仍然提交，运行时会在 `ticket_bind` 拒绝的超限仍**在输入框旁边**提示（`unbindableField`），而不是等一次注定失败的 Start 之后。Esc / 点遮罩 / Cancel 都关闭对话框；拒绝创建**不**关闭它——拒绝的对象正是那行输入。
 - 通知：Ticket 进入 `needs_you` 或 `review` 时，经由现有的 `useNotifications` 发一条系统通知。当前就在看这个 Ticket 的 Assignment 会话时，不发。
 
 ### 7.4 Task 面板的清理

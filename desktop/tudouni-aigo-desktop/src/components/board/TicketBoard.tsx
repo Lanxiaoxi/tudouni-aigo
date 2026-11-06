@@ -1,3 +1,4 @@
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Ban,
@@ -127,16 +128,33 @@ export function TicketBoard() {
     model: '',
   });
 
-  /** The new-Ticket form is remounted (new `key`) to reset it or to take a
-   *  seed; its text lives in the form, so nothing is stored for it here. */
-  const [fresh, setFresh] = useState<{ key: number; initial: FormValue }>(() => ({ key: 0, initial: blank('') }));
+  /**
+   * The new-Ticket dialog, or `null` when it is shut.
+   *
+   * **A dialog, not a box drawn above the columns.** The board used to open
+   * with a composer-shaped form pinned to its top: it pushed the four columns
+   * down by its own height on every visit, it was drawn even when nobody was
+   * adding anything, and the "Details" disclosure hid the three fields that
+   * decide *where the work runs* behind a second click — so the destination, the
+   * part a person most needs to get right, was the part most likely never to be
+   * seen. Creating a Ticket is one act with a beginning and an end; a dialog
+   * says so, and the board goes back to being a board.
+   *
+   * `key` remounts the form to reset it or to take a seed; its text lives in
+   * the form, so nothing is stored here.
+   */
+  const [composing, setComposing] = useState<{ key: number; initial: FormValue } | null>(null);
   /** Where a seeded brief came from, so creating the Ticket can empty that
    *  composer (only if it still holds the text - `clearDraftIf`). */
   const seedOrigin = useRef<{ draftOf: string; seed: string } | null>(null);
   useEffect(() => {
     if (ticketSeed === null) return;
     seedOrigin.current = ticketSeed.draftOf === null ? null : { draftOf: ticketSeed.draftOf, seed: ticketSeed.brief };
-    setFresh((prev) => ({ key: prev.key + 1, initial: blank(ticketSeed.brief) }));
+    // A seed opens the dialog: "save this as a Ticket" arrives from the composer
+    // or a selection menu, and the person's next act is to read the brief and
+    // finish it. Opening the board and leaving a blank form collapsed would be
+    // the same as dropping the text.
+    setComposing((prev) => ({ key: (prev?.key ?? 0) + 1, initial: blank(ticketSeed.brief) }));
     setEditingId(null);
     clearTicketSeed();
     // `blank` closes over the screen's remote id; the seed is the trigger.
@@ -164,7 +182,9 @@ export function TicketBoard() {
       useApp.getState().clearDraftIf(seedOrigin.current.draftOf, seedOrigin.current.seed);
       seedOrigin.current = null;
     }
-    setFresh((prev) => ({ key: prev.key + 1, initial: blank('') }));
+    // Closed on success only: a refused create keeps the dialog — and the
+    // typing in it — so the refusal has something to be about.
+    setComposing(null);
     return true;
   }
 
@@ -193,6 +213,23 @@ export function TicketBoard() {
           </h2>
           <p className="board-sub">{t('board.tickets.subtitle')}</p>
         </div>
+        {/* **The one way in.** Adding a Ticket is a deliberate act with a form
+            behind it, so it is a button in the head rather than a box that is
+            always open: the board's own subject is the work already written
+            down, and a form drawn over the first column competes with it.
+
+            Disabled with the board (`locked`), because creating one writes
+            `tickets.json` — a read-only file must not offer a button whose
+            press can only fail. */}
+        <button
+          type="button"
+          className="btn btn-primary btn-compact tkb-new"
+          disabled={locked}
+          onClick={() => setComposing({ key: (composing?.key ?? 0) + 1, initial: blank('') })}
+        >
+          <Plus size={13} />
+          {t('ticket.new.open')}
+        </button>
         <Tip label={t('board.closeHint')}>
           <button type="button" className="lb-icon" aria-label={t('board.close')} onClick={() => setBoard(null)}>
             <X size={15} />
@@ -206,36 +243,43 @@ export function TicketBoard() {
         </p>
       ) : null}
 
-      <div className="tkb-newwrap">
-        {editing !== null ? (
-          <TicketForm
-            key={`edit-${editing.id}`}
-            mode="edit"
-            initial={{
-              title: editing.title,
-              brief: editing.brief,
-              workspace: editing.workspace,
-              model: editing.model,
-            }}
-            disabled={locked}
-            localPaths={localPaths}
-            remoteLabels={remoteLabels}
-            onSubmit={(value) => save(editing, value)}
-            onCancel={() => setEditingId(null)}
-          />
-        ) : (
-          <TicketForm
-            key={`new-${fresh.key}`}
-            mode="new"
-            initial={fresh.initial}
-            disabled={locked}
-            localPaths={localPaths}
-            remoteLabels={remoteLabels}
-            onSubmit={create}
-            onCancel={null}
-          />
-        )}
-      </div>
+      {/* The two dialogs, both about a Ticket and both belonging to this board:
+          new and edit are one component, so the fields a person fills in are
+          the same fields they later correct. They stay component state rather
+          than store fields for the reason `IdleCloseConfirm` gives — the
+          question exists only while the board is open, and nothing else in the
+          window has a use for it. */}
+      {composing !== null ? (
+        <TicketDialog
+          key={`new-${composing.key}`}
+          open
+          mode="new"
+          initial={composing.initial}
+          disabled={locked}
+          localPaths={localPaths}
+          remoteLabels={remoteLabels}
+          onSubmit={create}
+          onCancel={() => setComposing(null)}
+        />
+      ) : null}
+      {editing !== null ? (
+        <TicketDialog
+          key={`edit-${editing.id}`}
+          open
+          mode="edit"
+          initial={{
+            title: editing.title,
+            brief: editing.brief,
+            workspace: editing.workspace,
+            model: editing.model,
+          }}
+          disabled={locked}
+          localPaths={localPaths}
+          remoteLabels={remoteLabels}
+          onSubmit={(value) => save(editing, value)}
+          onCancel={() => setEditingId(null)}
+        />
+      ) : null}
 
       {!loaded ? (
         <div className="board-loading">{t('ticket.loading')}</div>
@@ -337,10 +381,43 @@ export function TicketBoard() {
 }
 
 /* ============================================================
-   The form: new Ticket and edit Ticket are one control.
+   The dialog: new Ticket and edit Ticket are one control.
    ============================================================ */
 
-function TicketForm({
+/**
+ * Writing down a Ticket — the new one, and the correction to an existing one.
+ *
+ * ## Why it is a dialog
+ *
+ * It used to be a form pinned to the top of the board, always open on the way
+ * in. Three things were wrong with that, and only the third is about looks:
+ *
+ *   - **It cost the board its height on every visit.** Four columns of work,
+ *     pushed down by a text box nobody had asked for yet.
+ *   - **It hid the fields that matter most.** The workspace and the model — the
+ *     two answers that decide *where the work runs* — sat behind a "Details"
+ *     disclosure that started shut, so the default (`wherever the screen is`)
+ *     was the only one most Tickets ever got. A dialog has room to show all
+ *     four fields at once, and nothing is behind a second click.
+ *   - **It read as a composer**, i.e. as something to type a message into,
+ *     when creating a Ticket is a deliberate act with a beginning and an end.
+ *     The button that opens it is in the head, where the board's other
+ *     verbs live.
+ *
+ * ## What it keeps from the old shape
+ *
+ * The brief is still the only required field, `Ctrl+Enter` still submits, and
+ * the ceiling the runtime would refuse at `ticket_bind` is still said **while
+ * the text is in the box** (`unbindableField`) rather than after a Start that
+ * could not have worked.
+ *
+ * Dismissal is a real answer — Esc, the overlay and Cancel all close it — for
+ * the reason `IdleCloseConfirm` gives: a prompt with no way out turns one stray
+ * click into a forced choice. A refusal does **not** close it: the typing is
+ * the thing the refusal is about.
+ */
+function TicketDialog({
+  open,
   mode,
   initial,
   disabled,
@@ -349,21 +426,18 @@ function TicketForm({
   onSubmit,
   onCancel,
 }: {
+  open: boolean;
   mode: 'new' | 'edit';
   initial: FormValue;
   disabled: boolean;
   localPaths: string[];
   remoteLabels: Map<string, string>;
-  /** `true` when it took (a refused create keeps the typing). */
+  /** `true` when it took (a refused save keeps the typing and the dialog). */
   onSubmit: (value: FormValue) => boolean;
-  /** Edit only: a new-Ticket box has nothing to cancel. */
-  onCancel: (() => void) | null;
+  onCancel: () => void;
 }) {
   const t = useT();
   const [value, setValue] = useState<FormValue>(initial);
-  // Editing shows every field: it is the only way to reach the workspace and
-  // the model of an existing Ticket. A new Ticket is one box until asked.
-  const [open, setOpen] = useState(mode === 'edit');
   const taRef = useRef<HTMLTextAreaElement>(null);
   // The one limit a person can hit by pasting: `ticket_bind` carries the brief,
   // the runtime refuses an oversized one, and the Ticket would then say Running
@@ -374,116 +448,134 @@ function TicketForm({
 
   useEffect(() => {
     // A seeded box takes the caret at the end; a plain one stays out of the way.
-    if (mode === 'edit' || initial.brief !== '') {
+    if (initial.brief !== '') {
       const el = taRef.current;
       if (el === null) return;
       el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
     }
-  }, [mode, initial.brief]);
+  }, [initial.brief]);
 
   function submit(): void {
     if (!canSubmit) return;
-    // Cleared by the parent's remount on success; a refusal leaves the text.
+    // Closed by the parent on success; a refusal leaves the dialog and its text.
     onSubmit(value);
   }
 
   return (
-    <form
-      className="tkb-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        submit();
-      }}
-      onKeyDown={(e) => {
-        // Esc leaves the edit instead of the board: the person is in a form
-        // whose fields would be thrown away with the view.
-        if (e.key === 'Escape' && onCancel !== null) {
-          e.preventDefault();
-          e.stopPropagation();
-          onCancel();
-        }
+    <DialogPrimitive.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel();
       }}
     >
-      {mode === 'edit' ? <div className="tkb-form-title">{t('ticket.edit.title')}</div> : null}
-      <textarea
-        ref={taRef}
-        className="cfg-textarea tkb-brief"
-        rows={mode === 'edit' ? 6 : 3}
-        value={value.brief}
-        spellCheck={false}
-        disabled={disabled}
-        aria-label={t('ticket.field.brief')}
-        placeholder={t('ticket.new.placeholder')}
-        onChange={(e) => setValue({ ...value, brief: e.target.value })}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-      />
-      {tooLong !== null ? (
-        <p className="tkb-form-rule" role="alert">
-          {tooLong === 'brief'
-            ? t('ticket.limit.brief', { n: TICKET_BRIEF_CEILING })
-            : t('ticket.limit.title', { n: TICKET_TITLE_CEILING })}
-        </p>
-      ) : null}
-      {open ? (
-        <div className="tkb-details">
-          <label className="cfg-field">
-            <span className="cfg-label">
-              {t('ticket.field.title')} <span className="cfg-optional">{t('panel.task.optional')}</span>
-            </span>
-            <input
-              className="cfg-input"
-              value={value.title}
-              spellCheck={false}
-              disabled={disabled}
-              placeholder={t('ticket.field.titlePlaceholder')}
-              onChange={(e) => setValue({ ...value, title: e.target.value })}
-            />
-          </label>
-          <label className="cfg-field">
-            <span className="cfg-label">{t('panel.task.field.workspace')}</span>
-            <WorkspacePicker
-              value={value.workspace}
-              localPaths={localPaths}
-              remoteLabels={remoteLabels}
-              onChange={(workspace) => setValue({ ...value, workspace })}
-            />
-          </label>
-          <label className="cfg-field">
-            <span className="cfg-label">
-              {t('panel.task.field.model')} <span className="cfg-optional">{t('panel.task.optional')}</span>
-            </span>
-            <ModelPicker value={value.model} onChange={(model) => setValue({ ...value, model })} />
-          </label>
-        </div>
-      ) : null}
-      <div className="tkb-form-foot">
-        {mode === 'new' ? (
-          <button type="button" className="btn btn-ghost btn-compact" aria-expanded={open} onClick={() => setOpen(!open)}>
-            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            {t('ticket.new.details')}
-          </button>
-        ) : (
-          <span className="tkb-form-note">{t('ticket.edit.hint')}</span>
-        )}
-        <span className="grow" />
-        {mode === 'new' ? <span className="tkb-form-note">{t('ticket.new.hint')}</span> : null}
-        {onCancel !== null ? (
-          <button type="button" className="btn btn-outline btn-compact" onClick={onCancel}>
-            {t('common.cancel')}
-          </button>
-        ) : null}
-        <button type="submit" className="btn btn-primary btn-compact" disabled={!canSubmit}>
-          {mode === 'new' ? <Plus size={12} /> : <Check size={12} />}
-          {mode === 'new' ? t('ticket.new.create') : t('ticket.edit.save')}
-        </button>
-      </div>
-    </form>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="overlay-mask" />
+        <DialogPrimitive.Content className="dialog">
+          <div className="dialog-head">
+            <div className="grow">
+              <DialogPrimitive.Title className="dialog-title">
+                {mode === 'new' ? t('ticket.new.title') : t('ticket.edit.title')}
+              </DialogPrimitive.Title>
+              <DialogPrimitive.Description className="dialog-desc">
+                {mode === 'new' ? t('ticket.new.note') : t('ticket.edit.hint')}
+              </DialogPrimitive.Description>
+            </div>
+            <DialogPrimitive.Close asChild>
+              <button type="button" className="btn btn-ghost btn-compact" aria-label={t('common.close')}>
+                <X size={14} />
+              </button>
+            </DialogPrimitive.Close>
+          </div>
+
+          <form
+            className="tkb-dialog"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit();
+            }}
+          >
+            <div className="dialog-body scroll-fade">
+              <label className="cfg-field">
+                <span className="cfg-label">{t('ticket.field.brief')}</span>
+                <textarea
+                  ref={taRef}
+                  className="cfg-textarea tkb-brief"
+                  rows={8}
+                  value={value.brief}
+                  spellCheck={false}
+                  disabled={disabled}
+                  placeholder={t('ticket.new.placeholder')}
+                  onChange={(e) => setValue({ ...value, brief: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      submit();
+                    }
+                  }}
+                />
+              </label>
+              {tooLong !== null ? (
+                <p className="tkb-form-rule" role="alert">
+                  {tooLong === 'brief'
+                    ? t('ticket.limit.brief', { n: TICKET_BRIEF_CEILING })
+                    : t('ticket.limit.title', { n: TICKET_TITLE_CEILING })}
+                </p>
+              ) : null}
+
+              {/* All three, always. They were behind a disclosure that started
+                  shut, which made "where this runs" the field people never saw —
+                  and it is the one answer a wrong default cannot recover from. */}
+              <div className="tkb-details">
+                <label className="cfg-field">
+                  <span className="cfg-label">
+                    {t('ticket.field.title')} <span className="cfg-optional">{t('panel.task.optional')}</span>
+                  </span>
+                  <input
+                    className="cfg-input"
+                    value={value.title}
+                    spellCheck={false}
+                    disabled={disabled}
+                    placeholder={t('ticket.field.titlePlaceholder')}
+                    onChange={(e) => setValue({ ...value, title: e.target.value })}
+                  />
+                </label>
+                <label className="cfg-field">
+                  <span className="cfg-label">{t('panel.task.field.workspace')}</span>
+                  <WorkspacePicker
+                    value={value.workspace}
+                    localPaths={localPaths}
+                    remoteLabels={remoteLabels}
+                    onChange={(workspace) => setValue({ ...value, workspace })}
+                  />
+                </label>
+                <label className="cfg-field">
+                  <span className="cfg-label">
+                    {t('panel.task.field.model')} <span className="cfg-optional">{t('panel.task.optional')}</span>
+                  </span>
+                  <ModelPicker value={value.model} onChange={(model) => setValue({ ...value, model })} />
+                </label>
+              </div>
+            </div>
+
+            <div className="dialog-foot">
+              <span className="tkb-form-note">{t('ticket.new.hint')}</span>
+              <span className="grow" />
+              <button type="button" className="btn btn-outline" onClick={onCancel}>
+                {t('common.cancel')}
+                <kbd className="kbd" style={{ marginLeft: 4 }}>
+                  Esc
+                </kbd>
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
+                {mode === 'new' ? <Plus size={13} /> : <Check size={13} />}
+                {mode === 'new' ? t('ticket.new.create') : t('ticket.edit.save')}
+              </button>
+            </div>
+          </form>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

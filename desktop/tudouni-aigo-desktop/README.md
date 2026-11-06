@@ -775,6 +775,97 @@ left rail's `currentWorkspace` fed a remote path into the **local** workspace
 list, adding a row that could only ever fail and marking the same place current
 twice.
 
+### 28 · Why the ticket board has a door in the same row, and why the row is one shell
+
+The Ticket board's entrance was written into `SessionBar`'s **placeholder**
+branch — the `if (!session)` return that draws before a runtime's handshake
+lands — and only there. The bar had two returns, each spelling out
+`leftToggle / boardButton / … / rightToggle` by hand, so a control added to one
+of them simply did not exist in the other. The effect: the ticket door was on
+screen during the half second before `init`, and gone for the rest of the
+window's life, which left the workbench row inside the left rail as the only way
+in — and that row is `inert` the moment the rail folds. So the door was both
+missing and unreachable at once, in the ordinary state of the application.
+
+Two changes, and the second is the one that keeps it fixed:
+
+- **The ticket door sits immediately right of the session board's**, wearing the
+  same `.sb-board` square and the same `aria-pressed`/`aria-label` discipline. It
+  is one control with two entrances again (this row, and the workbench row), and
+  the two share the action (`toggleBoard('tickets')`) and the words
+  (`board.tickets.title`, `board.tickets.openHint`).
+- **The bar is one shell, not two.** Only the *facts* differ between "no
+  handshake yet" and a live session, so only the facts are branched
+  (`const facts = session ? … : …`) and the controls are written once. The
+  drift this fixes is structural, not a forgotten line: any future control has
+  exactly one place to go.
+
+The two doors **do** pivot together — one duration, one easing, so the pair
+moves as a pair — but the angle is chosen per glyph, because a turn is only
+feedback while the glyph still reads as itself at rest:
+
+- **The grid turns a quarter** (`.is-active:not(.sb-ticket)` → `rotate(90deg)`).
+  Four squares are fourfold symmetric, so 90° is the largest turn that leaves the
+  glyph reading as a grid, and the movement itself becomes the whole of the
+  feedback — the same reasoning as the composer's `+`.
+- **The Ticket turns a half** (`.is-active.sb-ticket` → `rotate(180deg)`).
+  `lucide`'s ticket puts its two rounded notches on the **left and right** edges
+  with the ticket lines down the middle, so 90° would stand the stub on its end
+  and read as a torn label. 180° is the opposite end of that same symmetry: the
+  notches travel from the right edge to the left, the glyph is unchanged in kind,
+  and it is visibly the biggest turn a ticket can make.
+
+The two angles are scoped apart rather than written on one selector on purpose —
+two `transform` declarations on the same element resolve by source order instead
+of adding up, so a shared rule would silently pick one.
+
+Its gate is `blocked` **alone**, unlike its neighbour's
+`blocked || (!boardAvailable && !boardOpen)`: tickets outlive every session, so
+the list has to open when no child is running — which is exactly when somebody
+needs it to decide what to start next. `render-check.mjs` asserts that asymmetry
+as "at least as available as the session board's", never the reverse.
+
+### 29 · Why writing a Ticket is a button and a dialog, not a box on the board
+
+The ticket board used to open with a composer-shaped form pinned across its top:
+always drawn, expanding to the height of its own textarea, with the fields that
+decide *where the work runs* — workspace and model — behind a "Details"
+disclosure that started shut.
+
+Three costs, and the second is the one that mattered:
+
+- **The board paid for it on every visit.** Four columns of work, pushed down by
+  a text box nobody had asked for yet.
+- **The default became the only answer most Tickets ever got.** Workspace is the
+  answer a wrong default cannot recover from — a Ticket started in the wrong
+  directory runs the wrong code, on the wrong machine if the screen happened to
+  be a remote one — and it was the field most likely never to be opened. A
+  dialog has room to show all four fields at once, and nothing hides behind a
+  second click.
+- **It read as a composer**, i.e. as somewhere to type a message, when creating a
+  Ticket is a deliberate act with a beginning and an end.
+
+So: a **New Ticket** button in the board's head, beside Close, and a dialog
+behind it. `TicketDialog` is one component serving both new and edit, so the
+fields a person fills in are the fields they later correct.
+
+What is kept from the old shape, deliberately:
+
+- the brief is still the only required field, and `Ctrl+Enter` still submits;
+- the ceiling the runtime would refuse at `ticket_bind` is still said **while
+  the text is in the box** (`unbindableField`), not after a Start that could not
+  have worked;
+- Esc, the overlay and Cancel all close it — dismissal is a real answer, the rule
+  `IdleCloseConfirm` states;
+- **a refusal does not close it.** The dialog stays with the typing intact,
+  because the typing is what the refusal is about.
+
+`render-check.mjs` drives the whole path in a real browser: the button is in the
+head immediately left of Close, nothing is open before it is pressed, the dialog
+that appears carries all four labels, Add Ticket starts disabled on an empty
+brief, and **Esc closes the dialog while leaving the board up** — the rung the
+old inline form got wrong in the other direction.
+
 ---
 
 ## Verification

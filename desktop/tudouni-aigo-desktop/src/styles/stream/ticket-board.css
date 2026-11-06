@@ -2,7 +2,8 @@
    The Ticket board (`TicketBoard`).
    It reuses the session board's frame (`.board`, `.board-head`,
    `.board-cols`, `.board-col`, the column dots) and only adds what
-   is its own: the new-Ticket form above the columns, and the card.
+   is its own: the New Ticket button in the head, the dialog behind
+   it, and the card.
    ============================================================ */
 
 .tkb-problem {
@@ -15,42 +16,51 @@
   flex: 0 0 auto;
 }
 
-.tkb-newwrap {
-  padding: var(--space-3) var(--space-4) 0;
-  flex: 0 0 auto;
+/* The board's one writing verb, at the head's trailing edge beside Close.
+ *
+ * It is `.btn-primary` because creating a Ticket is the only thing this board
+ * *adds* to the world — everything else on it reads, starts or finishes work
+ * that already exists — and because the board used to open with a form that
+ * said the same thing in a much larger way. `margin-left: auto` is not needed:
+ * `.board-head` is `justify-content: space-between` and the title block is the
+ * only other child, so this button and Close form the trailing pair.
+ *
+ * It leaves the head's own gap to Close rather than a fixed margin, so the two
+ * stay one cluster at any width. */
+.tkb-new {
+  flex: none;
 }
 
-.tkb-form {
+/* ---------------- the new / edit dialog ---------------- */
+
+/* The dialog's form is a flex column so `.dialog-body` can be the part that
+   scrolls: the head and the foot are the parts that must not move, and a form
+   sized to its content would push the foot off the bottom of a long brief. */
+.tkb-dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--lb-line);
-  border-radius: var(--radius-lg);
-  background: var(--lb-surface);
-}
-
-.tkb-form-title {
-  font-size: var(--text-compact);
-  font-weight: 600;
-  color: var(--fg);
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .tkb-brief {
   resize: vertical;
-  min-height: 56px;
+  /* Tall enough to hold a paragraph and to make the point that this is the
+     field that matters: the brief is the Ticket. The old inline box gave it
+     three rows, which read as an afterthought next to its own Details
+     disclosure. */
+  min-height: 120px;
 }
 
+/* The three answers that decide *where the work runs*, all visible at once.
+   They were behind a disclosure that started shut, so the default was the only
+   one most Tickets ever got. Two columns at this width keep the brief the
+   tallest thing in the dialog. */
 .tkb-details {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--space-3);
-}
-
-.tkb-form-foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .tkb-form-note {
@@ -59,7 +69,7 @@
 }
 
 /* The one field limit a person can hit, said where the box is rather than after
-   a Start that could not have worked (see `TicketForm`'s `tooLong`). */
+   a Start that could not have worked (see `TicketDialog`'s `tooLong`). */
 .tkb-form-rule {
   margin: 0;
   font-size: var(--text-caption);

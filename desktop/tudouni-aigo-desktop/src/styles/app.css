@@ -466,14 +466,18 @@
   cursor: not-allowed;
 }
 
-/* The session board's door, one step in from the leading edge and wearing the
-   rail toggle's shape. It is the **same square as the two toggles** on purpose:
-   all three fold something away from this bar, and a differently-sized control
+/* The boards' doors, one step in from the leading edge and wearing the rail
+   toggle's shape. It is the **same square as the two toggles** on purpose:
+   all of them fold something away from this bar, and a differently-sized control
    in the same run would read as belonging to the facts instead of to the
-   controls. Same `flex: none`, same reason — it is outside `.sb-scroll` and
+   controls. Same `flex: none`, same reason — they are outside `.sb-scroll` and
    must stay there.
 
-   Its gap is on the right like the leading toggle's, so the leading cluster is
+   One class for two doors (session board, then ticket board): same square, same
+   gate vocabulary, same engaged state. What they do not share is the angle of
+   the engage turn, which is keyed per glyph below.
+
+   Their gap is on the right like the leading toggle's, so the leading cluster is
    spaced evenly and the two rail toggles stay the outermost pair. */
 .sessionbar .sb-board {
   display: inline-flex;
@@ -495,14 +499,13 @@
   color: var(--fg);
 }
 
-/* The grid turns a quarter on its way in and back out again — the same idea as
-   the composer's `+`, where the turn is the whole animation rather than a
-   decoration on top of one. It is the **icon** that turns, not the button:
-   the `+` sits on a circle, so rotating the trigger is invisible, while this
-   one is a rounded square whose background would visibly swing. A quarter turn
-   rather than the `+`'s 45° because four squares rotated 45° become a diamond —
-   a different glyph, not the same one turned — whereas 90° leaves the grid
-   reading as a grid at rest and makes the movement itself the feedback.
+/* Both doors turn on their way in and back out again — the same idea as the
+   composer's `+`, where the turn is the whole animation rather than a
+   decoration on top of one. It is the **icon** that turns, not the button: the
+   `+` sits on a circle, so rotating the trigger is invisible, while these are
+   rounded squares whose background would visibly swing. The angle is chosen per
+   glyph (see below); what is shared is this declaration, because a pair whose
+   two halves animate at different speeds reads as two unrelated controls.
    `--motion-base` for the same reason as the `+`: the turn is the animation,
    too fast and it flickers. The transition lives on the base state so the
    turn-back on close is eased too; global reduced-motion zeroes the duration. */
@@ -511,8 +514,31 @@
   transition: transform var(--motion-base) var(--ease-out);
 }
 
-.sessionbar .sb-board.is-active svg {
+/* **A quarter for the grid, a half for the Ticket.** Same duration, same easing
+   (the shared declaration above); the angle is what differs, and it is chosen
+   per glyph rather than per control:
+
+   - The grid is fourfold symmetric, so 90° is the largest turn that leaves it
+     looking like itself at rest — the movement is the whole of the feedback.
+     (45° would be wrong for a different reason: it turns four squares into a
+     diamond, i.e. a different glyph.)
+   - `lucide`'s Ticket is not symmetric that way: its two rounded notches sit on
+     the **left and right** edges with the ticket lines down the middle, so 90°
+     stands the stub on its end and reads as a torn label. 180° is the opposite
+     end of that same symmetry — the notches travel from the right edge to the
+     left, the glyph is unchanged in kind, and it is visibly the biggest turn a
+     ticket can make. `aria-pressed` still carries the state; this is the motion
+     on top of it.
+
+   `90deg` and `180deg` must not both apply, which is why the second rule is
+   scoped to `.sb-ticket` rather than added beside the first: two `transform`
+   declarations on one element resolve by source order, they do not add up. */
+.sessionbar .sb-board.is-active:not(.sb-ticket) svg {
   transform: rotate(90deg);
+}
+
+.sessionbar .sb-board.is-active.sb-ticket svg {
+  transform: rotate(180deg);
 }
 
 /* **Engaged, not merely hovered.** While the board holds the column the button
@@ -523,7 +549,12 @@
    leading toggle's pressed state has nothing on screen to point at, whereas
    this one is describing what the whole column is currently showing.
    `--accent-subtle` and a real foreground: `--accent-tint-text` is the pair
-   that survives on top of it in both themes. */
+   that survives on top of it in both themes.
+
+   **Both boards.** The ticket door beside this one carries `.sb-board` too, so
+   one rule says "the column is showing a board" for the pair — which is what a
+   person reading the row needs, and what keeps the two from drifting into
+   different shades of the same state. */
 .sessionbar .sb-board.is-active {
   background: var(--accent-subtle);
   color: var(--accent-tint-text);

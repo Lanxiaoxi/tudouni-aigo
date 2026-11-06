@@ -863,19 +863,40 @@ async function main() {
       // rail is folded. Its **position** is asserted rather than merely its
       // existence — "right of the collapse button" is the request, and a button
       // that drifted to the far end would render, work, and be wrong.
-      boardBtn: !!q('.sessionbar .sb-board'),
+      //
+      // The selector that excludes the ticket door is written below without any
+      // backticks on purpose: this whole probe is a template literal, so a pair
+      // of backticks in a comment would end it. There are two doors on this bar
+      // now and the ticket one wears the same class for the same square, so an
+      // unprefixed selector would silently test whichever came first.
+      boardBtn: !!q('.sessionbar .sb-board:not(.sb-ticket)'),
       // Outside the scroller, like the toggles: with the left rail folded this
       // is the only way to the board, so a long session id must not be able to
       // scroll it away.
       boardBtnInScroller: !!q('.sessionbar .sb-scroll .sb-board'),
       boardBtnIndex: (() => {
         const bar = q('.sessionbar');
-        const b = q('.sessionbar .sb-board');
+        const b = q('.sessionbar .sb-board:not(.sb-ticket)');
         return bar && b ? [...bar.children].indexOf(b) : -1;
       })(),
-      boardBtnLabel: q('.sessionbar .sb-board')?.getAttribute('aria-label') ?? null,
-      boardBtnPressed: q('.sessionbar .sb-board')?.getAttribute('aria-pressed') ?? null,
-      boardBtnDisabled: q('.sessionbar .sb-board')?.disabled ?? null,
+      boardBtnLabel: q('.sessionbar .sb-board:not(.sb-ticket)')?.getAttribute('aria-label') ?? null,
+      boardBtnPressed: q('.sessionbar .sb-board:not(.sb-ticket)')?.getAttribute('aria-pressed') ?? null,
+      boardBtnDisabled: q('.sessionbar .sb-board:not(.sb-ticket)')?.disabled ?? null,
+      // The ticket board's door: beside the session board's, outside the same
+      // scroller, and drawn in both branches of the bar. That last part is
+      // the defect this pair exists to prevent — the ticket board's only other
+      // entrance is a workbench row inside the left rail, which is inert the
+      // moment the rail folds.
+      ticketBtn: !!q('.sessionbar .sb-ticket'),
+      ticketBtnInScroller: !!q('.sessionbar .sb-scroll .sb-ticket'),
+      ticketBtnIndex: (() => {
+        const bar = q('.sessionbar');
+        const b = q('.sessionbar .sb-ticket');
+        return bar && b ? [...bar.children].indexOf(b) : -1;
+      })(),
+      ticketBtnLabel: q('.sessionbar .sb-ticket')?.getAttribute('aria-label') ?? null,
+      ticketBtnPressed: q('.sessionbar .sb-ticket')?.getAttribute('aria-pressed') ?? null,
+      ticketBtnDisabled: q('.sessionbar .sb-ticket')?.disabled ?? null,
       // Tallied here so the assertion can compare the two doors' own state
       // rather than restating the gate: the rail foot's row carries
       // aria-pressed too, and the two must agree in every frame.
@@ -883,7 +904,15 @@ async function main() {
         [...document.querySelectorAll('.lb-foot .lb-workbench-item')].find(
           (b) => b.hasAttribute('aria-pressed'),
         )?.disabled ?? null,
-      store: { leftbarVisible: st.leftbarVisible, sidebarVisible: st.sidebarVisible, boardOpen: st.boardOpen },
+      // The state read is the board value itself rather than the retired
+      // boardOpen boolean, so a board that is on screen is named, not merely
+      // counted.
+      store: {
+        leftbarVisible: st.leftbarVisible,
+        sidebarVisible: st.sidebarVisible,
+        board: st.board,
+        boardOpen: st.board !== null,
+      },
       // The rail heads: the title the right one carries, and — the point of the
       // change — the fact that **neither head has a collapse control any more**.
       // A button that lives inside the thing it hides cannot perform its own act.
@@ -950,7 +979,8 @@ async function main() {
   //      and a button that had been appended after `.sb-scroll` instead would
   //      render, work, and sit on the wrong side of every fact on the row. The
   //      index is asserted against the bar's own children, so the bar's leading
-  //      order — toggle, board, facts, toggle — is the property under test.
+  //      order — toggle, session board, ticket board, facts, toggle — is the
+  //      property under test.
   //   2. **That it is readable.** Its name is in `aria-label` and its state in
   //      `aria-pressed`; the icon alone carries neither, so a copy that dropped
   //      them would be an unlabelled square to a screen reader.
@@ -979,6 +1009,44 @@ async function main() {
     throw new Error(
       `the two board doors disagree: session bar disabled=${bt.boardBtnDisabled}, rail foot disabled=${bt.footBoardDisabled}`,
     );
+  }
+
+  // ---- the ticket board's door, immediately right of the session board's ----
+  //
+  // A second door on the same row, asserted for the same two reasons — and for a
+  // third that is specific to it: **it has to be here at all.** The ticket
+  // board's other entrance is a workbench row inside the left rail, which is
+  // `inert` while the rail is folded, so a bar that drew the session board's
+  // door and not this one would leave the rail as the only way in — with a live
+  // session on screen, i.e. the ordinary state of the window.
+  if (!bt.ticketBtn) {
+    throw new Error(
+      'the session bar has no ticket-board button: the only other door is a workbench row inside the left rail',
+    );
+  }
+  if (bt.ticketBtnInScroller) {
+    throw new Error('the ticket board button is inside the horizontal scroller: a long session id can carry it off the edge');
+  }
+  // `boardBtnIndex + 1`, not a literal 2: what is asserted is the **pairing**
+  // ("immediately right of the session board's"), and a hard-coded index would
+  // silently pass while the two doors were separated by something else.
+  if (bt.ticketBtnIndex !== bt.boardBtnIndex + 1) {
+    throw new Error(
+      `the ticket board button is not immediately right of the session board's (indices ${bt.ticketBtnIndex} and ${bt.boardBtnIndex})`,
+    );
+  }
+  if (bt.ticketBtnLabel !== 'Ticket board') {
+    throw new Error(`the ticket board button carries no usable name: aria-label=${bt.ticketBtnLabel}`);
+  }
+  if (bt.ticketBtnPressed !== 'false') {
+    throw new Error(`the ticket board button claims a board is up before one was opened: aria-pressed=${bt.ticketBtnPressed}`);
+  }
+  // Its gate is `blocked` alone, unlike its neighbour's: tickets outlive every
+  // session, so the list must be openable when no child is running — which is
+  // exactly when somebody needs it to decide what to start. Asserted as "at
+  // least as available as the session board's", never the other way round.
+  if (bt.boardBtnDisabled === false && bt.ticketBtnDisabled === true) {
+    throw new Error('the ticket board is disabled while the session board is available: tickets outlive sessions');
   }
 
   // ---- the rail heads, and what they no longer carry ----
@@ -1252,15 +1320,15 @@ async function main() {
   }
 
   await evaluate(`(() => {
-    document.querySelector('.sessionbar .sb-board').click();
+    document.querySelector('.sessionbar .sb-board:not(.sb-ticket)').click();
     return true;
   })()`);
   await sleep(300);
 
   const afterBoardOpen = JSON.parse((await railState()) ?? '{}');
   console.log('after opening the board from the session bar:', JSON.stringify(afterBoardOpen));
-  if (afterBoardOpen.store.boardOpen !== true) {
-    throw new Error('the session bar\'s board button did not open the board');
+  if (afterBoardOpen.store.board !== 'sessions') {
+    throw new Error(`the session bar's board button did not open its board: board=${afterBoardOpen.store.board}`);
   }
   // **Not the rail's preference.** The crossed-wire failure this row is prone
   // to: `sidebarVisible` must be untouched, or the button is a second `Ctrl+B`.
@@ -1272,18 +1340,31 @@ async function main() {
   if (afterBoardOpen.boardBtnPressed !== 'true') {
     throw new Error(`the board button does not report the open board: aria-pressed=${afterBoardOpen.boardBtnPressed}`);
   }
+  // **The pair, not the single button.** The ticket door beside it must not
+  // claim to be the session board: `aria-pressed` is per-board, so a copy that
+  // read `board !== null` would light both squares for one board.
+  if (afterBoardOpen.ticketBtnPressed !== 'false') {
+    throw new Error(
+      `the ticket door claims the session board is the ticket board: aria-pressed=${afterBoardOpen.ticketBtnPressed}`,
+    );
+  }
   // The board is the column's occupant now, so the column must be showing it
   // rather than a rail the button had hidden on its way past.
   const boardView = await evaluate(`(() => {
     const q = (s) => document.querySelector(s);
     return JSON.stringify({
       board: !!q('.app-stream .board'),
+      // Which board, not merely "a board": both boards wear the .board class.
+      // The New Ticket button is the ticket board's own element — the session
+      // board's head carries no such verb — so it is what tells them apart.
+      tickets: !!q('.board-head .tkb-new'),
       // The right rail is derived away under the board, so its toggle says so.
       rightToggleDisabled: q('.sessionbar > .rail-toggle:last-child')?.disabled ?? null,
     });
   })()`);
   const BV = JSON.parse(boardView ?? '{}');
   if (!BV.board) throw new Error('the board is not what the conversation column is showing');
+  if (BV.tickets) throw new Error('the session board\'s door opened the ticket board');
   if (BV.rightToggleDisabled !== true) {
     throw new Error('the trailing rail toggle stayed enabled under the board');
   }
@@ -1292,14 +1373,14 @@ async function main() {
   // shut from that button is a one-way trip, which is the failure the two rail
   // toggles were moved into this row to avoid.
   await evaluate(`(() => {
-    document.querySelector('.sessionbar .sb-board').click();
+    document.querySelector('.sessionbar .sb-board:not(.sb-ticket)').click();
     return true;
   })()`);
   await sleep(300);
   const afterBoardClose = JSON.parse((await railState()) ?? '{}');
   console.log('after closing the board from the session bar:', JSON.stringify(afterBoardClose));
-  if (afterBoardClose.store.boardOpen !== false) {
-    throw new Error('the board button does not close the board it opened');
+  if (afterBoardClose.store.board !== null) {
+    throw new Error(`the board button does not close the board it opened: board=${afterBoardClose.store.board}`);
   }
   if (afterBoardClose.boardBtnPressed !== 'false') {
     throw new Error(`the board button still claims an open board: aria-pressed=${afterBoardClose.boardBtnPressed}`);
@@ -1310,6 +1391,169 @@ async function main() {
   if (afterBoardClose.boardBtnDisabled === true) {
     throw new Error('the board button is disabled with the board closed and a session live');
   }
+
+  // ---- and the ticket board's door, driven the same way ----
+  //
+  // Same two questions as above — *did it open the right board* and *can it shut
+  // it* — because a pair of squares on one row is exactly where a copy/paste
+  // slip wires both to `toggleBoard('sessions')`. The store names which board is
+  // up, so the assertion is on the store and on which tree got drawn.
+  await evaluate(`(() => {
+    document.querySelector('.sessionbar .sb-ticket').click();
+    return true;
+  })()`);
+  await sleep(300);
+  const afterTicketOpen = JSON.parse((await railState()) ?? '{}');
+  console.log('after opening the ticket board from the session bar:', JSON.stringify(afterTicketOpen));
+  if (afterTicketOpen.store.board !== 'tickets') {
+    throw new Error(
+      `the ticket door did not open the ticket board: board=${afterTicketOpen.store.board}`,
+    );
+  }
+  if (afterTicketOpen.ticketBtnPressed !== 'true') {
+    throw new Error(`the ticket door does not report its board: aria-pressed=${afterTicketOpen.ticketBtnPressed}`);
+  }
+  if (afterTicketOpen.boardBtnPressed !== 'false') {
+    throw new Error(
+      `the session board's door claims the ticket board is its own: aria-pressed=${afterTicketOpen.boardBtnPressed}`,
+    );
+  }
+  const ticketView = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    return JSON.stringify({
+      // The New Ticket button is the ticket board's own control; the session
+      // board's head has none. Both boards wear the .board class, which is why
+      // the two are told apart by something only one of them has.
+      tickets: !!q('.board-head .tkb-new'),
+      // And the form is **not** in the board's flow any more: it is a dialog,
+      // so nothing above the columns costs the board its height.
+      inlineForm: !!q('.app-stream .tkb-newwrap') || !!q('.app-stream .tkb-form'),
+      dialog: !!q('[role="dialog"] .tkb-dialog'),
+    });
+  })()`);
+  const TV = JSON.parse(ticketView ?? '{}');
+  if (!TV.tickets) throw new Error('the ticket board is not what the conversation column is showing');
+  if (TV.inlineForm) {
+    throw new Error('the new-Ticket form is drawn in the board\'s flow again: it belongs behind the New Ticket button');
+  }
+
+  await evaluate(`(() => {
+    document.querySelector('.sessionbar .sb-ticket').click();
+    return true;
+  })()`);
+  await sleep(300);
+  const afterTicketClose = JSON.parse((await railState()) ?? '{}');
+  console.log('after closing the ticket board from the session bar:', JSON.stringify(afterTicketClose));
+  if (afterTicketClose.store.board !== null) {
+    throw new Error(`the ticket door does not close the board it opened: board=${afterTicketClose.store.board}`);
+  }
+  if (afterTicketClose.ticketBtnPressed !== 'false') {
+    throw new Error(`the ticket door still claims an open board: aria-pressed=${afterTicketClose.ticketBtnPressed}`);
+  }
+
+  // ---- writing a Ticket: the button, then the dialog ----
+  //
+  // **The half a structural assertion cannot reach.** The button could be in the
+  // head, correctly labelled, correctly gated, and open nothing — or open a
+  // dialog with the fields that decide *where the work runs* hidden behind a
+  // disclosure again. Both are the failure this board was rebuilt to end, and
+  // neither shows up in a mount check.
+  await evaluate(`(() => { window.__aigoStore.getState().setBoard('tickets'); return true; })()`);
+  await sleep(400);
+
+  const head = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const btn = q('.board-head .tkb-new');
+    return JSON.stringify({
+      present: !!btn,
+      label: btn?.innerText?.trim() ?? null,
+      disabled: btn?.disabled ?? null,
+      // Trailing pair: the button, then Close. Asserted as an order rather than
+      // as two booleans, because "beside Close" is what was asked for and a
+      // button appended before the title would still render.
+      order: q('.board-head') ? [...q('.board-head').children].map((el) => el.className) : [],
+      // Nothing is open until it is pressed.
+      dialogBefore: !!q('[role="dialog"] .tkb-dialog'),
+    });
+  })()`);
+  console.log('ticket board head:', head);
+  const H = JSON.parse(head ?? '{}');
+  if (!H.present) throw new Error('the ticket board has no New Ticket button');
+  if (H.label !== 'New Ticket') throw new Error(`the New Ticket button carries the wrong label: ${H.label}`);
+  if (H.dialogBefore) throw new Error('the new-Ticket dialog is open before the button was pressed');
+  if (H.order[H.order.length - 1] !== 'lb-icon') {
+    throw new Error(`Close is not the head's last control: ${JSON.stringify(H.order)}`);
+  }
+  if (!String(H.order[H.order.length - 2] ?? '').includes('tkb-new')) {
+    throw new Error(`the New Ticket button is not beside Close: ${JSON.stringify(H.order)}`);
+  }
+
+  await evaluate(`(() => { document.querySelector('.board-head .tkb-new').click(); return true; })()`);
+  await sleep(400);
+
+  const form = await evaluate(`(() => {
+    const q = (s) => document.querySelector(s);
+    const d = q('[role="dialog"] .tkb-dialog');
+    // The head is the form's **sibling**, not a child: the dialog's title and
+    // description sit outside the form element so the head and foot can be the
+    // two parts that do not scroll. Reading them off the dialog is what makes
+    // this probe independent of that nesting.
+    const dialog = q('[role="dialog"]');
+    if (!d) return JSON.stringify({ open: false });
+    return JSON.stringify({
+      open: true,
+      title: dialog?.querySelector('.dialog-title')?.innerText?.trim() ?? null,
+      // All three optional fields, visible without a second click. The labels
+      // are the board's four decisions: what to do, what to call it, where it
+      // runs, and on which model.
+      labels: [...d.querySelectorAll('.cfg-label')].map((el) => el.innerText.trim()),
+      brief: !!d.querySelector('textarea'),
+      submitDisabled: d.querySelector('button[type="submit"]')?.disabled ?? null,
+      bodyScrolls: !!d.querySelector('.dialog-body'),
+      foot: !!d.querySelector('.dialog-foot'),
+      // The form is inside the dialog, not in the board behind it.
+      inBoardFlow: !!q('.app-stream .tkb-dialog'),
+    });
+  })()`);
+  console.log('new-Ticket dialog:', form);
+  const F = JSON.parse(form ?? '{}');
+  if (!F.open) throw new Error('pressing New Ticket opened nothing');
+  if (F.title !== 'New Ticket') throw new Error(`the dialog's title is wrong: ${F.title ?? '(none)'}`);
+  if (F.inBoardFlow) throw new Error('the dialog is drawn inside the board instead of over it');
+  if (!F.brief) throw new Error('the dialog has no brief field: a Ticket with no brief cannot be started');
+  for (const must of ['Title', 'Workspace', 'Model']) {
+    if (!F.labels.some((label) => label.startsWith(must))) {
+      throw new Error(`the dialog hides the ${must} field: ${JSON.stringify(F.labels)}`);
+    }
+  }
+  if (F.submitDisabled !== true) {
+    throw new Error('Add Ticket is enabled with an empty brief');
+  }
+  if (!F.bodyScrolls) throw new Error('the dialog has no scrolling body: a long brief would push the foot out of reach');
+  if (!F.foot) throw new Error('the dialog has no foot: Add Ticket and Cancel have nowhere to live');
+
+  // Esc closes the dialog and leaves the **board** up — the rung the old inline
+  // form got wrong in the other direction, where Esc in the box left the whole
+  // board (the person was typing a Ticket, not browsing work).
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await sleep(500);
+  const afterEsc = await evaluate(`(() => JSON.stringify({
+    dialog: !!document.querySelector('[role="dialog"] .tkb-dialog'),
+    board: window.__aigoStore.getState().board,
+    tickets: window.__aigoStore.getState().tickets.length,
+  }))()`);
+  console.log('after Esc in the dialog:', afterEsc);
+  const E = JSON.parse(afterEsc ?? '{}');
+  if (E.dialog) throw new Error('Esc did not close the new-Ticket dialog');
+  if (E.board !== 'tickets') throw new Error(`Esc closed the board as well: board=${E.board}`);
+  if (E.tickets !== 0) throw new Error(`Esc created a Ticket anyway: ${E.tickets} present`);
+
+  // Put the board away again: every assertion below reads the transcript and
+  // the rails, which the board takes the column away from.
+  await evaluate(`(() => { window.__aigoStore.getState().setBoard(null); return true; })()`);
+  await sleep(300);
+
 
   // Put the left rail back, so every assertion below sees the tree it expects.
   await evaluate(`(() => {
