@@ -338,7 +338,7 @@ export function QuestionModal() {
                             type="button"
                             role="option"
                             aria-selected={checked}
-                            className={`tk-menu-item${checked ? ' is-on' : ''}`}
+                            className={`tk-menu-item q-option${checked ? ' is-on' : ''}`}
                             onClick={() => toggle(option)}
                           >
                             {checked ? (
@@ -346,7 +346,7 @@ export function QuestionModal() {
                             ) : (
                               <span className="tk-menu-gap" />
                             )}
-                            <span className="tk-menu-item-label">{option}</span>
+                            <span className="tk-menu-item-label q-option-label">{option}</span>
                           </button>
                         );
                       })}

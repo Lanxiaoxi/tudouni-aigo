@@ -402,6 +402,24 @@
   font-size: 10px;
 }
 
+/* A question's option is the thing being asked about, not a menu entry: an
+   elided "…只执行者真正收回或换掉" would hide the very words the person
+   chooses between. The row keeps `tk-menu-item`'s shape (tick column,
+   hover, is-on) but its label wraps to as many lines as it needs — the
+   dialog body scrolls, so there is no ceiling to yield to. */
+.q-option {
+  align-items: flex-start;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.q-option-label {
+  white-space: normal;
+  word-break: break-word;
+  text-overflow: clip;
+  line-height: var(--leading-body);
+}
+
 .dialog-desc {
   margin-top: 2px;
   font-size: var(--text-caption);
