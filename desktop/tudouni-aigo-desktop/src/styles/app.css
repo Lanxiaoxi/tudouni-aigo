@@ -707,7 +707,12 @@
   left: 50%;
   transform: translateX(-50%);
   bottom: var(--space-4);
-  z-index: var(--z-popover);
+  /* Local rung, not a global one: `.app-stream` is `position: relative` with no
+     `z-index`, so it forms no stacking context and this value is compared
+     against the whole window. At `--z-popover` (520) the button painted over
+     every dialog (500) — it showed through the Workspace memory panel. It only
+     has to clear the transcript rows beneath it. */
+  z-index: 1;
   background: var(--accent-solid);
   color: var(--fg-on-accent);
   font-weight: 600;
