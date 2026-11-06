@@ -582,6 +582,11 @@ export interface AppStore {
    * then `sessionKey` is what a row is reachable by.
    */
   taskRuns: TaskRunLink[];
+  /** What the Tasks panel should open a new todo editor with, or `null`.
+   *  Window-local and never persisted — see `openTodoDraft`. `draftOf` is the
+   *  session whose composer the text came from, when it did: saving the todo
+   *  empties that composer (the text has been parked), cancelling leaves it. */
+  todoSeed: { prompt: string; draftOf: string | null } | null;
   /**
    * The model and effort last in use, by workspace (`desktop.json` holds it).
    *
@@ -743,6 +748,17 @@ export interface AppStore {
   /* ---------------- task templates ---------------- */
   /** Create a task with the given fields and persist it. Returns the new id. */
   upsertTask(task: Task): void;
+  /**
+   * Open the Tasks panel on a **new, unsaved todo** whose prompt is `prompt`
+   * (the transcript's "Add to todo"). Nothing is written until the editor's
+   * Save: the seed only says what the editor should start from.
+   */
+  openTodoDraft(prompt: string, opts?: { fromDraft?: boolean }): void;
+  /** The Tasks panel took the seed; forget it. */
+  clearTodoSeed(): void;
+  /** Empty one session's composer, but only if it still holds `expected` —
+   *  so text typed after the todo editor opened is never thrown away. */
+  clearDraftIf(key: string, expected: string): void;
   /** Delete a template. Its run links are **kept** — the design is explicit
    *  that removing a template must not erase the trace of past runs. */
   deleteTask(taskId: string): void;

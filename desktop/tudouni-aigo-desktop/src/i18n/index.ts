@@ -592,6 +592,29 @@ export const en = {
   'panel.task.save': 'Save task',
   'panel.task.error.name': 'A task needs a name.',
   'panel.task.error.prompt': 'A task needs a prompt.',
+  /* Todo — parked work. Same shelf and editor as a template, fewer fields, and
+     a Run that only fills the new session's composer. */
+  'panel.task.filter.todo': 'Todo',
+  'panel.todo.kind': 'Kind',
+  'panel.todo.kindTask': 'Task',
+  'panel.todo.kindTodo': 'Todo',
+  'panel.todo.newTitle': 'New todo',
+  'panel.todo.editTitle': 'Edit todo',
+  'panel.todo.editNote': 'Park a piece of work. Start opens a session with this prompt in the input box.',
+  'panel.todo.namePlaceholder': 'Defaults to the first line of the prompt',
+  'panel.todo.promptPlaceholder': 'What needs doing, and anything you already know…',
+  'panel.todo.promptHint': 'Filled into the new session\u2019s input box; nothing is sent until you press Enter.',
+  'panel.todo.save': 'Save todo',
+  'panel.todo.status.todo': 'To do',
+  'panel.todo.status.doing': 'In progress',
+  'panel.todo.status.done': 'Done',
+  'panel.todo.start': 'Start',
+  'panel.todo.runHint': 'Open a new session with this prompt in the input box',
+  'panel.todo.done': 'Done',
+  'panel.todo.doneHint': 'Mark this todo as finished',
+  'panel.todo.reopen': 'Reopen',
+  'panel.todo.reopenHint': 'Move this todo back to To do',
+  'panel.todo.delete': 'Delete this todo',
   /* Refine — a task's own run history, compared run against run, is the
      evidence; the only candidate it may produce is a replacement for that
      task's prompt. The copy mirrors the panel's existing voice: the reason
@@ -1797,6 +1820,8 @@ export const en = {
   'plus.browse': 'Browse…',
   'plus.skills': 'Skills',
   'plus.commands': 'Commands',
+  'plus.saveTodo': 'Save draft as todo',
+  'plus.todoEmpty': 'Type something first — the draft is what gets parked',
   /** The workspace-file entry, disabled: there is no tree to walk yet. */
   'plus.noWorkspace': 'no workspace',
   /** The row of attached files beside the pasted pictures. Its accessible
@@ -1933,6 +1958,7 @@ export const en = {
   'stream.menu.title': 'Selected text',
   'stream.menu.copy': 'Copy',
   'stream.menu.addToInput': 'Add to input',
+  'stream.menu.addToTodo': 'Add to todo',
   /** Quick replies under the last answer. The hint names the modifier-click,
    *  because "fill the input instead of sending" is invisible otherwise. */
   'stream.suggestions.label': 'Suggested replies',

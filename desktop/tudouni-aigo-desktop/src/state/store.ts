@@ -138,6 +138,7 @@ export function createAppStore() {
     // before the first session. Until then these fields hold the empty shelf,
     // and nothing draws or runs that reads them before the first session.
     ...desktopDataSnapshot(),
+    todoSeed: null,
     installStatus: {},
     configSyncPrompt: null,
     configSyncBusy: null,

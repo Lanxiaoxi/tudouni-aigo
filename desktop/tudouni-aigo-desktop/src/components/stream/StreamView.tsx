@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { ArrowDown, CornerDownLeft, Copy, Loader, Sparkles } from 'lucide-react';
+import { ArrowDown, CornerDownLeft, Copy, ListTodo, Loader, Sparkles } from 'lucide-react';
 import { NO_ENTRIES, selectModalVisible, useApp, useSessionField } from '@/state/store';
 import { insertAtCaret } from '@/runtime/paste';
 import { copyText } from '@/utils/clipboard';
@@ -132,7 +132,7 @@ export function StreamView() {
     setSelectionMenu({
       text,
       x: Math.min(e.clientX, window.innerWidth - 200),
-      y: Math.min(e.clientY, window.innerHeight - 110),
+      y: Math.min(e.clientY, window.innerHeight - 150),
     });
   }, []);
   // True from a programmatic stick until its scroll event has been delivered;
@@ -413,6 +413,21 @@ export function StreamView() {
             >
               <CornerDownLeft size={13} />
               {t('stream.menu.addToInput')}
+            </button>
+            {/* Park the selection as a todo: opens the Tasks panel on an
+                unsaved todo seeded with the text, so it can be edited before
+                it is saved (and Cancel leaves nothing behind). */}
+            <button
+              type="button"
+              role="menuitem"
+              className="stream-menu-item"
+              onClick={() => {
+                useApp.getState().openTodoDraft(selectionMenu.text);
+                setSelectionMenu(null);
+              }}
+            >
+              <ListTodo size={13} />
+              {t('stream.menu.addToTodo')}
             </button>
           </div>
         </div>

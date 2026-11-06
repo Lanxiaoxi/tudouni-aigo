@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { ChevronLeft, ChevronRight, FileText, FolderOpen, Paperclip, Plus, SquareSlash, WandSparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, FolderOpen, ListTodo, Paperclip, Plus, SquareSlash, WandSparkles } from 'lucide-react';
 import { NO_SKILLS, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { insertAtCaret } from '@/runtime/paste';
@@ -156,7 +156,34 @@ function RootPage({
         <span className="plus-item-label">{t('plus.commands')}</span>
         <span className="plus-item-hint">Ctrl K</span>
       </button>
+      <SaveDraftAsTodo t={t} onDone={onCommands} />
     </div>
+  );
+}
+
+/**
+ * Park the composer's draft as a todo. Opens the todo editor seeded with the
+ * draft; the composer is emptied only when the todo is saved (and only if it
+ * still holds the same text), so Cancel loses nothing. Disabled over an empty
+ * draft, which has nothing to park.
+ */
+function SaveDraftAsTodo({ t, onDone }: { t: T; onDone: () => void }) {
+  const draft = useSessionField((rt) => rt.draft, '');
+  const empty = draft.trim() === '';
+  return (
+    <button
+      type="button"
+      className="plus-item"
+      disabled={empty}
+      title={empty ? t('plus.todoEmpty') : undefined}
+      onClick={() => {
+        useApp.getState().openTodoDraft(draft, { fromDraft: true });
+        onDone();
+      }}
+    >
+      <ListTodo size={15} />
+      <span className="plus-item-label">{t('plus.saveTodo')}</span>
+    </button>
   );
 }
 

@@ -9,7 +9,7 @@ import type { AppStore } from '../storeShape';
 import { nextId } from '@/state/entries';
 import { buildLearningMessage, learningSessionRefs } from '@/learn/template';
 import { buildRefineMessage } from '@/learn/refineTemplate';
-import { canRunTask, refineAvailability, refineRunScope, type RefineScreen, type Task, type TaskRunLink } from '@/task/tasks';
+import { canRunTask, isTodo, refineAvailability, refineRunScope, taskTitle, type RefineScreen, type Task, type TaskRunLink } from '@/task/tasks';
 import { registerRuntime, sendTo, type Runtime, unregisterRuntime } from '@/runtime/bus';
 import { attachRuntime, createTauriRuntime, mirrorLaunchPrefs, readRuntimeStderr, shutdownRuntime, type BridgeOptions } from '@/runtime/tauri';
 import { TASK_RUNS_MAX, type LaunchArgs } from '../types';
@@ -30,7 +30,7 @@ import { describeFailure, releaseImages } from '../runtimeLanding';
  *  child that has not handshaken within half a minute is not about to. */
 const HANDSHAKE_WAIT_MS = 30_000;
 
-export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession' | 'focusSession' | 'detachSession' | 'openSession' | 'startLearning' | 'refineTask' | 'upsertTask' | 'deleteTask' | 'clearTaskRuns' | 'runTask' | 'noteTaskRunInit' | 'noteTaskRunOutcome'> {
+export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession' | 'focusSession' | 'detachSession' | 'openSession' | 'startLearning' | 'refineTask' | 'upsertTask' | 'openTodoDraft' | 'clearTodoSeed' | 'clearDraftIf' | 'deleteTask' | 'clearTaskRuns' | 'runTask' | 'noteTaskRunInit' | 'noteTaskRunOutcome'> {
   const { set, get, patch, patchWith, abandonIfUntouched } = ctx;
 
   /**
@@ -759,6 +759,23 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       persistPrefs(get());
     },
 
+    openTodoDraft(prompt, opts) {
+      const text = prompt.trim();
+      if (text === '') return;
+      set({ todoSeed: { prompt: text, draftOf: opts?.fromDraft === true ? get().activeKey : null } });
+      get().openPanel('tasks');
+    },
+
+    clearTodoSeed() {
+      set({ todoSeed: null });
+    },
+
+    clearDraftIf(key, expected) {
+      const bucket = get().sessions[key];
+      if (bucket === undefined || bucket.draft.trim() !== expected.trim()) return;
+      patchWith(key, () => ({ draft: '', historyCursor: null }));
+    },
+
     deleteTask(taskId) {
       // The links stay: the design is explicit that removing a template must
       // not erase the trace of the runs it produced — the link carries its own
@@ -844,7 +861,8 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         sessionId: '',
         sessionKey: key,
         startedAtMs: Date.now(),
-        taskName: task.name,
+        // A todo may have no name of its own; its title is its prompt's first line.
+        taskName: taskTitle(task),
         model: task.model,
         workspaceLabel,
         // The same frozen fact as the name and the model: what *was* sent into
@@ -864,8 +882,15 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         // persisted before this field existed means.
         remoteWorkspaceId: bucket.remoteWorkspaceId,
       };
+      // A todo moves to "doing" the moment its session exists: the work has
+      // started, whether or not the prefilled prompt has been sent yet. Only a
+      // person moves it to "done".
+      const todo = isTodo(task);
       set((state) => ({
         taskRuns: [...state.taskRuns, link].slice(-TASK_RUNS_MAX),
+        tasks: todo
+          ? state.tasks.map((row) => (row.id === task.id ? { ...row, status: 'doing' as const, updatedAtMs: Date.now() } : row))
+          : state.tasks,
       }));
       persistPrefs(get());
 
@@ -897,6 +922,16 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         }
         applyAutopilot?.();
         applyModel?.();
+        // A todo is started by the person who will work on it: the prompt is
+        // written into the session's composer and nothing is sent, so they can
+        // add what they learned since parking it before pressing Enter. The
+        // draft is patched on the run's own bucket rather than through
+        // `setDraft` (which writes the *active* one), so it lands correctly
+        // even if the person switched sessions during the handshake.
+        if (todo) {
+          patchWith(key, () => ({ draft: task.prompt, historyCursor: null }));
+          return;
+        }
         const active = get().activeKey;
         if (active !== key) {
           patchWith(key, (b) => ({
