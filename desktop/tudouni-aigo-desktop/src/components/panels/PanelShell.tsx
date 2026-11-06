@@ -2,7 +2,6 @@ import { createContext, useContext, type ReactNode } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { ArrowLeft, X } from 'lucide-react';
 import { useT } from '@/i18n/useT';
-import { Tip } from '@/components/ui/kit';
 
 /**
  * 弹层面板统一外壳。
@@ -71,8 +70,10 @@ export function PanelShell({
   onBack,
   backLabel,
   actions,
+  rail,
   children,
   footer,
+  footHint,
 }: {
   title: string;
   /** A mark that belongs to the title itself — the route editor's DRAFT chip.
@@ -87,16 +88,26 @@ export function PanelShell({
   /** The `?` beside the title. See `PanelInfo`: a definition, not a control. */
   info?: ReactNode;
   /** Present on a panel's **second surface** — the editor a list row opens —
-   *  where the way back has to be a control and not an Escape key. When it is
-   *  set the head leads with it, the way the tasks history leads with its own. */
+   *  where the way back has to be a control and not an Escape key. The design
+   *  gives it a row of its own above the title (`← Routes`), with the close at
+   *  the far end of that row, which is why it is not drawn inline beside the
+   *  title. */
   onBack?: () => void;
   backLabel?: string;
   /** The head's own controls, to the right of the title and left of the close.
    *  Per-surface on purpose: the list surface offers "Add a route", the editor
    *  that opens from it does not. */
   actions?: ReactNode;
+  /** The panel's read-only column. `RAIL · 340` in the design: facts the runtime
+   *  computed, beside the fields that change them, never mixed into them. When
+   *  it is set the body becomes the design's two columns. */
+  rail?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
+  /** The footer's leading sentence — a validation state or a hint, never a
+   *  button. Kept apart from `footer` (the actions) because the design puts them
+   *  at opposite edges of the same band. */
+  footHint?: ReactNode;
 }) {
   const t = useT();
   const surface = useContext(PanelSurfaceContext);
@@ -133,45 +144,69 @@ export function PanelShell({
       <span className="sr-only">{title}</span>
     );
 
+  const closeButton =
+    surface.kind === 'dialog' ? (
+      <DialogPrimitive.Close asChild>
+        <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')}>
+          <X size={14} />
+        </button>
+      </DialogPrimitive.Close>
+    ) : (
+      <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')} onClick={onSurfaceClose}>
+        <X size={14} />
+      </button>
+    );
+
   return (
     <>
-      <div className="dialog-head tk-head">
+      <div className="dialog-head tk-head wb-head">
+        {/* The way back, when this is a panel's second surface: its own row, so
+            the title under it starts at the panel's left edge and reads as the
+            page's heading rather than as the tail of a button. */}
         {onBack !== undefined ? (
-          <Tip label={backLabel ?? t('panel.back')}>
+          <div className="wb-head-top">
             <button
               type="button"
-              className="btn btn-ghost btn-icon"
+              className="btn btn-ghost btn-compact wb-back"
               aria-label={backLabel ?? t('panel.back')}
               onClick={onBack}
             >
-              <ArrowLeft size={15} />
+              <ArrowLeft size={14} />
+              <span>{backLabel ?? t('panel.back')}</span>
             </button>
-          </Tip>
+            <span className="grow" />
+            {closeButton}
+          </div>
         ) : null}
-        <div className="grow">
-          {titleNode}
-          {descNode}
+
+        <div className="wb-head-main">
+          <div className="wb-head-text">
+            {titleNode}
+            {descNode}
+          </div>
+
+          {count !== undefined ? <span className="count">{count}</span> : null}
+
+          {actions}
+
+          {onBack === undefined ? closeButton : null}
         </div>
-
-        {count !== undefined ? <span className="count">{count}</span> : null}
-
-        {actions}
-
-        {surface.kind === 'dialog' ? (
-          <DialogPrimitive.Close asChild>
-            <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')}>
-              <X size={14} />
-            </button>
-          </DialogPrimitive.Close>
-        ) : (
-          <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')} onClick={onSurfaceClose}>
-            <X size={14} />
-          </button>
-        )}
       </div>
 
-      {children}
-      {footer ? <div className="dialog-foot">{footer}</div> : null}
+      {rail !== undefined ? (
+        <div className="dialog-body scroll-fade wb-split">
+          <div className="wb-main">{children}</div>
+          <aside className="wb-rail">{rail}</aside>
+        </div>
+      ) : (
+        children
+      )}
+      {footer || footHint ? (
+        <div className="dialog-foot">
+          {footHint !== undefined ? <div className="wb-foot-hint">{footHint}</div> : null}
+          {footer}
+        </div>
+      ) : null}
     </>
   );
 }

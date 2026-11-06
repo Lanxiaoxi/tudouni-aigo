@@ -1,17 +1,23 @@
 /* ============================================================
    Hooks
    ============================================================
-   One card per hook, collapsed to a single line until it is opened.
+   The list, and the editor the sheet draws.
 
-   **Nothing in here is a new vocabulary.** The buttons are `.btn`, the fields are
-   `.cfg-input` laid out by `.pc-row`, the problem banners are `.cfg-problem`, the
-   switch is `.tk-switch`, the badges are `.badge`. What is added is the card, the
-   one-line summary, and the line that says how the script's last run ended.
+   **Nothing in here is a new vocabulary.** The buttons are `.btn`, the fields
+   are `.cfg-input` / `.cfg-textarea` laid out by `.wb-field`, the problem bands
+   are `.wb-alert`, the switch is `.tk-switch`, the badges are `.badge`, the
+   cards are `.wb-card`. What is added is the one-line summary on the list and
+   the two rail cards of the editor.
 
-   Three things on a card are facts about different times, and the layout keeps them
-   apart: the badge in the head is how the *file* relates to the *running session*,
-   the run line is what the script *did* in that session, and the form below is what
-   the person is *editing now*. */
+   The editor is a **second surface**, not an expanded card: the sheet gives it
+   the shell's `← Hooks` row, a rail and a footer, none of which fits inside a
+   card. That is why the list's card is now only a row to read (plus the switch
+   that is its own control) and the form lives behind `.hk-fold`.
+
+   Three things on a card are facts about different times, and the layout keeps
+   them apart: the badge in the head is how the *file* relates to the *running
+   session*, the run line is what the script *did* in that session, and the form
+   in the editor is what the person is *editing now*. */
 
 .hk-list {
   display: flex;
@@ -19,15 +25,12 @@
   gap: var(--space-3);
 }
 
-.hk-card {
+/* The border, radius and surface come from `.hk-card` in `workbench.css`, which
+   loads after this file on purpose. The list's card only has to keep its
+   contents inside the rounded edge. */
+.hk-list .hk-card {
   min-width: 0;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-}
-
-.hk-card.is-open {
-  border-color: var(--border-strong);
+  overflow: hidden;
 }
 
 /* A hook that is switched off is still a row to read and to switch back on, so it
@@ -42,12 +45,13 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  min-height: 52px;
+  padding: 10px var(--space-4);
 }
 
-/* The whole text block is the fold control. A button around the label rather than a
-   click on the row, because the row also carries the switch, and a wrapper that took
-   the click would fire on the switch's presses too. */
+/* The whole text block is the way into the editor. A button around the label rather
+   than a click on the row, because the row also carries the switch, and a wrapper
+   that took the click would fire on the switch's presses too. */
 .hk-fold {
   display: flex;
   align-items: center;
@@ -67,11 +71,6 @@
 .hk-caret {
   flex: none;
   color: var(--fg-muted);
-  transition: transform var(--motion-fast) var(--ease-out);
-}
-
-.hk-caret.is-open {
-  transform: rotate(180deg);
 }
 
 .hk-fold:hover .hk-caret {
@@ -134,7 +133,7 @@
   flex: none;
 }
 
-/* ---- how the last run ended ---- */
+/* ---- how the last run ended (on the list) ---- */
 
 .hk-run {
   display: flex;
@@ -181,21 +180,60 @@
   background: var(--destructive-subtle);
 }
 
-.hk-run-note {
-  margin: 0 var(--space-4) var(--space-3);
-  font-size: var(--text-caption);
-  color: var(--fg-muted);
+/* ---- the editor ----
+ *
+ * The shell already draws `.wb-main` beside the rail; this column only holds the
+ * editor's own groups apart. `wb-section + wb-section` would add its margin on
+ * top of this gap, so the page column wins. */
+
+.hk-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  /* The head's own bottom padding is 4; the sheet gives the first band more air
+     under the title than that. */
+  padding-top: var(--space-2);
+  min-width: 0;
 }
 
-/* ---- the form inside an open card ---- */
-
-.hk-body {
-  padding: var(--space-2) var(--space-4) var(--space-3);
-  border-top: 1px solid var(--border-subtle);
+.hk-editor .wb-section + .wb-section {
+  margin-top: 0;
 }
 
-.hk-body .pc-row {
-  grid-template-columns: 140px minmax(0, 1fr);
+.hk-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* On the list the bands sit directly above the path bar, which has no top
+   margin of its own; on the editor the column's gap already does this. */
+.dialog-body > .hk-alerts {
+  margin-bottom: var(--space-3);
+}
+
+/* The command is a block, the timeout is a number. The timeout control is
+   narrow while its field keeps the column's width, because the hint under it is
+   a sentence and would otherwise wrap inside 220px. */
+.hk-command {
+  min-height: 76px;
+  font-size: var(--text-code);
+}
+
+.hk-timeout {
+  max-width: 220px;
+}
+
+/* The event select is the shared Select, whose control is 34 high for the config
+   page's taller fields. In a workbench panel every control is 28, and this is
+   the panel that draws the select, so it retunes its own. */
+.hk-editor .rs-select .rs__control {
+  height: var(--control-h);
+  min-height: var(--control-h);
+}
+
+.hk-shell {
+  margin-top: var(--space-1);
 }
 
 .hk-warn {
@@ -205,19 +243,43 @@
   color: var(--warning-text);
 }
 
-/* The foot of a card: reorder and delete. Quiet until aimed at, the way every
+/* The foot of the editor: reorder and delete. Quiet until aimed at, the way every
    destructive control in this app is. */
 .hk-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-2);
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-subtle);
 }
 
 .hk-actions .grow {
   flex: 1 1 auto;
+}
+
+/* ---- the editor's rail ---- */
+
+.hk-rail-card {
+  padding: 14px var(--space-4);
+}
+
+.hk-rail-card .cfg-hint {
+  margin: 0;
+}
+
+/* The rail's own gap already separates the two groups. */
+.wb-rail .hk-rail-section + .hk-rail-section {
+  margin-top: 0;
+}
+
+/* The footer's leading sentence, in the two tones the sheet gives it: the count
+   of what must be fixed is destructive, a completed save is the accent. */
+.hk-foot-bad {
+  color: var(--destructive-text);
+}
+
+.hk-foot-ok {
+  color: var(--accent-text);
 }
 
 /* ---- the repository's own file, read-only ---- */

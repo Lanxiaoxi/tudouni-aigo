@@ -34,29 +34,38 @@ import { HooksPanel } from './HooksPanel';
  * palette is different — its input sits at the top and it hugs the top of the
  * window. Esc and clicking the overlay close, handled by the dialog primitive.
  *
- * Four panels take the wide container (`dialog-wide`): the configuration
- * editor, whose field grid needs the room; the task panel, whose rows carry a
- * name, a description, a workspace · model line and a fixed action slot across
- * one line — at 640px the action slot and the meta line collide, which is the
- * whole reason the task design puts them at opposite edges; Learn this
- * workspace, which is the same two-column editor shape as the task panel's; and
- * Settings, whose form and read-out card are columns rather than a form with a
- * side note. Usage joins them with its own reason: a year's heatmap is
- * fifty-three week columns, and every column squeezed below that width is a
- * month nobody can point at.
+ * **`wb-panel` is the workbench family's width, and it is 800.** The sheets draw
+ * their eleven panels at 92% of a 1280 window (1180), which is right for the two
+ * whose job is a long form beside a read-out column and too wide for a six-row
+ * list or a five-field editor — those read as a dialog that was stretched rather
+ * than as a page. So the family's default rung is 800 and `wb-wide` is the
+ * opt-in for the two, which keeps the sheet's own 1180.
  *
- * Terminals are on the same rung for the task row's own reason: a terminal row
- * carries an id, a status badge, a cwd path, a shell and an action slot on one
- * line, and the cwd is the fact the list is scanned by — squeezed to 640px it
- * truncates before the shell is named.
- *
- * Workspace memory has a rung of its own (`dialog-memory`, 1000px): it is the one
- * panel that is two real columns rather than a form with a side card, and the
- * review card stops fitting beside the tuning rows below ~1000px.
+ * The panels the sheets do not draw keep the rung they had: a model picker and a
+ * session picker are lists of one-line rows, and neither gains anything from
+ * width. Terminals and Usage stay on `dialog-wide` for their own reasons (a
+ * terminal row carries an id, a status badge, a cwd path, a shell and an action
+ * slot on one line; a year's heatmap is fifty-three week columns).
  *
  * There is no theme panel: the theme follows the system and there is no in-app
  * switch (decision 4), so the command that used to open one is gone too.
  */
+const WORKBENCH_PANELS: ReadonlySet<string> = new Set([
+  'config',
+  'tasks',
+  'subagentPresets',
+  'hooks',
+  'learn',
+  'settings',
+  'memory',
+  'codeintel',
+]);
+
+/** The two panels that take the wide rung. `config` covers the routes list, a
+ *  route's page, an MCP server's page and the web-search tab: one component, one
+ *  width, and a route's page is the densest form in the app. */
+const WIDE_PANELS: ReadonlySet<string> = new Set(['config', 'settings']);
+
 export function PanelHost() {
   const t = useT();
   const panel = useApp((s) => s.panel);
@@ -86,9 +95,12 @@ export function PanelHost() {
             panel === 'settings'
               ? ' dialog-wide'
               : ''
+          }${panel !== null && WORKBENCH_PANELS.has(panel) ? ' wb-panel' : ''}${
+            panel !== null && WIDE_PANELS.has(panel) ? ' wb-wide' : ''
           }${panel === 'files' ? ' dialog-files' : ''}${
             panel === 'memory' ? ' dialog-memory dialog-split' : ''
-          }${panel === 'codeintel' ? ' dialog-memory' : ''}`}
+          }${panel === 'codeintel' ? ' dialog-memory' : ''
+          }`}
           aria-label={t('topbar.commands')}
           // Esc with a dropdown menu up closes the menu, not the panel. Radix
           // sees the key first (capture on `document`), so it has to be told.

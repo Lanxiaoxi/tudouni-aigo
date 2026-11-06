@@ -32,7 +32,17 @@ function walk(dir: string, out: string[] = []): string[] {
 const checkCss = readFileSync(resolve(src, 'styles/components/check.css'), 'utf8');
 
 /** Rows whose input `check.css` draws. */
-const COVERED = ['cfg-check', 'close-remember', 'cfgsync-remember', 'tk-choice-row'];
+const COVERED = [
+  'cfg-check',
+  'close-remember',
+  'cfgsync-remember',
+  'tk-choice-row',
+  // The workspace-learning scope options are three separate bordered cards
+  // rather than one joined `.tk-choice-row` group, so they are a row of their
+  // own — and the radio they carry is still drawn by `check.css`, not by the
+  // WebView's own control.
+  'learn-scope-row',
+];
 
 /** The settings segment hides its radio and paints the segment instead. */
 const HIDDEN_ON_PURPOSE = ['set-choice-item'];

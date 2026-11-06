@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { ChevronDown, Inbox, Minus, Plus, RotateCw, ShieldQuestion, Trash2 } from 'lucide-react';
+import { ChevronDown, CircleAlert, Folder, FolderOpen, Minus, Plus, RotateCw, ShieldQuestion, Trash2 } from 'lucide-react';
 import type { TKey } from '@/i18n';
 import { useT } from '@/i18n/useT';
 import type {
@@ -10,8 +10,7 @@ import type {
   MemoryIndexStatus,
 } from '@/protocol/types';
 import { useApp, useSessionField } from '@/state/store';
-import { EmptyState } from '@/components/ui/kit';
-import { SwitchRow } from '@/components/ui/SwitchRow';
+import { EmptyState, PanelInfo } from '@/components/ui/kit';
 import { formatRelative } from '@/utils/format';
 import { PanelBody, PanelShell } from './PanelShell';
 
@@ -32,8 +31,14 @@ import { PanelBody, PanelShell } from './PanelShell';
  * a request, and retiring it changes what future sessions believe. They are drawn
  * as two lists with two vocabularies for exactly that reason; this panel used to
  * say so in a paragraph of prose, and now says it structurally — the queue sits
- * above the record, wears the pale card, and its rows carry the two decisions,
- * while a record row carries none.
+ * above the record in its own card, and its rows carry the two decisions, while a
+ * record row carries none.
+ *
+ * **The rail's labels sit outside its cards.** The sheet draws `WAITING FOR
+ * REVIEW` and `ON RECORD` as two labels over two bordered cards, not as headings
+ * inside one tinted column: the count belongs to the label, the card is the list
+ * the label names, and the corpus gets the height left under the queue so the
+ * index line can sit at the rail's foot.
  *
  * **A candidate's body is one press away, not always on screen.** The queue is
  * scanned by title — that is what a title is for — and a card that printed every
@@ -90,7 +95,12 @@ export function MemoryPanel() {
 
   if (!hasSession) {
     return (
-      <PanelShell title={t('panel.memory.title')} note={t('panel.memory.note')}>
+      // The same head as the loaded panel: the definition lives behind the `?`
+      // here too, so the two states do not change shape when a session opens.
+      <PanelShell
+        title={t('panel.memory.title')}
+        info={<PanelInfo label={t('panel.memory.note')} />}
+      >
         <PanelBody>
           <EmptyState title={t('panel.memory.noSession')} />
         </PanelBody>
@@ -103,7 +113,11 @@ export function MemoryPanel() {
   return (
     <PanelShell
       title={t('panel.memory.title')}
-      note={snapshot?.root ?? t('panel.memory.note')}
+      // The sheet keeps the title's line free for the one action and puts the
+      // definition behind the `?`; the workspace's path gets its own bar in the
+      // body instead of being the description, where a long path had to be read
+      // as prose.
+      info={<PanelInfo label={t('panel.memory.note')} />}
       actions={
         // One button, and it is the repair. It used to be two — "reload from disk"
         // and "rebuild index" — but rebuilding re-reads the Markdown as well, so the
@@ -119,193 +133,247 @@ export function MemoryPanel() {
           {t('panel.memory.rebuild')}
         </button>
       }
+      // The foot is the shell's: one sentence at the leading edge and the two
+      // actions at the trailing one. A disabled Save with no explanation reads as
+      // a broken button; the sentence is the difference between "saved" and
+      // "nothing to save", and the design's caption says what a change will do
+      // when there is nothing pending.
+      footHint={
+        <span className={dirty ? 'wm-foot-note is-dirty' : undefined}>
+          {dirty ? t('panel.memory.dirty') : t('panel.memory.saveNote')}
+        </span>
+      }
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={settings === null || sameConfig(settings, DEFAULTS)}
+            onClick={() => setDraft({ ...DEFAULTS })}
+          >
+            {t('panel.memory.reset')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!dirty}
+            onClick={() => {
+              // The whole known set travels, as a patch: the runtime keeps
+              // anything it knows that this build does not send, and clamps what
+              // is out of range. The clamps come back in the next snapshot, which
+              // is why the draft re-seeds from it rather than from what was typed.
+              if (settings !== null) memoryAction('config', { config: settings });
+            }}
+          >
+            {t('panel.memory.save')}
+          </button>
+        </>
+      }
     >
       <PanelBody>
-        {/* **The refusal banner.** It is drawn from `memoryProblem`, not from a
-          * notice, because the panel is a modal layer: a notice explaining a failed
-          * publish is printed behind this dialog. The runtime's own sentence is shown
-          * unaltered — it is the authority on why. */}
-        {problem !== null ? (
-          <div className="cfg-problems" role="alert">
-            <div className="cfg-problem is-blocking">
-              {t('panel.memory.problem')}: {problem}
+        <div className="wm-page">
+          {/* **The refusal banner.** It is drawn from `memoryProblem`, not from a
+            * notice, because the panel is a modal layer: a notice explaining a failed
+            * publish is printed behind this dialog. The runtime's own sentence is shown
+            * unaltered — it is the authority on why. */}
+          {problem !== null ? (
+            <div className="wb-alert is-error wm-alert" role="alert">
+              <CircleAlert className="wb-alert-icon" size={14} aria-hidden />
+              <span>
+                {t('panel.memory.problem')}: {problem}
+              </span>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {snapshot === null || settings === null ? (
-          <EmptyState title={t('panel.memory.loading')} />
-        ) : (
-          <div className="wm">
-            <div className="wm-main scroll-fade">
-              <div className="wm-legend">{t('panel.memory.behavior')}</div>
-              <div className="wm-group">
-                <SwitchRow
-                  label={t('panel.memory.enabled')}
-                  hint={t('panel.memory.enabledHint')}
-                  checked={settings.enabled}
-                  onChange={(enabled) => patchDraft({ enabled })}
-                />
-                <SwitchRow
-                  label={t('panel.memory.autoInject')}
-                  hint={t('panel.memory.autoInjectHint')}
-                  checked={settings.auto_inject}
-                  onChange={(auto_inject) => patchDraft({ auto_inject })}
-                />
-                <SwitchRow
-                  label={t('panel.memory.turnStart')}
-                  hint={t('panel.memory.turnStartHint')}
-                  checked={settings.recall_on_turn_start}
-                  onChange={(recall_on_turn_start) => patchDraft({ recall_on_turn_start })}
-                />
-                <SwitchRow
-                  label={t('panel.memory.toolFailure')}
-                  hint={t('panel.memory.toolFailureHint')}
-                  checked={settings.recall_on_tool_failure}
-                  onChange={(recall_on_tool_failure) => patchDraft({ recall_on_tool_failure })}
-                />
-              </div>
-
-              <div className="wm-legend wm-legend-gap">{t('panel.memory.tuning')}</div>
-              <div className="wm-group">
-                <NumberRow
-                  label={t('panel.memory.maxRecall')}
-                  limit={LIMITS.max_recall}
-                  value={settings.max_recall}
-                  onChange={(max_recall) => patchDraft({ max_recall })}
-                />
-                <NumberRow
-                  label={t('panel.memory.maxResults')}
-                  limit={LIMITS.max_results}
-                  value={settings.max_results}
-                  onChange={(max_results) => patchDraft({ max_results })}
-                />
-                <SliderRow
-                  label={t('panel.memory.minScore')}
-                  limit={LIMITS.min_score}
-                  value={settings.min_score}
-                  onChange={(min_score) => patchDraft({ min_score })}
-                />
-                <NumberRow
-                  label={t('panel.memory.entryChars')}
-                  limit={LIMITS.entry_chars}
-                  value={settings.entry_chars}
-                  onChange={(entry_chars) => patchDraft({ entry_chars })}
-                />
-                <NumberRow
-                  label={t('panel.memory.noteChars')}
-                  limit={LIMITS.note_chars}
-                  value={settings.note_chars}
-                  onChange={(note_chars) => patchDraft({ note_chars })}
-                />
-              </div>
-
-              {snapshot.unreadable.length > 0 ? (
-                <div className="wm-unreadable">
-                  <div className="wm-legend">{t('panel.memory.unreadable')}</div>
-                  {snapshot.unreadable.map((line, index) => (
-                    <div key={`u-${index}`} className="wm-unreadable-line">
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className="wm-save">
-                {/* A disabled Save with no explanation reads as a broken button; the
-                  * sentence that explains it is the difference between "saved" and
-                  * "nothing to save". The design's caption says what the change will
-                  * do, and that is the sentence when there is nothing pending. */}
-                <span className={`wm-save-note${dirty ? ' is-dirty' : ''}`}>
-                  {dirty ? t('panel.memory.dirty') : t('panel.memory.saveNote')}
+          {snapshot === null || settings === null ? (
+            <EmptyState title={t('panel.memory.loading')} />
+          ) : (
+            <>
+              {/* **The path spans both columns.** It belongs to the workspace, not
+                * to the settings column, so it is a line above the split rather than
+                * the head's description. The glyph is the sheet's marker for a path;
+                * it is not a control, because this panel has no verb that acts on the
+                * directory. */}
+              <div className="wb-path wm-pathbar">
+                <span className="wb-path-text" title={snapshot.root}>
+                  {snapshot.root}
                 </span>
-                <button
-                  type="button"
-                  className="btn btn-outline"
-                  disabled={sameConfig(settings, DEFAULTS)}
-                  onClick={() => setDraft({ ...DEFAULTS })}
-                >
-                  {t('panel.memory.reset')}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={!dirty}
-                  onClick={() => {
-                    // The whole known set travels, as a patch: the runtime keeps
-                    // anything it knows that this build does not send, and clamps what
-                    // is out of range. The clamps come back in the next snapshot, which
-                    // is why the draft re-seeds from it rather than from what was typed.
-                    memoryAction('config', { config: settings });
-                  }}
-                >
-                  {t('panel.memory.save')}
-                </button>
+                <Folder size={13} className="wm-path-icon" aria-hidden />
               </div>
-            </div>
 
-            <aside className="wm-side">
-              {/* **The lists scroll; the card does not.** The panel is a definite
-                * height now (`.dialog-split`), so when the corpus is longer than
-                * the space something has to give — and it must not be the index
-                * line, which is a fact about the whole corpus and reads as the
-                * card's footer. Hence the wrapper: it is the scroller, and the
-                * index line sits outside it, on the card's floor, always in view.
-                * Putting `scroll` on the card itself (or on the panel's body, as
-                * before) gave one scrollbar for the whole surface and scrolled
-                * that fact away with the rows it was describing. */}
-              <div className="wm-side-body scroll-fade">
-                <div className="wm-side-head">
-                  <span className="wm-side-title">{t('panel.memory.review')}</span>
-                  <span className="wm-pill">{candidates.length}</span>
-                </div>
-                {candidates.length === 0 ? (
-                  <div className="wm-side-empty">{t('panel.memory.reviewEmpty')}</div>
-                ) : (
-                  candidates.map((candidate) => (
-                    <CandidateItem
-                      key={candidate.id}
-                      candidate={candidate}
-                      open={reading === candidate.id}
-                      onToggle={() => setReading(reading === candidate.id ? null : candidate.id)}
-                      onApprove={() => memoryAction('publish', { proposal_id: candidate.id })}
-                      onDiscard={() => memoryAction('reject', { proposal_id: candidate.id })}
-                    />
-                  ))
-                )}
+              <div className="wm-layout">
+                <div className="wm-col scroll-fade">
+                  <section className="wb-section">
+                    <div className="wb-label-row">
+                      <span className="wb-label">{t('panel.memory.behavior')}</span>
+                    </div>
+                    <div className="wb-card wb-card-flush">
+                      <SwitchSetting
+                        label={t('panel.memory.enabled')}
+                        hint={t('panel.memory.enabledHint')}
+                        checked={settings.enabled}
+                        onChange={(enabled) => patchDraft({ enabled })}
+                      />
+                      <SwitchSetting
+                        label={t('panel.memory.autoInject')}
+                        hint={t('panel.memory.autoInjectHint')}
+                        checked={settings.auto_inject}
+                        onChange={(auto_inject) => patchDraft({ auto_inject })}
+                      />
+                      <SwitchSetting
+                        label={t('panel.memory.turnStart')}
+                        hint={t('panel.memory.turnStartHint')}
+                        checked={settings.recall_on_turn_start}
+                        onChange={(recall_on_turn_start) => patchDraft({ recall_on_turn_start })}
+                      />
+                      <SwitchSetting
+                        label={t('panel.memory.toolFailure')}
+                        hint={t('panel.memory.toolFailureHint')}
+                        checked={settings.recall_on_tool_failure}
+                        onChange={(recall_on_tool_failure) =>
+                          patchDraft({ recall_on_tool_failure })
+                        }
+                      />
+                    </div>
+                  </section>
 
-                <div className="wm-side-head wm-side-head-gap">
-                  <span className="wm-side-title">{t('panel.memory.recorded')}</span>
-                  <span className="wm-pill">{entries.length}</span>
+                  <section className="wb-section">
+                    <div className="wb-label-row">
+                      <span className="wb-label">{t('panel.memory.tuning')}</span>
+                    </div>
+                    <div className="wb-card wb-card-flush">
+                      <NumberRow
+                        label={t('panel.memory.maxRecall')}
+                        limit={LIMITS.max_recall}
+                        value={settings.max_recall}
+                        onChange={(max_recall) => patchDraft({ max_recall })}
+                      />
+                      <NumberRow
+                        label={t('panel.memory.maxResults')}
+                        limit={LIMITS.max_results}
+                        value={settings.max_results}
+                        onChange={(max_results) => patchDraft({ max_results })}
+                      />
+                      <SliderRow
+                        label={t('panel.memory.minScore')}
+                        limit={LIMITS.min_score}
+                        value={settings.min_score}
+                        onChange={(min_score) => patchDraft({ min_score })}
+                      />
+                      <NumberRow
+                        label={t('panel.memory.entryChars')}
+                        limit={LIMITS.entry_chars}
+                        value={settings.entry_chars}
+                        onChange={(entry_chars) => patchDraft({ entry_chars })}
+                      />
+                      <NumberRow
+                        label={t('panel.memory.noteChars')}
+                        limit={LIMITS.note_chars}
+                        value={settings.note_chars}
+                        onChange={(note_chars) => patchDraft({ note_chars })}
+                      />
+                    </div>
+                  </section>
+
+                  {snapshot.unreadable.length > 0 ? (
+                    <section className="wb-section">
+                      <div className="wb-label-row">
+                        <span className="wb-label">{t('panel.memory.unreadable')}</span>
+                      </div>
+                      <div className="wm-unreadable">
+                        {snapshot.unreadable.map((line, index) => (
+                          <div key={`u-${index}`} className="wm-unreadable-line">
+                            {line}
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
                 </div>
-                {entries.length === 0 ? (
-                  <div className="wm-on-empty">
-                    <Inbox size={26} className="wm-on-icon" aria-hidden />
-                    <div className="wm-on-title">{t('panel.memory.empty')}</div>
-                    <div className="wm-on-hint">{t('panel.memory.emptyHint')}</div>
+
+                <aside className="wm-rail">
+                  {/* The label names the group and the card holds its rows: the
+                    * sheet draws no tint behind the pair, because a tinted column
+                    * would make the queue and the record one subject again. */}
+                  <div className="wm-rail-block">
+                    <div className="wb-label-row wm-rail-head">
+                      <span className="wb-label">{t('panel.memory.review')}</span>
+                      <span className="wb-label-count">{candidates.length}</span>
+                    </div>
+                    <div className="wb-card wm-wait-card">
+                      {candidates.length === 0 ? (
+                        <div className="wm-wait-empty">{t('panel.memory.reviewEmpty')}</div>
+                      ) : (
+                        candidates.map((candidate) => (
+                          <CandidateItem
+                            key={candidate.id}
+                            candidate={candidate}
+                            open={reading === candidate.id}
+                            onToggle={() =>
+                              setReading(reading === candidate.id ? null : candidate.id)
+                            }
+                            onApprove={() =>
+                              memoryAction('publish', { proposal_id: candidate.id })
+                            }
+                            onDiscard={() =>
+                              memoryAction('reject', { proposal_id: candidate.id })
+                            }
+                          />
+                        ))
+                      )}
+                    </div>
                   </div>
-                ) : (
-                  entries.map((entry) => (
-                    <EntryItem
-                      key={entry.id}
-                      entry={entry}
-                      armed={armed?.id === entry.id ? armed : null}
-                      onArm={() => setArmed({ id: entry.id, reason: '' })}
-                      onConfirm={(reason) => {
-                        memoryAction('deprecate', { entry_id: entry.id, reason });
-                        setArmed(null);
-                      }}
-                      onCancel={() => setArmed(null)}
-                      onReason={(reason) => setArmed({ id: entry.id, reason })}
-                    />
-                  ))
-                )}
-              </div>
 
-              <IndexLine index={snapshot.index} />
-            </aside>
-          </div>
-        )}
+                  {/* **The lists scroll; the card does not.** The panel is a
+                    * definite height (`.dialog-split`), so when the corpus is longer
+                    * than the space something has to give — and it must not be the
+                    * index line, which is a fact about the whole corpus and reads as
+                    * the card's footer. Hence the body wrapper: it is the scroller,
+                    * and the index line sits outside the card, under it, always in
+                    * view. Putting `scroll` on the card itself (or on the panel's
+                    * body, as before) gave one scrollbar for the whole surface and
+                    * scrolled that fact away with the rows it was describing. */}
+                  <div className="wm-rail-block wm-rail-record">
+                    <div className="wb-label-row wm-rail-head">
+                      <span className="wb-label">{t('panel.memory.recorded')}</span>
+                      <span className="wb-label-count">{entries.length}</span>
+                    </div>
+                    <div className="wb-card wm-record-card">
+                      {entries.length === 0 ? (
+                        <div className="wm-record-empty">
+                          <EmptyState
+                            icon={<FolderOpen aria-hidden />}
+                            title={t('panel.memory.empty')}
+                            hint={t('panel.memory.emptyHint')}
+                          />
+                        </div>
+                      ) : (
+                        <div className="wm-record-body scroll-fade">
+                          {entries.map((entry) => (
+                            <EntryItem
+                              key={entry.id}
+                              entry={entry}
+                              armed={armed?.id === entry.id ? armed : null}
+                              onArm={() => setArmed({ id: entry.id, reason: '' })}
+                              onConfirm={(reason) => {
+                                memoryAction('deprecate', { entry_id: entry.id, reason });
+                                setArmed(null);
+                              }}
+                              onCancel={() => setArmed(null)}
+                              onReason={(reason) => setArmed({ id: entry.id, reason })}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <IndexLine index={snapshot.index} />
+                </aside>
+              </div>
+            </>
+          )}
+        </div>
       </PanelBody>
     </PanelShell>
   );
@@ -348,6 +416,47 @@ const DEFAULTS: MemoryConfig = {
   note_chars: 2400,
 };
 
+/** One switch row, in the sheet's row shape: title + hint at the leading edge,
+ *  the toggle at the trailing one.
+ *
+ *  `SwitchRow` was extracted from this panel and still draws the older shape —
+ *  toggle first, text beside it — which is what the code-intelligence rail wears.
+ *  This panel's rows are `.wb-row`s inside one `.wb-card` now, so the row is
+ *  assembled here from the shared classes and the shared `.tk-switch`; the
+ *  control is the same switch, not a second implementation of it. */
+function SwitchSetting({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="wb-row">
+      <div className="wb-row-main">
+        <span className="wb-row-title">{label}</span>
+        <span className="wb-row-hint">{hint}</span>
+      </div>
+      <div className="wb-row-control">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          aria-label={label}
+          className={`tk-switch${checked ? ' is-on' : ''}`}
+          onClick={() => onChange(!checked)}
+        >
+          <span className="tk-switch-knob" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function NumberRow({
   label,
   limit,
@@ -361,62 +470,63 @@ function NumberRow({
 }) {
   const t = useT();
   return (
-    <div className="wm-num">
-      <span className="wm-num-label">{label}</span>
-      <span className="wm-num-range">
-        {numberText(limit.min)}–{numberText(limit.max)}
-      </span>
-      <span className="wm-stepper">
-        <button
-          type="button"
-          className="wm-step"
-          aria-label={t('panel.memory.decrease', { label })}
-          disabled={value <= limit.min}
-          onClick={() => onChange(stepBy(value, -limit.step, limit))}
-        >
-          <Minus size={13} />
-        </button>
-        {/* **Editable, in a box that reads as a stepper.** The buttons are the
-            * ordinary way to change a number here, but `note_chars` spans 200–12000 in
-            * steps of 100: reaching 3000 by pressing "+" is 28 presses for a value
-            * somebody already knows. So the value is a field with the spinners
-            * removed — it looks like the design's number and types like a field. */}
-        <input
-          className="wm-step-value"
-          type="number"
-          inputMode="numeric"
-          aria-label={label}
-          value={value}
-          min={limit.min}
-          max={limit.max}
-          step={limit.step}
-          onChange={(e) => {
-            // A cleared box reads as 0, and 0 is below every floor here; sending it
-            // would be clamped and then re-seeded, which looks like the field
-            // rejecting what was typed. An empty box therefore keeps the old number.
-            if (e.target.value === '') return;
-            const next = Number(e.target.value);
-            if (Number.isFinite(next)) onChange(next);
-          }}
-          onBlur={() => {
-            // Left out of range, the number is pulled to the bound: the stepper's own
-            // disabled states are built from the same bounds, and a field reading 500
-            // next to a "+" that does nothing is two answers to one question. The
-            // runtime clamps as well, and its note is the authority on what was saved.
-            const next = Math.min(limit.max, Math.max(limit.min, value));
-            if (next !== value) onChange(next);
-          }}
-        />
-        <button
-          type="button"
-          className="wm-step"
-          aria-label={t('panel.memory.increase', { label })}
-          disabled={value >= limit.max}
-          onClick={() => onChange(stepBy(value, limit.step, limit))}
-        >
-          <Plus size={13} />
-        </button>
-      </span>
+    <div className="wb-row">
+      <div className="wb-row-main">
+        <span className="wb-row-title">{label}</span>
+      </div>
+      <div className="wb-row-control">
+        <span className="wm-stepper">
+          <button
+            type="button"
+            className="wm-step"
+            aria-label={t('panel.memory.decrease', { label })}
+            disabled={value <= limit.min}
+            onClick={() => onChange(stepBy(value, -limit.step, limit))}
+          >
+            <Minus size={13} />
+          </button>
+          {/* **Editable, in a box that reads as a stepper.** The buttons are the
+              * ordinary way to change a number here, but `note_chars` spans 200–12000 in
+              * steps of 100: reaching 3000 by pressing "+" is 28 presses for a value
+              * somebody already knows. So the value is a field with the spinners
+              * removed — it looks like the design's number and types like a field. */}
+          <input
+            className="wm-step-value"
+            type="number"
+            inputMode="numeric"
+            aria-label={label}
+            value={value}
+            min={limit.min}
+            max={limit.max}
+            step={limit.step}
+            onChange={(e) => {
+              // A cleared box reads as 0, and 0 is below every floor here; sending it
+              // would be clamped and then re-seeded, which looks like the field
+              // rejecting what was typed. An empty box therefore keeps the old number.
+              if (e.target.value === '') return;
+              const next = Number(e.target.value);
+              if (Number.isFinite(next)) onChange(next);
+            }}
+            onBlur={() => {
+              // Left out of range, the number is pulled to the bound: the stepper's own
+              // disabled states are built from the same bounds, and a field reading 500
+              // next to a "+" that does nothing is two answers to one question. The
+              // runtime clamps as well, and its note is the authority on what was saved.
+              const next = Math.min(limit.max, Math.max(limit.min, value));
+              if (next !== value) onChange(next);
+            }}
+          />
+          <button
+            type="button"
+            className="wm-step"
+            aria-label={t('panel.memory.increase', { label })}
+            disabled={value >= limit.max}
+            onClick={() => onChange(stepBy(value, limit.step, limit))}
+          >
+            <Plus size={13} />
+          </button>
+        </span>
+      </div>
     </div>
   );
 }
@@ -437,25 +547,26 @@ function SliderRow({
   // to nest a fill inside it. It is one custom property, and the track reads it.
   const fill = limit.max === limit.min ? 0 : ((value - limit.min) / (limit.max - limit.min)) * 100;
   return (
-    <div className="wm-num wm-slider-row">
-      <span className="wm-num-label">{label}</span>
-      <span className="wm-num-range">
-        {numberText(limit.min)}–{numberText(limit.max)}
-      </span>
-      <input
-        className="wm-slider"
-        type="range"
-        aria-label={label}
-        min={limit.min}
-        max={limit.max}
-        step={limit.step}
-        value={value}
-        style={{ '--wm-fill': `${fill}%` } as CSSProperties}
-        onChange={(e) => onChange(Number(e.target.value))}
-      />
-      <span className="wm-slider-value" aria-hidden>
-        {numberText(value)}
-      </span>
+    <div className="wb-row">
+      <div className="wb-row-main">
+        <span className="wb-row-title">{label}</span>
+      </div>
+      <div className="wb-row-control wm-slider-control">
+        <input
+          className="wm-slider"
+          type="range"
+          aria-label={label}
+          min={limit.min}
+          max={limit.max}
+          step={limit.step}
+          value={value}
+          style={{ '--wm-fill': `${fill}%` } as CSSProperties}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+        <span className="wm-slider-value" aria-hidden>
+          {numberText(value)}
+        </span>
+      </div>
     </div>
   );
 }

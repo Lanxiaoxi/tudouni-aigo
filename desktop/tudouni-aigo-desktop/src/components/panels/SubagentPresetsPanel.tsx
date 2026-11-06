@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Bot, Check, Plus, Trash2 } from 'lucide-react';
+import { Bot, Check, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { useT } from '@/i18n/useT';
+import type { Translate } from '@/i18n';
 import { Badge, PanelInfo, Tip } from '@/components/ui/kit';
 import { Select } from '@/components/ui/Select';
 import { readRemoteUserConfig, readUserConfig, writeRemoteUserConfig, writeUserConfig } from '@/runtime/tauri';
@@ -27,6 +28,18 @@ import { PanelBody, PanelShell } from './PanelShell';
  * the reply rather than the draft. The Rust merge (`apply_subagents`) moves each
  * preset's existing object into place, so a `$comment` on a preset survives.
  *
+ * **The list of presets is a list; one preset opens as a page.** That is the
+ * sheet's shape and the Config panel's: a row per preset — a mark, the name, its
+ * `default` tag, the route and model it names — and one row opens the page where
+ * the six fields are. The panel used to draw every preset as a section of one long
+ * form, which made three presets a screenful and no two of them comparable.
+ *
+ * **`Default preset` lives on the page, not on the list.** The sheet puts it
+ * above the page's fields, and it reads well there: "this preset is the one a
+ * delegation gets when it names none" is a statement about the preset you are
+ * looking at. The list still shows which one that is, as the `default` tag on its
+ * row, so the collection's state is visible without opening anything.
+ *
  * Like Config, nothing here reaches a running session: the runtime reads the
  * presets when a session opens. That is the decision recorded for this feature
  * ("new sessions only"), and it is why the panel opens with no session at all.
@@ -39,6 +52,8 @@ export function SubagentPresetsPanel() {
   const [saveProblem, setSaveProblem] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  /** Which preset's page is up. `index` addresses the draft array. */
+  const [editing, setEditing] = useState<number | null>(null);
 
   // The same "which machine" answer the Config panel uses: on a remote screen the
   // file the runtime reads is the host's, not this machine's.
@@ -89,6 +104,26 @@ export function SubagentPresetsPanel() {
   const canSave = doc.problem === null && dirty && problems.length === 0 && !saving;
   const atCap = draft.presets.length >= MAX_SUBAGENT_PRESETS;
 
+  /* The footer's leading sentence, the same slot the Config panel uses: what
+     just happened to the draft, or — when nothing has — nothing at all. The
+     sheet's `Unsaved changes` in the warning colour is the dirty branch. */
+  const status: ReactNode =
+    saveProblem !== null ? (
+      <span className="cfg-status-error" role="alert">
+        {saveProblem}
+      </span>
+    ) : saved ? (
+      <span className="cfg-status-ok">
+        <Check size={12} /> {t('panel.config.saved')}
+      </span>
+    ) : doc.problem !== null ? (
+      <span className="cfg-status-error">{t('panel.config.readOnly')}</span>
+    ) : problems.length > 0 ? (
+      <span className="cfg-status-error">{t('panel.config.blocked', { n: problems.length })}</span>
+    ) : dirty ? (
+      <span className="cfg-status-pending">{t('panel.config.unsaved')}</span>
+    ) : null;
+
   function edit(change: (current: SubagentsView) => SubagentsView) {
     setDraft((current) => (current === null ? current : change(current)));
     setSaved(false);
@@ -107,26 +142,29 @@ export function SubagentPresetsPanel() {
   }
 
   function addPreset() {
-    edit((current) => {
-      if (current.presets.length >= MAX_SUBAGENT_PRESETS) return current;
-      const taken = new Set(current.presets.map((p) => p.name));
-      let n = current.presets.length + 1;
-      while (taken.has(`preset-${n}`)) n += 1;
-      const route = routes[0];
-      return {
-        ...current,
-        presets: [
-          ...current.presets,
-          {
-            name: `preset-${n}`,
-            provider: route?.name ?? '',
-            model: route?.models[0]?.id ?? '',
-            effort: '',
-            purpose: '',
-          },
-        ],
-      };
-    });
+    if (draft === null || draft.presets.length >= MAX_SUBAGENT_PRESETS) return;
+    // The row is written first and then opened, which is what makes the page's
+    // fields bind to something the draft already holds — the rule `ConfigPanel`
+    // follows for a new route.
+    const taken = new Set(draft.presets.map((p) => p.name));
+    let n = draft.presets.length + 1;
+    while (taken.has(`preset-${n}`)) n += 1;
+    const route = routes[0];
+    const at = draft.presets.length;
+    edit((current) => ({
+      ...current,
+      presets: [
+        ...current.presets,
+        {
+          name: `preset-${n}`,
+          provider: route?.name ?? '',
+          model: route?.models[0]?.id ?? '',
+          effort: '',
+          purpose: '',
+        },
+      ],
+    }));
+    setEditing(at);
   }
 
   function removePreset(index: number) {
@@ -139,6 +177,9 @@ export function SubagentPresetsPanel() {
         default: gone !== undefined && current.default === gone.name ? '' : current.default,
       };
     });
+    // The page was about a preset that no longer exists; the list is the only
+    // surface that can still be true.
+    setEditing(null);
   }
 
   async function save() {
@@ -171,27 +212,9 @@ export function SubagentPresetsPanel() {
 
   const footer = (
     <>
-      <span className="cfg-status">
-        {saveProblem !== null ? (
-          <span className="cfg-status-error" role="alert">
-            {saveProblem}
-          </span>
-        ) : saved ? (
-          <span className="cfg-status-ok">
-            <Check size={12} /> {t('panel.config.saved')}
-          </span>
-        ) : doc.problem !== null ? (
-          <span className="cfg-status-error">{t('panel.config.readOnly')}</span>
-        ) : problems.length > 0 ? (
-          <span className="cfg-status-error">{t('panel.config.blocked', { n: problems.length })}</span>
-        ) : dirty ? (
-          <span className="cfg-status-pending">{t('panel.config.unsaved')}</span>
-        ) : null}
-      </span>
-      <span className="grow" />
       <button
         type="button"
-        className="btn btn-ghost btn-compact"
+        className="btn btn-ghost"
         disabled={!dirty || saving}
         onClick={() => {
           setDraft(copyOf(doc.subagents));
@@ -201,18 +224,171 @@ export function SubagentPresetsPanel() {
       >
         {t('panel.config.revert')}
       </button>
-      <button type="button" className="btn btn-primary btn-compact" disabled={!canSave} onClick={() => void save()}>
+      <button type="button" className="btn btn-primary" disabled={!canSave} onClick={() => void save()}>
         {saving ? t('panel.config.saving') : t('panel.config.save')}
       </button>
     </>
   );
+
+  const alerts =
+    problems.length === 0 ? null : (
+      <div className="cfg-problems">
+        {problems.map((text, i) => (
+          <div key={i} className="cfg-problem is-blocking">
+            {text}
+          </div>
+        ))}
+      </div>
+    );
+
+  /* ---- the preset page (a second surface) ---- */
+
+  const openPreset = editing === null ? undefined : draft.presets[editing];
+  if (openPreset !== undefined && editing !== null) {
+    return (
+      <PanelShell
+        onBack={() => setEditing(null)}
+        backLabel={t('panel.sp.title')}
+        title={openPreset.name.trim() === '' ? t('panel.config.untitled') : openPreset.name}
+        // A preset's name is a key — the model passes it as `preset` — so the
+        // title wears the same mono shape the route page's name does.
+        titleClass="pc-title"
+        footHint={status}
+        footer={footer}
+      >
+        <PanelBody>
+          <div className="sp-page">
+            {alerts}
+
+            <div className="wb-field">
+              <span className="cfg-label">{t('panel.sp.default')}</span>
+              <Select
+                value={draft.default}
+                options={defaultOptions(draft, t)}
+                onChange={(next) => edit((current) => ({ ...current, default: next }))}
+              />
+              <span className="cfg-hint">{t('panel.sp.defaultHint')}</span>
+            </div>
+
+            {/* The rule the sheet draws between the panel-wide default and this
+                preset's own fields, headed by the sheet's `PRESET · 1`. The
+                number is the preset's position in the list, which is what the
+                label is counting — not a total, which is what the list surface
+                already says. The trash rides at the rule's trailing end: the
+                destructive verb belongs to the group, not to any one field. */}
+            <div className="sp-preset-head">
+              <span className="wb-label">{t('panel.sp.section')}</span>
+              <span className="wb-label-count">{editing + 1}</span>
+              <span className="sp-rule" />
+              <Tip label={t('panel.sp.remove')}>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon cfg-danger"
+                  aria-label={t('panel.sp.remove')}
+                  onClick={() => removePreset(editing)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </Tip>
+            </div>
+
+            <div className="wb-grid">
+              <Field label={t('panel.sp.name')} hint={t('panel.sp.nameHint')}>
+                <input
+                  type="text"
+                  className="cfg-input mono"
+                  value={openPreset.name}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => updatePreset(editing, { name: e.target.value })}
+                />
+              </Field>
+
+              <Field label={t('panel.sp.route')}>
+                <Select
+                  value={openPreset.provider}
+                  placeholder={t('panel.sp.pick')}
+                  options={[
+                    // A saved route that is no longer configured stays visible, so
+                    // the field shows what the file says instead of silently going
+                    // blank.
+                    ...(routes.find((r) => r.name === openPreset.provider) === undefined &&
+                    openPreset.provider !== ''
+                      ? [{ value: openPreset.provider, label: openPreset.provider }]
+                      : []),
+                    ...routes.map((r) => ({
+                      value: r.name,
+                      label: r.displayName.trim() !== '' ? `${r.displayName} (${r.name})` : r.name,
+                    })),
+                  ]}
+                  onChange={(provider) => {
+                    // A route change resets the model to that route's first one: a
+                    // model id from the old route is almost never on the new one,
+                    // and the runtime refuses a preset whose model is not on its
+                    // route.
+                    const next = routes.find((r) => r.name === provider);
+                    updatePreset(editing, { provider, model: next?.models[0]?.id ?? '', effort: '' });
+                  }}
+                />
+              </Field>
+
+              <Field label={t('panel.sp.model')}>
+                <Select
+                  mono
+                  value={openPreset.model}
+                  placeholder={t('panel.sp.pick')}
+                  options={[
+                    ...(modelOf(openPreset, routes) === undefined && openPreset.model !== ''
+                      ? [{ value: openPreset.model, label: openPreset.model }]
+                      : []),
+                    ...(routes.find((r) => r.name === openPreset.provider)?.models ?? []).map((m) => ({
+                      value: m.id,
+                      label: m.label.trim() !== '' ? `${m.label} (${m.id})` : m.id,
+                    })),
+                  ]}
+                  onChange={(next) => updatePreset(editing, { model: next, effort: '' })}
+                />
+              </Field>
+
+              <Field label={t('panel.sp.effort')}>
+                <Select
+                  value={openPreset.effort}
+                  options={[
+                    { value: '', label: t('panel.sp.effortDefault') },
+                    ...effortLevelsOf(
+                      routes.find((r) => r.name === openPreset.provider),
+                      openPreset.model,
+                    ).map((level) => ({ value: level, label: level })),
+                  ]}
+                  onChange={(effort) => updatePreset(editing, { effort })}
+                />
+              </Field>
+            </div>
+
+            {/* The purpose is a sentence, not a key, so it takes the whole width
+                under the four short fields rather than a fifth narrow column. */}
+            <Field label={t('panel.sp.purpose')} hint={t('panel.sp.purposeHint')}>
+              <input
+                type="text"
+                className="cfg-input"
+                value={openPreset.purpose}
+                autoComplete="off"
+                onChange={(e) => updatePreset(editing, { purpose: e.target.value })}
+              />
+            </Field>
+          </div>
+        </PanelBody>
+      </PanelShell>
+    );
+  }
+
+  /* ---- the list surface ---- */
 
   return (
     <PanelShell
       title={t('panel.sp.title')}
       info={<PanelInfo label={t('panel.sp.about')} />}
       note={t('panel.sp.note')}
-      count={draft.presets.length}
       actions={
         <button
           type="button"
@@ -225,206 +401,171 @@ export function SubagentPresetsPanel() {
           {t('panel.sp.add')}
         </button>
       }
+      footHint={status}
       footer={footer}
     >
       <PanelBody>
-        {problems.length > 0 ? (
-          <div className="cfg-problems">
-            {problems.map((text, i) => (
-              <div key={i} className="cfg-problem is-blocking">
-                {text}
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <div className="cfg-surface">
+          {alerts}
 
-        <div className="cfg-path-row">
-          {remote !== null ? (
-            <Badge tone="neutral">
-              {remote.user}@{remote.host}
-            </Badge>
-          ) : null}
-          <span className="cfg-path mono" title={doc.path}>
-            {doc.path}
-          </span>
-        </div>
-        {doc.problem !== null ? <p className="cfg-file-problem">{doc.problem}</p> : null}
-        {routes.length === 0 ? <p className="set-hint">{t('panel.sp.noRoutes')}</p> : null}
-
-        <section className="pc-section">
-          <Field label={t('panel.sp.default')} hint={t('panel.sp.defaultHint')}>
-            <Select
-              size="short"
-              value={draft.default}
-              options={[
-                { value: '', label: t('panel.sp.followSession') },
-                ...draft.presets.filter((p) => p.name.trim() !== '').map((p) => ({ value: p.name, label: p.name })),
-              ]}
-              onChange={(next) => edit((current) => ({ ...current, default: next }))}
-            />
-          </Field>
-        </section>
-
-        {draft.presets.length === 0 ? (
-          <div className="tk-blank">
-            <span className="tk-blank-icon">
-              <Bot size={20} />
+          <div className="cfg-path-row">
+            {remote !== null ? (
+              <Badge tone="neutral">
+                {remote.user}@{remote.host}
+              </Badge>
+            ) : null}
+            <span className="cfg-path mono" title={doc.path}>
+              {doc.path}
             </span>
-            <div className="tk-blank-title">{t('panel.sp.empty')}</div>
-            <div className="tk-blank-hint">{t('panel.sp.emptyHint')}</div>
           </div>
-        ) : (
-          draft.presets.map((preset, index) => (
-            <PresetCard
-              key={index}
-              preset={preset}
-              routes={routes}
-              isDefault={draft.default !== '' && draft.default === preset.name}
-              onChange={(patch) => updatePreset(index, patch)}
-              onRemove={() => removePreset(index)}
-            />
-          ))
-        )}
+          {doc.problem !== null ? <p className="cfg-file-problem">{doc.problem}</p> : null}
+          {routes.length === 0 ? <p className="set-hint">{t('panel.sp.noRoutes')}</p> : null}
 
-        <p className="set-hint cfg-takes-effect">{t('panel.config.effect')}</p>
+          {/* The document default normally lives on a preset's page (see the
+              comment at the top of this file). With no presets there is no page
+              to open — and a file whose `default` names a preset that is gone
+              would then have no way to be cleared, while its own validation
+              refuses every save. So on an empty list the field comes here. */}
+          {draft.presets.length === 0 ? (
+            <div className="wb-field">
+              <span className="cfg-label">{t('panel.sp.default')}</span>
+              <Select
+                value={draft.default}
+                options={defaultOptions(draft, t)}
+                onChange={(next) => edit((current) => ({ ...current, default: next }))}
+              />
+              <span className="cfg-hint">{t('panel.sp.defaultHint')}</span>
+            </div>
+          ) : null}
+
+          {draft.presets.length === 0 ? (
+            /* No action button in the empty state: the primary lives in the head,
+               and a second copy here would be two doors to one room. */
+            <div className="tk-blank">
+              <span className="tk-blank-icon">
+                <Bot size={20} />
+              </span>
+              <div className="tk-blank-title">{t('panel.sp.empty')}</div>
+              <div className="tk-blank-hint">{t('panel.sp.emptyHint')}</div>
+            </div>
+          ) : (
+            <div className="tk-list">
+              {draft.presets.map((preset, index) => (
+                <PresetRow
+                  key={index}
+                  preset={preset}
+                  isDefault={draft.default !== '' && draft.default === preset.name}
+                  onOpen={() => setEditing(index)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </PanelBody>
     </PanelShell>
   );
 }
 
-/** One preset, all of its fields on one card: five fields are a form, not a
- *  collection worth a second surface (the web-search tab's reasoning). */
-function PresetCard({
+/**
+ * One preset in the list: the same row the routes list draws — a mark, the name
+ * with its `default` tag, what the preset names, and a fixed action slot whose
+ * button only appears on hover, so the text never reflows under the cursor.
+ *
+ * There is no overflow menu here: a preset has no order and nothing to duplicate,
+ * and the one destructive verb it does have is on its own page, where the
+ * decision is made rather than in passing.
+ */
+function PresetRow({
   preset,
-  routes,
   isDefault,
-  onChange,
-  onRemove,
+  onOpen,
 }: {
   preset: SubagentPresetView;
-  routes: RouteView[];
   isDefault: boolean;
-  onChange: (patch: Partial<SubagentPresetView>) => void;
-  onRemove: () => void;
+  onOpen: () => void;
 }) {
   const t = useT();
-  const route = routes.find((r) => r.name === preset.provider);
-  const model = route?.models.find((m) => m.id === preset.model);
-  const levels = effortLevelsOf(route, preset.model);
+  const effort = preset.effort.trim() === '' ? t('panel.sp.effortDefault') : preset.effort;
 
   return (
-    <section className="pc-section">
-      <div className="pc-section-head">
-        <span className="pc-section-label mono">{preset.name.trim() === '' ? t('panel.config.untitled') : preset.name}</span>
-        {isDefault ? (
-          <Badge tone="info" dot={false}>
-            {t('panel.config.defaultRoute')}
-          </Badge>
-        ) : null}
-        <span className="pc-rule" />
-        <Tip label={t('panel.sp.remove')}>
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon btn-compact cfg-danger"
-            aria-label={t('panel.sp.remove')}
-            onClick={onRemove}
-          >
-            <Trash2 size={13} />
+    <div className="tk-row">
+      <span className="tk-mark" aria-hidden>
+        <Bot size={15} />
+      </span>
+
+      <div className="tk-row-main">
+        <div className="tk-row-title">
+          <button type="button" className="tk-row-name" onClick={onOpen}>
+            {preset.name.trim() === '' ? t('panel.config.untitled') : preset.name}
           </button>
-        </Tip>
+          {isDefault ? (
+            <Badge tone="success" dot={false}>
+              {t('panel.config.defaultRoute')}
+            </Badge>
+          ) : null}
+        </div>
+
+        {preset.purpose.trim() !== '' ? <div className="tk-row-desc">{preset.purpose}</div> : null}
+
+        {/* `route · model · effort`, with the interpuncts the routes list uses:
+            the three facts a delegation is decided by, on one line. An unset one
+            is a dash rather than a call to action — this line is a read-out, and
+            the page behind the row is where a value gets chosen. */}
+        <div className="tk-row-meta">
+          <span className="tk-meta-item mono">{preset.provider.trim() === '' ? '—' : preset.provider}</span>
+          <span className="tk-meta-dot" aria-hidden>
+            ·
+          </span>
+          <span className="tk-meta-item mono">{preset.model.trim() === '' ? '—' : preset.model}</span>
+          <span className="tk-meta-dot" aria-hidden>
+            ·
+          </span>
+          <span className="tk-meta-item">{effort}</span>
+        </div>
       </div>
 
-      <Field label={t('panel.sp.name')} hint={t('panel.sp.nameHint')}>
-        <input
-          type="text"
-          className="cfg-input mono is-short"
-          value={preset.name}
-          spellCheck={false}
-          autoComplete="off"
-          onChange={(e) => onChange({ name: e.target.value })}
-        />
-      </Field>
-
-      <Field label={t('panel.sp.route')}>
-        <Select
-          size="short"
-          value={preset.provider}
-          placeholder={t('panel.sp.pick')}
-          options={[
-            // A saved route that is no longer configured stays visible, so the
-            // field shows what the file says instead of silently going blank.
-            ...(route === undefined && preset.provider !== ''
-              ? [{ value: preset.provider, label: preset.provider }]
-              : []),
-            ...routes.map((r) => ({
-              value: r.name,
-              label: r.displayName.trim() !== '' ? `${r.displayName} (${r.name})` : r.name,
-            })),
-          ]}
-          onChange={(provider) => {
-            // A route change resets the model to that route's first one: a model
-            // id from the old route is almost never on the new one, and the
-            // runtime refuses a preset whose model is not on its route.
-            const next = routes.find((r) => r.name === provider);
-            onChange({ provider, model: next?.models[0]?.id ?? '', effort: '' });
-          }}
-        />
-      </Field>
-
-      <Field label={t('panel.sp.model')}>
-        <Select
-          size="short"
-          mono
-          value={preset.model}
-          placeholder={t('panel.sp.pick')}
-          options={[
-            ...(model === undefined && preset.model !== '' ? [{ value: preset.model, label: preset.model }] : []),
-            ...(route?.models ?? []).map((m) => ({
-              value: m.id,
-              label: m.label.trim() !== '' ? `${m.label} (${m.id})` : m.id,
-            })),
-          ]}
-          onChange={(next) => onChange({ model: next, effort: '' })}
-        />
-      </Field>
-
-      <Field label={t('panel.sp.effort')}>
-        <Select
-          size="short"
-          value={preset.effort}
-          options={[
-            { value: '', label: t('panel.sp.effortDefault') },
-            ...levels.map((level) => ({ value: level, label: level })),
-          ]}
-          onChange={(effort) => onChange({ effort })}
-        />
-      </Field>
-
-      <Field label={t('panel.sp.purpose')} hint={t('panel.sp.purposeHint')}>
-        <input
-          type="text"
-          className="cfg-input is-short"
-          value={preset.purpose}
-          autoComplete="off"
-          onChange={(e) => onChange({ purpose: e.target.value })}
-        />
-      </Field>
-    </section>
+      <div className="tk-row-actions">
+        <button type="button" className="btn btn-outline tk-row-cta" onClick={onOpen}>
+          <Pencil size={12} />
+          {t('panel.config.edit')}
+        </button>
+      </div>
+    </div>
   );
 }
 
-/** The Config editor's row shape (`.pc-row`), local because `PcField` is not
- *  exported and the two must look the same. */
+/** One field on the preset page: the label above, the control full width, the
+ *  hint under it — the Config page's shape (`.wb-field`). Local because
+ *  `PcField` is not exported from `ConfigPanel`, and the two must look the
+ *  same. */
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
-    <label className="pc-row">
-      <span className="pc-label">{label}</span>
-      <span className="pc-control">
-        {children}
-        {hint ? <span className="cfg-hint">{hint}</span> : null}
-      </span>
+    <label className="wb-field">
+      <span className="cfg-label">{label}</span>
+      {children}
+      {hint ? <span className="cfg-hint">{hint}</span> : null}
     </label>
   );
+}
+
+/** The options of the document default: "follow the session", then one per named
+ *  preset. A preset whose name is blank cannot be chosen — the runtime would
+ *  refuse the pointer — so it is not offered. */
+function defaultOptions(draft: SubagentsView, t: Translate) {
+  return [
+    { value: '', label: t('panel.sp.followSession') },
+    ...draft.presets
+      .filter((p) => p.name.trim() !== '')
+      .map((p) => ({ value: p.name, label: p.name })),
+  ];
+}
+
+/** The model a preset names, when the route it names still exists. */
+function modelOf(
+  preset: SubagentPresetView,
+  routes: RouteView[],
+): RouteView['models'][number] | undefined {
+  return routes.find((r) => r.name === preset.provider)?.models.find((m) => m.id === preset.model);
 }
 
 /** `state.BroadEffortLevels`: offered when neither the model nor its route

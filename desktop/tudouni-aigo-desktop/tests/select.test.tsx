@@ -72,6 +72,19 @@ test('the stylesheet is imported and styles the parts react-select names', () =>
   }
 });
 
+test('the packaged window allows the runtime styles react-select draws itself', () => {
+  // react-select builds its flex control, absolute menu and clipped live region
+  // as emotion <style> tags at runtime. When Tauri bundles the assets it appends
+  // a nonce to style-src, and a nonce source makes 'unsafe-inline' inert — the
+  // nonce-less emotion tag is dropped and every dropdown stacks its parts. The
+  // config therefore opts out of the style-src modification it already allows.
+  const conf = JSON.parse(read('src-tauri/tauri.conf.json')) as {
+    app: { security: { csp: string; dangerousDisableAssetCspModification?: unknown } };
+  };
+  assert.deepEqual(conf.app.security.dangerousDisableAssetCspModification, ['style-src']);
+  assert.match(conf.app.security.csp, /style-src 'self' 'unsafe-inline'/);
+});
+
 test('the panel host lets Esc close an open menu before it closes the panel', () => {
   const host = read('src/components/panels/PanelHost.tsx');
   assert.match(host, /selectMenuIsOpen/);

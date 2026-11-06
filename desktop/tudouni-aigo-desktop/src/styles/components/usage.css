@@ -3,9 +3,11 @@
 
    The snapshot is numbers only, so the panel is two shapes: a row of stat
    cards and one activity grid. The cards are the code-index panel's fact
-   (`.ci-fact`) reshaped for a five-up row; the grid is drawn on a fixed cell
-   size so a year of columns fits the wide dialog and the month labels can
-   share the same rhythm.
+   (`.ci-fact`) reshaped for a five-up row; the grid is **fluid** — 53
+   fractional columns that divide whatever width the card has — so a year of
+   days fits the panel at every rung it is opened at, and the month labels
+   share the same rhythm. (It was fixed at 11px a cell, which fit the wide
+   dialog it was designed in and overran the 800px one it ships at.)
    ============================================================ */
 
 /* The five facts. Five fixed cells rather than auto-fit: unlike the code-index
@@ -112,45 +114,69 @@
   font-weight: 600;
 }
 
-/* The grid's geometry. One cell size, declared once, that the day grid, the
+/* The grid's geometry. One column count, declared once, that the day grid, the
    week row and the month labels all share — the labels align with the columns
    only while the three agree on the step. Declared on the card, not on the
    grids themselves: `.usage-months` sits between the two grids in the DOM and
    is none of them, so a custom property on the grids would not reach it —
    and its columns would silently fall back to `auto`, which is what bunched
-   the month labels together at the card's left edge. */
+   the month labels together at the card's left edge.
+
+   **`--usage-cols` is 53 because the window is a year, and the tracks are
+   fractions rather than pixels.** The two used to be independent constants —
+   `--usage-cell: 11px` on the day grid and a hard-coded `15px` on the week row
+   — and a fixed track is a claim about how much room there is. 53 × 11px plus
+   their gaps is 739px inside a 716px content box at the panel's 800px rung, so
+   the grid ran 7px past the card's right border and the week row (53 × 15px =
+   951px) ran 232px past it, out through the dialog's edge, where
+   `overflow: hidden` cut the last ten weeks off. Fractions cannot make that
+   claim: the tracks divide whatever the card actually has, and the cell's
+   `aspect-ratio` keeps the squares square as they follow.
+
+   The count is not a taste. `buildDailyGrid` always emits 371 cells — 365 days
+   plus the padding out to Saturday — which is exactly 53 × 7, and
+   `usage-heatmap.test.ts` holds it to that. Change `WINDOW_DAYS` and that test
+   fails before this number can go stale. */
 .usage-activity {
+  --usage-cols: 53;
   --usage-cell: 11px;
   --usage-gap: 3px;
 }
 
 .usage-grid {
   display: grid;
-  grid-template-rows: repeat(7, var(--usage-cell));
+  grid-template-columns: repeat(var(--usage-cols), minmax(0, 1fr));
+  grid-template-rows: repeat(7, auto);
   grid-auto-flow: column;
-  grid-auto-columns: var(--usage-cell);
   gap: var(--usage-gap);
   margin-top: var(--space-3);
-  width: fit-content;
 }
 
+/* The week row shares the day grid's rhythm — one cell, one week — so a reader
+   flipping between the two sees the same card, not a second chart. It carries
+   fewer cells than it has tracks when weeks went unrecorded; the unused tracks
+   stay empty at the far end rather than stretching the cells that exist. */
 .usage-weeks {
   display: grid;
-  grid-template-rows: var(--usage-cell);
+  grid-template-columns: repeat(var(--usage-cols), minmax(0, 1fr));
+  grid-template-rows: auto;
   grid-auto-flow: column;
-  grid-auto-columns: 15px;
   gap: var(--usage-gap);
   margin-top: var(--space-3);
-  width: fit-content;
 }
 
 /* One day. A button rather than a div so the tooltip is reachable without a
    pointer (see the panel); the focus ring is dropped deliberately — the cells
    are aria-labelled but not tab stops (`tabIndex={-1}`), because 371 stops
-   would make tabbing through the panel a punishment. */
+   would make tabbing through the panel a punishment.
+
+   `aspect-ratio` rather than a width and a height: the track is a fraction of
+   the card now, so the cell's size is decided by the column it lands in, and
+   the row must follow it or the grid stops being square. */
 .usage-cell {
   width: 100%;
-  height: 100%;
+  height: auto;
+  aspect-ratio: 1;
   padding: 0;
   border: 0;
   border-radius: 3px;
@@ -172,14 +198,16 @@
 /* Month labels under the grid. The container is the same column rhythm as the
    grid itself, and each label is placed by its own column number (inline
    `grid-column-start`), so an auto-created empty column is the spacing — there
-   is no second copy of the week math to keep in step. */
+   is no second copy of the week math to keep in step. It takes the same
+   fractional tracks for the same reason the grid does: a pixel track here
+   would put the labels back out of step with the cells the moment the card's
+   width changed. */
 .usage-months {
   display: grid;
+  grid-template-columns: repeat(var(--usage-cols), minmax(0, 1fr));
   grid-auto-flow: column;
-  grid-auto-columns: var(--usage-cell);
   gap: var(--usage-gap);
   margin-top: var(--space-2);
-  width: fit-content;
   font-size: var(--text-caption);
   color: var(--fg-muted);
 }
@@ -188,7 +216,10 @@
   white-space: nowrap;
 }
 
-/* The level key. */
+/* The level key. Its cells are the one place the size is still a literal: they
+   are a legend, not data, so they must match each other and the eye's idea of
+   "one day" rather than stretch with the card — a legend swatch that grew to
+   14px on a wide window would be describing a cell size the grid does not use. */
 .usage-legend {
   display: flex;
   align-items: center;

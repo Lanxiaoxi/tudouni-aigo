@@ -152,6 +152,10 @@
      — and a band wearing that colour could not be told from the defect, by the
      check or by the eye. */
   --bg-foot:       #15181E;
+  /* The workbench panels' read-only column. In the dark theme "attached to the
+     panel" is already what `--bg-secondary` says, so the token points at it
+     rather than inventing a fourth near-black. */
+  --wb-rail-bg:    var(--bg-secondary);
 
   /* ---------- the left rail's own surfaces（会话侧栏重设计） ----------
    * The left rail used to be the right rail's shade holding white row cards.
@@ -375,6 +379,11 @@
   --bg-bar:        #FBFDFA;  /* 顶栏 / 状态栏 */
   --bg-rail:       #FBFDFA;
   --bg-foot:       #F4F7F2;
+  /* The workbench panels' read-only column ("RAIL · 340 · 只读面" in
+     `design/workbench-light-v2/01`). It is its own rung rather than a reuse of
+     `--bg-rail`: that one belongs to the window's side rails, and a panel's rail
+     sits one step under the panel's own surface, not beside the transcript. */
+  --wb-rail-bg:    #F7FAF6;
 
   /* The left rail's own surfaces — see the dark theme for the three roles.
      The values are sampled from the sidebar redesign: a near-white green-tinted

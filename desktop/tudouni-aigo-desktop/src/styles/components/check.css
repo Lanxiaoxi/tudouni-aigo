@@ -20,7 +20,8 @@
   .close-remember input[type='checkbox'],
   .cfgsync-remember input[type='checkbox'],
   .md input[type='checkbox'],
-  .tk-choice-row input[type='radio']
+  .tk-choice-row input[type='radio'],
+  .learn-scope-row input[type='radio']
 ) {
   appearance: none;
   -webkit-appearance: none;
@@ -49,7 +50,8 @@
   border-radius: var(--radius-xs);
 }
 
-.tk-choice-row input[type='radio'] {
+.tk-choice-row input[type='radio'],
+.learn-scope-row input[type='radio'] {
   border-radius: 50%;
 }
 
@@ -72,7 +74,8 @@
   transition: scale var(--motion-fast) var(--ease-out);
 }
 
-.tk-choice-row input[type='radio']::after {
+.tk-choice-row input[type='radio']::after,
+.learn-scope-row input[type='radio']::after {
   content: '';
   width: 8px;
   height: 8px;
@@ -92,7 +95,8 @@
   background: var(--accent);
 }
 
-.tk-choice-row input[type='radio']:checked {
+.tk-choice-row input[type='radio']:checked,
+.learn-scope-row input[type='radio']:checked {
   border-color: var(--accent);
 }
 
@@ -101,14 +105,15 @@
   .close-remember input[type='checkbox'],
   .cfgsync-remember input[type='checkbox'],
   .md input[type='checkbox'],
-  .tk-choice-row input[type='radio']
+  .tk-choice-row input[type='radio'],
+  .learn-scope-row input[type='radio']
 ):checked::after {
   scale: 1;
 }
 
 /* Hover is read off the whole row: the label is the target the hand is aiming
    at, and the box is only 16px of it. */
-:is(.cfg-check, .close-remember, .cfgsync-remember, .tk-choice-row):hover
+:is(.cfg-check, .close-remember, .cfgsync-remember, .tk-choice-row, .learn-scope-row):hover
   input:is([type='checkbox'], [type='radio']):not(:disabled):not(:checked) {
   border-color: var(--accent-border-strong);
 }
@@ -118,7 +123,8 @@
   .close-remember input[type='checkbox'],
   .cfgsync-remember input[type='checkbox'],
   .md input[type='checkbox'],
-  .tk-choice-row input[type='radio']
+  .tk-choice-row input[type='radio'],
+  .learn-scope-row input[type='radio']
 ):disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -146,6 +152,10 @@ html[data-input-mode='keyboard']
 }
 
 html[data-input-mode='keyboard'] .tk-choice-row input[type='radio']:focus-visible {
+  border-radius: 50%;
+}
+
+html[data-input-mode='keyboard'] .learn-scope-row input[type='radio']:focus-visible {
   border-radius: 50%;
 }
 
