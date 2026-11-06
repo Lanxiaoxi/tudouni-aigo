@@ -768,7 +768,7 @@ export function selectQueuedModals(s: AppStore): number {
  * cards closes it. A session-held request is reached by focusing that
  * session — Ctrl+1..9, its rail row, or a board card.
  *
- * The board condition is deliberately **the view, not the flag**: `boardOpen`
+ * The board condition is deliberately **the view, not the flag**: `board`
  * true but a terminal or a start-up problem outranking the board would hold a
  * request with nothing on screen carrying the nudge — and, alone among the
  * several surfaces, no way to surface it on the spot, because focusing the
@@ -786,7 +786,10 @@ export function selectModalVisible(s: AppStore): boolean {
   if (s.activeKey !== s.modal.key) return false;
   // The view, read off the store rather than fed by a render — the same helper
   // the splash hand-over uses, so the seven-input order has one definition.
-  return conversationViewOf(s) !== 'board';
+  // Either board holds it. The Ticket board draws the same amber dot on a card
+  // whose session is asking, and "Open session" is its way to the prompt.
+  const view = conversationViewOf(s);
+  return view !== 'board' && view !== 'tickets';
 }
 
 /**

@@ -23,6 +23,7 @@ import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEnded
 import { runtimeOf } from '../appView';
 import { savedSessionsKey } from '../savedSessionsKey';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
+import { landTicketExit, landTicketInit, landTicketReport } from '../ticketLanding';
 
 /**
  * The text a refine report has already delivered, for candidate extraction.
@@ -324,6 +325,13 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
             // have `ui(tools)` to answer from.
             toolRegistry: init.tools,
             handshakeNotices: notices,
+            // The binding the child says it holds, without its reports (those
+            // are folded in below and are the Ticket's business, not the
+            // bucket's). Null from a runtime that predates the field.
+            ticketBinding:
+              init.ticket === null
+                ? null
+                : { id: init.ticket.id, title: init.ticket.title, brief: init.ticket.brief },
             entries: [...bucket.entries, ...notices],
             // The handshake means this child is up, so a previous refusal is no
             // longer true.
@@ -375,6 +383,9 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
           if (init.sessionId !== '') {
             get().noteTaskRunInit(key, init.sessionId);
           }
+          // A Ticket-bound session: back-fill the Assignment, fold in reports
+          // this window missed, then clear a binding that no longer holds.
+          landTicketInit(ctx, key, init);
           // The first screen shows the four most recent sessions, and only this
           // message ever asks for them. Without it those slots stay empty until
           // somebody opens `/resume`, and `Ctrl+1..9` has nothing to switch to.
@@ -563,6 +574,10 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
 
         case 'ui': {
           switch (msg.kind) {
+            case 'ticket_report': {
+              landTicketReport(ctx, msg);
+              break;
+            }
             case 'state': {
               applyStateSnapshot(set, get, key, projectState(msg));
               break;
@@ -1164,7 +1179,13 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
           // nothing.
           set({ ...releaseModalsOf(get(), key, get().activeKey) });
           patch(key, {
-            runtimeExit: { code: msg.code, requested: msg.requested },
+            runtimeExit: {
+              code: msg.code,
+              requested: msg.requested,
+              // Read just below by `landTicketExit`, which tells a dropped
+              // connection from a crash by this and not by the workspace type.
+              ...(msg.reason !== undefined ? { reason: msg.reason } : {}),
+            },
             entries: settleAbandonedTurn(bucket.entries),
             activeRunId: null,
             // Cleared so the next turn is not attributed against a dead run.
@@ -1214,6 +1235,12 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
               if (verdict !== null) get().noteTaskRunOutcome(key, verdict, null);
             }
           }
+
+          // A Ticket whose Assignment ran in this child hears about it. The
+          // machine moves only a running Ticket, and only for an exit nobody
+          // asked for (invariant 6); a requested one is a person closing a
+          // window, which the Ticket survives as "not connected".
+          landTicketExit(ctx, key, bucket.sessionId, { requested: msg.requested, reason: msg.reason });
           break;
         }
 

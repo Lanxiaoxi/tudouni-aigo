@@ -7,8 +7,16 @@ import {
   notifyContent,
   notifyDestination,
   sendNotification,
+  decodeTicketNotifySnapshot,
+  ticketNotifyContent,
+  ticketNotifyPass,
   type NotifyReason,
+  type TicketNotifyReason,
+  type TicketNotifyRow,
 } from '@/runtime/notify';
+import { selectTicketNotifyKey } from '@/state/selectors/tickets';
+import type { TicketStatus } from '@/ticket/model';
+import { currentAssignment } from '@/ticket/machine';
 import { makeT } from '@/i18n';
 import type { RowStatus } from '@/state/store';
 
@@ -137,6 +145,20 @@ export function useNotifications(): void {
     seen.current = next;
   }, [key, enabled]);
 
+  // Tickets entering `needs_you` or `review` (design 7.3). Its own watcher and
+  // its own memory, because a Ticket's status is not a session's: the two
+  // answer different questions and neither may suppress the other.
+  const ticketKey = useApp(selectTicketNotifyKey);
+  const ticketSeen = useRef(new Map<string, TicketStatus>());
+  useEffect(() => {
+    const { say, next } = ticketNotifyPass(ticketSeen.current, decodeTicketNotifySnapshot(ticketKey), {
+      enabled,
+      windowForeground: foreground.current,
+    });
+    ticketSeen.current = next;
+    for (const item of say) void deliverTicket(item.reason, item.row);
+  }, [ticketKey, enabled]);
+
   // The click back: show the session the notification was about.
   //
   // Registered once, for the window, and reading the store through
@@ -194,6 +216,25 @@ export function useNotifications(): void {
       // showing for it, so the click closes over and does nothing.
     });
   }, []);
+}
+
+/**
+ * A Ticket's toast. The target is its Assignment's session, so the click goes
+ * where the person can act: the live conversation, or a reopen of the saved one.
+ */
+async function deliverTicket(reason: TicketNotifyReason, row: TicketNotifyRow): Promise<void> {
+  const s = useApp.getState();
+  const ticket = s.tickets.find((item) => item.id === row.ticketId);
+  if (ticket === undefined) return;
+  const bucket = row.key !== '' ? s.sessions[row.key] : undefined;
+  const assignment = currentAssignment(ticket);
+  const workspace =
+    bucket?.session?.workspace ?? bucket?.workspace ?? assignment?.executor.workspace ?? '';
+  await sendNotification(ticketNotifyContent(makeT(), reason, ticket), {
+    key: row.key,
+    sessionId: row.sessionId,
+    workspace,
+  });
 }
 
 /**

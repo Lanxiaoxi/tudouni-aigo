@@ -59,11 +59,15 @@
  * this tree (`focusIsInTerminal`, `listKeyAction`, `contentBoxOf`,
  * `resolveAttachWorkspace`) exist to make assertable.
  */
+import type { BoardKind } from '@/state/storeShape';
+
 export type ConversationView =
   | 'startup-problem'
   | 'session-problem'
   | 'terminal'
   | 'board'
+  // The ticket board: same slot and same reasons as the session board (4).
+  | 'tickets'
   | 'welcome'
   | 'booting'
   | 'stream';
@@ -76,14 +80,14 @@ export interface ConversationViewInput {
   /** `SessionRuntime.activeTerminalId`, read from the session on screen. */
   attachedTerminalId: string | null;
   /**
-   * `AppStore.boardOpen` — the session board is showing.
+   * `AppStore.board` — which board is showing, if any.
    *
-   * Window-level, deliberately not read off the session on screen: the board
-   * answers "what is every session in this workspace doing", which is not a fact
-   * about one conversation. It is still *ordered* here, because the column can
-   * only draw one thing at a time.
+   * Window-level, deliberately not read off the session on screen: a board
+   * answers a question about every session (or every ticket), which is not a
+   * fact about one conversation. It is still *ordered* here, because the column
+   * can only draw one thing at a time.
    */
-  boardOpen: boolean;
+  board: BoardKind | null;
   /** `AppStore.activeKey !== null`. */
   hasSession: boolean;
   /** `SessionRuntime.ready`. */
@@ -104,7 +108,8 @@ export function conversationView(input: ConversationViewInput): ConversationView
   // on screen, and the board is about all of them. A workspace whose session
   // just spoke, one that has not spoken yet, and one that is still booting are
   // all states the board must be reachable from.
-  if (input.boardOpen) return 'board';
+  if (input.board === 'sessions') return 'board';
+  if (input.board === 'tickets') return 'tickets';
   if (!input.hasSession || (input.ready && !input.hasConversation)) return 'welcome';
   if (!input.ready) return 'booting';
   return 'stream';
@@ -123,7 +128,7 @@ export function conversationView(input: ConversationViewInput): ConversationView
 export function conversationViewOf(s: {
   startupProblem: string | null;
   activeKey: string | null;
-  boardOpen: boolean;
+  board: BoardKind | null;
   sessions: Record<string, { problem: string | null; activeTerminalId: string | null; ready: boolean; entries: { kind: string }[] } | undefined>;
 }): ConversationView {
   const rt = s.activeKey === null ? undefined : s.sessions[s.activeKey];
@@ -131,7 +136,7 @@ export function conversationViewOf(s: {
     startupProblem: s.startupProblem !== null,
     sessionProblem: rt?.problem != null,
     attachedTerminalId: rt?.activeTerminalId ?? null,
-    boardOpen: s.boardOpen,
+    board: s.board,
     hasSession: s.activeKey !== null,
     ready: rt?.ready ?? false,
     hasConversation: (rt?.entries ?? []).some((entry) => entry.kind !== 'note'),
@@ -159,7 +164,9 @@ export function conversationViewOf(s: {
  * that gives it one again.
  */
 export function showsComposer(view: ConversationView): boolean {
-  return view !== 'terminal' && view !== 'board';
+  // The Ticket board withdraws it for the same reason: it is a list of work,
+  // and a message typed there would have no addressee.
+  return view !== 'terminal' && view !== 'board' && view !== 'tickets';
 }
 
 /**

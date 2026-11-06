@@ -45,8 +45,10 @@ import type {
   UiSkillsMsg,
   UiStateMsg,
   UiStatusMsg,
+  UiTicketReportMsg,
   UiToolsMsg,
 } from '@/protocol/types';
+import type { Report } from '@/ticket/model';
 
 /* ============================================================
    The status bar's coarse phase
@@ -781,6 +783,65 @@ export interface VmInit {
   tools: VmInitTool[];
   notices: Array<{ level: 'info' | 'warn'; code: string; text: string }>;
   protocol: number;
+  /** The Ticket the session is bound to, or `null`. A runtime that predates
+   *  protocol 18 sends no key at all, which is the same statement. */
+  ticket: VmInitTicket | null;
+}
+
+/** `init.ticket`, projected: the binding and every report the session made. */
+export interface VmInitTicket {
+  id: string;
+  title: string;
+  brief: string;
+  reports: Report[];
+}
+
+/** One report from `init.ticket.reports`, or `null` when it is malformed.
+ *  The record has no session id (it is the session's own), so the handshake's
+ *  fills it in: a report must say who made it for the machine to judge it. */
+function projectReport(raw: unknown, sessionId: string): Report | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const reportId = str(r.report_id);
+  if (reportId === '') return null;
+  if (r.status !== 'done' && r.status !== 'blocked') return null;
+  const atMs = num(r.at_ms);
+  if (atMs === null) return null;
+  return {
+    reportId,
+    sessionId,
+    status: r.status,
+    summary: str(r.summary),
+    question: typeof r.question === 'string' ? r.question : null,
+    evidence: strings(r.evidence),
+    atMs,
+  };
+}
+
+/**
+ * `ui(ticket_report)`, projected. `null` when it cannot name a Ticket and a
+ * report - a half-formed message is dropped rather than guessed at, because
+ * the machine would otherwise record a fact nobody made.
+ */
+export function projectTicketReport(
+  msg: UiTicketReportMsg,
+): { ticketId: string; report: Report } | null {
+  const ticketId = str(msg.ticket_id);
+  if (ticketId === '') return null;
+  const report = projectReport(msg, str(msg.session_id));
+  return report === null ? null : { ticketId, report };
+}
+
+function projectInitTicket(raw: InitMsg['ticket'], sessionId: string): VmInitTicket | null {
+  if (raw === null || raw === undefined || typeof raw !== 'object') return null;
+  const id = str(raw.id);
+  if (id === '') return null;
+  const reports: Report[] = [];
+  for (const item of Array.isArray(raw.reports) ? raw.reports : []) {
+    const report = projectReport(item, sessionId);
+    if (report !== null) reports.push(report);
+  }
+  return { id, title: str(raw.title), brief: str(raw.brief), reports };
 }
 
 export function projectInit(msg: InitMsg): VmInit {
@@ -815,6 +876,7 @@ export function projectInit(msg: InitMsg): VmInit {
       text: str(item.text),
     })),
     protocol: num(msg.protocol) ?? 0,
+    ticket: projectInitTicket(msg.ticket, str(msg.session_id)),
   };
 }
 

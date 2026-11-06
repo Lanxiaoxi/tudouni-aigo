@@ -70,6 +70,8 @@ import { isHosted } from './tauri';
 import type { RowStatus } from '@/state/store';
 import type { Translate } from '@/i18n';
 import { baseName, oneLine } from '@/utils/format';
+import { TICKET_STATUSES, ticketTitle, type Ticket, type TicketStatus } from '@/ticket/model';
+import { needsYouCause } from '@/ticket/view';
 
 /* ============================================================
    The rule — pure functions, so they can be asserted without an OS
@@ -352,6 +354,148 @@ export function notifyContent(
     // neither half is known — a session whose `init` has not landed has no id,
     // and " · " alone would read as a missing value where there is none.
     body: [where, preview].filter((part) => part !== '').join('\n'),
+  };
+}
+
+/* ============================================================
+   Tickets - the same rule, one level up (docs/design/ticket.md 7.3)
+   ============================================================ */
+
+/** Why a Ticket is worth a toast: it moved into a state only a person can move. */
+export type TicketNotifyReason = 'needs-you' | 'review';
+
+/**
+ * Whether a Ticket changing from `previous` to `next` is news.
+ *
+ * Only **entering** `needs_you` or `review` is. `undefined` (first sight: the
+ * list was just read, or the Ticket was just made) is never news for the reason
+ * `notifyReason` gives, and an unchanged status is never news whatever it is -
+ * so a card re-rendering, or an event recorded without a move (a second report
+ * on a Ticket already in review), says nothing.
+ */
+export function ticketNotifyReason(
+  previous: TicketStatus | undefined,
+  next: TicketStatus,
+): TicketNotifyReason | null {
+  if (previous === undefined || previous === next) return null;
+  if (next === 'needs_you') return 'needs-you';
+  if (next === 'review') return 'review';
+  return null;
+}
+
+/** One Ticket as the notifier needs to see it. */
+export interface TicketNotifyRow {
+  ticketId: string;
+  status: TicketStatus;
+  /** The bucket the current Assignment's session is in (alive or not), or empty
+   *  when none is open. This is "which conversation would show it". */
+  key: string;
+  /** The Assignment's session id, empty before `init` named it. */
+  sessionId: string;
+}
+
+/** What the Ticket watcher subscribes to, decoded. */
+export interface TicketNotifySnapshot {
+  /** The session being drawn, or empty when nothing is open. */
+  activeKey: string;
+  rows: TicketNotifyRow[];
+}
+
+/** The compact form, for the reason `encodeNotifyRows` gives: one string, so
+ *  the watcher wakes on a status or a binding change and not on every token. */
+export function encodeTicketNotifySnapshot(snapshot: TicketNotifySnapshot): string {
+  const rows = snapshot.rows
+    .map((row) => [row.ticketId, row.status, row.key, row.sessionId].join(NOTIFY_FIELD))
+    .join(NOTIFY_ROW);
+  return `${snapshot.activeKey}${NOTIFY_SECTION}${rows}`;
+}
+
+/** The inverse. A malformed row is dropped, never guessed at. */
+export function decodeTicketNotifySnapshot(text: string): TicketNotifySnapshot {
+  const [activeKey = '', rows = ''] = text.split(NOTIFY_SECTION);
+  const out: TicketNotifyRow[] = [];
+  if (rows !== '') {
+    for (const part of rows.split(NOTIFY_ROW)) {
+      const fields = part.split(NOTIFY_FIELD);
+      if (fields.length !== 4) continue;
+      const [ticketId, status, key, sessionId] = fields;
+      if (ticketId === '' || !(TICKET_STATUSES as readonly string[]).includes(status)) continue;
+      out.push({ ticketId, status: status as TicketStatus, key, sessionId });
+    }
+  }
+  return { activeKey, rows: out };
+}
+
+/** A Ticket the watcher decided to speak about. */
+export interface TicketNotification {
+  row: TicketNotifyRow;
+  reason: TicketNotifyReason;
+}
+
+/**
+ * One pass of the Ticket watcher: what to say, and what to remember.
+ *
+ * Pure, so "only on entering, never while looking at it, nothing when switched
+ * off, and switching it on does not replay what changed meanwhile" can be
+ * asserted without a window. The returned map is built from **every** row even
+ * when `enabled` is false, for the reason the session watcher does the same.
+ *
+ * "Looking at it" is `isWatched` on the Assignment's own session: it is the
+ * conversation on screen **and** the window is in the foreground. The Ticket
+ * board does not count - a card moving into Needs you is not the person seeing
+ * the question, and the board is exactly where they would have been told.
+ */
+export function ticketNotifyPass(
+  previous: ReadonlyMap<string, TicketStatus>,
+  snapshot: TicketNotifySnapshot,
+  options: { enabled: boolean; windowForeground: boolean },
+): { say: TicketNotification[]; next: Map<string, TicketStatus> } {
+  const next = new Map<string, TicketStatus>();
+  const say: TicketNotification[] = [];
+  for (const row of snapshot.rows) {
+    next.set(row.ticketId, row.status);
+    if (!options.enabled) continue;
+    const reason = ticketNotifyReason(previous.get(row.ticketId), row.status);
+    if (reason === null) continue;
+    const watched =
+      row.key !== '' &&
+      isWatched({
+        key: row.key,
+        activeKey: snapshot.activeKey === '' ? null : snapshot.activeKey,
+        windowForeground: options.windowForeground,
+        modalKey: null,
+        modalVisible: false,
+      });
+    if (!watched) say.push({ row, reason });
+  }
+  return { say, next };
+}
+
+/**
+ * The toast's text: the reason is the title, the Ticket is the body, and the
+ * line under it says what the person is being asked - the agent's question, or
+ * why the session went away, or what it says it did.
+ */
+export function ticketNotifyContent(
+  t: Translate,
+  reason: TicketNotifyReason,
+  ticket: Ticket,
+): NotifyContent {
+  let detail = '';
+  if (reason === 'review') {
+    detail = ticket.lastReport?.summary ?? '';
+  } else {
+    const cause = needsYouCause(ticket);
+    if (cause === 'disconnected') detail = t('ticket.cause.disconnected');
+    else if (cause === 'crashed') detail = t('ticket.cause.crashed');
+    else detail = ticket.lastReport?.question ?? ticket.lastReport?.summary ?? '';
+  }
+  const name = ticketTitle(ticket);
+  return {
+    title: t(reason === 'review' ? 'ticket.notify.review' : 'ticket.notify.needsYou'),
+    body: [oneLine(name === '' ? t('ticket.untitled') : name, 80), oneLine(detail, 140)]
+      .filter((part) => part !== '')
+      .join('\n'),
   };
 }
 

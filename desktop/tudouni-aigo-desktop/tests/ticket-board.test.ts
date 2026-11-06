@@ -1,0 +1,658 @@
+/**
+ * The Ticket board's rules: which board is on screen, what the board derives
+ * from a Ticket, and what a Ticket's session actions put on the wire.
+ *
+ * Three halves, for the three ways this feature can go quietly wrong:
+ *
+ *   - **Boards are exclusive** and the Ticket board is a conversation-column
+ *     occupant like the session board (composer withdrawn, terminal outranks).
+ *   - **The card is a pure reading of the record** (`ticket/view.ts`): column,
+ *     cause, buttons, whether "Continue" can reach anything. A wrong branch
+ *     throws nothing and draws something plausible.
+ *   - **The session actions' order is the contract**: `ticket_bind` only to a
+ *     protocol-18 runtime and before `set_model`; `set_autopilot` before the
+ *     first message; a default start only pre-fills; a failed open changes
+ *     nothing; resume goes to the machine the session ran on.
+ *
+ * Driven against the same fake Tauri host `task.test.ts` uses.
+ */
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { conversationView, showsComposer, type ConversationViewInput } from '@/conversationView';
+import { createSessionBucket, useApp, type SessionRuntime } from '@/state/store';
+import { registerRuntime, unregisterRuntime } from '@/runtime/bus';
+import { apply, currentAssignment, type TicketInput } from '@/ticket/machine';
+import { emptyTicket, type Report, type Ticket } from '@/ticket/model';
+import {
+  canDrop,
+  canResumeAssignment,
+  columnOf,
+  groupTickets,
+  needsYouCause,
+  ticketActions,
+} from '@/ticket/view';
+import { liveKeyOfAssignment, selectTicketAttention } from '@/state/selectors/tickets';
+
+/* ============================================================
+   The host
+   ============================================================ */
+
+let localCalls: Record<string, unknown>[] = [];
+let remoteCalls: Record<string, unknown>[] = [];
+let nextKey = 500;
+let refuseLocal: string | null = null;
+
+(globalThis as { window?: unknown }).window = {
+  __TAURI_INTERNALS__: {
+    invoke(cmd: string, args: Record<string, unknown>) {
+      if (cmd === 'runtime_attach') {
+        if (refuseLocal !== null) return Promise.reject(new Error(refuseLocal));
+        localCalls.push((args.options ?? {}) as Record<string, unknown>);
+        return Promise.resolve(nextKey++);
+      }
+      if (cmd === 'runtime_attach_remote') {
+        remoteCalls.push((args.options ?? {}) as Record<string, unknown>);
+        return Promise.resolve(nextKey++);
+      }
+      if (cmd === 'check_remote_config') {
+        return Promise.resolve({ status: 'valid', fingerprint: 'fp-1', error: null });
+      }
+      if (cmd === 'read_local_config_text') return Promise.resolve({ text: '{}', fingerprint: 'fp-1' });
+      if (cmd === 'runtime_stderr') return Promise.resolve([]);
+      return Promise.resolve(null);
+    },
+  },
+};
+
+const HOST = {
+  id: 'ssh-1',
+  label: 'rvv',
+  host: '10.2.0.4',
+  port: 22,
+  user: 'tudouni',
+  identityFiles: [],
+  configPolicy: 'use-remote' as const,
+  configBaselineFingerprint: 'fp-1',
+};
+const ENTRY = {
+  id: 'rw-1',
+  hostId: HOST.id,
+  remotePath: '/repo/rvv-project',
+  remoteBinary: '/home/tudouni/.tudouni/runtime/current/tudouni-aigo',
+  label: 'rvv:rvv-project',
+};
+
+function liveBucket(key: string, workspace: string, protocol: number, sessionId: string): SessionRuntime {
+  const bucket = createSessionBucket(key, workspace, { ericai: false, maxSteps: null }, null);
+  bucket.ready = true;
+  bucket.sessionId = sessionId;
+  bucket.session = {
+    ...(bucket.session ?? ({} as NonNullable<SessionRuntime['session']>)),
+    resumed: true,
+    id: sessionId,
+    workspace,
+    protocol,
+  } as never;
+  return bucket;
+}
+
+/** A ready local session on screen, and a clean Ticket list. */
+function screen(protocol = 18, sessionId = 'S1'): void {
+  useApp.setState({
+    sessions: { 'k-active': liveBucket('k-active', 'C:/work', protocol, sessionId) },
+    order: ['k-active'],
+    activeKey: 'k-active',
+    modal: null,
+    pendingModals: [],
+    panel: null,
+    board: null,
+    startupProblem: null,
+    startupNotice: null,
+    workspaces: ['C:/work'],
+    sshHosts: [HOST],
+    remoteWorkspaces: [ENTRY],
+    lastWorkspace: 'C:/work',
+    tickets: [],
+    ticketsLoaded: true,
+    ticketsReadOnly: false,
+    ticketsProblem: null,
+    ticketSeed: null,
+  });
+  localCalls = [];
+  remoteCalls = [];
+  refuseLocal = null;
+}
+
+/** Everything sent to `key`, in order. */
+function capture(key: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  registerRuntime({
+    key,
+    send: (m) => out.push(m as unknown as Record<string, unknown>),
+    subscribe: () => () => undefined,
+    dispose: () => undefined,
+  });
+  return out;
+}
+
+async function until(what: string, ok: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!ok()) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/** The child answered its handshake: ready, with a runtime protocol and id. */
+function handshake(key: string, protocol: number, sessionId: string): void {
+  useApp.setState((s) => ({
+    sessions: {
+      ...s.sessions,
+      [key]: {
+        ...s.sessions[key],
+        ready: true,
+        sessionId,
+        session: { ...(s.sessions[key].session ?? {}), protocol, id: sessionId } as never,
+      },
+    },
+  }));
+}
+
+const REPORT = (patch: Partial<Report> = {}): Report => ({
+  reportId: 'r1',
+  sessionId: 'S1',
+  status: 'done',
+  summary: 'did it',
+  question: null,
+  evidence: [],
+  atMs: 3_000,
+  ...patch,
+});
+
+/** A Ticket brought to `status` through the machine, never by writing fields. */
+function ticketAt(
+  status: 'open' | 'running' | 'needs_you' | 'review',
+  patch: Partial<Ticket> = {},
+  executor: { remoteWorkspaceId?: string | null; sessionId?: string; sessionKey?: string } = {},
+): Ticket {
+  let t: Ticket = { ...emptyTicket(1_000), title: 'T', brief: 'do the thing', ...patch };
+  const run = (input: TicketInput): void => {
+    const result = apply(t, input);
+    if (!result.ok) throw new Error(`refused ${input.type}: ${result.reason}`);
+    t = result.ticket;
+  };
+  if (status === 'open') return t;
+  run({
+    type: 'start',
+    at: 2_000,
+    assignmentId: 'as-1',
+    sessionKey: executor.sessionKey ?? 'k-active',
+    remoteWorkspaceId: executor.remoteWorkspaceId ?? null,
+    workspace: executor.remoteWorkspaceId ? ENTRY.remotePath : 'C:/work',
+  });
+  const sid = executor.sessionId ?? 'S1';
+  if (sid !== '') run({ type: 'assignmentStarted', at: 2_001, sessionKey: executor.sessionKey ?? 'k-active', sessionId: sid });
+  if (status === 'review') run({ type: 'reported', at: 3_000, report: REPORT({ sessionId: sid }) });
+  if (status === 'needs_you') {
+    run({
+      type: 'reported',
+      at: 3_000,
+      report: REPORT({ sessionId: sid, status: 'blocked', question: 'which db?' }),
+    });
+  }
+  return t;
+}
+
+function install(...tickets: Ticket[]): void {
+  useApp.setState({ tickets });
+}
+
+/* ============================================================
+   Boards: exclusive, and one column occupant each
+   ============================================================ */
+
+test('opening one board puts the other away, and null closes whichever is up', () => {
+  screen();
+  useApp.getState().setBoard('sessions');
+  assert.equal(useApp.getState().board, 'sessions');
+  useApp.getState().setBoard('tickets');
+  assert.equal(useApp.getState().board, 'tickets', 'the ticket board replaced the session board');
+  useApp.getState().setBoard('sessions');
+  assert.equal(useApp.getState().board, 'sessions', 'and back: one field, so no stacking');
+  useApp.getState().setBoard(null);
+  assert.equal(useApp.getState().board, null);
+});
+
+test('toggleBoard closes the board that is up and switches rather than stacks', () => {
+  screen();
+  useApp.getState().toggleBoard('tickets');
+  assert.equal(useApp.getState().board, 'tickets');
+  useApp.getState().toggleBoard('sessions');
+  assert.equal(useApp.getState().board, 'sessions', 'pressing the other board\u2019s button switches');
+  useApp.getState().toggleBoard('sessions');
+  assert.equal(useApp.getState().board, null, 'pressing the open board\u2019s own button closes it');
+});
+
+test('opening a board closes a panel, and the Esc rung (`board !== null`) covers both', () => {
+  screen();
+  useApp.setState({ panel: 'tasks' });
+  useApp.getState().setBoard('tickets');
+  assert.equal(useApp.getState().panel, null, 'a panel stacked over a view would hide it');
+  // `useGlobalKeys` closes "whichever board" with `s.board !== null` then
+  // `setBoard(null)`; that rung is the same for both values.
+  for (const kind of ['sessions', 'tickets'] as const) {
+    useApp.getState().setBoard(kind);
+    const s = useApp.getState();
+    if (s.board !== null) s.setBoard(null);
+    assert.equal(useApp.getState().board, null);
+  }
+});
+
+function healthy(overrides: Partial<ConversationViewInput> = {}): ConversationViewInput {
+  return {
+    startupProblem: false,
+    sessionProblem: false,
+    attachedTerminalId: null,
+    board: null,
+    hasSession: true,
+    ready: true,
+    hasConversation: true,
+    ...overrides,
+  };
+}
+
+test('the ticket board is a column occupant: above the first screen, below a terminal, no composer', () => {
+  assert.equal(conversationView(healthy({ board: 'tickets' })), 'tickets');
+  assert.equal(conversationView(healthy({ board: 'tickets', hasConversation: false })), 'tickets', 'covers the greeting');
+  assert.equal(conversationView(healthy({ board: 'tickets', hasSession: false })), 'tickets', 'reachable with no session at all');
+  assert.equal(conversationView(healthy({ board: 'tickets', ready: false })), 'tickets');
+  assert.equal(
+    conversationView(healthy({ board: 'tickets', attachedTerminalId: 'term-01' })),
+    'terminal',
+    'nothing may cover the shell\u2019s way out',
+  );
+  assert.equal(conversationView(healthy({ board: 'tickets', sessionProblem: true })), 'session-problem');
+  assert.equal(showsComposer('tickets'), false, 'a message typed there would have no addressee');
+  assert.equal(conversationView(healthy({ board: 'sessions' })), 'board', 'the session board is unchanged');
+});
+
+test('the Ticket board needs no live session to open, and opening it does not touch the sessions', () => {
+  screen();
+  const before = useApp.getState().order;
+  useApp.getState().setBoard('tickets');
+  assert.equal(useApp.getState().order, before);
+  useApp.setState({ sessions: {}, order: [], activeKey: null });
+  useApp.getState().setBoard('tickets');
+  assert.equal(useApp.getState().board, 'tickets');
+});
+
+/* ============================================================
+   What the card reads from the record
+   ============================================================ */
+
+test('dropped has no column of its own: it folds into Done', () => {
+  assert.equal(columnOf('dropped'), 'done');
+  assert.equal(columnOf('needs_you'), 'needs_you');
+  const done = { ...ticketAt('review'), status: 'done' as const };
+  const dropped = { ...emptyTicket(1), status: 'dropped' as const };
+  const groups = groupTickets([ticketAt('open'), ticketAt('running'), done, dropped, ticketAt('review')]);
+  assert.deepEqual(
+    [groups.open.length, groups.running.length, groups.needs_you.length, groups.review.length, groups.done.length, groups.dropped.length],
+    [1, 1, 0, 1, 1, 1],
+  );
+});
+
+test('the buttons follow the status, and "Continue" is only the wording of "Open session"', () => {
+  assert.deepEqual(ticketActions('open', false), ['start', 'runNow']);
+  assert.deepEqual(ticketActions('running', true), ['open']);
+  assert.deepEqual(ticketActions('running', false), ['continue'], 'running but not connected');
+  assert.deepEqual(ticketActions('needs_you', true), ['open', 'restart']);
+  assert.deepEqual(ticketActions('needs_you', false), ['continue', 'restart']);
+  assert.deepEqual(ticketActions('review', false), ['open', 'accept', 'sendBack']);
+  assert.deepEqual(ticketActions('done', false), ['reopen']);
+  assert.deepEqual(ticketActions('dropped', false), ['reopen']);
+  assert.equal(canDrop('open') && canDrop('running') && canDrop('needs_you') && canDrop('review'), true);
+  assert.equal(canDrop('done') || canDrop('dropped'), false);
+});
+
+test('a lost connection reads as "disconnected", a blocked report as a question, a crash as a crash', () => {
+  const started = ticketAt('running');
+  const exit = (reason: 'disconnected' | 'crashed'): Ticket => {
+    const r = apply(started, { type: 'assignmentExited', at: 4_000, sessionKey: 'k-active', sessionId: 'S1', requested: false, reason });
+    if (!r.ok) throw new Error(r.reason);
+    return r.ticket;
+  };
+  assert.equal(needsYouCause(exit('disconnected')), 'disconnected');
+  assert.equal(needsYouCause(exit('crashed')), 'crashed');
+  assert.equal(needsYouCause(ticketAt('needs_you')), 'blocked');
+  assert.equal(needsYouCause(started), null, 'only needs_you has a cause');
+});
+
+test('"Continue" is judged from the Assignment, not from the Ticket\u2019s workspace ref', () => {
+  const remote = new Set(['rw-1']);
+  // A Ticket made against "the workspace on screen" has a ref that means
+  // nothing after a restart; its Assignment still knows where it ran.
+  const local = ticketAt('running');
+  assert.equal(local.workspace.kind, 'active');
+  assert.equal(canResumeAssignment(local, currentAssignment(local), remote), true);
+  const viaRemote = ticketAt('running', {}, { remoteWorkspaceId: 'rw-1' });
+  assert.equal(canResumeAssignment(viaRemote, currentAssignment(viaRemote), remote), true);
+  assert.equal(canResumeAssignment(viaRemote, currentAssignment(viaRemote), new Set()), false, 'its saved workspace was deleted');
+  const noId = ticketAt('running', {}, { sessionId: '' });
+  assert.equal(canResumeAssignment(noId, currentAssignment(noId), remote), false, 'no saved session id to resume');
+  assert.equal(canResumeAssignment(local, null, remote), false);
+});
+
+test('a session is "live" only while its child is: an exited or failed bucket is not', () => {
+  screen();
+  const t = ticketAt('running');
+  const assignment = currentAssignment(t);
+  assert.equal(liveKeyOfAssignment(useApp.getState(), assignment), 'k-active');
+  useApp.setState((s) => ({
+    sessions: { 'k-active': { ...s.sessions['k-active'], runtimeExit: { code: 1, requested: false } } },
+  }));
+  assert.equal(liveKeyOfAssignment(useApp.getState(), assignment), null, 'the bucket stays but nothing can hear us');
+  assert.equal(liveKeyOfAssignment(useApp.getState(), null), null);
+});
+
+test('the workbench badge counts the two states only a person can move', () => {
+  screen();
+  install(ticketAt('open'), ticketAt('running'), ticketAt('needs_you'), ticketAt('review'));
+  assert.equal(selectTicketAttention(useApp.getState()), 2);
+});
+
+/* ============================================================
+   startTicket: the order on the wire
+   ============================================================ */
+
+test('a default start opens a new session, binds it before the model, and only pre-fills the brief', async () => {
+  screen();
+  const t = { ...ticketAt('open'), model: 'prov/m1' };
+  install(t);
+
+  const key = await useApp.getState().startTicket(t.id);
+  assert.ok(key, 'a start that opened a session returns its key');
+  assert.equal(localCalls.length, 1, 'the local spawn is the open path');
+  assert.notEqual(key, 'k-active', 'a new bucket, never the one already on screen');
+
+  let ticket = useApp.getState().tickets[0];
+  assert.equal(ticket.status, 'running');
+  assert.equal(currentAssignment(ticket)?.executor.sessionKey, key);
+  assert.equal(currentAssignment(ticket)?.executor.workspace, 'C:/work', 'where it ran is recorded for Continue');
+  assert.equal(currentAssignment(ticket)?.executor.remoteWorkspaceId, null);
+
+  const out = capture(key);
+  handshake(key, 18, 'S-new');
+  await until('the brief to be pre-filled', () => useApp.getState().sessions[key]?.draft === 'do the thing');
+
+  assert.deepEqual(
+    out.map((m) => m.t),
+    ['ticket_bind', 'set_model'],
+    'bind first (it registers the report tool), then the model; nothing is sent',
+  );
+  assert.deepEqual(out[0].ticket, { id: t.id, title: 'T', brief: 'do the thing' });
+  assert.equal(out[1].model, 'prov/m1');
+  assert.equal(useApp.getState().sessions[key]?.hasSpoken, false);
+
+  ticket = useApp.getState().tickets[0];
+  assert.equal(currentAssignment(ticket)?.executor.sessionId, 'S-new', 'init\u2019s id is written back');
+  unregisterRuntime(key);
+});
+
+test('"run now" turns autopilot on before the first message, which is the brief', async () => {
+  screen();
+  const t = { ...ticketAt('open'), model: 'prov/m1' };
+  install(t);
+  const key = await useApp.getState().startTicket(t.id, { runNow: true });
+  assert.ok(key);
+  const out = capture(key);
+  handshake(key, 18, 'S-new');
+  await until('the brief to be sent', () => out.some((m) => m.t === 'user_message'));
+
+  assert.deepEqual(out.map((m) => m.t), ['ticket_bind', 'set_model', 'set_autopilot', 'user_message']);
+  assert.equal(out[2].on, true);
+  assert.equal(out[3].text, 'do the thing');
+  assert.equal(useApp.getState().sessions[key]?.draft, '', 'sent, not parked');
+  unregisterRuntime(key);
+});
+
+test('a runtime older than protocol 18 is never sent ticket_bind', async () => {
+  screen();
+  const t = ticketAt('open');
+  install(t);
+  const key = await useApp.getState().startTicket(t.id, { runNow: true });
+  assert.ok(key);
+  const out = capture(key);
+  handshake(key, 17, 'S-old');
+  await until('the brief to be sent', () => out.some((m) => m.t === 'user_message'));
+  assert.equal(out.some((m) => m.t === 'ticket_bind'), false, 'an old runtime would drop it and the card would lie');
+  assert.equal(useApp.getState().tickets[0].status, 'running', 'the Ticket still starts');
+  unregisterRuntime(key);
+});
+
+test('a start whose open fails or names a missing workspace leaves the Ticket untouched', async () => {
+  screen();
+  const t = ticketAt('open');
+  install(t, { ...t, id: 'tk-remote', workspace: { kind: 'remote', id: 'rw-404' } });
+
+  refuseLocal = 'the workspace C:/refused is not a directory';
+  assert.equal(await useApp.getState().startTicket(t.id), null, 'a refused open is not a start');
+  refuseLocal = null;
+  assert.equal(await useApp.getState().startTicket('tk-remote'), null, 'an unknown remote workspace starts nothing');
+
+  for (const row of useApp.getState().tickets) {
+    assert.equal(row.status, 'open');
+    assert.equal(row.assignments.length, 0, 'no Assignment without a session');
+  }
+});
+
+test('a start is refused before opening anything when the Ticket cannot start', async () => {
+  screen();
+  const empty = { ...ticketAt('open'), brief: '   ' };
+  const running = ticketAt('running');
+  install(empty, { ...running, id: 'tk-running' });
+  assert.equal(await useApp.getState().startTicket(empty.id), null);
+  assert.equal(await useApp.getState().startTicket('tk-running'), null);
+  assert.equal(localCalls.length, 0, 'no session was left behind by a refused command');
+});
+
+test('a double press opens one session, not two', async () => {
+  screen();
+  const t = ticketAt('open');
+  install(t);
+  const [a, b] = await Promise.all([useApp.getState().startTicket(t.id), useApp.getState().startTicket(t.id)]);
+  assert.equal([a, b].filter((k) => k !== null).length, 1);
+  assert.equal(localCalls.length, 1);
+});
+
+test('starting over a blocked Ticket supersedes the old Assignment and unbinds its live session', async () => {
+  screen(18, 'S1');
+  const old = capture('k-active');
+  const t = ticketAt('needs_you');
+  install(t);
+
+  const key = await useApp.getState().restartTicket(t.id);
+  assert.ok(key);
+  const ticket = useApp.getState().tickets[0];
+  assert.equal(ticket.status, 'running');
+  assert.equal(ticket.assignments.length, 2);
+  assert.equal(ticket.assignments[0].end, 'superseded');
+  assert.deepEqual(old.map((m) => m.t), ['ticket_bind']);
+  assert.equal(old[0].ticket, null, 'the old session no longer reports to this Ticket');
+  unregisterRuntime('k-active');
+  unregisterRuntime(key);
+});
+
+/* ============================================================
+   accept / drop / send back / continue
+   ============================================================ */
+
+test('accept and drop unbind a session that is still attached, and say nothing to a closed one', () => {
+  screen(18, 'S1');
+  const out = capture('k-active');
+  const review = ticketAt('review');
+  const running = { ...ticketAt('running'), id: 'tk-2' };
+  install(review, running);
+
+  assert.equal(useApp.getState().acceptTicket(review.id).ok, true);
+  assert.equal(useApp.getState().tickets[0].status, 'done');
+  assert.deepEqual(out.map((m) => m.t), ['ticket_bind']);
+  assert.equal(out[0].ticket, null);
+
+  assert.equal(useApp.getState().dropTicket('tk-2').ok, true);
+  assert.equal(useApp.getState().tickets[1].status, 'dropped');
+  assert.equal(out.length, 2, 'a second unbind for the second Ticket');
+
+  // A closed session cannot hear it: nothing is sent, nothing throws.
+  useApp.setState({ sessions: {}, order: [], activeKey: null });
+  const gone = { ...ticketAt('running'), id: 'tk-3' };
+  install(gone);
+  assert.equal(useApp.getState().dropTicket('tk-3').ok, true);
+  assert.equal(out.length, 2);
+  unregisterRuntime('k-active');
+});
+
+test('accept is refused outside review, and nothing is unbound for a refusal', () => {
+  screen(18, 'S1');
+  const out = capture('k-active');
+  const t = ticketAt('running');
+  install(t);
+  const result = useApp.getState().acceptTicket(t.id);
+  assert.equal(result.ok, false);
+  assert.equal(out.length, 0);
+  unregisterRuntime('k-active');
+});
+
+test('send back to a live session sends the feedback as a user message and moves to running', async () => {
+  screen(18, 'S1');
+  const out = capture('k-active');
+  const t = ticketAt('review');
+  install(t);
+
+  const result = await useApp.getState().sendBackTicket(t.id, '  also cover the error path  ');
+  assert.equal(result.ok, true);
+  assert.equal(useApp.getState().tickets[0].status, 'running');
+  assert.equal(useApp.getState().tickets[0].assignments.length, 1, 'same executor: no new Assignment');
+  assert.deepEqual(out.map((m) => m.t), ['user_message']);
+  assert.equal(out[0].text, 'also cover the error path');
+  assert.equal(localCalls.length, 0, 'nothing was opened');
+  unregisterRuntime('k-active');
+});
+
+test('send back with empty feedback is refused and sends nothing', async () => {
+  screen(18, 'S1');
+  const out = capture('k-active');
+  const t = ticketAt('review');
+  install(t);
+  const result = await useApp.getState().sendBackTicket(t.id, '   ');
+  assert.deepEqual(result, { ok: false, reason: 'empty_feedback' });
+  assert.equal(out.length, 0);
+  assert.equal(useApp.getState().tickets[0].status, 'review');
+  unregisterRuntime('k-active');
+});
+
+test('send back to a closed local session resumes that session where it ran, then speaks into it', async () => {
+  screen(18, 'S-other');
+  const t = ticketAt('review'); // its session S1 has no live bucket
+  install(t);
+
+  const pending = useApp.getState().sendBackTicket(t.id, 'tighten the tests');
+  await until('the resume to be opened', () => localCalls.length === 1);
+  assert.equal(localCalls[0].sessionId, 'S1', 'the original session is reopened, not a new one');
+  assert.equal(localCalls[0].workspace, 'C:/work', 'in the directory it ran in, not the screen\u2019s');
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  const ticket = useApp.getState().tickets[0];
+  assert.equal(ticket.status, 'running');
+  assert.equal(ticket.assignments.length, 1, 'a resume is not a new Assignment');
+
+  const key = useApp.getState().activeKey as string;
+  const out = capture(key);
+  handshake(key, 18, 'S1');
+  await until('the feedback to be sent', () => out.some((m) => m.t === 'user_message'));
+  assert.equal(out.find((m) => m.t === 'user_message')?.text, 'tighten the tests');
+  assert.equal(out.some((m) => m.t === 'ticket_bind'), false, 'the binding comes back with the session\u2019s own metadata');
+  unregisterRuntime(key);
+});
+
+test('send back whose session cannot be resumed starts a replacement and pre-fills brief and feedback', async () => {
+  screen(18, 'S-other');
+  const t = ticketAt('review', {}, { sessionId: '', sessionKey: 'k-gone' }); // never named: nothing to resume
+  install(t);
+
+  const result = await useApp.getState().sendBackTicket(t.id, 'fix the typo');
+  assert.equal(result.ok, true);
+  const ticket = useApp.getState().tickets[0];
+  assert.equal(ticket.status, 'running');
+  assert.equal(ticket.assignments.length, 2);
+  assert.equal(ticket.assignments[0].end, 'restore_failed');
+  assert.equal(ticket.assignments[1].end, null);
+
+  const key = useApp.getState().activeKey as string;
+  const out = capture(key);
+  handshake(key, 18, 'S-new');
+  await until('the replacement to be pre-filled', () => (useApp.getState().sessions[key]?.draft ?? '') !== '');
+  assert.equal(useApp.getState().sessions[key]?.draft, 'do the thing\n\nfix the typo');
+  assert.deepEqual(out.map((m) => m.t), ['ticket_bind'], 'bound, but nothing is sent on the person\u2019s behalf');
+  unregisterRuntime(key);
+});
+
+test('send back that can neither resume nor open leaves the Ticket in review', async () => {
+  screen(18, 'S-other');
+  const t = ticketAt('review', {}, { sessionId: '', sessionKey: 'k-gone' });
+  install(t);
+  refuseLocal = 'no';
+  const result = await useApp.getState().sendBackTicket(t.id, 'please redo');
+  assert.deepEqual(result, { ok: false, reason: 'session_unavailable' });
+  assert.equal(useApp.getState().tickets[0].status, 'review', 'not "running" with nobody listening');
+  assert.equal(useApp.getState().tickets[0].assignments.length, 1);
+});
+
+test('"continue" focuses a live session and otherwise resumes it on the machine it ran on', async () => {
+  screen(18, 'S1');
+  useApp.setState((s) => ({
+    sessions: { ...s.sessions, 'k-other': liveBucket('k-other', 'C:/elsewhere', 18, 'S-x') },
+    order: [...s.order, 'k-other'],
+    activeKey: 'k-other',
+  }));
+  const t = ticketAt('running');
+  install(t);
+  assert.equal(await useApp.getState().openTicketSession(t.id), 'k-active');
+  assert.equal(useApp.getState().activeKey, 'k-active', 'the live session is focused, nothing is reopened');
+  assert.equal(localCalls.length, 0);
+
+  // Now a remote Assignment whose session is closed, from a *local* screen:
+  // the resume goes to the remote workspace, not to where the screen is.
+  const remote = { ...ticketAt('running', {}, { remoteWorkspaceId: 'rw-1', sessionId: 'S-remote', sessionKey: 'k-gone' }), id: 'tk-remote' };
+  install(remote);
+  const key = await useApp.getState().openTicketSession('tk-remote');
+  assert.ok(key);
+  assert.equal(localCalls.length, 0, 'never the local spawn');
+  assert.equal(remoteCalls.length, 1);
+  assert.equal(remoteCalls[0].remoteWorkspace, ENTRY.remotePath);
+  assert.equal(remoteCalls[0].sessionId, 'S-remote');
+  assert.equal(useApp.getState().tickets[0].status, 'running', 'resuming moves no status');
+});
+
+test('"continue" on a needs_you Ticket resumes the session and stays needs_you', async () => {
+  screen(18, 'S-other');
+  const t = ticketAt('needs_you');
+  install(t);
+  const key = await useApp.getState().openTicketSession(t.id);
+  assert.ok(key);
+  assert.equal(localCalls[0].sessionId, 'S1');
+  assert.equal(useApp.getState().tickets[0].status, 'needs_you', 'only the person replying moves it (invariant 7)');
+});
+
+test('removing a Ticket unbinds the session it had', () => {
+  screen(18, 'S1');
+  const out = capture('k-active');
+  const t = ticketAt('running');
+  install(t);
+  assert.equal(useApp.getState().removeTicket(t.id), true);
+  assert.equal(useApp.getState().tickets.length, 0);
+  assert.equal(out[0]?.ticket, null);
+  unregisterRuntime('k-active');
+});

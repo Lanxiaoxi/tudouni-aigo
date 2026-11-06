@@ -110,6 +110,9 @@ export function useRuntimeBridge(): void {
       const data = await hydrateDesktopData();
       if (cancelled) return;
       useApp.setState(data);
+      // The Tickets are a separate file with their own read; not awaited, as
+      // nothing the first session needs depends on them.
+      void useApp.getState().loadTickets();
 
       // Not hosted (plain `npm run dev` in a browser): nothing to start, and the
       // UI stays in its booting phase rather than pretending.

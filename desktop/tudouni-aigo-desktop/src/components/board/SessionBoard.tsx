@@ -18,7 +18,7 @@ import { savedSessionsKey } from '@/state/savedSessionsKey';
  * The session board: what every session in this workspace is doing, on one
  * screen, at one moment.
  *
- * **It is a view, not a dialog.** The reasons are all in `store.boardOpen`, and
+ * **It is a view, not a dialog.** The reasons are all in `store.board`, and
  * they are the three mechanisms a Radix panel would have fought: `body`'s
  * inherited `pointer-events: none` (the left rail goes dead), `focusSession`
  * clearing `panel` (clicking a card would close the board), and `enqueueModal`
@@ -66,7 +66,7 @@ const COLUMNS: { id: 'idle' | 'needs' | 'working' | 'finished'; statuses: RowSta
 
 export function SessionBoard() {
   const t = useT();
-  const setBoardOpen = useApp((s) => s.setBoardOpen);
+  const setBoard = useApp((s) => s.setBoard);
   const focusSession = useApp((s) => s.focusSession);
   const activeKey = useApp((s) => s.activeKey);
   const detachSession = useApp((s) => s.detachSession);
@@ -449,7 +449,7 @@ export function SessionBoard() {
             type="button"
             className="lb-icon"
             aria-label={t('board.close')}
-            onClick={() => setBoardOpen(false)}
+            onClick={() => setBoard(null)}
           >
             <X size={15} />
           </button>
@@ -563,7 +563,7 @@ export function SessionBoard() {
                     // for a gesture whose meaning is arrival.
                     onClick={() => {
                       focusSession(card.key);
-                      setBoardOpen(false);
+                      setBoard(null);
                     }}
                     // The card's third exit is a right-click: archive and
                     // delete, on the card itself. Offered only when the card

@@ -127,7 +127,7 @@ export function enqueueModal(s: AppStore, entry: ModalEntry): Partial<AppStore> 
     // they are not looking at must not close a panel for them; `focusSession`
     // is the act that surfaces the held prompt, and it clears the panel there.
     //
-    // **It clears no board.** `boardOpen` is not a panel and is not touched
+    // **It clears no board.** `board` is not a panel and is not touched
     // here; the modal components hold a request whose session is on screen
     // while the board is (`selectModalVisible` — the card in Needs you is the
     // surface that says who is asking, and the click that focuses it is the

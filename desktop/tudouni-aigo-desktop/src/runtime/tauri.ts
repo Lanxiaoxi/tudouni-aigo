@@ -47,6 +47,9 @@ interface ExitEvent {
   key: number;
   code: number;
   requested: boolean;
+  /** Present only when the bridge knows why: `"ssh_closed"` for a remote
+   *  child whose channel ended unasked. Absent for every local exit. */
+  reason?: string;
 }
 
 interface StderrEvent {
@@ -222,6 +225,9 @@ class RuntimeHost {
           t: 'runtime_exited',
           code: payload.code,
           requested: payload.requested,
+          // Passed through only when the bridge sent one, so a local exit's
+          // message keeps exactly the shape it had before the field existed.
+          ...(typeof payload.reason === 'string' ? { reason: payload.reason } : {}),
         });
       });
       this.unlisten.push(offExit);
@@ -965,6 +971,21 @@ export async function readDesktopData(): Promise<string | null> {
 export async function writeDesktopData(text: string): Promise<string> {
   await tauriInvoke<null>('desktop_data_write', { text });
   return text;
+}
+
+/** The Tickets, as the text of `~/.tudouni/tickets.json`. `null` when the
+ *  file does not exist yet. Unlike `readDesktopData`, a read that *fails*
+ *  rejects: an unreadable Ticket file is not "no Tickets", and the store must
+ *  not treat it as an empty shelf it may then write over. */
+export async function readTicketsFile(): Promise<string | null> {
+  if (!isHosted()) return null;
+  return await tauriInvoke<string | null>('tickets_read');
+}
+
+/** Replace `~/.tudouni/tickets.json`, atomically on the Rust side. Rejects
+ *  when the write refused (including a file from a newer schema). */
+export async function writeTicketsFile(text: string): Promise<void> {
+  await tauriInvoke<null>('tickets_write', { text });
 }
 
 /* ============================================================

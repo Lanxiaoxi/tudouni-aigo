@@ -38,6 +38,8 @@ import { composerSlice } from './slices/composer';
 import { modalsSlice } from './slices/modals';
 import { terminalsSlice } from './slices/terminals';
 import { workspacesSlice } from './slices/workspaces';
+import { ticketsSlice } from './slices/tickets';
+import { ticketRunsSlice } from './slices/ticketRuns';
 
 
 /* ============================================================
@@ -106,7 +108,7 @@ export function createAppStore() {
     fileFocus: false,
     closePrompt: false,
     questionMinimizedId: null,
-    boardOpen: false,
+    board: null,
     // The usage panel's snapshot: window-level (see `storeShape`), `null` until
     // the first open of the panel asks for it.
     usage: null,
@@ -138,7 +140,13 @@ export function createAppStore() {
     // before the first session. Until then these fields hold the empty shelf,
     // and nothing draws or runs that reads them before the first session.
     ...desktopDataSnapshot(),
-    todoSeed: null,
+    ticketSeed: null,
+    // Tickets are read from their own file by `loadTickets`, not hydrated with
+    // the user data above; until then mutations are refused.
+    tickets: [],
+    ticketsLoaded: false,
+    ticketsReadOnly: false,
+    ticketsProblem: null,
     installStatus: {},
     configSyncPrompt: null,
     configSyncBusy: null,
@@ -158,6 +166,8 @@ export function createAppStore() {
       ...modalsSlice(ctx),
       ...terminalsSlice(ctx),
       ...workspacesSlice(ctx),
+      ...ticketsSlice(ctx),
+      ...ticketRunsSlice(ctx),
     };
   });
 }

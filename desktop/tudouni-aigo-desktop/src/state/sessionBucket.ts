@@ -27,6 +27,7 @@ export function createSessionBucket(
     runtimeExit: null,
     launch,
     runtimeBuild: null,
+    ticketBinding: null,
     session: null,
     learning: false,
     refineTaskId: null,

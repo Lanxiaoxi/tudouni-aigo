@@ -25,11 +25,7 @@ import { registerRuntime, unregisterRuntime } from '@/runtime/bus';
 import {
   canRunTask,
   emptyTask,
-  emptyTodo,
-  isTodo,
   taskTitle,
-  todoStatus,
-  withKind,
   isValidTask,
   isValidTaskRun,
   outcomeOfChildExit,
@@ -402,84 +398,57 @@ test('a failed open records no link', async () => {
 });
 
 /* ============================================================
-   Todo: parked work, started once, finished by hand
+   Templates only: todos became Tickets
    ============================================================ */
 
-test('a todo needs only a prompt, is titled by its first line, and starts with autopilot off', () => {
-  const todo = emptyTodo(1_000);
-  assert.equal(isTodo(todo), true);
-  assert.equal(todo.autopilot, false, 'a todo is an attended run');
-  assert.equal(todoStatus(todo), 'todo');
-  assert.deepEqual(taskProblems(todo), ['prompt'], 'no name required');
-  todo.prompt = '\n  fix the login redirect  \nmore detail';
-  assert.equal(canRunTask(todo), true);
-  assert.equal(taskTitle(todo), 'fix the login redirect');
-  assert.equal(canRunTask({ ...todo, status: 'done' }), false, 'a finished todo is reopened before it runs');
-  // A template's title is still its name, never its prompt.
-  assert.equal(taskTitle(makeTask({ name: '' })), '');
+test('a template is titled by its name alone, never by its prompt', () => {
+  assert.equal(taskTitle(makeTask({ name: '  nightly  ' })), 'nightly');
+  assert.equal(taskTitle(makeTask({ name: '', prompt: 'first line\nsecond' })), '');
+  assert.deepEqual(taskProblems(makeTask({ name: '' })), ['name'], 'a name is required again');
 });
 
-test('switching kind carries the content and resets the kind\u2019s defaults', () => {
-  const asTodo = withKind(makeTask({ enabled: false }), 'todo');
-  assert.equal(asTodo.kind, 'todo');
-  assert.equal(asTodo.autopilot, false);
-  assert.equal(asTodo.enabled, true, 'a todo cannot be disabled');
-  assert.equal(asTodo.prompt, 'build everything');
-  const back = withKind(asTodo, 'template');
-  assert.equal(back.kind, 'template');
-  assert.equal(back.autopilot, true);
-});
-
-test('the guards keep pre-todo records and drop malformed kind/status values', () => {
+test('the guard still loads records an older build wrote with kind/status, without checking them', () => {
   const base = { id: 't', name: '', description: '', prompt: '', workspace: { kind: 'active' }, model: '', enabled: true, createdAtMs: 1, updatedAtMs: 1 };
   assert.equal(isValidTask(base), true, 'no kind is a template');
+  assert.equal(isValidTask({ ...base, kind: 'template' }), true, 'a template saved by an older build keeps loading');
+  // Todos are dropped by `desktopData` from the raw field before this guard's
+  // verdict is used (asserted in desktop-data.test.ts); the guard itself no
+  // longer has an opinion about a field the type does not declare.
   assert.equal(isValidTask({ ...base, kind: 'todo', status: 'doing' }), true);
-  assert.equal(isValidTask({ ...base, kind: 'chore' }), false);
-  assert.equal(isValidTask({ ...base, kind: 'todo', status: 'later' }), false);
 });
 
-test('running a todo fills the new session\u2019s composer, sends nothing, and moves it to doing', async () => {
+test('running a template never pre-fills: its prompt is sent as the first message', async () => {
   localScreen();
-  const todo = { ...emptyTodo(1_000), prompt: 'fix the login redirect' };
-  useApp.setState({ tasks: [todo], taskRuns: [] });
-
-  const key = await useApp.getState().runTask(todo.id);
+  useApp.setState({ tasks: [makeTask({ autopilot: false })], taskRuns: [] });
+  const key = await useApp.getState().runTask(useApp.getState().tasks[0]?.id ?? '');
   assert.ok(key);
-  assert.equal(useApp.getState().tasks[0]?.status, 'doing', 'started the moment the session exists');
-  assert.equal(useApp.getState().taskRuns[0]?.taskName, 'fix the login redirect', 'the link is titled like the row');
-
-  const out: Record<string, unknown>[] = [];
-  registerRuntime({ key, send: (m) => out.push(m as unknown as Record<string, unknown>), subscribe: () => () => undefined, dispose: () => undefined });
-  useApp.setState((s) => ({ sessions: { ...s.sessions, [key]: { ...s.sessions[key], ready: true } } }));
-  const deadline = Date.now() + 5_000;
-  while (useApp.getState().sessions[key]?.draft !== 'fix the login redirect') {
-    if (Date.now() >= deadline) throw new Error('the todo never filled the composer');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.equal(out.some((m) => m.t === 'user_message'), false, 'nothing is sent — the person presses Enter');
-  assert.equal(out.some((m) => m.t === 'set_autopilot'), false, 'and autopilot stays off');
-  assert.equal(useApp.getState().sessions[key]?.hasSpoken, false);
+  const out = await waitForPrompt(key);
+  assert.equal(out.filter((m) => m.t === 'user_message').length, 1);
+  assert.equal(useApp.getState().sessions[key]?.draft, '', 'nothing is parked in the composer');
+  assert.equal(out.some((m) => m.t === 'ticket_bind'), false, 'a template run is not a Ticket');
   unregisterRuntime(key);
 });
 
-test('a todo seeded from the transcript is not saved until the editor saves it', () => {
+test('"save as Ticket" opens the Ticket board with the text as an unsaved seed', () => {
   localScreen();
-  useApp.setState({ tasks: [], todoSeed: null });
-  useApp.getState().openTodoDraft('  look into the flaky test  ');
+  useApp.setState({ tickets: [], ticketSeed: null, board: null });
+  useApp.getState().openTicketDraft('  look into the flaky test  ');
   const s = useApp.getState();
-  assert.equal(s.panel, 'tasks');
-  assert.deepEqual(s.todoSeed, { prompt: 'look into the flaky test', draftOf: null });
-  assert.equal(s.tasks.length, 0, 'a seed is a suggestion, not a row');
-  useApp.getState().openTodoDraft('   ');
-  assert.equal(useApp.getState().todoSeed?.prompt, 'look into the flaky test', 'an empty selection seeds nothing');
+  assert.equal(s.board, 'tickets', 'the board is a view, opened through setBoard');
+  assert.deepEqual(s.ticketSeed, { brief: 'look into the flaky test', draftOf: null });
+  assert.equal(s.tickets.length, 0, 'a seed is a suggestion, not a Ticket');
+  useApp.getState().openTicketDraft('   ');
+  assert.equal(useApp.getState().ticketSeed?.brief, 'look into the flaky test', 'an empty selection seeds nothing');
+  useApp.getState().clearTicketSeed();
+  assert.equal(useApp.getState().ticketSeed, null);
+  useApp.setState({ board: null });
 });
 
-test('saving a draft as a todo clears the composer only if it still holds that text', () => {
+test('saving a draft as a Ticket clears the composer only if it still holds that text', () => {
   localScreen();
   useApp.getState().setDraft('park this');
-  useApp.getState().openTodoDraft('park this', { fromDraft: true });
-  assert.equal(useApp.getState().todoSeed?.draftOf, 'k-active');
+  useApp.getState().openTicketDraft('park this', { fromDraft: true });
+  assert.equal(useApp.getState().ticketSeed?.draftOf, 'k-active');
 
   useApp.getState().setDraft('park this, and something new');
   useApp.getState().clearDraftIf('k-active', 'park this');
@@ -488,7 +457,7 @@ test('saving a draft as a todo clears the composer only if it still holds that t
   useApp.getState().setDraft('park this');
   useApp.getState().clearDraftIf('k-active', 'park this');
   assert.equal(useApp.getState().sessions['k-active']?.draft, '');
-  useApp.setState({ todoSeed: null, panel: null });
+  useApp.setState({ ticketSeed: null, board: null });
 });
 
 test('deleting a task keeps its run links — history survives the template', () => {

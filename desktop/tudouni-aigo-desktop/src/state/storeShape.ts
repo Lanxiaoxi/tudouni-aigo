@@ -16,6 +16,37 @@ import { type ConfigSyncChoice } from '@/state/configSync';
 import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModelMemoryEntry, type ModalState, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
 import type { RemoteConfigTarget } from '@/runtime/tauri';
 
+import type { TicketInputDraft, TicketPatch, TicketRefusal } from '@/ticket/machine';
+import type { Report, Ticket } from '@/ticket/model';
+import type { TaskWorkspaceRef } from '@/task/tasks';
+
+/** Why a Ticket action did nothing, beyond the machine's own refusals. */
+export type TicketActionRefusal =
+  | TicketRefusal
+  | 'not_loaded'
+  | 'read_only'
+  | 'not_found'
+  /** Another action on the same Ticket is still in flight. */
+  | 'busy'
+  /** No session could be reached or opened for it (workspace gone, open refused). */
+  | 'session_unavailable';
+
+/** What `dispatchTicket` and friends answer. `ok` carries the Ticket as it is
+ *  now (the same object when the input had nothing to record). */
+export type TicketDispatchResult =
+  | { ok: true; ticket: Ticket }
+  | { ok: false; reason: TicketActionRefusal };
+
+/** The fields a new Ticket is made from. Everything else is the machine's. */
+export interface TicketDraft {
+  title?: string;
+  brief: string;
+  workspace?: TaskWorkspaceRef;
+  model?: string;
+}
+
+/** The boards that can occupy the conversation column. See `AppStore.board`. */
+export type BoardKind = 'sessions' | 'tickets';
 
 export interface AppStore {
   /* ---------------- the runtime link ---------------- */
@@ -234,8 +265,17 @@ export interface AppStore {
    * **Not persisted.** "I am looking at the board" is a moment, not a setting;
    * remembering it would land the next launch on a screen with no transcript on
    * it for no reason the person gave.
+   *
+   * **A union, not two booleans.** There are two boards — the session board and
+   * the ticket board — and they occupy the same column. Two flags would make
+   * every reader remember to check both, and the one that forgot would draw the
+   * boards on top of each other. With one field the exclusion is the type's:
+   * opening one board *is* closing the other. Readers that mean "a board is on
+   * screen" test `board !== null`; readers that are about the session board
+   * alone (`blockedByBoard`, the board button's pressed state) test
+   * `board === 'sessions'`.
    */
-  boardOpen: boolean;
+  board: BoardKind | null;
   /**
    * The usage panel's snapshot, and the refusal the last request ended with.
    *
@@ -582,11 +622,27 @@ export interface AppStore {
    * then `sessionKey` is what a row is reachable by.
    */
   taskRuns: TaskRunLink[];
-  /** What the Tasks panel should open a new todo editor with, or `null`.
-   *  Window-local and never persisted — see `openTodoDraft`. `draftOf` is the
-   *  session whose composer the text came from, when it did: saving the todo
-   *  empties that composer (the text has been parked), cancelling leaves it. */
-  todoSeed: { prompt: string; draftOf: string | null } | null;
+  /** What the Ticket board should open its new-Ticket box with, or `null`.
+   *  Window-local and never persisted — see `openTicketDraft`. `draftOf` is the
+   *  session whose composer the text came from, when it did: creating the
+   *  Ticket empties that composer (the text has been parked), cancelling leaves it. */
+  ticketSeed: { brief: string; draftOf: string | null } | null;
+
+  /* ---------------- tickets (`~/.tudouni/tickets.json`) ---------------- */
+  /**
+   * The Tickets, in insertion order. **Not part of `DesktopData`**: they have
+   * their own file and write path (`src/ticket/store.ts`), and `status` on them
+   * is written only by `ticket/machine.ts`, through `dispatchTicket`.
+   */
+  tickets: Ticket[];
+  /** Whether the file has been read. Every mutation is refused before it: a
+   *  write from an unread state would replace the file with an empty list. */
+  ticketsLoaded: boolean;
+  /** The file is from a newer schema or could not be understood; this build
+   *  shows what it can and writes nothing. */
+  ticketsReadOnly: boolean;
+  /** Why it is read-only (or null), for a notice. */
+  ticketsProblem: string | null;
   /**
    * The model and effort last in use, by workspace (`desktop.json` holds it).
    *
@@ -749,15 +805,16 @@ export interface AppStore {
   /** Create a task with the given fields and persist it. Returns the new id. */
   upsertTask(task: Task): void;
   /**
-   * Open the Tasks panel on a **new, unsaved todo** whose prompt is `prompt`
-   * (the transcript's "Add to todo"). Nothing is written until the editor's
-   * Save: the seed only says what the editor should start from.
+   * Open the Ticket board on a **new, unsaved Ticket** whose brief is `brief`
+   * (the transcript's "Add to Ticket", the composer's "Save draft as Ticket").
+   * Nothing is written until the board's Create: the seed only says what the
+   * new-Ticket box should start from.
    */
-  openTodoDraft(prompt: string, opts?: { fromDraft?: boolean }): void;
-  /** The Tasks panel took the seed; forget it. */
-  clearTodoSeed(): void;
+  openTicketDraft(brief: string, opts?: { fromDraft?: boolean }): void;
+  /** The Ticket board took the seed; forget it. */
+  clearTicketSeed(): void;
   /** Empty one session's composer, but only if it still holds `expected` —
-   *  so text typed after the todo editor opened is never thrown away. */
+   *  so text typed after the Ticket box opened is never thrown away. */
   clearDraftIf(key: string, expected: string): void;
   /** Delete a template. Its run links are **kept** — the design is explicit
    *  that removing a template must not erase the trace of past runs. */
@@ -801,6 +858,54 @@ export interface AppStore {
    * written.
    */
   noteTaskRunOutcome(key: string, outcome: TaskRunOutcome, durationMs: number | null): void;
+
+  /* ---------------- tickets: actions ---------------- */
+  /** Read `tickets.json` once. Idempotent; concurrent callers share the read. */
+  loadTickets(): Promise<void>;
+  /** Make an open Ticket. Returns its id, or `null` when mutations are refused
+   *  (file unread, or read-only). */
+  createTicket(draft: TicketDraft): string | null;
+  /** Edit fields, through the machine's `edit` command. */
+  updateTicketDraft(id: string, patch: TicketPatch): TicketDispatchResult;
+  /** Hand the machine one command or fact and persist the result. `at`
+   *  defaults to now. Returns the machine's refusal as `reason`. */
+  dispatchTicket(id: string, input: TicketInputDraft): TicketDispatchResult;
+  deleteTicket(id: string): boolean;
+  /** Remove every `done` / `dropped` Ticket; returns how many. */
+  clearFinishedTickets(): number;
+  /** Fold one `ui(ticket_report)` into its Ticket (a `reported` fact). Only
+   *  touches Ticket data; the session wiring is the caller's. */
+  ingestTicketReport(ticketId: string, report: Report): TicketDispatchResult;
+  /** Fold the reports a reopened session brought back (`init`), skipping the
+   *  ones already seen. Idempotent. */
+  reconcileTicket(ticketId: string, reports: Report[]): TicketDispatchResult;
+
+  /* ---------------- tickets: session actions (`slices/ticketRuns.ts`) ---------------- */
+  /**
+   * Start (or restart) a Ticket: open a **new** session in its workspace, record
+   * the Assignment, bind the session, then either pre-fill the brief into its
+   * composer (default) or — `runNow` — switch autopilot on and send the brief.
+   * Resolves to the session key, or `null` when nothing was started (workspace
+   * unknown, open refused, Ticket not startable). A failed open changes nothing.
+   */
+  startTicket(id: string, opts?: { runNow?: boolean }): Promise<string | null>;
+  /** "Open session" / "Continue": focus the Assignment's session when it is
+   *  alive, otherwise resume it from its saved id **on the machine it ran on**.
+   *  Resolves to the key now showing it, or `null`. Resuming moves no status. */
+  openTicketSession(id: string): Promise<string | null>;
+  /** Accept a Ticket in review (`done`), and unbind a session still attached. */
+  acceptTicket(id: string): TicketDispatchResult;
+  /** Drop a non-terminal Ticket, and unbind a session still attached. */
+  dropTicket(id: string): TicketDispatchResult;
+  /** Send a reviewed Ticket back with feedback: the feedback goes to the
+   *  original session (resumed first if closed); a session that cannot be
+   *  resumed is replaced by a new one that gets the feedback and the brief. */
+  sendBackTicket(id: string, feedback: string): Promise<TicketDispatchResult>;
+  /** `needs_you` → "start over": same as `startTicket`, a fresh session. */
+  restartTicket(id: string): Promise<string | null>;
+  /** Delete a Ticket's record, and unbind a session still attached to it
+   *  (`deleteTicket` leaves that to the caller). */
+  removeTicket(id: string): boolean;
   /**
    * Take one runtime message, tagged with the session whose child sent it.
    *
@@ -1014,9 +1119,11 @@ export interface AppStore {
    * restart.
    */
   closePanel(): void;
-  /** Show or hide the session board in the conversation column. */
-  setBoardOpen(open: boolean): void;
-  toggleBoard(): void;
+  /** Show a board in the conversation column, or (`null`) close whichever is
+   *  open. The only writer of `board`, so the two boards cannot both be up. */
+  setBoard(next: BoardKind | null): void;
+  /** Open `kind` if it is not the board on screen, otherwise close it. */
+  toggleBoard(kind: BoardKind): void;
   /** Raise or dismiss the minimize-or-close prompt. Raised by `useWindowClose`. */
   setClosePrompt(open: boolean): void;
   /**

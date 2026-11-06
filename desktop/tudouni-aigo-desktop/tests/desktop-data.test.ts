@@ -344,3 +344,77 @@ test('hydrate runs once: a second call takes the in-memory copy, not the file', 
   const second = await hydrateDesktopData();
   assert.deepEqual(second, first, 'the window does not re-read its data under a running session');
 });
+
+/* ============================================================
+   Todos became Tickets: the old records are dropped on load
+   ============================================================ */
+
+const TODO = { ...TASK, id: 'task-todo', name: '', kind: 'todo', status: 'doing', autopilot: false };
+const link = (taskId: string, sessionKey: string) => ({
+  taskId,
+  sessionId: `S-${sessionKey}`,
+  sessionKey,
+  startedAtMs: 1,
+  taskName: 'n',
+  model: '',
+  workspaceLabel: 'w',
+});
+
+test('a stored todo is dropped on load, with the run links that pointed at it', async () => {
+  reset();
+  fileText = JSON.stringify({
+    ...emptyDesktopData(),
+    tasks: [TASK, TODO, { ...TASK, id: 'task-2', kind: 'template' }],
+    taskRuns: [link('task-1', 'a'), link('task-todo', 'b'), link('task-2', 'c')],
+  });
+
+  const data = await hydrateDesktopData();
+  assert.deepEqual(data.tasks.map((t) => t.id), ['task-1', 'task-2']);
+  assert.deepEqual(data.taskRuns.map((r) => r.sessionKey), ['a', 'c']);
+});
+
+test('a todo too damaged to load still takes its run links with it', async () => {
+  reset();
+  // No prompt: `isValidTask` rejects it, but the links still name its id.
+  const broken = { id: 'task-broken', kind: 'todo', name: 'x' };
+  fileText = JSON.stringify({
+    ...emptyDesktopData(),
+    tasks: [TASK, broken],
+    taskRuns: [link('task-broken', 'z'), link('task-1', 'a')],
+  });
+
+  const data = await hydrateDesktopData();
+  assert.deepEqual(data.tasks.map((t) => t.id), ['task-1']);
+  assert.deepEqual(data.taskRuns.map((r) => r.sessionKey), ['a']);
+});
+
+test('todos in the legacy localStorage record are dropped by the migration too', async () => {
+  reset();
+  setLegacy({ tasks: [TASK, TODO], taskRuns: [link('task-todo', 'b')] });
+
+  const data = await hydrateDesktopData();
+  assert.deepEqual(data.tasks.map((t) => t.id), ['task-1']);
+  assert.deepEqual(data.taskRuns, []);
+  assert.deepEqual(JSON.parse(fileText as string).tasks.map((t: { id: string }) => t.id), ['task-1']);
+});
+
+test('the retired kind and status are not written back, and the template stays whole', async () => {
+  reset();
+  fileText = JSON.stringify({
+    ...emptyDesktopData(),
+    tasks: [{ ...TASK, kind: 'template', status: 'todo' }],
+  });
+  const data = await hydrateDesktopData();
+  assert.equal('kind' in data.tasks[0], false);
+  assert.equal('status' in data.tasks[0], false);
+  assert.deepEqual(data.tasks[0], TASK);
+
+  // The store still carries the fields on the type until the panel's todo code
+  // goes; a save must not put them back on the file.
+  syncFromStore(state({ tasks: [{ ...TASK, prompt: 'changed', kind: 'template', status: 'todo' }] }));
+  await flush();
+  const onFile = JSON.parse(fileText as string).tasks[0];
+  assert.equal(onFile.prompt, 'changed');
+  assert.equal('kind' in onFile, false);
+  assert.equal('status' in onFile, false);
+});

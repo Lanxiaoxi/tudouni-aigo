@@ -46,6 +46,10 @@ mod config_file;
 /// `read_local_config_text` does. See its module doc for why the split out of
 /// the window's localStorage record and why the write is a rename.
 mod desktop_data;
+/// `~/.tudouni/tickets.json` — the Tickets, in a file of their own because
+/// they are written on every event (`docs/design/ticket.md` §6.3). Same text
+/// door as `desktop_data`.
+mod tickets_data;
 mod prompt_history;
 
 mod deliverable;
@@ -199,6 +203,8 @@ pub fn run() {
             crate::config_commands::read_local_config_text,
             crate::desktop_data::desktop_data_read,
             crate::desktop_data::desktop_data_write,
+            crate::tickets_data::tickets_read,
+            crate::tickets_data::tickets_write,
             // The composer's prompt history: one append-only sidecar per
             // workspace, plus the one-time seed from the sessions that predate
             // it. The read and append are the keystroke path's neighbours, not

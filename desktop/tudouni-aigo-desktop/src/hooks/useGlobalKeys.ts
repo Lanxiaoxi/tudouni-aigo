@@ -188,9 +188,11 @@ export function useGlobalKeys(): void {
         // it is not what the person is looking at. It may not come before a
         // **visible** modal: that Esc is the modal's, and a board that stole it
         // would make a fail-closed approval unanswerable from the keyboard.
-        if (s.boardOpen) {
+        // One rung for both boards: `board` holds at most one of them, so
+        // "leave the board" needs no order between them.
+        if (s.board !== null) {
           e.preventDefault();
-          s.setBoardOpen(false);
+          s.setBoard(null);
           return;
         }
         // The find bar, before the interrupt and after everything that stacks
@@ -251,7 +253,7 @@ export function useGlobalKeys(): void {
             // key is swallowed here and the rail's own control is drawn
             // `disabled` as well; both say the same thing rather than one of
             // them silently doing nothing.
-            if (s.boardOpen) return;
+            if (s.board !== null) return;
             s.toggleSidebar();
             return;
           }

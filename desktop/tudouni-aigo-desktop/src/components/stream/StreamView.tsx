@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { ArrowDown, CornerDownLeft, Copy, ListTodo, Loader, Sparkles } from 'lucide-react';
+import { ArrowDown, CornerDownLeft, Copy, Loader, Sparkles, Ticket } from 'lucide-react';
 import { NO_ENTRIES, selectModalVisible, useApp, useSessionField } from '@/state/store';
 import { insertAtCaret } from '@/runtime/paste';
 import { copyText } from '@/utils/clipboard';
@@ -414,20 +414,20 @@ export function StreamView() {
               <CornerDownLeft size={13} />
               {t('stream.menu.addToInput')}
             </button>
-            {/* Park the selection as a todo: opens the Tasks panel on an
-                unsaved todo seeded with the text, so it can be edited before
+            {/* Park the selection as a Ticket: opens the Ticket board on an
+                unsaved Ticket seeded with the text, so it can be edited before
                 it is saved (and Cancel leaves nothing behind). */}
             <button
               type="button"
               role="menuitem"
               className="stream-menu-item"
               onClick={() => {
-                useApp.getState().openTodoDraft(selectionMenu.text);
+                useApp.getState().openTicketDraft(selectionMenu.text);
                 setSelectionMenu(null);
               }}
             >
-              <ListTodo size={13} />
-              {t('stream.menu.addToTodo')}
+              <Ticket size={13} />
+              {t('stream.menu.addToTicket')}
             </button>
           </div>
         </div>

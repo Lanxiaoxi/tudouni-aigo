@@ -420,19 +420,19 @@ pub(crate) fn spawn_wait_thread(app: &AppHandle, key: ChildKey) {
 
             match waited {
                 Ok(Some(code)) => {
-                    let requested = {
+                    let (requested, remote) = {
                         let state: State<Bridge> = app.state();
                         let mut guard = match state.inner.lock() {
                             Ok(guard) => guard,
                             Err(_) => break None,
                         };
                         match guard.children.remove(&key) {
-                            Some(current) => current.requested,
+                            Some(current) => (current.requested, current.remote_ssh.is_some()),
                             // `runtime_kill` removed it while we were polling.
                             None => break None,
                         }
                     };
-                    break Some((code, requested));
+                    break Some((code, requested, remote));
                 }
                 Ok(None) => {}
                 Err(_) => {
@@ -441,22 +441,35 @@ pub(crate) fn spawn_wait_thread(app: &AppHandle, key: ChildKey) {
                         Ok(guard) => guard,
                         Err(_) => break None,
                     };
-                    if guard.children.remove(&key).is_none() {
-                        break None;
+                    match guard.children.remove(&key) {
+                        Some(current) => {
+                            break Some((-1, false, current.remote_ssh.is_some()));
+                        }
+                        None => break None,
                     }
-                    break Some((-1, false));
                 }
             }
             thread::sleep(EXIT_POLL_INTERVAL);
         };
 
-        if let Some((code, requested)) = outcome {
+        if let Some((code, requested, remote)) = outcome {
             // The runtime never sends `runtime_exited` itself — in the Go client
             // it is the client's own synthesized message, and this is its
             // equivalent. `requested` is not optional: a requested shutdown and
             // a crash both exit with code 0, so it is the only thing that tells
             // "the session ended" from "the runtime died".
-            let _ = app.emit("runtime://exited", ExitPayload { key, code, requested });
+            //
+            // `reason` is the one thing `requested` cannot say: an unrequested
+            // exit of a *remote* child is the SSH channel ending (a dropped
+            // connection or a dead host), which a Ticket words differently from
+            // a crashed process. Decided here, where the child's kind is known
+            // (this wait thread is shared by the local and the remote spawn),
+            // rather than guessed from the workspace type on the other side.
+            let reason = crate::bridge::exit_reason(remote, requested);
+            let _ = app.emit(
+                "runtime://exited",
+                ExitPayload { key, code, requested, reason },
+            );
         }
     });
 }

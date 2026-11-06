@@ -34,6 +34,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { StreamView } from '@/components/stream/StreamView';
 import { TerminalView } from '@/components/terminal/TerminalView';
 import { SessionBoard } from '@/components/board/SessionBoard';
+import { TicketBoard } from '@/components/board/TicketBoard';
 import { PanelHost } from '@/components/panels/PanelHost';
 import { PermissionModal } from '@/components/modals/PermissionModal';
 import { QuestionModal } from '@/components/modals/QuestionModal';
@@ -81,7 +82,10 @@ export function App() {
   const entries = rt?.entries ?? NO_ENTRIES;
   const sidebarVisible = useApp((s) => s.sidebarVisible);
   const leftbarVisible = useApp((s) => s.leftbarVisible);
-  const boardOpen = useApp((s) => s.boardOpen);
+  const board = useApp((s) => s.board);
+  // "A board is on screen", whichever one: both take the right rail's place for
+  // the same reason (there is no single conversation on screen to report on).
+  const boardOpen = board !== null;
   const sidebarWidth = useApp((s) => s.sidebarWidth);
   const leftbarWidth = useApp((s) => s.leftbarWidth);
   // Live while a rail-width drag is in flight, and naming **which** rail: only
@@ -136,7 +140,7 @@ export function App() {
     startupProblem: startupProblem !== null,
     sessionProblem: problem !== null,
     attachedTerminalId,
-    boardOpen,
+    board,
     // No session open means nothing to boot: `ready` can never become true, so
     // "starting the runtime…" would be a sentence about a process nobody
     // started. Closing the last session is how that state is reached.
@@ -168,7 +172,7 @@ export function App() {
   const [streamLift, setStreamLift] = useState(false);
   const prevView = useRef(view);
   useEffect(() => {
-    if (prevView.current === 'board' && view === 'stream') setStreamLift(true);
+    if ((prevView.current === 'board' || prevView.current === 'tickets') && view === 'stream') setStreamLift(true);
     prevView.current = view;
   }, [view]);
 
@@ -303,6 +307,8 @@ export function App() {
                 <TerminalView />
               ) : view === 'board' ? (
                 <SessionBoard />
+              ) : view === 'tickets' ? (
+                <TicketBoard />
               ) : view === 'welcome' ? (
                 <Welcome />
               ) : view === 'booting' ? (

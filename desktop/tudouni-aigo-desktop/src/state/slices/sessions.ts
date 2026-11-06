@@ -9,7 +9,12 @@ import type { AppStore } from '../storeShape';
 import { nextId } from '@/state/entries';
 import { buildLearningMessage, learningSessionRefs } from '@/learn/template';
 import { buildRefineMessage } from '@/learn/refineTemplate';
-import { canRunTask, isTodo, refineAvailability, refineRunScope, taskTitle, type RefineScreen, type Task, type TaskRunLink } from '@/task/tasks';
+import { canRunTask, refineAvailability, refineRunScope, taskTitle, type RefineScreen, type Task, type TaskRunLink } from '@/task/tasks';
+import {
+  openNewSession,
+  sayHandshakeTimedOut as sayHandshakeTimedOutShared,
+  waitForReady as waitForReadyShared,
+} from '../sessionRun';
 import { registerRuntime, sendTo, type Runtime, unregisterRuntime } from '@/runtime/bus';
 import { attachRuntime, createTauriRuntime, mirrorLaunchPrefs, readRuntimeStderr, shutdownRuntime, type BridgeOptions } from '@/runtime/tauri';
 import { TASK_RUNS_MAX, type LaunchArgs } from '../types';
@@ -24,60 +29,14 @@ import { FIND_IDLE } from '../find';
 import { nextStartingKey } from '../startingSeq';
 import { describeFailure, releaseImages } from '../runtimeLanding';
 
-/** How long a task's first prompt waits for the handshake. Matches the
- *  `init`-then-`session_load` ordering rule: the prompt may only be written
- *  once the empty `session_load` of a fresh session has been applied, and a
- *  child that has not handshaken within half a minute is not about to. */
-const HANDSHAKE_WAIT_MS = 30_000;
-
-export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession' | 'focusSession' | 'detachSession' | 'openSession' | 'startLearning' | 'refineTask' | 'upsertTask' | 'openTodoDraft' | 'clearTodoSeed' | 'clearDraftIf' | 'deleteTask' | 'clearTaskRuns' | 'runTask' | 'noteTaskRunInit' | 'noteTaskRunOutcome'> {
+export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession' | 'focusSession' | 'detachSession' | 'openSession' | 'startLearning' | 'refineTask' | 'upsertTask' | 'openTicketDraft' | 'clearTicketSeed' | 'clearDraftIf' | 'deleteTask' | 'clearTaskRuns' | 'runTask' | 'noteTaskRunInit' | 'noteTaskRunOutcome'> {
   const { set, get, patch, patchWith, abandonIfUntouched } = ctx;
 
-  /**
-   * Wait for one session's handshake, and say **which** of the three outcomes
-   * happened rather than folding them together.
-   *
-   * `gone` is the ordinary failure (the bucket was replaced by a problem row or
-   * closed while waiting) and the failure is already on screen. `timeout` is
-   * not: the child is still there and still booting, so nothing has been said
-   * about the prompt that was never sent — the caller has to say it.
-   */
-  async function waitForReady(key: string): Promise<'ready' | 'gone' | 'timeout'> {
-    const deadline = Date.now() + HANDSHAKE_WAIT_MS;
-    for (;;) {
-      const current = get().sessions[key];
-      if (current === undefined) return 'gone';
-      if (current.ready) return 'ready';
-      if (Date.now() >= deadline) return 'timeout';
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-  }
-
-  /**
-   * Say that a task's first prompt never left this window.
-   *
-   * A note rather than a silent return, because there is no other surface that
-   * could carry it: the session is still booting (so there is no `problem`
-   * row), and the composer's draft was never written (so the input box shows
-   * nothing either). `task` is the template's own title when the caller has
-   * one — "this prompt" is the honest sentence for a learning run, which has
-   * no task behind it.
-   */
-  function sayHandshakeTimedOut(key: string, task: string | null): void {
-    patchWith(key, (bucket) => ({
-      entries: [
-        ...bucket.entries,
-        {
-          kind: 'note',
-          id: nextId('note'),
-          tone: 'warn',
-          code: 'handshake_timeout',
-          text: '',
-          message: { code: 'handshakeTimeout', seconds: HANDSHAKE_WAIT_MS / 1000, task },
-        },
-      ],
-    }));
-  }
+  // The handshake wait and its timeout note are shared with Ticket starts
+  // (`sessionRun.ts`); these are the slice-local spellings of them.
+  const waitForReady = (key: string) => waitForReadyShared(ctx, key);
+  const sayHandshakeTimedOut = (key: string, task: string | null) =>
+    sayHandshakeTimedOutShared(ctx, key, task);
 
   return {
     async attachSession(options = {}) {
@@ -759,15 +718,18 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       persistPrefs(get());
     },
 
-    openTodoDraft(prompt, opts) {
-      const text = prompt.trim();
+    openTicketDraft(brief, opts) {
+      const text = brief.trim();
       if (text === '') return;
-      set({ todoSeed: { prompt: text, draftOf: opts?.fromDraft === true ? get().activeKey : null } });
-      get().openPanel('tasks');
+      set({ ticketSeed: { brief: text, draftOf: opts?.fromDraft === true ? get().activeKey : null } });
+      // The Ticket board is a view, not a panel: `setBoard` also puts away a
+      // panel and detaches an attached shell, so the seed is never opened
+      // behind something that hides it.
+      get().setBoard('tickets');
     },
 
-    clearTodoSeed() {
-      set({ todoSeed: null });
+    clearTicketSeed() {
+      set({ ticketSeed: null });
     },
 
     clearDraftIf(key, expected) {
@@ -793,75 +755,22 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
       const task = get().tasks.find((row) => row.id === taskId);
       if (!task || !canRunTask(task)) return null;
 
-      // Where the run goes. `active` means the workspace on screen — whatever
-      // it is, local or remote, `openSession(null)` already answers it: it
-      // dials another child there on a remote screen and spawns here on a
-      // local one. An explicit local path is a plain attach; an explicit
-      // remote ref is the forceNew connect when the workspace already has a
-      // live child (a Run means a **new** session, never "focus the old one")
-      // and the rail's own entry otherwise, which owns the config-sync
-      // decision and the automatic install.
-      const s = get();
-      let workspaceLabel: string;
-      let opened: Promise<void>;
-      if (task.workspace.kind === 'active') {
-        const active = activeRuntime(s);
-        workspaceLabel = active?.session?.workspace ?? active?.workspace ?? '';
-        if (workspaceLabel === '') return null;
-        opened = get().openSession(null);
-      } else if (task.workspace.kind === 'local') {
-        workspaceLabel = task.workspace.path;
-        opened = get().openSession(null, task.workspace.path);
-      } else {
-        const remoteId = task.workspace.id;
-        const entry = s.remoteWorkspaces.find((item) => item.id === remoteId);
-        const host = entry !== undefined ? s.sshHosts.find((item) => item.id === entry.hostId) : undefined;
-        if (entry === undefined || host === undefined) return null;
-        workspaceLabel = entry.remotePath;
-        const live = s.order.find((key) => s.sessions[key]?.remoteWorkspaceId === remoteId);
-        opened =
-          live !== undefined
-            ? get().connectRemoteWorkspace(remoteId, { forceNew: true })
-            : get().enterRemoteWorkspace(remoteId);
-      }
-
-      // The keys that existed before the open. The run's link may only land on
-      // a bucket created **by this open**: the open paths can also merely
-      // focus an existing session (and a config-sync prompt can park the open
-      // entirely, leaving the screen where it was), and recording a run against
-      // a conversation that already existed would be the "fake success" the
-      // design refuses.
-      const previousKeys = new Set(s.order);
-
-      let openError: unknown = null;
-      try {
-        await opened;
-      } catch (err) {
-        // A refused open (the config check could not connect, for one) is the
-        // panel's to show; nothing was started, so nothing is recorded.
-        openError = err;
-      }
-      if (openError !== null) return null;
-
-      const after = get();
-      const key = after.activeKey;
-      const bucket = key !== null ? after.sessions[key] : null;
-      if (key === null || bucket === null || previousKeys.has(key) || bucket.problem !== null) {
-        // Either nothing opened, an existing session was focused, or the open
-        // failed with its own row (`failed-…` or a problem placeholder —
-        // `attachSession` catches its bridge's refusal and shows it there, so
-        // no throw reaches the `await` above) — in every one of those no
-        // session was created, so no link, no prompt, and no key is returned:
-        // the contract is "the key a run landed in", and nothing landed.
-        return null;
-      }
+      // Where the run goes, and the rule that the link may only land on a
+      // bucket created **by this open** (focusing an existing session, a parked
+      // config-sync prompt or a failed open all start nothing, and recording a
+      // run against a conversation that already existed would be the "fake
+      // success" the design refuses). Both live in `openNewSession`, shared
+      // with `startTicket`; `null` means nothing was started, so no link, no
+      // prompt, and no key is returned.
+      const bucket = await openNewSession(ctx, task.workspace);
+      if (bucket === null) return null;
+      const { key, workspaceLabel } = bucket;
 
       const link: TaskRunLink = {
         taskId: task.id,
         sessionId: '',
         sessionKey: key,
         startedAtMs: Date.now(),
-        // A todo may have no name of its own; its title is its prompt's first line.
         taskName: taskTitle(task),
         model: task.model,
         workspaceLabel,
@@ -882,15 +791,8 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         // persisted before this field existed means.
         remoteWorkspaceId: bucket.remoteWorkspaceId,
       };
-      // A todo moves to "doing" the moment its session exists: the work has
-      // started, whether or not the prefilled prompt has been sent yet. Only a
-      // person moves it to "done".
-      const todo = isTodo(task);
       set((state) => ({
         taskRuns: [...state.taskRuns, link].slice(-TASK_RUNS_MAX),
-        tasks: todo
-          ? state.tasks.map((row) => (row.id === task.id ? { ...row, status: 'doing' as const, updatedAtMs: Date.now() } : row))
-          : state.tasks,
       }));
       persistPrefs(get());
 
@@ -922,16 +824,6 @@ export function sessionsSlice(ctx: StoreContext): Pick<AppStore, 'attachSession'
         }
         applyAutopilot?.();
         applyModel?.();
-        // A todo is started by the person who will work on it: the prompt is
-        // written into the session's composer and nothing is sent, so they can
-        // add what they learned since parking it before pressing Enter. The
-        // draft is patched on the run's own bucket rather than through
-        // `setDraft` (which writes the *active* one), so it lands correctly
-        // even if the person switched sessions during the handshake.
-        if (todo) {
-          patchWith(key, () => ({ draft: task.prompt, historyCursor: null }));
-          return;
-        }
         const active = get().activeKey;
         if (active !== key) {
           patchWith(key, (b) => ({

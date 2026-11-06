@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { ChevronLeft, ChevronRight, FileText, FolderOpen, ListTodo, Paperclip, Plus, SquareSlash, WandSparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileText, FolderOpen, Paperclip, Plus, SquareSlash, Ticket, WandSparkles } from 'lucide-react';
 import { NO_SKILLS, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { insertAtCaret } from '@/runtime/paste';
@@ -156,18 +156,18 @@ function RootPage({
         <span className="plus-item-label">{t('plus.commands')}</span>
         <span className="plus-item-hint">Ctrl K</span>
       </button>
-      <SaveDraftAsTodo t={t} onDone={onCommands} />
+      <SaveDraftAsTicket t={t} onDone={onCommands} />
     </div>
   );
 }
 
 /**
- * Park the composer's draft as a todo. Opens the todo editor seeded with the
- * draft; the composer is emptied only when the todo is saved (and only if it
+ * Park the composer's draft as a Ticket. Opens the Ticket board's new-Ticket box seeded with the
+ * draft; the composer is emptied only when the Ticket is created (and only if it
  * still holds the same text), so Cancel loses nothing. Disabled over an empty
  * draft, which has nothing to park.
  */
-function SaveDraftAsTodo({ t, onDone }: { t: T; onDone: () => void }) {
+function SaveDraftAsTicket({ t, onDone }: { t: T; onDone: () => void }) {
   const draft = useSessionField((rt) => rt.draft, '');
   const empty = draft.trim() === '';
   return (
@@ -175,14 +175,14 @@ function SaveDraftAsTodo({ t, onDone }: { t: T; onDone: () => void }) {
       type="button"
       className="plus-item"
       disabled={empty}
-      title={empty ? t('plus.todoEmpty') : undefined}
+      title={empty ? t('plus.ticketEmpty') : undefined}
       onClick={() => {
-        useApp.getState().openTodoDraft(draft, { fromDraft: true });
+        useApp.getState().openTicketDraft(draft, { fromDraft: true });
         onDone();
       }}
     >
-      <ListTodo size={15} />
-      <span className="plus-item-label">{t('plus.saveTodo')}</span>
+      <Ticket size={15} />
+      <span className="plus-item-label">{t('plus.saveTicket')}</span>
     </button>
   );
 }

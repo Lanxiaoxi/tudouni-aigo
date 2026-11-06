@@ -79,7 +79,7 @@ function install(
     // The two window facts the archive work added, reset here so one test cannot
     // hand a borrowed filter or an open board to the next — neither is persisted,
     // so a fresh window is exactly this.
-    boardOpen: false,
+    board: null,
     sessionFilter: 'active',
     startupProblem: null,
     startupNotice: null,
@@ -735,7 +735,7 @@ test('a request arriving while the board is up is held, not rendered', () => {
   // it, by closing the board.
   const bucket = handshaken('k1', 'C:/work', '20261002-183456');
   install({ k1: bucket }, ['k1'], 'k1', {
-    boardOpen: true,
+    board: 'sessions',
     modal: {
       kind: 'permission',
       key: 'k1',
@@ -754,7 +754,7 @@ test('a request arriving while the board is up is held, not rendered', () => {
   assert.equal(selectModalVisible(useApp.getState()), false);
   // And the same request becomes visible the moment the board closes — the
   // click, or Esc.
-  useApp.setState({ boardOpen: false });
+  useApp.setState({ board: null });
   assert.equal(selectModalVisible(useApp.getState()), true);
 });
 
@@ -767,7 +767,7 @@ test('a held request becomes visible when the terminal outranks the board', () =
   const bucket = handshaken('k1', 'C:/work', '20261002-183456');
   bucket.activeTerminalId = 'term-01';
   install({ k1: bucket }, ['k1'], 'k1', {
-    boardOpen: true,
+    board: 'sessions',
     modal: {
       kind: 'permission',
       key: 'k1',
@@ -791,7 +791,7 @@ test('a board with no request under it renders nothing to hold', () => {
   // components' `open`, so a board that is up **without** a request must yield
   // a dead modal rather than a phantom one.
   const bucket = handshaken('k1', 'C:/work', '20261002-183456');
-  install({ k1: bucket }, ['k1'], 'k1', { boardOpen: true });
+  install({ k1: bucket }, ['k1'], 'k1', { board: 'sessions' });
   assert.equal(selectModalVisible(useApp.getState()), false);
 });
 
@@ -929,10 +929,10 @@ test('the board stays openable from the bar once the children are gone', () => {
   // a room with no door — the rail's foot being the other one, and also gone
   // with the rail. `disabled` is `!boardAvailable && !boardOpen`, so the open
   // board answers for itself.
-  install({}, [], null, { boardOpen: true });
+  install({}, [], null, { board: 'sessions' });
   assert.equal(selectBoardAvailable(useApp.getState()), false);
   assert.equal(
-    !selectBoardAvailable(useApp.getState()) && !useApp.getState().boardOpen,
+    !selectBoardAvailable(useApp.getState()) && useApp.getState().board !== 'sessions',
     false,
     'an open board is still closable from its own button',
   );

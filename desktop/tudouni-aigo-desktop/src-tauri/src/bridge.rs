@@ -73,6 +73,70 @@ pub(crate) struct ExitPayload {
     pub(crate) key: ChildKey,
     pub(crate) code: i32,
     pub(crate) requested: bool,
+    /// Why the child went away, when this side knows something `requested`
+    /// and `code` cannot say. Today only `"ssh_closed"`: a remote child whose
+    /// channel ended without our asking. The front end uses it to tell a
+    /// dropped connection from a crashed process (a Ticket's "disconnected"
+    /// versus "crashed") instead of guessing from the workspace type.
+    ///
+    /// Omitted from the JSON when `None`, so a local exit stays byte-for-byte
+    /// what it was and an older front end never sees a field it does not know.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reason: Option<&'static str>,
+}
+
+/// The reason string for an unrequested remote exit.
+pub(crate) const EXIT_REASON_SSH_CLOSED: &str = "ssh_closed";
+
+/// What to tell the front end about why a child ended.
+///
+/// A requested exit has no reason: the person asked for it, and "the
+/// connection closed" would be a false statement about a close we caused.
+/// A local child never has one: the reason exists to name the one failure a
+/// local process cannot have.
+pub(crate) fn exit_reason(remote: bool, requested: bool) -> Option<&'static str> {
+    if remote && !requested {
+        Some(EXIT_REASON_SSH_CLOSED)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod exit_payload_tests {
+    use super::*;
+
+    fn payload(reason: Option<&'static str>) -> serde_json::Value {
+        serde_json::to_value(ExitPayload {
+            key: 7,
+            code: 0,
+            requested: false,
+            reason,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn reason_is_omitted_when_absent() {
+        let value = payload(None);
+        assert!(value.get("reason").is_none(), "{value}");
+        assert_eq!(value["key"], 7);
+        assert_eq!(value["requested"], false);
+    }
+
+    #[test]
+    fn reason_is_serialized_when_present() {
+        let value = payload(Some(EXIT_REASON_SSH_CLOSED));
+        assert_eq!(value["reason"], "ssh_closed");
+    }
+
+    #[test]
+    fn only_an_unrequested_remote_exit_has_a_reason() {
+        assert_eq!(exit_reason(true, false), Some("ssh_closed"));
+        assert_eq!(exit_reason(true, true), None);
+        assert_eq!(exit_reason(false, false), None);
+        assert_eq!(exit_reason(false, true), None);
+    }
 }
 
 /// One diagnostic line from a child. Separate from `runtime://line` because it

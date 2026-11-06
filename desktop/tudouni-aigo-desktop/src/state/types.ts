@@ -582,7 +582,7 @@ export interface SessionRuntime {
   /** This child's stderr, verbatim, bounded. Diagnostics, never protocol data. */
   stderrTail: string[];
   /** Set when this child ends without being asked to. */
-  runtimeExit: { code: number; requested: boolean } | null;
+  runtimeExit: { code: number; requested: boolean; reason?: string } | null;
   /** What this child was started with. See `LaunchArgs`. */
   launch: LaunchArgs;
   /**
@@ -600,6 +600,15 @@ export interface SessionRuntime {
    * somebody reading Audit is trying to resolve.
    */
   runtimeBuild: string | null;
+
+  /**
+   * The Ticket this child said it is bound to (`init.ticket`), without the
+   * reports. `null` when unbound, before `init`, or on a runtime that predates
+   * protocol 18. It is the runtime's claim as of the handshake, not the Ticket's
+   * truth: the Ticket list is the authority, and `ticket_bind` changes made
+   * later by this window are not echoed back here.
+   */
+  ticketBinding: { id: string; title: string; brief: string } | null;
 
   session: SessionInfo | null;
   /**

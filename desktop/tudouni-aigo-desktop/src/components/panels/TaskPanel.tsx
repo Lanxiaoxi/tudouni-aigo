@@ -5,14 +5,10 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
-  CircleCheck,
   Clock,
   Copy,
-  ExternalLink,
   Folder,
-  ListTodo,
   MoreHorizontal,
-  RotateCcw,
   Pencil,
   Play,
   Plus,
@@ -40,11 +36,7 @@ import { baseName, formatClock, formatDuration } from '@/utils/format';
 import {
   canRunTask,
   emptyTask,
-  emptyTodo,
-  isTodo,
   taskTitle,
-  todoStatus,
-  withKind,
   refineAvailability,
   refineRunScope,
   REFINE_LAST_N,
@@ -56,7 +48,6 @@ import {
   type RunDay,
   type RunScope,
   type Task,
-  type TaskKind,
   type TaskRunLink,
   type TaskWorkspaceRef,
 } from '@/task/tasks';
@@ -129,30 +120,7 @@ export function TaskPanel() {
   // choice and the focus, and its Start is the only door into `refineTask`.
   const [refineId, setRefineId] = useState<string | null>(null);
 
-  // A todo seeded from outside the panel (the transcript's "Add to todo", the
-  // composer's "Save draft as todo"). Held here **unsaved**: unlike "New task",
-  // which writes a row before its editor opens, a seed is only a suggestion and
-  // Cancel must leave no trace of it.
-  const todoSeed = useApp((s) => s.todoSeed);
-  const clearTodoSeed = useApp((s) => s.clearTodoSeed);
-  const [pending, setPending] = useState<{ task: Task; seed: string; draftOf: string | null } | null>(null);
-  useEffect(() => {
-    if (todoSeed === null) return;
-    const todo = emptyTodo(Date.now());
-    todo.prompt = todoSeed.prompt;
-    if (remoteWorkspaceId !== null) todo.workspace = { kind: 'remote', id: remoteWorkspaceId };
-    setPending({ task: todo, seed: todoSeed.prompt, draftOf: todoSeed.draftOf });
-    setEditingId(null);
-    setRefineId(null);
-    clearTodoSeed();
-  }, [todoSeed, clearTodoSeed, remoteWorkspaceId]);
-
-  const editing =
-    pending !== null
-      ? pending.task
-      : editingId !== null
-        ? (tasks.find((row) => row.id === editingId) ?? null)
-        : null;
+  const editing = editingId !== null ? (tasks.find((row) => row.id === editingId) ?? null) : null;
   const refining = refineId !== null ? (tasks.find((row) => row.id === refineId) ?? null) : null;
 
   const localPaths = useMemo(() => {
@@ -171,11 +139,11 @@ export function TaskPanel() {
   const labelOf = (ref: TaskWorkspaceRef): string | null =>
     workspaceRefLabel(ref, workspace, localPaths, remoteLabels);
 
-  function startNew(kind: TaskKind) {
+  function startNew() {
     // The workspace field pre-selects the screen's own workspace when there is
     // one, and a remote screen pre-selects **its** ref: a Run from a remote
     // screen should default to running there, exactly like "New session" does.
-    const task = kind === 'todo' ? emptyTodo(Date.now()) : emptyTask(Date.now());
+    const task = emptyTask(Date.now());
     if (remoteWorkspaceId !== null) task.workspace = { kind: 'remote', id: remoteWorkspaceId };
     upsertTask(task);
     setEditingId(task.id);
@@ -198,24 +166,14 @@ export function TaskPanel() {
       <TaskEditor
         key={editing.id}
         task={editing}
-        isNew={pending !== null || (editing.name.trim() === '' && editing.prompt.trim() === '')}
+        isNew={editing.name.trim() === '' && editing.prompt.trim() === ''}
         localPaths={localPaths}
         remoteLabels={remoteLabels}
         onDone={(next) => {
           upsertTask(next);
-          if (pending !== null) {
-            // Parked: the composer the text came from no longer needs to hold
-            // it — unless it was typed on since, which `clearDraftIf` respects.
-            if (pending.draftOf !== null) useApp.getState().clearDraftIf(pending.draftOf, pending.seed);
-            setPending(null);
-          }
           setEditingId(null);
         }}
         onCancel={() => {
-          if (pending !== null) {
-            setPending(null);
-            return;
-          }
           // A brand-new, untouched template is not worth leaving behind: "New
           // task" writes the row before the editor opens, so cancelling out of
           // one that was never typed into would leave blank shelf litter. Only
@@ -264,17 +222,7 @@ export function TaskPanel() {
    The shelf: every template, in the design's row shape.
    ============================================================ */
 
-/** `enabled`/`disabled` are a template's notion and count templates only;
- *  `todo` is every todo, finished ones last. */
-type ShelfFilter = 'all' | 'todo' | 'enabled' | 'disabled';
-
-/** Order on the shelf: open todos (doing, then not started) before templates,
- *  finished todos last — the list answers "what is waiting for me" first. */
-function shelfRank(task: Task): number {
-  if (!isTodo(task)) return 2;
-  const status = todoStatus(task);
-  return status === 'doing' ? 0 : status === 'todo' ? 1 : 3;
-}
+type ShelfFilter = 'all' | 'enabled' | 'disabled';
 
 function TaskShelf({
   tasks,
@@ -290,7 +238,7 @@ function TaskShelf({
   tasks: Task[];
   links: TaskRunLink[];
   labelOf: (ref: TaskWorkspaceRef) => string | null;
-  onNew: (kind: TaskKind) => void;
+  onNew: () => void;
   onEdit: (id: string) => void;
   onDuplicate: (task: Task) => void;
   onHistory: () => void;
@@ -327,33 +275,24 @@ function TaskShelf({
   const counts = useMemo(
     () => ({
       all: tasks.length,
-      // Open todos only: the count is "how much is waiting", and a finished
-      // todo is not waiting for anything.
-      todo: tasks.filter((row) => isTodo(row) && todoStatus(row) !== 'done').length,
-      enabled: tasks.filter((row) => !isTodo(row) && row.enabled).length,
-      disabled: tasks.filter((row) => !isTodo(row) && !row.enabled).length,
+      enabled: tasks.filter((row) => row.enabled).length,
+      disabled: tasks.filter((row) => !row.enabled).length,
     }),
     [tasks],
   );
 
+  // The shelf keeps its insertion order.
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const rows = tasks.filter((row) => {
-      if (filter === 'todo' && !isTodo(row)) return false;
-      if (filter === 'enabled' && (isTodo(row) || !row.enabled)) return false;
-      if (filter === 'disabled' && (isTodo(row) || row.enabled)) return false;
+    return tasks.filter((row) => {
+      if (filter === 'enabled' && !row.enabled) return false;
+      if (filter === 'disabled' && row.enabled) return false;
       if (needle === '') return true;
       return (
         taskTitle(row).toLowerCase().includes(needle) ||
-        row.description.toLowerCase().includes(needle) ||
-        (isTodo(row) && row.prompt.toLowerCase().includes(needle))
+        row.description.toLowerCase().includes(needle)
       );
     });
-    // Stable: equal ranks keep the shelf's insertion order.
-    return rows
-      .map((row, index) => ({ row, index }))
-      .sort((a, b) => shelfRank(a.row) - shelfRank(b.row) || a.index - b.index)
-      .map((item) => item.row);
   }, [tasks, filter, query]);
 
   return (
@@ -381,7 +320,7 @@ function TaskShelf({
           heading and this row is a working surface. */}
       <div className="tk-toolbar">
         <div className="tk-chips" role="tablist" aria-label={t('panel.task.title')}>
-          {(['all', 'todo', 'enabled', 'disabled'] as const).map((key) => (
+          {(['all', 'enabled', 'disabled'] as const).map((key) => (
             <button
               key={key}
               type="button"
@@ -411,9 +350,7 @@ function TaskShelf({
           <Clock size={13} />
           {t('panel.task.history')}
         </button>
-        {/* Under the Todo filter, "New" starts a todo: the filter is where the
-            person said which kind they are thinking about. */}
-        <button type="button" className="btn btn-primary" onClick={() => onNew(filter === 'todo' ? 'todo' : 'template')}>
+        <button type="button" className="btn btn-primary" onClick={onNew}>
           <Plus size={13} />
           {t('panel.task.new')}
         </button>
@@ -539,21 +476,6 @@ function TaskRow({
   const newest = runs.length > 0 ? runs[runs.length - 1] : null;
   const failed = newest !== null && newest.outcome === 'failed';
 
-  if (isTodo(task)) {
-    return (
-      <TodoRow
-        task={task}
-        label={label}
-        newest={newest}
-        busy={busy}
-        runnable={runnable}
-        blocked={blocked}
-        onRun={onRun}
-        onEdit={onEdit}
-      />
-    );
-  }
-
   return (
     <div className={`tk-row${task.enabled ? '' : ' is-disabled'}`}>
       <span className="tk-mark" aria-hidden>
@@ -660,165 +582,6 @@ function TaskRow({
           onToggleAutopilot={() => upsertTask({ ...task, autopilot: task.autopilot !== true })}
           onDelete={() => deleteTask(task.id)}
         />
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   A todo's row: parked work, started once, finished by hand.
-   ============================================================ */
-
-/**
- * One todo. The same row skeleton as a template (mark, title, meta, a fixed
- * action slot) so the shelf reads as one list, but the slot follows the todo's
- * status rather than hover:
- *
- *   - **todo** — Run, shown at rest: starting it is the only thing to do.
- *   - **doing** — Open (the session its Run started) and Done.
- *   - **done** — Reopen, and the row is dimmed like a disabled template.
- *
- * Run here opens the session and fills its composer; nothing is sent (see
- * `runTask`). That is why there is no running bar: the person is the one who
- * starts the turn, in the session itself.
- */
-function TodoRow({
-  task,
-  label,
-  newest,
-  busy,
-  runnable,
-  blocked,
-  onRun,
-  onEdit,
-}: {
-  task: Task;
-  label: string | null;
-  newest: TaskRunLink | null;
-  busy: boolean;
-  runnable: boolean;
-  blocked: string | null;
-  onRun: () => void;
-  onEdit: () => void;
-}) {
-  const t = useT();
-  const upsertTask = useApp((s) => s.upsertTask);
-  const deleteTask = useApp((s) => s.deleteTask);
-  const focusSession = useApp((s) => s.focusSession);
-  const status = todoStatus(task);
-  const [armed, setArmed] = useState(false);
-
-  // Whether the session the last Run started is still a live child, as a
-  // stable boolean (one row per todo must not re-render on every token).
-  const liveKey = newest?.sessionKey ?? '';
-  const live = useApp((s) => liveKey !== '' && s.sessions[liveKey] !== undefined);
-  const openable = newest !== null && (live || newest.sessionId !== '');
-
-  function open(): void {
-    if (newest === null) return;
-    if (live) {
-      focusSession(newest.sessionKey);
-      useApp.getState().closePanel();
-    } else if (newest.sessionId !== '') {
-      void useApp.getState().openSession(newest.sessionId);
-    }
-  }
-
-  const setStatus = (next: 'todo' | 'doing' | 'done') => upsertTask({ ...task, status: next });
-
-  return (
-    <div className={`tk-row tk-todo${status === 'done' ? ' is-disabled' : ''}`}>
-      <span className="tk-mark" aria-hidden>
-        {status === 'done' ? <CircleCheck size={15} /> : <ListTodo size={15} />}
-      </span>
-
-      <div className="tk-row-main">
-        <div className="tk-row-title">
-          <button
-            type="button"
-            className={`tk-row-name${status === 'done' ? ' is-done' : ''}`}
-            onClick={onEdit}
-          >
-            {taskTitle(task) || t('panel.task.unnamed')}
-          </button>
-          <span
-            className={`badge ${status === 'doing' ? 'badge-info' : status === 'done' ? 'badge-success' : 'badge-neutral'}`}
-          >
-            {t(`panel.todo.status.${status}`)}
-          </span>
-          {label === null ? (
-            <span className="badge badge-warning">{t('panel.task.workspaceMissing')}</span>
-          ) : null}
-        </div>
-
-        <div className="tk-row-meta">
-          <span className="tk-meta-item" title={label ?? undefined}>
-            {label === null ? t('panel.task.workspaceMissing') : baseName(label) || label}
-          </span>
-          <span className="tk-meta-dot" aria-hidden>
-            ·
-          </span>
-          <span className="tk-meta-item">
-            {task.model.trim() === '' ? t('panel.task.modelDefault') : task.model}
-          </span>
-        </div>
-      </div>
-
-      <div className="tk-row-actions">
-        {status === 'todo' ? (
-          <Tip label={blocked ?? t('panel.todo.runHint')}>
-            <button
-              type="button"
-              className="btn btn-primary tk-row-cta is-shown"
-              disabled={!runnable || busy}
-              onClick={onRun}
-            >
-              <Play size={12} />
-              {t('panel.todo.start')}
-            </button>
-          </Tip>
-        ) : status === 'doing' ? (
-          <>
-            {openable ? (
-              <Tip label={t('panel.task.openHint')}>
-                <button type="button" className="btn btn-outline btn-compact" onClick={open}>
-                  <ExternalLink size={12} />
-                  {t('panel.task.open')}
-                </button>
-              </Tip>
-            ) : null}
-            <Tip label={t('panel.todo.doneHint')}>
-              <button type="button" className="btn btn-primary btn-compact" onClick={() => setStatus('done')}>
-                <Check size={12} />
-                {t('panel.todo.done')}
-              </button>
-            </Tip>
-          </>
-        ) : (
-          <Tip label={t('panel.todo.reopenHint')}>
-            <button type="button" className="btn btn-outline btn-compact" onClick={() => setStatus('todo')}>
-              <RotateCcw size={12} />
-              {t('panel.todo.reopen')}
-            </button>
-          </Tip>
-        )}
-
-        {/* Delete keeps the app's two-press arm; leaving the button disarms. */}
-        <Tip label={armed ? t('panel.task.deleteConfirm') : t('panel.todo.delete')}>
-          <button
-            type="button"
-            className={`btn btn-ghost btn-icon tk-more${armed ? ' is-armed' : ''}`}
-            aria-label={armed ? t('panel.task.deleteConfirm') : t('panel.todo.delete')}
-            onBlur={() => setArmed(false)}
-            onMouseLeave={() => setArmed(false)}
-            onClick={() => {
-              if (armed) deleteTask(task.id);
-              else setArmed(true);
-            }}
-          >
-            <Trash2 size={14} />
-          </button>
-        </Tip>
       </div>
     </div>
   );
@@ -1335,8 +1098,7 @@ function TaskEditor({
   onCancel,
 }: {
   task: Task;
-  /** Decided by the caller: a todo may legitimately have no name, so "no name
-   *  yet" no longer means "never saved". */
+  /** Decided by the caller: whether this is a template being created. */
   isNew: boolean;
   localPaths: string[];
   remoteLabels: Map<string, string>;
@@ -1352,8 +1114,6 @@ function TaskEditor({
 
   const missing = taskProblems(draft);
   const canSave = missing.length === 0;
-  const todo = isTodo(draft);
-  const kinds: TaskKind[] = ['template', 'todo'];
 
   // Esc discards, which the footer says. `PanelShell` is not used here, so the
   // key is bound where the state that has to be discarded lives — and the
@@ -1378,38 +1138,11 @@ function TaskEditor({
       <div className="dialog-head tk-head">
         <div className="grow">
           <DialogPrimitive.Title className="dialog-title">
-            {todo
-              ? isNew
-                ? t('panel.todo.newTitle')
-                : t('panel.todo.editTitle')
-              : isNew
-                ? t('panel.task.newTitle')
-                : t('panel.task.editTitle')}
+            {isNew ? t('panel.task.newTitle') : t('panel.task.editTitle')}
           </DialogPrimitive.Title>
           <DialogPrimitive.Description className="dialog-desc">
-            {todo ? t('panel.todo.editNote') : t('panel.task.editNote')}
+            {t('panel.task.editNote')}
           </DialogPrimitive.Description>
-        </div>
-        {/* The kind switch: one editor for both, because a todo is a task with
-            fewer fields and a different Run — not a second feature. Switching
-            carries the prompt and environment over and resets the kind's own
-            defaults (`withKind`): autopilot off for a todo, on for a template. */}
-        <div className="wb-seg tk-kind" role="radiogroup" aria-label={t('panel.todo.kind')}>
-          {kinds.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              role="radio"
-              aria-checked={(draft.kind ?? 'template') === kind}
-              className={`wb-seg-item${(draft.kind ?? 'template') === kind ? ' is-on' : ''}`}
-              onClick={() => {
-                if ((draft.kind ?? 'template') !== kind) setDraft(withKind(draft, kind));
-              }}
-            >
-              {kind === 'todo' ? <ListTodo size={13} /> : <SquareTerminal size={13} />}
-              {t(kind === 'todo' ? 'panel.todo.kindTodo' : 'panel.todo.kindTask')}
-            </button>
-          ))}
         </div>
         <DialogPrimitive.Close asChild>
           <button type="button" className="btn btn-ghost btn-icon" aria-label={t('panel.close')}>
@@ -1425,25 +1158,16 @@ function TaskEditor({
                 description is a sentence, so they take one and two shares of the
                 same line rather than two full-width rows that push the prompt
                 below the fold. */}
-            {/* A todo drops the description and makes the name optional: the
-                prompt *is* the todo, and its first line titles it when no name
-                is given (`taskTitle`). */}
-            <div className={todo ? 'tk-name-row' : 'wb-grid tk-name-row'}>
+            <div className="wb-grid tk-name-row">
               <label className="cfg-field">
                 <span className="cfg-label">
-                  {t('panel.task.field.name')}{' '}
-                  {todo ? (
-                    <span className="cfg-optional">{t('panel.task.optional')}</span>
-                  ) : (
-                    <span className="cfg-required">*</span>
-                  )}
+                  {t('panel.task.field.name')} <span className="cfg-required">*</span>
                 </span>
                 <input
                   className={`cfg-input${touched && missing.includes('name') ? ' is-error' : ''}`}
                   value={draft.name}
-                  autoFocus={!todo || draft.prompt.trim() === ''}
+                  autoFocus
                   spellCheck={false}
-                  placeholder={todo ? t('panel.todo.namePlaceholder') : undefined}
                   onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                   onBlur={() => setTouched(true)}
                 />
@@ -1452,7 +1176,6 @@ function TaskEditor({
                 ) : null}
               </label>
 
-              {todo ? null : (
               <label className="cfg-field">
                 <span className="cfg-label">
                   {t('panel.task.field.desc')}{' '}
@@ -1466,7 +1189,6 @@ function TaskEditor({
                   onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                 />
               </label>
-              )}
             </div>
 
             <label className="cfg-field">
@@ -1478,15 +1200,14 @@ function TaskEditor({
                 rows={9}
                 value={draft.prompt}
                 spellCheck={false}
-                placeholder={todo ? t('panel.todo.promptPlaceholder') : t('panel.task.field.promptPlaceholder')}
-                autoFocus={todo && draft.prompt.trim() !== ''}
+                placeholder={t('panel.task.field.promptPlaceholder')}
                 onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
                 onBlur={() => setTouched(true)}
               />
               {touched && missing.includes('prompt') ? (
                 <span className="tk-field-error">{t('panel.task.error.prompt')}</span>
               ) : (
-                <span className="tk-field-hint">{todo ? t('panel.todo.promptHint') : t('panel.task.promptHint')}</span>
+                <span className="tk-field-hint">{t('panel.task.promptHint')}</span>
               )}
             </label>
           </div>
@@ -1519,11 +1240,6 @@ function TaskEditor({
               </label>
             </div>
 
-            {/* A todo's run is attended — the person is at the keyboard — and a
-                todo cannot be "disabled", only finished; so neither switch is
-                drawn for one. */}
-            {todo ? null : (
-            <>
             <div className="wb-row tk-switch-row">
               <span className="wb-row-main">
                 <span className="wb-row-title">{t('panel.task.field.autopilot')}</span>
@@ -1561,8 +1277,6 @@ function TaskEditor({
                 </button>
               </span>
             </div>
-            </>
-            )}
           </aside>
         </div>
       </PanelBody>
@@ -1574,7 +1288,7 @@ function TaskEditor({
           {t('common.cancel')}
         </button>
         <button type="button" className="btn btn-primary" disabled={!canSave} onClick={() => onDone(draft)}>
-          {todo ? t('panel.todo.save') : t('panel.task.save')}
+          {t('panel.task.save')}
         </button>
       </div>
     </>
@@ -1595,7 +1309,7 @@ function TaskEditor({
  * workspace's `label` is already the human name of a place this window cannot
  * address locally, and echoing it underneath itself would be noise.
  */
-function WorkspacePicker({
+export function WorkspacePicker({
   value,
   localPaths,
   remoteLabels,
@@ -1714,7 +1428,7 @@ function WorkspacePicker({
  * `provider/model` is what the run sends (`set_model` does no fuzzy matching),
  * so the qualified form is the value — the same rule `ModelPanel` follows.
  */
-function ModelPicker({ value, onChange }: { value: string; onChange: (model: string) => void }) {
+export function ModelPicker({ value, onChange }: { value: string; onChange: (model: string) => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState(false);

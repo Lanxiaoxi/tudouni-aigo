@@ -48,48 +48,17 @@ export interface Task {
    *  session's default (off). A freshly created one is on. The editor always
    *  writes it back, so the field converges after the first save. */
   autopilot?: boolean;
-  /**
-   * What the record is for. A `template` is run again and again, unattended; a
-   * `todo` is a piece of work parked for later, started once by a person who is
-   * sitting at it — so its Run only opens the session and fills the composer,
-   * and nothing is sent until that person presses Enter.
-   *
-   * Optional: every record saved before the field existed is a template, and
-   * absent reads as exactly that.
-   */
-  kind?: TaskKind;
-  /** A todo's progress. Ignored for a template. Absent on a todo reads as
-   *  `todo` (not started). `done` is only ever set by the person. */
-  status?: TodoStatus;
   createdAtMs: number;
   updatedAtMs: number;
 }
 
-export type TaskKind = 'template' | 'todo';
-export type TodoStatus = 'todo' | 'doing' | 'done';
-
-/** Whether a record is a todo rather than a reusable template. */
-export function isTodo(task: Task): boolean {
-  return task.kind === 'todo';
-}
-
-/** A todo's status with the absent case folded in. */
-export function todoStatus(task: Task): TodoStatus {
-  return task.status ?? 'todo';
-}
-
 /**
- * The line a todo is listed under: its name when it has one, otherwise the
- * prompt's first non-empty line. A todo's name is optional — the description of
- * the work *is* the todo, and asking for a second title is friction at exactly
- * the moment the person wanted to park it quickly.
+ * The line a template is listed under: its name. (Todos used to be titled by
+ * their prompt's first line; they became Tickets, which carry their own title
+ * rule in `ticket/model.ts`.)
  */
 export function taskTitle(task: Task): string {
-  const name = task.name.trim();
-  if (name !== '' || !isTodo(task)) return name;
-  const first = task.prompt.split(/\r?\n/).find((line) => line.trim() !== '') ?? '';
-  const line = first.trim();
-  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+  return task.name.trim();
 }
 
 /** One association between a task and the session a Run produced. */
@@ -305,27 +274,6 @@ export function emptyTask(nowMs: number): Task {
   };
 }
 
-/**
- * Fields a fresh todo gets. Autopilot is **off**: a todo is started by the
- * person who is going to work on it, so approvals and questions have somebody
- * to answer them.
- */
-export function emptyTodo(nowMs: number): Task {
-  return { ...emptyTask(nowMs), kind: 'todo', status: 'todo', autopilot: false };
-}
-
-/**
- * Switch a draft between the two kinds, carrying the content over and giving
- * the kind-specific switches the new kind's defaults (the editor's segmented
- * control). A todo is always enabled: "disabled" is a template's notion.
- */
-export function withKind(task: Task, kind: TaskKind): Task {
-  if (kind === 'todo') {
-    return { ...task, kind, status: task.status ?? 'todo', autopilot: false, enabled: true };
-  }
-  return { ...task, kind, autopilot: true };
-}
-
 /** Guard one parsed task record from `desktop.json` before it is trusted.
  *  The record outlives every build, so a malformed record is dropped whole
  *  rather than let through with `undefined` fields. */
@@ -350,9 +298,10 @@ export function isValidTask(value: unknown): value is Task {
   // `autopilot` is optional (pre-field records keep their old behaviour), but a
   // *present* value that is not a boolean is malformed and drops the record.
   if (v.autopilot !== undefined && typeof v.autopilot !== 'boolean') return false;
-  // `kind` and `status` follow the same rule: absent is the older shape.
-  if (v.kind !== undefined && v.kind !== 'template' && v.kind !== 'todo') return false;
-  if (v.status !== undefined && v.status !== 'todo' && v.status !== 'doing' && v.status !== 'done') return false;
+  // `kind` / `status` belonged to todos, which became Tickets. A record that
+  // still carries them is read loosely and not checked: `desktopData` drops the
+  // todos by the raw field before this guard's result is used, and a template
+  // saved by an older build with `kind: 'template'` must keep loading.
   return typeof v.model === 'string' && typeof v.createdAtMs === 'number' && typeof v.updatedAtMs === 'number';
 }
 
@@ -393,16 +342,13 @@ export function isValidTaskRun(value: unknown): value is TaskRunLink {
 /** The fields Run needs, and what is missing. `[]` means it may run. */
 export function taskProblems(task: Task): string[] {
   const problems: string[] = [];
-  // A todo is titled by its prompt (`taskTitle`), so only a template needs a name.
-  if (task.name.trim() === '' && !isTodo(task)) problems.push('name');
+  if (task.name.trim() === '') problems.push('name');
   if (task.prompt.trim() === '') problems.push('prompt');
   return problems;
 }
 
-/** Whether a task can be run: enabled and without missing required fields.
- *  A finished todo is not: it is reopened first, deliberately. */
+/** Whether a task can be run: enabled and without missing required fields. */
 export function canRunTask(task: Task): boolean {
-  if (isTodo(task) && todoStatus(task) === 'done') return false;
   return task.enabled && taskProblems(task).length === 0;
 }
 

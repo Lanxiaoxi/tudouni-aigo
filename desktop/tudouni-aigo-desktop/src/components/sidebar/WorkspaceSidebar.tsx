@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Activity, Archive, ArchiveRestore, Bot, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Trash2, Webhook, Wrench, X } from 'lucide-react';
+import { Activity, Archive, ArchiveRestore, Bot, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Ticket as TicketIcon, Trash2, Webhook, Wrench, X } from 'lucide-react';
+import { selectTicketAttention } from '@/state/selectors/tickets';
 import {
   activeRuntime,
   activeWorkspaceOf,
@@ -157,9 +158,11 @@ export function WorkspaceSidebar() {
   // is the same kind of decision as the workspace above it — what the runtime
   // process *is* — rather than a per-turn control like the status bar's.
   const openPanel = useApp((s) => s.openPanel);
-  // The session board is a **view**, not a panel (`store.boardOpen`), so it is
-  // reached through its own action rather than `openPanel`.
-  const setBoardOpen = useApp((s) => s.setBoardOpen);
+  // The boards are **views**, not panels (`store.board`), so they are reached
+  // through their own action rather than `openPanel`.
+  const toggleBoard = useApp((s) => s.toggleBoard);
+  // A number, so the selector is stable without memoising a filtered list.
+  const ticketAttention = useApp(selectTicketAttention);
 
   /**
    * The status of every live session, keyed by the runtime's own session id.
@@ -481,7 +484,10 @@ export function WorkspaceSidebar() {
   // whenever a panel was up, which is one of the two ways "New session" was
   // reported as a button that does nothing. See `railBlocked`.
   const blocked = useApp(railBlocked);
-  const boardOpen = useApp((s) => s.boardOpen);
+  const board = useApp((s) => s.board);
+  // Only the **session** board forbids creating and erasing sessions (below);
+  // the ticket board exists to start sessions, so it must not.
+  const boardOpen = board === 'sessions';
   /**
    * The two actions the session board forbids: **creating and destroying a
    * session.**
@@ -565,7 +571,7 @@ export function WorkspaceSidebar() {
    * workspace rows stay one unbroken block.
    *
    * The gates are unchanged from the row each one replaces (each is the same
-   * `openPanel`/`setBoardOpen` call; the disabled reasons are the same ones the
+   * `openPanel`/`toggleBoard` call; the disabled reasons are the same ones the
    * old rows carried). What changed is only how they are arranged.
    *
    * **Per-item badges.** Terminal wears the count of running shells in the
@@ -695,7 +701,23 @@ export function WorkspaceSidebar() {
       // selector the session bar's second door reads (see `SessionBar`).
       disabled: blocked || (!hasLiveChild && !boardOpen),
       active: boardOpen,
-      run: () => setBoardOpen(!boardOpen),
+      run: () => toggleBoard('sessions'),
+    },
+    {
+      key: 'tickets',
+      // Beside the session board: the same "what is happening" pair, and the
+      // same action and labels as the session bar's ticket door.
+      group: 'settings',
+      label: t('board.tickets.title'),
+      hint: t('board.tickets.openHint'),
+      icon: <TicketIcon size={14} />,
+      // `blocked` alone, like Tasks: tickets outlive every session, so the
+      // board must open with no child running at all.
+      disabled: blocked,
+      active: board === 'tickets',
+      // needs_you + review: the two states that are waiting on the person.
+      badge: ticketAttention > 0 ? { value: ticketAttention, tone: 'attention' } : undefined,
+      run: () => toggleBoard('tickets'),
     },
     {
       key: 'usage',

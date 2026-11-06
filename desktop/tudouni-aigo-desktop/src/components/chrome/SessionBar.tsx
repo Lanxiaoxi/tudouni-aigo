@@ -1,4 +1,4 @@
-import { LayoutGrid, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Search } from 'lucide-react';
+import { LayoutGrid, Ticket as TicketIcon, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Search } from 'lucide-react';
 import { railBlocked, selectBoardAvailable, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Fact, Tip } from '@/components/ui/kit';
@@ -60,7 +60,7 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
   const toggleLeftbar = useApp((s) => s.toggleLeftbar);
   const sidebarVisible = useApp((s) => s.sidebarVisible);
   const toggleSidebar = useApp((s) => s.toggleSidebar);
-  const setBoardOpen = useApp((s) => s.setBoardOpen);
+  const toggleBoard = useApp((s) => s.toggleBoard);
   const openFind = useApp((s) => s.openFind);
   // The board's gate is the **workspace's**, not the conversation on screen's:
   // it reports on every session at once, so it must open in the one case Files
@@ -78,7 +78,11 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
   // preference there would change nothing on screen and then bring the rail back
   // in the opposite state once the board closed. The button asks the same
   // question so the two agree, rather than one of them silently doing nothing.
-  const boardOpen = useApp((s) => s.boardOpen);
+  const board = useApp((s) => s.board);
+  // Either board takes the right rail's place, so the rail toggle is inert
+  // under both; the session board's own button is pressed only for its board.
+  const boardOpen = board !== null;
+  const sessionBoardOpen = board === 'sessions';
 
   const leftToggle = (
     <Tip label={leftbarVisible ? t('lb.collapse') : t('lb.show')}>
@@ -121,17 +125,40 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
     <Tip label={t('board.openHint')}>
       <button
         type="button"
-        className={`sb-board${boardOpen ? ' is-active' : ''}`}
+        className={`sb-board${sessionBoardOpen ? ' is-active' : ''}`}
         aria-label={t('board.title')}
-        aria-pressed={boardOpen}
+        aria-pressed={sessionBoardOpen}
         // The same condition the rail's foot draws, from the same selector:
         // inert while a panel or a drawn prompt owns the screen, and otherwise
         // available whenever the workspace has a child to answer for it —
         // **except** while the board is up, where the button is the way back.
-        disabled={blocked || (!boardAvailable && !boardOpen)}
-        onClick={() => setBoardOpen(!boardOpen)}
+        disabled={blocked || (!boardAvailable && !sessionBoardOpen)}
+        onClick={() => toggleBoard('sessions')}
       >
         <LayoutGrid size={14} />
+      </button>
+    </Tip>
+  );
+
+  /**
+   * The ticket board's door, beside the session board's and outside the
+   * scroller for the same reason. Its gate is **only** `railBlocked`: tickets
+   * outlive every session, so the board must open with no child running at all
+   * — `selectBoardAvailable` (which asks for a live child) would lock a person
+   * out of exactly the list that says what to start next. No count here: this
+   * row is 34px of compact facts; the workbench row carries the badge.
+   */
+  const ticketButton = (
+    <Tip label={t('board.tickets.openHint')}>
+      <button
+        type="button"
+        className={`sb-board${board === 'tickets' ? ' is-active' : ''}`}
+        aria-label={t('board.tickets.title')}
+        aria-pressed={board === 'tickets'}
+        disabled={blocked}
+        onClick={() => toggleBoard('tickets')}
+      >
+        <TicketIcon size={14} />
       </button>
     </Tip>
   );
@@ -196,6 +223,7 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
       <div className="sessionbar">
         {leftToggle}
         {boardButton}
+        {ticketButton}
         <div className="sb-scroll">
           <span className="sb-label">{t('session.label')}</span>
           <span className="muted">—</span>

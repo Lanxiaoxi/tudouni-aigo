@@ -18,8 +18,9 @@ import { selectModalVisible } from '../selectors/session';
 import { activeRuntime, activeWorkspaceOf } from '../appView';
 import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
+import { landPersonReplied } from '../ticketLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoardOpen' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
 
   /**
@@ -565,6 +566,10 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
         rememberPrompt(promptHistoryKey(workspace, current.remoteWorkspaceId), remembered);
       }
       sendTo(key, { v: 1, t: 'user_message', text: sent });
+      // The person speaking in a session is the answer a `needs_you` Ticket is
+      // waiting for. This is the one door a typed or clicked message goes
+      // through; a Ticket's own messages (`speak`) are not the person replying.
+      landPersonReplied(ctx, key);
     },
 
     interrupt() {
@@ -688,29 +693,31 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
       sendTo(key, { v: 1, t: 'session_list', filter });
     },
 
-    setBoardOpen(open) {
+    setBoard(next) {
       // **Closing a panel, not preserving it.** The board is a view and a panel is
       // a dialog; the conversation column can only show one thing, so opening one
       // must put the other away rather than leave a panel stacked over the board.
-      if (!open) {
-        set({ boardOpen: false });
+      // Opening one board replaces the other for the same reason: `board` holds
+      // one value, so the exclusion needs no code here.
+      if (next === null) {
+        set({ board: null });
         return;
       }
       // **An attached shell loses the screen to the board, explicitly.** The
       // view's priority order keeps the terminal above the board — `TerminalView`
       // is the only way out of a shell, so nothing may cover it — which is why
-      // merely setting `boardOpen` here was invisible whenever a shell was on
+      // merely setting `board` here was invisible whenever a shell was on
       // screen: the flag flipped, the terminal kept drawing, and the press read
       // as dead until the shell was left by hand. Opening the board is an
       // explicit act, exactly like pressing the detach control, so it detaches
       // the same way — through `attachTerminal(null)`, so the "still running"
       // note is written by the one place that writes it.
       get().attachTerminal(null);
-      set({ boardOpen: true, panel: null });
+      set({ board: next, panel: null });
     },
 
-    toggleBoard() {
-      get().setBoardOpen(!get().boardOpen);
+    toggleBoard(kind) {
+      get().setBoard(get().board === kind ? null : kind);
     },
 
     setClosePrompt(open) {

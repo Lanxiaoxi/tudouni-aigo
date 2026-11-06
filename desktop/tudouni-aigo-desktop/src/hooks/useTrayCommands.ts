@@ -26,7 +26,7 @@ import { onTrayCommand } from '@/runtime/tauri';
  * `new-session` deliberately goes through `openSession(null)`, the same entry
  * the `/new` command and the rail's button take. The board being up does not
  * block it here, unlike the rail: a tray click is an explicit act, not a
- * stray press over a live board, so the board is closed first (`setBoardOpen`
+ * stray press over a live board, so the board is closed first (`setBoard(null)`
  * sends nothing, so nothing in flight is disturbed) and the new session opens.
  */
 export function useTrayCommands(): void {
@@ -36,14 +36,14 @@ export function useTrayCommands(): void {
       switch (command.action) {
         case 'new-session': {
           if (selectModalVisible(s)) return;
-          if (s.boardOpen) s.setBoardOpen(false);
+          if (s.board !== null) s.setBoard(null);
           void s.openSession(null);
           return;
         }
         case 'open-board': {
           if (selectModalVisible(s)) return;
-          if (!s.boardOpen && !selectBoardAvailable(s)) return;
-          s.setBoardOpen(true);
+          if (s.board !== 'sessions' && !selectBoardAvailable(s)) return;
+          s.setBoard('sessions');
           return;
         }
       }

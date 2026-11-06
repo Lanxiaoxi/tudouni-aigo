@@ -200,6 +200,42 @@ function isValidRemoteWorkspace(value: unknown): value is RemoteWorkspaceEntry {
   );
 }
 
+/**
+ * Whether a stored record is a todo from before Tickets existed.
+ *
+ * Todos became Tickets (`docs/design/ticket.md` §2): the old records are not
+ * migrated — a product decision, their data was not worth carrying — so they
+ * are dropped on load. Read off the raw field rather than through the `Task`
+ * type, which loses `kind` in the next batch.
+ */
+function isLegacyTodo(value: unknown): boolean {
+  return (value as { kind?: unknown } | null)?.kind === 'todo';
+}
+
+/** The ids of every todo in a raw `tasks` array, valid or not: a run link
+ *  points at an id, and a todo too damaged to load still owned its links. */
+function todoIds(rawTasks: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (!Array.isArray(rawTasks)) return ids;
+  for (const row of rawTasks) {
+    const id = (row as { id?: unknown } | null)?.id;
+    if (isLegacyTodo(row) && typeof id === 'string') ids.add(id);
+  }
+  return ids;
+}
+
+/** A task as it is written: without the retired `kind` / `status` fields. A
+ *  template saved by an older build carries `kind: 'template'`, and writing it
+ *  back would keep a field nothing reads. */
+function forDisk(task: Task): Task {
+  // Read loosely: `Task` no longer declares these, but a record parsed from an
+  // older file still has them as own properties.
+  const raw = task as Task & { kind?: unknown; status?: unknown };
+  if (raw.kind === undefined && raw.status === undefined) return task;
+  const { kind: _kind, status: _status, ...rest } = raw;
+  return rest;
+}
+
 /** The copy the store reads from and `syncFromStore` compares against. */
 let current: DesktopData = emptyDesktopData();
 /** What is already on the file, as text — `null` until the first write. */
@@ -247,7 +283,9 @@ function extract(s: AppStore): DesktopData {
     streamBaseCps: s.streamBaseCps,
     streamMaxCps: s.streamMaxCps,
     closePolicy: s.closePolicy,
-    tasks: s.tasks,
+    // Without the retired `kind` / `status` (todos became Tickets): an
+    // older record that still carries them is rewritten without.
+    tasks: s.tasks.map(forDisk),
     taskRuns: s.taskRuns,
     modelMemory: s.modelMemory,
   };
@@ -342,6 +380,7 @@ function legacyFromLocalStorage(): Partial<Record<keyof DesktopData, unknown>> |
 function validate(raw: Record<string, unknown> | null | undefined): DesktopData {
   const empty = emptyDesktopData();
   if (raw === null || typeof raw !== 'object') return empty;
+  const droppedTodos = todoIds(raw.tasks);
   return {
     workspaces: Array.isArray(raw.workspaces)
       ? raw.workspaces.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
@@ -388,8 +427,12 @@ function validate(raw: Record<string, unknown> | null | undefined): DesktopData 
     streamBaseCps: clampBaseCps(raw.streamBaseCps),
     streamMaxCps: clampMaxCps(raw.streamMaxCps, clampBaseCps(raw.streamBaseCps)),
     closePolicy: readClosePolicy(raw.closePolicy),
-    tasks: Array.isArray(raw.tasks) ? raw.tasks.filter(isValidTask) : empty.tasks,
-    taskRuns: Array.isArray(raw.taskRuns) ? raw.taskRuns.filter(isValidTaskRun) : empty.taskRuns,
+    tasks: Array.isArray(raw.tasks)
+      ? raw.tasks.filter(isValidTask).filter((task) => !isLegacyTodo(task)).map(forDisk)
+      : empty.tasks,
+    taskRuns: Array.isArray(raw.taskRuns)
+      ? raw.taskRuns.filter(isValidTaskRun).filter((link) => !droppedTodos.has(link.taskId))
+      : empty.taskRuns,
     // A whole map or nothing: a half-valid record is worse than an empty one
     // (a missing model is a claim "this workspace last used nothing").
     modelMemory:

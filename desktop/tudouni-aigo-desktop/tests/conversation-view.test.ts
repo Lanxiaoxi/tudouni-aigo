@@ -46,7 +46,7 @@ function healthy(overrides: Partial<ConversationViewInput> = {}): ConversationVi
     startupProblem: false,
     sessionProblem: false,
     attachedTerminalId: null,
-    boardOpen: false,
+    board: null,
     hasSession: true,
     ready: true,
     hasConversation: true,
@@ -135,7 +135,7 @@ test('find is offered only while the transcript is the column', () => {
     healthy({ startupProblem: true }),
     healthy({ sessionProblem: true }),
     healthy({ attachedTerminalId: 'term-1' }),
-    healthy({ boardOpen: true }),
+    healthy({ board: 'sessions' }),
     healthy({ hasConversation: false }),
     healthy({ ready: false }),
     healthy(),
@@ -225,8 +225,8 @@ test('the board covers the first screen — the case it is built for', () => {
   // all of them", and that is *precisely* the state in which the session on
   // screen has just spoken or has not spoken yet. Placed under the first screen
   // it would be covered in the one case it was made for.
-  assert.equal(conversationView(healthy({ boardOpen: true, hasConversation: false })), 'board');
-  assert.equal(conversationView(healthy({ boardOpen: true })), 'board');
+  assert.equal(conversationView(healthy({ board: 'sessions', hasConversation: false })), 'board');
+  assert.equal(conversationView(healthy({ board: 'sessions' })), 'board');
 });
 
 test('an attached terminal outranks the board, for the reason the terminal outranks everything', () => {
@@ -235,7 +235,7 @@ test('an attached terminal outranks the board, for the reason the terminal outra
   // this, "open the board" would strand the person over a running shell they
   // cannot see and cannot leave, the same deadlock the first screen used to
   // produce.
-  assert.equal(conversationView(healthy({ boardOpen: true, attachedTerminalId: 'term-01' })), 'terminal');
+  assert.equal(conversationView(healthy({ board: 'sessions', attachedTerminalId: 'term-01' })), 'terminal');
   // And the composer stays withdrawn while either of them is on screen.
   assert.equal(showsComposer('board'), false);
   assert.equal(showsComposer('terminal'), false);
@@ -247,6 +247,6 @@ test('the board is reachable from a booting and a no-session workspace', () => {
   // session is still starting, or has no session open at all, are both states
   // the board must be reachable from — "there is nothing here" is not a reason
   // to hide "what is running".
-  assert.equal(conversationView(healthy({ boardOpen: true, ready: false })), 'board');
-  assert.equal(conversationView(healthy({ boardOpen: true, hasSession: false })), 'board');
+  assert.equal(conversationView(healthy({ board: 'sessions', ready: false })), 'board');
+  assert.equal(conversationView(healthy({ board: 'sessions', hasSession: false })), 'board');
 });

@@ -239,6 +239,30 @@ export interface InitMsg {
   permissions: PermissionScope;
   audit_path: string;
   notices: InitNotice[];
+  /** The Ticket this session is bound to (protocol 18). `null` when unbound;
+   *  absent from a runtime that predates the field, which reads the same. */
+  ticket?: InitTicket | null;
+}
+
+/** One `ticket_report` call as the session's metadata keeps it. Unlike the
+ *  `ui` message it has no `ticket_id` or `session_id`: it is already inside
+ *  the one session's record. */
+export interface InitTicketReport {
+  report_id: string;
+  status: 'done' | 'blocked';
+  summary: string;
+  question: string | null;
+  evidence: string[];
+  at_ms: number;
+}
+
+/** The binding `init` hands back, with every report the session ever made, so
+ *  a reopened session can fill in what the window missed. */
+export interface InitTicket {
+  id: string;
+  title: string;
+  brief: string;
+  reports: InitTicketReport[];
 }
 
 /**
@@ -1513,7 +1537,25 @@ export interface UiSuggestionsMsg {
   replies: string[];
 }
 
+/** An agent's `ticket_report` call, forwarded as it happened (protocol 18). The
+ *  runtime checkpoints it into the session's metadata **before** sending this,
+ *  so "sent" implies "recorded" and `init` can replay it. */
+export interface UiTicketReportMsg {
+  v: number;
+  t: 'ui';
+  kind: 'ticket_report';
+  ticket_id: string;
+  report_id: string;
+  session_id: string;
+  status: 'done' | 'blocked';
+  summary: string;
+  question: string | null;
+  evidence: string[];
+  at_ms: number;
+}
+
 export type UiMsg =
+  | UiTicketReportMsg
   | UiStateMsg
   | UiSuggestionsMsg
   | UiStatusMsg
@@ -1668,6 +1710,11 @@ export interface RuntimeExitedMsg {
    *  boolean is the only thing that tells "the session ended" from "the runtime
    *  died". */
   requested: boolean;
+  /** Why the bridge says the child went away, when it knows more than
+   *  `requested` does. `"ssh_closed"` marks a remote connection that ended
+   *  unasked; absent for every local exit. Lets a Ticket tell "disconnected"
+   *  from "crashed" without guessing from the workspace type. */
+  reason?: string;
 }
 
 export type RuntimeMsg =
@@ -1749,6 +1796,11 @@ export type FrontendMsg =
   /** Suggested replies on or off. Absolute state; the runtime holds it per
    *  process, so it is re-sent after every `init` while the person has it off. */
   | { v: number; t: 'set_suggestions'; on: boolean }
+  /** Tell a session which Ticket it is working for (protocol 18), or `null` to
+   *  unbind. Only sent to a session whose `init.protocol` is 18 or later: an
+   *  older runtime would drop it silently and the person would believe there is
+   *  a report channel when there is not. */
+  | { v: number; t: 'ticket_bind'; ticket: { id: string; title: string; brief: string } | null }
   | { v: number; t: 'status' }
   | { v: number; t: 'tools' }
   | { v: number; t: 'context' }
