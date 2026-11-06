@@ -25,6 +25,24 @@ export const TICKET_MIN_PROTOCOL = 18;
 /** How many events a Ticket keeps. The oldest go first, `created` never does. */
 export const TICKET_EVENTS_MAX = 200;
 
+/**
+ * The ceilings `ticket_bind` is validated against, mirrored from
+ * `internal/state/ticket.go` (`TicketTitleCeiling` / `TicketBriefCeiling`).
+ *
+ * Mirrored rather than assumed, because the failure is silent in the worst
+ * possible way: the runtime refuses the bind with a `warn` notice that lands in
+ * the session's transcript, while the Ticket — whose status was written by
+ * `start` before the bind was sent — goes on saying **Running** with no report
+ * tool behind it. That is exactly the "do not imply a reporting channel that
+ * does not exist" rule of design §5.4, broken by an oversized paste.
+ *
+ * So the desktop refuses to make an unbindable Ticket in the first place. The
+ * numbers must be kept equal to the runtime's; a test asserts the two files
+ * agree, since nothing at build time can (they are two languages).
+ */
+export const TICKET_TITLE_CEILING = 500;
+export const TICKET_BRIEF_CEILING = 20000;
+
 export const TICKET_STATUSES = [
   'open',
   'running',
@@ -202,6 +220,26 @@ export function emptyTicket(nowMs: number): Ticket {
     mandate: { basis: 'manual' },
     delivery: { kind: 'local' },
   };
+}
+
+/* ============================================================
+   What a bind can carry
+   ============================================================ */
+
+/** A field of a Ticket that would make `ticket_bind` be refused, or `null`.
+ *
+ *  Three callers ask with slightly different fields, and they all have to agree:
+ *  the form (so the box says so while the person types), `createTicket` /
+ *  `updateTicketDraft` (so nothing is ever stored), and nothing else — `start`
+ *  does not re-check, because a Ticket that passed at creation cannot have
+ *  grown. Keeping it one function is what stops the three drifting.
+ *
+ *  Only the fields the **bind** carries are checked: the id is minted here and
+ *  is short by construction, and `model` / `workspace` are not sent at all. */
+export function unbindableField(ticket: Pick<Ticket, 'title' | 'brief'>): 'title' | 'brief' | null {
+  if (ticket.title.length > TICKET_TITLE_CEILING) return 'title';
+  if (ticket.brief.length > TICKET_BRIEF_CEILING) return 'brief';
+  return null;
 }
 
 /* ============================================================

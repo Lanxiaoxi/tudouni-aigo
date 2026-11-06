@@ -6,7 +6,7 @@
  * all facts of the record (plus one boolean the caller reads off the session -
  * "is the child there"), so they can be asserted without a window.
  */
-import type { Assignment, Ticket, TicketStatus } from './model';
+import { unbindableField, type Assignment, type Ticket, type TicketStatus } from './model';
 
 export const TICKET_COLUMNS = ['open', 'running', 'needs_you', 'review', 'done'] as const;
 export type TicketColumn = (typeof TICKET_COLUMNS)[number];
@@ -40,7 +40,7 @@ export function groupTickets(tickets: readonly Ticket[]): TicketGroups {
 }
 
 /** Why a Ticket is waiting on the person. */
-export type TicketCause = 'blocked' | 'disconnected' | 'crashed';
+export type TicketCause = 'blocked' | 'disconnected' | 'crashed' | 'unreachable';
 
 /**
  * The reason behind a `needs_you` Ticket, read from its newest cause event.
@@ -49,7 +49,10 @@ export type TicketCause = 'blocked' | 'disconnected' | 'crashed';
  * newer of the two is the one the card should explain. `disconnected` comes
  * from the bridge's `reason: ssh_closed` (carried on the exit event), never from
  * the workspace type - the card must say "connection lost" rather than "error"
- * for a dropped SSH link (design 6.5). `null` outside `needs_you`.
+ * for a dropped SSH link (design 6.5). `unreachable` is the front end's own
+ * verdict on a child that never answered its handshake (a Start whose session
+ * never came up), which is a different sentence again: nothing was running, so
+ * there is no conversation to reopen. `null` outside `needs_you`.
  */
 export function needsYouCause(ticket: Ticket): TicketCause | null {
   if (ticket.status !== 'needs_you') return null;
@@ -61,7 +64,9 @@ export function needsYouCause(ticket: Ticket): TicketCause | null {
       continue;
     }
     if (event.type === 'assignmentExited' && event.data?.requested === false) {
-      return event.data.reason === 'disconnected' ? 'disconnected' : 'crashed';
+      if (event.data.reason === 'disconnected') return 'disconnected';
+      if (event.data.reason === 'unreachable') return 'unreachable';
+      return 'crashed';
     }
   }
   // Records written by a build that did not mark `applied`: the report is what
@@ -128,4 +133,17 @@ export function canResumeAssignment(
 /** Whether a status can still be given up. */
 export function canDrop(status: TicketStatus): boolean {
   return status !== 'done' && status !== 'dropped';
+}
+
+/**
+ * Whether "Start" / "Start over" can put this Ticket's brief on the wire.
+ *
+ * A `ticket_bind` carrying more than the runtime's ceilings is **refused**, and
+ * the refusal is a notice in the session's transcript while the Ticket goes on
+ * saying Running with no report tool — design §5.4's "do not imply a channel
+ * that is not there", reached by an oversized paste. The card asks this before
+ * offering the button, so the refusal never has to be explained.
+ */
+export function canBindBrief(ticket: Pick<Ticket, 'title' | 'brief'>): boolean {
+  return unbindableField(ticket) === null;
 }

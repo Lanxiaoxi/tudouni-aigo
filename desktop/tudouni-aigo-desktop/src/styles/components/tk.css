@@ -754,20 +754,9 @@
   font-size: var(--text-caption);
   color: var(--destructive-text);
 }
-/* The editor's Task / Todo switch, in the head beside the close button. */
-.tk-kind {
-  flex: none;
-  align-self: center;
-  margin-right: var(--space-2);
-}
-
-/* A finished todo's title is struck through; the row is already dimmed. */
+/* A finished template's title is struck through; the row is already dimmed.
+   (The todo half of this rule went with the todo — see `docs/design/ticket.md`.) */
 .tk-row-name.is-done {
   text-decoration: line-through;
   text-decoration-color: var(--fg-faint);
-}
-
-/* A todo's delete button arms on the first press, like the menu's Delete. */
-.tk-todo .tk-more.is-armed {
-  color: var(--destructive-text);
 }

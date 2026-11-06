@@ -17,14 +17,25 @@
  * Driven against the same fake Tauri host `task.test.ts` uses.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { test } from 'node:test';
 
 import { conversationView, showsComposer, type ConversationViewInput } from '@/conversationView';
 import { createSessionBucket, useApp, type SessionRuntime } from '@/state/store';
 import { registerRuntime, unregisterRuntime } from '@/runtime/bus';
+import { landTicketUnreachable } from '@/state/ticketLanding';
 import { apply, currentAssignment, type TicketInput } from '@/ticket/machine';
-import { emptyTicket, type Report, type Ticket } from '@/ticket/model';
 import {
+  TICKET_BRIEF_CEILING,
+  TICKET_TITLE_CEILING,
+  emptyTicket,
+  unbindableField,
+  type Report,
+  type Ticket,
+} from '@/ticket/model';
+import {
+  canBindBrief,
   canDrop,
   canResumeAssignment,
   columnOf,
@@ -655,4 +666,95 @@ test('removing a Ticket unbinds the session it had', () => {
   assert.equal(useApp.getState().tickets.length, 0);
   assert.equal(out[0]?.ticket, null);
   unregisterRuntime('k-active');
+});
+
+/* ============================================================
+   A start whose session never came up
+   ============================================================ */
+
+test('a start whose session never handshakes moves the Ticket to needs_you with "Start over"', async () => {
+  screen();
+  const t = ticketAt('open');
+  install(t);
+
+  // The child is opened and `start` writes `running` before anything waits on
+  // it. No `init` ever lands, so the Assignment has no session id — which makes
+  // "Continue" (`canResumeAssignment`) false and leaves `running` with no way
+  // out at all. `gone` is that branch: the bucket went away while the start was
+  // still waiting for its handshake.
+  const key = await useApp.getState().startTicket(t.id);
+  assert.ok(key);
+  assert.equal(useApp.getState().tickets[0].status, 'running');
+  const out = capture(key);
+
+  await useApp.getState().detachSession(key);
+
+  await until('the Ticket to move', () => useApp.getState().tickets[0].status === 'needs_you');
+  const after = useApp.getState().tickets[0];
+  assert.equal(currentAssignment(after)?.executor.sessionId, '', 'nothing taught it an id');
+  assert.deepEqual(ticketActions(after.status, false), ['continue', 'restart'], 'Start over is offered');
+  assert.equal(needsYouCause(after), 'unreachable', 'and the card says why, not "crashed"');
+  assert.equal(after.assignments.length, 1, 'the Assignment is not ended: a report or a close is an event');
+  assert.equal(out.length, 0, 'nothing was sent to a child that never answered');
+  unregisterRuntime(key);
+});
+
+test('the unreachable landing says nothing about a Ticket that has moved on', () => {
+  screen();
+  const t = ticketAt('running');
+  install(t);
+  // The Ticket was dropped while the handshake was being waited on. The fact is
+  // still true about the session, but it is not this Ticket's news any more —
+  // and an unrequested exit on a dropped Ticket must not resurrect it.
+  useApp.getState().dropTicket(t.id);
+  const dropped = useApp.getState().tickets[0];
+  assert.equal(dropped.status, 'dropped');
+  landTicketUnreachable(
+    { get: useApp.getState, patchWith: () => undefined, patch: () => undefined, set: useApp.setState } as never,
+    'k-gone',
+    t.id,
+  );
+  assert.equal(useApp.getState().tickets[0], dropped, 'the same object: nothing was written');
+});
+
+/* ============================================================
+   The ceilings a bind is validated against
+   ============================================================ */
+
+test('the desktop\u2019s ceilings are the runtime\u2019s, which is the only way this stays true', () => {
+  // Two languages and one rule: the runtime refuses an oversized `ticket_bind`
+  // and the desktop must refuse to make such a Ticket, or the card says Running
+  // with no report tool behind it. Nothing at build time can compare the two
+  // constants, so this reads them.
+  const source = readFileSync(
+    resolve(process.cwd(), '..', '..', 'internal', 'state', 'ticket.go'),
+    'utf8',
+  );
+  const value = (name: string): number => {
+    const match = source.match(new RegExp(`${name}\\s*=\\s*(\\d+)`));
+    assert.ok(match, `${name} is not declared in internal/state/ticket.go`);
+    return Number(match[1]);
+  };
+  assert.equal(TICKET_TITLE_CEILING, value('TicketTitleCeiling'));
+  assert.equal(TICKET_BRIEF_CEILING, value('TicketBriefCeiling'));
+});
+
+test('a Ticket whose bind would be refused cannot be created or edited into one', () => {
+  screen();
+  const tooLong = 'x'.repeat(TICKET_BRIEF_CEILING + 1);
+  assert.equal(useApp.getState().createTicket({ brief: tooLong }), null, 'not stored at all');
+  assert.equal(useApp.getState().tickets.length, 0);
+  assert.equal(unbindableField({ title: '', brief: tooLong }), 'brief');
+  assert.equal(unbindableField({ title: 'x'.repeat(TICKET_TITLE_CEILING + 1), brief: 'b' }), 'title');
+  assert.equal(unbindableField({ title: 'ok', brief: tooLong.slice(1) }), null, 'the ceiling itself is allowed');
+
+  // The same rule from the other end: an edit that would grow past it is a
+  // refusal with a reason, not a stored record that fails at Start.
+  const id = useApp.getState().createTicket({ brief: 'fine' });
+  assert.ok(id);
+  const result = useApp.getState().updateTicketDraft(id, { brief: tooLong });
+  assert.equal(result.ok, false);
+  assert.equal(useApp.getState().tickets[0].brief, 'fine', 'the record is untouched by a refused edit');
+  assert.equal(canBindBrief({ title: '', brief: tooLong }), false);
+  assert.equal(canBindBrief({ title: '', brief: 'fine' }), true);
 });

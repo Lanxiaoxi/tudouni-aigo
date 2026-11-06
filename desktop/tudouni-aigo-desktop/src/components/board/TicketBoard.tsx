@@ -23,9 +23,17 @@ import { SessionDot } from '@/components/sidebar/SessionDot';
 import { ModelPicker, WorkspacePicker } from '@/components/panels/TaskPanel';
 import { workspaceRefLabel, type TaskWorkspaceRef } from '@/task/tasks';
 import { currentAssignment } from '@/ticket/machine';
-import { TICKET_MIN_PROTOCOL, ticketTitle, type Ticket } from '@/ticket/model';
+import {
+  TICKET_BRIEF_CEILING,
+  TICKET_MIN_PROTOCOL,
+  TICKET_TITLE_CEILING,
+  ticketTitle,
+  unbindableField,
+  type Ticket,
+} from '@/ticket/model';
 import {
   TICKET_COLUMNS,
+  canBindBrief,
   canDrop,
   canResumeAssignment,
   groupTickets,
@@ -98,7 +106,6 @@ export function TicketBoard() {
   }, [loadTickets]);
 
   const locked = !loaded || readOnly;
-  const [problem, setProblem] = useState<string | null>(null);
 
   const localPaths = useMemo(() => {
     const set = new Set(workspaces);
@@ -146,7 +153,6 @@ export function TicketBoard() {
   const finished = groups.done.length + groups.dropped.length;
 
   function create(value: FormValue): boolean {
-    setProblem(null);
     const id = createTicket({
       title: value.title.trim(),
       brief: value.brief,
@@ -163,7 +169,6 @@ export function TicketBoard() {
   }
 
   function save(ticket: Ticket, value: FormValue): boolean {
-    setProblem(null);
     const result = updateTicketDraft(ticket.id, {
       title: value.title.trim(),
       brief: value.brief,
@@ -198,11 +203,6 @@ export function TicketBoard() {
       {readOnly ? (
         <p className="tkb-problem" role="alert">
           {t('ticket.readOnly', { reason: readOnlyReason ?? '' })}
-        </p>
-      ) : null}
-      {problem !== null ? (
-        <p className="tkb-problem" role="alert">
-          {problem}
         </p>
       ) : null}
 
@@ -255,7 +255,6 @@ export function TicketBoard() {
                 remoteLabels={remoteLabels}
                 remoteIds={remoteIds}
                 locked={locked}
-                onProblem={setProblem}
                 onEdit={() => setEditingId(ticket.id)}
               />
             );
@@ -366,7 +365,12 @@ function TicketForm({
   // the model of an existing Ticket. A new Ticket is one box until asked.
   const [open, setOpen] = useState(mode === 'edit');
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const canSubmit = !disabled && value.brief.trim() !== '';
+  // The one limit a person can hit by pasting: `ticket_bind` carries the brief,
+  // the runtime refuses an oversized one, and the Ticket would then say Running
+  // with no report tool behind it. Said here, while the text is still in the
+  // box, rather than after a Start that could not have worked.
+  const tooLong = unbindableField({ title: value.title, brief: value.brief });
+  const canSubmit = !disabled && value.brief.trim() !== '' && tooLong === null;
 
   useEffect(() => {
     // A seeded box takes the caret at the end; a plain one stays out of the way.
@@ -419,6 +423,13 @@ function TicketForm({
           }
         }}
       />
+      {tooLong !== null ? (
+        <p className="tkb-form-rule" role="alert">
+          {tooLong === 'brief'
+            ? t('ticket.limit.brief', { n: TICKET_BRIEF_CEILING })
+            : t('ticket.limit.title', { n: TICKET_TITLE_CEILING })}
+        </p>
+      ) : null}
       {open ? (
         <div className="tkb-details">
           <label className="cfg-field">
@@ -486,7 +497,6 @@ function TicketCard({
   remoteLabels,
   remoteIds,
   locked,
-  onProblem,
   onEdit,
 }: {
   ticket: Ticket;
@@ -496,7 +506,6 @@ function TicketCard({
   remoteLabels: Map<string, string>;
   remoteIds: ReadonlySet<string>;
   locked: boolean;
-  onProblem: (text: string | null) => void;
   onEdit: () => void;
 }) {
   const t = useT();
@@ -520,6 +529,12 @@ function TicketCard({
   const [armed, setArmed] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
+  // **On the card, not on the board.** A refusal belongs beside the button that
+  // produced it: the board is a horizontal scroller, so a sentence drawn above
+  // the columns can be several screens from the card whose Start failed 鈥?and
+  // the next press anywhere cleared it, which is what made it unreadable rather
+  // than merely misplaced.
+  const [problem, setProblem] = useState<string | null>(null);
 
   const assignment = currentAssignment(ticket);
   const connected = liveKey !== null;
@@ -542,12 +557,17 @@ function TicketCard({
   const startBlocked = label === null;
   const placeMissing = status === 'open' ? startBlocked : live && !connected && !resumable && startBlocked;
   const oldRuntime = live && protocol !== null && protocol > 0 && protocol < TICKET_MIN_PROTOCOL;
+  // A brief the runtime would refuse at `ticket_bind`, or an empty one: either
+  // way there is nothing to start. Both are refused at the source (the form and
+  // `createTicket`), so this is the third guard, for a record that predates
+  // them or arrived from a hand-edited file.
+  const cannotStart = startBlocked || ticket.brief.trim() === '' || !canBindBrief(ticket);
 
   async function run(work: () => Promise<boolean>, failure: TKey): Promise<void> {
-    onProblem(null);
+    setProblem(null);
     setBusy(true);
     try {
-      if (!(await work())) onProblem(t(failure));
+      if (!(await work())) setProblem(t(failure));
     } finally {
       setBusy(false);
     }
@@ -585,7 +605,7 @@ function TicketCard({
           return true;
         }
         if (result.reason !== 'session_unavailable') {
-          onProblem(t('ticket.problem.refused'));
+          setProblem(t('ticket.problem.refused'));
           return true; // already said
         }
         return false;
@@ -613,15 +633,20 @@ function TicketCard({
         </span>
         {runs > 0 ? (
           <>
-            <span aria-hidden>·</span>
+            <span aria-hidden>路</span>
             <span>{t('ticket.runCount', { n: runs })}</span>
           </>
         ) : null}
       </div>
 
-      {placeMissing || (status === 'running' && !connected) || oldRuntime ? (
+      {placeMissing || !canBindBrief(ticket) || (status === 'running' && !connected) || oldRuntime ? (
         <div className="tkb-card-badges">
           {placeMissing ? <span className="badge badge-warning">{t('ticket.workspaceMissing')}</span> : null}
+          {!canBindBrief(ticket) ? (
+            <span className="badge badge-warning" title={t('ticket.btn.cannotStartHint')}>
+              {t('ticket.tooLong')}
+            </span>
+          ) : null}
           {status === 'running' && !connected ? (
             <span className="badge badge-neutral" title={t('ticket.notConnectedHint')}>
               {t('ticket.notConnected')}
@@ -635,9 +660,13 @@ function TicketCard({
         </div>
       ) : null}
 
-      {cause === 'disconnected' || cause === 'crashed' ? (
+      {cause === 'disconnected' || cause === 'crashed' || cause === 'unreachable' ? (
         <div className="tkb-card-cause">
-          {cause === 'disconnected' ? t('ticket.cause.disconnected') : t('ticket.cause.crashed')}
+          {cause === 'disconnected'
+            ? t('ticket.cause.disconnected')
+            : cause === 'unreachable'
+              ? t('ticket.cause.unreachable')
+              : t('ticket.cause.crashed')}
         </div>
       ) : null}
 
@@ -651,6 +680,13 @@ function TicketCard({
         ) : null
       ) : ticket.title.trim() !== '' ? (
         <div className="tkb-card-text is-brief">{ticket.brief}</div>
+      ) : null}
+
+      {/* The refusal sits directly above the buttons that produced it. */}
+      {problem !== null ? (
+        <p className="tkb-card-problem" role="alert">
+          {problem}
+        </p>
       ) : null}
 
       {feedbackOpen ? (
@@ -697,11 +733,11 @@ function TicketCard({
           switch (action) {
             case 'start':
               return (
-                <Tip key={action} label={startBlocked ? t('ticket.workspaceMissing') : t('ticket.btn.startHint')}>
+                <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.startHint')}>
                   <button
                     type="button"
                     className="btn btn-primary btn-compact"
-                    disabled={cannotSessions || startBlocked || ticket.brief.trim() === ''}
+                    disabled={cannotSessions || cannotStart}
                     onClick={() => void act.start(false)}
                   >
                     <Play size={12} />
@@ -711,11 +747,11 @@ function TicketCard({
               );
             case 'runNow':
               return (
-                <Tip key={action} label={startBlocked ? t('ticket.workspaceMissing') : t('ticket.btn.runNowHint')}>
+                <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.runNowHint')}>
                   <button
                     type="button"
                     className="btn btn-outline btn-compact"
-                    disabled={cannotSessions || startBlocked || ticket.brief.trim() === ''}
+                    disabled={cannotSessions || cannotStart}
                     onClick={() => void act.start(true)}
                   >
                     <Zap size={12} />
@@ -749,11 +785,11 @@ function TicketCard({
               );
             case 'restart':
               return (
-                <Tip key={action} label={startBlocked ? t('ticket.workspaceMissing') : t('ticket.btn.restartHint')}>
+                <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.restartHint')}>
                   <button
                     type="button"
                     className="btn btn-outline btn-compact"
-                    disabled={cannotSessions || startBlocked || ticket.brief.trim() === ''}
+                    disabled={cannotSessions || cannotStart}
                     onClick={() => void act.restart()}
                   >
                     <RotateCcw size={12} />
@@ -769,7 +805,7 @@ function TicketCard({
                     className="btn btn-primary btn-compact"
                     disabled={cannotSessions}
                     onClick={() => {
-                      onProblem(null);
+                      setProblem(null);
                       acceptTicket(ticket.id);
                     }}
                   >
@@ -801,7 +837,7 @@ function TicketCard({
                     className="btn btn-outline btn-compact"
                     disabled={cannotSessions}
                     onClick={() => {
-                      onProblem(null);
+                      setProblem(null);
                       dispatchTicket(ticket.id, { type: 'reopen' });
                     }}
                   >
@@ -828,7 +864,7 @@ function TicketCard({
               aria-label={t('ticket.btn.drop')}
               disabled={cannotSessions}
               onClick={() => {
-                onProblem(null);
+                setProblem(null);
                 dropTicket(ticket.id);
               }}
             >

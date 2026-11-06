@@ -1,6 +1,6 @@
 # Ticket：任务级的工作单元
 
-状态：**已实现**。runtime 侧在 `internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`（`PROTOCOL = 18`，见 `docs/spec/protocol.md` 3.16）；桌面端在 `desktop/tudouni-aigo-desktop/src/ticket/`（model / machine / store / view）、`src/state/slices/tickets.ts`、`src/state/slices/ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`。与本文的出入：`start` 命令自带执行者并直接建 Assignment（`assignmentStarted` 只回填 sessionId / 恢复后的新 sessionKey）；新增事实 `assignmentRestoreFailed`；`Assignment.executor` 多一个可选 `workspace`；`sendBack` 先确保会话可用再迁移；"直接开跑"是独立按钮。
+状态：**已实现**。runtime 侧在 `internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`（`PROTOCOL = 18`，见 `docs/spec/protocol.md` 3.16）；桌面端在 `desktop/tudouni-aigo-desktop/src/ticket/`（model / machine / store / view）、`src/state/slices/tickets.ts`、`src/state/slices/ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`。与本文的出入：`start` 命令自带执行者并直接建 Assignment（`assignmentStarted` 只回填 sessionId / 恢复后的新 sessionKey）；新增事实 `assignmentRestoreFailed`；新增退出原因 `unreachable`（见 6.4）；`Assignment.executor` 多一个可选 `workspace`；`sendBack` 先确保会话可用再迁移；"直接开跑"是独立按钮；`ticket_bind` 的字段上限在桌面端被镜像了一份并在建/改时就拦截（见 5.5）。
 
 这份文档回答三件事：Ticket 是什么、它的状态由谁来写、为了将来扩展到团队能力，现在要在哪些地方留口子。
 
@@ -266,6 +266,20 @@ interface TicketEvent {
 "打开会话"按钮：会话还活着就 `focusSession`，否则 `openSession(sessionId)`，与 `TodoRow.open` 相同。
 
 **"未连接"不是一个状态。** `running` 的 Ticket，如果它的 Assignment 会话当前不是活着的子进程，卡片上就显示"未连接"，按钮从"打开会话"变成"继续"。最常见的情况是 app 重启之后，所有 `running` 的 Ticket 都会这样。"未连接"是从会话存活情况推导出来的展示，不写进 Ticket，原因和不变量 1 一样：Ticket 的状态只由事件写入。按"继续"会恢复原会话（`openSession(sessionId)`），绑定从会话 metadata 里自动带回来，不需要重新发 `ticket_bind`，同时触发一次对账（6.3）和绑定比对（5.1）。恢复本身不迁移状态（不变量 7）。
+
+**握手没到，等于执行者没了。** 上面那条推论有个前提：Assignment 记着 `sessionId`，所以"继续"有东西可恢复。一个 start 如果卡在握手（`waitForReady` 超时，或 bucket 在等待期间被替换/关闭），这个前提不成立——`start` 早已把状态写成 `running`，而 `running` 卡片只提供"继续"，它解析不出 id，于是在卡片上表现为**一个永远按不动的按钮**。
+
+所以 `deliverStart` 在握手不是 `ready` 时发一条 `assignmentExited(requested: false, reason: 'unreachable')`（`ticketLanding.landTicketUnreachable`）。这走的是既有的"未经请求的退出 → `needs_you`"迁移，不引入新的状态转换，也不给 `ticketActions` 加 `running` 的例外——状态机仍然是唯一决定状态的地方。理由是它说的就是实情：**执行者没了，而且不是人让它走的**。卡片因此显示"会话没起来，请重开一个"（`ticket.cause.unreachable`），并把"重来"交给 `needs_you` 那一列本来就有的按钮。
+
+`reason` 用一个独立取值而不是复用 `crashed`：什么都没跑起来，也就没有东西崩溃，说成崩溃是关于一个从未启动的进程的假话。这条事实**不结束 Assignment**（和不变量 6 一致：退出只是事件），所以 `assignments.length` 不变。
+
+### 6.6 `ticket_bind` 的字段上限
+
+runtime 对 bind 的三个字段有硬上限（`internal/state/ticket.go`：id 200、title 500、brief 20000），超了直接拒绝，桌面端只会收到一条 `notice`。这构成了 §5.4 那条规则的另一种破法：**Ticket 的状态在 bind 之前就已经写成 `running` 了**，于是超长 brief 会得到一个说 Running、却没有任何回报工具的卡片，而且协议号是 18，卡片连"runtime 过旧"的徽标都不会显示。
+
+桌面端因此把上限镜像了一份（`ticket/model.ts` 的 `TICKET_TITLE_CEILING` / `TICKET_BRIEF_CEILING`），在三个位置挡：表单输入时给出提示并禁用提交、`createTicket` 拒绝建、`updateTicketDraft` 拒绝改。`view.canBindBrief` 再兜一层，让这样的记录（比如手改过文件）显示"过长"徽标并禁用开始。
+
+三个数字必须和 runtime 一致，而这件事构建期检查不了——`tests/ticket-board.test.ts` 直接读 `internal/state/ticket.go` 比对，这是唯一能防止两边漂掉的办法。
 
 ### 6.5 远程工作区
 

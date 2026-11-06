@@ -751,8 +751,8 @@
 
 /* A segmented strip: one sunken track, the chosen item lifted onto the card's
    surface. Used for the panel tabs and for the tasks list's filters — the sheet
-   draws both as the same control. */
-.wb-seg,
+   draws both as the same control. (The tasks editor's Task/Todo switch used to
+   be a third member; todos became Tickets and the switch went with them.) */
 .tk-chips,
 .panel-tabs {
   display: inline-flex;
@@ -764,7 +764,6 @@
   border: none;
 }
 
-.wb-seg-item,
 .tk-chip,
 .panel-tab {
   display: inline-flex;
@@ -786,13 +785,11 @@
     color var(--motion-fast) var(--ease-out);
 }
 
-.wb-seg-item:hover,
 .tk-chip:hover,
 .panel-tab:hover {
   color: var(--fg);
 }
 
-.wb-seg-item.is-on,
 .tk-chip.is-on,
 .panel-tab.is-on {
   background: var(--bg-elevated);
@@ -804,7 +801,6 @@
 /* The trail count inside a segment keeps its muted value in both states: the
    chip's job is to say which filter is on, and a number that changed colour with
    it would be a second statement. */
-.wb-seg-count,
 .tk-chip-count,
 .panel-tab .count {
   font-family: var(--font-mono);

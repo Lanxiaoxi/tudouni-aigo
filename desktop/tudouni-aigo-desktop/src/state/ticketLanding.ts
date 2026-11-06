@@ -153,3 +153,40 @@ export function landPersonReplied(ctx: StoreContext, key: string): void {
     ctx.get().dispatchTicket(ticket.id, { type: 'personReplied', sessionId });
   }
 }
+
+/**
+ * A Start whose session never came up: the brief could not be delivered and the
+ * Assignment has no session id, so `running` would be a Ticket whose only
+ * button ("Continue") cannot resolve anything to reopen.
+ *
+ * Reported as an **unrequested exit**, which is what it is — the executor is
+ * gone without anybody asking — so the machine's ordinary rule moves it to
+ * `needs_you`, where "Start over" is offered. Raising it here rather than
+ * teaching `ticketActions` a `running`-without-a-session case keeps the
+ * transition table the single place a status is decided: the card is stuck
+ * because nothing told the machine, not because the buttons were incomplete.
+ *
+ * `requested: false` with `reason: 'unreachable'` is also why the front end must
+ * not reuse `crashed`: nothing ran and nothing crashed, and the card's sentence
+ * would be a lie about a process that never started.
+ */
+export function landTicketUnreachable(ctx: StoreContext, key: string, ticketId: string): void {
+  whenLoaded(ctx, () => {
+    const s = ctx.get();
+    // The Ticket may have moved on (dropped, accepted, restarted) while the
+    // handshake was waited on, so there may be nothing left to tell.
+    if (!s.tickets.some((row) => row.id === ticketId)) return;
+    // No bucket check for "did it arrive after all": if the child did come up,
+    // the backfill has written the Assignment's session id and the machine's
+    // own `owns` turns this into a no-op. Asking a second question here would
+    // be a second definition of "which session is this", and the machine's is
+    // the one that decides.
+    s.dispatchTicket(ticketId, {
+      type: 'assignmentExited',
+      sessionKey: key,
+      sessionId: '',
+      requested: false,
+      reason: 'unreachable',
+    });
+  });
+}

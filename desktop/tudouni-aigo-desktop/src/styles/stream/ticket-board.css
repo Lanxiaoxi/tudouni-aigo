@@ -58,6 +58,14 @@
   color: var(--fg-muted);
 }
 
+/* The one field limit a person can hit, said where the box is rather than after
+   a Start that could not have worked (see `TicketForm`'s `tooLong`). */
+.tkb-form-rule {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--destructive-text);
+}
+
 /* The Done column folds to its head until asked: finished work is not what the
    board is for, and a column of forty cards would push the live ones aside. */
 .board-col.tkb-col-folded {
@@ -192,6 +200,16 @@
 .tkb-card-ask {
   font-weight: 600;
   color: var(--warning-text);
+}
+
+/* A card's own refusal. On the card rather than above the columns: the board
+   scrolls sideways, so a board-level sentence can be screens away from the
+   button whose press failed. */
+.tkb-card-problem {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--warning-text);
+  word-break: break-word;
 }
 
 .tkb-sendback {

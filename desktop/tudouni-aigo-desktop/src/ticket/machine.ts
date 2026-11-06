@@ -74,8 +74,15 @@ export interface TicketPatch {
 }
 
 /** Why the child went away, for an exit nobody asked for. `disconnected` comes
- *  from the bridge's `reason: "ssh_closed"`, not from the workspace type. */
-export type ExitReason = 'crashed' | 'disconnected';
+ *  from the bridge's `reason: "ssh_closed"`, not from the workspace type.
+ *
+ *  `unreachable` is the one reason the front end raises itself rather than
+ *  reading off a real process exit: the child never answered its handshake, so
+ *  there is no session id to resume and no way to send it work. It has to look
+ *  like a dead executor, because that is what a Ticket in `running` would
+ *  otherwise be stuck with — a "Continue" that cannot resolve an id and no
+ *  other way out (see `state/slices/ticketRuns.ts`'s `deliverStart`). */
+export type ExitReason = 'crashed' | 'disconnected' | 'unreachable';
 
 /** Which session a fact is about. Both halves because neither is enough alone:
  *  `sessionKey` is a per-app-run counter (a key from last week can name another

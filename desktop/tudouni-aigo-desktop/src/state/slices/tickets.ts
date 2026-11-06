@@ -16,7 +16,7 @@
 import type { StoreContext } from '../storeContext';
 import type { AppStore, TicketDispatchResult } from '../storeShape';
 import { apply, type TicketInput } from '@/ticket/machine';
-import { emptyTicket, type Report, type Ticket } from '@/ticket/model';
+import { emptyTicket, unbindableField, type Report, type Ticket } from '@/ticket/model';
 import { loadTickets, reconcile, saveTickets } from '@/ticket/store';
 
 export function ticketsSlice(ctx: StoreContext): Pick<
@@ -107,12 +107,26 @@ export function ticketsSlice(ctx: StoreContext): Pick<
         workspace: draft.workspace ?? base.workspace,
         model: draft.model ?? '',
       };
+      // A Ticket whose bind the runtime would refuse must not exist at all: it
+      // would be a card saying Running with no report tool behind it. The form
+      // says so while typing; this is the second half of the same rule, for
+      // every caller that is not the form.
+      if (unbindableField(ticket) !== null) return null;
       commitList([...get().tickets, ticket]);
       return ticket.id;
     },
 
     updateTicketDraft(id, patch) {
-      return update(id, (ticket) => apply(ticket, { type: 'edit', at: Date.now(), patch }));
+      return update(id, (ticket) => {
+        const result = apply(ticket, { type: 'edit', at: Date.now(), patch });
+        // An edit that would make the record unbindable is refused as a whole,
+        // rather than stored and left to fail at the next Start: the same rule
+        // `createTicket` applies, from the other end of the same record.
+        if (result.ok && unbindableField(result.ticket) !== null) {
+          return { ok: false, reason: 'invalid_edit' };
+        }
+        return result;
+      });
     },
 
     dispatchTicket(id, input) {

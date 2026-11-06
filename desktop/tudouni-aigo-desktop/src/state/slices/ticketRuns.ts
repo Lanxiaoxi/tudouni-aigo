@@ -27,6 +27,7 @@ import {
 } from '@/ticket/model';
 import { sendTo } from '@/runtime/bus';
 import { liveKeyOfAssignment } from '../selectors/tickets';
+import { landTicketUnreachable } from '../ticketLanding';
 import {
   claimNewSession,
   openNewSession,
@@ -137,9 +138,16 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
   /** The tail of a start: everything that needs the child to be ready. */
   async function deliverStart(key: string, ticket: Ticket, runNow: boolean): Promise<void> {
     const wait = await waitForReady(ctx, key);
-    if (wait === 'gone') return;
-    if (wait === 'timeout') {
-      sayHandshakeTimedOut(ctx, key, ticketTitle(ticket));
+    // **The handshake is what makes `running` true.** A `start` has already
+    // written the status and the Assignment by the time this runs, so a child
+    // that never answered would leave a Ticket with no session id — and the
+    // only button a `running` Ticket offers is "Continue", which cannot resolve
+    // an id to reopen. Nothing else would ever move it out of that state, so
+    // the failure is turned into the fact it is: an executor that went away
+    // without being asked (`landTicketUnreachable`).
+    if (wait !== 'ready') {
+      if (wait === 'timeout') sayHandshakeTimedOut(ctx, key, ticketTitle(ticket));
+      landTicketUnreachable(ctx, key, ticket.id);
       return;
     }
     backfill(key, ticket.id);
