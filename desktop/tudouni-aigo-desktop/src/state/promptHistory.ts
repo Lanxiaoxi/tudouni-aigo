@@ -16,12 +16,15 @@
  * since swept. `rememberablePrompt` removes exactly the paths this send carried.
  * What remains is prose, which is what the next completion should say.
  *
- * **The suggestion is a prefix match on the whole draft.** The earlier the
- * person is in the sentence the more useful the guess, and the caret-at-the-end
- * rule is the caller's (a completion offered mid-sentence would overwrite the
- * sentence's tail). Ranking is frequency first, recency second: a phrase said
- * ten times is a habit, while a phrase said once last week may be an answer to a
- * question that is already closed.
+ * **The suggestion is a clause-aware prefix match.** The draft is matched in
+ * two passes: first as a prefix of a whole historical sentence (the strongest
+ * signal — starting from the beginning says "I mean this one"), then as a
+ * prefix of any clause *inside* a sentence (so `出一个` matches the second
+ * clause of `pull代码，出一个安装包`). Both passes rank frequency first, recency
+ * second. Tab accepts one clause at a time — up to the next punctuation
+ * boundary — rather than the whole sentence, so a person can stop after
+ * `pull代码，` and type their own tail. The caret-at-the-end rule is the
+ * caller's (a completion offered mid-sentence would overwrite the tail).
  *
  * This module is pure — no storage, no Tauri — because the matcher is the part
  * worth asserting in a test. The cache and the two file calls live in
@@ -165,24 +168,114 @@ export function mergePrompt(
 }
 
 /**
- * The one sentence the toolbar should offer, or `null`.
+ * A suggestion split into clauses for progressive acceptance.
  *
- * The draft is matched **as typed** (`请p` contains no trailing space and is a
- * prefix of `请pull…`), case-insensitively for Latin text. The matched entry is
- * already ranked, so the first hit is the best one. A suggestion never repeats
- * what is already in the box: `请pull代码` typed in full offers nothing, and
- * keeps offering nothing until the next character makes a longer sentence a
- * different sentence.
+ * `text` is always the segment that starts with the draft — either the whole
+ * historical sentence (pass 1) or the tail from a clause boundary (pass 2).
+ * This way `text.startsWith(draft)` always holds, and Tab's slice logic
+ * (`text.slice(0, acceptTo)`) never needs to know which pass produced it.
  */
-export function suggestPrompt(draft: string, entries: readonly PromptEntry[]): string | null {
+export interface Suggestion {
+  /** The matched text segment — whole sentence or clause-to-end. */
+  text: string;
+  /**
+   * The index in `text` up to which Tab should accept — the end of the
+   * first clause boundary at or after the draft's length. Tab inserts
+   * `text.slice(draft.length, acceptTo)`; the remainder is re-suggested
+   * on the next render because the draft has changed.
+   */
+  acceptTo: number;
+}
+
+/**
+ * Punctuation that ends a clause. The delimiter character goes with the clause
+ * before it — `pull代码，` is a complete unit, while `pull代码` with a dangling
+ * comma waiting for the next clause reads as broken.
+ *
+ * The full-width set covers Chinese; the half-width set covers English. The
+ * English period (`.`) is deliberately excluded: in `npm install`, `v1.2.3` or
+ * a file extension it is a word character, and there is no reliable way to tell
+ * that apart from a sentence-ending period at match time.
+ */
+const CLAUSE_DELIMITERS = new Set('，。；！？、,;!?');
+
+/**
+ * The start positions of every clause in `text` — position 0 plus every
+ * position right after a delimiter. Used by pass 2 to match from any clause
+ * boundary, not only the sentence start.
+ */
+function clauseBoundaries(text: string): number[] {
+  const bounds = [0];
+  for (let i = 0; i < text.length; i++) {
+    if (CLAUSE_DELIMITERS.has(text[i])) bounds.push(i + 1);
+  }
+  return bounds;
+}
+
+/**
+ * The index of the first clause boundary at or after `from`.
+ *
+ * A boundary is the position right after a delimiter character. If no
+ * delimiter follows, the end of the text is the boundary — the last clause
+ * is accepted whole because there is nowhere shorter to stop.
+ */
+function nextClauseBoundary(text: string, from: number): number {
+  for (let i = from; i < text.length; i++) {
+    if (CLAUSE_DELIMITERS.has(text[i])) return i + 1;
+  }
+  return text.length;
+}
+
+/**
+ * The suggestion the toolbar should offer, or `null`.
+ *
+ * Matching runs in two passes, both over the already-ranked list (frequency
+ * first, recency second):
+ *
+ * **Pass 1 — whole-sentence prefix.** The draft is a prefix of a full
+ * historical sentence. This is the strongest signal: starting from the
+ * beginning of a sentence says "I mean this one" more than matching a clause
+ * in the middle ever could. The first hit wins and the pass short-circuits.
+ *
+ * **Pass 2 — clause-boundary prefix.** The draft is a prefix of a clause
+ * *somewhere inside* a historical sentence. This catches `出一个` matching the
+ * second clause of `pull代码，出一个安装包` — the person is continuing from a
+ * clause they remember, not from the sentence's head. Pass 2 starts from
+ * boundary index 1 because position 0 was already covered by pass 1.
+ *
+ * In both passes the draft is matched **as typed** (`请p` is a prefix of
+ * `请pull…`), case-insensitively for Latin text. A suggestion never repeats
+ * what is already in the box: `请pull代码` typed in full offers nothing.
+ */
+export function suggestPrompt(
+  draft: string,
+  entries: readonly PromptEntry[],
+): Suggestion | null {
   if (entries.length === 0) return null;
   if (draft.length > PROMPT_TEXT_MAX) return null;
   if (draft.trim().length < PROMPT_PREFIX_MIN) return null;
   const prefix = draft.toLowerCase();
+
+  // Pass 1: whole-sentence prefix match.
   for (const entry of entries) {
     if (entry.text.length <= draft.length) continue;
-    if (entry.text.toLowerCase().startsWith(prefix)) return entry.text;
+    if (entry.text.toLowerCase().startsWith(prefix)) {
+      return { text: entry.text, acceptTo: nextClauseBoundary(entry.text, draft.length) };
+    }
   }
+
+  // Pass 2: clause-boundary prefix match.
+  for (const entry of entries) {
+    const bounds = clauseBoundaries(entry.text);
+    for (let i = 1; i < bounds.length; i++) {
+      const segment = entry.text.slice(bounds[i]);
+      if (segment.length <= draft.length) continue;
+      if (segment.toLowerCase().startsWith(prefix)) {
+        return { text: segment, acceptTo: nextClauseBoundary(segment, draft.length) };
+      }
+    }
+  }
+
   return null;
 }
 

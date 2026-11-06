@@ -23,6 +23,7 @@ import {
   serializePromptHistory,
   suggestPrompt,
   type PromptEntry,
+  type Suggestion,
 } from '@/state/promptHistory';
 
 /* ============================================================
@@ -115,15 +116,21 @@ const entries = parsePromptHistory(
   ].join('\n'),
 );
 
+/** Shorthand for a Suggestion, so the assertions read as the text and the
+ *  clause boundary index rather than an object literal. */
+function sug(text: string, acceptTo: number): Suggestion {
+  return { text, acceptTo };
+}
+
 test('a Chinese prefix completes, and the most-used sentence wins', () => {
-  assert.equal(suggestPrompt('请p', entries), '请pull代码');
+  assert.deepEqual(suggestPrompt('请p', entries), sug('请pull代码', 7));
   assert.equal(suggestPrompt('请 pu', entries), null, 'the stored text has no such space');
-  assert.equal(suggestPrompt('请push', entries), '请push到远端');
+  assert.deepEqual(suggestPrompt('请push', entries), sug('请push到远端', 8));
 });
 
 test('Latin matching ignores case in both directions', () => {
-  assert.equal(suggestPrompt('please run the t', entries), 'please run the tests');
-  assert.equal(suggestPrompt('PLEASE RUN THE L', entries), 'Please run the linter');
+  assert.deepEqual(suggestPrompt('please run the t', entries), sug('please run the tests', 20));
+  assert.deepEqual(suggestPrompt('PLEASE RUN THE L', entries), sug('Please run the linter', 21));
 });
 
 test('a draft too short, already complete or longer than a sentence offers nothing', () => {
@@ -133,6 +140,102 @@ test('a draft too short, already complete or longer than a sentence offers nothi
   assert.equal(suggestPrompt('请pull代码并提交', entries), null);
   assert.equal(suggestPrompt('x'.repeat(PROMPT_TEXT_MAX + 1), entries), null);
   assert.equal(suggestPrompt('请p', []), null);
+});
+
+/* ------------------------------------------------------------
+   clause-aware acceptance: Tab stops at punctuation boundaries
+   ------------------------------------------------------------ */
+
+const clauseEntries = parsePromptHistory(
+  [line('pull代码，出一个安装包，然后发邮件通知', 10)].join('\n'),
+);
+
+test('pass 1: a whole-sentence prefix matches and Tab stops at the next clause', () => {
+  // Draft "pull代码" — pass 1 matches the full sentence. The first clause
+  // boundary is right after the comma at index 6, so Tab inserts "，" and
+  // stops there.
+  assert.deepEqual(suggestPrompt('pull代码', clauseEntries), sug('pull代码，出一个安装包，然后发邮件通知', 7));
+});
+
+test('pass 1: after accepting one clause, the next Tab stops at the following boundary', () => {
+  // Draft "pull代码，" (len 7) — the next boundary is after "出一个安装包，"
+  // at index 14 (the comma sits at index 13, the boundary follows it).
+  assert.deepEqual(suggestPrompt('pull代码，', clauseEntries), sug('pull代码，出一个安装包，然后发邮件通知', 14));
+});
+
+test('pass 1: the last clause has no delimiter, so Tab accepts it whole', () => {
+  // Draft "pull代码，出一个安装包，" (len 14) — the remainder "然后发邮件通知"
+  // has no internal delimiter, so Tab inserts the whole tail (acceptTo = 21,
+  // the full text length).
+  assert.deepEqual(
+    suggestPrompt('pull代码，出一个安装包，', clauseEntries),
+    sug('pull代码，出一个安装包，然后发邮件通知', 21),
+  );
+});
+
+test('pass 2: a clause-boundary prefix matches from inside a sentence', () => {
+  // Draft "出一个" (len 3) — pass 1 misses (the sentence does not start with
+  // it); pass 2 matches from the clause boundary at index 7. The segment is
+  // "出一个安装包，然后发邮件通知", and Tab stops after "出一个安装包，" (the
+  // comma in the segment sits at index 6, so acceptTo = 7).
+  assert.deepEqual(suggestPrompt('出一个', clauseEntries), sug('出一个安装包，然后发邮件通知', 7));
+});
+
+test('pass 2: a clause-boundary prefix on the last clause accepts it whole', () => {
+  // Draft "然后" — pass 2 matches from the boundary at index 15. The segment
+  // "然后发邮件通知" has no internal delimiter, so Tab inserts the whole tail.
+  assert.deepEqual(suggestPrompt('然后', clauseEntries), sug('然后发邮件通知', 7));
+});
+
+test('pass 2: a prefix that straddles a clause boundary does not match', () => {
+  // Draft "代码，出" — it starts in the middle of the first clause and crosses
+  // into the second. Neither pass matches: pass 1 needs a whole-sentence
+  // prefix, pass 2 needs a clause-boundary prefix.
+  assert.equal(suggestPrompt('代码，出', clauseEntries), null);
+});
+
+/* ------------------------------------------------------------
+   two-pass priority: whole-sentence match beats clause match
+   ------------------------------------------------------------ */
+
+test('a low-frequency whole-sentence match beats a high-frequency clause match', () => {
+  // "出一个安装包" (count 1) is a whole-sentence match for draft "出一个";
+  // "pull代码，出一个安装包" (count 10) has a clause-boundary match.
+  // Pass 1 wins: the person started from the beginning of a sentence.
+  const mixed = parsePromptHistory(
+    [
+      line('pull代码，出一个安装包', 1),
+      line('pull代码，出一个安装包', 2),
+      line('pull代码，出一个安装包', 3),
+      line('出一个安装包', 10),
+    ].join('\n'),
+  );
+  assert.deepEqual(suggestPrompt('出一个', mixed), sug('出一个安装包', 6));
+});
+
+test('when pass 1 misses, pass 2 finds the clause match by frequency', () => {
+  // Neither sentence starts with "出一个", so pass 1 misses. Pass 2 finds
+  // the clause match in the higher-frequency sentence.
+  const clauseOnly = parsePromptHistory(
+    [
+      line('pull代码，出一个安装包', 1),
+      line('pull代码，出一个安装包', 2),
+      line('pull代码，出一个安装包', 3),
+      line('改bug，出一个补丁', 10),
+    ].join('\n'),
+  );
+  assert.deepEqual(suggestPrompt('出一个', clauseOnly), sug('出一个安装包', 6));
+});
+
+/* ------------------------------------------------------------
+   clause boundaries without internal punctuation
+   ------------------------------------------------------------ */
+
+test('a sentence with no internal delimiters offers a single whole-clause accept', () => {
+  // "pull代码即可" (len 8) — no delimiter inside, so acceptTo equals text.length.
+  // Tab inserts the whole remainder in one step, same as the old behaviour.
+  const noClause = parsePromptHistory([line('pull代码即可', 10)].join('\n'));
+  assert.deepEqual(suggestPrompt('pull代码', noClause), sug('pull代码即可', 8));
 });
 
 test('a send joins the list, counts, and stays under the cap', () => {

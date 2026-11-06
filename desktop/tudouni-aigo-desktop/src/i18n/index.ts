@@ -1834,10 +1834,12 @@ export const en = {
      half, and the reason the hint area is not blank while a turn runs. */
   'composer.hint.streaming': 'Streaming… Esc to stop',
   'composer.hint.modal': 'The runtime is blocked by a modal — answer it to continue',
-  /** The completion the toolbar is offering. The label names the key and the
-   *  whole sentence, because the visible text is only the sentence: a screen
-   *  reader would otherwise read it as prose already in the box. */
-  'composer.suggestAccept': 'Complete "{text}" with Tab',
+  /** The completion the toolbar is offering. Tab inserts one clause (up to the
+   *  next punctuation boundary); clicking the text inserts the whole segment.
+   *  The label names the key and the full text, because the visible text is
+   *  only the segment: a screen reader would otherwise read it as prose already
+   *  in the box. */
+  'composer.suggestAccept': 'Tab to insert next clause, click to complete "{text}"',
   'composer.dropHint': 'Drop a file to insert its path — pictures are attached by naming their path',
   /** A heads-up, not a refusal: the paths are in the sentence, but the file
    *  tools refuse them at SafePath, so the model would reach them through

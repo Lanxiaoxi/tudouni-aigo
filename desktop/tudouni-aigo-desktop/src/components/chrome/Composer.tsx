@@ -142,21 +142,38 @@ export function Composer() {
   }
 
   /**
-   * Take the suggestion into the box, and leave the caret after it.
+   * Accept one clause of the suggestion (Tab), or the whole thing (click).
    *
-   * The focus call is for the **click** path: the note is a button, and a press
-   * moves focus to it — without this the sentence lands and the next keystroke
-   * goes to a button. The Tab path is already focused and the call is a no-op.
-   * The caret is re-asked here rather than trusted from the render: if a click
-   * moved it into the sentence between the frame and the press, replacing the
-   * draft would eat the tail.
+   * Tab inserts up to `suggestion.acceptTo` — the next clause boundary — so a
+   * person can stop after `pull代码，` and type their own tail. The draft then
+   * changes, `useMemo` re-runs `suggestPrompt`, and a fresh suggestion for the
+   * new prefix appears on the next render. That recompute is the zsh
+   * "partial accept → re-fetch" pattern, except React's reactivity replaces the
+   * explicit fetch.
+   *
+   * Click accepts the full `suggestion.text` — from the match start to the
+   * sentence end — as a convenience for the person who wants the whole thing.
+   *
+   * Both share the focus call (a click moves focus to the button; Tab is
+   * already focused) and the caret guard (a click that moved the caret into
+   * the sentence between the frame and the press must not overwrite the tail).
    */
-  function acceptSuggestion() {
+  function acceptClause() {
     const el = taRef.current;
     if (el === null || suggestion === null) return;
     if (el.selectionStart !== el.value.length || el.selectionEnd !== el.value.length) return;
     el.focus();
-    setValueAndCaret(el, suggestion, suggestion.length);
+    const accepted = suggestion.text.slice(0, suggestion.acceptTo);
+    setValueAndCaret(el, accepted, accepted.length);
+    setCaretAtEnd(true);
+  }
+
+  function acceptFull() {
+    const el = taRef.current;
+    if (el === null || suggestion === null) return;
+    if (el.selectionStart !== el.value.length || el.selectionEnd !== el.value.length) return;
+    el.focus();
+    setValueAndCaret(el, suggestion.text, suggestion.text.length);
     setCaretAtEnd(true);
   }
 
@@ -183,10 +200,12 @@ export function Composer() {
 
     // **Tab is the suggestion's, and only while there is one.** Without a
     // suggestion the key falls through to the browser's focus move — the
-    // behaviour every other control in this window still depends on.
+    // behaviour every other control in this window still depends on. Tab
+    // accepts one clause (up to the next punctuation boundary); the full
+    // sentence is accepted by clicking the suggestion text.
     if (e.key === 'Tab' && !e.shiftKey && !mod && !e.altKey && suggestion !== null) {
       e.preventDefault();
-      acceptSuggestion();
+      acceptClause();
       return;
     }
 
@@ -367,20 +386,20 @@ export function Composer() {
             ) : running ? (
               <span>{t('composer.hint.streaming')}</span>
             ) : suggestion !== null ? (
-              // The suggestion is the sentence, not its remainder: Tab inserts
-              // `suggestion` whole, and a line that showed only `ull代码` would
-              // leave the person guessing what the beginning was. The whole line
-              // is the button, so a click completes it too — Tab is a convenience,
-              // not the only way to accept.
+              // The suggestion line shows the full segment (`suggestion.text`)
+              // — from the match start to the sentence end — so the person can
+              // see what Tab would progressively insert. Tab accepts one clause
+              // at a time (up to the next punctuation boundary); a click
+              // accepts the whole segment at once.
               <span className="cp-suggest">
-                <Tip label={t('composer.suggestAccept', { text: suggestion })}>
+                <Tip label={t('composer.suggestAccept', { text: suggestion.text })}>
                   <button
                     type="button"
                     className="cp-suggest-text"
-                    onClick={acceptSuggestion}
-                    aria-label={t('composer.suggestAccept', { text: suggestion })}
+                    onClick={acceptFull}
+                    aria-label={t('composer.suggestAccept', { text: suggestion.text })}
                   >
-                    {suggestion}
+                    {suggestion.text}
                   </button>
                 </Tip>
                 <span className="cp-suggest-key" aria-hidden="true">
