@@ -726,6 +726,25 @@ var catalog = map[string]string{
 	"channels.goal.unsupported":    "this runtime does not accept goal commands",
 	"channels.goal.refused":        "the goal command was refused: {problem}",
 
+	// --- the ticket binding -------------------------------------------------
+	//
+	// `channels.ticket.*` are notices a front end draws; `ticket.report.*` are
+	// read by the model, so they say what to do next rather than what went wrong.
+	"channels.ticket.no_session":   "no session is loaded, so there is nothing to bind a ticket to",
+	"channels.ticket.missing":      "ticket_bind needs a `ticket` key (an object to bind, or null to unbind)",
+	"channels.ticket.needs_object": "ticket_bind: `ticket` must be an object or null",
+	"channels.ticket.needs_id":     "ticket_bind: `ticket.id` must be a non-empty string",
+	"channels.ticket.needs_text":   "ticket_bind: `ticket.{field}` must be a string",
+	"channels.ticket.unsupported":  "this runtime does not accept ticket bindings, so the agent cannot report on the ticket",
+	"channels.ticket.refused":      "the ticket binding was refused: {problem}",
+
+	"ticket.report.unbound":          "This session is no longer bound to a ticket, so the report was not recorded. Carry on without ticket_report; tell the user in your answer what you did or what you need.",
+	"ticket.report.needs_summary":    "summary is required: say in a sentence or two what was done (status=done) or where you are stuck (status=blocked).",
+	"ticket.report.needs_question":   "status=blocked needs `question`: ask the one specific thing only the user can answer. If you are stuck for another reason, work on it further; if you only need a decision, ask it as the question.",
+	"ticket.report.bad_status":       "status must be \"done\" or \"blocked\".",
+	"ticket.report.recorded.done":    "Report recorded (id {id}): marked done. This is your claim only - the user decides whether to accept it. Give your final answer now.",
+	"ticket.report.recorded.blocked": "Report recorded (id {id}): marked blocked. Wait for the user's reply before continuing; end your turn with the question.",
+
 	// --- the managed EricAI token (`--ericai`) -----------------------------
 	//
 	// These arrive as notices, mid-turn, and each one is a statement about a

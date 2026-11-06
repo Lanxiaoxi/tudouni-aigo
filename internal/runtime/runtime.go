@@ -106,6 +106,10 @@ type Options struct {
 	// Nil is the ordinary case for an in-process front end: the build still runs and
 	// the index is still written; only the progress has no reader.
 	OnCodeIntelEvent func(payload map[string]any)
+	// OnTicketEvent carries one `ticket_report` to the front end. See
+	// protocol.RuntimeHooks.OnTicketEvent. Nil is the ordinary case for an in-process
+	// front end: the report is still recorded in session metadata.
+	OnTicketEvent func(payload map[string]any)
 }
 
 // Runtime is one assembled session.
@@ -249,6 +253,9 @@ type Runtime struct {
 	// different moments, and one field serving two producers is how a session switch
 	// ends up sending one of them to the previous connection.
 	onCodeIntelEvent func(payload map[string]any)
+	// onTicketEvent is where a `ticket_report` is announced, after it has been
+	// checkpointed. Nil means nobody is listening.
+	onTicketEvent func(payload map[string]any)
 	// CodeIntel is this workspace's index handle and its panel state. Nil only in
 	// tests that build a Runtime by hand.
 	CodeIntel *codeIntelState

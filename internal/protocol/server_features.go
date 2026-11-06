@@ -197,6 +197,70 @@ func (s *Server) handleGoal(message map[string]any) {
 	s.notice("info", "goal", goalActionText(action, panel))
 }
 
+// handleTicketBind binds the mounted session to a ticket, or unbinds it.
+//
+// The `ticket` key has to be present. `null` is the unbind and an object is the bind;
+// a message with no `ticket` at all is refused rather than read as an unbind, since
+// the wrong guess silently removes the reporting tool from a session that is still
+// working for a ticket.
+//
+// It does not wait for a running turn, unlike `mcp load`: the tool registry is
+// mutex-guarded, a turn snapshots its tool schema when it starts, and a report that
+// races an unbind is turned away by the tool itself (the check is made under the
+// metadata lock). Waiting here would only delay the front end's first prompt.
+//
+// Success sends no notice: the message is machine-to-machine, sent on every session
+// open, and a sentence per open would be noise the person never asked for. Refusals
+// do get one, because those are the cases where the agent will have no way to report.
+func (s *Server) handleTicketBind(message map[string]any) {
+	runtime := s.current()
+	if runtime == nil {
+		s.notice("warn", "ticket", i18n.T("channels.ticket.no_session"))
+		return
+	}
+	raw, present := message["ticket"]
+	if !present {
+		s.notice("warn", "ticket", i18n.T("channels.ticket.missing"))
+		return
+	}
+
+	var spec map[string]any
+	if raw != nil {
+		object, ok := raw.(map[string]any)
+		if !ok {
+			s.notice("warn", "ticket", i18n.T("channels.ticket.needs_object"))
+			return
+		}
+		id, ok := object["id"].(string)
+		if !ok || strings.TrimSpace(id) == "" {
+			s.notice("warn", "ticket", i18n.T("channels.ticket.needs_id"))
+			return
+		}
+		spec = map[string]any{"id": id, "title": "", "brief": ""}
+		for _, key := range []string{"title", "brief"} {
+			value, present := object[key]
+			if !present || value == nil {
+				continue
+			}
+			text, ok := value.(string)
+			if !ok {
+				s.notice("warn", "ticket", i18n.T("channels.ticket.needs_text", "field", key))
+				return
+			}
+			spec[key] = text
+		}
+	}
+
+	binder, ok := runtime.(TicketBinder)
+	if !ok {
+		s.notice("warn", "ticket", i18n.T("channels.ticket.unsupported"))
+		return
+	}
+	if err := binder.BindTicket(spec); err != nil {
+		s.notice("warn", "ticket", i18n.T("channels.ticket.refused", "problem", err.Error()))
+	}
+}
+
 // goalActionText says what the command did, in the terms the person used.
 func goalActionText(action string, panel map[string]any) string {
 	if action == GoalClear {

@@ -328,5 +328,64 @@ func sampleInitFields() map[string]any {
 		"permissions":    map[string]any{},
 		"audit_path":     "/tmp/ws/.tudouni/logs/s.jsonl",
 		"notices":        []any{},
+		// Unbound is an explicit null, not an absent key (protocol 18).
+		"ticket": nil,
+	}
+}
+
+// TestTheTicketMessagesSatisfyTheirSchemas covers the three shapes protocol 18 added:
+// the inbound bind (object and null), `init.ticket` when bound, and the report the
+// agent's tool call produces.
+func TestTheTicketMessagesSatisfyTheirSchemas(t *testing.T) {
+	inbound := loadSchema(t, "inbound.schema.json")
+	bindSpec, ok := inbound["ticket_bind"]
+	if !ok {
+		t.Fatal("the inbound schema does not declare ticket_bind")
+	}
+	checkMessage(t, bindSpec, map[string]any{
+		"v": VERSION, "t": InTicketBind,
+		"ticket": map[string]any{"id": "tk-1", "title": "t", "brief": "b"},
+	})
+	checkMessage(t, bindSpec, map[string]any{"v": VERSION, "t": InTicketBind, "ticket": nil})
+	for _, key := range RequiredKeys[InTicketBind] {
+		found := false
+		for _, declared := range bindSpec.Required {
+			found = found || declared == key
+		}
+		if !found {
+			t.Errorf("RequiredKeys[ticket_bind] names %q but the schema does not require it", key)
+		}
+	}
+
+	outbound := loadSchema(t, "outbound.schema.json")
+	report := map[string]any{
+		"report_id": "rpt-1", "status": "blocked", "summary": "stuck",
+		"question": "which one?", "evidence": []any{"go test ./..."}, "at_ms": int64(1770000000000),
+	}
+	init := map[string]any{"v": VERSION, "t": OutInit, "protocol": PROTOCOL}
+	for key, value := range sampleInitFields() {
+		init[key] = value
+	}
+	init["ticket"] = map[string]any{
+		"id": "tk-1", "title": "t", "brief": "b", "reports": []any{report},
+	}
+	checkMessage(t, outbound["init"], init)
+
+	live := map[string]any{"v": VERSION, "t": OutUI, "kind": UITicketReport,
+		"ticket_id": "tk-1", "session_id": "s"}
+	for key, value := range report {
+		live[key] = value
+	}
+	checkMessage(t, outbound["ui"], live)
+	// And the no-question shape: null, not absent and not "".
+	live["question"] = nil
+	live["status"] = "done"
+	live["evidence"] = []any{}
+	checkMessage(t, outbound["ui"], live)
+}
+
+func TestTheProtocolNumberCoversTickets(t *testing.T) {
+	if PROTOCOL < 18 {
+		t.Fatalf("PROTOCOL = %d; the ticket channel arrived in 18", PROTOCOL)
 	}
 }

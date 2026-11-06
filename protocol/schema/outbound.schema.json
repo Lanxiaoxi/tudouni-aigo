@@ -68,6 +68,17 @@
         }
       },
       "audit_path": {"type": "string", "doc": "审计日志的路径，供界面显示/打开"},
+      "ticket": {
+        "type": "object",
+        "nullable": true,
+        "doc": [
+          "protocol 18 起。这个会话当前绑定的工单，**键永远在**，未绑定时是 `null`（不省略：前端要的是「未绑定」这个值，而不是一个要自己猜的缺席）。",
+          "绑定时是 `{id, title, brief, reports: [...]}`，来自会话 metadata 的 `ticket` 记录，所以 `/resume` 或重开会话后仍在，`ticket_report` 工具也随之注册。",
+          "`reports` 的每一条与 `ui(ticket_report)` 的字段一致：`{report_id, status, summary, question, evidence, at_ms}`（`question` 无则 null，`evidence` 无则 `[]`），按时间先后，最多保留最近 200 条。",
+          "**这是对账用的**：前端可能错过实时的 `ui(ticket_report)`（窗口正在重载），打开会话时按 `report_id` 补齐漏掉的。runtime 保证先把回报写进会话文件、再发 `ui`，所以「发出过」一定意味着「这里有」。",
+          "runtime 低于 18 时没有这一格；前端据 `init.protocol` 判断，不要把缺席读成「未绑定」。"
+        ]
+      },
       "notices": {
         "type": "array",
         "items": {
@@ -137,7 +148,7 @@
       "t": {"type": "string", "const": "ui"},
       "kind": {
         "type": "string",
-        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "terminals", "terminal_created", "terminal_output", "terminal_exit", "memory", "hooks", "codeintel", "usage", "probe_effort", "suggestions"],
+        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "terminals", "terminal_created", "terminal_output", "terminal_exit", "memory", "hooks", "codeintel", "usage", "probe_effort", "suggestions", "ticket_report"],
         "doc": "run_finished = 这一轮的正文（answer + run_id）；state = 面板数据快照（todos/skills/skill_catalog/jobs/mcp/agents_md/messages/steps/model/**terminals**）；status = `/status` 要的那一屏（回答入站的 status）；tools = `/tools` 的清单（回答入站的 tools）；mcp = `/mcp` 的清单（回答入站的 mcp）；skills = `/skills` 的清单（回答入站的 skills：`skills` 是这个会话**能加载**的全量目录，`active` 才是**已加载**的名字 —— 两者不能混，详见 `skills` 那条）；compacted = `/compact` 那一次的结果（回答入站的 compact，字段 `compaction`）；context = `/context` 那一屏（回答入站的 context，字段 `context`）；files = 一层目录的清单（回答入站的 `file_list`）；file_read = 一个文件的读取结果（回答入站的 `file_read`）；terminals = 这个 workspace 的全量 Terminal 清单（回答入站的 `terminal_list`，也是 `terminal_create` **失败**时的回答）；terminal_created = `terminal_create` 成功，带新建的那一条；terminal_output = 终端输出的**异步增量**（没有对应的入站消息 —— 它是对 `terminal_input` 那一次写的后续，而不是它的答案）；terminal_exit = shell 结束（自己退的或被杀的，靠 `reason` 分）；codeintel = 工作区代码索引面板（回答入站的 `codeintel_action`，也承载构建进度的推送）；usage = 跨工作区用量总账的汇总（回答入站的 `usage_stats`，字段 `usage`）。这些 kind 都不进审计 —— 终端输出尤其不能：它是无限流，写进审计等于把日志变成第二个终端。"
       },
       "answer": {
@@ -147,6 +158,36 @@
       "run_id": {
         "type": "string",
         "doc": "**kind=run_finished 和 kind=suggestions 有**。run_finished 上和 `t:\"event\"` 上那条 run_finished 配对 —— 两条消息的顺序不保证，所以配对只能靠它；suggestions 上是这组建议属于哪一轮，不是最后一轮就丢掉。"
+      },
+      "ticket_id": {
+        "type": "string",
+        "doc": "**只有 kind=ticket_report 有**（protocol 18）。这条回报属于哪个工单（`ticket_bind` 时给的 id）。runtime 不解释工单，只原样转发。"
+      },
+      "report_id": {
+        "type": "string",
+        "doc": "**只有 kind=ticket_report 有**（protocol 18）。这条回报的 id，runtime 每次调用 `ticket_report` 工具时生成，**前端按它去重**（实时消息和 `init.ticket.reports` 里的同一条是同一个 id）。"
+      },
+      "session_id": {
+        "type": "string",
+        "doc": "**只有 kind=ticket_report 有**（protocol 18）。做出这条回报的会话。"
+      },
+      "summary": {
+        "type": "string",
+        "doc": "**只有 kind=ticket_report 有**（protocol 18）。给人看的简短说明：做了什么（done）或卡在哪（blocked）。**kind=ticket_report 的完整字段：** `ticket_id` / `report_id` / `session_id` / `status`（`done` | `blocked`）/ `summary` / `question`（blocked 时必有，done 时 null）/ `evidence`（字符串数组，没有时是 `[]`）/ `at_ms`（毫秒时间戳）。**先落盘再发出**：收到这条就意味着同一份回报已经在会话文件里，下一次打开会话时 `init.ticket.reports` 里一定有它。工具调用不结束本轮；一个已解绑的会话不会发这条。"
+      },
+      "question": {
+        "type": "string",
+        "nullable": true,
+        "doc": "**只有 kind=ticket_report 有**（protocol 18）。status=blocked 时是那个具体问题；status=done 时是 null。"
+      },
+      "evidence": {
+        "type": "array",
+        "items": {"type": "string"},
+        "doc": "**只有 kind=ticket_report 有**（protocol 18）。验证命令、PR 链接、文件路径等凭据；没有时是 `[]`，不是 null。"
+      },
+      "at_ms": {
+        "type": "integer",
+        "doc": "**只有 kind=ticket_report 有**（protocol 18）。回报生成的时间，Unix 毫秒。"
       },
       "replies": {
         "type": "array",
@@ -250,8 +291,7 @@
         "doc": "**只有 kind=state 有**。**当前这个模型收哪些档位**（没声明时是 `minimal/low/medium/high/xhigh/max` 一整套）。**随协议发而不是让前端写死**：前端不许 import 内核（决策 18），而抄一份清单到前端就会漂 —— 漂掉的症状是\"清单里列着它，打进去说没有这一档\"。**切换模型之后这一格会变**，面板里的清单是打开那一刻的快照。"
       },
       "status": {
-        "type": "object",
-        "doc": "**只有 kind=status 有**。分组的状态快照：`session`（id/resumed/workspace/messages/steps）、`model`（provider/current/selected/last_used/since/window/base_url/route/reasoning）、`counters`（runs/model_calls/model_ok/tool_calls/permission_waits/asks）、`usage`（prompt/cached/miss/completion/model_ms）、`timing`（protocol 5 起，**最近一轮 turn 的墙钟分解**：`run_ms` 总时长 + model_ms/tool_ms/waited_ms/human_ms/backoff_ms/saved_ms 各桶 + unattributed 未归因，**没有跑过 turn 时为 null**）、`meta`（max_steps/stream/autopilot/tool_count/audit_path/permissions/catalog）。**分组是有意的**：这一屏跨四个层次，平铺之后字段名早晚撞车。**`timing` 与 `usage` 不是一个口径**：`usage`/`counters` 是会话累计，`timing` 是*最近一轮*的——因为问它的是底栏 turn 时长芯片（\"这一轮的 5.4s 花在哪\"），累计值塞在单轮总时长旁边凑不成账。各桶是 `--audit` 时长账本同一次求和（只是按该轮 `run_id` 过滤），所以两个报告不会漂；`run_ms` 就是前端自己 `run_finished.duration_ms` 的那个数，放在这里是让 unattributed 有分母。"
+        "doc": "**kind=status 和 kind=ticket_report 有，类型不同，按 kind 读**（所以这一格不声明 type）：kind=ticket_report 时是字符串 `done` / `blocked`（protocol 18，见 `summary` 那条）；kind=status 时是下面这个对象。**kind=status 时是对象：**分组的状态快照：`session`（id/resumed/workspace/messages/steps）、`model`（provider/current/selected/last_used/since/window/base_url/route/reasoning）、`counters`（runs/model_calls/model_ok/tool_calls/permission_waits/asks）、`usage`（prompt/cached/miss/completion/model_ms）、`timing`（protocol 5 起，**最近一轮 turn 的墙钟分解**：`run_ms` 总时长 + model_ms/tool_ms/waited_ms/human_ms/backoff_ms/saved_ms 各桶 + unattributed 未归因，**没有跑过 turn 时为 null**）、`meta`（max_steps/stream/autopilot/tool_count/audit_path/permissions/catalog）。**分组是有意的**：这一屏跨四个层次，平铺之后字段名早晚撞车。**`timing` 与 `usage` 不是一个口径**：`usage`/`counters` 是会话累计，`timing` 是*最近一轮*的——因为问它的是底栏 turn 时长芯片（\"这一轮的 5.4s 花在哪\"），累计值塞在单轮总时长旁边凑不成账。各桶是 `--audit` 时长账本同一次求和（只是按该轮 `run_id` 过滤），所以两个报告不会漂；`run_ms` 就是前端自己 `run_finished.duration_ms` 的那个数，放在这里是让 unattributed 有分母。"
       },
       "tools": {
         "type": "array",

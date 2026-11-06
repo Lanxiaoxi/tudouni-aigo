@@ -673,6 +673,29 @@
     },
     "required": ["v", "t"]
   },
+  "ticket_bind": {
+    "summary": "**把这个会话绑定到一个工单，或解绑**（protocol 18）。绑定后 runtime 注册 `ticket_report` 工具、在每轮 payload 尾部加一条工单说明；解绑则注销工具。",
+    "doc": [
+      "绑定写进会话 metadata 的 `ticket` 记录（与 `goal` 平级），所以 `/resume` 或重开会话后仍然有效，`init.ticket` 会带回它。",
+      "runtime **不知道工单存在哪里，也不知道它的状态机**：它只记住「我在为哪个工单工作」，并把 agent 的回报原样转发（出站 `ui(ticket_report)`）。",
+      "",
+      "`ticket` 键**必须在**：对象 = 绑定，`null` = 解绑。缺省会被拒绝并回一条 notice，**不当成解绑** —— 猜错的代价是一个还在为工单工作的会话悄悄丢了回报工具。",
+      "对同一个 id 重发绑定是幂等的：刷新 title / brief，**保留已有的 reports**。绑定另一个 id 会清空 reports（回报属于它所属的工单）。",
+      "解绑会连同 reports 一起删掉记录；前端应在解绑前先对账。",
+      "没有成功通知：成功是静默的（每次打开会话都会发），只有拒绝才回 `notice(code=\"ticket\", level=warn)`。runtime 低于 18 会静默忽略这条消息，所以前端据 `init.protocol` 判断，不要假设通道存在。",
+      "不等当前这一轮：工具注册表带锁，一轮在开始时快照工具清单；与解绑赛跑的 `ticket_report` 调用由工具自己在 metadata 锁内检查并以「已解绑」为准拒绝。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "ticket_bind"},
+      "ticket": {
+        "type": "object",
+        "nullable": true,
+        "doc": "`{id, title, brief}`（`id` 必填、非空；`title` / `brief` 是字符串，缺省为空串）或 `null`（解绑）。上限：id 200、title 500、brief 20000 个字符。"
+      }
+    },
+    "required": ["v", "t", "ticket"]
+  },
   "probe_effort": {
     "summary": "探测当前模型的推理档位：runtime 对 `effort_levels` 的**每一档**发一个真实的小请求（thinking 开、输出额度压到最小），回答 ui(probe_effort)，逐档给出 ok / rejected / uncertain。无参数：档位清单只有 runtime 知道（目录里声明的）。探测花真金，**确认是前端的活**——用户点头才发这条。",
     "fields": {

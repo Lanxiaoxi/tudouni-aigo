@@ -58,6 +58,9 @@ var _ protocol.HooksService = (*Runtime)(nil)
 // AuthStartup runs the credential check at the moment the handshake is out.
 var _ protocol.AuthStartup = (*Runtime)(nil)
 
+// TicketBinder accepts `ticket_bind`.
+var _ protocol.TicketBinder = (*Runtime)(nil)
+
 // IndexWarmer is the code index's background warm-up.
 var _ protocol.IndexWarmer = (*Runtime)(nil)
 

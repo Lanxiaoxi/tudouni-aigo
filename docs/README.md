@@ -55,6 +55,8 @@
   「一条新的 `run_started`」处理（§16 问题的建议做法），而不是续答。
   **给写 hook 的人看的是根下的 [hooks.md](../hooks.md)，不是这一份**——这里是决策记录。
 
+- [ticket.md](design/ticket.md) — Ticket：把 todo 从 Task 拆出来，做成任务级工作单元（状态机、`ticket_bind` / `ticket_report` 回报通道、Ticket board 与两个入口、为团队能力预留的扩展口）。**状态：已实现**（runtime：`internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`，协议 18；桌面端：`desktop/tudouni-aigo-desktop/src/ticket/`、`src/state/slices/tickets.ts` / `ticketRuns.ts`、`src/components/board/TicketBoard.tsx`）。
+
 **还没做的方案，别当成现状读：**
 
 - [benchmark-harbor.md](design/benchmark-harbor.md) — 用 Harbor + Terminal-Bench 2.0 评估 runtime 的方案：只写一个 adapter，Harbor 负责容器、题库、判分与成本/耗时记录，结论只从「同模型换 harness」的配对实验里读。**状态：方案，未实施。**

@@ -57,6 +57,14 @@ type RuntimeHooks struct {
 	// Nil means nobody is listening: the build still runs and the index is still
 	// written; only the progress has no reader.
 	OnCodeIntelEvent func(payload map[string]any)
+	// OnTicketEvent carries one `ticket_report` to the front end as the body of a `ui`
+	// message. A separate hook from the two above for the same reason they are separate
+	// from each other: different producer (a tool call on the turn's goroutine) and
+	// different lifetime (it belongs to the mounted session, not the process).
+	//
+	// Nil means nobody is listening; the report is still recorded in session metadata
+	// and still reaches the front end through `init.ticket.reports` on the next open.
+	OnTicketEvent func(payload map[string]any)
 	// Report is where an instruction a person has to **act on** goes when it is
 	// produced **while a session is already running**: today, the device code and
 	// the verification URI of the managed-token login (`--ericai`).
@@ -187,6 +195,9 @@ func Main(opener RuntimeOpener, summaries func(includeArchived bool) []map[strin
 			// outlives the reply that started it, so it cannot answer on the reply's
 			// message. See RuntimeHooks.OnCodeIntelEvent.
 			OnCodeIntelEvent: server.SendCodeIntelEvent,
+			// A ticket report is announced the same way: a tool call on the turn's
+			// goroutine, forwarded as a `ui` body. See RuntimeHooks.OnTicketEvent.
+			OnTicketEvent: server.SendTicketEvent,
 			// Same reasoning, and the same failure without it: this mode's stderr is
 			// drained by the front end (see Client.Start), so an instruction written
 			// there reaches nobody. See RuntimeHooks.Report.

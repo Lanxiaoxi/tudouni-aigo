@@ -245,6 +245,18 @@ type ProbeEfforter interface {
 	ProbeEffort() (map[string]any, error)
 }
 
+// TicketBinder is what a runtime must provide to accept `ticket_bind`.
+//
+// Optional for the reason `GoalCommander` is: a stub or older runtime answers the
+// message with a notice saying so, which beats a bind that appears to work while
+// the agent has no way to report.
+//
+// A nil map means unbind. Otherwise the map carries `id`, `title` and `brief`
+// (strings; the handler has already checked the types).
+type TicketBinder interface {
+	BindTicket(ticket map[string]any) error
+}
+
 // FileService is what a runtime must provide for the workspace's file
 // capability.
 //
@@ -509,6 +521,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 	case InProbeEffort:
 		s.handleProbeEffort()
 
+	case InTicketBind:
+		s.handleTicketBind(message)
+
 	case InRefreshState:
 		s.Send(s.stateMessage(false))
 
@@ -619,6 +634,23 @@ func (s *Server) SendTerminalEvent(payload map[string]any) {
 // Called from the build's own goroutine, so the same rule applies: never block, and let
 // `Send` swallow a write failure.
 func (s *Server) SendCodeIntelEvent(payload map[string]any) {
+	if payload == nil {
+		return
+	}
+	envelope := map[string]any{"v": VERSION, "t": OutUI}
+	for key, value := range payload {
+		envelope[key] = value
+	}
+	s.Send(envelope)
+}
+
+// SendTicketEvent forwards one ticket report to the front end.
+//
+// Same contract as SendCodeIntelEvent: the payload arrives shaped, this adds the
+// envelope, and it is called from the turn's tool goroutine so it must not block.
+// A separate method because the producers differ and a hook shared between them is
+// how one of them ends up wired to the previous connection.
+func (s *Server) SendTicketEvent(payload map[string]any) {
 	if payload == nil {
 		return
 	}

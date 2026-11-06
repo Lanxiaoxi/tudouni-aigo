@@ -389,6 +389,12 @@ func OpenRuntime(options Options) (*Runtime, error) {
 	}
 	runtimeValue.Tools = registry.Tools
 	runtimeValue.Skills = registry.Skills
+	runtimeValue.onTicketEvent = options.OnTicketEvent
+	// A resumed session comes back with its binding in metadata, so the reporting
+	// tool has to be registered here too, not only when a `ticket_bind` arrives.
+	if err := runtimeValue.applyTicketTool(); err != nil {
+		return nil, err
+	}
 
 	// Delegation, registered after the registry exists because a subagent needs a
 	// **copy of the parent's whole tool set** to work from — and that set is only

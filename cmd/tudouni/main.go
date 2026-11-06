@@ -450,6 +450,9 @@ func openRuntime(booted runtime.Booted, sessionID string,
 		// layer supplies, nil for the in-process front ends. Those still build — the
 		// panel is a desktop surface, and nothing here is refused for want of a hook.
 		OnCodeIntelEvent: hooks.OnCodeIntelEvent,
+		// A ticket report travels the same route: a hook the protocol layer supplies,
+		// nil for the in-process front ends (which have no ticket binding to report on).
+		OnTicketEvent: hooks.OnTicketEvent,
 		// Where a login's instructions go. Nil for the in-process front ends, which
 		// is a real answer rather than a gap: those own a terminal, so the runtime's
 		// own stderr is the right place and the sentence is printed there. Under

@@ -786,6 +786,49 @@ runtime 发** —— 和 shell 自己退出时是同一条路。前端**不允�
 不是冗余：快照在每次工具结果、每轮收尾都发，所以一个在 shell 建好之后才启动的前端 —— 或者
 丢过一条消息的前端 —— 会从下一份快照里知道它，而不是永远不知道。
 
+### 3.16 `ticket_bind` / `ui(ticket_report)` / `init.ticket` —— 工单回报通道（protocol 18）
+
+runtime **不知道工单存在哪里，也不知道它的状态机**。它只做三件事：记住"我在为哪个工单
+工作"，给模型一个回报工具，把回报原样转发出去。工单本身（状态、验收）是前端的事。
+
+```
+你                                     runtime
+│  ──── ticket_bind {id,title,brief} ►  绑定：写进会话 metadata，注册 ticket_report 工具
+│  ◄──── （无应答；拒绝时一条 notice）
+│        … 模型调用 ticket_report …
+│  ◄──── ui(ticket_report) ───────────  **先落盘，再发**
+│  ──── ticket_bind {ticket:null} ───►  解绑：删记录，注销工具
+```
+
+**入站 `ticket_bind`**：`ticket` 键**必须在**。对象 `{id, title, brief}` 是绑定，`null` 是
+解绑。缺这个键被拒绝（`notice`，`code=ticket`），**不当成解绑**：猜错的代价是一个还在为
+工单工作的会话悄悄丢了回报工具。成功是静默的（每次打开会话都会发一条，一句话一次会变成
+噪音）。重发同一个 id 的绑定幂等：刷新 title / brief、**保留已有 reports**；绑定另一个 id
+清空 reports。runtime 低于 18 会静默忽略这条消息，所以**前端据 `init.protocol` 判断**，
+别假设通道存在。
+
+**绑定写进会话 metadata 的 `ticket` 记录**（与 `goal` 平级）：
+`{id, title, brief, reports: [{report_id, status, summary, question, evidence, at_ms}]}`。
+所以 `/resume` 或重开会话后绑定仍在，`ticket_report` 也跟着重新注册。绑定时每轮 payload
+尾部有一条工单说明（标题、brief、"做完或卡住时调用 `ticket_report`"），它不进
+`session.Messages`。
+
+**工具 `ticket_report(status, summary, question?, evidence?)`**：`status` ∈ `done` /
+`blocked`；`summary` 必填；`status=blocked` 必须带 `question`（一个具体问题），否则被拒并
+说明原因。它**不结束本轮**。只有绑定时才注册，解绑时注销；解绑和调用恰好同时发生时，
+runtime 以"已解绑"为准拒绝（检查和写入在同一把 metadata 锁里）。委派出去的子代理拿不到它。
+
+**出站 `ui(ticket_report)`**：
+`{"v":1,"t":"ui","kind":"ticket_report","ticket_id","report_id","session_id","status","summary","question","evidence","at_ms"}`。
+`question` 无则 `null`，`evidence` 无则 `[]`。**runtime 先把回报写进会话文件、再发这条**：
+"发出过"一定意味着"记下了"。`report_id` 是前端的去重键。
+
+**`init.ticket`**：键**永远在**。未绑定为 `null`（不省略）；绑定时为
+`{id, title, brief, reports: [...]}`，`reports` 每条与 `ui(ticket_report)` 的字段一致（没有
+`ticket_id` / `session_id` / `kind`），按时间先后、最多保留最近 200 条。前端打开会话时按
+`report_id` 补齐漏掉的回报；已处理过的 id 直接跳过。protocol < 18 的 runtime 没有这一格，
+前端别把缺席读成"未绑定"。
+
 ## 4. 人机交互：两条会阻塞的消息
 
 **收到 `permission_request` / `question_request` 之后，runtime 会一直等你回应。**

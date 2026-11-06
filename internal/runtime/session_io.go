@@ -94,9 +94,10 @@ func (r *Runtime) onEvent(record map[string]any) {
 
 // notes is the trailing block appended to every request payload.
 //
-// Seven parts, in this order: the skill catalogue, the loaded skill bodies, the
-// workspace memory, the goal, the task list, the background-job warning, and the
-// delegations in flight. None of them enters the session's messages: all seven are
+// Eight parts, in this order: the skill catalogue, the loaded skill bodies, the
+// workspace memory, the goal, the bound ticket, the task list, the background-job
+// warning, and the delegations in flight. None of them enters the session's
+// messages: all of them are
 // this run's working memory, not something either party said.
 //
 // **The order is by how costly it is to miss.** The catalogue is a menu; the goal
@@ -141,6 +142,14 @@ func (r *Runtime) notes() string {
 	if r.Goal != nil {
 		if goal, ok := r.goal(); ok {
 			parts = append(parts, state.GoalText(goal, r.activation()))
+		}
+	}
+	// The ticket this session works for, if any. It sits with the goal because both are
+	// "what this session is for"; the instruction to report is only useful if it is in
+	// front of the model when it decides it is finished or stuck.
+	if r.SessionValue != nil {
+		if ticket, ok := r.ticket(); ok {
+			parts = append(parts, state.TicketText(ticket))
 		}
 	}
 	// The task list the model maintains itself. It has to be here rather than left

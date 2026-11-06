@@ -156,7 +156,19 @@ const VERSION = 1
 // only when no automatic round follows; a front end that does not know it ignores
 // it, and one that draws the buttons treats a click as the person sending the text.
 // Additive in the same way 13 was.
-const PROTOCOL = 17
+//
+// 18 adds the ticket reporting channel: `ticket_bind` inbound (bind this session
+// to a ticket, or `null` to unbind), a `ticket_report` kind on the `ui` channel
+// (the agent's `ticket_report` tool call, forwarded verbatim), and an `init.ticket`
+// field carrying the binding and every report made under it. The runtime does not
+// know where tickets are stored or what their state machine is; it only remembers
+// the binding in session metadata, offers the reporting tool while bound, and
+// writes each report down **before** announcing it so `init.ticket.reports` can
+// always reconcile a message the front end missed. Additive in the same way 13
+// was: a front end that knows none of it never sends the bind, and a runtime
+// below 18 silently ignores it — which is why a front end that draws a reporting
+// state gates the bind on this number instead of assuming the channel exists.
+const PROTOCOL = 18
 
 // Message keys used by every envelope.
 const (
@@ -265,6 +277,12 @@ const (
 	// confirms with the person first; the runtime simply does what it is
 	// asked.
 	InProbeEffort = "probe_effort"
+
+	// Bind this session to a ticket (`ticket: {id, title, brief}`) or unbind it
+	// (`ticket: null`). The key must be present: an absent `ticket` is refused
+	// rather than read as an unbind, because guessing "unbind" would silently drop
+	// the reporting tool from a session that is still working for a ticket.
+	InTicketBind = "ticket_bind"
 )
 
 // Message kinds travelling runtime -> front end.
@@ -371,6 +389,11 @@ const (
 	// cannot probe answers this kind with `problem` and no `probe`, for the
 	// reason the memory and codeintel panels carry theirs.
 	UIProbeEffort = "probe_effort"
+
+	// One report the agent made through `ticket_report`, forwarded as it was
+	// recorded. It is sent only after the report is in the session file, so
+	// "announced" always implies "recoverable from init.ticket.reports".
+	UITicketReport = "ticket_report"
 )
 
 // Terminal statuses. The runtime is the only source of truth for these; a front
@@ -567,6 +590,9 @@ var RequiredKeys = map[string][]string{
 
 	// No arguments: the levels come from the catalogue, not the front end.
 	InProbeEffort: {"v", "t"},
+
+	// `ticket` is required to be present but may be null (unbind).
+	InTicketBind: {"v", "t", "ticket"},
 }
 
 // TerminalDefaults are the size a terminal is created with when the client does

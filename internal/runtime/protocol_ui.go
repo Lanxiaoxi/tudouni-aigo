@@ -43,6 +43,10 @@ func (r *Runtime) InitFields() map[string]any {
 		"permissions":    r.nonDefaultPermissions(),
 		"audit_path":     r.auditPath(),
 		"notices":        notices,
+		// The ticket binding and every report made under it, or null. Always present
+		// (protocol 18): the front end reconciles missed `ui(ticket_report)` messages
+		// against `reports` by id, so it needs "unbound" to be a value, not an absence.
+		"ticket": r.ticketInit(),
 	}
 }
 

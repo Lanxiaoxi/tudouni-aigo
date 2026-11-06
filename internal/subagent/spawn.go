@@ -501,6 +501,10 @@ var sessionScopedToolNames = []string{
 	"update_goal",
 	"load_skill",
 	"ask_user",
+	// A child has no ticket of its own: a report from it would be recorded against
+	// the parent's binding, and the parent's metadata is the map two children could
+	// write at once.
+	"ticket_report",
 	// The collect tool reads the delegating session's board, so it belongs to
 	// the parent only: a child collecting another child's answer would be
 	// acting on a session it was never handed, and the answer it would take is
