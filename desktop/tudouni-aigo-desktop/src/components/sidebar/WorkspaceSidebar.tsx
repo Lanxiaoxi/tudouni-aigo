@@ -749,7 +749,7 @@ export function WorkspaceSidebar() {
     },
     {
       key: 'settings' as const,
-      label: t('lb.workbench.groupTasks'),
+      label: t('lb.workbench.groupRuntime'),
       items: navVisible.filter((item) => item.group === 'settings'),
     },
   ].filter((group) => group.items.length > 0);

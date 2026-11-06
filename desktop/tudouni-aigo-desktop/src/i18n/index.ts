@@ -657,10 +657,10 @@ export const en = {
   'lb.foldFoot': 'Fold the workbench',
   'lb.unfoldFoot': 'Unfold the workbench',
   /* The drawer's two group names. They are the same nouns the rail already
-     uses — a workspace's own surfaces, then the process's settings — so the
-     groups read as parts of this rail rather than as a second menu. */
+     uses — a workspace's own surfaces, then the runtime's own settings — so
+     the groups read as parts of this rail rather than as a second menu. */
   'lb.workbench.groupWorkspace': 'Workspace',
-  'lb.workbench.groupTasks': 'Tasks & settings',
+  'lb.workbench.groupRuntime': 'Runtime',
   'lb.workbench.search': 'Jump to or search',
   'lb.workbench.clear': 'Clear the workbench filter',
   'lb.workbench.none': 'Nothing matches',
