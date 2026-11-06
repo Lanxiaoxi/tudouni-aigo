@@ -41,11 +41,21 @@ const (
 	MaxTicketReports = 200
 
 	// Ceilings on what a bind may carry. The brief goes into the payload tail every
-	// round (see TicketText), so an accidental paste of a whole file must not become
-	// a permanent per-request cost.
+	// round (see TicketText, which only quotes its head), so an accidental paste of
+	// a whole file must not become a permanent per-request cost.
 	TicketIDCeiling    = 200
 	TicketTitleCeiling = 500
 	TicketBriefCeiling = 20000
+
+	// TicketTailBriefRunes is how much of the brief the payload tail quotes.
+	//
+	// The tail is sent with **every** request, so its size is a cost paid once per
+	// round for the whole session: 20000 characters is roughly 5k tokens each time,
+	// which is an order of magnitude more than the note is worth. The full brief is
+	// already message one of the conversation, where it is read once and then
+	// compacted away with the rest of the early history — which is exactly the
+	// trade the goal note makes (it quotes the objective, not the plan).
+	TicketTailBriefRunes = 2000
 )
 
 // TicketReport is one fact the agent reported.
@@ -170,33 +180,44 @@ func ticketReportOf(raw any) (TicketReport, bool) {
 	return report, true
 }
 
-// BindTicket records the binding.
+// BindTicket records the binding and reports whether the record changed.
 //
 // Binding the ticket that is already bound refreshes its title and brief and
 // **keeps its reports**: a front end that re-sends the bind (reopening a session)
 // must not erase the history it will reconcile against. Binding a different
 // ticket starts a fresh list, because reports belong to the ticket they were made
 // under.
-func BindTicket(metadata map[string]any, spec TicketSpec) (Ticket, error) {
+//
+// The second return value is what lets the runtime skip a checkpoint: a front end
+// re-sends the same bind on every session open, so "unchanged" is a common case
+// and rewriting the session file for it would be a save carrying no new fact.
+func BindTicket(metadata map[string]any, spec TicketSpec) (Ticket, bool, error) {
 	id := strings.TrimSpace(spec.ID)
 	if id == "" {
-		return Ticket{}, fmt.Errorf("a ticket needs a non-empty id")
+		return Ticket{}, false, fmt.Errorf("a ticket needs a non-empty id")
 	}
 	if utf8.RuneCountInString(id) > TicketIDCeiling {
-		return Ticket{}, fmt.Errorf("the ticket id is longer than %d characters", TicketIDCeiling)
+		return Ticket{}, false, fmt.Errorf("the ticket id is longer than %d characters", TicketIDCeiling)
 	}
 	if utf8.RuneCountInString(spec.Title) > TicketTitleCeiling {
-		return Ticket{}, fmt.Errorf("the ticket title is longer than %d characters", TicketTitleCeiling)
+		return Ticket{}, false, fmt.Errorf("the ticket title is longer than %d characters", TicketTitleCeiling)
 	}
 	if utf8.RuneCountInString(spec.Brief) > TicketBriefCeiling {
-		return Ticket{}, fmt.Errorf("the ticket brief is longer than %d characters", TicketBriefCeiling)
+		return Ticket{}, false, fmt.Errorf("the ticket brief is longer than %d characters", TicketBriefCeiling)
 	}
 	ticket := Ticket{ID: id, Title: spec.Title, Brief: spec.Brief}
-	if current, ok := LoadTicket(metadata); ok && current.ID == id {
-		ticket.Reports = current.Reports
+	previous, wasBound := LoadTicket(metadata)
+	if wasBound && previous.ID == id {
+		ticket.Reports = previous.Reports
 	}
+	// Compared on the fields a bind can carry, not on the whole record: the
+	// reports are carried over untouched just above, so an unchanged re-bind can
+	// only differ in one of these three. `!wasBound` is included so the first
+	// bind of a ticket is never mistaken for a no-op.
+	changed := !wasBound || previous.ID != ticket.ID ||
+		previous.Title != ticket.Title || previous.Brief != ticket.Brief
 	metadata[TicketKey] = ticket.Block()
-	return ticket, nil
+	return ticket, changed, nil
 }
 
 // ClearTicket removes the binding and reports whether there was one.
@@ -231,6 +252,11 @@ func AppendTicketReport(metadata map[string]any, report TicketReport) (Ticket, b
 // history holds one stale copy per round and compaction folds the oldest away
 // first, while the instruction to report is only useful if it is in front of the
 // model when it decides it is finished or stuck.
+//
+// **The brief is quoted only at its head**, and the cut says so in words. The
+// tail rides every request, so quoting the whole thing would charge the session
+// once per round for text the model read on the first turn; a silent cut would be
+// worse still, because the model would take a truncated brief for the whole job.
 func TicketText(ticket Ticket) string {
 	var builder strings.Builder
 	builder.WriteString("## 当前工单（Ticket，运行时持有，跨轮持续）\n\n")
@@ -239,10 +265,24 @@ func TicketText(ticket Ticket) string {
 		builder.WriteString("标题：" + title + "\n")
 	}
 	if brief := strings.TrimSpace(ticket.Brief); brief != "" {
-		builder.WriteString("工作描述：\n" + brief + "\n")
+		builder.WriteString("工作描述：\n" + truncateRunes(brief, TicketTailBriefRunes) + "\n")
 	}
 	builder.WriteString("\n做完时调用 ticket_report(status=\"done\", summary=...)；" +
 		"卡住、需要用户回答一个具体问题才能继续时，调用 ticket_report(status=\"blocked\", summary=..., question=...)。" +
 		"调用它不会结束本轮；done 只是你的声明，是否验收由用户决定。")
 	return builder.String()
+}
+
+// truncateRunes cuts text to at most limit runes and says how much was left out.
+//
+// Runes rather than bytes because the brief is prose in whatever language the
+// person wrote it: cutting a UTF-8 sequence in half produces a replacement
+// character in a note the model then reasons about.
+func truncateRunes(text string, limit int) string {
+	total := utf8.RuneCountInString(text)
+	if total <= limit {
+		return text
+	}
+	cut := []rune(text)[:limit]
+	return string(cut) + fmt.Sprintf("\n……（工单描述共 %d 字，这里只引用前 %d 字；完整内容在会话的第一条消息里）", total, limit)
 }

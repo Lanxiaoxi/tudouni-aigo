@@ -141,6 +141,8 @@ ticket_report(
 - 工具不结束 turn。模型报完 `done` 之后通常会自己停下；用 prompt 引导，不做强制。
 - 每次调用生成一个 `report_id`，追加到会话 metadata 的 `ticket.reports`。
 - 绑定时，payload 尾部加一条 note（走 `Runtime.notes()`，不进 `session.Messages`，和 goal 摘要同一机制），内容是 Ticket 标题、brief，以及"做完或卡住时调用 `ticket_report`"。
+- **尾部引用的是 brief 的开头，不是全文。** 这条 note 每一轮请求都发一次，按 bind 上限（20000 字）引用全文就是每轮多付约 5k token，比这条说明本身的价值高一个数量级；完整 brief 本来就在会话第一条消息里，读一次、之后随最老的历史一起被压缩掉。`TicketText` 因此只引用 `TicketTailBriefRunes`（2000 字），并**明说截断了多少**——静默截断比多花 token 更糟，模型会把半截 brief 当成全部工作。这正是 goal 的做法：`GoalText` 引用 objective 而不是整份计划。
+- **重发同一个 bind 不写盘。** 桌面端每次打开会话都会发一次 `ticket_bind`，而绝大多数时候 id / title / brief 都没变。`state.BindTicket` 因此返回第二个值"记录是否真的变了"，runtime 只在这个值为真时 `Checkpoint()`；工具注册表两种情况都对账（`applyTicketTool` 幂等且便宜），因为恢复的会话可能带着一个注册表还没跟上的绑定。
 
 ### 5.3 出站：`ui(ticket_report)`，以及对账
 

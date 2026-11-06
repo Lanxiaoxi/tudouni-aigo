@@ -46,7 +46,7 @@ func callReport(t *testing.T, r *Runtime, args map[string]any) (tools.Result, er
 	return tool.Execute(context.Background(), args)
 }
 
-func TestBindingRegistersAndUnbindingUnregistersTheTool(t *testing.T) {
+func TestTheBindingRegistersAndUnbindingUnregistersTheTool(t *testing.T) {
 	r, _ := ticketRuntime(t)
 	if hasTicketReport(r) {
 		t.Fatal("ticket_report was registered before anything was bound")
@@ -211,6 +211,51 @@ func TestRebindingTheSameTicketKeepsItsReportsAndANewOneClearsThem(t *testing.T)
 	ticket, _ = r.ticket()
 	if ticket.ID != "tk-2" || len(ticket.Reports) != 0 {
 		t.Errorf("a different ticket kept the old reports: %+v", ticket)
+	}
+}
+
+// A front end re-sends the same bind on every session open. Letting that write the
+// session file would be a save per open carrying no new fact, so the checkpoint is
+// skipped when the record did not move — and only then.
+func TestARebindThatChangesNothingDoesNotRewriteTheSession(t *testing.T) {
+	r, store := ticketRuntime(t)
+	// The comparison is against the file, so the first bind has to be on disk:
+	// a "no change" decided against an in-memory record the file never got would
+	// be a save dropped for the wrong reason.
+	if err := r.BindTicket(bindSpec("tk-1")); err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.Path(r.SessionIDValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.BindTicket(bindSpec("tk-1")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+		t.Error("an identical re-bind rewrote the session file")
+	}
+
+	// A changed field is a real change and must still land.
+	if err := r.BindTicket(map[string]any{"id": "tk-1", "title": "renamed", "brief": "b"}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load(r.SessionIDValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ticket, ok := state.LoadTicket(loaded.Metadata)
+	if !ok || ticket.Title != "renamed" {
+		t.Errorf("a changed re-bind was not persisted: %+v", ticket)
 	}
 }
 

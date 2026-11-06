@@ -114,6 +114,13 @@ export function landTicketReport(ctx: StoreContext, msg: UiTicketReportMsg): voi
  * it; the machine moves only a `running` one, and only for an exit nobody asked
  * for. `ssh_closed` is the bridge's own statement that a connection dropped
  * (design 6.5) - the workspace type is never consulted.
+ *
+ * **The session is identified here, not left to the machine.** The machine's
+ * `owns` is the last word and still runs (it is what turns a stale `sessionKey`
+ * into a no-op), but walking every open Ticket on every child exit just to have
+ * all but one of them refuse the fact is work the caller can skip: it knows which
+ * session ended, and it knows the same identity rule the machine uses - the
+ * runtime's session id once it is known, the bridge's key only before that.
  */
 export function landTicketExit(
   ctx: StoreContext,
@@ -122,12 +129,23 @@ export function landTicketExit(
   exit: { requested: boolean; reason?: string },
 ): void {
   whenLoaded(ctx, () => {
+    const id = sessionId ?? '';
     for (const ticket of ctx.get().tickets) {
-      if (currentAssignment(ticket) === null) continue;
+      const assignment = currentAssignment(ticket);
+      if (assignment === null) continue;
+      // The same two halves of identity the machine compares (see `owns`). An
+      // id is the only identity once `init` has landed; before that the key is
+      // all there is, and an exit from a child that never named itself cannot
+      // be matched to an Assignment that already knows its id.
+      const owned =
+        assignment.executor.sessionId !== ''
+          ? assignment.executor.sessionId === id
+          : id === '' && assignment.executor.sessionKey === key;
+      if (!owned) continue;
       ctx.get().dispatchTicket(ticket.id, {
         type: 'assignmentExited',
         sessionKey: key,
-        sessionId: sessionId ?? '',
+        sessionId: id,
         requested: exit.requested,
         ...(exit.requested
           ? {}
@@ -142,16 +160,23 @@ export function landTicketExit(
  * in exactly this session, that is the answer (`personReplied`); in any other
  * state the machine ignores it, so the pre-filter is only to avoid walking the
  * list with a dispatch per Ticket on every message.
+ *
+ * Goes through `whenLoaded` like the other three: the person can type in the
+ * first second of a launch, before the Ticket file has been read, and a fact
+ * dropped there is a Ticket left saying "needs you" over a question that has
+ * already been answered.
  */
 export function landPersonReplied(ctx: StoreContext, key: string): void {
-  const s = ctx.get();
-  const sessionId = s.sessions[key]?.sessionId ?? '';
-  if (sessionId === '' || !s.ticketsLoaded) return;
-  for (const ticket of s.tickets) {
-    if (ticket.status !== 'needs_you') continue;
-    if (currentAssignment(ticket)?.executor.sessionId !== sessionId) continue;
-    ctx.get().dispatchTicket(ticket.id, { type: 'personReplied', sessionId });
-  }
+  whenLoaded(ctx, () => {
+    const s = ctx.get();
+    const sessionId = s.sessions[key]?.sessionId ?? '';
+    if (sessionId === '') return;
+    for (const ticket of s.tickets) {
+      if (ticket.status !== 'needs_you') continue;
+      if (currentAssignment(ticket)?.executor.sessionId !== sessionId) continue;
+      s.dispatchTicket(ticket.id, { type: 'personReplied', sessionId });
+    }
+  });
 }
 
 /**

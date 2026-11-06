@@ -25,18 +25,27 @@ func (r *Runtime) ticket() (state.Ticket, bool) {
 //
 // The metadata is written, checkpointed, and only then is the tool set changed, so
 // the file never claims a binding the registry has not caught up with.
+//
+// **A re-bind that changes nothing is checkpointed by nobody.** The front end
+// sends this on every session open, and the common case is the same ticket with
+// the same title and brief — writing the session file for that would be a save per
+// open carrying no new fact. `BindTicket` reports whether the record actually
+// moved so the decision is made where the comparison is, rather than guessed at
+// here. The tool registry is reconciled either way: a resumed session can come back
+// with a binding the registry has not caught up with, and `applyTicketTool` is
+// cheap and idempotent.
 func (r *Runtime) BindTicket(spec map[string]any) error {
 	if r.SessionValue == nil {
 		return fmt.Errorf("no session is mounted")
 	}
 	var err error
-	changed := true
+	changed := false
 	r.meta().Write(func(metadata map[string]any) {
 		if spec == nil {
 			changed = state.ClearTicket(metadata)
 			return
 		}
-		_, err = state.BindTicket(metadata, state.TicketSpec{
+		_, changed, err = state.BindTicket(metadata, state.TicketSpec{
 			ID:    stringOf(spec["id"]),
 			Title: stringOf(spec["title"]),
 			Brief: stringOf(spec["brief"]),

@@ -435,6 +435,52 @@ test('the person sending a message in the blocked session puts the Ticket back t
   unregisterRuntime(KEY);
 });
 
+test('an exit only ever reaches the Ticket whose session identity matches', () => {
+  reset();
+  capture(KEY);
+  named(KEY, 'S1');
+  // Two live Tickets, both `running`, each with its own session. An exit from
+  // S1 must not touch the other, and the caller is the one that knows which
+  // session ended — the machine's `owns` still runs, but walking every open
+  // Ticket to have all but one refuse is work that can be skipped.
+  const mine = ticketAt('running', { sessionId: 'S1' });
+  const other = ticketAt('running', { sessionId: 'S2', sessionKey: 'k-other' }, 'tk-other');
+  install(mine, other);
+
+  useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'runtime_exited', code: 1, requested: false } as never);
+  assert.equal(useApp.getState().tickets[0].status, 'needs_you', 'S1\u2019s Ticket moved');
+  assert.equal(useApp.getState().tickets[1].status, 'running', 'S2\u2019s Ticket did not');
+  assert.equal(
+    useApp.getState().tickets[1].events.filter((e) => e.type === 'assignmentExited').length,
+    0,
+    'and no event was recorded for it either',
+  );
+  unregisterRuntime(KEY);
+});
+
+test('the person\u2019s reply is not lost when it beats the Ticket file', async () => {
+  reset();
+  capture(KEY);
+  useApp.getState().applyRuntimeMessage(KEY, initMsg('S1', 18) as never);
+  useApp.setState((s) => ({ sessions: { ...s.sessions, [KEY]: { ...s.sessions[KEY], ready: true } } }));
+
+  // The file has not been read yet: this is the first second of a launch, and
+  // the person is already typing into a session that is waiting on them. The
+  // fact has to wait for the read rather than be dropped for it — the same rule
+  // the other three landings follow.
+  const blocked = ticketAt('needs_you');
+  ticketFile = JSON.stringify({ schema: 1, tickets: [blocked] });
+  useApp.setState({ tickets: [], ticketsLoaded: false });
+
+  useApp.getState().setDraft('use postgres');
+  useApp.getState().submitDraft();
+
+  await until('the file read to land', () => useApp.getState().ticketsLoaded);
+  await until('the reply to move the Ticket', () => first().status === 'running');
+  assert.equal(first().events.at(-1)?.type, 'personReplied');
+  unregisterRuntime(KEY);
+});
+
 test('a message in some other session, or in a Ticket that is not waiting, moves nothing', () => {
   reset();
   capture(KEY);
