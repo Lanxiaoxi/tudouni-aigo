@@ -184,7 +184,13 @@
   flex-direction: column;
   gap: var(--space-2);
   flex: 1 1 0;
-  min-width: 248px;
+  /* Four lanes share the row. `248px` is the comfortable width, but a window
+     that only just fits four of them — a maximised app at 150% display scaling,
+     say — must not push the last lane under the right edge. Down to `220px`
+     the row shrinks to fit instead; below that it scrolls, because a narrower
+     card stops being readable. `100%` here is the lanes' own content box, so
+     the three gaps between the four lanes are the only thing subtracted. */
+  min-width: max(220px, min(248px, calc((100% - var(--space-3) * 3) / 4)));
   padding: var(--space-2);
   border-radius: var(--radius-lg);
   background: var(--lb-hover);
