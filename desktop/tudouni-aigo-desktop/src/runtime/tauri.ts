@@ -973,8 +973,8 @@ export async function writeDesktopData(text: string): Promise<string> {
   return text;
 }
 
-/** The Tickets, as the text of `~/.tudouni/tickets.json`. `null` when the
- *  file does not exist yet. Unlike `readDesktopData`, a read that *fails*
+/** The Tickets, as the text of `~/.tudouni/tickets/tickets.json`. `null` when
+ *  the file does not exist yet. Unlike `readDesktopData`, a read that *fails*
  *  rejects: an unreadable Ticket file is not "no Tickets", and the store must
  *  not treat it as an empty shelf it may then write over. */
 export async function readTicketsFile(): Promise<string | null> {
@@ -982,10 +982,41 @@ export async function readTicketsFile(): Promise<string | null> {
   return await tauriInvoke<string | null>('tickets_read');
 }
 
-/** Replace `~/.tudouni/tickets.json`, atomically on the Rust side. Rejects
- *  when the write refused (including a file from a newer schema). */
+/** Replace `~/.tudouni/tickets/tickets.json`, atomically on the Rust side.
+ *  Rejects when the write refused (including a file from a newer schema). */
 export async function writeTicketsFile(text: string): Promise<void> {
   await tauriInvoke<null>('tickets_write', { text });
+}
+
+/** One file waiting in the ticket inbox, as the Rust door read it. */
+export interface InboxFileText {
+  /** The stem, without `.md`. */
+  name: string;
+  text: string;
+}
+
+/** List `~/.tudouni/tickets/inbox/*.md`. Empty outside Tauri and on a first
+ *  launch, which are the same thing to a caller. */
+export async function listInboxFiles(): Promise<InboxFileText[]> {
+  if (!isHosted()) return [];
+  return await tauriInvoke<InboxFileText[]>('inbox_list');
+}
+
+/** Move one drained inbox file into `processed/`. */
+export async function archiveInboxFile(name: string): Promise<void> {
+  if (!isHosted()) return;
+  await tauriInvoke<null>('inbox_archive', { name });
+}
+
+/** Where the inbox is, for a sentence that tells a person where to drop work.
+ *  `null` outside Tauri. */
+export async function readInboxDir(): Promise<string | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<string>('inbox_dir');
+  } catch {
+    return null;
+  }
 }
 
 /* ============================================================

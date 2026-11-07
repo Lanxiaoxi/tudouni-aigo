@@ -1,9 +1,9 @@
-/**
- * The only module that reads or writes `~/.tudouni/tickets.json`.
+﻿/**
+ * the only module that reads or writes `~/.tudouni/tickets/tickets.json`.
  *
  * `slices/tickets.ts` is just this file wired into zustand; a Ticket store that
  * moves somewhere else (a runtime-side database, a server) replaces this module
- * and nothing above it (`docs/design/ticket.md` §6.2, §9).
+ * and nothing above it (`docs/design/ticket.md` 搂6.2, 搂9).
  *
  * The rules it owns:
  *
@@ -176,9 +176,9 @@ export function ticketWritesSettled(): Promise<void> {
  *
  * Used when a bound session is opened: its metadata lists every report it ever
  * made, and one may have been lost in the narrow window between the runtime
- * writing it and this process saving it (design §6.3). **Idempotent** — a
+ * writing it and this process saving it (design 搂6.3). **Idempotent** 鈥?a
  * report already folded in (live, or by an earlier reconcile) is skipped by id
- * inside the machine — so running it on every open is free. Returns the same
+ * inside the machine 鈥?so running it on every open is free. Returns the same
  * object when nothing was new, so a caller can skip the write.
  */
 export function reconcile(ticket: Ticket, reports: Report[]): Ticket {

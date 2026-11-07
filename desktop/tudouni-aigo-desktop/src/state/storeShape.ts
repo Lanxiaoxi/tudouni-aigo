@@ -17,8 +17,17 @@ import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type La
 import type { RemoteConfigTarget } from '@/runtime/tauri';
 
 import type { TicketInputDraft, TicketPatch, TicketRefusal } from '@/ticket/machine';
-import type { Report, Ticket } from '@/ticket/model';
-import type { TaskWorkspaceRef } from '@/task/tasks';
+import type { Report, Ticket } from '@/ticket/model';import type { TaskWorkspaceRef } from '@/task/tasks';
+
+/** What one inbox drain did, for the sentence the board shows afterwards. */
+export interface InboxScanResult {
+  /** How many files became a new Ticket. */
+  created: number;
+  /** How many were archived because their `source`/`thread` already had one. */
+  known: number;
+  /** Files left in `inbox/` because they carried no work. */
+  empty: string[];
+}
 
 /** Why a Ticket action did nothing, beyond the machine's own refusals. */
 export type TicketActionRefusal =
@@ -879,6 +888,16 @@ export interface AppStore {
   /** Fold the reports a reopened session brought back (`init`), skipping the
    *  ones already seen. Idempotent. */
   reconcileTicket(ticketId: string, reports: Report[]): TicketDispatchResult;
+  /**
+   * Drain `~/.tudouni/tickets/inbox/`: every dropped file becomes an **open**
+   * Ticket and moves to `processed/`.
+   *
+   * A drop whose `source`/`thread` already has a Ticket is archived without a
+   * second one, which is what makes scanning on every board open safe. Resolves
+   * to what happened, or `null` when the scan could not run at all (the file is
+   * read-only, or there is no ticket file yet).
+   */
+  scanTicketInbox(): Promise<InboxScanResult | null>;
 
   /* ---------------- tickets: session actions (`slices/ticketRuns.ts`) ---------------- */
   /**

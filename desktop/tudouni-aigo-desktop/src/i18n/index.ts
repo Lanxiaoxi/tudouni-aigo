@@ -910,6 +910,16 @@ export const en = {
   'ticket.clearFinishedConfirm': 'Clear {n}? Click again',
   'ticket.clearFinishedHint': 'Remove every Done and Dropped Ticket. Sessions are not touched.',
   'ticket.new.open': 'New Ticket',
+  /* The inbox: work that arrived as a file rather than from the dialog. It is
+     read-only to a program — a drop becomes an OPEN Ticket and nothing more —
+     so the words say "check" and "propose", never "run". */
+  'ticket.inbox.scan': 'Check inbox',
+  'ticket.inbox.scanHint': 'Read any files waiting in the ticket inbox folder',
+  'ticket.inbox.created': '{n} from the inbox',
+  'ticket.inbox.nothing': 'Nothing new in the inbox',
+  'ticket.inbox.emptyFiles': 'Left in place: {names} (no brief in the file)',
+  'ticket.inbox.origin': 'From {source}',
+  'ticket.inbox.originHint': 'Dropped in the inbox as {file}. It arrived as Open: pressing Start is still your call.',
   'ticket.new.title': 'New Ticket',
   'ticket.new.note': 'One piece of work, written down once. It outlives every session it takes.',
   'ticket.new.placeholder': 'What needs doing? Brief it the way you would a colleague.',

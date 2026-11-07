@@ -1,6 +1,6 @@
 # Ticket：任务级的工作单元
 
-状态：**已实现**。runtime 侧在 `internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`（`PROTOCOL = 18`，见 `docs/spec/protocol.md` 3.16）；桌面端在 `desktop/tudouni-aigo-desktop/src/ticket/`（model / machine / store / view）、`src/state/slices/tickets.ts`、`src/state/slices/ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`。与本文的出入：`start` 命令自带执行者并直接建 Assignment（`assignmentStarted` 只回填 sessionId / 恢复后的新 sessionKey）；新增事实 `assignmentRestoreFailed`；新增退出原因 `unreachable`（见 6.4）；`Assignment.executor` 多一个可选 `workspace`；`sendBack` 先确保会话可用再迁移；"直接开跑"是独立按钮；`ticket_bind` 的字段上限在桌面端被镜像了一份并在建/改时就拦截（见 5.5）。
+状态：**已实现**。runtime 侧在 `internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`（`PROTOCOL = 18`，见 `docs/spec/protocol.md` 3.16）；桌面端在 `desktop/tudouni-aigo-desktop/src/ticket/`（model / machine / store / view / inbox）、`src/state/slices/tickets.ts`、`src/state/slices/ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`。与本文的出入：`start` 命令自带执行者并直接建 Assignment（`assignmentStarted` 只回填 sessionId / 恢复后的新 sessionKey）；新增事实 `assignmentRestoreFailed`；新增退出原因 `unreachable`（见 6.4）；`Assignment.executor` 多一个可选 `workspace`；`sendBack` 先确保会话可用再迁移；"直接开跑"是独立按钮；`ticket_bind` 的字段上限在桌面端被镜像了一份并在建/改时就拦截（见 5.5）；**工单数据在 `~/.tudouni/tickets/` 目录下，并已实现 inbox 多信源投递（见 6.7）**。
 
 这份文档回答三件事：Ticket 是什么、它的状态由谁来写、为了将来扩展到团队能力，现在要在哪些地方留口子。
 
@@ -230,8 +230,17 @@ interface TicketEvent {
 
 | 数据 | 位置 | 地位 |
 | --- | --- | --- |
-| Ticket 本身（状态、Assignment、事件） | 本机 `~/.tudouni/tickets.json` | **权威**。唯一写者是 `machine.ts` |
+| Ticket 本身（状态、Assignment、事件） | 本机 `~/.tudouni/tickets/tickets.json` | **权威**。唯一写者是 `machine.ts` |
 | 会话的绑定和它报过的 report | 执行它的那台机器上，会话 metadata 的 `ticket` 记录（`<workspace>/.tudouni/sessions/<id>.jsonl`） | **事实的副本**，只用于对账，从不反向覆盖 Ticket 状态 |
+
+**一个目录装这一件事。** `~/.tudouni/tickets/` 底下三样东西：
+
+```
+~/.tudouni/tickets/
+  tickets.json   记录本身，唯一写者是 machine.ts
+  inbox/         外部程序投递口（见 6.7）
+  processed/     已转成 Ticket 的投递文件，保留但不再扫描
+```
 
 **单独一个文件，不放进 `desktop.json`。** `desktop.json` 现在放的是模板、SSH 主机、远程工作区这些很少变动的配置。Ticket 每发生一个事件就要写一次，两者的写入频率差了几个数量级。分开存放有三个好处：
 
@@ -244,7 +253,7 @@ interface TicketEvent {
 其余规则：
 
 - 加载时用 `isValidTicket` 守卫，不合法的记录整条丢弃，和 `isValidTask` 的规矩一样。
-- 写 `tickets.json` 的进程只有一个：桌面端用了 `tauri-plugin-single-instance`，不会有两个实例同时写。如果以后放开单实例，这里要加修订号检查，否则后写的会覆盖先写的。
+- 写 `tickets.json` 的进程只有一个：桌面端用了 `tauri-plugin-single-instance`，不会有两个实例同时写。如果以后放开单实例，这里要加修订号检查，否则后写的会覆盖先写的。**inbox 不改变这一点**（见 6.7）：外部程序只写 `inbox/`，桌面端读它、写 `tickets.json`，写者仍然只有一个。
 - **事件和状态在同一条记录里，一次原子写入。** 所以不会出现"事件写进去了，状态还是旧的"这种半截状态。
 - `events` 每个 Ticket 最多保留 200 条，超出时丢最旧的，但 `created` 那一条永远保留。`assignments` 不设上限，因为一个 Ticket 换执行者的次数本来就很少。
 - `done` / `dropped` 状态的 Ticket 不自动清理。board 上默认折叠，并提供"清除已完成"。
@@ -282,6 +291,50 @@ runtime 对 bind 的三个字段有硬上限（`internal/state/ticket.go`：id 2
 桌面端因此把上限镜像了一份（`ticket/model.ts` 的 `TICKET_TITLE_CEILING` / `TICKET_BRIEF_CEILING`），在三个位置挡：表单输入时给出提示并禁用提交、`createTicket` 拒绝建、`updateTicketDraft` 拒绝改。`view.canBindBrief` 再兜一层，让这样的记录（比如手改过文件）显示"过长"徽标并禁用开始。
 
 三个数字必须和 runtime 一致，而这件事构建期检查不了——`tests/ticket-board.test.ts` 直接读 `internal/state/ticket.go` 比对，这是唯一能防止两边漂掉的办法。
+
+### 6.7 inbox：工作从外部来
+
+工单原本只能从 New Ticket 对话框产生。`inbox/` 补上了另一半：**一张工单可以由一个不是人的东西提议。**
+
+```
+~/.tudouni/tickets/inbox/*.md  →  扫描  →  OPEN 列的工单  →  人按 Start  →  running
+                                             ↑ 候选区就在这里
+```
+
+**为什么不是磁盘上的 `candidates/`。** `internal/memory/` 的候选区（`entries/` 与 `candidates/` 分离，人审核后发布）是同构的设计，但那边需要磁盘上的暂存目录，是因为记忆没有界面来承载"待审核"。Ticket 有一个看板，**OPEN 列本身就是候选区**，而且比文件夹好在人一眼能扫。所以这里只有 `inbox/`（投递）和 `processed/`（已处理），没有第二个暂存层。
+
+**三条规则。**
+
+1. **投递永远不会开始工作。** 进来的单子是 `open`，人还得按 Start。一个能写文件的程序不能命令工作开始，和它不能让 Ticket 变成 `done` 是同一条规矩。这是 inbox 和自动应答机的全部区别。
+2. **同一个投递只产一张单。** 看板每次打开都扫（不是定时轮询），所以重复投递是常态而不是意外。`origin` 里的 `(source, thread)` 就是幂等键，对着**已有的工单记录**查一遍。注意去重是"对记录"而不是"对同批"：同一个 `thread` 的两个文件在一次扫描里都会变成工单，所以投递方不该同时写两次同一个 thread。
+3. **坏文件跳过，不致命。** 一个读不了或空白的投递不能藏住它旁边的九个好的，也不能让看板打不开。
+
+**文件形状。**
+
+```markdown
+---
+source: github
+thread: issue#123
+title: Safari 白屏
+---
+登录页在 Safari 下白屏，Chrome 正常。请定位并修复。
+```
+
+front matter 可省：没有时 source 记作 `inbox`、thread 取文件名，所以随手丢一个纯文本笔记也能变成工单。`title` 可省：没有时取正文第一行（沿用 `ticketTitle` 的规则）。认不出的字段**忽略而不是拒绝**——投递方加一个字段不该让单子进不来。
+
+**防护。**
+
+| 风险 | 处理 |
+| --- | --- |
+| 半截文件（正在被写） | 跳过 `.` 开头的文件名（和 memory 的 `tempPrefix` 同一条规矩），并在协议里要求投递方原子写 |
+| 空白文件 | 留在 `inbox/` 原地并报告，因为它可能还在被编辑 |
+| brief 超过 `ticket_bind` 上限 | 不建单、不归档，文件留在原地让人修。理由和 6.6 相同：绝不让一张单子看起来 Running 却没有回报工具 |
+| 归档失败 | 工单已建；文件留下，下次扫描按 `known` 匹配并重试。不整洁，但不出错 |
+| 路径穿越 | Rust 侧拒绝任何含分隔符或 `..` 的名字 |
+
+**为什么是"打开看板时扫"而不是定时。** 定时轮询会让应用感觉像有东西一直在后台跑，而 Tickets 的前提是"人看它的时候它才动"。打开看板正是有人问"有什么要做的"的时刻。
+
+**做了什么改动。** 桌面端 `src/ticket/inbox.ts`（纯函数）+ `slices/tickets.ts` 的 `scanTicketInbox`；Rust `tickets_data.rs` 加 `inbox_list` / `inbox_archive` / `inbox_dir`，路径从 `~/.tudouni/tickets.json` 改为 `~/.tudouni/tickets/tickets.json`；卡片上多一个来源标注，看板头部多一个「Check inbox」。**runtime 一行都没改**——这正是"runtime 永远不懂 Ticket"这个决定现在付利息的地方。
 
 ### 6.5 远程工作区
 
@@ -392,13 +445,13 @@ board: null | 'sessions' | 'tickets';
 
 | 维度 | 现在 | 将来（团队） | 现在为此付出的代价 |
 | --- | --- | --- | --- |
-| 工作从哪来 | `origin: {kind:'manual'}` | `{kind:'source', source, thread, triggerId}`：GitHub issue、飞书话题、template 定时巡检产生的发现 | 一个字段 |
+| 工作从哪来 | `origin: {kind:'manual'}` **或** `{kind:'source', source, thread, file}`（inbox，见 6.7） | source 换成真实的 GitHub / 飞书实现 | 一个字段 |
 | 谁提的 | `requester: {kind:'person', id:'local'}` | 真实的用户 id；`{kind:'bot', …}` | 一个字段 |
 | 凭什么做 | `mandate: {basis:'manual'}` | `addressed` / `followup` / `rule`，以及恢复执行时的重新校验（revalidation） | 一个字段 |
 | 结果交到哪 | `delivery: {kind:'local'}` | `{kind:'channel', address}`，经 Outbox 回复到原对话 | 一个字段 |
 | 谁在执行 | `executor: {kind:'session', …}` | 远端 worker、无人值守的 autopilot 会话 | 一层包装 |
 | 谁做了什么 | `events[].actor` | 审计、多人协作的时间线 | 每个事件多一个字段 |
-| 存在哪里 | `src/ticket/` 模块后面的 `~/.tudouni/tickets.json` | runtime 侧的 SQLite，或服务端 | 所有读写都经过一个模块 |
+| 存在哪里 | `src/ticket/` 模块后面的 `~/.tudouni/tickets/tickets.json` | runtime 侧的 SQLite，或服务端 | 所有读写都经过一个模块 |
 | 状态由谁推进 | `machine.ts` 纯函数 | 搬到服务端照样能用：纯函数，不依赖 UI | 不在别处写 `status` |
 | 回报通道 | `ticket_bind` / `ticket_report`，runtime 不知道存储在哪 | 不变：服务端代替桌面端发 bind、收 report | 无 |
 | ID | `tk-<time36>-<rand>`，不嵌入本机信息 | 全局唯一即可，不必迁移 | 无 |

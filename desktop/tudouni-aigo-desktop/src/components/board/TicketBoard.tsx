@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  Inbox,
   Pencil,
   Play,
   Plus,
@@ -93,6 +94,7 @@ export function TicketBoard() {
   const createTicket = useApp((s) => s.createTicket);
   const updateTicketDraft = useApp((s) => s.updateTicketDraft);
   const clearFinishedTickets = useApp((s) => s.clearFinishedTickets);
+  const scanTicketInbox = useApp((s) => s.scanTicketInbox);
   const ticketSeed = useApp((s) => s.ticketSeed);
   const clearTicketSeed = useApp((s) => s.clearTicketSeed);
   const workspaces = useApp((s) => s.workspaces);
@@ -107,6 +109,57 @@ export function TicketBoard() {
   }, [loadTickets]);
 
   const locked = !loaded || readOnly;
+
+  /**
+   * One inbox drain per time the board is opened.
+   *
+   * **On open, not on a timer.** A poll would make the app feel like something
+   * is always running in the background, and this board's whole premise is that
+   * it acts when a person looks at it. Opening the board is the moment somebody
+   * is asking "what is there to do", which is exactly when the question should
+   * be answered.
+   *
+   * Gated on `loaded`: the drain decides "already handled" against the Tickets
+   * in memory, so running it before the file was read would treat every old
+   * drop as new. Gated on `locked` too — a read-only file must not offer a
+   * scan whose every drop would be refused.
+   */
+  const scanned = useRef(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanNote, setScanNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loaded || locked || scanned.current) return;
+    scanned.current = true;
+    void (async () => {
+      setScanning(true);
+      try {
+        const result = await scanTicketInbox();
+        if (result !== null && result.created > 0) {
+          setScanNote(t('ticket.inbox.created', { n: result.created }));
+        }
+      } finally {
+        setScanning(false);
+      }
+    })();
+  }, [loaded, locked, scanTicketInbox, t]);
+
+  async function scanNow(): Promise<void> {
+    setScanning(true);
+    setScanNote(null);
+    try {
+      const result = await scanTicketInbox();
+      if (result === null) return;
+      if (result.created > 0) {
+        setScanNote(t('ticket.inbox.created', { n: result.created }));
+      } else if (result.empty.length > 0) {
+        setScanNote(t('ticket.inbox.emptyFiles', { names: result.empty.join(', ') }));
+      } else {
+        setScanNote(t('ticket.inbox.nothing'));
+      }
+    } finally {
+      setScanning(false);
+    }
+  }
 
   const localPaths = useMemo(() => {
     const set = new Set(workspaces);
@@ -221,6 +274,17 @@ export function TicketBoard() {
             Disabled with the board (`locked`), because creating one writes
             `tickets.json` — a read-only file must not offer a button whose
             press can only fail. */}
+        <Tip label={t('ticket.inbox.scanHint')}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-compact tkb-inbox"
+            disabled={locked || scanning}
+            onClick={() => void scanNow()}
+          >
+            <Inbox size={13} />
+            {t('ticket.inbox.scan')}
+          </button>
+        </Tip>
         <button
           type="button"
           className="btn btn-primary btn-compact tkb-new"
@@ -240,6 +304,14 @@ export function TicketBoard() {
       {readOnly ? (
         <p className="tkb-problem" role="alert">
           {t('ticket.readOnly', { reason: readOnlyReason ?? '' })}
+        </p>
+      ) : null}
+
+      {/* What the last drain did. It says what arrived, never that work began:
+          a drop becomes an Open Ticket and the person still presses Start. */}
+      {scanNote !== null ? (
+        <p className="tkb-inbox-note" role="status">
+          {scanNote}
         </p>
       ) : null}
 
@@ -725,8 +797,21 @@ function TicketCard({
         </span>
         {runs > 0 ? (
           <>
-            <span aria-hidden>路</span>
+            <span aria-hidden>·</span>
             <span>{t('ticket.runCount', { n: runs })}</span>
+          </>
+        ) : null}
+        {/* Where it came from, when it was not this dialog. Not a badge: it is
+            not a problem, and a card whose every line is a badge reads as one. */}
+        {ticket.origin.kind === 'source' ? (
+          <>
+            <span aria-hidden>·</span>
+            <span
+              className="tkb-card-origin"
+              title={t('ticket.inbox.originHint', { file: ticket.origin.file })}
+            >
+              {t('ticket.inbox.origin', { source: ticket.origin.source })}
+            </span>
           </>
         ) : null}
       </div>

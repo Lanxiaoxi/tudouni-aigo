@@ -162,12 +162,30 @@ export interface Ticket {
   createdAtMs: number;
   updatedAtMs: number;
 
-  // The extension points of design §9: each has exactly one value today.
-  origin: { kind: 'manual' };
+  // The extension points of design §9: each has one value in use today.
+  //
+  // `origin` gained its second member with the inbox (`docs/design/ticket.md`
+  // §9): a Ticket nobody typed into a form arrived as a file. Everything else
+  // still has exactly one value, and `isValidTicket` accepts only the members
+  // this build knows.
+  origin: TicketOrigin;
   requester: Actor;
   mandate: { basis: 'manual' };
   delivery: { kind: 'local' };
 }
+
+/** Where a Ticket came from. */
+export type TicketOrigin =
+  /** A person wrote it in the New Ticket dialog. */
+  | { kind: 'manual' }
+  /**
+   * A file an outside program dropped in `~/.tudouni/tickets/inbox/`.
+   *
+   * `source` and `thread` are the **idempotence key**: re-dropping the same
+   * issue must yield one Ticket, not one per scan. `file` is kept so a person
+   * can find the original under `processed/` afterwards.
+   */
+  | { kind: 'source'; source: string; thread: string; file: string };
 
 /* ============================================================
    Id, title, blank
@@ -291,6 +309,19 @@ export function isValidActor(value: unknown): value is Actor {
   return value.kind === 'system';
 }
 
+/** Whether `value` is an origin this build knows. An unknown kind is a record
+ *  written by a newer build, which the guard drops whole. */
+export function isValidOrigin(value: unknown): value is TicketOrigin {
+  if (!isRecord(value)) return false;
+  if (value.kind === 'manual') return true;
+  if (value.kind !== 'source') return false;
+  return (
+    isNonEmptyString(value.source) &&
+    isNonEmptyString(value.thread) &&
+    typeof value.file === 'string'
+  );
+}
+
 export function isValidReport(value: unknown): value is Report {
   if (!isRecord(value)) return false;
   return (
@@ -349,7 +380,7 @@ export function isValidTicket(value: unknown): value is Ticket {
   if (!Array.isArray(value.events) || !value.events.every(isValidEvent)) return false;
   if (value.lastReport !== null && !isValidReport(value.lastReport)) return false;
   if (typeof value.createdAtMs !== 'number' || typeof value.updatedAtMs !== 'number') return false;
-  if (!isRecord(value.origin) || value.origin.kind !== 'manual') return false;
+  if (!isRecord(value.origin) || !isValidOrigin(value.origin)) return false;
   if (!isValidActor(value.requester)) return false;
   if (!isRecord(value.mandate) || value.mandate.basis !== 'manual') return false;
   return isRecord(value.delivery) && value.delivery.kind === 'local';

@@ -205,6 +205,12 @@ pub fn run() {
             crate::desktop_data::desktop_data_write,
             crate::tickets_data::tickets_read,
             crate::tickets_data::tickets_write,
+            // The ticket inbox: the one-way door an outside program drops work
+            // through. Listed and drained here so `tickets.json` keeps exactly
+            // one writer — nothing outside this app ever touches the record.
+            crate::tickets_data::inbox_list,
+            crate::tickets_data::inbox_archive,
+            crate::tickets_data::inbox_dir,
             // The composer's prompt history: one append-only sidecar per
             // workspace, plus the one-time seed from the sessions that predate
             // it. The read and append are the keystroke path's neighbours, not

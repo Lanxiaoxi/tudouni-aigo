@@ -173,6 +173,37 @@
   white-space: nowrap;
 }
 
+/* Where a Ticket came from, when it arrived as a file rather than from the
+   dialog. Dim and clipped like the workspace name beside it: it is provenance,
+   not a state, and a card that shouts about its origin buries the work. */
+.tkb-card-origin {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-faint);
+}
+
+/* The head's "Check inbox" button: quiet, because it is an errand rather than
+   the board's verb. Beside New Ticket it reads as "look for dropped work",
+   which is what it is. */
+.tkb-inbox {
+  flex: none;
+}
+
+/* What the last drain found. A line under the head rather than a toast: it
+   answers "did anything arrive", which is a question the board keeps answering
+   for as long as it is open. */
+.tkb-inbox-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+  background: var(--bg-subtle);
+  border-bottom: 1px solid var(--lb-line);
+  flex: 0 0 auto;
+}
+
 .tkb-card-badges {
   display: flex;
   flex-wrap: wrap;
