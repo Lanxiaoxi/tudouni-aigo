@@ -906,6 +906,30 @@ export const en = {
   'ticket.col.show': 'Show finished Tickets',
   'ticket.col.hide': 'Hide finished Tickets',
   'ticket.dropped': 'Dropped',
+  /* The board's toolbar: one search box and one status filter. The filter is a
+     way of *looking at the same tickets*, not a way of removing the other
+     columns — a single selected status draws one full-width lane with a way
+     back to the whole board. */
+  'ticket.toolbar.search': 'Search tickets, briefs, workspaces',
+  'ticket.search.clear': 'Clear search',
+  'ticket.filter.all': 'All',
+  'ticket.filter.label': 'Filter by status',
+  'ticket.result.ofAll': '/ {total} tickets',
+  'ticket.result.in': 'in {lane}',
+  'ticket.lane.all': 'All tickets',
+  /* Empty lanes say what the lane is *for*, so an empty board still explains
+     its own flow. Done is reached through the filter, not a permanent column. */
+  'ticket.lane.empty.open.title': 'No tickets waiting to start',
+  'ticket.lane.empty.open.hint': 'Written-down work lands here first.',
+  'ticket.lane.empty.running.title': 'Nothing is running',
+  'ticket.lane.empty.running.hint': 'Start a card and its ticket moves here.',
+  'ticket.lane.empty.needs_you.title': 'Nothing is waiting on you',
+  'ticket.lane.empty.needs_you.hint': 'A blocked session brings its ticket here, with the question.',
+  'ticket.lane.empty.review.title': 'Nothing to review',
+  'ticket.lane.empty.review.hint': 'When a session hands work back, it waits here for you.',
+  'ticket.lane.empty.done.title': 'Nothing finished yet',
+  'ticket.lane.empty.done.hint': 'Accepted tickets stay here.',
+  'ticket.requester': 'Requester: you',
   'ticket.clearFinished': 'Clear finished',
   'ticket.clearFinishedConfirm': 'Clear {n}? Click again',
   'ticket.clearFinishedHint': 'Remove every Done and Dropped Ticket. Sessions are not touched.',
@@ -925,6 +949,14 @@ export const en = {
   'ticket.new.placeholder': 'What needs doing? Brief it the way you would a colleague.',
   'ticket.new.hint': 'Ctrl+Enter to add',
   'ticket.new.create': 'Add Ticket',
+  /* The dialog's two groups. The brief is the Ticket; the other group is the
+     answer a wrong default cannot recover from, so it is always visible. */
+  'ticket.form.work': 'The work',
+  'ticket.form.workHint': 'The brief is the Ticket — the title is only a label for it.',
+  'ticket.form.briefHint': 'The first line becomes the title if you do not write one.',
+  'ticket.form.where': 'Where it runs',
+  'ticket.form.whereHint': 'Decides where the work runs and which model handles it.',
+  'ticket.required': '(required)',
   'ticket.edit.title': 'Edit Ticket',
   'ticket.edit.save': 'Save',
   'ticket.edit.hint': 'A change to the brief does not reach a session that is already working.',

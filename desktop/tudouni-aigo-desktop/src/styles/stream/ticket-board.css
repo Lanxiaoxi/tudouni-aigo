@@ -1,9 +1,13 @@
 /* ============================================================
    The Ticket board (`TicketBoard`).
-   It reuses the session board's frame (`.board`, `.board-head`,
-   `.board-cols`, `.board-col`, the column dots) and only adds what
-   is its own: the New Ticket button in the head, the dialog behind
-   it, and the card.
+
+   The board's frame (`.board`, `.board-head`, the title block) is shared
+   with the session board. Everything below is ticket-specific: the
+   toolbar, the four lanes, the card, and the two dialogs.
+
+   The layer model is the board's own: the board is `--lb-surface`,
+   each lane its `--lb-hover` wash, and the cards sit back on the
+   surface as near-white panels. No third grey.
    ============================================================ */
 
 .tkb-problem {
@@ -16,114 +20,377 @@
   flex: 0 0 auto;
 }
 
-/* The board's one writing verb, at the head's trailing edge beside Close.
- *
- * It is `.btn-primary` because creating a Ticket is the only thing this board
- * *adds* to the world — everything else on it reads, starts or finishes work
- * that already exists — and because the board used to open with a form that
- * said the same thing in a much larger way. `margin-left: auto` is not needed:
- * `.board-head` is `justify-content: space-between` and the title block is the
- * only other child, so this button and Close form the trailing pair.
- *
- * It leaves the head's own gap to Close rather than a fixed margin, so the two
- * stay one cluster at any width. */
-.tkb-new {
+/* The head's trailing group: inbox, New Ticket and Close stay one cluster
+   instead of being spread by `.board-head`'s `space-between`. */
+.tkb-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   flex: none;
 }
 
-/* ---------------- the new / edit dialog ---------------- */
-
-/* The dialog's form is a flex column so `.dialog-body` can be the part that
-   scrolls: the head and the foot are the parts that must not move, and a form
-   sized to its content would push the foot off the bottom of a long brief. */
-.tkb-dialog {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1 1 auto;
+/* The board's one writing verb. Primary because creating a Ticket is the only
+   thing this board adds to the world; everything else starts, reads or finishes
+   work that already exists. */
+.tkb-new,
+.tkb-inbox {
+  flex: none;
 }
 
-.tkb-brief {
-  resize: vertical;
-  /* Tall enough to hold a paragraph and to make the point that this is the
-     field that matters: the brief is the Ticket. The old inline box gave it
-     three rows, which read as an afterthought next to its own Details
-     disclosure. */
-  min-height: 120px;
-}
+/* ---------------- toolbar: search + status filter ---------------- */
 
-/* The three answers that decide *where the work runs*, all visible at once.
-   They were behind a disclosure that started shut, so the default was the only
-   one most Tickets ever got. Two columns at this width keep the brief the
-   tallest thing in the dialog. */
-.tkb-details {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--space-3);
-  margin-top: var(--space-3);
-}
-
-.tkb-form-note {
-  font-size: var(--text-caption);
-  color: var(--fg-muted);
-}
-
-/* The one field limit a person can hit, said where the box is rather than after
-   a Start that could not have worked (see `TicketDialog`'s `tooLong`). */
-.tkb-form-rule {
-  margin: 0;
-  font-size: var(--text-caption);
-  color: var(--destructive-text);
-}
-
-/* The Done column folds to its head until asked: finished work is not what the
-   board is for, and a column of forty cards would push the live ones aside. */
-.board-col.tkb-col-folded {
-  flex: 0 0 auto;
-  min-width: 230px;
-}
-
-.tkb-clear {
-  margin-left: auto;
-  margin-right: var(--space-1);
-}
-
-.tkb-fold {
+.tkb-toolbar {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1);
-  font-size: var(--text-caption);
-  color: var(--fg-muted);
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  text-align: left;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--lb-line);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
 }
 
-.tkb-fold:hover {
+.tkb-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  min-width: 200px;
+  flex: 1 1 220px;
+  max-width: 320px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--fg-faint);
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.tkb-search:focus-within {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+  color: var(--fg-muted);
+}
+
+.tkb-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font-size: var(--text-compact);
   color: var(--fg);
 }
 
-.tkb-fold-count {
+.tkb-search input::placeholder {
+  color: var(--fg-faint);
+}
+
+/* The browser's own clear affordance is a different shape from the rest of the
+   window; the button beside it is the one shown. */
+.tkb-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.tkb-search-clear {
+  display: none;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.tkb-search.has-value .tkb-search-clear {
+  display: inline-flex;
+}
+
+.tkb-search-clear:hover {
+  color: var(--fg);
+}
+
+/* A segmented filter, not a row of tabs: it changes the board's viewpoint
+   without changing which Tickets exist. */
+.tkb-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-muted);
+  border-radius: var(--radius-sm);
+}
+
+.tkb-seg button {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.tkb-seg button:hover {
+  color: var(--fg);
+}
+
+.tkb-seg button[aria-pressed='true'] {
+  background: var(--bg-elevated);
+  color: var(--fg);
+  box-shadow: var(--shadow-thumb);
+}
+
+.tkb-seg-n {
+  margin-left: 4px;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  opacity: 0.65;
 }
+
+.tkb-result-count {
+  margin-left: auto;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.tkb-result-count b {
+  color: var(--fg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- lanes ---------------- */
+
+.tkb-lanes {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-5);
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tkb-lane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 0;
+  min-width: 248px;
+  padding: var(--space-2);
+  border-radius: var(--radius-lg);
+  background: var(--lb-hover);
+  overflow-y: auto;
+}
+
+/* The 2px status strip: four lanes read as four meanings before a card is
+   read. It sits above the sticky head so scrolling never hides it. */
+.tkb-lane::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  z-index: 3;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--tkb-lane-tone, var(--fg-faint));
+  opacity: 0.9;
+}
+
+.tkb-lane[data-tone='running'] {
+  --tkb-lane-tone: var(--accent);
+}
+
+.tkb-lane[data-tone='asking'] {
+  --tkb-lane-tone: var(--warning);
+}
+
+.tkb-lane[data-tone='review'] {
+  --tkb-lane-tone: var(--success);
+}
+
+.tkb-lane[data-tone='idle'] {
+  --tkb-lane-tone: var(--border-strong);
+}
+
+.tkb-lane[data-tone='idle']::before {
+  opacity: 0.5;
+}
+
+.tkb-lane-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-1);
+  background: var(--lb-hover);
+}
+
+.tkb-lane-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--tkb-lane-tone, var(--fg-faint));
+}
+
+.tkb-lane-dot.is-running {
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+  animation: tkb-breathe 2.4s ease-in-out infinite;
+}
+
+.tkb-lane-dot.is-asking {
+  box-shadow: 0 0 0 3px var(--warning-subtle);
+}
+
+@keyframes tkb-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.tkb-lane-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tkb-lane-count {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 7px;
+  flex: none;
+  border: 1px solid var(--lb-line);
+  border-radius: 99px;
+  background: var(--lb-surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The nearest exit from a filtered lane. Filtering is a change of viewpoint,
+   not a deletion, so the way back to all four lanes is always on screen. */
+.tkb-lane-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  padding: 0 7px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tkb-lane-back:hover {
+  border-color: var(--accent-border);
+  color: var(--fg);
+}
+
+/* One selected status draws one full-width lane. Cards keep their own shape;
+   the extra room is spent on the report and the question, not on stretching
+   a narrow card across the window. */
+.tkb-lane.is-single {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.tkb-lane.is-single .tkb-card-list {
+  gap: var(--space-3);
+}
+
+.tkb-clear {
+  flex: none;
+  margin-right: var(--space-1);
+}
+
+.tkb-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The empty lane: dashed, centred, honest. A blank column reads as a rendering
+   bug; the copy says what the lane is for. */
+.tkb-lane-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  text-align: center;
+}
+
+.tkb-lane-empty svg {
+  color: var(--fg-faint);
+  flex: none;
+}
+
+.tkb-lane-empty b {
+  font-size: var(--text-compact);
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+
+.tkb-lane-empty span {
+  max-width: 22ch;
+  line-height: 1.45;
+}
+
+/* ---------------- card ---------------- */
 
 .tkb-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   flex: none;
+  min-width: 0;
   padding: var(--space-3);
   border: 1px solid var(--lb-line);
   border-radius: var(--radius-md);
   background: var(--lb-surface);
   box-shadow: var(--shadow-card);
   color: var(--fg-secondary);
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
 }
 
-/* The two columns that want the person wear the edge their dots wear. */
+.tkb-card:hover {
+  border-color: var(--accent-tint-border);
+  box-shadow: var(--shadow-card-hover);
+}
+
+/* The two lanes that want the person wear the edge their dots wear. */
 .tkb-card.is-needs {
   border-color: var(--warning-border);
 }
@@ -133,75 +400,126 @@
 }
 
 .tkb-card.is-finished {
-  opacity: 0.75;
+  opacity: 0.72;
 }
 
 .tkb-card-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
 }
 
+/* The title is the card's one first-level line: reports and questions sit
+   below it, never beside it at the same weight. */
 .tkb-card-title {
   flex: 1 1 auto;
   min-width: 0;
+  margin: 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  font-size: var(--text-compact);
+  font-size: var(--text-body);
   font-weight: 600;
-  line-height: var(--leading-body);
+  line-height: var(--leading-tight);
   color: var(--fg);
   word-break: break-word;
+}
+
+.tkb-state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--radius-xs);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.tkb-state-chip.is-open,
+.tkb-state-chip.is-done {
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+}
+
+.tkb-state-chip.is-running {
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+}
+
+.tkb-state-chip.is-asking {
+  background: var(--warning-subtle);
+  color: var(--warning-text);
+}
+
+.tkb-state-chip.is-review {
+  background: var(--success-subtle);
+  color: var(--success-text);
 }
 
 .tkb-card-meta {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  flex-wrap: wrap;
+  gap: 4px;
   min-width: 0;
-  font-size: var(--text-caption);
+}
+
+/* A chip carries one fact with its icon: where it runs, which run, which model,
+   where it came from. Chips are quiet; state lives in the chip on the title row
+   and in the live dot. */
+.tkb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
   color: var(--fg-muted);
-}
-
-.tkb-card-where {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: var(--text-caption);
   white-space: nowrap;
 }
 
-/* Where a Ticket came from, when it arrived as a file rather than from the
-   dialog. Dim and clipped like the workspace name beside it: it is provenance,
-   not a state, and a card that shouts about its origin buries the work. */
-.tkb-card-origin {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--fg-faint);
-}
-
-/* The head's "Check inbox" button: quiet, because it is an errand rather than
-   the board's verb. Beside New Ticket it reads as "look for dropped work",
-   which is what it is. */
-.tkb-inbox {
+.tkb-chip svg {
   flex: none;
 }
 
-/* What the last drain found. A line under the head rather than a toast: it
-   answers "did anything arrive", which is a question the board keeps answering
-   for as long as it is open. */
-.tkb-inbox-note {
-  margin: 0;
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-compact);
-  color: var(--fg-muted);
-  background: var(--bg-subtle);
-  border-bottom: 1px solid var(--lb-line);
-  flex: 0 0 auto;
+.tkb-chip .txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tkb-chip.is-missing {
+  color: var(--warning-text);
+  background: var(--warning-subtle);
+}
+
+/* Provenance, when it arrived as a file rather than from the dialog. Dashed
+   because it is a footnote, not a state. */
+.tkb-chip.is-origin {
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--fg-faint);
+}
+
+.tkb-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent-subtle);
+  color: var(--accent-text);
 }
 
 .tkb-card-badges {
@@ -210,37 +528,68 @@
   gap: var(--space-1);
 }
 
-.tkb-card-cause {
+/* A condition the card is in, rather than a report: an unrequested exit says
+   why the work stopped, in the amber the lane already uses. */
+.tkb-card-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0;
   font-size: var(--text-caption);
   font-weight: 600;
+  line-height: 1.4;
   color: var(--warning-text);
 }
 
-.tkb-card-text {
+.tkb-card-note svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* The question a blocked session asked. It is the one thing this card exists
+   to show, so it gets a quoted block rather than another grey paragraph. */
+.tkb-card-ask {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-left: 2px solid var(--warning);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  background: var(--warning-subtle);
+  color: var(--fg);
   font-size: var(--text-compact);
   line-height: var(--leading-body);
-  color: var(--fg);
+}
+
+.tkb-ask-label {
+  display: inline-block;
+  margin-right: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--warning-text);
+}
+
+/* The report, or the brief when there is no report yet. Three lines: enough to
+   recognise the work, not enough to bury the buttons. */
+.tkb-card-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--text-compact);
+  line-height: var(--leading-body);
+  color: var(--fg-secondary);
   word-break: break-word;
   white-space: pre-wrap;
 }
 
 .tkb-card-text.is-brief {
   color: var(--fg-muted);
-}
-
-/* A blocked report's question: the one thing the card exists to show. */
-.tkb-card-text.is-ask {
-  color: var(--fg);
-}
-
-.tkb-card-ask {
-  font-weight: 600;
-  color: var(--warning-text);
 }
 
 /* A card's own refusal. On the card rather than above the columns: the board
@@ -270,10 +619,234 @@
   gap: var(--space-2);
 }
 
-.tkb-card-actions {
+/* The foot: verbs on the left, tools on the right. The divider separates action
+   from housekeeping without drawing a second card edge. */
+.tkb-card-foot {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-1);
-  margin-top: var(--space-1);
+  margin-top: 2px;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tkb-card-actions,
+.tkb-card-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.tkb-card-tools {
+  flex: none;
+}
+
+.tkb-card-tools .btn-icon {
+  color: var(--fg-faint);
+}
+
+.tkb-card-tools .btn-icon:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+/* ---------------- static loading blocks ---------------- */
+
+.tkb-sk-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--lb-line);
+  border-radius: var(--radius-md);
+  background: var(--lb-surface);
+}
+
+.tkb-sk {
+  background: var(--bg-muted);
+  border-radius: var(--radius-xs);
+}
+
+.tkb-sk-line {
+  height: 10px;
+}
+
+.tkb-sk-line.w80 {
+  width: 80%;
+}
+
+.tkb-sk-line.w60 {
+  width: 60%;
+}
+
+.tkb-sk-chip {
+  width: 64px;
+  height: 16px;
+}
+
+/* ---------------- the new / edit dialog ---------------- */
+
+/* The dialog's form is a flex column so `.dialog-body` can be the part that
+   scrolls: the head and the foot are the parts that must not move, and a form
+   sized to its content would push the foot off the bottom of a long brief. */
+.tkb-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.tkb-dialog .dialog-body {
+  padding-top: var(--space-4);
+}
+
+.tkb-brief {
+  resize: vertical;
+  /* Tall enough to hold a paragraph and to make the point that this is the
+     field that matters: the brief is the Ticket. */
+  min-height: 120px;
+}
+
+/* Two groups: what the work is, and where it runs. The second group is always
+   visible — it is the answer a wrong default cannot recover from. */
+.tkb-fgroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tkb-fgroup + .tkb-fgroup {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.tkb-fgroup-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tkb-fgroup-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--text-h2);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.tkb-fgroup-title svg {
+  flex: none;
+  color: var(--fg-muted);
+}
+
+.tkb-fgroup-hint {
+  font-size: var(--text-caption);
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+.tkb-label-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The brief's character count, on the label row: the ceiling is a fact about
+   the field, so it sits beside the field's name rather than after a failure. */
+.tkb-counter {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.tkb-counter.is-near {
+  color: var(--warning-text);
+}
+
+.tkb-counter.is-over {
+  color: var(--destructive-text);
+  font-weight: 600;
+}
+
+/* Two columns for the two answers that decide where it runs. Form fields in
+   this window stack at a narrow dialog; this width holds both. */
+.tkb-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+/* The one field limit a person can hit, said where the box is rather than after
+   a Start that could not have worked. */
+.tkb-form-rule {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--destructive-text);
+}
+
+.tkb-form-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.tkb-form-note svg {
+  flex: none;
+}
+
+/* ---------------- what the last inbox drain found ---------------- */
+
+.tkb-inbox-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--lb-line);
+  flex: 0 0 auto;
+}
+
+/* ---------------- scrollbars ---------------- */
+
+.tkb-lanes,
+.tkb-lane {
+  scrollbar-width: thin;
+  scrollbar-color: var(--lb-line) transparent;
+}
+
+.tkb-lanes::-webkit-scrollbar,
+.tkb-lane::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.tkb-lanes::-webkit-scrollbar-thumb,
+.tkb-lane::-webkit-scrollbar-thumb {
+  background: var(--lb-line);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.tkb-lanes::-webkit-scrollbar-thumb:hover,
+.tkb-lane::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.tkb-lanes::-webkit-scrollbar-track,
+.tkb-lanes::-webkit-scrollbar-corner,
+.tkb-lane::-webkit-scrollbar-track,
+.tkb-lane::-webkit-scrollbar-corner {
+  background: transparent;
 }

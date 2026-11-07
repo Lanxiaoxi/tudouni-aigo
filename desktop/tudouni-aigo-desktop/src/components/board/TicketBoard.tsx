@@ -1,18 +1,24 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
+  ArrowLeft,
   Ban,
   Check,
-  ChevronDown,
-  ChevronRight,
+  CornerDownLeft,
   ExternalLink,
+  Folder,
   Inbox,
+  MessageSquare,
   Pencil,
   Play,
   Plus,
   RotateCcw,
+  Search,
+  Sparkles,
   Trash2,
   Undo2,
+  User,
   X,
   Zap,
 } from 'lucide-react';
@@ -32,12 +38,13 @@ import {
   ticketTitle,
   unbindableField,
   type Ticket,
+  type TicketStatus,
 } from '@/ticket/model';
 import {
-  TICKET_COLUMNS,
   canBindBrief,
   canDrop,
   canResumeAssignment,
+  columnOf,
   groupTickets,
   needsYouCause,
   ticketActions,
@@ -61,20 +68,54 @@ import { baseName } from '@/utils/format';
  * Neither is ever written back into the Ticket (invariant 1).
  */
 
-/** The column head's dot: the session board's palette, one class per column.
- *  Explicit classes rather than a computed name so the class audit sees them. */
-function columnDotClass(column: TicketColumn): string {
-  switch (column) {
-    case 'running':
-      return 'is-running';
-    case 'needs_you':
-      return 'is-asking';
-    case 'review':
-      return 'is-unseen';
-    default:
-      return 'is-idle';
-  }
-}
+/** The four lanes the overview draws. Done has no permanent column: finished
+ *  work is reached through the toolbar's Done filter, where it is one full-width
+ *  lane that also owns `dropped`. */
+const OVERVIEW_COLUMNS: readonly TicketColumn[] = ['open', 'running', 'needs_you', 'review'];
+
+type LaneTone = 'idle' | 'running' | 'asking' | 'review';
+
+const LANE_TONE: Record<TicketColumn, LaneTone> = {
+  open: 'idle',
+  running: 'running',
+  needs_you: 'asking',
+  review: 'review',
+  done: 'idle',
+};
+
+const STATE_CHIP: Record<TicketStatus, string> = {
+  open: 'is-open',
+  running: 'is-running',
+  needs_you: 'is-asking',
+  review: 'is-review',
+  done: 'is-done',
+  dropped: 'is-done',
+};
+
+const STATE_LABEL_KEY: Record<TicketStatus, TKey> = {
+  open: 'ticket.col.open',
+  running: 'ticket.col.running',
+  needs_you: 'ticket.col.needs_you',
+  review: 'ticket.col.review',
+  done: 'ticket.col.done',
+  dropped: 'ticket.dropped',
+};
+
+const LANE_EMPTY_TITLE: Record<TicketColumn, TKey> = {
+  open: 'ticket.lane.empty.open.title',
+  running: 'ticket.lane.empty.running.title',
+  needs_you: 'ticket.lane.empty.needs_you.title',
+  review: 'ticket.lane.empty.review.title',
+  done: 'ticket.lane.empty.done.title',
+};
+
+const LANE_EMPTY_HINT: Record<TicketColumn, TKey> = {
+  open: 'ticket.lane.empty.open.hint',
+  running: 'ticket.lane.empty.running.hint',
+  needs_you: 'ticket.lane.empty.needs_you.hint',
+  review: 'ticket.lane.empty.review.hint',
+  done: 'ticket.lane.empty.done.hint',
+};
 
 interface FormValue {
   title: string;
@@ -218,10 +259,22 @@ export function TicketBoard() {
   const editing = editingId === null ? null : (tickets.find((row) => row.id === editingId) ?? null);
 
   const groups = useMemo(() => groupTickets(tickets), [tickets]);
-  const [showDone, setShowDone] = useState(false);
-  const [showDropped, setShowDropped] = useState(false);
   const [clearArmed, setClearArmed] = useState(false);
-  const finished = groups.done.length + groups.dropped.length;
+
+  /** The toolbar's status filter. `all` draws the four live lanes; anything
+   *  else draws that one lane, full width, with a way back. */
+  const [filter, setFilter] = useState<'all' | TicketColumn>('all');
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+
+  const counts: Record<TicketColumn, number> = {
+    open: groups.open.length,
+    running: groups.running.length,
+    needs_you: groups.needs_you.length,
+    review: groups.review.length,
+    // Done owns `dropped`, the way it owns the folded region in the model.
+    done: groups.done.length + groups.dropped.length,
+  };
 
   function create(value: FormValue): boolean {
     const id = createTicket({
@@ -256,6 +309,125 @@ export function TicketBoard() {
   const labelOf = (ref: TaskWorkspaceRef): string | null =>
     workspaceRefLabel(ref, workspace, localPaths, remoteLabels);
 
+  /** A card is visible when it is in the chosen lane and matches the search. */
+  function matches(ticket: Ticket): boolean {
+    if (filter !== 'all' && columnOf(ticket.status) !== filter) return false;
+    if (needle === '') return true;
+    const where = labelOf(ticket.workspace) ?? '';
+    const hay = [
+      ticketTitle(ticket),
+      ticket.brief,
+      where,
+      ticket.model,
+      ticket.lastReport?.summary ?? '',
+      ticket.lastReport?.question ?? '',
+      ticket.origin.kind === 'source' ? ticket.origin.source : '',
+      ticket.origin.kind === 'source' ? ticket.origin.thread : '',
+    ]
+      .join(' ')
+      .toLowerCase();
+    return hay.includes(needle);
+  }
+
+  function cardsOf(column: TicketColumn): Ticket[] {
+    const cards = column === 'done' ? [...groups.done, ...groups.dropped] : groups[column];
+    return cards.filter(matches);
+  }
+
+  const visibleCount = tickets.filter(matches).length;
+  const laneLabel = filter === 'all' ? '' : t(`ticket.col.${filter}` as TKey);
+  const countTail =
+    filter === 'all' ? t('ticket.result.ofAll', { total: tickets.length }) : t('ticket.result.in', { lane: laneLabel });
+
+  const columns: TicketColumn[] = filter === 'all' ? [...OVERVIEW_COLUMNS] : [filter];
+
+  const segments: { key: 'all' | TicketColumn; label: string; n: number }[] = [
+    { key: 'all', label: t('ticket.filter.all'), n: tickets.length },
+    ...OVERVIEW_COLUMNS.map((column) => ({
+      key: column,
+      label: t(`ticket.col.${column}` as TKey),
+      n: counts[column],
+    })),
+    { key: 'done', label: t('ticket.col.done'), n: counts.done },
+  ];
+
+  function renderCard(ticket: Ticket) {
+    return (
+      <TicketCard
+        key={ticket.id}
+        ticket={ticket}
+        label={labelOf(ticket.workspace)}
+        remoteLabels={remoteLabels}
+        remoteIds={remoteIds}
+        locked={locked}
+        onEdit={() => setEditingId(ticket.id)}
+      />
+    );
+  }
+
+  function renderLane(column: TicketColumn) {
+    const single = filter !== 'all';
+    const cards = cardsOf(column);
+    const tone = LANE_TONE[column];
+    return (
+      <section
+        key={column}
+        className={`tkb-lane${single ? ' is-single' : ''}`}
+        data-tone={tone}
+        aria-label={t(`ticket.col.${column}` as TKey)}
+      >
+        <div className="tkb-lane-head">
+          <span className={`tkb-lane-dot is-${tone}`} aria-hidden />
+          <span className="tkb-lane-title">{t(`ticket.col.${column}` as TKey)}</span>
+          {single ? (
+            <button
+              type="button"
+              className="tkb-lane-back"
+              aria-label={t('ticket.lane.all')}
+              onClick={() => setFilter('all')}
+            >
+              <ArrowLeft size={11} />
+              {t('ticket.lane.all')}
+            </button>
+          ) : null}
+          <span className="grow" />
+          {column === 'done' && counts.done > 0 ? (
+            <Tip label={clearArmed ? t('ticket.clearFinishedConfirm', { n: counts.done }) : t('ticket.clearFinishedHint')}>
+              <button
+                type="button"
+                className={`btn btn-ghost btn-compact tkb-clear${clearArmed ? ' is-armed' : ''}`}
+                disabled={locked}
+                onBlur={() => setClearArmed(false)}
+                onMouseLeave={() => setClearArmed(false)}
+                onClick={() => {
+                  if (!clearArmed) {
+                    setClearArmed(true);
+                    return;
+                  }
+                  setClearArmed(false);
+                  clearFinishedTickets();
+                }}
+              >
+                {clearArmed ? t('ticket.clearFinishedConfirm', { n: counts.done }) : t('ticket.clearFinished')}
+              </button>
+            </Tip>
+          ) : null}
+          <span className="tkb-lane-count">{counts[column]}</span>
+        </div>
+
+        {cards.length === 0 ? (
+          <div className="tkb-lane-empty">
+            <Inbox size={16} />
+            <b>{t(LANE_EMPTY_TITLE[column])}</b>
+            <span>{t(LANE_EMPTY_HINT[column])}</span>
+          </div>
+        ) : (
+          <div className="tkb-card-list">{cards.map(renderCard)}</div>
+        )}
+      </section>
+    );
+  }
+
   return (
     <div className="board">
       <header className="board-head">
@@ -274,31 +446,33 @@ export function TicketBoard() {
             Disabled with the board (`locked`), because creating one writes
             `tickets.json` — a read-only file must not offer a button whose
             press can only fail. */}
-        <Tip label={t('ticket.inbox.scanHint')}>
+        <div className="tkb-head-actions">
+          <Tip label={t('ticket.inbox.scanHint')}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact tkb-inbox"
+              disabled={locked || scanning}
+              onClick={() => void scanNow()}
+            >
+              <Inbox size={13} />
+              {t('ticket.inbox.scan')}
+            </button>
+          </Tip>
           <button
             type="button"
-            className="btn btn-ghost btn-compact tkb-inbox"
-            disabled={locked || scanning}
-            onClick={() => void scanNow()}
+            className="btn btn-primary btn-compact tkb-new"
+            disabled={locked}
+            onClick={() => setComposing({ key: (composing?.key ?? 0) + 1, initial: blank('') })}
           >
-            <Inbox size={13} />
-            {t('ticket.inbox.scan')}
+            <Plus size={13} />
+            {t('ticket.new.open')}
           </button>
-        </Tip>
-        <button
-          type="button"
-          className="btn btn-primary btn-compact tkb-new"
-          disabled={locked}
-          onClick={() => setComposing({ key: (composing?.key ?? 0) + 1, initial: blank('') })}
-        >
-          <Plus size={13} />
-          {t('ticket.new.open')}
-        </button>
-        <Tip label={t('board.closeHint')}>
-          <button type="button" className="lb-icon" aria-label={t('board.close')} onClick={() => setBoard(null)}>
-            <X size={15} />
-          </button>
-        </Tip>
+          <Tip label={t('board.closeHint')}>
+            <button type="button" className="lb-icon" aria-label={t('board.close')} onClick={() => setBoard(null)}>
+              <X size={15} />
+            </button>
+          </Tip>
+        </div>
       </header>
 
       {readOnly ? (
@@ -313,6 +487,48 @@ export function TicketBoard() {
         <p className="tkb-inbox-note" role="status">
           {scanNote}
         </p>
+      ) : null}
+
+      {/* Search and the status filter. The filter does not remove the other
+          columns from the world — it changes the board to one full-width lane
+          and leaves a way back, so a filter never reads as a deletion. */}
+      {loaded ? (
+        <div className="tkb-toolbar">
+          <div className={`tkb-search${query !== '' ? ' has-value' : ''}`}>
+            <Search size={13} />
+            <input
+              type="search"
+              value={query}
+              placeholder={t('ticket.toolbar.search')}
+              aria-label={t('ticket.toolbar.search')}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button
+              type="button"
+              className="tkb-search-clear"
+              aria-label={t('ticket.search.clear')}
+              onClick={() => setQuery('')}
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <div className="tkb-seg" role="group" aria-label={t('ticket.filter.label')}>
+            {segments.map((segment) => (
+              <button
+                key={segment.key}
+                type="button"
+                aria-pressed={filter === segment.key}
+                onClick={() => setFilter(segment.key)}
+              >
+                {segment.label}
+                <span className="tkb-seg-n">{segment.n}</span>
+              </button>
+            ))}
+          </div>
+          <span className="tkb-result-count" aria-live="polite">
+            <b>{visibleCount}</b> {countTail}
+          </span>
+        </div>
       ) : null}
 
       {/* The two dialogs, both about a Ticket and both belonging to this board:
@@ -354,101 +570,43 @@ export function TicketBoard() {
       ) : null}
 
       {!loaded ? (
-        <div className="board-loading">{t('ticket.loading')}</div>
+        <div className="tkb-lanes" aria-busy="true">
+          {OVERVIEW_COLUMNS.map((column) => (
+            <LaneSkeleton key={column} column={column} />
+          ))}
+        </div>
       ) : tickets.length === 0 ? (
         <EmptyState title={t('ticket.empty.title')} hint={t('ticket.empty.hint')} />
       ) : (
-        <div className="board-cols scroll-fade">
-          {TICKET_COLUMNS.map((column) => {
-            const isDone = column === 'done';
-            const cards = isDone ? (showDone ? groups.done : []) : groups[column];
-            const count = isDone ? finished : groups[column].length;
-            const renderCard = (ticket: Ticket) => (
-              <TicketCard
-                key={ticket.id}
-                ticket={ticket}
-                label={labelOf(ticket.workspace)}
-                remoteLabels={remoteLabels}
-                remoteIds={remoteIds}
-                locked={locked}
-                onEdit={() => setEditingId(ticket.id)}
-              />
-            );
-            return (
-              <section
-                key={column}
-                className={`board-col${isDone && !showDone ? ' tkb-col-folded' : ''}`}
-                aria-label={t(`ticket.col.${column}`)}
-              >
-                <div className="board-col-head">
-                  <span className={`board-col-dot ${columnDotClass(column)}`} aria-hidden />
-                  <span className="board-col-title">{t(`ticket.col.${column}`)}</span>
-                  {isDone ? (
-                    <>
-                      <Tip label={showDone ? t('ticket.col.hide') : t('ticket.col.show')}>
-                        <button
-                          type="button"
-                          className="lb-icon"
-                          aria-expanded={showDone}
-                          aria-label={showDone ? t('ticket.col.hide') : t('ticket.col.show')}
-                          onClick={() => setShowDone(!showDone)}
-                        >
-                          {showDone ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                        </button>
-                      </Tip>
-                      {finished > 0 ? (
-                        <Tip label={clearArmed ? t('ticket.clearFinishedConfirm', { n: finished }) : t('ticket.clearFinishedHint')}>
-                          <button
-                            type="button"
-                            className={`btn btn-ghost btn-compact tkb-clear${clearArmed ? ' is-armed' : ''}`}
-                            disabled={locked}
-                            onBlur={() => setClearArmed(false)}
-                            onMouseLeave={() => setClearArmed(false)}
-                            onClick={() => {
-                              if (!clearArmed) {
-                                setClearArmed(true);
-                                return;
-                              }
-                              setClearArmed(false);
-                              clearFinishedTickets();
-                            }}
-                          >
-                            {clearArmed ? t('ticket.clearFinishedConfirm', { n: finished }) : t('ticket.clearFinished')}
-                          </button>
-                        </Tip>
-                      ) : null}
-                    </>
-                  ) : null}
-                  <span className="board-col-count">{count}</span>
-                </div>
-
-                {cards.map(renderCard)}
-
-                {isDone && showDone && groups.dropped.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      className="tkb-fold"
-                      aria-expanded={showDropped}
-                      onClick={() => setShowDropped(!showDropped)}
-                    >
-                      {showDropped ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                      {t('ticket.dropped')}
-                      <span className="tkb-fold-count">{groups.dropped.length}</span>
-                    </button>
-                    {showDropped ? groups.dropped.map(renderCard) : null}
-                  </>
-                ) : null}
-
-                {cards.length === 0 && !(isDone && !showDone) ? (
-                  <div className="board-col-empty">{t('ticket.col.empty')}</div>
-                ) : null}
-              </section>
-            );
-          })}
-        </div>
+        <div className="tkb-lanes scroll-fade">{columns.map(renderLane)}</div>
       )}
     </div>
+  );
+}
+
+/* ============================================================
+   Loading: static blocks, no shimmer.
+   ============================================================ */
+
+function LaneSkeleton({ column }: { column: TicketColumn }) {
+  const t = useT();
+  const tone = LANE_TONE[column];
+  return (
+    <section className="tkb-lane" data-tone={tone} aria-label={t(`ticket.col.${column}` as TKey)}>
+      <div className="tkb-lane-head">
+        <span className={`tkb-lane-dot is-${tone}`} aria-hidden />
+        <span className="tkb-lane-title">{t(`ticket.col.${column}` as TKey)}</span>
+        <span className="grow" />
+        <span className="tkb-lane-count">—</span>
+      </div>
+      {[0, 1].map((index) => (
+        <div className="tkb-sk-card" key={index}>
+          <span className="tkb-sk tkb-sk-line w80" />
+          <span className="tkb-sk tkb-sk-chip" />
+          <span className="tkb-sk tkb-sk-line w60" />
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -473,8 +631,8 @@ export function TicketBoard() {
  *     four fields at once, and nothing is behind a second click.
  *   - **It read as a composer**, i.e. as something to type a message into,
  *     when creating a Ticket is a deliberate act with a beginning and an end.
- *     The button that opens it is in the head, where the board's other
- *     verbs live.
+ *     The button that opens it is in the head, where the board's other verbs
+ *     live.
  *
  * ## What it keeps from the old shape
  *
@@ -517,16 +675,13 @@ function TicketDialog({
   // box, rather than after a Start that could not have worked.
   const tooLong = unbindableField({ title: value.title, brief: value.brief });
   const canSubmit = !disabled && value.brief.trim() !== '' && tooLong === null;
-
-  useEffect(() => {
-    // A seeded box takes the caret at the end; a plain one stays out of the way.
-    if (initial.brief !== '') {
-      const el = taRef.current;
-      if (el === null) return;
-      el.focus();
-      el.setSelectionRange(el.value.length, el.value.length);
-    }
-  }, [initial.brief]);
+  const briefLength = value.brief.length;
+  const counterClass =
+    briefLength > TICKET_BRIEF_CEILING
+      ? 'tkb-counter is-over'
+      : briefLength > TICKET_BRIEF_CEILING * 0.9
+        ? 'tkb-counter is-near'
+        : 'tkb-counter';
 
   function submit(): void {
     if (!canSubmit) return;
@@ -543,7 +698,19 @@ function TicketDialog({
     >
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="overlay-mask" />
-        <DialogPrimitive.Content className="dialog">
+        <DialogPrimitive.Content
+          className="dialog"
+          onOpenAutoFocus={(event) => {
+            // The brief is the reason the dialog opened, so it takes the caret
+            // rather than the close button. A seeded brief starts at its end:
+            // the person's next act is to add to what is already there.
+            event.preventDefault();
+            const el = taRef.current;
+            if (el === null) return;
+            el.focus();
+            if (value.brief !== '') el.setSelectionRange(el.value.length, el.value.length);
+          }}
+        >
           <div className="dialog-head">
             <div className="grow">
               <DialogPrimitive.Title className="dialog-title">
@@ -568,40 +735,60 @@ function TicketDialog({
             }}
           >
             <div className="dialog-body scroll-fade">
-              <label className="cfg-field">
-                <span className="cfg-label">{t('ticket.field.brief')}</span>
-                <textarea
-                  ref={taRef}
-                  className="cfg-textarea tkb-brief"
-                  rows={8}
-                  value={value.brief}
-                  spellCheck={false}
-                  disabled={disabled}
-                  placeholder={t('ticket.new.placeholder')}
-                  onChange={(e) => setValue({ ...value, brief: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                      e.preventDefault();
-                      submit();
-                    }
-                  }}
-                />
-              </label>
-              {tooLong !== null ? (
-                <p className="tkb-form-rule" role="alert">
-                  {tooLong === 'brief'
-                    ? t('ticket.limit.brief', { n: TICKET_BRIEF_CEILING })
-                    : t('ticket.limit.title', { n: TICKET_TITLE_CEILING })}
-                </p>
-              ) : null}
+              <section className="tkb-fgroup" aria-labelledby="tkb-dialog-work">
+                <div className="tkb-fgroup-head">
+                  <h3 className="tkb-fgroup-title" id="tkb-dialog-work">
+                    <MessageSquare size={13} />
+                    {t('ticket.form.work')}
+                  </h3>
+                  <span className="tkb-fgroup-hint">{t('ticket.form.workHint')}</span>
+                </div>
 
-              {/* All three, always. They were behind a disclosure that started
-                  shut, which made "where this runs" the field people never saw —
-                  and it is the one answer a wrong default cannot recover from. */}
-              <div className="tkb-details">
+                <label className="cfg-field">
+                  <span className="tkb-label-row">
+                    <span className="cfg-label">
+                      {t('ticket.field.brief')}
+                      <span className="cfg-required" aria-hidden>
+                        *
+                      </span>
+                      <span className="sr-only">{t('ticket.required')}</span>
+                    </span>
+                    <span className={counterClass}>
+                      {briefLength} / {TICKET_BRIEF_CEILING}
+                    </span>
+                  </span>
+                  <textarea
+                    ref={taRef}
+                    className="cfg-textarea tkb-brief"
+                    rows={6}
+                    value={value.brief}
+                    spellCheck={false}
+                    disabled={disabled}
+                    placeholder={t('ticket.new.placeholder')}
+                    aria-invalid={tooLong === 'brief'}
+                    aria-describedby={tooLong === 'brief' ? 'tkb-brief-error' : 'tkb-brief-hint'}
+                    onChange={(e) => setValue({ ...value, brief: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                        e.preventDefault();
+                        submit();
+                      }
+                    }}
+                  />
+                  <span className="cfg-hint" id="tkb-brief-hint">
+                    {t('ticket.form.briefHint')}
+                  </span>
+                </label>
+                {tooLong === 'brief' ? (
+                  <p className="tkb-form-rule" id="tkb-brief-error" role="alert">
+                    {t('ticket.limit.brief', { n: TICKET_BRIEF_CEILING })}
+                  </p>
+                ) : null}
+
                 <label className="cfg-field">
                   <span className="cfg-label">
-                    {t('ticket.field.title')} <span className="cfg-optional">{t('panel.task.optional')}</span>
+                    {t('ticket.field.title')}
+                    <span className="cfg-optional">{t('panel.task.optional')}</span>
                   </span>
                   <input
                     className="cfg-input"
@@ -609,29 +796,56 @@ function TicketDialog({
                     spellCheck={false}
                     disabled={disabled}
                     placeholder={t('ticket.field.titlePlaceholder')}
+                    aria-invalid={tooLong === 'title'}
+                    aria-describedby={tooLong === 'title' ? 'tkb-title-error' : undefined}
                     onChange={(e) => setValue({ ...value, title: e.target.value })}
                   />
                 </label>
-                <label className="cfg-field">
-                  <span className="cfg-label">{t('panel.task.field.workspace')}</span>
-                  <WorkspacePicker
-                    value={value.workspace}
-                    localPaths={localPaths}
-                    remoteLabels={remoteLabels}
-                    onChange={(workspace) => setValue({ ...value, workspace })}
-                  />
-                </label>
-                <label className="cfg-field">
-                  <span className="cfg-label">
-                    {t('panel.task.field.model')} <span className="cfg-optional">{t('panel.task.optional')}</span>
-                  </span>
-                  <ModelPicker value={value.model} onChange={(model) => setValue({ ...value, model })} />
-                </label>
-              </div>
+                {tooLong === 'title' ? (
+                  <p className="tkb-form-rule" id="tkb-title-error" role="alert">
+                    {t('ticket.limit.title', { n: TICKET_TITLE_CEILING })}
+                  </p>
+                ) : null}
+              </section>
+
+              {/* All three, always. They were behind a disclosure that started
+                  shut, which made "where this runs" the field people never saw —
+                  and it is the one answer a wrong default cannot recover from. */}
+              <section className="tkb-fgroup" aria-labelledby="tkb-dialog-where">
+                <div className="tkb-fgroup-head">
+                  <h3 className="tkb-fgroup-title" id="tkb-dialog-where">
+                    <Folder size={13} />
+                    {t('ticket.form.where')}
+                  </h3>
+                  <span className="tkb-fgroup-hint">{t('ticket.form.whereHint')}</span>
+                </div>
+
+                <div className="tkb-field-grid">
+                  <label className="cfg-field">
+                    <span className="cfg-label">{t('panel.task.field.workspace')}</span>
+                    <WorkspacePicker
+                      value={value.workspace}
+                      localPaths={localPaths}
+                      remoteLabels={remoteLabels}
+                      onChange={(next) => setValue({ ...value, workspace: next })}
+                    />
+                  </label>
+                  <label className="cfg-field">
+                    <span className="cfg-label">
+                      {t('panel.task.field.model')}
+                      <span className="cfg-optional">{t('panel.task.optional')}</span>
+                    </span>
+                    <ModelPicker value={value.model} onChange={(model) => setValue({ ...value, model })} />
+                  </label>
+                </div>
+              </section>
             </div>
 
             <div className="dialog-foot">
-              <span className="tkb-form-note">{t('ticket.new.hint')}</span>
+              <span className="tkb-form-note">
+                <CornerDownLeft size={12} />
+                {t('ticket.new.hint')}
+              </span>
               <span className="grow" />
               <button type="button" className="btn btn-outline" onClick={onCancel}>
                 {t('common.cancel')}
@@ -695,7 +909,7 @@ function TicketCard({
   const [feedback, setFeedback] = useState('');
   // **On the card, not on the board.** A refusal belongs beside the button that
   // produced it: the board is a horizontal scroller, so a sentence drawn above
-  // the columns can be several screens from the card whose Start failed 鈥?and
+  // the columns can be several screens from the card whose Start failed — and
   // the next press anywhere cleared it, which is what made it unreadable rather
   // than merely misplaced.
   const [problem, setProblem] = useState<string | null>(null);
@@ -783,37 +997,42 @@ function TicketCard({
   return (
     <article
       className={`tkb-card${status === 'needs_you' ? ' is-needs' : ''}${status === 'review' ? ' is-review' : ''}${status === 'done' || status === 'dropped' ? ' is-finished' : ''}`}
+      aria-labelledby={`tkb-title-${ticket.id}`}
     >
       <div className="tkb-card-top">
-        <span className="tkb-card-title" title={ticketTitle(ticket)}>
+        <h3 className="tkb-card-title" id={`tkb-title-${ticket.id}`} title={ticketTitle(ticket)}>
           {ticketTitle(ticket) || t('ticket.untitled')}
-        </span>
-        {connected ? <SessionDot status={rowStatus} /> : null}
+        </h3>
+        <span className={`tkb-state-chip ${STATE_CHIP[status]}`}>{t(STATE_LABEL_KEY[status])}</span>
       </div>
 
       <div className="tkb-card-meta">
-        <span className="tkb-card-where" title={where ?? undefined}>
-          {where === null ? t('ticket.workspaceMissing') : baseName(where) || where}
+        <span className={`tkb-chip${label === null ? ' is-missing' : ''}`} title={where ?? undefined}>
+          <Folder size={11} />
+          <span className="txt">{where === null ? t('ticket.workspaceMissing') : baseName(where) || where}</span>
         </span>
         {runs > 0 ? (
-          <>
-            <span aria-hidden>·</span>
-            <span>{t('ticket.runCount', { n: runs })}</span>
-          </>
+          <span className="tkb-chip">
+            <RotateCcw size={11} />
+            <span className="txt">{t('ticket.runCount', { n: runs })}</span>
+          </span>
         ) : null}
-        {/* Where it came from, when it was not this dialog. Not a badge: it is
-            not a problem, and a card whose every line is a badge reads as one. */}
+        {ticket.model !== '' ? (
+          <span className="tkb-chip" title={ticket.model}>
+            <Sparkles size={11} />
+            <span className="txt">{ticket.model}</span>
+          </span>
+        ) : null}
         {ticket.origin.kind === 'source' ? (
-          <>
-            <span aria-hidden>·</span>
-            <span
-              className="tkb-card-origin"
-              title={t('ticket.inbox.originHint', { file: ticket.origin.file })}
-            >
-              {t('ticket.inbox.origin', { source: ticket.origin.source })}
-            </span>
-          </>
+          <span className="tkb-chip is-origin" title={t('ticket.inbox.originHint', { file: ticket.origin.file })}>
+            <Inbox size={11} />
+            <span className="txt">{t('ticket.inbox.origin', { source: ticket.origin.source })}</span>
+          </span>
         ) : null}
+        <span className="tkb-avatar" title={t('ticket.requester')}>
+          <User size={11} />
+        </span>
+        {connected ? <SessionDot status={rowStatus} /> : null}
       </div>
 
       {placeMissing || !canBindBrief(ticket) || (status === 'running' && !connected) || oldRuntime ? (
@@ -838,24 +1057,25 @@ function TicketCard({
       ) : null}
 
       {cause === 'disconnected' || cause === 'crashed' || cause === 'unreachable' ? (
-        <div className="tkb-card-cause">
-          {cause === 'disconnected'
-            ? t('ticket.cause.disconnected')
-            : cause === 'unreachable'
-              ? t('ticket.cause.unreachable')
-              : t('ticket.cause.crashed')}
-        </div>
+        <p className="tkb-card-note">
+          <AlertTriangle size={12} />
+          <span>
+            {cause === 'disconnected'
+              ? t('ticket.cause.disconnected')
+              : cause === 'unreachable'
+                ? t('ticket.cause.unreachable')
+                : t('ticket.cause.crashed')}
+          </span>
+        </p>
       ) : null}
 
-      {report !== null ? (
-        asks ? (
-          <div className="tkb-card-text is-ask">
-            <span className="tkb-card-ask">{t('ticket.asks')}</span> {report.question}
-          </div>
-        ) : report.summary.trim() !== '' ? (
-          <div className="tkb-card-text">{report.summary}</div>
-        ) : null
-      ) : ticket.title.trim() !== '' ? (
+      {report !== null && asks ? (
+        <div className="tkb-card-ask">
+          <span className="tkb-ask-label">{t('ticket.asks')}</span> {report.question}
+        </div>
+      ) : report !== null && report.summary.trim() !== '' ? (
+        <div className="tkb-card-text">{report.summary}</div>
+      ) : ticket.brief.trim() !== '' ? (
         <div className="tkb-card-text is-brief">{ticket.brief}</div>
       ) : null}
 
@@ -905,167 +1125,171 @@ function TicketCard({
         </div>
       ) : null}
 
-      <div className="tkb-card-actions">
-        {actions.map((action) => {
-          switch (action) {
-            case 'start':
-              return (
-                <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.startHint')}>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-compact"
-                    disabled={cannotSessions || cannotStart}
-                    onClick={() => void act.start(false)}
+      <div className="tkb-card-foot">
+        <div className="tkb-card-actions">
+          {actions.map((action) => {
+            switch (action) {
+              case 'start':
+                return (
+                  <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.startHint')}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-compact"
+                      disabled={cannotSessions || cannotStart}
+                      onClick={() => void act.start(false)}
+                    >
+                      <Play size={12} />
+                      {t('ticket.btn.start')}
+                    </button>
+                  </Tip>
+                );
+              case 'runNow':
+                return (
+                  <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.runNowHint')}>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-compact"
+                      disabled={cannotSessions || cannotStart}
+                      onClick={() => void act.start(true)}
+                    >
+                      <Zap size={12} />
+                      {t('ticket.btn.runNow')}
+                    </button>
+                  </Tip>
+                );
+              case 'open':
+              case 'continue':
+                return (
+                  <Tip
+                    key={action}
+                    label={
+                      !canGo
+                        ? t('ticket.workspaceMissing')
+                        : action === 'open'
+                          ? t('ticket.btn.openHint')
+                          : t('ticket.btn.continueHint')
+                    }
                   >
-                    <Play size={12} />
-                    {t('ticket.btn.start')}
-                  </button>
-                </Tip>
-              );
-            case 'runNow':
-              return (
-                <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.runNowHint')}>
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-compact"
-                    disabled={cannotSessions || cannotStart}
-                    onClick={() => void act.start(true)}
-                  >
-                    <Zap size={12} />
-                    {t('ticket.btn.runNow')}
-                  </button>
-                </Tip>
-              );
-            case 'open':
-            case 'continue':
-              return (
-                <Tip
-                  key={action}
-                  label={
-                    !canGo
-                      ? t('ticket.workspaceMissing')
-                      : action === 'open'
-                        ? t('ticket.btn.openHint')
-                        : t('ticket.btn.continueHint')
-                  }
-                >
-                  <button
-                    type="button"
-                    className={`btn btn-compact ${action === 'continue' && status === 'running' ? 'btn-primary' : 'btn-outline'}`}
-                    disabled={busy || !canGo}
-                    onClick={() => void act.open()}
-                  >
-                    <ExternalLink size={12} />
-                    {action === 'open' ? t('ticket.btn.open') : t('ticket.btn.continue')}
-                  </button>
-                </Tip>
-              );
-            case 'restart':
-              return (
-                <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.restartHint')}>
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-compact"
-                    disabled={cannotSessions || cannotStart}
-                    onClick={() => void act.restart()}
-                  >
-                    <RotateCcw size={12} />
-                    {t('ticket.btn.restart')}
-                  </button>
-                </Tip>
-              );
-            case 'accept':
-              return (
-                <Tip key={action} label={t('ticket.btn.acceptHint')}>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-compact"
-                    disabled={cannotSessions}
-                    onClick={() => {
-                      setProblem(null);
-                      acceptTicket(ticket.id);
-                    }}
-                  >
-                    <Check size={12} />
-                    {t('ticket.btn.accept')}
-                  </button>
-                </Tip>
-              );
-            case 'sendBack':
-              return (
-                <Tip key={action} label={t('ticket.btn.sendBackHint')}>
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-compact"
-                    disabled={cannotSessions || !(canGo || label !== null)}
-                    aria-expanded={feedbackOpen}
-                    onClick={() => setFeedbackOpen(!feedbackOpen)}
-                  >
-                    <Undo2 size={12} />
-                    {t('ticket.btn.sendBack')}
-                  </button>
-                </Tip>
-              );
-            case 'reopen':
-              return (
-                <Tip key={action} label={t('ticket.btn.reopenHint')}>
-                  <button
-                    type="button"
-                    className="btn btn-outline btn-compact"
-                    disabled={cannotSessions}
-                    onClick={() => {
-                      setProblem(null);
-                      dispatchTicket(ticket.id, { type: 'reopen' });
-                    }}
-                  >
-                    <RotateCcw size={12} />
-                    {t('ticket.btn.reopen')}
-                  </button>
-                </Tip>
-              );
-          }
-        })}
+                    <button
+                      type="button"
+                      className={`btn btn-compact ${action === 'continue' && status === 'running' ? 'btn-primary' : 'btn-outline'}`}
+                      disabled={busy || !canGo}
+                      onClick={() => void act.open()}
+                    >
+                      <ExternalLink size={12} />
+                      {action === 'open' ? t('ticket.btn.open') : t('ticket.btn.continue')}
+                    </button>
+                  </Tip>
+                );
+              case 'restart':
+                return (
+                  <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.restartHint')}>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-compact"
+                      disabled={cannotSessions || cannotStart}
+                      onClick={() => void act.restart()}
+                    >
+                      <RotateCcw size={12} />
+                      {t('ticket.btn.restart')}
+                    </button>
+                  </Tip>
+                );
+              case 'accept':
+                return (
+                  <Tip key={action} label={t('ticket.btn.acceptHint')}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-compact"
+                      disabled={cannotSessions}
+                      onClick={() => {
+                        setProblem(null);
+                        acceptTicket(ticket.id);
+                      }}
+                    >
+                      <Check size={12} />
+                      {t('ticket.btn.accept')}
+                    </button>
+                  </Tip>
+                );
+              case 'sendBack':
+                return (
+                  <Tip key={action} label={t('ticket.btn.sendBackHint')}>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-compact"
+                      disabled={cannotSessions || !(canGo || label !== null)}
+                      aria-expanded={feedbackOpen}
+                      onClick={() => setFeedbackOpen(!feedbackOpen)}
+                    >
+                      <Undo2 size={12} />
+                      {t('ticket.btn.sendBack')}
+                    </button>
+                  </Tip>
+                );
+              case 'reopen':
+                return (
+                  <Tip key={action} label={t('ticket.btn.reopenHint')}>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-compact"
+                      disabled={cannotSessions}
+                      onClick={() => {
+                        setProblem(null);
+                        dispatchTicket(ticket.id, { type: 'reopen' });
+                      }}
+                    >
+                      <RotateCcw size={12} />
+                      {t('ticket.btn.reopen')}
+                    </button>
+                  </Tip>
+                );
+            }
+          })}
+        </div>
 
         <span className="grow" />
 
-        <Tip label={t('ticket.btn.edit')}>
-          <button type="button" className="btn btn-ghost btn-icon" aria-label={t('ticket.btn.edit')} onClick={onEdit}>
-            <Pencil size={13} />
-          </button>
-        </Tip>
-        {canDrop(status) ? (
-          <Tip label={t('ticket.btn.dropHint')}>
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon"
-              aria-label={t('ticket.btn.drop')}
-              disabled={cannotSessions}
-              onClick={() => {
-                setProblem(null);
-                dropTicket(ticket.id);
-              }}
-            >
-              <Ban size={13} />
+        <div className="tkb-card-tools">
+          <Tip label={t('ticket.btn.edit')}>
+            <button type="button" className="btn btn-ghost btn-icon" aria-label={t('ticket.btn.edit')} onClick={onEdit}>
+              <Pencil size={13} />
             </button>
           </Tip>
-        ) : null}
-        {/* Delete keeps the app's two-press arm; leaving the button disarms. */}
-        <Tip label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}>
-          <button
-            type="button"
-            className={`btn btn-ghost btn-icon${armed ? ' is-armed' : ''}`}
-            aria-label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}
-            disabled={locked}
-            onBlur={() => setArmed(false)}
-            onMouseLeave={() => setArmed(false)}
-            onClick={() => {
-              if (armed) removeTicket(ticket.id);
-              else setArmed(true);
-            }}
-          >
-            <Trash2 size={13} />
-          </button>
-        </Tip>
+          {canDrop(status) ? (
+            <Tip label={t('ticket.btn.dropHint')}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon"
+                aria-label={t('ticket.btn.drop')}
+                disabled={cannotSessions}
+                onClick={() => {
+                  setProblem(null);
+                  dropTicket(ticket.id);
+                }}
+              >
+                <Ban size={13} />
+              </button>
+            </Tip>
+          ) : null}
+          {/* Delete keeps the app's two-press arm; leaving the button disarms. */}
+          <Tip label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}>
+            <button
+              type="button"
+              className={`btn btn-ghost btn-icon${armed ? ' is-armed' : ''}`}
+              aria-label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}
+              disabled={locked}
+              onBlur={() => setArmed(false)}
+              onMouseLeave={() => setArmed(false)}
+              onClick={() => {
+                if (armed) removeTicket(ticket.id);
+                else setArmed(true);
+              }}
+            >
+              <Trash2 size={13} />
+            </button>
+          </Tip>
+        </div>
       </div>
     </article>
   );
