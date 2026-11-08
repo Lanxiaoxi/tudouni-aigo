@@ -668,6 +668,7 @@ function TicketDialog({
 }) {
   const t = useT();
   const [value, setValue] = useState<FormValue>(initial);
+  const titleRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // The one limit a person can hit by pasting: `ticket_bind` carries the brief,
   // the runtime refuses an oversized one, and the Ticket would then say Running
@@ -701,10 +702,18 @@ function TicketDialog({
         <DialogPrimitive.Content
           className="dialog"
           onOpenAutoFocus={(event) => {
-            // The brief is the reason the dialog opened, so it takes the caret
-            // rather than the close button. A seeded brief starts at its end:
-            // the person's next act is to add to what is already there.
+            // The name is the first field on the sheet, so an empty one takes
+            // the caret — the first thing to fill in is the first thing under
+            // the cursor. When a name is already there (an edit, or a seeded
+            // ticket), the brief takes it instead: that is what the dialog
+            // opened for, and a seeded brief starts at its end, because the
+            // person's next act is to add to what is already written.
             event.preventDefault();
+            const title = titleRef.current;
+            if (title !== null && value.title === '') {
+              title.focus();
+              return;
+            }
             const el = taRef.current;
             if (el === null) return;
             el.focus();
@@ -744,6 +753,33 @@ function TicketDialog({
                   <span className="tkb-fgroup-hint">{t('ticket.form.workHint')}</span>
                 </div>
 
+                {/* The name comes first on the sheet; the brief, which is the
+                    Ticket itself, follows it. The order is the order a person
+                    fills them in — label, then the work — and it also puts the
+                    optional field where an optional field is looked for. */}
+                <label className="cfg-field">
+                  <span className="cfg-label">
+                    {t('ticket.field.title')}
+                    <span className="cfg-optional">{t('panel.task.optional')}</span>
+                  </span>
+                  <input
+                    ref={titleRef}
+                    className="cfg-input"
+                    value={value.title}
+                    spellCheck={false}
+                    disabled={disabled}
+                    placeholder={t('ticket.field.titlePlaceholder')}
+                    aria-invalid={tooLong === 'title'}
+                    aria-describedby={tooLong === 'title' ? 'tkb-title-error' : undefined}
+                    onChange={(e) => setValue({ ...value, title: e.target.value })}
+                  />
+                </label>
+                {tooLong === 'title' ? (
+                  <p className="tkb-form-rule" id="tkb-title-error" role="alert">
+                    {t('ticket.limit.title', { n: TICKET_TITLE_CEILING })}
+                  </p>
+                ) : null}
+
                 <label className="cfg-field">
                   <span className="tkb-label-row">
                     <span className="cfg-label">
@@ -782,28 +818,6 @@ function TicketDialog({
                 {tooLong === 'brief' ? (
                   <p className="tkb-form-rule" id="tkb-brief-error" role="alert">
                     {t('ticket.limit.brief', { n: TICKET_BRIEF_CEILING })}
-                  </p>
-                ) : null}
-
-                <label className="cfg-field">
-                  <span className="cfg-label">
-                    {t('ticket.field.title')}
-                    <span className="cfg-optional">{t('panel.task.optional')}</span>
-                  </span>
-                  <input
-                    className="cfg-input"
-                    value={value.title}
-                    spellCheck={false}
-                    disabled={disabled}
-                    placeholder={t('ticket.field.titlePlaceholder')}
-                    aria-invalid={tooLong === 'title'}
-                    aria-describedby={tooLong === 'title' ? 'tkb-title-error' : undefined}
-                    onChange={(e) => setValue({ ...value, title: e.target.value })}
-                  />
-                </label>
-                {tooLong === 'title' ? (
-                  <p className="tkb-form-rule" id="tkb-title-error" role="alert">
-                    {t('ticket.limit.title', { n: TICKET_TITLE_CEILING })}
                   </p>
                 ) : null}
               </section>

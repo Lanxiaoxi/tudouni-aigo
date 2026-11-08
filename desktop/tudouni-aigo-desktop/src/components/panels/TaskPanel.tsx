@@ -1440,7 +1440,18 @@ export function ModelPicker({ value, onChange }: { value: string; onChange: (mod
 
   return (
     <div className="tk-ws">
-      <PopoverPrimitive.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) setTyped(false); }}>
+      <PopoverPrimitive.Root
+        // A menu opened over a modal dialog has to be modal itself. The
+        // dialog's scroll lock cancels wheel events that land outside its own
+        // content, and this menu is portalled to `body` — outside it. Without
+        // this, the catalogue painted a scrollbar and the wheel did nothing
+        // (the same trap `Select` documents). A modal popover brings its own
+        // lock, whose target *is* the menu, so the wheel turns this list and
+        // the dialog body behind it stays still.
+        modal
+        open={open}
+        onOpenChange={(next) => { setOpen(next); if (!next) setTyped(false); }}
+      >
         <PopoverPrimitive.Trigger asChild>
           <button
             type="button"

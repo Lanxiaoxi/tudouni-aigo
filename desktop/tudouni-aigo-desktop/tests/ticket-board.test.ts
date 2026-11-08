@@ -758,3 +758,42 @@ test('a Ticket whose bind would be refused cannot be created or edited into one'
   assert.equal(canBindBrief({ title: '', brief: tooLong }), false);
   assert.equal(canBindBrief({ title: '', brief: 'fine' }), true);
 });
+
+/* ---------------- The dialog's two invisible decisions ---------------- */
+
+/**
+ * Where the name sits, and why the model menu can be wheeled.
+ *
+ * Both are one-line facts with nothing to observe in Node: the field order is
+ * markup, and the wheel is a Radix scroll lock that only exists in a browser.
+ * They are pinned as source so a later edit cannot quietly put the brief back
+ * on top, or drop the `modal` that makes the catalogue scroll inside the
+ * dialog (Radix's dialog cancels wheel events outside its own content, and a
+ * portalled menu is outside it — the list then draws a scrollbar and refuses
+ * to move, which is the report this fixes).
+ */
+test('the dialog names the work before it briefs it', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  const dialog = src.slice(src.indexOf('function TicketDialog'), src.indexOf('function TicketCard'));
+  const title = dialog.indexOf("t('ticket.field.title')");
+  const brief = dialog.indexOf("t('ticket.field.brief')");
+  assert.ok(title >= 0 && brief >= 0, 'the title and brief labels are gone from TicketDialog');
+  assert.ok(
+    title < brief,
+    'the title field is drawn below the brief: the name is the first thing on the sheet',
+  );
+});
+
+test('the model menu is modal, which is what lets the wheel turn it inside a dialog', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/panels/TaskPanel.tsx'), 'utf8');
+  const picker = src.slice(src.indexOf('export function ModelPicker'), src.indexOf('function TaskInfo'));
+  const at = picker.indexOf('<PopoverPrimitive.Root');
+  assert.ok(at >= 0, 'ModelPicker no longer renders a PopoverPrimitive.Root');
+  const rootTag = picker.slice(at, picker.indexOf('>', at));
+  assert.match(
+    rootTag,
+    /\n\s+modal\r?\n/,
+    'the model popover lost `modal`: inside a dialog, Radix cancels the wheel ' +
+      'events that land on this portalled menu, so the catalogue stops scrolling',
+  );
+});
