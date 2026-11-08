@@ -134,6 +134,7 @@ export function createAppStore() {
     sessionsCollapsed: prefs.sessionsCollapsed,
     workspacesCollapsed: prefs.workspacesCollapsed,
     footCollapsed: prefs.footCollapsed,
+    ticketStartMode: prefs.ticketStartMode,
     // The user data starts from the in-memory copy, which at module load is
     // the empty shelf: the file that holds it is read asynchronously by
     // `hydrateDesktopData`, and the start-up applies the result to the store

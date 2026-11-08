@@ -17,7 +17,9 @@ import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type La
 import type { RemoteConfigTarget } from '@/runtime/tauri';
 
 import type { TicketInputDraft, TicketPatch, TicketRefusal } from '@/ticket/machine';
-import type { Report, Ticket } from '@/ticket/model';import type { TaskWorkspaceRef } from '@/task/tasks';
+import type { Report, Ticket } from '@/ticket/model';
+import type { TicketStartMemory } from '@/ticket/view';
+import type { TaskWorkspaceRef } from '@/task/tasks';
 
 /** What one inbox drain did, for the sentence the board shows afterwards. */
 export interface InboxScanResult {
@@ -436,6 +438,17 @@ export interface AppStore {
    * person who wants the drawer opens it once and the preference keeps it.
    */
   footCollapsed: boolean;
+  /**
+   * What a Ticket card dropped into Running means: ask, or the remembered
+   * answer.
+   *
+   * Window-level and persisted like the rail prefs around it. `'ask'` is the
+   * first-run value — the two answers cost very differently (`run_now` sends the
+   * brief and turns autopilot on), so only a person who ticked "do this from now
+   * on" ever skips the dialog. Read through `rememberedStartMode` rather than
+   * compared by hand, so the rule lives in one place.
+   */
+  ticketStartMode: TicketStartMemory;
   /**
    * Bookmarked workspaces.
    *
@@ -906,6 +919,11 @@ export interface AppStore {
    * composer (default) or — `runNow` — switch autopilot on and send the brief.
    * Resolves to the session key, or `null` when nothing was started (workspace
    * unknown, open refused, Ticket not startable). A failed open changes nothing.
+   *
+   * **It does not decide what the screen shows next.** Whether the board stays
+   * up belongs to the gesture that asked (`staysOnBoard` in `ticket/view.ts`): a
+   * drag watches the board, a card's Start button goes to the conversation. The
+   * session layer cannot tell the two apart, so it does not try.
    */
   startTicket(id: string, opts?: { runNow?: boolean }): Promise<string | null>;
   /** "Open session" / "Continue": focus the Assignment's session when it is
@@ -1208,6 +1226,15 @@ export interface AppStore {
   toggleWorkspacesCollapsed(): void;
   /** Fold or unfold the left rail's foot (the workbench buttons). Persisted. */
   toggleFootCollapsed(): void;
+  /**
+   * Remember what dropping a Ticket into Running does — or, with `'ask'`, stop
+   * remembering and ask again.
+   *
+   * An ordinary preference write: nothing is sent to the runtime and no Ticket is
+   * touched. The board reads it through `rememberedStartMode` at drop time, so a
+   * change takes effect on the next drag rather than needing anything unwound.
+   */
+  setTicketStartMode(mode: TicketStartMemory): void;
   toggleReasoning(id: string): void;
   toggleTool(id: string): void;
   /** Fold a turn's whole body behind its head, or unfold it. Not persisted: it

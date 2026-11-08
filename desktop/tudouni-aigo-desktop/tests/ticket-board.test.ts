@@ -35,14 +35,21 @@ import {
   type Ticket,
 } from '@/ticket/model';
 import {
+  acceptsDrop,
   canBindBrief,
   canDrop,
   canResumeAssignment,
   columnOf,
+  dropTargets,
+  dropVerb,
   groupTickets,
   needsYouCause,
+  rememberedStartMode,
+  staysOnBoard,
   ticketActions,
+  ticketRunState,
 } from '@/ticket/view';
+import { en } from '@/i18n';
 import { liveKeyOfAssignment, selectTicketAttention } from '@/state/selectors/tickets';
 
 /* ============================================================
@@ -759,7 +766,206 @@ test('a Ticket whose bind would be refused cannot be created or edited into one'
   assert.equal(canBindBrief({ title: '', brief: 'fine' }), true);
 });
 
-/* ---------------- The dialog's two invisible decisions ---------------- */
+/* ============================================================
+   Dragging a card into another lane
+   ============================================================ */
+
+/**
+ * **The table is the contract.**
+ *
+ * A lane's meaning has to be one of the card's own buttons — that is what stops
+ * the drag from becoming a second state machine. So the assertions come in
+ * pairs: the lanes that light up, and (the half that decays silently) the lanes
+ * that must never light up.
+ */
+test('a lane means exactly what one of the card\u2019s own buttons means', () => {
+  // open → Running is `start` (or `runNow`, decided by the dialog or the memory).
+  assert.deepEqual(dropTargets('open'), { running: { kind: 'begin' } });
+  // review → Done is `accept`; review → Running is `sendBack` (with an opinion).
+  assert.deepEqual(dropTargets('review'), {
+    done: { kind: 'accept' },
+    running: { kind: 'sendBack' },
+  });
+  // Finished → Open is `reopen`.
+  assert.deepEqual(dropTargets('done'), { open: { kind: 'reopen' } });
+  assert.deepEqual(dropTargets('dropped'), { open: { kind: 'reopen' } });
+});
+
+test('no lane can do what only an agent or the person\u2019s own buttons can', () => {
+  // `running → needs_you` / `review` are `reported` facts. A person has no
+  // command for either, so no lane may offer one.
+  assert.deepEqual(dropTargets('running'), {});
+  // `needs_you → running` is two intents (continue does not even move the
+  // status — invariant 7), so both stay buttons.
+  assert.deepEqual(dropTargets('needs_you'), {});
+  // **Done is never a drop target for a live card**: it owns `done` *and*
+  // `dropped`, so a drop there could not say which it meant.
+  assert.equal(dropTargets('open').done, undefined);
+  assert.equal(dropTargets('running').done, undefined);
+  assert.equal(dropTargets('needs_you').done, undefined);
+  // Open is not a target for a live card either: nothing `open → open` means.
+  assert.equal(dropTargets('open').open, undefined);
+  assert.equal(dropTargets('review').open, undefined);
+});
+
+test('a lane that would do nothing raises no highlight, and one that would is named', () => {
+  assert.equal(acceptsDrop('open', 'running'), true);
+  assert.equal(acceptsDrop('open', 'review'), false);
+  assert.equal(acceptsDrop('running', 'needs_you'), false);
+  assert.equal(acceptsDrop('running', 'done'), false, 'Done must not promise a move it cannot mean');
+  assert.equal(acceptsDrop('review', 'done'), true);
+  assert.equal(acceptsDrop('review', 'running'), true, 'a review can go back to work');
+  assert.equal(acceptsDrop('done', 'open'), true);
+});
+
+test('the drop is announced in the words the buttons use', () => {
+  assert.equal(dropVerb({ kind: 'begin' }, 'run_now'), 'begin.run_now');
+  assert.equal(dropVerb({ kind: 'begin' }, 'start'), 'begin.start');
+  assert.equal(dropVerb({ kind: 'accept' }), 'accept');
+  assert.equal(dropVerb({ kind: 'sendBack' }), 'sendBack');
+  assert.equal(dropVerb({ kind: 'reopen' }), 'reopen');
+  // Every verb has words, or the announcement would be a missing key.
+  for (const verb of ['begin.start', 'begin.run_now', 'accept', 'sendBack', 'reopen'] as const) {
+    assert.ok(en[`ticket.drop.verb.${verb}`], `no copy for ticket.drop.verb.${verb}`);
+    assert.ok(en[`ticket.drop.announce.${verb}`], `no copy for ticket.drop.announce.${verb}`);
+  }
+});
+
+test('a drag never leaves the board, and a card\u2019s Start button still does', () => {
+  // The whole point of the feature: a drop is watched on the board.
+  assert.equal(staysOnBoard('drag', false), true, 'an attended drag must not open the conversation');
+  assert.equal(staysOnBoard('drag', true), true);
+  // The card's own Start hands the brief over, so it goes where the brief is.
+  assert.equal(staysOnBoard('card', false), false);
+  // Run now has nothing to hand over: the card moves to Running by itself.
+  assert.equal(staysOnBoard('card', true), true);
+
+  // Both entry points ask the rule; neither decides it locally. The drag's
+  // branch never fires (the function answers `true` for `'drag'`), and it is
+  // written out so a third entry point has something to copy.
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  const drag = src.slice(src.indexOf('const beginFromDrop'), src.indexOf('const applyDrop'));
+  assert.match(drag, /staysOnBoard\('drag'/, 'the drop path no longer asks the rule');
+  const card = src.slice(src.indexOf('const act = {'), src.indexOf("type: 'accept'"));
+  assert.match(card, /staysOnBoard\('card'/, 'the card\u2019s Start no longer asks the rule');
+});
+
+test('a first-run board asks how to start, and only a stored answer skips the dialog', () => {
+  // The one mistake here that spends money before anyone reads a dialog.
+  assert.equal(rememberedStartMode('ask'), null, 'the default must ask');
+  assert.equal(rememberedStartMode('start'), 'start');
+  assert.equal(rememberedStartMode('run_now'), 'run_now');
+});
+
+test('a running card that has not sent its brief says so, and stays in Running', () => {
+  const base = { status: 'running' as const, live: true, ready: true, draft: 'do the thing', hasSpoken: false, brief: 'do the thing' };
+  // The attended start: brief parked in the input box, nothing sent.
+  assert.equal(ticketRunState(base), 'awaiting_send');
+  // Sent (or any turn in flight): ordinary working.
+  assert.equal(ticketRunState({ ...base, hasSpoken: true }), 'sent');
+  // A draft that is not the brief is the person's own typing, not a parked one.
+  assert.equal(ticketRunState({ ...base, draft: 'something else' }), 'sent');
+  assert.equal(ticketRunState({ ...base, draft: '' }), 'sent');
+  // Handshake not landed.
+  assert.equal(ticketRunState({ ...base, ready: false }), 'connecting');
+  // No live session, or not running at all: the card's own badges explain it.
+  assert.equal(ticketRunState({ ...base, live: false }), 'idle');
+  assert.equal(ticketRunState({ ...base, status: 'review' }), 'idle');
+});
+
+test('the start memory is a window preference: it defaults to asking, and a corrupt record asks too', () => {
+  // Read the module as text: `prefs.ts` touches `localStorage` at import time,
+  // which this suite's Node host does not have. The rules asserted are the two
+  // that matter — the default, and that nothing is coerced into `run_now`.
+  const src = readFileSync(resolve(process.cwd(), 'src/state/prefs.ts'), 'utf8');
+  assert.match(src, /ticketStartMode: 'ask',/, 'a first launch must ask');
+  assert.match(
+    src,
+    /parsed\.ticketStartMode === 'start' \|\| parsed\.ticketStartMode === 'run_now'[\s\S]*?: 'ask',/,
+    'a corrupted record must fall back to asking, never to running unattended',
+  );
+});
+
+test('the board draws the drag, and the card never swallows a press on a control', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  // The drag is a pointer gesture, not HTML5 drag-and-drop: a WebView shares
+  // `dragstart` with the OS file-drop channel and it has no touch support.
+  assert.equal(src.includes('draggable='), false, 'the card must not be HTML5-draggable');
+  assert.match(src, /onPointerDown/, 'the card has no pointer-down handler: nothing can be dragged');
+  assert.match(
+    src,
+    /closest\('button, a, input, textarea, select, \[role="menu"\]'\)/,
+    'a press on a control inside the card must stay that control\u2019s press',
+  );
+  // The lane head states the verb before the release, and the ghost does too.
+  assert.match(src, /tkb-lane-verb/);
+  assert.match(src, /tkb-drag-ghost/);
+  // Escape cancels in flight, in capture, before the window's own Esc closes
+  // the board.
+  assert.match(src, /window\.addEventListener\('keydown', key, true\)/);
+});
+
+test('the menu offers every move a drop could make \u2014 the drag is never the only way', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  // Both the lane and the menu read `dropTargets`; a hand-written second list
+  // is what would let them drift.
+  const drops = [...src.matchAll(/dropTargets\(/g)];
+  assert.ok(drops.length >= 3, 'the drop table is no longer the one source for lanes and menu items');
+  assert.match(src, /moveEntries\.map/, 'the menu no longer lists the moves');
+});
+
+test('the release decides the drop before React is asked to re-render', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  const up = src.slice(src.indexOf('function up('), src.indexOf('function cancel('));
+  // Running the command inside a `setDrag` updater would put it in the render
+  // phase, where React may invoke the updater more than once — and `start`
+  // twice means two sessions for one Ticket. The card in flight is read off
+  // the ref the render is drawing instead.
+  assert.equal(
+    /setDrag\(\(current\)[\s\S]*?onDrop\(/.test(up),
+    false,
+    'the drop command runs inside a state updater: it can fire more than once',
+  );
+  assert.match(up, /const current = dragRef\.current;/, 'the release no longer reads the card from the ref');
+  assert.match(up, /setDrag\(null\);/, 'the flight state is not cleared before the command runs');
+  // The auto-scroll must not be inside the updater either, for the same reason.
+  const move = src.slice(src.indexOf('function move('), src.indexOf('function up('));
+  const opener = move.indexOf('setDrag((current) => {');
+  assert.ok(opener >= 0, 'the pointer-move branch no longer updates the drag');
+  const body = move.slice(opener, move.indexOf('});', opener));
+  assert.equal(
+    body.includes('autoScroll('),
+    false,
+    'scrolling runs inside a state updater',
+  );
+});
+
+test('a filtered board does not lift a card, because there is nowhere to drop it', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  // The filter draws one full-width lane, so every other lane is off screen: a
+  // gesture that could only be released over nothing must not start.
+  assert.match(src, /if \(!enabled\) return;/, 'the drag ignores whether any drop target is on screen');
+  assert.match(src, /filter === 'all',/, 'the hook is not told which board it is on');
+  // The menu path stays available under a filter, since it needs no second lane.
+  assert.match(src, /moveEntries\.map/);
+});
+
+test('a remembered start mode has a way back, or it could never be changed again', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  const card = src.slice(src.indexOf('function TicketCard'));
+  // Ticking "do this from now on" suppresses the dialog, so the only route back
+  // is the card's own menu. Without it the dialog's hint would point at a screen
+  // that never appears again.
+  assert.match(card, /onAskStart/, 'the card has no route back into the start dialog');
+  assert.match(card, /t\('ticket\.menu\.startOptions'\)/, 'the menu item that opens it is gone');
+  // Pinned to Open: that is the only status a start belongs to.
+  assert.match(card, /status === 'open' \? \(/, 'the start-options item is not gated on the status');
+  // And the dialog offers to stop remembering, which is the other half.
+  const dialog = src.slice(src.indexOf('function StartDialog'), src.indexOf('function TicketCard'));
+  assert.match(dialog, /t\('ticket\.start\.remember'\)/);
+  assert.ok(en['ticket.menu.startOptions'] !== undefined);
+});
+
 
 /**
  * Where the name sits, and why the model menu can be wheeled.

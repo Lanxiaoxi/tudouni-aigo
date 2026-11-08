@@ -896,6 +896,269 @@
   flex: 0 0 auto;
 }
 
+/* ============================================================
+   Dragging a card into another lane
+   ============================================================ */
+
+/*
+   **The lane lights up; it does not darken its neighbours.**
+
+   A lane that would take the card wears a 2px inset ring in its own tone, and
+   its head states the verb the release would run — so the answer to "what
+   happens if I let go here" is on screen *before* the finger lifts. A lane that
+   would not take it is left exactly as it looks when nothing is being dragged:
+   dimming three of four lanes at the moment a person is trying to read where
+   they are going would cost more than the missing hint.
+
+   The 2px ring is drawn as an inset box-shadow rather than a border, because a
+   border would change the lane's inner width mid-gesture and reflow every card
+   in it under the pointer.
+*/
+.tkb-lane {
+  transition: box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.tkb-lane.is-target {
+  box-shadow: inset 0 0 0 2px var(--tkb-lane-tone, var(--accent));
+}
+
+/* The verb, in the lane head. Small and quiet: the ring already says "here",
+   this says *what*. */
+.tkb-lane-verb {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--tkb-lane-tone, var(--accent));
+  color: var(--fg-on-accent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* An empty lane that would take the card says so in place of its own copy —
+   the one spot on the board that has room for a sentence. */
+.tkb-lane-empty.is-target {
+  border-style: solid;
+  border-color: var(--tkb-lane-tone, var(--accent));
+  color: var(--fg);
+}
+
+.tkb-lane-empty.is-target b {
+  color: var(--fg);
+}
+
+/* The card in flight. Fixed, at the pointer, and never hit-testable: a clone
+   that could take a click would steal the drop it is standing in for. */
+.tkb-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-3);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  pointer-events: none;
+  /* Slightly transparent so the lane under it stays readable: the ring is the
+     answer, and the clone must not cover the thing being answered. */
+  opacity: 0.94;
+}
+
+.tkb-drag-title {
+  overflow: hidden;
+  font-size: var(--text-body);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tkb-drag-hint {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+/* The card that was picked up: it stays in its lane, hollow, so the board does
+   not reflow under the person's eyes while they aim. */
+.tkb-card.is-dragging {
+  opacity: 0.4;
+}
+
+/* A `running` card whose brief is still parked in its session's input box. It
+   is not working yet, and the accent edge says so at a glance. */
+.tkb-card.is-parked {
+  border-style: dashed;
+}
+
+/* A card that has been let go and whose command has not landed. It says
+   "moving", never "moved": nothing is written until the store's status
+   changes, and a placeholder that claimed otherwise would announce a start that
+   could still be refused. */
+.tkb-landing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px dashed var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+  font-size: var(--text-compact);
+  font-weight: 600;
+}
+
+.tkb-landing-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+  animation: tkb-breathe 1.2s ease-in-out infinite;
+}
+
+/* What the last drop did. The card's own move is the evidence, and it may be
+   in a lane that scrolled away — so the sentence is stated once, dismissibly,
+   and announced politely. */
+.tkb-drop-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-4) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  flex: 0 0 auto;
+}
+
+.tkb-drop-note span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tkb-drop-note button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+
+.tkb-drop-note button:hover {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+/* The menu's "Move to…" group: a divider and a caption, so two verbs from a
+   different family do not read as two more housekeeping rows. */
+.tkb-menu-sep {
+  height: 1px;
+  margin: var(--space-1) 0;
+  background: var(--border-subtle);
+}
+
+.tkb-menu-label {
+  padding: 2px var(--space-3) var(--space-1);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+/* ============================================================
+   The start dialog
+   ============================================================ */
+
+/* The dialog's content is a plain `.dialog`, plus this hook: the start sheet is
+   reached by a gesture rather than a button in the head, so it needs to be
+   findable in the stylesheet as itself. */
+.tkb-start .dialog-body {
+  max-width: 460px;
+}
+
+.tkb-start-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+}
+
+/* The two answers are rows, not a radio pair floating beside their labels: the
+   difference between them is a sentence, and a sentence needs the width. */
+.tkb-start-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.tkb-start-choice:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-muted);
+}
+
+.tkb-start-choice:has(input:checked) {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+}
+
+.tkb-start-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tkb-start-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-compact);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.tkb-start-hint {
+  font-size: var(--text-caption);
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+/* The remember box is not a third answer, so it is not framed like one. */
+.tkb-start-remember {
+  margin-top: var(--space-2);
+}
+
+/* The mark is a judgement about motion, so it follows the system setting. The
+   1.2s breath is the one thing here that moves for its whole life. */
+@media (prefers-reduced-motion: reduce) {
+  .tkb-landing-dot {
+    animation: none;
+  }
+}
+
 /* ---------------- scrollbars ---------------- */
 
 .tkb-lanes,

@@ -135,6 +135,184 @@ export function canDrop(status: TicketStatus): boolean {
   return status !== 'done' && status !== 'dropped';
 }
 
+/* ============================================================
+   Dragging a card into another lane
+   ============================================================ */
+
+/**
+ * What letting go in a lane means.
+ *
+ * **A drop is an intent, never a transition.** `machine.apply` is still the only
+ * writer of `status`, and every kind below ends in exactly one of the commands
+ * `ticketActions` already offers — so a lane can never mean something the
+ * buttons on that same card cannot mean (design 7.1's "one control, two
+ * entrances", applied to the board's own gestures).
+ *
+ * `begin` deliberately carries **no mode**. Dropping a card into Running is the
+ * statement "this work should start", which is not the same statement as "send
+ * it right now": the choice between starting attended (the brief waits in the
+ * input box) and running unattended (autopilot on, the brief sent at once) costs
+ * tokens either way, so it is asked — or remembered — rather than inferred from
+ * a gesture (`rememberedStartMode`).
+ */
+export type TicketDrop =
+  | { kind: 'begin' }
+  | { kind: 'accept' }
+  | { kind: 'sendBack' }
+  | { kind: 'reopen' };
+
+/**
+ * Which lanes accept a card dragged out of `status`, and as what.
+ *
+ * **The lanes that are absent are the point**, and each one is absent for a
+ * reason rather than by omission:
+ *
+ *   - `running → needs_you` / `review` are facts an agent reports (`reported`),
+ *     or an unrequested exit. A person has no way to make either true, so a drop
+ *     that did it would be inventing a transition the record has no command for.
+ *   - `needs_you → running` is two different intents — "continue" (resume the
+ *     same session) and "start over" (`superseded`, a fresh one) — and the
+ *     continue branch does not move the status at all (invariant 7). A lane
+ *     cannot be a gesture whose result is "nothing moved", so both stay buttons.
+ *   - **Done is never a drop target.** Done owns both `done` and `dropped`
+ *     (`columnOf`), so a drop there cannot say which one it means; and giving a
+ *     Ticket up is irreversible enough to keep its own confirmation.
+ *
+ * Every other direction is a lane-to-lane move whose command already exists, so
+ * the drag adds no vocabulary — it only adds a second way to say it.
+ */
+export function dropTargets(status: TicketStatus): Partial<Record<TicketColumn, TicketDrop>> {
+  switch (status) {
+    case 'open':
+      return { running: { kind: 'begin' } };
+    case 'review':
+      // Review is the one lane with two meaningful moves: forward to Done, and
+      // back to Running with an opinion. Both are the card's own buttons.
+      return { done: { kind: 'accept' }, running: { kind: 'sendBack' } };
+    case 'done':
+    case 'dropped':
+      return { open: { kind: 'reopen' } };
+    case 'running':
+    case 'needs_you':
+      return {};
+  }
+}
+
+/** Whether a lane would do nothing with this card — for the drop highlight. */
+export function acceptsDrop(status: TicketStatus, column: TicketColumn): boolean {
+  return dropTargets(status)[column] !== undefined;
+}
+
+/**
+ * What the board remembers about the `begin` drop: ask every time, or take one
+ * answer without asking.
+ *
+ * `'ask'` is the first-run value and the default, because the two answers cost
+ * very differently: `run_now` sends the brief and switches autopilot on, so a
+ * remembered one is only ever set by a person who ticked the box.
+ */
+export type TicketStartMemory = 'ask' | 'start' | 'run_now';
+
+/** The two answers the start dialog offers, and the two a memory can hold. */
+export type StartMode = 'start' | 'run_now';
+
+/**
+ * The mode a `begin` drop should use, or `null` when it has to ask.
+ *
+ * A function rather than an `if` at the call site so the rule can be asserted:
+ * a stray edit that makes a first-run board run Tickets unattended is the one
+ * mistake here that spends money before anyone reads a dialog.
+ */
+export function rememberedStartMode(memory: TicketStartMemory): StartMode | null {
+  return memory === 'ask' ? null : memory;
+}
+
+/** The label a drop's verb is spoken and announced with. `begin` has no fixed
+ *  label: which mode it becomes is only known once the memory or the dialog has
+ *  answered, so the caller passes the resolved mode.
+ *
+ *  The two-part names are **i18n keys, not prose**: `ticket.drop.verb.begin.start`
+ *  is one entry, and a `:` separator would read as a key prefix to every reader
+ *  of this file while reading as a plain string to `t`. */
+export type DropVerb = 'begin.start' | 'begin.run_now' | 'accept' | 'sendBack' | 'reopen';
+
+/** The verb a drop is announced with, once `begin` has been resolved. */
+export function dropVerb(drop: TicketDrop, mode: StartMode = 'run_now'): DropVerb {
+  switch (drop.kind) {
+    case 'begin':
+      return mode === 'start' ? 'begin.start' : 'begin.run_now';
+    case 'accept':
+      return 'accept';
+    case 'sendBack':
+      return 'sendBack';
+    case 'reopen':
+      return 'reopen';
+  }
+}
+
+/**
+ * Whether acting on a Ticket leaves the board on screen.
+ *
+ * **The drag never leaves it**, and this exists so that stays a rule rather than
+ * something each call site remembers. A person who drags a card to Running is
+ * watching the board; taking them to a conversation would answer a question they
+ * did not ask. The card's own Start button is the opposite: it is the "hand this
+ * to me, with the brief in front of me" gesture, so it goes where the brief is —
+ * unless it was Run now, which has nothing to hand over (the board stays, and the
+ * card moves to Running by itself).
+ */
+export function staysOnBoard(source: 'card' | 'drag', runNow: boolean): boolean {
+  if (source === 'drag') return true;
+  return runNow;
+}
+
+/* ============================================================
+   What the card says about the run it just started
+   ============================================================ */
+
+/**
+ * What a `running` Ticket's session is actually doing, read off the bucket.
+ *
+ * **Derived, never written to the Ticket** — the same rule `selectRowStatus` and
+ * `needsYouCause` follow, and for the same reason: the record's status is a
+ * snapshot only `machine.apply` writes, and "the brief is sitting in the input
+ * box unsent" is a fact about a session, not a state of the work.
+ *
+ * It exists because `start` writes `running` before anything has been sent: an
+ * attended start parks the brief in the composer, so a card in Running with
+ * nothing running in it is otherwise indistinguishable from a working one. That
+ * is exactly the misreading design §7.3's "do not imply a channel that is not
+ * there" forbids in the other direction.
+ */
+export type TicketRunState =
+  /** Not running, or no live session to read: the card's own badges say why. */
+  | 'idle'
+  /** The session was opened and has not answered its handshake. */
+  | 'connecting'
+  /** The brief is in the composer, unsent: the work waits on the person. */
+  | 'awaiting_send'
+  /** Something has been said in the session, or nothing is parked. */
+  | 'sent';
+
+export function ticketRunState(input: {
+  status: TicketStatus;
+  /** The Assignment's child is alive (`liveKeyOfAssignment !== null`). */
+  live: boolean;
+  ready: boolean;
+  draft: string;
+  hasSpoken: boolean;
+  brief: string;
+}): TicketRunState {
+  if (input.status !== 'running' || !input.live) return 'idle';
+  if (!input.ready) return 'connecting';
+  if (input.hasSpoken) return 'sent';
+  const parked = input.draft.trim();
+  // A brief of nothing is no evidence of a parked brief; the card is already
+  // saying the Ticket cannot start.
+  if (parked !== '' && parked === input.brief.trim()) return 'awaiting_send';
+  return 'sent';
+}
+
 /**
  * Whether "Start" / "Start over" can put this Ticket's brief on the wire.
  *

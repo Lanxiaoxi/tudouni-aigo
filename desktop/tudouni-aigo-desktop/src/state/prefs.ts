@@ -91,6 +91,15 @@ type Prefs = {
   workspacesCollapsed: boolean;
   /** The left rail's foot (the seven workbench buttons), folded on its own. */
   footCollapsed: boolean;
+  /**
+   * What dropping a Ticket card into Running does: ask, or take one answer.
+   *
+   * A **window preference**, not user data, and it stays in the window's own
+   * storage for the reason the header gives: it is how this person drives the
+   * board, and copying `~/.tudouni` to another machine must not carry a
+   * "always run unattended" switch over with it. Losing it costs one dialog.
+   */
+  ticketStartMode: 'ask' | 'start' | 'run_now';
 };
 
 function loadPrefs(): Prefs {
@@ -105,6 +114,7 @@ function loadPrefs(): Prefs {
     sessionsCollapsed: false,
     workspacesCollapsed: false,
     footCollapsed: true,
+    ticketStartMode: 'ask',
   };
   try {
     const raw = localStorage.getItem('aigo.prefs');
@@ -154,6 +164,12 @@ function loadPrefs(): Prefs {
       // now `true` (the drawer starts folded — see `footCollapsed`'s doc).
       footCollapsed:
         typeof parsed.footCollapsed === 'boolean' ? parsed.footCollapsed : fallback.footCollapsed,
+      // Read off the union member by member rather than coerced: a corrupted
+      // record must fall back to **asking**, never to running unattended.
+      ticketStartMode:
+        parsed.ticketStartMode === 'start' || parsed.ticketStartMode === 'run_now'
+          ? parsed.ticketStartMode
+          : 'ask',
     };
   } catch {
     return fallback;
@@ -186,6 +202,7 @@ export function persistPrefs(s: AppStore, quiet?: { key: string; value: QuietMod
         sessionsCollapsed: s.sessionsCollapsed,
         workspacesCollapsed: s.workspacesCollapsed,
         footCollapsed: s.footCollapsed,
+        ticketStartMode: s.ticketStartMode,
       }),
     );
   } catch {

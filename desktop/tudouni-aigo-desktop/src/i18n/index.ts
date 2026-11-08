@@ -977,6 +977,63 @@ export const en = {
   'ticket.btn.startHint': 'Open a new session with the brief in its input box',
   'ticket.btn.runNow': 'Run now',
   'ticket.btn.runNowHint': 'Turn autopilot on and send the brief straight away',
+  /* ---------------- dropping a card into another lane ----------------
+   *
+   * Dragging is the board's second way to say what the buttons say, so the words
+   * are the buttons' words. `drop.*` names the *act a drop performs*, which is
+   * what the lane head says while a card is over it — "Run now" is a button,
+   * "Drop to run now" is a place.
+   */
+  'ticket.drop.verb.begin.start': 'Drop to start',
+  'ticket.drop.verb.begin.run_now': 'Drop to run now',
+  'ticket.drop.verb.accept': 'Drop to accept',
+  'ticket.drop.verb.sendBack': 'Drop to send back',
+  'ticket.drop.verb.reopen': 'Drop to reopen',
+  'ticket.drop.overNone': 'Nothing happens here',
+  'ticket.drop.announce.begin.start': '{title} moved to Running. The brief waits in its session.',
+  'ticket.drop.announce.begin.run_now': '{title} moved to Running. It is working now.',
+  'ticket.drop.announce.accept': '{title} moved to Done.',
+  'ticket.drop.announce.sendBack': '{title} moved to Running. Say what should change.',
+  'ticket.drop.announce.reopen': '{title} moved back to Open.',
+  'ticket.drop.moving': 'Moving…',
+  'ticket.drop.cancelled': 'The move was cancelled.',
+  /* The drag's keyboard-equivalent: never the only way to do it. */
+  'ticket.menu.move': 'Move to…',
+  'ticket.menu.moveTo.running': 'Running',
+  'ticket.menu.moveTo.open': 'Open',
+  'ticket.menu.moveTo.done': 'Done',
+  /* The way back to the dialog once "do this from now on" has suppressed it. */
+  'ticket.menu.startOptions': 'Start options…',
+  'ticket.menu.startOptionsHint': 'Choose between showing the brief first and running now \u2014 and change what is remembered',
+  /* ---------------- the start dialog ----------------
+   *
+   * Dragging a card into Running says "this should start", which is not the same
+   * claim as "send it right now": one answer parks the brief in the session's
+   * input box, the other turns autopilot on and spends tokens unattended. So a
+   * drop asks — unless the person ticked the box that says stop asking.
+   */
+  'ticket.start.title': 'Start {title}',
+  'ticket.start.note': 'Both open a new session. They differ in what happens first.',
+  'ticket.start.mode.start': 'Show me first',
+  'ticket.start.mode.startHint': 'The brief waits in the new session\u2019s input box. Press Enter when you are ready.',
+  'ticket.start.mode.run_now': 'Run now',
+  'ticket.start.mode.run_nowHint': 'Turns autopilot on and sends the brief straight away.',
+  'ticket.start.remember': 'Do this from now on without asking',
+  'ticket.start.rememberHint': 'Change it later in this dialog: untick it to be asked again.',
+  'ticket.start.confirm': 'Start',
+  'ticket.start.cancel': 'Cancel',
+  /* ---------------- what a running card is doing ----------------
+   *
+   * `running` is written when the session is opened, so a card can sit in that
+   * lane with the brief still unsent. Derived from the session, never written to
+   * the Ticket — the same rule the status dot follows.
+   */
+  'ticket.run.connecting': 'Connecting…',
+  'ticket.run.connectingHint': 'The session was opened and has not answered yet.',
+  'ticket.run.awaitingSend': 'Brief not sent',
+  'ticket.run.awaitingSendHint': 'The brief is waiting in the session\u2019s input box. Open it and press Enter.',
+  'ticket.btn.sendBrief': 'Go send it',
+  'ticket.btn.sendBriefHint': 'Open the session with its brief already in the box',
   'ticket.btn.open': 'Open session',
   'ticket.btn.openHint': 'Go to the session working on this',
   'ticket.btn.continue': 'Continue',

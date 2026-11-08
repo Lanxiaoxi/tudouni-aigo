@@ -20,7 +20,7 @@ import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
 import { landPersonReplied } from '../ticketLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'setTicketStartMode' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
 
   /**
@@ -848,6 +848,11 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
 
     toggleFootCollapsed() {
       set({ footCollapsed: !get().footCollapsed });
+      persistPrefs(get());
+    },
+
+    setTicketStartMode(mode) {
+      set({ ticketStartMode: mode });
       persistPrefs(get());
     },
 

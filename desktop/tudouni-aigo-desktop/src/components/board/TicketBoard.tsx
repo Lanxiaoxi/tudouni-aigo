@@ -1,8 +1,10 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   Ban,
   Check,
   CornerDownLeft,
@@ -42,14 +44,23 @@ import {
   type TicketStatus,
 } from '@/ticket/model';
 import {
+  acceptsDrop,
   canBindBrief,
   canDrop,
   canResumeAssignment,
   columnOf,
+  dropTargets,
+  dropVerb,
   groupTickets,
   needsYouCause,
+  rememberedStartMode,
+  staysOnBoard,
   ticketActions,
+  ticketRunState,
+  type StartMode,
   type TicketColumn,
+  type TicketDrop,
+  type TicketRunState,
 } from '@/ticket/view';
 import { baseName } from '@/utils/format';
 
@@ -262,11 +273,137 @@ export function TicketBoard() {
   const groups = useMemo(() => groupTickets(tickets), [tickets]);
   const [clearArmed, setClearArmed] = useState(false);
 
+  /* ---------------- dragging a card into another lane ---------------- */
+
+  /**
+   * A card that has been let go and whose command is still running.
+   *
+   * **The board never moves a card optimistically.** `start` opens a session
+   * first and only then writes `running` (`ticketRuns.ts`), so a card that slid
+   * into Running the instant it was released could sit there with no session
+   * behind it if the open was refused — a lie the person would find out about
+   * minutes later. The placeholder says "moving" and is replaced by the real card
+   * when the store says the status changed, or removed when the command fails.
+   */
+  const [landing, setLanding] = useState<{ ticketId: string; column: TicketColumn } | null>(null);
+  /** What the last drop did, for the screen reader (and the visible note). */
+  const [dropNote, setDropNote] = useState<string | null>(null);
+
+  /**
+   * The start question, when a drop had to ask.
+   *
+   * Component state rather than a store field, for the reason `TicketDialog`
+   * gives: the question exists only while the board is open and nothing else in
+   * the window has a use for it. `remember` is the box's *proposed* answer — it
+   * is only written when the dialog is confirmed.
+   */
+  const [startAsk, setStartAsk] = useState<{ ticket: Ticket; mode: StartMode } | null>(null);
+
+  const startTicket = useApp((s) => s.startTicket);
+  const acceptTicket = useApp((s) => s.acceptTicket);
+  const setTicketStartMode = useApp((s) => s.setTicketStartMode);
+  const ticketStartMode = useApp((s) => s.ticketStartMode);
+
+  /** Cards whose send-back box a drop asked for. */
+  const [feedbackFor, setFeedbackFor] = useState<string | null>(null);
+
+  /** Run a Ticket's start for a drop, keeping the board in front of it. */
+  const beginFromDrop = useCallback(
+    async (ticket: Ticket, mode: StartMode): Promise<void> => {
+      setLanding({ ticketId: ticket.id, column: 'running' });
+      setDropNote(null);
+      try {
+        const key = await startTicket(ticket.id, { runNow: mode === 'run_now' });
+        if (key === null) {
+          setDropNote(t('ticket.problem.start'));
+          return;
+        }
+        // **The one line this whole feature is about.** `staysOnBoard('drag', …)`
+        // is true whatever the mode, so a drop — attended or not — leaves the
+        // person where they were, watching the card move. Asking the rule rather
+        // than omitting the call is what keeps the two paths honest: `act.start`
+        // below asks the same function with `'card'` and does close the board, and
+        // a future third entry point has an obvious thing to copy.
+        if (!staysOnBoard('drag', mode === 'run_now')) setBoard(null);
+        setDropNote(
+          t(mode === 'run_now' ? 'ticket.drop.announce.begin.run_now' : 'ticket.drop.announce.begin.start', {
+            title: ticketTitle(ticket) || ticket.id,
+          }),
+        );
+      } finally {
+        setLanding(null);
+      }
+    },
+    [setBoard, startTicket, t],
+  );
+
+  /**
+   * What letting go means, applied through the **same store actions the card's
+   * buttons call** — the drag adds a gesture, never a verb.
+   */
+  const applyDrop = useCallback(
+    (ticket: Ticket, drop: TicketDrop): void => {
+      const title = ticketTitle(ticket) || ticket.id;
+      switch (drop.kind) {
+        case 'begin': {
+          const remembered = rememberedStartMode(ticketStartMode);
+          if (remembered === null) {
+            // Asked, not guessed: the two answers cost differently.
+            setStartAsk({ ticket, mode: 'run_now' });
+            return;
+          }
+          void beginFromDrop(ticket, remembered);
+          return;
+        }
+        case 'accept': {
+          // Synchronous: the machine answers in the same tick, so there is
+          // nothing for a "moving" placeholder to cover.
+          const result = acceptTicket(ticket.id);
+          setDropNote(
+            result.ok ? t('ticket.drop.announce.accept', { title }) : t('ticket.problem.refused'),
+          );
+          return;
+        }
+        case 'reopen': {
+          const result = useApp.getState().dispatchTicket(ticket.id, { type: 'reopen' });
+          setDropNote(
+            result.ok ? t('ticket.drop.announce.reopen', { title }) : t('ticket.problem.refused'),
+          );
+          return;
+        }
+        case 'sendBack': {
+          // Sending back needs an opinion, and the opinion lives on the card.
+          // A lane cannot type it, so the drop opens the card's own feedback box
+          // rather than refusing with no way forward.
+          setFeedbackFor(ticket.id);
+          setDropNote(t('ticket.btn.sendBackHint'));
+          return;
+        }
+      }
+    },
+    [acceptTicket, beginFromDrop, t, ticketStartMode],
+  );
+
   /** The toolbar's status filter. `all` draws the four live lanes; anything
-   *  else draws that one lane, full width, with a way back. */
+   *  else draws that one lane, full width, with a way back.
+   *
+   *  Declared above the drag because the gesture reads it: a single-lane board
+   *  has nowhere to drop, so its cards do not lift at all. */
   const [filter, setFilter] = useState<'all' | TicketColumn>('all');
   const [query, setQuery] = useState('');
   const needle = query.trim().toLowerCase();
+
+  const { drag, lanesRef, onPointerDown } = useTicketDrag(
+    useCallback(
+      (ticketId: string, drop: TicketDrop) => {
+        const ticket = useApp.getState().tickets.find((row) => row.id === ticketId);
+        if (ticket === undefined) return;
+        applyDrop(ticket, drop);
+      },
+      [applyDrop],
+    ),
+    filter === 'all',
+  );
 
   const counts: Record<TicketColumn, number> = {
     open: groups.open.length,
@@ -353,6 +490,7 @@ export function TicketBoard() {
   ];
 
   function renderCard(ticket: Ticket) {
+    const dragging = drag?.ticketId === ticket.id;
     return (
       <TicketCard
         key={ticket.id}
@@ -361,25 +499,59 @@ export function TicketBoard() {
         remoteLabels={remoteLabels}
         remoteIds={remoteIds}
         locked={locked}
+        dragging={dragging}
+        feedbackRequested={feedbackFor === ticket.id}
+        onFeedbackDone={() => setFeedbackFor((current) => (current === ticket.id ? null : current))}
+        onDragStart={onPointerDown}
+        onMove={(drop) => applyDrop(ticket, drop)}
+        onAskStart={() => setStartAsk({ ticket, mode: rememberedStartMode(ticketStartMode) ?? 'run_now' })}
         onEdit={() => setEditingId(ticket.id)}
       />
     );
   }
 
+  /**
+   * One lane.
+   *
+   * **A lane says what it would do while a card is over it, and does nothing
+   * otherwise.** The `is-target` state is `acceptsDrop`, which is the very
+   * function the drop itself consults — so the highlight can never promise a
+   * move the release would refuse. A lane that will not take the card is left
+   * exactly as it looks when nothing is being dragged: dimming it would make the
+   * board unreadable at the moment a person most wants to read it.
+   */
   function renderLane(column: TicketColumn) {
     const single = filter !== 'all';
     const cards = cardsOf(column);
     const tone = LANE_TONE[column];
+    const target = drag !== null && acceptsDrop(drag.status, column);
+    const landingHere = landing !== null && landing.column === column;
     return (
       <section
         key={column}
-        className={`tkb-lane${single ? ' is-single' : ''}`}
+        className={`tkb-lane${single ? ' is-single' : ''}${target ? ' is-target' : ''}`}
         data-tone={tone}
+        data-lane={column}
         aria-label={t(`ticket.col.${column}` as TKey)}
       >
         <div className="tkb-lane-head">
           <span className={`tkb-lane-dot is-${tone}`} aria-hidden />
           <span className="tkb-lane-title">{t(`ticket.col.${column}` as TKey)}</span>
+          {target && drag !== null ? (
+            // The verb the release would run, in the lane head: said before the
+            // finger is lifted, not after.
+            <span className="tkb-lane-verb">
+              {(() => {
+                const drop = dropTargets(drag.status)[column];
+                if (drop === undefined) return null;
+                // `begin` has no fixed verb until the start question answers;
+                // the lane names the act ("start") and the dialog unnamed.
+                return drop.kind === 'begin'
+                  ? t('ticket.drop.verb.begin.start')
+                  : t(`ticket.drop.verb.${dropVerb(drop)}` as TKey);
+              })()}
+            </span>
+          ) : null}
           {single ? (
             <button
               type="button"
@@ -416,11 +588,31 @@ export function TicketBoard() {
           <span className="tkb-lane-count">{counts[column]}</span>
         </div>
 
+        {/* A card in flight over this lane, before anything has been written:
+            the placeholder is the only thing on the board that says "moving"
+            (never "moved"), and it is replaced by the real card the moment the
+            store's status changes. */}
+        {landingHere ? (
+          <div className="tkb-landing" role="status">
+            <span className="tkb-landing-dot" aria-hidden />
+            {t('ticket.drop.moving')}
+          </div>
+        ) : null}
+
         {cards.length === 0 ? (
-          <div className="tkb-lane-empty">
-            <Inbox size={16} />
-            <b>{t(LANE_EMPTY_TITLE[column])}</b>
-            <span>{t(LANE_EMPTY_HINT[column])}</span>
+          <div className={`tkb-lane-empty${target ? ' is-target' : ''}`}>
+            {target && drag !== null ? (
+              <>
+                <CornerDownLeft size={16} />
+                <b>{t('ticket.drop.verb.begin.start')}</b>
+              </>
+            ) : (
+              <>
+                <Inbox size={16} />
+                <b>{t(LANE_EMPTY_TITLE[column])}</b>
+                <span>{t(LANE_EMPTY_HINT[column])}</span>
+              </>
+            )}
           </div>
         ) : (
           <div className="tkb-card-list">{cards.map(renderCard)}</div>
@@ -579,8 +771,84 @@ export function TicketBoard() {
       ) : tickets.length === 0 ? (
         <EmptyState title={t('ticket.empty.title')} hint={t('ticket.empty.hint')} />
       ) : (
-        <div className="tkb-lanes scroll-fade">{columns.map(renderLane)}</div>
+        <div className="tkb-lanes scroll-fade" ref={lanesRef}>
+          {columns.map(renderLane)}
+        </div>
       )}
+
+      {/* What the last drop did. Polite and dismissible, because a drag is
+          silent otherwise: the card's own move is the only evidence it
+          happened, and that evidence is off screen once the lane scrolls. */}
+      {dropNote !== null ? (
+        <div className="tkb-drop-note" role="status" aria-live="polite">
+          <span>{dropNote}</span>
+          <button type="button" aria-label={t('common.close')} onClick={() => setDropNote(null)}>
+            <X size={11} />
+          </button>
+        </div>
+      ) : null}
+
+      {/* **The card in flight.** A fixed clone at the pointer's own position,
+          sized once at pickup so it does not reflow as it crosses lanes of a
+          different width, and `inert` so it cannot take a click mid-gesture.
+
+          Portalled to the body, and that is load-bearing: `.board` carries an
+          entrance `animation` whose keyframes end in `transform: none`, but an
+          *animated* element keeps a stacking context for the animation's
+          duration — and a `position: fixed` child of a transformed ancestor is
+          positioned against that ancestor, not the viewport. Rendering it here
+          would make the clone jump by the board's offset for the first 200ms of
+          a drag. */}
+      {drag !== null
+        ? createPortal(
+            <div
+              className="tkb-drag-ghost"
+              aria-hidden
+              style={{
+                width: drag.width,
+                transform: `translate3d(${drag.x + 12}px, ${drag.y + 10}px, 0)`,
+              }}
+            >
+              <span className="tkb-drag-title">{drag.title}</span>
+              <span className="tkb-drag-hint">
+                {drag.over !== null && acceptsDrop(drag.status, drag.over)
+                  ? (() => {
+                      const drop = dropTargets(drag.status)[drag.over];
+                      return drop === undefined
+                        ? ''
+                        : drop.kind === 'begin'
+                          ? t('ticket.drop.verb.begin.start')
+                          : t(`ticket.drop.verb.${dropVerb(drop)}` as TKey);
+                    })()
+                  : t('ticket.drop.overNone')}
+              </span>
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {/* The start question a drop asked. Mounted here so its `key` renews the
+          radio state with the Ticket it belongs to. */}
+      {startAsk !== null ? (
+        <StartDialog
+          key={`start-${startAsk.ticket.id}`}
+          ticket={startAsk.ticket}
+          initial={startAsk.mode}
+          remember={ticketStartMode !== 'ask'}
+          onSubmit={(mode, remember) => {
+            setStartAsk(null);
+            // Remembering is a separate act from starting: ticking the box says
+            // "stop asking", not "and do it this time too".
+            if (remember) setTicketStartMode(mode);
+            else if (ticketStartMode !== 'ask') setTicketStartMode('ask');
+            void beginFromDrop(startAsk.ticket, mode);
+          }}
+          onCancel={() => {
+            setStartAsk(null);
+            setDropNote(t('ticket.drop.cancelled'));
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -881,6 +1149,406 @@ function TicketDialog({
 }
 
 /* ============================================================
+   The drag: one controller for the lane list.
+   ============================================================ */
+
+/**
+ * One card in flight.
+ *
+ * `pointerId` is what makes this cancellable at all: the gesture belongs to the
+ * pointer that started it, and `pointercancel` / a lost capture both arrive
+ * with the same id (a window that loses focus, a touch that turns into a
+ * scroll).
+ */
+interface DragState {
+  ticketId: string;
+  pointerId: number;
+  /** The pointer's current client position, for the floating clone. */
+  x: number;
+  y: number;
+  /** The card's size when it was picked up: the clone must not resize as it
+   *  crosses a lane of a different width. */
+  width: number;
+  /** The lane under the pointer, or `null` over dead space. */
+  over: TicketColumn | null;
+  /** The card's own status, so the drop targets do not need a lookup. */
+  status: TicketStatus;
+  title: string;
+}
+
+/** How far the pointer travels before a press becomes a drag. Below this it is
+ *  still a click, so a card can be pressed to focus it without lifting off. */
+const DRAG_THRESHOLD = 5;
+
+/** How close to a scroller's edge the pointer has to be to auto-scroll it. */
+const EDGE_PX = 48;
+/** Pixels per frame at the edge. Slow enough to aim, fast enough to cross four
+ *  lanes without lifting. */
+const EDGE_SPEED = 14;
+
+/**
+ * The board's drag gesture.
+ *
+ * **Pointer events, not HTML5 drag-and-drop.** The board is a `view` inside a
+ * WebView, where a `dragstart` payload is shared with the OS file-drop channel
+ * and carries no coordinates worth trusting; it also has no touch support and
+ * cannot report where the pointer is *between* drops. Pointer events give the
+ * clone a position per frame, which is the whole interaction.
+ *
+ * **The gesture decides nothing.** It produces a `TicketDrop` and hands it to
+ * the caller; the caller runs the same store action the card's own button runs.
+ * That is the rule this feature lives or dies by — a lane can mean what a button
+ * means, never more.
+ */
+function useTicketDrag(
+  onDrop: (ticketId: string, drop: TicketDrop) => void,
+  /** Whether any lane other than the card's own is on screen. */
+  enabled: boolean,
+) {
+  const [drag, setDrag] = useState<DragState | null>(null);
+  /** The pointer is down but has not travelled far enough yet. Refs, because a
+   *  press that does not become a drag must leave no React state behind. */
+  const pending = useRef<{
+    pointerId: number;
+    ticketId: string;
+    status: TicketStatus;
+    title: string;
+    x: number;
+    y: number;
+    width: number;
+  } | null>(null);
+  const lanesRef = useRef<HTMLDivElement>(null);
+
+  /** The lane whose rectangle holds a point. Read off the DOM because the lanes
+   *  are laid out by flex, not by anything this hook knows. */
+  const laneAt = useCallback((x: number, y: number): TicketColumn | null => {
+    const root = lanesRef.current;
+    if (root === null) return null;
+    for (const lane of root.querySelectorAll<HTMLElement>('[data-lane]')) {
+      const box = lane.getBoundingClientRect();
+      if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) {
+        return lane.dataset.lane as TicketColumn;
+      }
+    }
+    return null;
+  }, []);
+
+  /**
+   * Keep the scroller under the pointer turning while the card is near it.
+   *
+   * Twice over: `.tkb-lanes` scrolls sideways, so without this a card could not
+   * be carried from Open to Review on a narrow window without being put down
+   * first; and each lane scrolls its own cards, so reach the bottom of a long
+   * lane. Driven by `pointermove` — a pointer held perfectly still at the edge
+   * does not scroll, which is the behaviour a person expects from a drag they
+   * are aiming.
+   */
+  const autoScroll = useCallback((x: number, y: number) => {
+    const root = lanesRef.current;
+    if (root === null) return;
+    const box = root.getBoundingClientRect();
+    if (y >= box.top && y <= box.bottom) {
+      if (x - box.left < EDGE_PX) root.scrollLeft -= EDGE_SPEED;
+      else if (box.right - x < EDGE_PX) root.scrollLeft += EDGE_SPEED;
+    }
+    for (const lane of root.querySelectorAll<HTMLElement>('[data-lane]')) {
+      const laneBox = lane.getBoundingClientRect();
+      if (x < laneBox.left || x > laneBox.right) continue;
+      if (y - laneBox.top < EDGE_PX) lane.scrollTop -= EDGE_SPEED;
+      else if (laneBox.bottom - y < EDGE_PX) lane.scrollTop += EDGE_SPEED;
+    }
+  }, []);
+
+  /** A press that might become a drag. Nothing is captured yet: capturing here
+   *  would swallow the click a person means to make. */
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLElement>, ticket: Ticket) => {
+      // Primary button and one pointer only. A second finger must not start a
+      // second card.
+      if (event.button !== 0 || pending.current !== null) return;
+      // A filtered board draws one lane, so every other lane is off screen and
+      // there is nowhere to drop. Lifting the card would be a gesture whose only
+      // possible outcome is a release over nothing.
+      if (!enabled) return;
+      // Pressing a control inside the card is pressing that control: the card's
+      // sentence, its buttons, and its menu all keep their own gestures.
+      if ((event.target as HTMLElement).closest('button, a, input, textarea, select, [role="menu"]') !== null) {
+        return;
+      }
+      const box = event.currentTarget.getBoundingClientRect();
+      pending.current = {
+        pointerId: event.pointerId,
+        ticketId: ticket.id,
+        status: ticket.status,
+        title: ticketTitle(ticket) || ticket.id,
+        x: event.clientX,
+        y: event.clientY,
+        width: box.width,
+      };
+    },
+    [enabled],
+  );
+
+  /** Movement: promote a press into a drag once it has travelled far enough. */
+  useEffect(() => {
+    function move(event: PointerEvent): void {
+      const start = pending.current;
+      if (start !== null && start.pointerId === event.pointerId) {
+        const far =
+          Math.abs(event.clientX - start.x) >= DRAG_THRESHOLD ||
+          Math.abs(event.clientY - start.y) >= DRAG_THRESHOLD;
+        if (!far) return;
+        pending.current = null;
+        // Only some Tickets can go anywhere. The others never lift, which is
+        // the honest feedback: there is nothing this gesture could do.
+        if (Object.keys(dropTargets(start.status)).length === 0) return;
+        // The press may already have selected the card's text. Clear it: the
+        // gesture has become a move, and a half-selected brief dragged across
+        // the board says the wrong thing about what is happening.
+        window.getSelection()?.removeAllRanges();
+        setDrag({
+          ticketId: start.ticketId,
+          pointerId: start.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          width: start.width,
+          over: null,
+          status: start.status,
+          title: start.title,
+        });
+        return;
+      }
+      setDrag((current) => {
+        if (current === null || current.pointerId !== event.pointerId) return current;
+        const over = laneAt(event.clientX, event.clientY);
+        return { ...current, x: event.clientX, y: event.clientY, over };
+      });
+      // Outside the updater: scrolling is a side effect of the pointer moving,
+      // not something a render pass may redo.
+      autoScroll(event.clientX, event.clientY);
+    }
+
+    function up(event: PointerEvent): void {
+      if (pending.current !== null && pending.current.pointerId === event.pointerId) {
+        // A press that never became a drag: it was a click, and the card's own
+        // handlers saw it. Nothing to do.
+        pending.current = null;
+        return;
+      }
+      // **The drop is decided before any state is written.** Reading the card in
+      // flight out of a `setDrag` updater would run the command inside React's
+      // render phase — and an updater may be invoked more than once (StrictMode,
+      // a re-render while it is queued), which would fire `start` twice. `dragRef`
+      // is the same object the render is drawing, read directly.
+      const current = dragRef.current;
+      if (current === null || current.pointerId !== event.pointerId) return;
+      setDrag(null);
+      const lane = laneAt(event.clientX, event.clientY);
+      if (lane === null) return;
+      const drop = dropTargets(current.status)[lane];
+      // `drop` is only non-undefined for a lane `acceptsDrop` returns true for,
+      // so an illegal lane releases silently — the highlight already said so.
+      if (drop !== undefined) onDrop(current.ticketId, drop);
+    }
+
+    function cancel(event: PointerEvent): void {
+      if (pending.current?.pointerId === event.pointerId) {
+        pending.current = null;
+        return;
+      }
+      setDrag((current) => (current !== null && current.pointerId === event.pointerId ? null : current));
+    }
+
+    function key(event: KeyboardEvent): void {
+      if (event.key !== 'Escape') return;
+      if (pending.current === null && dragRef.current === null) return;
+      // Capture, and stop it: the window's Esc closes the board, and an
+      // in-flight card is the nearer thing to cancel.
+      event.preventDefault();
+      event.stopPropagation();
+      pending.current = null;
+      setDrag(null);
+    }
+
+    /**
+     * The window going away ends the gesture.
+     *
+     * `pointerup` outside the window never arrives, so a card would stay in
+     * flight — a floating clone following a pointer that is now somewhere else,
+     * with the board's next click landing on a drop target. The window losing
+     * focus is the one signal that always precedes that.
+     */
+    function blur(): void {
+      pending.current = null;
+      // Only clear if something is actually in flight, so the ordinary window
+      // blur (clicking the other app) costs no render.
+      if (dragRef.current !== null) setDrag(null);
+    }
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('keydown', key, true);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('keydown', key, true);
+      window.removeEventListener('blur', blur);
+    };
+  }, [autoScroll, laneAt, onDrop]);
+
+  // Read inside the key handler, which is registered once.
+  const dragRef = useRef<DragState | null>(null);
+  dragRef.current = drag;
+
+  return { drag, lanesRef, onPointerDown };
+}
+
+/* ============================================================
+   The start dialog: the one question a drop into Running asks.
+   ============================================================ */
+
+/**
+ * Start an Open Ticket — attended, or right now.
+ *
+ * **Why a drop asks at all.** The gesture "drag this card to Running" states
+ * that the work should begin; it does not state whether the brief should be sent
+ * unattended. Those cost differently (one parks the brief in the session's input
+ * box, the other turns autopilot on and spends tokens with nobody watching), so
+ * the answer is a choice — remembered only when the person ticks the box, and
+ * `'ask'` by default (`rememberedStartMode`).
+ *
+ * `Ctrl+Enter` submits, Esc cancels, and the chosen mode is the one the radio
+ * shows rather than a hidden default.
+ */
+function StartDialog({
+  ticket,
+  initial,
+  remember,
+  onSubmit,
+  onCancel,
+}: {
+  ticket: Ticket;
+  /** The mode the radio starts on: the remembered one, or `run_now` when there
+   *  is nothing remembered (the gesture meant "go"). */
+  initial: StartMode;
+  /** Whether the remember box starts ticked. */
+  remember: boolean;
+  onSubmit: (mode: StartMode, remember: boolean) => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const [mode, setMode] = useState<StartMode>(initial);
+  const [keep, setKeep] = useState(remember);
+  const okRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <DialogPrimitive.Root
+      open
+      onOpenChange={(next) => {
+        if (!next) onCancel();
+      }}
+    >
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="overlay-mask" />
+        <DialogPrimitive.Content
+          className="dialog tkb-start"
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            okRef.current?.focus();
+          }}
+        >
+          <div className="dialog-head">
+            <div className="grow">
+              <DialogPrimitive.Title className="dialog-title">
+                {t('ticket.start.title', { title: ticketTitle(ticket) || ticket.id })}
+              </DialogPrimitive.Title>
+              <DialogPrimitive.Description className="dialog-desc">
+                {t('ticket.start.note')}
+              </DialogPrimitive.Description>
+            </div>
+            <DialogPrimitive.Close asChild>
+              <button type="button" className="btn btn-ghost btn-compact" aria-label={t('common.close')}>
+                <X size={14} />
+              </button>
+            </DialogPrimitive.Close>
+          </div>
+
+          <div className="dialog-body scroll-fade tkb-start-body">
+            <label className="tk-choice-row tkb-start-choice">
+              <input
+                type="radio"
+                name="tkb-start-mode"
+                checked={mode === 'start'}
+                onChange={() => setMode('start')}
+              />
+              <span className="tkb-start-copy">
+                <span className="tkb-start-name">
+                  <Play size={12} />
+                  {t('ticket.start.mode.start')}
+                </span>
+                <span className="tkb-start-hint">{t('ticket.start.mode.startHint')}</span>
+              </span>
+            </label>
+
+            <label className="tk-choice-row tkb-start-choice">
+              <input
+                type="radio"
+                name="tkb-start-mode"
+                checked={mode === 'run_now'}
+                onChange={() => setMode('run_now')}
+              />
+              <span className="tkb-start-copy">
+                <span className="tkb-start-name">
+                  <Zap size={12} />
+                  {t('ticket.start.mode.run_now')}
+                </span>
+                <span className="tkb-start-hint">{t('ticket.start.mode.run_nowHint')}</span>
+              </span>
+            </label>
+
+            <label className="cfg-check tkb-start-remember">
+              <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} />
+              <span className="tkb-start-copy">
+                <span>{t('ticket.start.remember')}</span>
+                <span className="tkb-start-hint">{t('ticket.start.rememberHint')}</span>
+              </span>
+            </label>          </div>
+
+          <div className="dialog-foot">
+            <span className="tkb-form-note">
+              <CornerDownLeft size={12} />
+              {t('ticket.new.hint')}
+            </span>
+            <span className="grow" />
+            <button type="button" className="btn btn-outline" onClick={onCancel}>
+              {t('ticket.start.cancel')}
+            </button>
+            <button
+              ref={okRef}
+              type="button"
+              className="btn btn-primary"
+              onClick={() => onSubmit(mode, keep)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  onSubmit(mode, keep);
+                }
+              }}
+            >
+              {mode === 'run_now' ? <Zap size={13} /> : <Play size={13} />}
+              {t('ticket.start.confirm')}
+            </button>
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+/* ============================================================
    One card.
    ============================================================ */
 
@@ -890,6 +1558,12 @@ function TicketCard({
   remoteLabels,
   remoteIds,
   locked,
+  dragging,
+  feedbackRequested,
+  onFeedbackDone,
+  onDragStart,
+  onMove,
+  onAskStart,
   onEdit,
 }: {
   ticket: Ticket;
@@ -899,6 +1573,18 @@ function TicketCard({
   remoteLabels: Map<string, string>;
   remoteIds: ReadonlySet<string>;
   locked: boolean;
+  /** This card is the one in flight: drawn as a placeholder, not lifted twice. */
+  dragging: boolean;
+  /** A drop asked this card to say what should change (send back). */
+  feedbackRequested: boolean;
+  /** The drop's request has been answered or dropped (the box closed). */
+  onFeedbackDone: () => void;
+  onDragStart: (event: React.PointerEvent<HTMLElement>, ticket: Ticket) => void;
+  /** The menu's "Move to…": the same command the drop would run. */
+  onMove: (drop: TicketDrop) => void;
+  /** The menu's "Start options…": the only way back to the dialog once a mode
+   *  has been remembered (ticking the box suppresses it). */
+  onAskStart: () => void;
   onEdit: () => void;
 }) {
   const t = useT();
@@ -922,6 +1608,15 @@ function TicketCard({
   const [armed, setArmed] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
+
+  // A drop into Running came here to have something typed: open the box, and
+  // tell the board it may forget the request so a later re-render does not
+  // reopen what the person just closed.
+  useEffect(() => {
+    if (!feedbackRequested) return;
+    setFeedbackOpen(true);
+    onFeedbackDone();
+  }, [feedbackRequested, onFeedbackDone]);
   // **On the card, not on the board.** A refusal belongs beside the button that
   // produced it: the board is a horizontal scroller, so a sentence drawn above
   // the columns can be several screens from the card whose Start failed — and
@@ -1022,9 +1717,10 @@ function TicketCard({
         const key = await startTicket(ticket.id, { runNow });
         // A prefilled brief is waiting to be read and added to, so the person
         // is taken to it. "Run now" has nothing to wait for: the board stays,
-        // and the card moves to Running by itself.
-        if (key !== null && !runNow) closeBoard();
-        return key !== null;
+        // and the card moves to Running by itself. A **drag** never leaves the
+        // board either way, which is why that rule lives in `staysOnBoard`
+        // rather than here (see `applyDrop`).
+        if (key !== null && !staysOnBoard('card', runNow)) closeBoard();        return key !== null;
       }, 'ticket.problem.start'),
     restart: () =>
       run(async () => {
@@ -1058,11 +1754,46 @@ function TicketCard({
   const canGo = connected || resumable;
   const cannotSessions = busy || locked;
 
+  /** The lanes this card can be sent to, from the same table the drop uses. */
+  const moveEntries = Object.entries(dropTargets(status)) as [TicketColumn, TicketDrop][];
+
+  /**
+   * What this Assignment's session is doing, derived from the bucket.
+   *
+   * `start` writes `running` before anything is sent, so this is what stops the
+   * card claiming work is under way when the brief is still parked in the input
+   * box (or when the handshake has not landed). Read as primitives so the card
+   * does not repaint on every token — the same reason as `rowStatus`.
+   */
+  const runReady = useApp((s) => (liveKey === null ? false : (s.sessions[liveKey]?.ready ?? false)));
+  const runDraft = useApp((s) => (liveKey === null ? '' : (s.sessions[liveKey]?.draft ?? '')));
+  const runSpoke = useApp((s) => (liveKey === null ? false : (s.sessions[liveKey]?.hasSpoken ?? false)));
+  const runState: TicketRunState = ticketRunState({
+    status,
+    live: connected,
+    ready: runReady,
+    draft: runDraft,
+    hasSpoken: runSpoke,
+    brief: ticket.brief,
+  });
+
   return (
     <>
       <article
-        className={`tkb-card${status === 'needs_you' ? ' is-needs' : ''}${status === 'review' ? ' is-review' : ''}${status === 'done' || status === 'dropped' ? ' is-finished' : ''}`}
+        className={`tkb-card${status === 'needs_you' ? ' is-needs' : ''}${status === 'review' ? ' is-review' : ''}${status === 'done' || status === 'dropped' ? ' is-finished' : ''}${dragging ? ' is-dragging' : ''}${runState === 'awaiting_send' ? ' is-parked' : ''}`}
         aria-labelledby={`tkb-title-${ticket.id}`}
+        // **The drag starts here and nowhere else.** A press on the card's body
+        // may become one; a press on a control inside it does not (the hook
+        // checks), and a right-click is the menu's.
+        onPointerDown={
+          locked
+            ? undefined
+            : (e) => {
+                // A right-click or a second pointer is not a drag.
+                if (e.button !== 0) return;
+                onDragStart(e, ticket);
+              }
+        }
         // The card's second way into the menu, at the pointer's own place. A
         // right-click inside a text field keeps the native menu: that is where
         // "copy" and "paste" live, and the housekeeping verbs are not what a
@@ -1132,7 +1863,12 @@ function TicketCard({
           {connected ? <SessionDot status={rowStatus} /> : null}
         </div>
 
-        {placeMissing || !canBindBrief(ticket) || (status === 'running' && !connected) || oldRuntime ? (
+        {placeMissing ||
+        !canBindBrief(ticket) ||
+        (status === 'running' && !connected) ||
+        runState === 'connecting' ||
+        runState === 'awaiting_send' ||
+        oldRuntime ? (
           <div className="tkb-card-badges">
             {placeMissing ? <span className="badge badge-warning">{t('ticket.workspaceMissing')}</span> : null}
             {!canBindBrief(ticket) ? (
@@ -1143,6 +1879,19 @@ function TicketCard({
             {status === 'running' && !connected ? (
               <span className="badge badge-neutral" title={t('ticket.notConnectedHint')}>
                 {t('ticket.notConnected')}
+              </span>
+            ) : null}
+            {/* `running` is written when the session is opened, so these two say
+                what the lane cannot: nothing is working yet. Both are read from
+                the session, never written to the Ticket. */}
+            {runState === 'connecting' ? (
+              <span className="badge badge-neutral" title={t('ticket.run.connectingHint')}>
+                {t('ticket.run.connecting')}
+              </span>
+            ) : null}
+            {runState === 'awaiting_send' ? (
+              <span className="badge badge-info" title={t('ticket.run.awaitingSendHint')}>
+                {t('ticket.run.awaitingSend')}
               </span>
             ) : null}
             {oldRuntime ? (
@@ -1260,21 +2009,34 @@ function TicketCard({
                     <Tip
                       key={action}
                       label={
-                        !canGo
-                          ? t('ticket.workspaceMissing')
-                          : action === 'open'
-                            ? t('ticket.btn.openHint')
-                            : t('ticket.btn.continueHint')
+                        runState === 'awaiting_send'
+                          ? t('ticket.btn.sendBriefHint')
+                          : !canGo
+                            ? t('ticket.workspaceMissing')
+                            : action === 'open'
+                              ? t('ticket.btn.openHint')
+                              : t('ticket.btn.continueHint')
                       }
                     >
                       <button
                         type="button"
-                        className={`btn btn-compact ${action === 'continue' && status === 'running' ? 'btn-primary' : 'btn-outline'}`}
+                        // A parked brief is the one reason this button is the
+                        // primary action of the card: the work is waiting on the
+                        // person, and pressing Enter is all that is left.
+                        className={`btn btn-compact ${
+                          runState === 'awaiting_send' || (action === 'continue' && status === 'running')
+                            ? 'btn-primary'
+                            : 'btn-outline'
+                        }`}
                         disabled={busy || !canGo}
                         onClick={() => void act.open()}
                       >
                         <ExternalLink size={12} />
-                        {action === 'open' ? t('ticket.btn.open') : t('ticket.btn.continue')}
+                        {runState === 'awaiting_send'
+                          ? t('ticket.btn.sendBrief')
+                          : action === 'open'
+                            ? t('ticket.btn.open')
+                            : t('ticket.btn.continue')}
                       </button>
                     </Tip>
                   );
@@ -1380,6 +2142,27 @@ function TicketCard({
               <Pencil size={13} />
               {t('ticket.menu.edit')}
             </button>
+            {/* **The way back from a remembered answer.** Ticking "do this from
+                now on" suppresses this dialog, so without an entry that always
+                opens it, a remembered mode could never be changed — and the
+                dialog's own hint would be pointing at a screen that no longer
+                appears. Open tickets only: it is the card a start belongs to. */}
+            {status === 'open' ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="tkb-menu-item"
+                title={t('ticket.menu.startOptionsHint')}
+                disabled={cannotSessions || cannotStart}
+                onClick={() => {
+                  closeMenu();
+                  onAskStart();
+                }}
+              >
+                <Play size={13} />
+                {t('ticket.menu.startOptions')}
+              </button>
+            ) : null}
             {canDrop(status) ? (
               <button
                 type="button"
@@ -1396,6 +2179,36 @@ function TicketCard({
                 <Ban size={13} />
                 {t('ticket.btn.drop')}
               </button>
+            ) : null}
+            {/* **The keyboard and menu equal of the drag.** Dragging is a
+                second way to say what a lane does, so it must never be the only
+                one: these items come from the very table the drop consults, so
+                the two cannot drift. Hidden when no lane would take the card
+                (running, needs_you) — an item whose press can only refuse is
+                worse than no item. */}
+            {moveEntries.length > 0 ? (
+              <>
+                <span className="tkb-menu-sep" role="separator" />
+                <span className="tkb-menu-label">{t('ticket.menu.move')}</span>
+                {moveEntries.map(([column, drop]) => (
+                  <button
+                    key={column}
+                    type="button"
+                    role="menuitem"
+                    className="tkb-menu-item"
+                    disabled={cannotSessions}
+                    onClick={() => {
+                      closeMenu();
+                      onMove(drop);
+                    }}
+                  >
+                    <ArrowRight size={13} />
+                    {drop.kind === 'begin'
+                      ? t('ticket.menu.moveTo.running')
+                      : t(`ticket.menu.moveTo.${column}` as TKey)}
+                  </button>
+                ))}
+              </>
             ) : null}
             <Tip label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}>
               <button
