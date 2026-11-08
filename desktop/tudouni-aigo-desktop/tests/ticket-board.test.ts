@@ -797,3 +797,34 @@ test('the model menu is modal, which is what lets the wheel turn it inside a dia
       'events that land on this portalled menu, so the catalogue stops scrolling',
   );
 });
+
+/* ---------------- the card's housekeeping menu ---------------- */
+
+/**
+ * Edit, drop and delete are housekeeping, not the card's verbs: they sit behind
+ * one ⋯ (and a right-click) rather than on a row of their own. Pinned as source
+ * for the same reason as the dialog's markup: the shape is the decision, and
+ * Node has no browser to click it in.
+ *
+ * The check that matters beyond the shape is `canDrop`: the record decides
+ * whether "Drop" exists at all, so a Done card's menu is two rows, not three.
+ * A menu that offered it everywhere would be a button whose only press is a
+ * refusal.
+ */
+test('the card keeps edit, drop and delete behind one menu, and drop follows the status', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  const card = src.slice(src.indexOf('function TicketCard'));
+  assert.equal(
+    card.includes('tkb-card-tools'),
+    false,
+    'the three icon buttons are back on a row of their own; they belong in the card menu',
+  );
+  assert.match(card, /aria-haspopup="menu"/, 'the ⋯ trigger no longer says it opens a menu');
+  assert.match(card, /onContextMenu=/, 'the card lost its right-click way into the same menu');
+  assert.match(
+    card,
+    /\{canDrop\(status\) \? \(/,
+    'Drop is offered without asking the record whether the status can be given up',
+  );
+});
+

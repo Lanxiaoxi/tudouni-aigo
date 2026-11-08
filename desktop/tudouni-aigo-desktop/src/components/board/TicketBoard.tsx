@@ -10,6 +10,7 @@ import {
   Folder,
   Inbox,
   MessageSquare,
+  MoreHorizontal,
   Pencil,
   Play,
   Plus,
@@ -928,6 +929,55 @@ function TicketCard({
   // than merely misplaced.
   const [problem, setProblem] = useState<string | null>(null);
 
+  /**
+   * The card's housekeeping menu: edit, drop, delete.
+   *
+   * **The three verbs live behind one ⋯, not on a row of their own.** They are
+   * housekeeping, not the work the card is about, and on the four-lane
+   * overview a 40px icon row under "Open session" was the widest thing on a
+   * narrow card — a second button row for actions nobody presses on most
+   * visits. One trigger costs a single icon; the menu also gives the same
+   * verbs to a right-click, so the card has both the discoverable and the
+   * habitual way in.
+   *
+   * Hand-rolled for `SessionBoard`'s reasons: a menu over a *view* wants
+   * coordinates, not anchoring, and a fixed scrim folds "click elsewhere" and
+   * Escape into one mechanism. The items are the record's own — drop is
+   * offered only where `canDrop` allows it, and every press ends in a store
+   * action that goes through `machine.apply`.
+   */
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const moreRef = useRef<HTMLButtonElement>(null);
+
+  function closeMenu(): void {
+    setMenu(null);
+    setArmed(false);
+  }
+
+  /** Open at a point, clamped so the menu never hangs off the window edge. */
+  function openMenuAt(x: number, y: number): void {
+    setArmed(false);
+    setMenu({
+      x: Math.max(8, Math.min(x, window.innerWidth - 208)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 150)),
+    });
+  }
+
+  useEffect(() => {
+    if (menu === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Capture, and stop it: the window's own Esc closes the board, and the
+      // menu is the nearer thing to close.
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(null);
+      setArmed(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [menu]);
+
   const assignment = currentAssignment(ticket);
   const connected = liveKey !== null;
   const resumable = canResumeAssignment(ticket, assignment, remoteIds);
@@ -1009,302 +1059,369 @@ function TicketCard({
   const cannotSessions = busy || locked;
 
   return (
-    <article
-      className={`tkb-card${status === 'needs_you' ? ' is-needs' : ''}${status === 'review' ? ' is-review' : ''}${status === 'done' || status === 'dropped' ? ' is-finished' : ''}`}
-      aria-labelledby={`tkb-title-${ticket.id}`}
-    >
-      <div className="tkb-card-top">
-        <h3 className="tkb-card-title" id={`tkb-title-${ticket.id}`} title={ticketTitle(ticket)}>
-          {ticketTitle(ticket) || t('ticket.untitled')}
-        </h3>
-        <span className={`tkb-state-chip ${STATE_CHIP[status]}`}>{t(STATE_LABEL_KEY[status])}</span>
-      </div>
-
-      <div className="tkb-card-meta">
-        <span className={`tkb-chip${label === null ? ' is-missing' : ''}`} title={where ?? undefined}>
-          <Folder size={11} />
-          <span className="txt">{where === null ? t('ticket.workspaceMissing') : baseName(where) || where}</span>
-        </span>
-        {runs > 0 ? (
-          <span className="tkb-chip">
-            <RotateCcw size={11} />
-            <span className="txt">{t('ticket.runCount', { n: runs })}</span>
-          </span>
-        ) : null}
-        {ticket.model !== '' ? (
-          <span className="tkb-chip" title={ticket.model}>
-            <Sparkles size={11} />
-            <span className="txt">{ticket.model}</span>
-          </span>
-        ) : null}
-        {ticket.origin.kind === 'source' ? (
-          <span className="tkb-chip is-origin" title={t('ticket.inbox.originHint', { file: ticket.origin.file })}>
-            <Inbox size={11} />
-            <span className="txt">{t('ticket.inbox.origin', { source: ticket.origin.source })}</span>
-          </span>
-        ) : null}
-        <span className="tkb-avatar" title={t('ticket.requester')}>
-          <User size={11} />
-        </span>
-        {connected ? <SessionDot status={rowStatus} /> : null}
-      </div>
-
-      {placeMissing || !canBindBrief(ticket) || (status === 'running' && !connected) || oldRuntime ? (
-        <div className="tkb-card-badges">
-          {placeMissing ? <span className="badge badge-warning">{t('ticket.workspaceMissing')}</span> : null}
-          {!canBindBrief(ticket) ? (
-            <span className="badge badge-warning" title={t('ticket.btn.cannotStartHint')}>
-              {t('ticket.tooLong')}
-            </span>
-          ) : null}
-          {status === 'running' && !connected ? (
-            <span className="badge badge-neutral" title={t('ticket.notConnectedHint')}>
-              {t('ticket.notConnected')}
-            </span>
-          ) : null}
-          {oldRuntime ? (
-            <span className="badge badge-warning" title={t('ticket.runtimeOldHint')}>
-              {t('ticket.runtimeOld')}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
-
-      {cause === 'disconnected' || cause === 'crashed' || cause === 'unreachable' ? (
-        <p className="tkb-card-note">
-          <AlertTriangle size={12} />
-          <span>
-            {cause === 'disconnected'
-              ? t('ticket.cause.disconnected')
-              : cause === 'unreachable'
-                ? t('ticket.cause.unreachable')
-                : t('ticket.cause.crashed')}
-          </span>
-        </p>
-      ) : null}
-
-      {report !== null && asks ? (
-        <div className="tkb-card-ask">
-          <span className="tkb-ask-label">{t('ticket.asks')}</span> {report.question}
-        </div>
-      ) : report !== null && report.summary.trim() !== '' ? (
-        <div className="tkb-card-text">{report.summary}</div>
-      ) : ticket.brief.trim() !== '' ? (
-        <div className="tkb-card-text is-brief">{ticket.brief}</div>
-      ) : null}
-
-      {/* The refusal sits directly above the buttons that produced it. */}
-      {problem !== null ? (
-        <p className="tkb-card-problem" role="alert">
-          {problem}
-        </p>
-      ) : null}
-
-      {feedbackOpen ? (
-        <div className="tkb-sendback">
-          <textarea
-            className="cfg-textarea tkb-sendback-text"
-            rows={3}
-            autoFocus
-            value={feedback}
-            spellCheck={false}
-            aria-label={t('ticket.btn.sendBackHint')}
-            placeholder={t('ticket.btn.sendBackPlaceholder')}
-            onChange={(e) => setFeedback(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                e.stopPropagation();
-                setFeedbackOpen(false);
-              } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && feedback.trim() !== '') {
-                e.preventDefault();
-                void act.sendBack();
-              }
-            }}
-          />
-          <div className="tkb-sendback-foot">
-            <button type="button" className="btn btn-outline btn-compact" onClick={() => setFeedbackOpen(false)}>
-              {t('common.cancel')}
-            </button>
+    <>
+      <article
+        className={`tkb-card${status === 'needs_you' ? ' is-needs' : ''}${status === 'review' ? ' is-review' : ''}${status === 'done' || status === 'dropped' ? ' is-finished' : ''}`}
+        aria-labelledby={`tkb-title-${ticket.id}`}
+        // The card's second way into the menu, at the pointer's own place. A
+        // right-click inside a text field keeps the native menu: that is where
+        // "copy" and "paste" live, and the housekeeping verbs are not what a
+        // person selected text for.
+        onContextMenu={(e) => {
+          if ((e.target as HTMLElement).closest('textarea, input') !== null) return;
+          e.preventDefault();
+          openMenuAt(e.clientX, e.clientY);
+        }}
+      >
+        <div className="tkb-card-top">
+          <h3 className="tkb-card-title" id={`tkb-title-${ticket.id}`} title={ticketTitle(ticket)}>
+            {ticketTitle(ticket) || t('ticket.untitled')}
+          </h3>
+          <span className={`tkb-state-chip ${STATE_CHIP[status]}`}>{t(STATE_LABEL_KEY[status])}</span>
+          {/* The housekeeping verbs, behind one ⋯ in the card's top corner.
+              They are not the work the card is about, and on the four-lane
+              overview a row of three icons under "Open session" was the widest
+              thing on a narrow card. The menu is also on right-click. */}
+          <Tip label={t('ticket.menu.more')}>
             <button
+              ref={moreRef}
               type="button"
-              className="btn btn-primary btn-compact"
-              disabled={cannotSessions || feedback.trim() === ''}
-              onClick={() => void act.sendBack()}
+              className="tkb-card-more"
+              aria-label={t('ticket.menu.more')}
+              aria-haspopup="menu"
+              aria-expanded={menu !== null}
+              onClick={() => {
+                const rect = moreRef.current?.getBoundingClientRect();
+                if (rect === undefined) return;
+                // Right-edged with the trigger, so the menu opens under the
+                // dots it belongs to.
+                openMenuAt(rect.right - 200, rect.bottom + 4);
+              }}
             >
-              <Undo2 size={12} />
-              {t('ticket.btn.sendBackSend')}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="tkb-card-foot">
-        <div className="tkb-card-actions">
-          {actions.map((action) => {
-            switch (action) {
-              case 'start':
-                return (
-                  <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.startHint')}>
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-compact"
-                      disabled={cannotSessions || cannotStart}
-                      onClick={() => void act.start(false)}
-                    >
-                      <Play size={12} />
-                      {t('ticket.btn.start')}
-                    </button>
-                  </Tip>
-                );
-              case 'runNow':
-                return (
-                  <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.runNowHint')}>
-                    <button
-                      type="button"
-                      className="btn btn-outline btn-compact"
-                      disabled={cannotSessions || cannotStart}
-                      onClick={() => void act.start(true)}
-                    >
-                      <Zap size={12} />
-                      {t('ticket.btn.runNow')}
-                    </button>
-                  </Tip>
-                );
-              case 'open':
-              case 'continue':
-                return (
-                  <Tip
-                    key={action}
-                    label={
-                      !canGo
-                        ? t('ticket.workspaceMissing')
-                        : action === 'open'
-                          ? t('ticket.btn.openHint')
-                          : t('ticket.btn.continueHint')
-                    }
-                  >
-                    <button
-                      type="button"
-                      className={`btn btn-compact ${action === 'continue' && status === 'running' ? 'btn-primary' : 'btn-outline'}`}
-                      disabled={busy || !canGo}
-                      onClick={() => void act.open()}
-                    >
-                      <ExternalLink size={12} />
-                      {action === 'open' ? t('ticket.btn.open') : t('ticket.btn.continue')}
-                    </button>
-                  </Tip>
-                );
-              case 'restart':
-                return (
-                  <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.restartHint')}>
-                    <button
-                      type="button"
-                      className="btn btn-outline btn-compact"
-                      disabled={cannotSessions || cannotStart}
-                      onClick={() => void act.restart()}
-                    >
-                      <RotateCcw size={12} />
-                      {t('ticket.btn.restart')}
-                    </button>
-                  </Tip>
-                );
-              case 'accept':
-                return (
-                  <Tip key={action} label={t('ticket.btn.acceptHint')}>
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-compact"
-                      disabled={cannotSessions}
-                      onClick={() => {
-                        setProblem(null);
-                        acceptTicket(ticket.id);
-                      }}
-                    >
-                      <Check size={12} />
-                      {t('ticket.btn.accept')}
-                    </button>
-                  </Tip>
-                );
-              case 'sendBack':
-                return (
-                  <Tip key={action} label={t('ticket.btn.sendBackHint')}>
-                    <button
-                      type="button"
-                      className="btn btn-outline btn-compact"
-                      disabled={cannotSessions || !(canGo || label !== null)}
-                      aria-expanded={feedbackOpen}
-                      onClick={() => setFeedbackOpen(!feedbackOpen)}
-                    >
-                      <Undo2 size={12} />
-                      {t('ticket.btn.sendBack')}
-                    </button>
-                  </Tip>
-                );
-              case 'reopen':
-                return (
-                  <Tip key={action} label={t('ticket.btn.reopenHint')}>
-                    <button
-                      type="button"
-                      className="btn btn-outline btn-compact"
-                      disabled={cannotSessions}
-                      onClick={() => {
-                        setProblem(null);
-                        dispatchTicket(ticket.id, { type: 'reopen' });
-                      }}
-                    >
-                      <RotateCcw size={12} />
-                      {t('ticket.btn.reopen')}
-                    </button>
-                  </Tip>
-                );
-            }
-          })}
-        </div>
-
-        <span className="grow" />
-
-        <div className="tkb-card-tools">
-          <Tip label={t('ticket.btn.edit')}>
-            <button type="button" className="btn btn-ghost btn-icon" aria-label={t('ticket.btn.edit')} onClick={onEdit}>
-              <Pencil size={13} />
+              <MoreHorizontal size={14} />
             </button>
           </Tip>
-          {canDrop(status) ? (
-            <Tip label={t('ticket.btn.dropHint')}>
+        </div>
+
+        <div className="tkb-card-meta">
+          <span className={`tkb-chip${label === null ? ' is-missing' : ''}`} title={where ?? undefined}>
+            <Folder size={11} />
+            <span className="txt">{where === null ? t('ticket.workspaceMissing') : baseName(where) || where}</span>
+          </span>
+          {runs > 0 ? (
+            <span className="tkb-chip">
+              <RotateCcw size={11} />
+              <span className="txt">{t('ticket.runCount', { n: runs })}</span>
+            </span>
+          ) : null}
+          {ticket.model !== '' ? (
+            <span className="tkb-chip" title={ticket.model}>
+              <Sparkles size={11} />
+              <span className="txt">{ticket.model}</span>
+            </span>
+          ) : null}
+          {ticket.origin.kind === 'source' ? (
+            <span className="tkb-chip is-origin" title={t('ticket.inbox.originHint', { file: ticket.origin.file })}>
+              <Inbox size={11} />
+              <span className="txt">{t('ticket.inbox.origin', { source: ticket.origin.source })}</span>
+            </span>
+          ) : null}
+          <span className="tkb-avatar" title={t('ticket.requester')}>
+            <User size={11} />
+          </span>
+          {connected ? <SessionDot status={rowStatus} /> : null}
+        </div>
+
+        {placeMissing || !canBindBrief(ticket) || (status === 'running' && !connected) || oldRuntime ? (
+          <div className="tkb-card-badges">
+            {placeMissing ? <span className="badge badge-warning">{t('ticket.workspaceMissing')}</span> : null}
+            {!canBindBrief(ticket) ? (
+              <span className="badge badge-warning" title={t('ticket.btn.cannotStartHint')}>
+                {t('ticket.tooLong')}
+              </span>
+            ) : null}
+            {status === 'running' && !connected ? (
+              <span className="badge badge-neutral" title={t('ticket.notConnectedHint')}>
+                {t('ticket.notConnected')}
+              </span>
+            ) : null}
+            {oldRuntime ? (
+              <span className="badge badge-warning" title={t('ticket.runtimeOldHint')}>
+                {t('ticket.runtimeOld')}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {cause === 'disconnected' || cause === 'crashed' || cause === 'unreachable' ? (
+          <p className="tkb-card-note">
+            <AlertTriangle size={12} />
+            <span>
+              {cause === 'disconnected'
+                ? t('ticket.cause.disconnected')
+                : cause === 'unreachable'
+                  ? t('ticket.cause.unreachable')
+                  : t('ticket.cause.crashed')}
+            </span>
+          </p>
+        ) : null}
+
+        {report !== null && asks ? (
+          <div className="tkb-card-ask">
+            <span className="tkb-ask-label">{t('ticket.asks')}</span> {report.question}
+          </div>
+        ) : report !== null && report.summary.trim() !== '' ? (
+          <div className="tkb-card-text">{report.summary}</div>
+        ) : ticket.brief.trim() !== '' ? (
+          <div className="tkb-card-text is-brief">{ticket.brief}</div>
+        ) : null}
+
+        {/* The refusal sits directly above the buttons that produced it. */}
+        {problem !== null ? (
+          <p className="tkb-card-problem" role="alert">
+            {problem}
+          </p>
+        ) : null}
+
+        {feedbackOpen ? (
+          <div className="tkb-sendback">
+            <textarea
+              className="cfg-textarea tkb-sendback-text"
+              rows={3}
+              autoFocus
+              value={feedback}
+              spellCheck={false}
+              aria-label={t('ticket.btn.sendBackHint')}
+              placeholder={t('ticket.btn.sendBackPlaceholder')}
+              onChange={(e) => setFeedback(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setFeedbackOpen(false);
+                } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && feedback.trim() !== '') {
+                  e.preventDefault();
+                  void act.sendBack();
+                }
+              }}
+            />
+            <div className="tkb-sendback-foot">
+              <button type="button" className="btn btn-outline btn-compact" onClick={() => setFeedbackOpen(false)}>
+                {t('common.cancel')}
+              </button>
               <button
                 type="button"
-                className="btn btn-ghost btn-icon"
-                aria-label={t('ticket.btn.drop')}
+                className="btn btn-primary btn-compact"
+                disabled={cannotSessions || feedback.trim() === ''}
+                onClick={() => void act.sendBack()}
+              >
+                <Undo2 size={12} />
+                {t('ticket.btn.sendBackSend')}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="tkb-card-foot">
+          <div className="tkb-card-actions">
+            {actions.map((action) => {
+              switch (action) {
+                case 'start':
+                  return (
+                    <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.startHint')}>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-compact"
+                        disabled={cannotSessions || cannotStart}
+                        onClick={() => void act.start(false)}
+                      >
+                        <Play size={12} />
+                        {t('ticket.btn.start')}
+                      </button>
+                    </Tip>
+                  );
+                case 'runNow':
+                  return (
+                    <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.runNowHint')}>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-compact"
+                        disabled={cannotSessions || cannotStart}
+                        onClick={() => void act.start(true)}
+                      >
+                        <Zap size={12} />
+                        {t('ticket.btn.runNow')}
+                      </button>
+                    </Tip>
+                  );
+                case 'open':
+                case 'continue':
+                  return (
+                    <Tip
+                      key={action}
+                      label={
+                        !canGo
+                          ? t('ticket.workspaceMissing')
+                          : action === 'open'
+                            ? t('ticket.btn.openHint')
+                            : t('ticket.btn.continueHint')
+                      }
+                    >
+                      <button
+                        type="button"
+                        className={`btn btn-compact ${action === 'continue' && status === 'running' ? 'btn-primary' : 'btn-outline'}`}
+                        disabled={busy || !canGo}
+                        onClick={() => void act.open()}
+                      >
+                        <ExternalLink size={12} />
+                        {action === 'open' ? t('ticket.btn.open') : t('ticket.btn.continue')}
+                      </button>
+                    </Tip>
+                  );
+                case 'restart':
+                  return (
+                    <Tip key={action} label={cannotStart ? t('ticket.btn.cannotStartHint') : t('ticket.btn.restartHint')}>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-compact"
+                        disabled={cannotSessions || cannotStart}
+                        onClick={() => void act.restart()}
+                      >
+                        <RotateCcw size={12} />
+                        {t('ticket.btn.restart')}
+                      </button>
+                    </Tip>
+                  );
+                case 'accept':
+                  return (
+                    <Tip key={action} label={t('ticket.btn.acceptHint')}>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-compact"
+                        disabled={cannotSessions}
+                        onClick={() => {
+                          setProblem(null);
+                          acceptTicket(ticket.id);
+                        }}
+                      >
+                        <Check size={12} />
+                        {t('ticket.btn.accept')}
+                      </button>
+                    </Tip>
+                  );
+                case 'sendBack':
+                  return (
+                    <Tip key={action} label={t('ticket.btn.sendBackHint')}>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-compact"
+                        disabled={cannotSessions || !(canGo || label !== null)}
+                        aria-expanded={feedbackOpen}
+                        onClick={() => setFeedbackOpen(!feedbackOpen)}
+                      >
+                        <Undo2 size={12} />
+                        {t('ticket.btn.sendBack')}
+                      </button>
+                    </Tip>
+                  );
+                case 'reopen':
+                  return (
+                    <Tip key={action} label={t('ticket.btn.reopenHint')}>
+                      <button
+                        type="button"
+                        className="btn btn-outline btn-compact"
+                        disabled={cannotSessions}
+                        onClick={() => {
+                          setProblem(null);
+                          dispatchTicket(ticket.id, { type: 'reopen' });
+                        }}
+                      >
+                        <RotateCcw size={12} />
+                        {t('ticket.btn.reopen')}
+                      </button>
+                    </Tip>
+                  );
+              }
+            })}
+          </div>
+        </div>
+      </article>
+
+      {/* The housekeeping menu. Edit is always there; drop only on a status that
+          can be given up; delete keeps the app's two-press arm, and `armed`
+          resets when the menu closes, so a stray first press costs nothing. */}
+      {menu !== null ? (
+        <div
+          className="tkb-menu-scrim"
+          onClick={closeMenu}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            closeMenu();
+          }}
+        >
+          <div
+            className="tkb-menu"
+            role="menu"
+            aria-label={t('ticket.menu.title')}
+            style={{ left: menu.x, top: menu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="tkb-menu-item"
+              aria-label={t('ticket.btn.edit')}
+              disabled={locked}
+              onClick={() => {
+                closeMenu();
+                onEdit();
+              }}
+            >
+              <Pencil size={13} />
+              {t('ticket.menu.edit')}
+            </button>
+            {canDrop(status) ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="tkb-menu-item"
+                title={t('ticket.btn.dropHint')}
                 disabled={cannotSessions}
                 onClick={() => {
+                  closeMenu();
                   setProblem(null);
                   dropTicket(ticket.id);
                 }}
               >
                 <Ban size={13} />
+                {t('ticket.btn.drop')}
+              </button>
+            ) : null}
+            <Tip label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}>
+              <button
+                type="button"
+                role="menuitem"
+                className={`tkb-menu-item is-destructive${armed ? ' is-armed' : ''}`}
+                aria-label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}
+                disabled={locked}
+                onClick={() => {
+                  if (armed) {
+                    closeMenu();
+                    removeTicket(ticket.id);
+                  } else {
+                    // Arms, and stays up about it: the next press is the
+                    // delete, and anything else closes the menu and disarms.
+                    setArmed(true);
+                  }
+                }}
+              >
+                {armed ? <X size={13} /> : <Trash2 size={13} />}
+                {armed ? t('panel.task.deleteConfirm') : t('ticket.menu.delete')}
               </button>
             </Tip>
-          ) : null}
-          {/* Delete keeps the app's two-press arm; leaving the button disarms. */}
-          <Tip label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}>
-            <button
-              type="button"
-              className={`btn btn-ghost btn-icon${armed ? ' is-armed' : ''}`}
-              aria-label={armed ? t('panel.task.deleteConfirm') : t('ticket.btn.delete')}
-              disabled={locked}
-              onBlur={() => setArmed(false)}
-              onMouseLeave={() => setArmed(false)}
-              onClick={() => {
-                if (armed) removeTicket(ticket.id);
-                else setArmed(true);
-              }}
-            >
-              <Trash2 size={13} />
-            </button>
-          </Tip>
+          </div>
         </div>
-      </div>
-    </article>
+      ) : null}
+    </>
   );
 }

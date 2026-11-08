@@ -995,6 +995,11 @@ export const en = {
   'ticket.btn.dropHint': 'Give this Ticket up',
   'ticket.btn.edit': 'Edit this Ticket',
   'ticket.btn.delete': 'Delete this Ticket',
+  /* The card's housekeeping menu: one ⋯ rather than a row of icons. */
+  'ticket.menu.title': 'Ticket actions',
+  'ticket.menu.more': 'More actions',
+  'ticket.menu.edit': 'Edit',
+  'ticket.menu.delete': 'Delete',
   'ticket.btn.cannotStartHint': 'This Ticket cannot be started as it is: fix the workspace or shorten the brief.',
   'ticket.tooLong': 'Too long',
   'ticket.limit.brief': 'The brief is over {n} characters and the runtime would refuse it. Shorten it to start this Ticket.',
