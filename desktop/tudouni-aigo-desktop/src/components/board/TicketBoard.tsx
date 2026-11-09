@@ -30,7 +30,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { activeRuntime, activeWorkspaceOf, selectRowStatus, useApp } from '@/state/store';
-import { selectTicketLiveKey } from '@/state/selectors/tickets';
+import { selectTicketLiveKey, selectTicketTurnRunning } from '@/state/selectors/tickets';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { EmptyState, Tip } from '@/components/ui/kit';
@@ -69,6 +69,7 @@ import {
   rememberedStartMode,
   staysOnBoard,
   ticketActions,
+  ticketAgentBusy,
   ticketRunState,
   type StartMode,
   type TicketColumn,
@@ -408,7 +409,11 @@ export function TicketBoard() {
           // nothing for a "moving" placeholder to cover.
           const result = acceptTicket(ticket.id);
           setDropNote(
-            result.ok ? t('ticket.drop.announce.accept', { title }) : t('ticket.problem.refused'),
+            result.ok
+              ? t('ticket.drop.announce.accept', { title })
+              : result.reason === 'agent_busy'
+                ? t('ticket.problem.agentBusy')
+                : t('ticket.problem.refused'),
           );
           return;
         }
@@ -2011,6 +2016,9 @@ function TicketCard({
     hasSpoken: runSpoke,
     brief: ticket.brief,
   });
+  // A boolean, so the card repaints when a turn starts or ends and not per token.
+  const turnRunning = useApp((s) => selectTicketTurnRunning(s, liveKey));
+  const agentBusy = ticketAgentBusy({ status, live: connected, turnRunning });
 
   return (
     <>
@@ -2134,6 +2142,7 @@ function TicketCard({
         (status === 'running' && !connected) ||
         runState === 'connecting' ||
         runState === 'awaiting_send' ||
+        agentBusy ||
         oldRuntime ? (
           <div className="tkb-card-badges">
             {placeMissing ? <span className="badge badge-warning">{t('ticket.workspaceMissing')}</span> : null}
@@ -2158,6 +2167,11 @@ function TicketCard({
             {runState === 'awaiting_send' ? (
               <span className="badge badge-info" title={t('ticket.run.awaitingSendHint')}>
                 {t('ticket.run.awaitingSend')}
+              </span>
+            ) : null}
+            {agentBusy ? (
+              <span className="badge badge-info" title={t('ticket.run.agentBusyHint')}>
+                {t('ticket.run.agentBusy')}
               </span>
             ) : null}
             {oldRuntime ? (
@@ -2322,11 +2336,11 @@ function TicketCard({
                   );
                 case 'accept':
                   return (
-                    <Tip key={action} label={t('ticket.btn.acceptHint')}>
+                    <Tip key={action} label={agentBusy ? t('ticket.btn.acceptBusyHint') : t('ticket.btn.acceptHint')}>
                       <button
                         type="button"
                         className="btn btn-primary btn-compact"
-                        disabled={cannotSessions}
+                        disabled={cannotSessions || agentBusy}
                         onClick={() => {
                           setProblem(null);
                           acceptTicket(ticket.id);

@@ -31,7 +31,7 @@ import { attachmentLines } from '@/ticket/attachments';
 import { sendTo } from '@/runtime/bus';
 import { stageTicketAttachments, type StagedTicketAttachment } from '@/runtime/tauri';
 import { nextId } from '@/state/entries';
-import { liveKeyOfAssignment } from '../selectors/tickets';
+import { liveKeyOfAssignment, selectTicketTurnRunning } from '../selectors/tickets';
 import { landTicketUnreachable } from '../ticketLanding';
 import {
   claimNewSession,
@@ -330,6 +330,14 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
     },
 
     acceptTicket(id) {
+      // The card disables Accept while the agent works, but a drop into Done
+      // reaches here too: the store is the one place both entrances share, so
+      // the rule is kept here and not only on the button.
+      const ticket = find(id);
+      if (ticket !== undefined && ticket.status === 'review') {
+        const key = liveKeyOfAssignment(get(), currentAssignment(ticket));
+        if (selectTicketTurnRunning(get(), key)) return { ok: false, reason: 'agent_busy' };
+      }
       return ending(id, 'accept');
     },
 

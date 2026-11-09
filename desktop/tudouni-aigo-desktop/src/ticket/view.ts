@@ -314,6 +314,27 @@ export function ticketRunState(input: {
 }
 
 /**
+ * Whether a Ticket in `review` has an agent working in its session again.
+ *
+ * `review` is written when the agent *reports* done, and nothing in the machine
+ * moves it afterwards: the person can open the session and keep talking, the
+ * agent starts a new turn, and the record still says "ready for you". The status
+ * is left alone on purpose (opening a session moves nothing, invariant 7), so
+ * the card says the second half out loud instead - **derived from the session,
+ * never written to the Ticket**, like `ticketRunState` - and Accept waits for
+ * the turn to end, so a half-finished change cannot be signed off.
+ */
+export function ticketAgentBusy(input: {
+  status: TicketStatus;
+  /** The Assignment's child is alive (`liveKeyOfAssignment !== null`). */
+  live: boolean;
+  /** A turn is in flight in that session. */
+  turnRunning: boolean;
+}): boolean {
+  return input.status === 'review' && input.live && input.turnRunning;
+}
+
+/**
  * Whether "Start" / "Start over" can put this Ticket's brief on the wire.
  *
  * A `ticket_bind` carrying more than the runtime's ceilings is **refused**, and

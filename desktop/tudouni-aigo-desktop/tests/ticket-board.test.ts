@@ -47,6 +47,7 @@ import {
   rememberedStartMode,
   staysOnBoard,
   ticketActions,
+  ticketAgentBusy,
   ticketRunState,
 } from '@/ticket/view';
 import { en } from '@/i18n';
@@ -871,6 +872,18 @@ test('a running card that has not sent its brief says so, and stays in Running',
   // No live session, or not running at all: the card's own badges explain it.
   assert.equal(ticketRunState({ ...base, live: false }), 'idle');
   assert.equal(ticketRunState({ ...base, status: 'review' }), 'idle');
+});
+
+test('a review card whose agent is working again says so, and only then', () => {
+  const base = { status: 'review' as const, live: true, turnRunning: true };
+  assert.equal(ticketAgentBusy(base), true);
+  // A finished turn, or no live child: nothing is working, Accept stays open.
+  assert.equal(ticketAgentBusy({ ...base, turnRunning: false }), false);
+  assert.equal(ticketAgentBusy({ ...base, live: false }), false);
+  // Other lanes have their own wording; the status itself is never touched.
+  for (const status of ['open', 'running', 'needs_you', 'done', 'dropped'] as const) {
+    assert.equal(ticketAgentBusy({ ...base, status }), false, status);
+  }
 });
 
 test('the start memory is a window preference: it defaults to asking, and a corrupt record asks too', () => {

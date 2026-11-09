@@ -39,6 +39,8 @@ export type TicketActionRefusal =
   | 'not_found'
   /** Another action on the same Ticket is still in flight. */
   | 'busy'
+  /** Accept while the agent is working again in a Ticket's review session. */
+  | 'agent_busy'
   /** No session could be reached or opened for it (workspace gone, open refused). */
   | 'session_unavailable';
 

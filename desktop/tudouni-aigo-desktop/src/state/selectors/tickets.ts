@@ -5,6 +5,7 @@
  * a filtered array — the same reason `selectRowStatusKey` returns a string.
  */
 import type { AppStore } from '@/state/storeShape';
+import { hasRunningTurn } from '@/state/entries';
 import { currentAssignment } from '@/ticket/machine';
 import type { Assignment, Ticket } from '@/ticket/model';
 import { encodeTicketNotifySnapshot, type TicketNotifyRow } from '@/runtime/notify';
@@ -95,6 +96,16 @@ export function selectTicketNotifyKey(s: AppStore): string {
     activeKey: s.board === null ? (s.activeKey ?? '') : '',
     rows,
   });
+}
+
+/**
+ * Whether the session under `key` has a turn in flight. A boolean, so a card
+ * subscribed to it repaints when a turn starts or ends, not on every token.
+ */
+export function selectTicketTurnRunning(s: AppStore, key: string | null): boolean {
+  if (key === null) return false;
+  const bucket = s.sessions[key];
+  return bucket !== undefined && hasRunningTurn(bucket.entries);
 }
 
 /** `liveKeyOfAssignment` for a Ticket's current Assignment. */
