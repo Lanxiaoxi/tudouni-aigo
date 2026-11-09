@@ -11,6 +11,7 @@ import { fenceLanguage, fenceLayout } from './fence';
 import { tableToTsv } from './tableText';
 import { MarkdownImage } from './MarkdownImage';
 import { imageUrlTransform } from './imageUrl';
+import { remarkAutolinkFix } from './remarkAutolinkFix';
 import { remarkFilePath } from './remarkFilePath';
 import { openFilePath } from '@/runtime/tauri';
 
@@ -278,7 +279,7 @@ export function Markdown({ text }: { text: string }) {
   return (
     <div className="md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkFilePath]}
+        remarkPlugins={[remarkGfm, remarkAutolinkFix, remarkFilePath]}
         rehypePlugins={highlight ? [highlight] : []}
         components={components}
         urlTransform={imageUrlTransform}

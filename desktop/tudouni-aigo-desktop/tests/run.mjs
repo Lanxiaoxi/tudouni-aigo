@@ -303,6 +303,12 @@ const SUITES = [
   // real conversations. Inline code spans are scanned now, with the code-chip
   // look kept on the link's label; fenced blocks and authored links stay plain.
   'markdown-filepath.test.tsx',
+  // A GFM autolink in Chinese prose. `，` `）` `。` are not whitespace, so the
+  // autolink-literal swallows the sentence after the bare URL into one `<a>`,
+  // and the link styling follows the whole tail. Pinned: the link ends at the
+  // first non-ASCII character, the tail is plain text, and authored links,
+  // `workspace-file:` links and already-whitespace-bounded urls stay untouched.
+  'markdown-autolink.test.tsx',
   // Pictures in an answer. A model that generates one hands back a **path**, and
   // a WebView cannot load a path as an `<img>` — so this suite pins the mapping
   // that turns one into pixels, the destinations that are refused instead (a
