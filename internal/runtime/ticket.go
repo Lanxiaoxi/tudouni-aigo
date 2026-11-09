@@ -46,9 +46,10 @@ func (r *Runtime) BindTicket(spec map[string]any) error {
 			return
 		}
 		_, changed, err = state.BindTicket(metadata, state.TicketSpec{
-			ID:    stringOf(spec["id"]),
-			Title: stringOf(spec["title"]),
-			Brief: stringOf(spec["brief"]),
+			ID:          stringOf(spec["id"]),
+			Title:       stringOf(spec["title"]),
+			Brief:       stringOf(spec["brief"]),
+			Attachments: attachmentsOf(spec["attachments"]),
 		})
 	})
 	if err != nil {
@@ -58,6 +59,20 @@ func (r *Runtime) BindTicket(spec map[string]any) error {
 		r.Checkpoint()
 	}
 	return r.applyTicketTool()
+}
+
+// attachmentsOf reads the bind's attachment list. A row that does not parse is
+// dropped here only because the protocol layer has already refused such binds;
+// BindTicket validates again, so nothing unchecked reaches the record.
+func attachmentsOf(raw any) []state.TicketAttachment {
+	rows, _ := raw.([]any)
+	var out []state.TicketAttachment
+	for _, row := range rows {
+		if attachment, ok := state.TicketAttachmentOf(row); ok {
+			out = append(out, attachment)
+		}
+	}
+	return out
 }
 
 // applyTicketTool brings the registry in line with the binding: registered while a

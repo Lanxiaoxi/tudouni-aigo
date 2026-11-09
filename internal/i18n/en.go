@@ -730,13 +730,14 @@ var catalog = map[string]string{
 	//
 	// `channels.ticket.*` are notices a front end draws; `ticket.report.*` are
 	// read by the model, so they say what to do next rather than what went wrong.
-	"channels.ticket.no_session":   "no session is loaded, so there is nothing to bind a ticket to",
-	"channels.ticket.missing":      "ticket_bind needs a `ticket` key (an object to bind, or null to unbind)",
-	"channels.ticket.needs_object": "ticket_bind: `ticket` must be an object or null",
-	"channels.ticket.needs_id":     "ticket_bind: `ticket.id` must be a non-empty string",
-	"channels.ticket.needs_text":   "ticket_bind: `ticket.{field}` must be a string",
-	"channels.ticket.unsupported":  "this runtime does not accept ticket bindings, so the agent cannot report on the ticket",
-	"channels.ticket.refused":      "the ticket binding was refused: {problem}",
+	"channels.ticket.no_session":      "no session is loaded, so there is nothing to bind a ticket to",
+	"channels.ticket.missing":         "ticket_bind needs a `ticket` key (an object to bind, or null to unbind)",
+	"channels.ticket.needs_object":    "ticket_bind: `ticket` must be an object or null",
+	"channels.ticket.needs_id":        "ticket_bind: `ticket.id` must be a non-empty string",
+	"channels.ticket.needs_text":      "ticket_bind: `ticket.{field}` must be a string",
+	"channels.ticket.bad_attachments": "ticket_bind: `ticket.attachments` was refused: {problem}",
+	"channels.ticket.unsupported":     "this runtime does not accept ticket bindings, so the agent cannot report on the ticket",
+	"channels.ticket.refused":         "the ticket binding was refused: {problem}",
 
 	"ticket.report.unbound":          "This session is no longer bound to a ticket, so the report was not recorded. Carry on without ticket_report; tell the user in your answer what you did or what you need.",
 	"ticket.report.needs_summary":    "summary is required: say in a sentence or two what was done (status=done) or where you are stuck (status=blocked).",

@@ -19,13 +19,18 @@ import type { StoreContext } from '../storeContext';
 import type { AppStore, TicketDispatchResult } from '../storeShape';
 import { currentAssignment } from '@/ticket/machine';
 import {
+  attachmentsOf,
   newAssignmentId,
+  TICKET_ATTACHMENTS_MIN_PROTOCOL,
   TICKET_MIN_PROTOCOL,
   ticketTitle,
   type Assignment,
   type Ticket,
 } from '@/ticket/model';
+import { attachmentLines } from '@/ticket/attachments';
 import { sendTo } from '@/runtime/bus';
+import { stageTicketAttachments, type StagedTicketAttachment } from '@/runtime/tauri';
+import { nextId } from '@/state/entries';
 import { liveKeyOfAssignment } from '../selectors/tickets';
 import { landTicketUnreachable } from '../ticketLanding';
 import {
@@ -64,8 +69,13 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
   }
 
   /** Tell a session which Ticket it works for (or, `null`, that it no longer
-   *  does). Nothing is sent to a runtime that predates the message. */
-  function bind(key: string, ticket: Ticket | null): void {
+   *  does). Nothing is sent to a runtime that predates the message.
+   *
+   *  `staged` are the attachments already copied into this session's workspace.
+   *  They ride the bind only from protocol 19 on: an older runtime would ignore
+   *  the key, so for it the paths go into the first message instead
+   *  (`briefWith`). */
+  function bind(key: string, ticket: Ticket | null, staged: StagedTicketAttachment[] = []): void {
     const protocol = get().sessions[key]?.session?.protocol ?? 0;
     if (protocol < TICKET_MIN_PROTOCOL) return;
     sendTo(key, {
@@ -74,8 +84,53 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
       ticket:
         ticket === null
           ? null
-          : { id: ticket.id, title: ticketTitle(ticket), brief: ticket.brief },
+          : {
+              id: ticket.id,
+              title: ticketTitle(ticket),
+              brief: ticket.brief,
+              ...(protocol >= TICKET_ATTACHMENTS_MIN_PROTOCOL && staged.length > 0
+                ? { attachments: staged.map(({ name, path, bytes }) => ({ name, path, bytes })) }
+                : {}),
+            },
     });
+  }
+
+  /**
+   * Copy the Ticket's attachments into session `key`'s workspace, before the
+   * bind (which names their paths). A failure is said in that session's
+   * transcript and the session is bound without them: starting the work with
+   * the person told is better than refusing a Start over a missing log.
+   */
+  async function stage(key: string, ticket: Ticket): Promise<StagedTicketAttachment[]> {
+    const names = attachmentsOf(ticket).map((item) => item.name);
+    if (names.length === 0) return [];
+    try {
+      return await stageTicketAttachments(key, ticket.id, names);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      patchWith(key, (bucket) => ({
+        entries: [
+          ...bucket.entries,
+          {
+            kind: 'note',
+            id: nextId('note'),
+            tone: 'warn',
+            code: 'ticket_attachments_failed',
+            text: '',
+            message: { code: 'ticketAttachmentsFailed', names, reason },
+          },
+        ],
+      }));
+      return [];
+    }
+  }
+
+  /** The first message for a runtime that cannot carry attachments on the bind:
+   *  the brief, then the staged paths, so the agent still knows where they are. */
+  function briefWith(key: string, ticket: Ticket, staged: StagedTicketAttachment[]): string {
+    const protocol = get().sessions[key]?.session?.protocol ?? 0;
+    if (staged.length === 0 || protocol >= TICKET_ATTACHMENTS_MIN_PROTOCOL) return ticket.brief;
+    return `${ticket.brief}\n\n${attachmentLines(staged)}`;
   }
 
   /** Unbind the session an Assignment ran in, when that child is still alive.
@@ -151,23 +206,28 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
       return;
     }
     backfill(key, ticket.id);
+    // Attachments are staged before the bind, because the bind names their
+    // paths in the workspace.
+    const staged = await stage(key, ticket);
+    if (get().sessions[key] === undefined) return;
     // Bind first, then the model: the bind is what registers the report tool,
     // and nothing the model switch does depends on it - but the order is the
     // one the design states (5.1) and is asserted.
-    bind(key, ticket);
+    bind(key, ticket, staged);
     const model = ticket.model.trim();
     if (model !== '') sendTo(key, { v: 1, t: 'set_model', model });
+    const brief = briefWith(key, ticket, staged);
     if (runNow) {
       // Before the message, for the reason `runTask` gives: a run that is
       // already working is one the switch may not reach.
       sendTo(key, { v: 1, t: 'set_autopilot', on: true });
-      speak(ctx, key, ticket.brief);
+      speak(ctx, key, brief);
       return;
     }
     // Attended by default: the brief waits in the composer so the person can
     // add what they know before pressing Enter. Patched on this bucket, not
     // through `setDraft` (which writes the *active* one).
-    patchWith(key, () => ({ draft: ticket.brief, historyCursor: null }));
+    patchWith(key, () => ({ draft: brief, historyCursor: null }));
   }
 
   /** The tail of a send-back into a session that was not already listening. */
@@ -190,10 +250,12 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
     // A replacement session knows nothing: the brief and the opinion go
     // together, and as a prefill because the person is reading along.
     backfill(key, ticket.id);
-    bind(key, ticket);
+    const staged = await stage(key, ticket);
+    if (get().sessions[key] === undefined) return;
+    bind(key, ticket, staged);
     const model = ticket.model.trim();
     if (model !== '') sendTo(key, { v: 1, t: 'set_model', model });
-    patchWith(key, () => ({ draft: `${ticket.brief}\n\n${feedback}`, historyCursor: null }));
+    patchWith(key, () => ({ draft: `${briefWith(key, ticket, staged)}\n\n${feedback}`, historyCursor: null }));
   }
 
   /** Run a command that ends the executor, then unbind the session it had. */

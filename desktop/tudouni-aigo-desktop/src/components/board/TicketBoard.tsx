@@ -1,6 +1,7 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -13,11 +14,14 @@ import {
   Inbox,
   MessageSquare,
   MoreHorizontal,
+  Paperclip,
   Pencil,
   Play,
   Plus,
+  Radar,
   RotateCcw,
   Search,
+  Settings,
   Sparkles,
   Trash2,
   Undo2,
@@ -32,17 +36,26 @@ import type { TKey } from '@/i18n';
 import { EmptyState, Tip } from '@/components/ui/kit';
 import { SessionDot } from '@/components/sidebar/SessionDot';
 import { ModelPicker, WorkspacePicker } from '@/components/panels/TaskPanel';
+import { SourcesPanel } from '@/components/board/SourcesPanel';
+import { scanSources } from '@/runtime/tauri';
+import { describeScan, scanHadProblem } from '@/ticket/sources';
 import { workspaceRefLabel, type TaskWorkspaceRef } from '@/task/tasks';
 import { currentAssignment } from '@/ticket/machine';
 import {
+  TICKET_ATTACHMENTS_MAX,
   TICKET_BRIEF_CEILING,
   TICKET_MIN_PROTOCOL,
   TICKET_TITLE_CEILING,
+  attachmentsOf,
   ticketTitle,
   unbindableField,
   type Ticket,
+  type TicketAttachment,
   type TicketStatus,
 } from '@/ticket/model';
+import { formatBytes } from '@/ticket/attachments';
+import { chooseAttachmentFiles, openTicketAttachment } from '@/runtime/tauri';
+import { setDropOverride } from '@/hooks/useFileDrop';
 import {
   acceptsDrop,
   canBindBrief,
@@ -129,11 +142,18 @@ const LANE_EMPTY_HINT: Record<TicketColumn, TKey> = {
   done: 'ticket.lane.empty.done.hint',
 };
 
+/** A stable empty list, so the dialog's selector does not repaint every render. */
+const NO_ATTACHMENTS: TicketAttachment[] = [];
+
 interface FormValue {
   title: string;
   brief: string;
   workspace: TaskWorkspaceRef;
   model: string;
+  /** Files picked in the **new** dialog. There is no Ticket id to copy them
+   *  under yet, so they are attached right after `createTicket`. The edit
+   *  dialog attaches at once and keeps this empty. */
+  attachPaths: string[];
 }
 
 export function TicketBoard() {
@@ -214,6 +234,33 @@ export function TicketBoard() {
     }
   }
 
+  /**
+   * Ticket sources: a separate button with a separate note.
+   *
+   * **It never touches the inbox.** A scan only writes files into it; turning
+   * them into Tickets is "Check inbox", a second press, so the person sees what
+   * arrived before it lands on the board. The two notes are separate states for
+   * the same reason: one scan's sentence must not overwrite the other's.
+   */
+  const [sourcesScanning, setSourcesScanning] = useState(false);
+  const [sourcesNote, setSourcesNote] = useState<{ text: string; bad: boolean } | null>(null);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+
+  async function scanSourcesNow(): Promise<void> {
+    setSourcesScanning(true);
+    setSourcesNote(null);
+    try {
+      const report = await scanSources();
+      setSourcesNote({ text: describeScan(report, t), bad: scanHadProblem(report) });
+    } catch (err) {
+      // Includes "a scan is already running".
+      const error = err instanceof Error ? err.message : String(err);
+      setSourcesNote({ text: t('ticket.sources.note.scanFailed', { error }), bad: true });
+    } finally {
+      setSourcesScanning(false);
+    }
+  }
+
   const localPaths = useMemo(() => {
     const set = new Set(workspaces);
     if (workspace !== '') set.add(workspace);
@@ -232,6 +279,7 @@ export function TicketBoard() {
     brief,
     workspace: screenRemoteId !== null ? { kind: 'remote', id: screenRemoteId } : { kind: 'active' },
     model: '',
+    attachPaths: [],
   });
 
   /**
@@ -422,6 +470,16 @@ export function TicketBoard() {
       model: value.model,
     });
     if (id === null) return false;
+    if (value.attachPaths.length > 0) {
+      // After the record exists: the copies are kept under its id. A file that
+      // could not be copied is said on the board, since the dialog is closing.
+      void (async () => {
+        const { failed } = await useApp.getState().addTicketAttachments(id, value.attachPaths);
+        if (failed.length > 0) {
+          setScanNote(t('ticket.attach.failed', { list: failed.map((f) => `${baseName(f.path) || f.path} (${f.error})`).join('; ') }));
+        }
+      })();
+    }
     if (seedOrigin.current !== null) {
       useApp.getState().clearDraftIf(seedOrigin.current.draftOf, seedOrigin.current.seed);
       seedOrigin.current = null;
@@ -651,6 +709,29 @@ export function TicketBoard() {
               {t('ticket.inbox.scan')}
             </button>
           </Tip>
+          {/* Sources write into the inbox; they are not part of the Tickets
+              file, so they stay available when the board is read-only. */}
+          <Tip label={t('ticket.sources.scanHint')}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact tkb-inbox"
+              disabled={sourcesScanning}
+              onClick={() => void scanSourcesNow()}
+            >
+              <Radar size={13} />
+              {t('ticket.sources.scan')}
+            </button>
+          </Tip>
+          <Tip label={t('ticket.sources.settingsHint')}>
+            <button
+              type="button"
+              className="lb-icon"
+              aria-label={t('ticket.sources.settings')}
+              onClick={() => setSourcesOpen(true)}
+            >
+              <Settings size={15} />
+            </button>
+          </Tip>
           <button
             type="button"
             className="btn btn-primary btn-compact tkb-new"
@@ -681,6 +762,15 @@ export function TicketBoard() {
           {scanNote}
         </p>
       ) : null}
+      {sourcesNote !== null ? (
+        <p
+          className={`tkb-inbox-note tkb-src-note${sourcesNote.bad ? ' is-bad' : ''}`}
+          role={sourcesNote.bad ? 'alert' : 'status'}
+        >
+          {sourcesNote.text}
+        </p>
+      ) : null}
+      {sourcesOpen ? <SourcesPanel onClose={() => setSourcesOpen(false)} /> : null}
 
       {/* Search and the status filter. The filter does not remove the other
           columns from the world — it changes the board to one full-width lane
@@ -736,6 +826,7 @@ export function TicketBoard() {
           open
           mode="new"
           initial={composing.initial}
+          ticketId={null}
           disabled={locked}
           localPaths={localPaths}
           remoteLabels={remoteLabels}
@@ -753,7 +844,9 @@ export function TicketBoard() {
             brief: editing.brief,
             workspace: editing.workspace,
             model: editing.model,
+            attachPaths: [],
           }}
+          ticketId={editing.id}
           disabled={locked}
           localPaths={localPaths}
           remoteLabels={remoteLabels}
@@ -919,6 +1012,7 @@ function TicketDialog({
   open,
   mode,
   initial,
+  ticketId,
   disabled,
   localPaths,
   remoteLabels,
@@ -928,6 +1022,10 @@ function TicketDialog({
   open: boolean;
   mode: 'new' | 'edit';
   initial: FormValue;
+  /** The record being edited, or `null` for a new Ticket. An edit attaches at
+   *  once (the copy goes under this id); a new Ticket holds the picked paths
+   *  in `value.attachPaths` until it exists. */
+  ticketId: string | null;
   disabled: boolean;
   localPaths: string[];
   remoteLabels: Map<string, string>;
@@ -958,6 +1056,78 @@ function TicketDialog({
     // Closed by the parent on success; a refusal leaves the dialog and its text.
     onSubmit(value);
   }
+
+  /* ---------------- attachments ---------------- */
+  const stored = useApp((s) =>
+    ticketId === null ? NO_ATTACHMENTS : (s.tickets.find((row) => row.id === ticketId)?.attachments ?? NO_ATTACHMENTS),
+  );
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachNote, setAttachNote] = useState<string | null>(null);
+  const [dropHover, setDropHover] = useState(false);
+  const attachCount = ticketId === null ? value.attachPaths.length : stored.length;
+
+  /**
+   * One gesture's paths, from the button or a drop. An edit copies them at
+   * once; a new Ticket keeps them on the form (deduplicated by path) until the
+   * record exists, because the copies are kept under its id.
+   */
+  async function addPaths(paths: string[]): Promise<void> {
+    if (paths.length === 0 || disabled) return;
+    setAttachNote(null);
+    if (ticketId === null) {
+      const fresh = paths.filter((p) => !value.attachPaths.includes(p));
+      const room = TICKET_ATTACHMENTS_MAX - value.attachPaths.length;
+      if (fresh.length > room) setAttachNote(t('ticket.attach.full', { n: TICKET_ATTACHMENTS_MAX }));
+      const taken = fresh.slice(0, Math.max(0, room));
+      if (taken.length > 0) setValue((v) => ({ ...v, attachPaths: [...v.attachPaths, ...taken] }));
+      return;
+    }
+    setAttachBusy(true);
+    try {
+      const { failed } = await useApp.getState().addTicketAttachments(ticketId, paths);
+      if (failed.length > 0) {
+        setAttachNote(
+          t('ticket.attach.failed', {
+            list: failed.map((f) => `${baseName(f.path) || f.path} (${f.error})`).join('; '),
+          }),
+        );
+      }
+    } finally {
+      setAttachBusy(false);
+    }
+  }
+  // The latest `addPaths` for the drop handler, which is registered once.
+  const addRef = useRef(addPaths);
+  addRef.current = addPaths;
+
+  // While the dialog is up, an OS drop is aimed at it, not at the composer
+  // underneath — anywhere on the window, highlighted over the brief.
+  useEffect(() => {
+    if (!open) return;
+    setDropOverride({
+      onDragging: setDropHover,
+      onDrop: (paths) => void addRef.current(paths),
+    });
+    return () => setDropOverride(null);
+  }, [open]);
+
+  async function browse(): Promise<void> {
+    const picked = await chooseAttachmentFiles();
+    await addPaths(picked);
+  }
+
+  function removeAttachment(name: string, path: string | null): void {
+    if (ticketId === null) {
+      setValue((v) => ({ ...v, attachPaths: v.attachPaths.filter((p) => p !== path) }));
+      return;
+    }
+    void useApp.getState().removeTicketAttachment(ticketId, name);
+  }
+
+  const chips: { key: string; name: string; size: string | null; path: string | null; stored: TicketAttachment | null }[] =
+    ticketId === null
+      ? value.attachPaths.map((path) => ({ key: path, name: baseName(path) || path, size: null, path, stored: null }))
+      : stored.map((item) => ({ key: item.name, name: item.name, size: formatBytes(item.bytes), path: null, stored: item }));
 
   return (
     <DialogPrimitive.Root
@@ -1089,6 +1259,71 @@ function TicketDialog({
                     {t('ticket.limit.brief', { n: TICKET_BRIEF_CEILING })}
                   </p>
                 ) : null}
+
+                {/* Attachments: a button, or a drop anywhere on the window while
+                    the dialog is up (highlighted here). */}
+                <div
+                  className={`tkb-attach${dropHover ? ' is-drop' : ''}`}
+                  aria-busy={attachBusy || undefined}
+                >
+                  <div className="tkb-label-row">
+                    <span className="cfg-label">
+                      <Paperclip size={12} /> {t('ticket.attach.title')}
+                      <span className="cfg-optional">{t('panel.task.optional')}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-compact"
+                      disabled={disabled || attachBusy || attachCount >= TICKET_ATTACHMENTS_MAX}
+                      onClick={() => void browse()}
+                    >
+                      <Plus size={12} />
+                      {attachBusy ? t('ticket.attach.busy') : t('ticket.attach.add')}
+                    </button>
+                  </div>
+                  {dropHover ? (
+                    <p className="cfg-hint">{t('ticket.attach.drop')}</p>
+                  ) : chips.length === 0 ? (
+                    <p className="cfg-hint">{t('ticket.attach.hint')}</p>
+                  ) : (
+                    <ul className="tkb-attach-list" aria-label={t('ticket.attach.title')}>
+                      {chips.map((chip) => (
+                        <li key={chip.key} className="tkb-chip tkb-attach-chip" title={chip.path ?? chip.name}>
+                          {chip.stored !== null && ticketId !== null ? (
+                            <button
+                              type="button"
+                              className="tkb-attach-name"
+                              aria-label={t('ticket.attach.open', { name: chip.name })}
+                              onClick={() => void openTicketAttachment(ticketId, chip.name).catch(() => undefined)}
+                            >
+                              {chip.name}
+                            </button>
+                          ) : (
+                            <span className="tkb-attach-name">{chip.name}</span>
+                          )}
+                          {chip.size !== null ? <span className="muted">{chip.size}</span> : null}
+                          <button
+                            type="button"
+                            className="tkb-attach-drop"
+                            aria-label={t('ticket.attach.remove', { name: chip.name })}
+                            disabled={disabled}
+                            onClick={() => removeAttachment(chip.name, chip.path)}
+                          >
+                            <X size={11} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {ticketId === null && chips.length > 0 ? (
+                    <p className="cfg-hint">{t('ticket.attach.pendingNote')}</p>
+                  ) : null}
+                  {attachNote !== null ? (
+                    <p className="tkb-form-rule" role="alert">
+                      {attachNote}
+                    </p>
+                  ) : null}
+                </div>
               </section>
 
               {/* All three, always. They were behind a disclosure that started
@@ -1851,11 +2086,42 @@ function TicketCard({
               <span className="txt">{ticket.model}</span>
             </span>
           ) : null}
+          {attachmentsOf(ticket).length > 0 ? (
+            <span
+              className="tkb-chip"
+              title={attachmentsOf(ticket)
+                .map((item) => `${item.name} (${formatBytes(item.bytes)})`)
+                .join('\n')}
+            >
+              <Paperclip size={11} />
+              <span className="txt">{t('ticket.attach.count', { n: attachmentsOf(ticket).length })}</span>
+            </span>
+          ) : null}
           {ticket.origin.kind === 'source' ? (
             <span className="tkb-chip is-origin" title={t('ticket.inbox.originHint', { file: ticket.origin.file })}>
               <Inbox size={11} />
               <span className="txt">{t('ticket.inbox.origin', { source: ticket.origin.source })}</span>
             </span>
+          ) : null}
+          {/* The way back to where the drop came from (a PR, a commit). A
+              separate chip rather than making the origin one clickable, so a
+              click aimed at the card's menu or drag cannot open a browser. */}
+          {ticket.origin.kind === 'source' && ticket.origin.url !== undefined ? (
+            <button
+              type="button"
+              className="tkb-chip is-link"
+              title={ticket.origin.url}
+              aria-label={t('ticket.inbox.openLink', { url: ticket.origin.url })}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                const url = ticket.origin.kind === 'source' ? ticket.origin.url : undefined;
+                if (url !== undefined) void openUrl(url).catch(() => undefined);
+              }}
+            >
+              <ExternalLink size={11} />
+              <span className="txt">{t('ticket.inbox.link')}</span>
+            </button>
           ) : null}
           <span className="tkb-avatar" title={t('ticket.requester')}>
             <User size={11} />

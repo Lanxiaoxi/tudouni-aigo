@@ -50,6 +50,12 @@ mod desktop_data;
 /// they are written on every event (`docs/design/ticket.md` §6.3). Same text
 /// door as `desktop_data`.
 mod tickets_data;
+/// Files attached to a Ticket: the authoritative copies under
+/// `~/.tudouni/tickets/attachments/`, and the staging into a session's workspace.
+mod ticket_attachments;
+/// Ticket Sources: adapters that turn outside changes into inbox files
+/// (`docs/design/ticket-sources.md`). Writes only `inbox/` and its own files.
+mod ticket_sources;
 mod prompt_history;
 
 mod deliverable;
@@ -211,6 +217,19 @@ pub fn run() {
             crate::tickets_data::inbox_list,
             crate::tickets_data::inbox_archive,
             crate::tickets_data::inbox_dir,
+            crate::ticket_attachments::ticket_attachment_import,
+            crate::ticket_attachments::ticket_attachment_remove,
+            crate::ticket_attachments::ticket_attachments_purge,
+            crate::ticket_attachments::ticket_attachment_open,
+            crate::ticket_attachments::ticket_attachments_stage,
+            // Ticket Sources: probe the outside world and write inbox files
+            // (docs/design/ticket-sources.md 5). They never write tickets.json.
+            crate::ticket_sources::commands::sources_read,
+            crate::ticket_sources::commands::sources_write,
+            crate::ticket_sources::commands::sources_path,
+            crate::ticket_sources::commands::sources_status,
+            crate::ticket_sources::commands::sources_scan,
+            crate::ticket_sources::commands::sources_probe,
             // The composer's prompt history: one append-only sidecar per
             // workspace, plus the one-time seed from the sessions that predate
             // it. The read and append are the keystroke path's neighbours, not

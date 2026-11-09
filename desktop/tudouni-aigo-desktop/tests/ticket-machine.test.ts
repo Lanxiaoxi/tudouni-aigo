@@ -677,3 +677,46 @@ test('isValidTicket keeps a record whose status disagrees with its Assignments',
   // would lose more than it saves.
   assert.equal(isValidTicket({ ...running(), status: 'open' }), true);
 });
+
+/* ============================================================
+   Attachments
+   ============================================================ */
+
+const att = (name: string, bytes = 10) => ({ name, bytes, addedAtMs: T0 });
+
+test('edit replaces the attachment list and records only the field name', () => {
+  const next = ok(open(), { type: 'edit', at: tick(), patch: { attachments: [att('server.log')] } });
+  assert.deepEqual(next.attachments, [att('server.log')]);
+  const last = next.events[next.events.length - 1];
+  assert.equal(last.type, 'edited');
+  assert.deepEqual(last.data, { fields: ['attachments'] });
+  // The same list again is not a change.
+  assert.equal(apply(next, { type: 'edit', at: tick(), patch: { attachments: [att('server.log')] } }).ok, true);
+  const same = ok(next, { type: 'edit', at: tick(), patch: { attachments: [att('server.log')] } });
+  assert.equal(same, next);
+});
+
+test('edit refuses an attachment list it could not store', () => {
+  const cases = [
+    [att('a/b')],
+    [att('.env')],
+    [att('x.log'), att('x.log')],
+    [{ name: 'x.log', bytes: -1, addedAtMs: T0 }],
+    Array.from({ length: 51 }, (_, i) => att(`f${i}.log`)),
+  ];
+  for (const list of cases) {
+    assert.equal(
+      refused(open(), { type: 'edit', at: tick(), patch: { attachments: list as never } }),
+      'invalid_edit',
+      JSON.stringify(list).slice(0, 60),
+    );
+  }
+});
+
+test('isValidTicket accepts a record without attachments and guards one with them', () => {
+  const good = open();
+  assert.equal(isValidTicket(good), true);
+  assert.equal(isValidTicket({ ...good, attachments: [att('dump.txt')] }), true);
+  assert.equal(isValidTicket({ ...good, attachments: [att('../x')] }), false);
+  assert.equal(isValidTicket({ ...good, attachments: 'x' }), false);
+});

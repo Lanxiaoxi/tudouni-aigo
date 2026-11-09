@@ -426,6 +426,12 @@ const SUITES = [
   // file a person still has to fix is left in place.
   'ticket-inbox.test.ts',
   'ticket-inbox-drain.test.ts',
+  // Ticket Sources, the pure half (docs/design/ticket-sources.md §3, §4): a
+  // read-edit-write that keeps the fields the panel does not know, a file that
+  // cannot be read refusing to become an empty one, the validation rules the
+  // form shows before Rust's own, and the one table that has to give every kind
+  // its parameters and default templates. All silent when wrong in a window.
+  'ticket-sources.test.ts',
   // The Ticket board (docs/design/ticket.md §6.4, §7): the two boards are exclusive and
   // the ticket one is a column occupant; the card is a pure reading of the
   // record; and a Ticket's session actions put ticket_bind / set_model /

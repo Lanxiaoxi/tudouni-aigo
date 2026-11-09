@@ -56,7 +56,137 @@ const (
 	// compacted away with the rest of the early history — which is exactly the
 	// trade the goal note makes (it quotes the objective, not the plan).
 	TicketTailBriefRunes = 2000
+
+	// Ceilings on the attachment list (protocol 19). The list is quoted in the
+	// payload tail on every round, one line per entry, so the count cap is also
+	// the cap on what the tail can grow by. The file contents never travel here:
+	// only where the files were put.
+	MaxTicketAttachments        = 50
+	TicketAttachmentNameCeiling = 255
+	TicketAttachmentPathCeiling = 1024
 )
+
+// TicketAttachment is one file the person attached to the ticket, already copied
+// into the session's workspace by the front end.
+//
+// The runtime does not copy, read or keep the file; it only remembers where it
+// is, so the model can be told every round and a resumed session still knows.
+// Path is workspace-relative with forward slashes.
+type TicketAttachment struct {
+	Name  string
+	Path  string
+	Bytes int64
+}
+
+// Wire is the attachment in the shape `init.ticket.attachments[]` carries and
+// the metadata record stores. Bytes is int64 so a live payload and a value that
+// went through a JSON round trip (float64) are told apart only by type, not by
+// meaning; LoadTicket accepts both.
+func (a TicketAttachment) Wire() map[string]any {
+	return map[string]any{"name": a.Name, "path": a.Path, "bytes": a.Bytes}
+}
+
+// ValidateTicketAttachment reports why an attachment is not acceptable, or nil.
+//
+// The protocol layer checks the same rules on the raw message so the person gets
+// a precise notice; this copy exists because the text is quoted to the model
+// every round, so the record must not trust whichever caller built it. A path
+// that escapes the workspace would send the model reading files the person never
+// attached, and a name or path with a line break could forge extra lines in the
+// tail.
+func ValidateTicketAttachment(a TicketAttachment) error {
+	if a.Name == "" {
+		return fmt.Errorf("an attachment needs a non-empty name")
+	}
+	if utf8.RuneCountInString(a.Name) > TicketAttachmentNameCeiling {
+		return fmt.Errorf("an attachment name is longer than %d characters", TicketAttachmentNameCeiling)
+	}
+	if strings.ContainsAny(a.Name, `/\`) {
+		return fmt.Errorf("attachment name %q must not contain / or \\", a.Name)
+	}
+	if hasControlRune(a.Name) {
+		return fmt.Errorf("an attachment name must not contain control characters")
+	}
+	if a.Path == "" {
+		return fmt.Errorf("attachment %q needs a non-empty path", a.Name)
+	}
+	if utf8.RuneCountInString(a.Path) > TicketAttachmentPathCeiling {
+		return fmt.Errorf("an attachment path is longer than %d characters", TicketAttachmentPathCeiling)
+	}
+	if hasControlRune(a.Path) {
+		return fmt.Errorf("an attachment path must not contain control characters")
+	}
+	if strings.HasPrefix(a.Path, "/") || strings.HasPrefix(a.Path, `\`) || hasDriveLetter(a.Path) {
+		return fmt.Errorf("attachment path %q must be relative to the workspace", a.Path)
+	}
+	// Both separators are split on: the contract says forward slashes, but a
+	// `..\` segment is just as much a way out on the platform that uses `\`.
+	for _, segment := range strings.FieldsFunc(a.Path, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if segment == ".." {
+			return fmt.Errorf("attachment path %q must not contain a .. segment", a.Path)
+		}
+	}
+	if a.Bytes < 0 {
+		return fmt.Errorf("attachment %q has a negative size", a.Name)
+	}
+	return nil
+}
+
+func hasControlRune(text string) bool {
+	for _, r := range text {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// hasDriveLetter spots `C:` at the start, which names a drive on Windows whether
+// or not a slash follows.
+func hasDriveLetter(path string) bool {
+	if len(path) < 2 || path[1] != ':' {
+		return false
+	}
+	letter := path[0]
+	return (letter >= 'a' && letter <= 'z') || (letter >= 'A' && letter <= 'Z')
+}
+
+func sameAttachments(a, b []TicketAttachment) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// TicketAttachmentOf reads one attachment out of a decoded JSON object. It is
+// lenient on purpose (see LoadTicket): a row that is not understood is dropped
+// rather than failing the whole record.
+func TicketAttachmentOf(raw any) (TicketAttachment, bool) {
+	row, ok := raw.(map[string]any)
+	if !ok {
+		return TicketAttachment{}, false
+	}
+	attachment := TicketAttachment{}
+	attachment.Name, _ = row["name"].(string)
+	attachment.Path, _ = row["path"].(string)
+	switch size := row["bytes"].(type) {
+	case int64:
+		attachment.Bytes = size
+	case int:
+		attachment.Bytes = int64(size)
+	case float64:
+		attachment.Bytes = int64(size)
+	}
+	if attachment.Name == "" || attachment.Path == "" {
+		return TicketAttachment{}, false
+	}
+	return attachment, true
+}
 
 // TicketReport is one fact the agent reported.
 type TicketReport struct {
@@ -74,13 +204,16 @@ type Ticket struct {
 	Title   string
 	Brief   string
 	Reports []TicketReport
+	// Attachments is what the front end staged into the workspace (protocol 19).
+	Attachments []TicketAttachment
 }
 
 // TicketSpec is what a bind carries.
 type TicketSpec struct {
-	ID    string
-	Title string
-	Brief string
+	ID          string
+	Title       string
+	Brief       string
+	Attachments []TicketAttachment
 }
 
 // Wire is the report in the shape both `init.ticket.reports[]` and
@@ -116,11 +249,18 @@ func (t Ticket) Block() map[string]any {
 	for _, report := range t.Reports {
 		reports = append(reports, report.Wire())
 	}
+	// Always an array, never null: a front end reading `init.ticket.attachments`
+	// should have one case to handle, the same reasoning as `reports`.
+	attachments := make([]any, 0, len(t.Attachments))
+	for _, attachment := range t.Attachments {
+		attachments = append(attachments, attachment.Wire())
+	}
 	return map[string]any{
-		"id":      t.ID,
-		"title":   t.Title,
-		"brief":   t.Brief,
-		"reports": reports,
+		"id":          t.ID,
+		"title":       t.Title,
+		"brief":       t.Brief,
+		"reports":     reports,
+		"attachments": attachments,
 	}
 }
 
@@ -143,6 +283,16 @@ func LoadTicket(metadata map[string]any) (Ticket, bool) {
 		for _, row := range rows {
 			if report, ok := ticketReportOf(row); ok {
 				ticket.Reports = append(ticket.Reports, report)
+			}
+		}
+	}
+	// A record written before protocol 19 has no such key; that reads as none.
+	// A row that fails validation is dropped rather than quoted to the model,
+	// since a hand-edited session file is the only way one gets here.
+	if rows, ok := raw["attachments"].([]any); ok {
+		for _, row := range rows {
+			if attachment, ok := TicketAttachmentOf(row); ok && ValidateTicketAttachment(attachment) == nil {
+				ticket.Attachments = append(ticket.Attachments, attachment)
 			}
 		}
 	}
@@ -205,17 +355,31 @@ func BindTicket(metadata map[string]any, spec TicketSpec) (Ticket, bool, error) 
 	if utf8.RuneCountInString(spec.Brief) > TicketBriefCeiling {
 		return Ticket{}, false, fmt.Errorf("the ticket brief is longer than %d characters", TicketBriefCeiling)
 	}
+	if len(spec.Attachments) > MaxTicketAttachments {
+		return Ticket{}, false, fmt.Errorf("a ticket takes at most %d attachments", MaxTicketAttachments)
+	}
+	for _, attachment := range spec.Attachments {
+		if err := ValidateTicketAttachment(attachment); err != nil {
+			return Ticket{}, false, err
+		}
+	}
 	ticket := Ticket{ID: id, Title: spec.Title, Brief: spec.Brief}
+	if len(spec.Attachments) > 0 {
+		ticket.Attachments = append([]TicketAttachment(nil), spec.Attachments...)
+	}
 	previous, wasBound := LoadTicket(metadata)
 	if wasBound && previous.ID == id {
 		ticket.Reports = previous.Reports
 	}
 	// Compared on the fields a bind can carry, not on the whole record: the
 	// reports are carried over untouched just above, so an unchanged re-bind can
-	// only differ in one of these three. `!wasBound` is included so the first
-	// bind of a ticket is never mistaken for a no-op.
+	// only differ in one of these four. `!wasBound` is included so the first
+	// bind of a ticket is never mistaken for a no-op. Attachments count because
+	// they reach the model every round: a changed list that was not saved would
+	// be forgotten on resume.
 	changed := !wasBound || previous.ID != ticket.ID ||
-		previous.Title != ticket.Title || previous.Brief != ticket.Brief
+		previous.Title != ticket.Title || previous.Brief != ticket.Brief ||
+		!sameAttachments(previous.Attachments, ticket.Attachments)
 	metadata[TicketKey] = ticket.Block()
 	return ticket, changed, nil
 }
@@ -266,6 +430,20 @@ func TicketText(ticket Ticket) string {
 	}
 	if brief := strings.TrimSpace(ticket.Brief); brief != "" {
 		builder.WriteString("工作描述：\n" + truncateRunes(brief, TicketTailBriefRunes) + "\n")
+	}
+	if len(ticket.Attachments) > 0 {
+		builder.WriteString("\n这个工单带有附件，已经复制到工作区里，可以直接读取：文本和日志用 read_file，" +
+			"docx / pptx / xlsx / pdf 用 read_document。这些文件是用户为这项工作提供的依据，" +
+			"动手前先看相关的部分。大日志不要整份读，按行区间读，或先用 grep 定位。\n")
+		// Capped by the same limit the bind enforces, so a hand-edited session
+		// file cannot make the per-round tail grow without bound.
+		shown := ticket.Attachments
+		if len(shown) > MaxTicketAttachments {
+			shown = shown[:MaxTicketAttachments]
+		}
+		for _, attachment := range shown {
+			builder.WriteString(fmt.Sprintf("- %s: %s (%d bytes)\n", attachment.Name, attachment.Path, attachment.Bytes))
+		}
 	}
 	builder.WriteString("\n做完时调用 ticket_report(status=\"done\", summary=...)；" +
 		"卡住、需要用户回答一个具体问题才能继续时，调用 ticket_report(status=\"blocked\", summary=..., question=...)。" +

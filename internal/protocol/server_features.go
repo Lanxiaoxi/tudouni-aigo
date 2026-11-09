@@ -1,9 +1,13 @@
 package protocol
 
 import (
+	"encoding/json"
+	"fmt"
+	"math"
 	"strings"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 )
 
 // The feature commands: model switches, compaction, goal, MCP, and memory.
@@ -249,6 +253,14 @@ func (s *Server) handleTicketBind(message map[string]any) {
 			}
 			spec[key] = text
 		}
+		if value, present := object["attachments"]; present && value != nil {
+			attachments, problem := parseTicketAttachments(value)
+			if problem != "" {
+				s.notice("warn", "ticket", i18n.T("channels.ticket.bad_attachments", "problem", problem))
+				return
+			}
+			spec["attachments"] = attachments
+		}
 	}
 
 	binder, ok := runtime.(TicketBinder)
@@ -258,6 +270,70 @@ func (s *Server) handleTicketBind(message map[string]any) {
 	}
 	if err := binder.BindTicket(spec); err != nil {
 		s.notice("warn", "ticket", i18n.T("channels.ticket.refused", "problem", err.Error()))
+	}
+}
+
+// parseTicketAttachments checks `ticket.attachments` and returns it in the shape
+// the runtime's BindTicket reads. The second value is a human-readable problem,
+// "" when the list is acceptable.
+//
+// The whole bind is refused on any bad entry rather than keeping the good ones:
+// the list is the person's evidence for the work, and a silently shorter list
+// would send the agent off without a file the person thought it had.
+func parseTicketAttachments(raw any) ([]any, string) {
+	rows, ok := raw.([]any)
+	if !ok {
+		return nil, "`ticket.attachments` must be an array"
+	}
+	if len(rows) > state.MaxTicketAttachments {
+		return nil, fmt.Sprintf("at most %d attachments are allowed, got %d", state.MaxTicketAttachments, len(rows))
+	}
+	out := make([]any, 0, len(rows))
+	for index, row := range rows {
+		object, ok := row.(map[string]any)
+		if !ok {
+			return nil, fmt.Sprintf("attachment %d must be an object", index)
+		}
+		name, ok := object["name"].(string)
+		if !ok {
+			return nil, fmt.Sprintf("attachment %d: `name` must be a string", index)
+		}
+		path, ok := object["path"].(string)
+		if !ok {
+			return nil, fmt.Sprintf("attachment %d: `path` must be a string", index)
+		}
+		size, ok := wholeNumber(object["bytes"])
+		if !ok {
+			return nil, fmt.Sprintf("attachment %d: `bytes` must be a whole number", index)
+		}
+		attachment := state.TicketAttachment{Name: name, Path: path, Bytes: size}
+		if err := state.ValidateTicketAttachment(attachment); err != nil {
+			return nil, fmt.Sprintf("attachment %d: %v", index, err)
+		}
+		out = append(out, attachment.Wire())
+	}
+	return out, ""
+}
+
+// wholeNumber reads a JSON number that must be an integer. A fractional value is
+// refused rather than truncated: a size that is not a count of bytes means the
+// sender is confused about what it is sending.
+func wholeNumber(value any) (int64, bool) {
+	switch number := value.(type) {
+	case float64:
+		if number != math.Trunc(number) || math.IsInf(number, 0) || math.Abs(number) > 1<<53 {
+			return 0, false
+		}
+		return int64(number), true
+	case int:
+		return int64(number), true
+	case int64:
+		return number, true
+	case json.Number:
+		parsed, err := number.Int64()
+		return parsed, err == nil
+	default:
+		return 0, false
 	}
 }
 

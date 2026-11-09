@@ -24,6 +24,8 @@ import {
   hasTicketFor,
   originOf,
   parseInboxFile,
+  parseUrlField,
+  parseWorkspaceField,
   planScan,
   splitFrontMatter,
   type InboxFile,
@@ -95,6 +97,48 @@ test('the front matter names the source and the thread', () => {
 test('a title in the front matter wins over the first line', () => {
   const drop = parseInboxFile(file('x', '---\ntitle: Safari blank page\n---\nFix it'));
   assert.equal(drop!.title, 'Safari blank page');
+});
+
+test('a drop without workspace / model / url keeps the old defaults', () => {
+  const drop = parseInboxFile(file('x', '---\nsource: s\n---\nDo it'));
+  assert.deepEqual(drop!.workspace, { kind: 'active' });
+  assert.equal(drop!.model, '');
+  assert.equal(drop!.url, null);
+  // The origin gains no `url` key, so the stored record keeps its old shape.
+  assert.deepEqual(originOf(drop!), { kind: 'source', source: 's', thread: 'x', file: 'x' });
+});
+
+test('workspace, model and url in the front matter are read', () => {
+  const drop = parseInboxFile(
+    file(
+      'x',
+      '---\nsource: s\nworkspace: local:D:/repo-a\nmodel: deepseek/chat\nurl: https://github.com/o/r/pull/1\n---\nReview',
+    ),
+  );
+  assert.deepEqual(drop!.workspace, { kind: 'local', path: 'D:/repo-a' });
+  assert.equal(drop!.model, 'deepseek/chat');
+  assert.equal(drop!.url, 'https://github.com/o/r/pull/1');
+  assert.equal(originOf(drop!).kind === 'source' && originOf(drop!).url, 'https://github.com/o/r/pull/1');
+});
+
+test('workspace values: remote, active, and anything unreadable falls back to active', () => {
+  assert.deepEqual(parseWorkspaceField('remote:rw-1'), { kind: 'remote', id: 'rw-1' });
+  assert.deepEqual(parseWorkspaceField('active'), { kind: 'active' });
+  assert.deepEqual(parseWorkspaceField('LOCAL: C:\\work'), { kind: 'local', path: 'C:\\work' });
+  // A path with a drive colon is still one path: only the first colon splits.
+  assert.deepEqual(parseWorkspaceField('local:C:/x'), { kind: 'local', path: 'C:/x' });
+  assert.deepEqual(parseWorkspaceField('local:'), { kind: 'active' });
+  assert.deepEqual(parseWorkspaceField('somewhere'), { kind: 'active' });
+  assert.deepEqual(parseWorkspaceField(undefined), { kind: 'active' });
+});
+
+test('only http(s) links are kept', () => {
+  assert.equal(parseUrlField('https://example.com/a'), 'https://example.com/a');
+  assert.equal(parseUrlField('HTTP://example.com'), 'HTTP://example.com');
+  assert.equal(parseUrlField('file:///C:/secret.txt'), null);
+  assert.equal(parseUrlField('javascript:alert(1)'), null);
+  assert.equal(parseUrlField('https://a b'), null);
+  assert.equal(parseUrlField(''), null);
 });
 
 test('an empty body is not a drop', () => {

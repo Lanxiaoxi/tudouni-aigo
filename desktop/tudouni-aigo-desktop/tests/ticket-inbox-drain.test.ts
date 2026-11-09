@@ -95,6 +95,30 @@ test('a drop becomes an OPEN Ticket with its origin recorded', async () => {
   assert.deepEqual(ticket.origin, { kind: 'source', source: 'github', thread: 'issue#9', file: 'gh-9' });
 });
 
+test('a drop that names its workspace, model and link lands with them', async () => {
+  // The Source layer (docs/design/ticket-sources.md 3.4) writes these; a Ticket
+  // for one repo's release must not run in whatever workspace is on screen.
+  const store = await loadedStore();
+  inbox.set(
+    'src-rel-1',
+    '---\nsource: rel\nthread: push#abc\nworkspace: local:D:/repo-a\nmodel: m1\nurl: https://example.com/c/abc\n---\nRelease abc\n',
+  );
+  await store.getState().scanTicketInbox();
+
+  const ticket = store.getState().tickets[0];
+  assert.deepEqual(ticket.workspace, { kind: 'local', path: 'D:/repo-a' });
+  assert.equal(ticket.model, 'm1');
+  assert.deepEqual(ticket.origin, {
+    kind: 'source',
+    source: 'rel',
+    thread: 'push#abc',
+    file: 'src-rel-1',
+    url: 'https://example.com/c/abc',
+  });
+  // And the record still passes the guard after a round trip through the file.
+  assert.match(fileText ?? '', /"url":\s*"https:\/\/example.com\/c\/abc"/);
+});
+
 test('a drain never starts work', async () => {
   // The whole point of the door: a program may propose, not command.
   const store = await loadedStore();

@@ -263,6 +263,16 @@ export interface InitTicket {
   title: string;
   brief: string;
   reports: InitTicketReport[];
+  /** Protocol 19: the attachments the bind carried. Absent before 19. */
+  attachments?: TicketBindAttachment[];
+}
+
+/** One attachment `ticket_bind` names (protocol 19): already staged into the
+ *  session's workspace, so `path` is workspace-relative. */
+export interface TicketBindAttachment {
+  name: string;
+  path: string;
+  bytes: number;
 }
 
 /**
@@ -1800,7 +1810,11 @@ export type FrontendMsg =
    *  unbind. Only sent to a session whose `init.protocol` is 18 or later: an
    *  older runtime would drop it silently and the person would believe there is
    *  a report channel when there is not. */
-  | { v: number; t: 'ticket_bind'; ticket: { id: string; title: string; brief: string } | null }
+  | {
+      v: number;
+      t: 'ticket_bind';
+      ticket: { id: string; title: string; brief: string; attachments?: TicketBindAttachment[] } | null;
+    }
   | { v: number; t: 'status' }
   | { v: number; t: 'tools' }
   | { v: number; t: 'context' }

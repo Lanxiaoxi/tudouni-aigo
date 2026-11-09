@@ -22,6 +22,25 @@ export const TICKET_SCHEMA = 1;
  *  is a report channel when there is not. */
 export const TICKET_MIN_PROTOCOL = 18;
 
+/** The first protocol whose `ticket_bind` carries `attachments`. An older
+ *  runtime would ignore the key, so the paths travel in the first message
+ *  instead (see `ticketRuns.ts`). */
+export const TICKET_ATTACHMENTS_MIN_PROTOCOL = 19;
+
+/** How many files one Ticket may carry. Mirrors the runtime's ceiling on
+ *  `ticket_bind.ticket.attachments` and `MAX_ATTACHMENTS_PER_TICKET` in
+ *  `src-tauri/src/ticket_attachments.rs`. */
+export const TICKET_ATTACHMENTS_MAX = 50;
+
+/** One file attached to a Ticket. The bytes live in
+ *  `~/.tudouni/tickets/attachments/<ticketId>/<name>` (a copy taken when it was
+ *  attached), so `name` is the only key a record needs. */
+export interface TicketAttachment {
+  name: string;
+  bytes: number;
+  addedAtMs: number;
+}
+
 /** How many events a Ticket keeps. The oldest go first, `created` never does. */
 export const TICKET_EVENTS_MAX = 200;
 
@@ -159,6 +178,14 @@ export interface Ticket {
    *  not move the status is still what the agent last said), but never from
    *  a session that is not the current executor. */
   lastReport: Report | null;
+  /**
+   * Files the person attached (a log, a dump, a spec). **Optional, not a schema
+   * bump**: a record from before the field existed has none, and an older build
+   * reading a newer record keeps the key untouched because the store writes
+   * records back whole. Bumping `TICKET_SCHEMA` would have made every older
+   * build's file read-only for one optional list.
+   */
+  attachments?: TicketAttachment[];
   createdAtMs: number;
   updatedAtMs: number;
 
@@ -185,7 +212,7 @@ export type TicketOrigin =
    * issue must yield one Ticket, not one per scan. `file` is kept so a person
    * can find the original under `processed/` afterwards.
    */
-  | { kind: 'source'; source: string; thread: string; file: string };
+  | { kind: 'source'; source: string; thread: string; file: string; url?: string };
 
 /* ============================================================
    Id, title, blank
@@ -318,7 +345,9 @@ export function isValidOrigin(value: unknown): value is TicketOrigin {
   return (
     isNonEmptyString(value.source) &&
     isNonEmptyString(value.thread) &&
-    typeof value.file === 'string'
+    typeof value.file === 'string' &&
+    // Optional: records from before the field existed have none.
+    (value.url === undefined || typeof value.url === 'string')
   );
 }
 
@@ -333,6 +362,33 @@ export function isValidReport(value: unknown): value is Report {
     Array.isArray(value.evidence) &&
     value.evidence.every((item) => typeof item === 'string') &&
     typeof value.atMs === 'number'
+  );
+}
+
+/** The attachments of a Ticket, empty for a record that has none. */
+export function attachmentsOf(ticket: Pick<Ticket, 'attachments'>): TicketAttachment[] {
+  return ticket.attachments ?? [];
+}
+
+/** One attachment name as the Rust door accepts it: one path component. */
+export function isAttachmentName(name: string): boolean {
+  return (
+    name !== '' &&
+    name.length <= 255 &&
+    !/[/\\\0]/.test(name) &&
+    !name.startsWith('.')
+  );
+}
+
+export function isValidAttachment(value: unknown): value is TicketAttachment {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.name === 'string' &&
+    isAttachmentName(value.name) &&
+    typeof value.bytes === 'number' &&
+    Number.isInteger(value.bytes) &&
+    value.bytes >= 0 &&
+    typeof value.addedAtMs === 'number'
   );
 }
 
@@ -379,6 +435,16 @@ export function isValidTicket(value: unknown): value is Ticket {
   if (value.assignments.filter((a: Assignment) => a.end === null).length > 1) return false;
   if (!Array.isArray(value.events) || !value.events.every(isValidEvent)) return false;
   if (value.lastReport !== null && !isValidReport(value.lastReport)) return false;
+  if (
+    value.attachments !== undefined &&
+    !(
+      Array.isArray(value.attachments) &&
+      value.attachments.length <= TICKET_ATTACHMENTS_MAX &&
+      value.attachments.every(isValidAttachment)
+    )
+  ) {
+    return false;
+  }
   if (typeof value.createdAtMs !== 'number' || typeof value.updatedAtMs !== 'number') return false;
   if (!isRecord(value.origin) || !isValidOrigin(value.origin)) return false;
   if (!isValidActor(value.requester)) return false;

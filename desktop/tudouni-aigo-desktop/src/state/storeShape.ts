@@ -892,6 +892,18 @@ export interface AppStore {
   /** Hand the machine one command or fact and persist the result. `at`
    *  defaults to now. Returns the machine's refusal as `reason`. */
   dispatchTicket(id: string, input: TicketInputDraft): TicketDispatchResult;
+  /**
+   * Copy local files into the Ticket's attachment directory and add them to the
+   * record. The bytes are copied first and the record names only what landed,
+   * so a refused file never appears as an attachment. Resolves to the names
+   * added and, per refused path, the sentence that says why.
+   */
+  addTicketAttachments(
+    id: string,
+    localPaths: string[],
+  ): Promise<{ added: string[]; failed: { path: string; error: string }[] }>;
+  /** Drop one attachment from the record, then its stored copy. */
+  removeTicketAttachment(id: string, name: string): Promise<boolean>;
   deleteTicket(id: string): boolean;
   /** Remove every `done` / `dropped` Ticket; returns how many. */
   clearFinishedTickets(): number;

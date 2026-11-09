@@ -34,6 +34,8 @@ import { framePictures } from './paste';
 // that go with them live in that module, and this file is the bridge, not a
 // second place that decides what a route may hold.
 import type { ConfigDocument, ConfigPatch } from './userConfig';
+// Ticket Sources' answers are defined with the rules that read them.
+import type { LastScan, ProbeResult, ScanReport } from '@/ticket/sources';
 
 type UnlistenFn = () => void;
 
@@ -988,6 +990,87 @@ export async function writeTicketsFile(text: string): Promise<void> {
   await tauriInvoke<null>('tickets_write', { text });
 }
 
+/* ---------------- Ticket attachments (`ticket_attachments.rs`) ---------------- */
+
+/** What happened to one picked path. Exactly one of `attachment` / `error`. */
+export interface TicketAttachmentImport {
+  localPath: string;
+  attachment: { name: string; bytes: number } | null;
+  error: string | null;
+}
+
+/** A Ticket attachment copied into a session's workspace. */
+export interface StagedTicketAttachment {
+  name: string;
+  /** Workspace-relative, forward slashes: what `ticket_bind` carries. */
+  path: string;
+  bytes: number;
+}
+
+/** Copy picked files into `~/.tudouni/tickets/attachments/<id>/`. One outcome
+ *  per path, in order. `existing` keeps the per-Ticket ceiling across calls. */
+export async function importTicketAttachments(
+  ticketId: string,
+  localPaths: string[],
+  existing: number,
+): Promise<TicketAttachmentImport[]> {
+  if (!isHosted()) {
+    return localPaths.map((localPath) => ({
+      localPath,
+      attachment: null,
+      error: 'attaching a file needs the desktop app',
+    }));
+  }
+  return await tauriInvoke<TicketAttachmentImport[]>('ticket_attachment_import', {
+    ticketId,
+    localPaths,
+    existing,
+  });
+}
+
+export async function removeTicketAttachmentFile(ticketId: string, name: string): Promise<void> {
+  if (!isHosted()) return;
+  await tauriInvoke<null>('ticket_attachment_remove', { ticketId, name });
+}
+
+export async function purgeTicketAttachments(ticketId: string): Promise<void> {
+  if (!isHosted()) return;
+  await tauriInvoke<null>('ticket_attachments_purge', { ticketId });
+}
+
+export async function openTicketAttachment(ticketId: string, name: string): Promise<void> {
+  if (!isHosted()) return;
+  await tauriInvoke<null>('ticket_attachment_open', { ticketId, name });
+}
+
+/** Copy a Ticket's attachments into session `key`'s workspace (local or
+ *  remote; the bridge decides). All or nothing. */
+export async function stageTicketAttachments(
+  key: string,
+  ticketId: string,
+  names: string[],
+): Promise<StagedTicketAttachment[]> {
+  if (!isHosted() || names.length === 0) return [];
+  return await tauriInvoke<StagedTicketAttachment[]>('ticket_attachments_stage', {
+    key: Number(key),
+    ticketId,
+    names,
+  });
+}
+
+/** Several files from the OS dialog. Empty when cancelled or not hosted. */
+export async function chooseAttachmentFiles(): Promise<string[]> {
+  if (!isHosted()) return [];
+  try {
+    const mod = await import('@tauri-apps/plugin-dialog');
+    const picked = await mod.open({ directory: false, multiple: true });
+    if (Array.isArray(picked)) return picked.filter((p): p is string => typeof p === 'string');
+    return typeof picked === 'string' ? [picked] : [];
+  } catch {
+    return [];
+  }
+}
+
 /** One file waiting in the ticket inbox, as the Rust door read it. */
 export interface InboxFileText {
   /** The stem, without `.md`. */
@@ -1017,6 +1100,65 @@ export async function readInboxDir(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/* ============================================================
+   Ticket Sources (docs/design/ticket-sources.md §5)
+   ============================================================ */
+
+/** `~/.tudouni/tickets/sources.json` as text; `null` when it does not exist
+ *  yet or outside Tauri. A read that fails rejects: an unreadable file is not
+ *  "no sources", and the panel must not offer to write over it. */
+export async function readSourcesFile(): Promise<string | null> {
+  if (!isHosted()) return null;
+  return await tauriInvoke<string | null>('sources_read');
+}
+
+/** Replace `sources.json`. Rust validates first and rejects with the reason,
+ *  so the caller shows the rejection instead of closing. */
+export async function writeSourcesFile(text: string): Promise<void> {
+  await tauriInvoke<null>('sources_write', { text });
+}
+
+/** Where `sources.json` is, for "Open file". `null` outside Tauri. */
+export async function readSourcesPath(): Promise<string | null> {
+  if (!isHosted()) return null;
+  try {
+    return await tauriInvoke<string>('sources_path');
+  } catch {
+    return null;
+  }
+}
+
+/** Each source's last scan, by id. Empty outside Tauri. */
+export async function readSourcesStatus(): Promise<Record<string, LastScan>> {
+  if (!isHosted()) return {};
+  try {
+    return await tauriInvoke<Record<string, LastScan>>('sources_status');
+  } catch {
+    return {};
+  }
+}
+
+/** Run a scan. The clock and the time zone are read here, not in Rust, so the
+ *  Rust side needs no time-zone library (`schedule` is local time). Rejects
+ *  with the reason, including "a scan is already running". */
+export async function scanSources(opts?: { only?: string[] }): Promise<ScanReport> {
+  return await tauriInvoke<ScanReport>('sources_scan', {
+    nowMs: Date.now(),
+    tzOffsetMinutes: new Date().getTimezoneOffset(),
+    only: opts?.only,
+  });
+}
+
+/** Run one source's probe and write nothing ("Dry run"). Takes the source's
+ *  JSON text, so an unsaved edit can be tried before it is saved. */
+export async function probeSource(sourceJsonText: string): Promise<ProbeResult> {
+  return await tauriInvoke<ProbeResult>('sources_probe', {
+    source: sourceJsonText,
+    nowMs: Date.now(),
+    tzOffsetMinutes: new Date().getTimezoneOffset(),
+  });
 }
 
 /* ============================================================

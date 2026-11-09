@@ -43,8 +43,9 @@ const TICKETS_DIR: &str = "tickets";
 const INBOX_DIR: &str = "inbox";
 const PROCESSED_DIR: &str = "processed";
 
-/// The directory holding the record and the inbox.
-fn tickets_dir() -> Result<PathBuf, String> {
+/// The directory holding the record and the inbox. Shared with
+/// `ticket_attachments`, whose authoritative copies live beside the record.
+pub(crate) fn tickets_dir() -> Result<PathBuf, String> {
     let home = home_dir().ok_or("the home directory could not be read")?;
     Ok(home.join(RUNTIME_DIR).join(TICKETS_DIR))
 }

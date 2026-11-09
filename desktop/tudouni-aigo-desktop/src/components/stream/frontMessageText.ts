@@ -116,6 +116,11 @@ export function frontMessageText(t: Translate, message: FrontMessage): string {
             seconds: message.seconds,
             task: message.task,
           });
+    case 'ticketAttachmentsFailed':
+      return t('note.ticket.attachmentsFailed', {
+        names: message.names.join(', '),
+        reason: message.reason,
+      });
     case 'hookDenied':
       // The hook's own words come last and are kept verbatim: they are the reason
       // the person wrote the script, and rewording them would be this window

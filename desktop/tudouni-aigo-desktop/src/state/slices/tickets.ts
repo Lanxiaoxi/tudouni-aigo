@@ -16,16 +16,34 @@
 import type { StoreContext } from '../storeContext';
 import type { AppStore, TicketDispatchResult } from '../storeShape';
 import { apply, type TicketInput } from '@/ticket/machine';
-import { emptyTicket, unbindableField, type Report, type Ticket } from '@/ticket/model';
+import { attachmentsOf, emptyTicket, unbindableField, type Report, type Ticket } from '@/ticket/model';
 import { originOf, planScan, type InboxDrop } from '@/ticket/inbox';
 import { loadTickets, reconcile, saveTickets } from '@/ticket/store';
-import { archiveInboxFile, listInboxFiles } from '@/runtime/tauri';
+import {
+  archiveInboxFile,
+  importTicketAttachments,
+  listInboxFiles,
+  purgeTicketAttachments,
+  removeTicketAttachmentFile,
+} from '@/runtime/tauri';
+
+/** Remove a gone Ticket's stored copies. Fire and forget: a directory left
+ *  behind is untidy, not wrong, and must not hold up the board. */
+function purge(ids: string[]): void {
+  for (const id of ids) {
+    void purgeTicketAttachments(id).catch((err) =>
+      console.warn(`the attachments of ${id} could not be removed:`, err),
+    );
+  }
+}
 
 export function ticketsSlice(ctx: StoreContext): Pick<
   AppStore,
   | 'loadTickets'
   | 'createTicket'
   | 'updateTicketDraft'
+  | 'addTicketAttachments'
+  | 'removeTicketAttachment'
   | 'dispatchTicket'
   | 'deleteTicket'
   | 'clearFinishedTickets'
@@ -132,6 +150,63 @@ export function ticketsSlice(ctx: StoreContext): Pick<
       });
     },
 
+    async addTicketAttachments(id, localPaths) {
+      const failed: { path: string; error: string }[] = [];
+      const current = get().tickets.find((row) => row.id === id);
+      if (current === undefined || blocked() !== null || localPaths.length === 0) {
+        return { added: [], failed: localPaths.map((path) => ({ path, error: 'the Ticket cannot be changed now' })) };
+      }
+      // **Bytes first, record second.** The record names only what landed, so a
+      // refused file never shows up as an attachment the agent will be promised.
+      let outcomes;
+      try {
+        outcomes = await importTicketAttachments(id, localPaths, attachmentsOf(current).length);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return { added: [], failed: localPaths.map((path) => ({ path, error })) };
+      }
+      const now = Date.now();
+      const landed = [];
+      for (const outcome of outcomes) {
+        if (outcome.attachment !== null) {
+          landed.push({ name: outcome.attachment.name, bytes: outcome.attachment.bytes, addedAtMs: now });
+        } else {
+          failed.push({ path: outcome.localPath, error: outcome.error ?? 'the file was not attached' });
+        }
+      }
+      if (landed.length === 0) return { added: [], failed };
+      // Re-read: the record may have changed while the copy ran.
+      const fresh = get().tickets.find((row) => row.id === id);
+      const result =
+        fresh === undefined
+          ? null
+          : get().updateTicketDraft(id, { attachments: [...attachmentsOf(fresh), ...landed] });
+      if (result === null || !result.ok) {
+        for (const item of landed) void removeTicketAttachmentFile(id, item.name).catch(() => undefined);
+        return {
+          added: [],
+          failed: [...failed, ...landed.map((item) => ({ path: item.name, error: 'the Ticket could not record it' }))],
+        };
+      }
+      return { added: landed.map((item) => item.name), failed };
+    },
+
+    async removeTicketAttachment(id, name) {
+      const current = get().tickets.find((row) => row.id === id);
+      if (current === undefined) return false;
+      const rest = attachmentsOf(current).filter((item) => item.name !== name);
+      const result = get().updateTicketDraft(id, { attachments: rest });
+      if (!result.ok) return false;
+      // Record first, bytes second: the reverse of adding, for the same reason —
+      // the record never names a file that is not there.
+      try {
+        await removeTicketAttachmentFile(id, name);
+      } catch (err) {
+        console.warn(`attachment ${name} of ${id} could not be removed:`, err);
+      }
+      return true;
+    },
+
     dispatchTicket(id, input) {
       return update(id, (ticket) =>
         apply(ticket, { ...input, at: input.at ?? Date.now() } as TicketInput),
@@ -146,6 +221,7 @@ export function ticketsSlice(ctx: StoreContext): Pick<
       // session that is still attached is the caller's job, as it is for
       // accept and drop, because only the caller knows if it is alive.
       commitList(get().tickets.filter((row) => row.id !== id));
+      purge([id]);
       return true;
     },
 
@@ -153,7 +229,13 @@ export function ticketsSlice(ctx: StoreContext): Pick<
       if (blocked() !== null) return 0;
       const kept = get().tickets.filter((row) => row.status !== 'done' && row.status !== 'dropped');
       const removed = get().tickets.length - kept.length;
-      if (removed > 0) commitList(kept);
+      if (removed > 0) {
+        const gone = get()
+          .tickets.filter((row) => row.status === 'done' || row.status === 'dropped')
+          .map((row) => row.id);
+        commitList(kept);
+        purge(gone);
+      }
       return removed;
     },
 
@@ -203,6 +285,11 @@ export function ticketsSlice(ctx: StoreContext): Pick<
           // `emptyTicket` mints its own id and `created` event; both are wanted.
           title: drop.title,
           brief: drop.brief,
+          // Where the drop says the work runs. A source that watches one repo
+          // knows its workspace; leaving it to "the screen at Start" would run
+          // a release in whatever workspace happened to be open.
+          workspace: drop.workspace,
+          model: drop.model,
           origin: originOf(drop),
         };
         // The ceilings `ticket_bind` enforces are checked here too: a drop that

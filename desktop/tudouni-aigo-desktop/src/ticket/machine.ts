@@ -49,8 +49,11 @@
  */
 import {
   LOCAL_PERSON,
+  TICKET_ATTACHMENTS_MAX,
   TICKET_EVENTS_MAX,
+  isValidAttachment,
   isWorkspaceRef,
+  type TicketAttachment,
   type Actor,
   type Assignment,
   type Report,
@@ -71,6 +74,9 @@ export interface TicketPatch {
   brief?: string;
   workspace?: TaskWorkspaceRef;
   model?: string;
+  /** The whole list, replaced. The bytes are the slice's business (a file is
+   *  copied before the record names it); the machine only records the change. */
+  attachments?: TicketAttachment[];
 }
 
 /** Why the child went away, for an exit nobody asked for. `disconnected` comes
@@ -243,7 +249,7 @@ function commit(
   actor: Actor,
   type: TicketEventType,
   data: Record<string, unknown> | undefined,
-  changes: Partial<Pick<Ticket, 'title' | 'brief' | 'workspace' | 'model' | 'status' | 'assignments' | 'lastReport'>>,
+  changes: Partial<Pick<Ticket, 'title' | 'brief' | 'workspace' | 'model' | 'status' | 'assignments' | 'lastReport' | 'attachments'>>,
 ): ApplyResult {
   const event: TicketEvent = data === undefined ? { at, actor, type } : { at, actor, type, data };
   return accept({
@@ -364,7 +370,7 @@ export function apply(ticket: Ticket, input: TicketInput): ApplyResult {
 
     case 'edit': {
       const { patch } = input;
-      const changes: Partial<Pick<Ticket, 'title' | 'brief' | 'workspace' | 'model'>> = {};
+      const changes: Partial<Pick<Ticket, 'title' | 'brief' | 'workspace' | 'model' | 'attachments'>> = {};
       const fields: string[] = [];
       for (const key of ['title', 'brief', 'model'] as const) {
         const value = patch[key];
@@ -380,6 +386,22 @@ export function apply(ticket: Ticket, input: TicketInput): ApplyResult {
         if (JSON.stringify(patch.workspace) !== JSON.stringify(ticket.workspace)) {
           changes.workspace = patch.workspace;
           fields.push('workspace');
+        }
+      }
+      if (patch.attachments !== undefined) {
+        const list = patch.attachments;
+        if (
+          !Array.isArray(list) ||
+          list.length > TICKET_ATTACHMENTS_MAX ||
+          !list.every(isValidAttachment) ||
+          new Set(list.map((a) => a.name)).size !== list.length
+        ) {
+          return refuse('invalid_edit');
+        }
+        const before = ticket.attachments ?? [];
+        if (JSON.stringify(list) !== JSON.stringify(before)) {
+          changes.attachments = list;
+          fields.push('attachments');
         }
       }
       // Allowed in every status: re-pointing a Ticket at another workspace

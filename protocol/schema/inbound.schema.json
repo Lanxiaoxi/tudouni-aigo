@@ -674,7 +674,7 @@
     "required": ["v", "t"]
   },
   "ticket_bind": {
-    "summary": "**把这个会话绑定到一个工单，或解绑**（protocol 18）。绑定后 runtime 注册 `ticket_report` 工具、在每轮 payload 尾部加一条工单说明；解绑则注销工具。",
+    "summary": "**把这个会话绑定到一个工单，或解绑**（protocol 18；protocol 19 起 `ticket.attachments`）。绑定后 runtime 注册 `ticket_report` 工具、在每轮 payload 尾部加一条工单说明；解绑则注销工具。",
     "doc": [
       "绑定写进会话 metadata 的 `ticket` 记录（与 `goal` 平级），所以 `/resume` 或重开会话后仍然有效，`init.ticket` 会带回它。",
       "runtime **不知道工单存在哪里，也不知道它的状态机**：它只记住「我在为哪个工单工作」，并把 agent 的回报原样转发（出站 `ui(ticket_report)`）。",
@@ -691,7 +691,7 @@
       "ticket": {
         "type": "object",
         "nullable": true,
-        "doc": "`{id, title, brief}`（`id` 必填、非空；`title` / `brief` 是字符串，缺省为空串）或 `null`（解绑）。上限：id 200、title 500、brief 20000 个字符。"
+        "doc": "`{id, title, brief, attachments?}`（`id` 必填、非空；`title` / `brief` 是字符串，缺省为空串）或 `null`（解绑）。上限：id 200、title 500、brief 20000 个字符。**`attachments`（protocol 19，可选）**：缺省或 `null` = 没有附件；给了就必须是最多 50 个 `{name, path, bytes}` 的数组。`name` 非空、≤255 字符、不含 `/` 或 `\\`；`path` 非空、≤1024 字符、是工作区相对路径（正斜杠），拒绝绝对路径（前导 `/` 或 `C:` 这样的盘符）和任何 `..` 段；`bytes` 是非负整数。前端要在绑定**之前**把文件复制进工作区（约定放 `.tudouni/ticket-attachments/<ticketId>/`），runtime 只记路径、不复制也不读文件。任何一条不合格，整条绑定被拒并回 `notice(code=\"ticket\", level=warn)`，不保留合格的那部分。附件写进会话 metadata，每轮 payload 尾部列出，重新绑定同一个 id 但附件不同算一次变更。"
       }
     },
     "required": ["v", "t", "ticket"]

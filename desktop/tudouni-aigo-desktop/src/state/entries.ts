@@ -186,6 +186,9 @@ export type FrontMessage =
    *  inside the wait, so there was nowhere safe to send it. `task` is the
    *  template's title when the caller has one. */
   | { code: 'handshakeTimeout'; seconds: number; task: string | null }
+  /** A Ticket's attachments could not be copied into this session's workspace,
+   *  so the session was bound without them. `reason` is the bridge's sentence. */
+  | { code: 'ticketAttachmentsFailed'; names: string[]; reason: string }
   /** A user-configured hook refused a tool call, or broke.
    *
    *  Its own sentence because the alternative is nothing at all: the call row

@@ -516,6 +516,24 @@
   color: var(--fg-faint);
 }
 
+/* The link back to the drop's source: a real button, so it is reachable by
+   keyboard and says what it opens. */
+.tkb-chip.is-link {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-caption);
+}
+
+.tkb-chip.is-link:hover {
+  color: var(--fg);
+}
+
+.tkb-chip.is-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .tkb-avatar {
   display: inline-flex;
   align-items: center;
@@ -872,6 +890,56 @@
   color: var(--destructive-text);
 }
 
+/* The dialog's attachments: a button, a row of chips, and a dashed outline
+   while an OS drop is over the window. */
+.tkb-attach {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed transparent;
+  border-radius: var(--radius-xs);
+}
+
+.tkb-attach.is-drop {
+  border-color: var(--accent);
+  background: var(--bg-muted);
+}
+
+.tkb-attach-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tkb-attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+button.tkb-attach-name {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.tkb-attach-drop {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
 .tkb-form-note {
   display: inline-flex;
   align-items: center;
@@ -1193,4 +1261,264 @@
 .tkb-lane::-webkit-scrollbar-track,
 .tkb-lane::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* ============================================================
+   Ticket sources: the settings panel and the board's scan note
+   ============================================================ */
+
+/* Of the two sentences under the head, the sources one turns amber when a
+   source failed: a scan that dropped nothing because it broke must not read
+   like one that dropped nothing because nothing changed. */
+.tkb-src-note.is-bad {
+  color: var(--warning-text);
+  background: var(--warning-subtle);
+}
+
+/* A fixed height, not "whatever the content is": the list and the editor
+   scroll on their own, and a dialog that resized as sources were added or
+   switched would move the Save button under the pointer. */
+.tkb-src-dialog {
+  height: min(760px, calc(100vh - 96px));
+}
+
+.tkb-src-body {
+  display: grid;
+  grid-template-columns: 252px minmax(0, 1fr);
+  gap: var(--space-4);
+  overflow: hidden;
+  padding-top: var(--space-3);
+}
+
+.tkb-src-side,
+.tkb-src-pane {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.tkb-src-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-right: var(--space-3);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.tkb-src-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.tkb-src-side-title {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.tkb-src-empty {
+  margin: 0;
+  font-size: var(--text-compact);
+  color: var(--fg-muted);
+}
+
+.tkb-src-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tkb-src-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+  border-radius: var(--radius-md);
+}
+
+.tkb-src-item:hover {
+  background: var(--lb-hover);
+}
+
+.tkb-src-item.is-selected {
+  background: var(--accent-subtle);
+}
+
+.tkb-src-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0 var(--space-2) var(--space-2);
+  text-align: left;
+  color: var(--fg);
+}
+
+.tkb-src-item-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-compact);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tkb-src-item-name svg {
+  flex: none;
+  color: var(--warning-text);
+}
+
+.tkb-src-item-kind,
+.tkb-src-item-status {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tkb-src-item-status.is-bad {
+  color: var(--destructive-text);
+}
+
+/* The editor is a column of groups, each a two-column grid; a wide field
+   (a template, a JSON box, a checkbox row) takes the whole row. */
+.tkb-src-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding-bottom: var(--space-4);
+}
+
+.tkb-src-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.tkb-src-wide {
+  grid-column: 1 / -1;
+}
+
+.tkb-src-events {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.tkb-src-filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tkb-src-filter-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.tkb-src-adv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.tkb-src-adv > summary {
+  cursor: pointer;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  margin-bottom: var(--space-3);
+}
+
+.tkb-src-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The kind picker: one card per kind, name over a one-line reason to pick it. */
+.tkb-src-kinds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tkb-src-kind {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  text-align: left;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--fg);
+}
+
+.tkb-src-kind:hover {
+  background: var(--lb-hover);
+}
+
+.tkb-src-kind-name {
+  font-size: var(--text-compact);
+  font-weight: 600;
+}
+
+.tkb-src-kind-hint {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+/* What a dry run saw. */
+.tkb-src-probe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.tkb-src-probe-sum {
+  margin: 0;
+  font-size: var(--text-compact);
+  color: var(--fg);
+}
+
+.tkb-src-probe-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-caption);
+}
+
+.tkb-src-probe-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.tkb-src-probe-table th,
+.tkb-src-probe-table td {
+  padding: 2px var(--space-2) 2px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  overflow-wrap: anywhere;
+}
+
+.tkb-src-open {
+  display: inline-flex;
 }

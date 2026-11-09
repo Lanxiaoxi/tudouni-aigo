@@ -73,7 +73,8 @@
         "nullable": true,
         "doc": [
           "protocol 18 起。这个会话当前绑定的工单，**键永远在**，未绑定时是 `null`（不省略：前端要的是「未绑定」这个值，而不是一个要自己猜的缺席）。",
-          "绑定时是 `{id, title, brief, reports: [...]}`，来自会话 metadata 的 `ticket` 记录，所以 `/resume` 或重开会话后仍在，`ticket_report` 工具也随之注册。",
+          "绑定时是 `{id, title, brief, reports: [...], attachments: [...]}`，来自会话 metadata 的 `ticket` 记录，所以 `/resume` 或重开会话后仍在，`ticket_report` 工具也随之注册。",
+          "`attachments`（protocol 19 起）**永远是数组**，没有附件时是 `[]`；每一条是 `{name, path, bytes}`（`path` 是工作区相对路径，正斜杠；`bytes` 是整数）。protocol 18 的 runtime 没有这一格，前端别把缺席读成「没有附件」。",
           "`reports` 的每一条与 `ui(ticket_report)` 的字段一致：`{report_id, status, summary, question, evidence, at_ms}`（`question` 无则 null，`evidence` 无则 `[]`），按时间先后，最多保留最近 200 条。",
           "**这是对账用的**：前端可能错过实时的 `ui(ticket_report)`（窗口正在重载），打开会话时按 `report_id` 补齐漏掉的。runtime 保证先把回报写进会话文件、再发 `ui`，所以「发出过」一定意味着「这里有」。",
           "runtime 低于 18 时没有这一格；前端据 `init.protocol` 判断，不要把缺席读成「未绑定」。"

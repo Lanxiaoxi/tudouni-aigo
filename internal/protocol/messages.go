@@ -168,7 +168,18 @@ const VERSION = 1
 // was: a front end that knows none of it never sends the bind, and a runtime
 // below 18 silently ignores it — which is why a front end that draws a reporting
 // state gates the bind on this number instead of assuming the channel exists.
-const PROTOCOL = 18
+//
+// 19 adds ticket attachments: `ticket_bind.ticket.attachments` (optional; absent
+// or null means none; at most 50 `{name, path, bytes}` objects) and the same list on
+// `init.ticket.attachments` (always an array). The front end copies each file into
+// the session's workspace **before** binding and sends only where it put them; the
+// runtime stores the list in the session metadata, names the files in the payload
+// tail every round so the agent can read them, and refuses the whole bind (a `ticket`
+// warn notice) if any entry is malformed or escapes the workspace. Additive in the
+// same way 18 was: a runtime below 19 ignores the unknown key and the agent simply is
+// not told about the files, which is why a front end that stages attachments gates it
+// on this number.
+const PROTOCOL = 19
 
 // Message keys used by every envelope.
 const (

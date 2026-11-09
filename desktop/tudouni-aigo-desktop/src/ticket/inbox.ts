@@ -35,6 +35,7 @@
  * is the file's stem, so a person can drop a plain note and still get a Ticket.
  * Everything after the front matter is the brief.
  */
+import type { TaskWorkspaceRef } from '@/task/tasks';
 import type { Ticket, TicketOrigin } from './model';
 
 /** The directory names inside `~/.tudouni/tickets/`. Mirrors
@@ -64,11 +65,44 @@ export interface InboxDrop {
   title: string;
   /** The work, and what the session is given. */
   brief: string;
+  /** Where the work runs; `active` when the drop does not say (the old
+   *  behaviour, and the only answer a hand-written note can give by default). */
+  workspace: TaskWorkspaceRef;
+  /** The model; empty means the workspace's current one. */
+  model: string;
+  /** A link back to where the drop came from (a PR, a commit), or `null`. */
+  url: string | null;
 }
 
 /** The front matter fields this build reads. Anything else is ignored rather
  *  than rejected: a source that adds a field should not stop the drop. */
-const KNOWN_FIELDS = new Set(['source', 'thread', 'title']);
+const KNOWN_FIELDS = new Set(['source', 'thread', 'title', 'workspace', 'model', 'url']);
+
+/**
+ * Read a `workspace:` value: `active`, `local:<path>` or `remote:<id>`.
+ *
+ * Anything else falls back to `active` rather than refusing the drop: a source
+ * that misspells the place still delivered work, and the person sees where it
+ * will run (and can edit it) before pressing Start.
+ */
+export function parseWorkspaceField(value: string | undefined): TaskWorkspaceRef {
+  const text = (value ?? '').trim();
+  const colon = text.indexOf(':');
+  if (colon > 0) {
+    const kind = text.slice(0, colon).trim().toLowerCase();
+    const rest = text.slice(colon + 1).trim();
+    if (rest !== '' && kind === 'local') return { kind: 'local', path: rest };
+    if (rest !== '' && kind === 'remote') return { kind: 'remote', id: rest };
+  }
+  return { kind: 'active' };
+}
+
+/** Only http(s) links are kept: the card opens this with the system handler,
+ *  and a `file:` or custom-scheme link from a drop has no business there. */
+export function parseUrlField(value: string | undefined): string | null {
+  const text = (value ?? '').trim();
+  return /^https?:\/\/\S+$/i.test(text) ? text : null;
+}
 
 /**
  * Split `---` front matter from the body.
@@ -128,12 +162,28 @@ export function parseInboxFile(file: InboxFile): InboxDrop | null {
   const source = (fields.source ?? '').trim().toLowerCase() || DEFAULT_SOURCE;
   const thread = (fields.thread ?? file.name).trim() || file.name;
   const title = (fields.title ?? '').trim() || firstLine(brief);
-  return { source, thread, file: file.name, title, brief };
+  return {
+    source,
+    thread,
+    file: file.name,
+    title,
+    brief,
+    workspace: parseWorkspaceField(fields.workspace),
+    model: (fields.model ?? '').trim(),
+    url: parseUrlField(fields.url),
+  };
 }
 
-/** The origin a drop becomes. */
+/** The origin a drop becomes. `url` is written only when there is one, so a
+ *  record from a drop without a link has the same shape it always had. */
 export function originOf(drop: InboxDrop): TicketOrigin {
-  return { kind: 'source', source: drop.source, thread: drop.thread, file: drop.file };
+  return {
+    kind: 'source',
+    source: drop.source,
+    thread: drop.thread,
+    file: drop.file,
+    ...(drop.url !== null ? { url: drop.url } : {}),
+  };
 }
 
 /**

@@ -122,7 +122,21 @@ runtime **不知道 Ticket 存在哪里，也不知道它的状态机**。它只
 - 桌面端在 `waitForReady` 之后、预填 prompt 之前发送，时机和 `set_autopilot` / `set_model` 相同。
 - runtime 把绑定写进会话 metadata（`ticket` 记录，与 `goal` 平级），所以 `/resume` 或重新打开这个会话，绑定仍然有效。
 - `ticket: null` 表示解绑。Ticket 被 accept、drop，或 Assignment 被 superseded 时，如果会话还活着，当场发送。
+- **附件（protocol 19）见 5.1.1。**
 - **会话不在线时，靠打开时比对来解绑。** 会话没打开时没人收这条消息，旧绑定会留在 metadata 里，`/resume` 后工具又会被注册。所以桌面端每次打开会话，都拿 `init` 带回的 `ticket` 绑定和本地记录比对：如果绑定指向的 Ticket 已经不在 `running` / `needs_you` / `review`，或者它当前的 Assignment 不是这个会话，就立刻发 `ticket_bind null`。顺序是先对账（6.3）补齐漏掉的 report，再解绑。
+
+#### 5.1.1 附件：`ticket.attachments`
+
+```json
+{"v":1,"t":"ticket_bind","ticket":{"id":"tk-abc-123","title":"…","brief":"…",
+  "attachments":[{"name":"server.log","path":".tudouni/ticket-attachments/tk-abc-123/server.log","bytes":482113}]}}
+```
+
+- 人可以给 Ticket 挂文件（典型是一份 debug 日志）。`attachments` 是可选键：缺省或 `null` 表示没有；给了就是最多 50 个 `{name, path, bytes}`。`path` 是工作区相对路径、正斜杠，不能是绝对路径、不能含 `..`；任何一条不合格，整条绑定被拒（`notice` code `ticket`），不保留合格的那部分。
+- **正本在桌面端**：`~/.tudouni/tickets/attachments/<ticketId>/`。Ticket 活得比会话长，附件也一样，所以正本不能放在某个工作区里。
+- **每次 Start 暂存一份副本**到 `<workspace>/.tudouni/ticket-attachments/<ticketId>/`（远程工作区则暂存到远端的工作区），然后才发 `ticket_bind`。runtime 够不到桌面端的家目录，agent 的 `read_file` / `read_document` 也被工作区边界限制，所以副本必须在工作区里；每次 Start 重新暂存，是因为工作区可能换了、被清理过，或附件在两次 Start 之间变了。
+- runtime 只记路径：既不复制也不读文件。清单写进会话 metadata（`/resume` 后仍在），`init.ticket.attachments` 永远是数组（没有时 `[]`），`state.BindTicket` 把"附件清单变了"算作记录变更（会落盘），清单相同则不算。
+- **每轮 payload 尾部列出清单**（`TicketText`）：一行一个 `- <name>: <path> (<bytes> bytes)`，并告诉模型这些是用户为这项工作提供的依据，文本和日志用 `read_file`、docx / pptx / xlsx / pdf 用 `read_document`，大日志按区间或先 grep，不要整份读。上限 50 条，所以尾部的增长有界；文件内容永远不进尾部。
 
 ### 5.2 工具：`ticket_report`
 
@@ -159,6 +173,7 @@ ticket_report(
 
 - `PROTOCOL` 从 17 升到 18，属于纯加法：一个入站 kind、一个 `ui` kind、`init` 里多一个可选字段。旧前端不认识新 kind，按协议规则忽略即可。
 - **旧 runtime 的处理**：远程工作区可能装着旧 runtime（远端 `~/.tudouni/runtime/current` 落后于桌面端的情况出现过）。桌面端在 `init` 看到 protocol < 18 时，Ticket 照样可以启动，但卡片上要标出"runtime 过旧，agent 无法回报"，不能假装有回报通道。
+- `PROTOCOL` 从 18 升到 19 加入附件（5.1.1），同样是纯加法：入站多一个可选键、`init.ticket` 多一个数组。protocol 18 的 runtime 会忽略 `attachments`，agent 不知道有这些文件，所以桌面端据 `init.protocol >= 19` 才暂存附件。
 - 要同步更新 `docs/spec/protocol.md` 和 `protocol/schema/*.schema.json`。
 
 ## 六、桌面端：实体、存储、写者
@@ -353,6 +368,8 @@ front matter 可省：没有时 source 记作 `inbox`、thread 取文件名，�
 | 路径穿越 | Rust 侧拒绝任何含分隔符或 `..` 的名字 |
 
 **为什么是"打开看板时扫"而不是定时。** 定时轮询会让应用感觉像有东西一直在后台跑，而 Tickets 的前提是"人看它的时候它才动"。打开看板正是有人问"有什么要做的"的时刻。
+
+**上游：Source 层。** 把外界的变化（GitHub、git 远端、文件、HTTP、定时、任意命令）自动翻译成 inbox 文件的那一层，见 `docs/design/ticket-sources.md`。它只写 `inbox/`，本节的规则一条不变；它让 inbox 多认三个字段 `workspace` / `model` / `url`（手写的投递同样生效）。
 
 **做了什么改动。** 桌面端 `src/ticket/inbox.ts`（纯函数）+ `slices/tickets.ts` 的 `scanTicketInbox`；Rust `tickets_data.rs` 加 `inbox_list` / `inbox_archive` / `inbox_dir`，路径从 `~/.tudouni/tickets.json` 改为 `~/.tudouni/tickets/tickets.json`；卡片上多一个来源标注，看板头部多一个「Check inbox」。**runtime 一行都没改**——这正是"runtime 永远不懂 Ticket"这个决定现在付利息的地方。
 

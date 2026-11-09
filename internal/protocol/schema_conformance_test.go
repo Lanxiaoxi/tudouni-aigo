@@ -347,6 +347,16 @@ func TestTheTicketMessagesSatisfyTheirSchemas(t *testing.T) {
 		"ticket": map[string]any{"id": "tk-1", "title": "t", "brief": "b"},
 	})
 	checkMessage(t, bindSpec, map[string]any{"v": VERSION, "t": InTicketBind, "ticket": nil})
+	// protocol 19: the optional attachments list rides inside the ticket object.
+	checkMessage(t, bindSpec, map[string]any{
+		"v": VERSION, "t": InTicketBind,
+		"ticket": map[string]any{
+			"id": "tk-1", "title": "t", "brief": "b",
+			"attachments": []any{map[string]any{
+				"name": "server.log", "path": ".tudouni/ticket-attachments/tk-1/server.log", "bytes": float64(482113),
+			}},
+		},
+	})
 	for _, key := range RequiredKeys[InTicketBind] {
 		found := false
 		for _, declared := range bindSpec.Required {
@@ -368,6 +378,14 @@ func TestTheTicketMessagesSatisfyTheirSchemas(t *testing.T) {
 	}
 	init["ticket"] = map[string]any{
 		"id": "tk-1", "title": "t", "brief": "b", "reports": []any{report},
+		"attachments": []any{map[string]any{
+			"name": "server.log", "path": ".tudouni/ticket-attachments/tk-1/server.log", "bytes": int64(482113),
+		}},
+	}
+	checkMessage(t, outbound["init"], init)
+	// The empty shape is an array too, never null or absent (protocol 19).
+	init["ticket"] = map[string]any{
+		"id": "tk-1", "title": "t", "brief": "b", "reports": []any{}, "attachments": []any{},
 	}
 	checkMessage(t, outbound["init"], init)
 
@@ -387,5 +405,11 @@ func TestTheTicketMessagesSatisfyTheirSchemas(t *testing.T) {
 func TestTheProtocolNumberCoversTickets(t *testing.T) {
 	if PROTOCOL < 18 {
 		t.Fatalf("PROTOCOL = %d; the ticket channel arrived in 18", PROTOCOL)
+	}
+}
+
+func TestTheProtocolNumberCoversTicketAttachments(t *testing.T) {
+	if PROTOCOL < 19 {
+		t.Fatalf("PROTOCOL = %d; ticket attachments arrived in 19", PROTOCOL)
 	}
 }

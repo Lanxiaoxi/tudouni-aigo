@@ -786,7 +786,7 @@ runtime 发** —— 和 shell 自己退出时是同一条路。前端**不允�
 不是冗余：快照在每次工具结果、每轮收尾都发，所以一个在 shell 建好之后才启动的前端 —— 或者
 丢过一条消息的前端 —— 会从下一份快照里知道它，而不是永远不知道。
 
-### 3.16 `ticket_bind` / `ui(ticket_report)` / `init.ticket` —— 工单回报通道（protocol 18）
+### 3.16 `ticket_bind` / `ui(ticket_report)` / `init.ticket` —— 工单回报通道（protocol 18；附件 protocol 19）
 
 runtime **不知道工单存在哪里，也不知道它的状态机**。它只做三件事：记住"我在为哪个工单
 工作"，给模型一个回报工具，把回报原样转发出去。工单本身（状态、验收）是前端的事。
@@ -828,6 +828,24 @@ runtime 以"已解绑"为准拒绝（检查和写入在同一把 metadata 锁里
 `ticket_id` / `session_id` / `kind`），按时间先后、最多保留最近 200 条。前端打开会话时按
 `report_id` 补齐漏掉的回报；已处理过的 id 直接跳过。protocol < 18 的 runtime 没有这一格，
 前端别把缺席读成"未绑定"。
+
+**附件（protocol 19）。** `ticket_bind.ticket` 多一个**可选**键 `attachments`：缺省或 `null`
+= 没有附件；给了就必须是最多 50 个对象的数组，每个 `{"name": string, "path": string, "bytes": number}`：
+
+| 字段 | 规则 |
+| --- | --- |
+| `name` | 非空，≤ 255 字符，不含 `/` 或 `\` |
+| `path` | 非空，≤ 1024 字符，**工作区相对路径**、正斜杠（如 `.tudouni/ticket-attachments/tk-abc-123/server.log`）；拒绝绝对路径（前导 `/`，或 `C:` 这样的盘符）和任何 `..` 段 |
+| `bytes` | 非负整数（JSON number；小数被拒，不截断） |
+
+前端要在**绑定之前**把文件复制进会话的工作区，bind 只告诉 runtime 它们放在哪；runtime 既不复制
+也不读文件。**任何一条不合格，整条绑定被拒**，回一条 `notice(level=warn, code=ticket)`，不保留
+合格的那部分（静默变短的清单会让 agent 少一份人以为它有的证据）。附件随绑定写进会话 metadata，
+所以 `/resume` 后仍在；每轮 payload 尾部会列出它们（`- <name>: <path> (<bytes> bytes)`，并提示用
+`read_file` / `read_document` 读取、大日志按区间或 grep 读）。重发同一个 id 但附件不同算一次变更
+（会落盘）；附件相同则不是。`init.ticket.attachments` **永远是数组**（没有时 `[]`），元素形状与
+上面相同。protocol 18 的 runtime 会忽略未知的 `attachments` 键，agent 因而不知道有这些文件，
+所以前端据 `init.protocol >= 19` 决定要不要暂存附件。
 
 ## 4. 人机交互：两条会阻塞的消息
 

@@ -25,6 +25,22 @@ import { isHosted } from '@/runtime/tauri';
  * channel that carries the approval gate. The outside paths only earn a notice —
  * a heads-up that the direct read will not work, not a refusal of the path itself.
  */
+/**
+ * A surface that takes the OS drop instead of the composer — today, the Ticket
+ * dialog's attachment area. Module-level rather than a store field because the
+ * handler is a callback owned by a mounted component, not state anybody draws.
+ * Only one can be active; the last to register wins, and it must clear itself.
+ */
+export interface DropOverride {
+  onDragging: (on: boolean) => void;
+  onDrop: (paths: string[]) => void;
+}
+let dropOverride: DropOverride | null = null;
+
+export function setDropOverride(next: DropOverride | null): void {
+  dropOverride = next;
+}
+
 export function useFileDrop(): void {
   useEffect(() => {
     if (!isHosted()) return;
@@ -37,6 +53,20 @@ export function useFileDrop(): void {
         const off = await mod.getCurrentWebview().onDragDropEvent((event) => {
           const s = useApp.getState();
           const payload = event.payload;
+
+          // A dialog that owns the drop (a Ticket's attachments) takes it whole:
+          // the composer under a modal is not where the person is aiming.
+          const owner = dropOverride;
+          if (owner !== null) {
+            if (payload.type === 'enter' || payload.type === 'over') owner.onDragging(true);
+            else if (payload.type === 'leave') owner.onDragging(false);
+            else {
+              owner.onDragging(false);
+              const dropped = payload.paths ?? [];
+              if (dropped.length > 0) owner.onDrop(dropped);
+            }
+            return;
+          }
 
           if (payload.type === 'enter' || payload.type === 'over') {
             s.setDragging(true);
