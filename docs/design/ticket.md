@@ -1,6 +1,6 @@
 # Ticket：任务级的工作单元
 
-状态：**已实现**。runtime 侧在 `internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`（`PROTOCOL = 18`，见 `docs/spec/protocol.md` 3.16）；桌面端在 `desktop/tudouni-aigo-desktop/src/ticket/`（model / machine / store / view / inbox）、`src/state/slices/tickets.ts`、`src/state/slices/ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`。与本文的出入：`start` 命令自带执行者并直接建 Assignment（`assignmentStarted` 只回填 sessionId / 恢复后的新 sessionKey）；新增事实 `assignmentRestoreFailed`；新增退出原因 `unreachable`（见 6.4）；`Assignment.executor` 多一个可选 `workspace`；`sendBack` 先确保会话可用再迁移；"直接开跑"是独立按钮；`ticket_bind` 的字段上限在桌面端被镜像了一份并在建/改时就拦截（见 5.5）；**工单数据在 `~/.tudouni/tickets/` 目录下，并已实现 inbox 多信源投递（见 6.7）**。
+状态：**已实现**。runtime 侧在 `internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`（`PROTOCOL = 18`，见 `docs/spec/protocol.md` 3.16）；桌面端在 `desktop/tudouni-aigo-desktop/src/ticket/`（model / machine / store / view / inbox）、`src/state/slices/tickets.ts`、`src/state/slices/ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`。与本文的出入：`start` 命令自带执行者并直接建 Assignment（`assignmentStarted` 只回填 sessionId / 恢复后的新 sessionKey）；新增事实 `assignmentRestoreFailed`；新增退出原因 `unreachable`（见 6.4）；`Assignment.executor` 多一个可选 `workspace`；`sendBack` 先确保会话可用再迁移；"直接开跑"是独立按钮；`ticket_bind` 的字段上限在桌面端被镜像了一份并在建/改时就拦截（见 6.6）；**工单数据在 `~/.tudouni/tickets/` 目录下，并已实现 inbox 多信源投递（见 6.7）**。
 
 这份文档回答三件事：Ticket 是什么、它的状态由谁来写、为了将来扩展到团队能力，现在要在哪些地方留口子。
 
@@ -284,6 +284,26 @@ interface TicketEvent {
 
 `reason` 用一个独立取值而不是复用 `crashed`：什么都没跑起来，也就没有东西崩溃，说成崩溃是关于一个从未启动的进程的假话。这条事实**不结束 Assignment**（和不变量 6 一致：退出只是事件），所以 `assignments.length` 不变。
 
+### 6.5 远程工作区
+
+Ticket 永远存在本机，执行它的会话可以在远程。两者靠三样东西连起来：
+
+- `Ticket.workspace`：复用 `TaskWorkspaceRef`，远程的写法是 `{kind:'remote', id}`；
+- `Assignment.executor.remoteWorkspaceId`：从**实际打开的 bucket** 上读，不从 Ticket 的 ref 上读。理由和 `runTask` 写 `TaskRunLink.remoteWorkspaceId` 时相同：ref 可以是 `active`，而以后要恢复会话时，要知道的是它当时**在哪台机器上**跑的；
+- `sessionId`：会话文件和绑定都在那台机器的 `<workspace>/.tudouni/sessions/` 下。
+
+几种情况分别这样处理：
+
+| 情况 | 处理 |
+| --- | --- |
+| SSH 断线 | runtime 随连接一起结束，会收到一个未被请求的退出。按会话的处理方式，Ticket 进入 `needs_you`，事件记为 `assignmentExited(reason: disconnected)`，Assignment 不结束。`reason` 来自 Rust 侧：远程 bridge 在 `runtime://exited` 的载荷（`ExitPayload`）里加一个 `reason` 字段（如 `ssh_closed`），本地子进程不带。桌面端据此区分 `crashed` 和 `disconnected`，不按工作区类型去猜。卡片上写"连接已断开"而不是"出错"。"继续"会重新连接并恢复原会话，report 靠对账补齐。断线确实需要人去处理（重连），所以算作卡点，但措辞上不能让人以为是 agent 出了问题 |
+| 远程 runtime 版本过旧（protocol < 18） | 桌面端在 `init` 里读到协议号后，**不发** `ticket_bind`。发给旧 runtime 也只会被静默忽略，那样人就会误以为有回报通道。Ticket 照样可以启动，卡片上标出"runtime 过旧，agent 无法回报，请手动推进"，状态只能由人来改。远程 runtime 装成旧版本，最常见的原因是安装包里打进了旧的 `remote-packages`，排查从那里开始 |
+| 远程工作区或主机被删除 | `workspaceRefLabel` 返回 `null`。卡片标出"工作区不存在"，"开始"和"继续"按钮禁用；已有的 Assignment 记录保留，`drop` 和编辑不受影响。可以把 Ticket 改指向另一个工作区，但只对新的 Assignment 生效，旧 Assignment 的 `remoteWorkspaceId` 不会被改写 |
+| `active` 工作区的 Ticket | 第一次开始时"在哪"由当时所在的屏幕决定，之后"继续"按 Assignment 上记录的 `remoteWorkspaceId` 和 `sessionId` 恢复，不按当前屏幕。否则在另一个工作区按"继续"，就会把会话恢复到错的机器上 |
+| 换一台电脑 | `tickets.json` 跟着用户目录走，可以直接复制过去。远程 Ticket 在新电脑上仍然能用，前提是 `desktop.json` 里的远程工作区 id 也一起复制了；`local` 路径的 Ticket 在新电脑上会显示"工作区不存在"。不做跨机器同步，那属于第九节说的"存储搬走" |
+
+runtime 侧对远程**没有任何特殊处理**：绑定、工具、report、metadata 在本地和远程都是同一套代码。远程问题全部由桌面端处理，因为"Ticket 在哪"和"会话在哪"这两个事实都只有桌面端知道。
+
 ### 6.6 `ticket_bind` 的字段上限
 
 runtime 对 bind 的三个字段有硬上限（`internal/state/ticket.go`：id 200、title 500、brief 20000），超了直接拒绝，桌面端只会收到一条 `notice`。这构成了 §5.4 那条规则的另一种破法：**Ticket 的状态在 bind 之前就已经写成 `running` 了**，于是超长 brief 会得到一个说 Running、却没有任何回报工具的卡片，而且协议号是 18，卡片连"runtime 过旧"的徽标都不会显示。
@@ -306,7 +326,7 @@ runtime 对 bind 的三个字段有硬上限（`internal/state/ticket.go`：id 2
 **三条规则。**
 
 1. **投递永远不会开始工作。** 进来的单子是 `open`，人还得按 Start。一个能写文件的程序不能命令工作开始，和它不能让 Ticket 变成 `done` 是同一条规矩。这是 inbox 和自动应答机的全部区别。
-2. **同一个投递只产一张单。** 看板每次打开都扫（不是定时轮询），所以重复投递是常态而不是意外。`origin` 里的 `(source, thread)` 就是幂等键，对着**已有的工单记录**查一遍。注意去重是"对记录"而不是"对同批"：同一个 `thread` 的两个文件在一次扫描里都会变成工单，所以投递方不该同时写两次同一个 thread。
+2. **同一个投递只产一张单。** 看板每次打开都扫（不是定时轮询），所以重复投递是常态而不是意外。`origin` 里的 `(source, thread)` 就是幂等键，对着**已有的工单记录**查一遍，同一次扫描里也按它去重：同一个 `thread` 的两个文件只建一张单，后面那个按 `known` 归档（`inbox.planScan`）。
 3. **坏文件跳过，不致命。** 一个读不了或空白的投递不能藏住它旁边的九个好的，也不能让看板打不开。
 
 **文件形状。**
@@ -335,26 +355,6 @@ front matter 可省：没有时 source 记作 `inbox`、thread 取文件名，�
 **为什么是"打开看板时扫"而不是定时。** 定时轮询会让应用感觉像有东西一直在后台跑，而 Tickets 的前提是"人看它的时候它才动"。打开看板正是有人问"有什么要做的"的时刻。
 
 **做了什么改动。** 桌面端 `src/ticket/inbox.ts`（纯函数）+ `slices/tickets.ts` 的 `scanTicketInbox`；Rust `tickets_data.rs` 加 `inbox_list` / `inbox_archive` / `inbox_dir`，路径从 `~/.tudouni/tickets.json` 改为 `~/.tudouni/tickets/tickets.json`；卡片上多一个来源标注，看板头部多一个「Check inbox」。**runtime 一行都没改**——这正是"runtime 永远不懂 Ticket"这个决定现在付利息的地方。
-
-### 6.5 远程工作区
-
-Ticket 永远存在本机，执行它的会话可以在远程。两者靠三样东西连起来：
-
-- `Ticket.workspace`：复用 `TaskWorkspaceRef`，远程的写法是 `{kind:'remote', id}`；
-- `Assignment.executor.remoteWorkspaceId`：从**实际打开的 bucket** 上读，不从 Ticket 的 ref 上读。理由和 `runTask` 写 `TaskRunLink.remoteWorkspaceId` 时相同：ref 可以是 `active`，而以后要恢复会话时，要知道的是它当时**在哪台机器上**跑的；
-- `sessionId`：会话文件和绑定都在那台机器的 `<workspace>/.tudouni/sessions/` 下。
-
-几种情况分别这样处理：
-
-| 情况 | 处理 |
-| --- | --- |
-| SSH 断线 | runtime 随连接一起结束，会收到一个未被请求的退出。按会话的处理方式，Ticket 进入 `needs_you`，事件记为 `assignmentExited(reason: disconnected)`，Assignment 不结束。`reason` 来自 Rust 侧：远程 bridge 在 `runtime://exited` 的载荷（`ExitPayload`）里加一个 `reason` 字段（如 `ssh_closed`），本地子进程不带。桌面端据此区分 `crashed` 和 `disconnected`，不按工作区类型去猜。卡片上写"连接已断开"而不是"出错"。"继续"会重新连接并恢复原会话，report 靠对账补齐。断线确实需要人去处理（重连），所以算作卡点，但措辞上不能让人以为是 agent 出了问题 |
-| 远程 runtime 版本过旧（protocol < 18） | 桌面端在 `init` 里读到协议号后，**不发** `ticket_bind`。发给旧 runtime 也只会被静默忽略，那样人就会误以为有回报通道。Ticket 照样可以启动，卡片上标出"runtime 过旧，agent 无法回报，请手动推进"，状态只能由人来改。远程 runtime 装成旧版本，最常见的原因是安装包里打进了旧的 `remote-packages`，排查从那里开始 |
-| 远程工作区或主机被删除 | `workspaceRefLabel` 返回 `null`。卡片标出"工作区不存在"，"开始"和"继续"按钮禁用；已有的 Assignment 记录保留，`drop` 和编辑不受影响。可以把 Ticket 改指向另一个工作区，但只对新的 Assignment 生效，旧 Assignment 的 `remoteWorkspaceId` 不会被改写 |
-| `active` 工作区的 Ticket | 第一次开始时"在哪"由当时所在的屏幕决定，之后"继续"按 Assignment 上记录的 `remoteWorkspaceId` 和 `sessionId` 恢复，不按当前屏幕。否则在另一个工作区按"继续"，就会把会话恢复到错的机器上 |
-| 换一台电脑 | `tickets.json` 跟着用户目录走，可以直接复制过去。远程 Ticket 在新电脑上仍然能用，前提是 `desktop.json` 里的远程工作区 id 也一起复制了；`local` 路径的 Ticket 在新电脑上会显示"工作区不存在"。不做跨机器同步，那属于第九节说的"存储搬走" |
-
-runtime 侧对远程**没有任何特殊处理**：绑定、工具、report、metadata 在本地和远程都是同一套代码。远程问题全部由桌面端处理，因为"Ticket 在哪"和"会话在哪"这两个事实都只有桌面端知道。
 
 ## 七、UI
 

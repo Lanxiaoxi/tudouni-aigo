@@ -190,10 +190,9 @@ test('a scan splits fresh, known and empty', () => {
   assert.deepEqual(plan.empty, ['c']);
 });
 
-test('two files for one thread in one scan both become fresh', () => {
-  // The store creates both; `hasTicketFor` only knows what was already stored.
-  // This is the documented behaviour — the dedupe is against the record, not
-  // within a batch — so a source must not write the same thread twice at once.
+test('two files for one thread in one scan make one Ticket', () => {
+  // One request delivered twice: the first file wins and the second is archived
+  // as `known`, the answer it would get had it arrived one scan later.
   const plan = planScan(
     [
       file('a', '---\nsource: gh\nthread: 1\n---\nfirst'),
@@ -201,7 +200,21 @@ test('two files for one thread in one scan both become fresh', () => {
     ],
     [],
   );
-  assert.equal(plan.fresh.length, 2);
+  assert.deepEqual(plan.fresh.map((drop) => drop.brief), ['first']);
+  assert.deepEqual(plan.known.map((drop) => drop.brief), ['second']);
+});
+
+test('the batch dedupe is per pair, not per thread or per source alone', () => {
+  const plan = planScan(
+    [
+      file('a', '---\nsource: gh\nthread: 1\n---\none'),
+      file('b', '---\nsource: jira\nthread: 1\n---\ntwo'),
+      file('c', '---\nsource: gh\nthread: 2\n---\nthree'),
+    ],
+    [],
+  );
+  assert.equal(plan.fresh.length, 3);
+  assert.equal(plan.known.length, 0);
 });
 
 /* ============================================================

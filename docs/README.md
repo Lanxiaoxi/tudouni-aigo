@@ -55,7 +55,7 @@
   「一条新的 `run_started`」处理（§16 问题的建议做法），而不是续答。
   **给写 hook 的人看的是根下的 [hooks.md](../hooks.md)，不是这一份**——这里是决策记录。
 
-- [ticket.md](design/ticket.md) — Ticket：把 todo 从 Task 拆出来，做成任务级工作单元（状态机、`ticket_bind` / `ticket_report` 回报通道、Ticket board 与两个入口、为团队能力预留的扩展口）。**状态：已实现**（runtime：`internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`，协议 18；桌面端：`desktop/tudouni-aigo-desktop/src/ticket/`、`src/state/slices/tickets.ts` / `ticketRuns.ts`、`src/components/board/TicketBoard.tsx`）。
+- [ticket.md](design/ticket.md) — Ticket：把 todo 从 Task 拆出来，做成任务级工作单元（状态机、`ticket_bind` / `ticket_report` 回报通道、Ticket board 与两个入口、为团队能力预留的扩展口、外部程序投递工单的 inbox）。**状态：已实现**（runtime：`internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`，协议 18；桌面端：`desktop/tudouni-aigo-desktop/src/ticket/`（含 `inbox.ts`）、`src/state/slices/tickets.ts` / `ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`）。数据在 `~/.tudouni/tickets/`：`tickets.json` 是记录，`inbox/` 是投递口，`processed/` 是已处理的投递（§6.3、§6.7）。
 
 **还没做的方案，别当成现状读：**
 

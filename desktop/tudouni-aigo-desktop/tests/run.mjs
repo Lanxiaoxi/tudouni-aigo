@@ -420,20 +420,20 @@ const SUITES = [
   // mutation before the file has been read. Every failure is silent in a window.
   'ticket-machine.test.ts',
   'ticket-store.test.ts',
-  // The ticket inbox (docs/design/ticket.md §9): front matter, the idempotence
+  // The ticket inbox (docs/design/ticket.md §6.7): front matter, the idempotence
   // key, and the guard accepting what a drop writes. The drain half — that a
   // drop lands as OPEN, that a redelivered thread yields one Ticket, and that a
   // file a person still has to fix is left in place.
   'ticket-inbox.test.ts',
   'ticket-inbox-drain.test.ts',
-  // The Ticket board (docs/design/ticket.md A7): the two boards are exclusive and
+  // The Ticket board (docs/design/ticket.md §6.4, §7): the two boards are exclusive and
   // the ticket one is a column occupant; the card is a pure reading of the
   // record; and a Ticket's session actions put ticket_bind / set_model /
   // set_autopilot / the first message on the wire in the contract order, to the
   // right machine.
   'ticket-board.test.ts',
-  // The Ticket side of a session's life (docs/design/ticket.md 5.1, 5.3, 6.3,
-  // 6.5, 7.3): init reconciles reports idempotently and unbinds a stale
+  // The Ticket side of a session's life (docs/design/ticket.md §5.1, §5.3, §6.3,
+  // §6.5, §7.3): init reconciles reports idempotently and unbinds a stale
   // binding only after that; a report or init that beats the file is held, not
   // lost; an unrequested exit and the person's reply move the status; and the
   // notifier speaks once per entry into needs_you / review, never to someone

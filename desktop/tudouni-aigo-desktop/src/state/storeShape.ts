@@ -650,7 +650,7 @@ export interface AppStore {
    *  Ticket empties that composer (the text has been parked), cancelling leaves it. */
   ticketSeed: { brief: string; draftOf: string | null } | null;
 
-  /* ---------------- tickets (`~/.tudouni/tickets.json`) ---------------- */
+  /* ---------------- tickets (`~/.tudouni/tickets/tickets.json`) ---------------- */
   /**
    * The Tickets, in insertion order. **Not part of `DesktopData`**: they have
    * their own file and write path (`src/ticket/store.ts`), and `status` on them

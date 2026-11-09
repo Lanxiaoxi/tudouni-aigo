@@ -171,19 +171,32 @@ export interface InboxScan {
  * Pure: the caller does the archiving and the storing. Two filters, in order —
  * a blank file is left where it is (a person may still be typing into it), and
  * a drop whose Ticket already exists is archived without a new Ticket.
+ *
+ * **"Already exists" includes this batch.** Two files naming the same
+ * `source/thread` in one scan are one request delivered twice, so only the
+ * first becomes a Ticket and the rest are archived as `known` — the same
+ * answer the second file would get if it had arrived one scan later.
  */
 export function planScan(files: readonly InboxFile[], tickets: readonly Ticket[]): InboxScan {
   const fresh: InboxDrop[] = [];
   const known: InboxDrop[] = [];
   const empty: string[] = [];
+  // NUL cannot appear in either half (both come from one line of front matter
+  // or a file name), so the joined key cannot make two pairs collide.
+  const batch = new Set<string>();
   for (const file of files) {
     const drop = parseInboxFile(file);
     if (drop === null) {
       empty.push(file.name);
       continue;
     }
-    if (hasTicketFor(tickets, drop)) known.push(drop);
-    else fresh.push(drop);
+    const key = `${drop.source}\u0000${drop.thread}`;
+    if (batch.has(key) || hasTicketFor(tickets, drop)) {
+      known.push(drop);
+      continue;
+    }
+    batch.add(key);
+    fresh.push(drop);
   }
   return { fresh, known, empty };
 }
