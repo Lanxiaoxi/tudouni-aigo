@@ -840,6 +840,21 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
               });
               break;
             }
+            case 'file_search': {
+              // Only the answer to the query still in the box is kept: typing
+              // fires one request per pause, and answers can arrive after the
+              // person has moved on. A late answer drawn under newer text would
+              // list files that do not match what is written.
+              patchWith(key, (current) =>
+                typeof msg.query === 'string' && msg.query === current.filesSearchQuery
+                  ? {
+                      filesSearchEntries: Array.isArray(msg.entries) ? msg.entries : [],
+                      filesSearchTruncated: msg.truncated === true,
+                    }
+                  : {},
+              );
+              break;
+            }
             case 'file_read': {
               // **Two destinations, one answer.** The body goes into the
               // transcript as a block — that is where a file read belongs in
@@ -1094,6 +1109,11 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
               ? {
                   filesLoading: false,
                   filesProblem: msg.text,
+                  // A refused search is answered too: without this the panel
+                  // would sit on "searching…" for ever.
+                  ...(current.filesSearchQuery !== '' && current.filesSearchEntries === null
+                    ? { filesSearchEntries: [] }
+                    : {}),
                   ...(current.fileView && current.fileView.answer === null
                     ? { fileView: { ...current.fileView, problem: msg.text } }
                     : {}),

@@ -1462,11 +1462,60 @@ export function FilesPanel() {
     readFile(entry.path);
   }
 
+  // **A filter over the listing already on screen, not a workspace search.**
+  // `file_list` answers one directory level, so this narrows what the runtime
+  // already sent; a recursive search would be a new protocol request. The query
+  // is per directory: walking elsewhere clears it, because a filter that
+  // silently carried over would make a full directory look nearly empty.
+  //
+  // **From protocol 20 the box searches the whole workspace** (`file_search`):
+  // the runtime walks the tree, since it holds the boundary. Against an older
+  // runtime it falls back to filtering the current listing, which is the only
+  // honest thing it can do — a request that runtime would silently drop would
+  // leave the box on "searching…" for ever.
+  const protocol = useSessionField((rt) => rt.session?.protocol ?? 0, 0);
+  const remote = protocol >= 20;
+  const searchFiles = useApp((s) => s.searchFiles);
+  const searchResults = useSessionField((rt) => rt.filesSearchEntries, null);
+  const searchTruncated = useSessionField((rt) => rt.filesSearchTruncated, false);
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const searching = needle !== '';
+  const workspaceSearch = remote && searching;
+  const shown = useMemo(() => {
+    if (!searching) return entries;
+    if (remote) return searchResults ?? NO_FILE_ENTRIES;
+    return entries.filter((e) => e.name.toLowerCase().includes(needle));
+  }, [entries, needle, searching, remote, searchResults]);
+
+  // One request per pause in typing, not per keystroke: each one walks the tree.
+  useEffect(() => {
+    if (!remote) return;
+    const timer = window.setTimeout(() => searchFiles(q), 200);
+    return () => window.clearTimeout(timer);
+  }, [q, remote, searchFiles]);
+
   const { active, setActive } = useListKeys({
-    count: entries.length,
+    count: shown.length,
     onClose: closePanel,
-    onPick: (i) => entries[i] && open(entries[i]),
+    onPick: (i) => shown[i] && pickResult(shown[i]),
   });
+
+  // A result is opened like a row; picking a directory from the workspace search
+  // walks into it and ends the search, since the listing is now the answer.
+  function pickResult(entry: FileEntry) {
+    if (workspaceSearch && entry.type === 'directory') setQ('');
+    open(entry);
+  }
+
+  useEffect(() => {
+    // Walking elsewhere ends a local filter; a workspace search is not about this
+    // directory, so it only ends when a directory result was picked (above).
+    if (!remote) setQ('');
+    setActive(0);
+    // `setActive` is a state setter and stable; only the directory matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path]);
 
   // The parent step is the same arithmetic the runtime's own paths use: the
   // empty string is the workspace root, and it is also its own parent. Walking
@@ -1498,8 +1547,45 @@ export function FilesPanel() {
        * still one Escape away, and `openPanel` clears this flag on every other
        * route in, so browsing is never secretly unavailable. */}
       {focus ? null : (
+        <div className="mp-search">
+          <Search size={14} className="muted" />
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              // The cursor must not stay on a row the new query hid.
+              setActive(0);
+            }}
+            placeholder={t(remote ? 'panel.files.search' : 'panel.files.searchLocal')}
+            aria-label={t(remote ? 'panel.files.search' : 'panel.files.searchLocal')}
+            spellCheck={false}
+          />
+          {q !== '' ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-compact"
+              aria-label={t('panel.files.clearSearch')}
+              onClick={() => {
+                setQ('');
+                setActive(0);
+              }}
+            >
+              <X size={12} />
+            </button>
+          ) : null}
+          <span className="mp-search-count">
+            {workspaceSearch
+              ? searchResults === null
+                ? '…'
+                : `${shown.length}${searchTruncated ? '+' : ''}`
+              : `${shown.length} / ${entries.length}`}
+          </span>
+        </div>
+      )}
+      {focus ? null : (
         <PanelBody>
-          {path !== '' ? (
+          {path !== '' && !workspaceSearch ? (
             <button
               type="button"
               className="btn btn-ghost btn-compact"
@@ -1520,20 +1606,28 @@ export function FilesPanel() {
 
             The refusal is the runtime's own wording, unaltered: it is the
             authority on why it will not read a path. */}
-          {loading ? (
+          {workspaceSearch && problem !== null ? (
+            <EmptyState title={t('panel.files.failed')} hint={problem} />
+          ) : workspaceSearch && searchResults === null ? (
+            <EmptyState title={t('panel.files.searching')} />
+          ) : workspaceSearch && shown.length === 0 ? (
+            <EmptyState title={t('panel.files.noMatchWorkspace')} />
+          ) : !workspaceSearch && loading ? (
             <EmptyState title={t('panel.files.loading')} />
-        ) : problem !== null ? (
+        ) : !workspaceSearch && problem !== null ? (
           <EmptyState title={t('panel.files.failed')} hint={problem} />
-        ) : entries.length === 0 ? (
+        ) : !workspaceSearch && entries.length === 0 ? (
           <EmptyState title={t('panel.files.empty')} />
+        ) : shown.length === 0 ? (
+          <EmptyState title={t('panel.files.noMatch')} />
         ) : (
-          entries.map((entry, i) => (
+          shown.map((entry, i) => (
             <PanelRow
               key={entry.path}
               index={i + 1}
               active={active === i}
               onHover={() => setActive(i)}
-              onPick={() => open(entry)}
+              onPick={() => pickResult(entry)}
               aside={
                 entry.type === 'directory' ? (
                   <Folder size={12} className="muted" />
@@ -1546,6 +1640,12 @@ export function FilesPanel() {
                 {entry.name}
                 {entry.type === 'directory' ? '/' : ''}
               </span>
+              {/* A workspace result can live anywhere, so where it lives is
+                  part of what identifies it: two `index.ts` rows are otherwise
+                  indistinguishable. */}
+              {workspaceSearch && parentPath(entry.path) !== '' ? (
+                <span className="caption muted mono"> {parentPath(entry.path)}/</span>
+              ) : null}
             </PanelRow>
           ))
         )}

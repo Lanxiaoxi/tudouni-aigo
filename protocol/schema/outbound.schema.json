@@ -149,7 +149,7 @@
       "t": {"type": "string", "const": "ui"},
       "kind": {
         "type": "string",
-        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "terminals", "terminal_created", "terminal_output", "terminal_exit", "memory", "hooks", "codeintel", "usage", "probe_effort", "suggestions", "ticket_report"],
+        "enum": ["run_finished", "state", "status", "tools", "mcp", "skills", "compacted", "context", "files", "file_read", "file_search", "terminals", "terminal_created", "terminal_output", "terminal_exit", "memory", "hooks", "codeintel", "usage", "probe_effort", "suggestions", "ticket_report"],
         "doc": "run_finished = 这一轮的正文（answer + run_id）；state = 面板数据快照（todos/skills/skill_catalog/jobs/mcp/agents_md/messages/steps/model/**terminals**）；status = `/status` 要的那一屏（回答入站的 status）；tools = `/tools` 的清单（回答入站的 tools）；mcp = `/mcp` 的清单（回答入站的 mcp）；skills = `/skills` 的清单（回答入站的 skills：`skills` 是这个会话**能加载**的全量目录，`active` 才是**已加载**的名字 —— 两者不能混，详见 `skills` 那条）；compacted = `/compact` 那一次的结果（回答入站的 compact，字段 `compaction`）；context = `/context` 那一屏（回答入站的 context，字段 `context`）；files = 一层目录的清单（回答入站的 `file_list`）；file_read = 一个文件的读取结果（回答入站的 `file_read`）；terminals = 这个 workspace 的全量 Terminal 清单（回答入站的 `terminal_list`，也是 `terminal_create` **失败**时的回答）；terminal_created = `terminal_create` 成功，带新建的那一条；terminal_output = 终端输出的**异步增量**（没有对应的入站消息 —— 它是对 `terminal_input` 那一次写的后续，而不是它的答案）；terminal_exit = shell 结束（自己退的或被杀的，靠 `reason` 分）；codeintel = 工作区代码索引面板（回答入站的 `codeintel_action`，也承载构建进度的推送）；usage = 跨工作区用量总账的汇总（回答入站的 `usage_stats`，字段 `usage`）。这些 kind 都不进审计 —— 终端输出尤其不能：它是无限流，写进审计等于把日志变成第二个终端。"
       },
       "answer": {
@@ -364,6 +364,10 @@
       "entries": {
         "type": "array",
         "doc": "**只有 kind=files 有**。一层目录的条目：`[{\"name\": \"main.go\", \"path\": \"src/main.go\", \"type\": \"file|directory\"}]`。**空数组 = 空目录**，不是「没读到」—— 后者会是一条 notice。条目按名字排序（目录优先），由 runtime 排好：前端各排一次就是两个顺序。`path` 是**相对于 workspace root 的完整路径**，不是一个名字：前端拿它直接发下一条 `file_list` / `file_read`，不用自己拼接（拼接是路径逃逸最常见的来源）。"
+      },
+      "query": {
+        "type": "string",
+        "doc": "**只有 kind=file_search 有**。这次回答针对的查询，原样回给前端，好让它丢掉对已经不再显示的查询的迟到回答。"
       },
       "artifact_id": {
         "type": "string",

@@ -384,6 +384,25 @@
     },
     "required": ["v", "t", "path"]
   },
+  "file_search": {
+    "summary": "**按名字递归搜整个 Workspace**（protocol 20）。",
+    "doc": [
+      "匹配的是条目的**名字**（最后一段），不区分大小写的子串；不是全路径、不是文件内容。",
+      "跳过依赖 / 构建产物 / VCS 目录（`.git`、`node_modules`、`dist`、`target` 等）的内部，",
+      "不跟随符号链接。结果最多 `files.SearchMaxResults` 条，被截断时 `truncated=true`。",
+      "响应是出站的 `ui` / `kind=file_search`，字段 `query` / `entries` / `truncated`；",
+      "`entries` 的形状与 `file_list` 的一样。空查询会被拒绝（一条 notice）。"
+    ],
+    "fields": {
+      "v": {"type": "integer", "const": 1},
+      "t": {"type": "string", "const": "file_search"},
+      "query": {
+        "type": "string",
+        "doc": "要找的名字片段。**必须给且非空** —— 空查询等于列出整个工作区。"
+      }
+    },
+    "required": ["v", "t", "query"]
+  },
   "terminal_list": {
     "summary": "请 runtime 回一份 Terminal 清单（出站的 `ui` / `kind=terminals`）。",
     "doc": [

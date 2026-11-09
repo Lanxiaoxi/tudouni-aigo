@@ -40,6 +40,9 @@ var _ protocol.GoalRoundScheduler = (*Runtime)(nil)
 // FileService answers `file_list` / `file_read`.
 var _ protocol.FileService = (*Runtime)(nil)
 
+// FileSearcher answers `file_search`.
+var _ protocol.FileSearcher = (*Runtime)(nil)
+
 // TerminalService owns the workspace's shells.
 var _ protocol.TerminalService = (*Runtime)(nil)
 

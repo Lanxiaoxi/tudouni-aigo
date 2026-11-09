@@ -1,6 +1,8 @@
 package protocol
 
 import (
+	"strings"
+
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/i18n"
 )
 
@@ -85,6 +87,38 @@ func (s *Server) handleFileRead(message map[string]any) {
 	payload["v"] = VERSION
 	payload["t"] = OutUI
 	payload["kind"] = UIFileRead
+	s.Send(payload)
+}
+
+// handleFileSearch answers `file_search`.
+//
+// An empty query is refused here, before the runtime: walking the whole
+// workspace to match the empty string would list every file in it, which is the
+// one answer a search must never give by accident.
+func (s *Server) handleFileSearch(message map[string]any) {
+	runtime := s.current()
+	if runtime == nil {
+		s.notice("warn", "files", i18n.T("channels.files.no_session"))
+		return
+	}
+	service, ok := runtime.(FileSearcher)
+	if !ok {
+		s.notice("warn", "files", i18n.T("channels.files.unsupported"))
+		return
+	}
+	query, ok := String(message, "query")
+	if !ok || strings.TrimSpace(query) == "" {
+		s.notice("warn", "files", i18n.T("channels.files.needs_query"))
+		return
+	}
+	payload, err := service.SearchFiles(query)
+	if err != nil {
+		s.notice("warn", "files", i18n.T("channels.files.search_failed", "problem", err.Error()))
+		return
+	}
+	payload["v"] = VERSION
+	payload["t"] = OutUI
+	payload["kind"] = UIFileSearch
 	s.Send(payload)
 }
 

@@ -1,6 +1,7 @@
 package files
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,6 +199,50 @@ func TestCountLinesMatchesAnEditor(t *testing.T) {
 		if got := countLines(text); got != want {
 			t.Errorf("countLines(%q) = %d, want %d", text, got, want)
 		}
+	}
+}
+
+func TestSearchFindsNamesAtAnyDepthAndSkipsHeavyTrees(t *testing.T) {
+	service, root := newService(t)
+	write(t, filepath.Join(root, "Main.go"), "x")
+	write(t, filepath.Join(root, "src", "deep", "main_test.go"), "x")
+	write(t, filepath.Join(root, "domain", "other.go"), "x")
+	write(t, filepath.Join(root, "node_modules", "pkg", "main.js"), "x")
+	write(t, filepath.Join(root, ".git", "main"), "x")
+
+	rows, truncated, err := service.Search("MAIN")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if truncated {
+		t.Error("a three-file answer was reported as truncated")
+	}
+	var paths []string
+	for _, row := range rows {
+		paths = append(paths, row.Path)
+	}
+	got := strings.Join(paths, ",")
+	// Names, not paths: `domain/other.go` contains "main" only in its directory,
+	// and the directory `domain` itself does match by name.
+	if got != "domain,Main.go,src/deep/main_test.go" {
+		t.Errorf("matches = %s, want domain,Main.go,src/deep/main_test.go", got)
+	}
+}
+
+func TestSearchRefusesAnEmptyQueryAndCapsTheAnswer(t *testing.T) {
+	service, root := newService(t)
+	if _, _, err := service.Search("   "); err == nil {
+		t.Error("an empty query was accepted")
+	}
+	for i := 0; i < SearchMaxResults+5; i++ {
+		write(t, filepath.Join(root, "many", fmt.Sprintf("hit-%03d.txt", i)), "x")
+	}
+	rows, truncated, err := service.Search("hit-")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(rows) != SearchMaxResults || !truncated {
+		t.Errorf("rows = %d truncated = %v, want %d and true", len(rows), truncated, SearchMaxResults)
 	}
 }
 

@@ -56,6 +56,24 @@ func (r *Runtime) ListFiles(path string) (map[string]any, error) {
 	return map[string]any{"path": normalised, "entries": rows}, nil
 }
 
+// SearchFiles answers `file_search`: entries anywhere in the workspace whose name
+// contains query. The query is echoed so a front end that typed ahead can drop an
+// answer to a query it no longer shows.
+func (r *Runtime) SearchFiles(query string) (map[string]any, error) {
+	if r.Files == nil {
+		return nil, fmt.Errorf("this runtime has no workspace file service")
+	}
+	entries, truncated, err := r.Files.Search(query)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		rows = append(rows, entry.Row())
+	}
+	return map[string]any{"query": query, "entries": rows, "truncated": truncated}, nil
+}
+
 // ReadFile answers `file_read`: one text file, plus a reference to its body.
 //
 // It stores the body as an Artifact and sends back the reference **and** a

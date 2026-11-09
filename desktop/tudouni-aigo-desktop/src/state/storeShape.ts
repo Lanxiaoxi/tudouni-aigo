@@ -1354,6 +1354,12 @@ export interface AppStore {
    * a `/./src/../src`.
    */
   listFiles(path: string): void;
+  /**
+   * Search the active session's whole workspace by name (`file_search`). An
+   * empty (or blank) query sends nothing and clears the results: the runtime
+   * would refuse it, and "search for nothing" means "go back to browsing".
+   */
+  searchFiles(query: string): void;
   /** Read one file. The reply's head goes in the viewer and its `artifact_id`
    *  names the body on disk; the whole file is never sent. */
   readFile(path: string): void;

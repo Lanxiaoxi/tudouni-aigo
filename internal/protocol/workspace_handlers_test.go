@@ -49,6 +49,12 @@ func (s *terminalStub) ReadFile(path string) (map[string]any, error) {
 	}, nil
 }
 
+func (s *terminalStub) SearchFiles(query string) (map[string]any, error) {
+	return map[string]any{"query": query, "truncated": false, "entries": []any{
+		map[string]any{"name": "main.go", "path": "src/main.go", "type": "file", "size": 13},
+	}}, nil
+}
+
 func (s *terminalStub) ListTerminals() []map[string]any {
 	if s.terminals == nil {
 		return []map[string]any{}
@@ -194,6 +200,39 @@ func TestFileReadCarriesTheArtifactReference(t *testing.T) {
 	}
 	if path, _ := String(message, "path"); path != "src/main.go" {
 		t.Errorf("path = %q, want src/main.go", path)
+	}
+}
+
+func TestFileSearchAnswersAndRefusesAnEmptyQuery(t *testing.T) {
+	runtime := &terminalStub{}
+	message := onlyMessage(t, driveServer(t, runtime, map[string]any{
+		"v": VERSION, "t": InFileSearch, "query": "main",
+	}))
+	if kind, _ := String(message, "kind"); kind != UIFileSearch {
+		t.Fatalf("kind = %q, want %q", kind, UIFileSearch)
+	}
+	if query, _ := String(message, "query"); query != "main" {
+		t.Errorf("query = %q, want the request's own query echoed", query)
+	}
+	if entries, _ := message["entries"].([]any); len(entries) != 1 {
+		t.Errorf("entries = %v, want one row", message["entries"])
+	}
+
+	// An empty query would list the whole workspace; it is refused instead.
+	for _, inbound := range []map[string]any{
+		{"v": VERSION, "t": InFileSearch},
+		{"v": VERSION, "t": InFileSearch, "query": "  "},
+	} {
+		if got := onlyMessage(t, driveServer(t, runtime, inbound)); TypeOf(got) != OutNotice {
+			t.Errorf("type = %q, want a notice", TypeOf(got))
+		}
+	}
+
+	// A runtime without the capability says so rather than answering nothing.
+	if got := onlyMessage(t, driveServer(t, &stubRuntime{}, map[string]any{
+		"v": VERSION, "t": InFileSearch, "query": "main",
+	})); TypeOf(got) != OutNotice {
+		t.Errorf("unsupported runtime: type = %q, want a notice", TypeOf(got))
 	}
 }
 

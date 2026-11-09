@@ -491,6 +491,20 @@ export interface UiFilesMsg {
   entries: FileEntry[];
 }
 
+/** `ui(file_search)` (protocol 20): entries anywhere in the workspace whose
+ *  **name** contains `query`. `query` is the request's own text, echoed so an
+ *  answer to a query the box no longer shows can be dropped. `truncated` means
+ *  the runtime stopped early (result cap or walk cap): "no more matches" is then
+ *  not a statement the panel may make. */
+export interface UiFileSearchMsg {
+  v: number;
+  t: 'ui';
+  kind: 'file_search';
+  query: string;
+  entries: FileEntry[];
+  truncated: boolean;
+}
+
 /**
  * `ui(file_read)`.
  *
@@ -1577,6 +1591,7 @@ export type UiMsg =
   | UiRunFinishedMsg
   | UiFilesMsg
   | UiFileReadMsg
+  | UiFileSearchMsg
   | UiTerminalsMsg
   | UiTerminalCreatedMsg
   | UiTerminalOutputMsg
@@ -1893,6 +1908,9 @@ export type FrontendMsg =
   /** Read one file. The reply carries a preview plus an `artifact_id`; the whole
    *  body stays on disk. */
   | { v: number; t: 'file_read'; path: string }
+  /** Search the whole workspace by name (protocol 20). `query` must be non-empty;
+   *  the runtime refuses an empty one with a `files` notice. */
+  | { v: number; t: 'file_search'; query: string }
   | { v: number; t: 'terminal_list' }
   /** Open a shell. `cwd` is workspace-relative and **may be omitted** (the
    *  runtime then uses the workspace root); so may the size, which then becomes

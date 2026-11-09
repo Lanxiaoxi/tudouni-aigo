@@ -1536,6 +1536,14 @@ export const en = {
    *  picking a row does, in place of the path note the browser shows. */
   'panel.files.pick': 'pick a file to attach it to the message',
   'panel.files.parent': 'Up one level',
+  /** The search box. From protocol 20 it searches the whole workspace by name;
+   *  against an older runtime it filters the current directory only. */
+  'panel.files.search': 'Search files in the workspace…',
+  'panel.files.searchLocal': 'Filter this directory…',
+  'panel.files.clearSearch': 'Clear the search',
+  'panel.files.noMatch': 'No file in this directory matches',
+  'panel.files.noMatchWorkspace': 'No file in the workspace matches',
+  'panel.files.searching': 'Searching the workspace…',
   /* `panel.files.dir` ('directory') was never read: the panel marks a directory
      with a trailing `/` and an icon, which is the runtime's own `type` shown as
      itself rather than a word repeating it. */

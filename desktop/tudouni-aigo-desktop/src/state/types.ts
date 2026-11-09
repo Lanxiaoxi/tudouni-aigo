@@ -899,6 +899,17 @@ export interface SessionRuntime {
    */
   filesProblem: string | null;
   /**
+   * The workspace-wide name search (`file_search`, protocol 20).
+   *
+   * `filesSearchQuery` is the query the **last request** asked; an answer whose
+   * echoed `query` differs is stale (the person kept typing) and is dropped. The
+   * results are `null` until the first answer for that query arrives, which is
+   * how "searching…" and "no match" stay two different statements.
+   */
+  filesSearchQuery: string;
+  filesSearchEntries: FileEntry[] | null;
+  filesSearchTruncated: boolean;
+  /**
    * The file most recently read from the browser, and whether it is still in
    * flight.
    *

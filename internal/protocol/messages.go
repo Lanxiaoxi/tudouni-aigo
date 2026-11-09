@@ -179,7 +179,16 @@ const VERSION = 1
 // same way 18 was: a runtime below 19 ignores the unknown key and the agent simply is
 // not told about the files, which is why a front end that stages attachments gates it
 // on this number.
-const PROTOCOL = 19
+//
+// 20 adds `file_search` inbound (`query`, required) and a `file_search` kind on
+// the `ui` channel: entries anywhere in the workspace whose **name** contains the
+// query, case-insensitively, as `file_list` rows plus `query` (echoed, so a front
+// end that typed ahead can drop a stale answer) and `truncated`. The walk skips
+// dependency/build/VCS trees and is capped (see `files.SearchMaxResults`). A front
+// end that draws a workspace search gates it on this number: a runtime below 20
+// silently ignores the message, and a search box that never answers is a promise
+// the runtime behind it cannot keep.
+const PROTOCOL = 20
 
 // Message keys used by every envelope.
 const (
@@ -222,8 +231,9 @@ const (
 
 	// Files. Workspace-scoped and read-only in this phase; `file_write` and the
 	// rest are deliberately absent rather than declared and unimplemented.
-	InFileList = "file_list"
-	InFileRead = "file_read"
+	InFileList   = "file_list"
+	InFileRead   = "file_read"
+	InFileSearch = "file_search"
 
 	// Terminal. Six verbs, and the split is the runtime's own model of a shell
 	// rather than a convenience: a terminal is created once, written to many times,
@@ -340,9 +350,10 @@ const (
 
 	// Files. The answer to `file_list`; `file_read` reuses the artifact
 	// machinery and answers with its own kind.
-	UIFiles     = "files"
-	UIFileRead  = "file_read"
-	UITerminals = "terminals"
+	UIFiles      = "files"
+	UIFileRead   = "file_read"
+	UIFileSearch = "file_search"
+	UITerminals  = "terminals"
 
 	// Terminal. `terminal_created` is the answer to `terminal_create` (the new
 	// terminal's own row); `terminal_output` is the asynchronous stream and is the
@@ -568,6 +579,8 @@ var RequiredKeys = map[string][]string{
 	// make "list the root" a message no front end could legally send.
 	InFileList: {"v", "t"},
 	InFileRead: {"v", "t", "path"},
+	// The query is required: there is no sensible default for "search for what".
+	InFileSearch: {"v", "t", "query"},
 
 	InTerminalList: {"v", "t"},
 	// Nothing is required beyond the envelope: the cwd is optional (the workspace

@@ -274,6 +274,14 @@ type FileService interface {
 	ReadFile(path string) (map[string]any, error)
 }
 
+// FileSearcher is the optional recursive name search behind `file_search`
+// (protocol 20). It is its own interface rather than a third FileService method
+// so a runtime that lists and reads but cannot search is still a FileService, and
+// is answered with "unsupported" instead of failing to satisfy the bigger one.
+type FileSearcher interface {
+	SearchFiles(query string) (map[string]any, error)
+}
+
 // TerminalService is what a runtime must provide for the workspace's terminals.
 //
 // It is the verbs a terminal really has rather than one verb-and-arguments pair,
@@ -532,6 +540,9 @@ func (s *Server) Dispatch(message map[string]any) bool {
 
 	case InFileRead:
 		s.handleFileRead(message)
+
+	case InFileSearch:
+		s.handleFileSearch(message)
 
 	case InTerminalList:
 		s.handleTerminalList()

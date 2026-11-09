@@ -1034,6 +1034,8 @@ var catalog = map[string]string{
 	"channels.files.needs_path":  "[files] reading a file needs a path; file_list with no path is the workspace root.",
 	"channels.files.list_failed": "[files] could not list that directory: {problem}",
 	"channels.files.read_failed": "[files] could not read that file: {problem}",
+	"channels.files.needs_query":   "[files] a search needs some text to look for.",
+	"channels.files.search_failed": "[files] could not search the workspace: {problem}",
 
 	"channels.terminal.no_session":    "[terminal] no session yet.",
 	"channels.terminal.unsupported":   "[terminal] this runtime cannot run terminals.",

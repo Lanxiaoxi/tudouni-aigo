@@ -253,6 +253,99 @@ func (s *Service) Read(path string) (Content, error) {
 	}, nil
 }
 
+// Search bounds. A search answers one protocol line, so both the answer and the
+// walk that produces it are capped: a workspace with a vendored tree must not turn
+// one keystroke into a multi-second walk or a multi-megabyte message.
+const (
+	// SearchMaxResults is the most rows one answer carries. Past it the answer says
+	// `truncated` and the person narrows the query; nobody scrolls 500 matches.
+	SearchMaxResults = 200
+	// SearchMaxVisited bounds the entries the walk looks at. Hitting it is also
+	// reported as `truncated`, because "no more matches" would be a false statement.
+	SearchMaxVisited = 100_000
+)
+
+// searchSkip is the set of directory names never descended into. They are trees a
+// person does not browse for by name (dependencies, build output, VCS internals),
+// and they are exactly the ones large enough to make a walk slow. The directory
+// itself can still match; only its contents are skipped.
+var searchSkip = map[string]bool{
+	".git": true, "node_modules": true, ".venv": true, "venv": true,
+	"__pycache__": true, "dist": true, "target": true, ".next": true,
+	".tudouni": true,
+}
+
+// Search walks the whole workspace for entries whose **name** contains query,
+// case-insensitively, and reports whether the answer was cut short.
+//
+// It matches names rather than whole paths: typing `main` should find
+// `src/main.go`, not every file under a directory called `domain`. Symlinks are
+// not followed (WalkDir does not), so the walk cannot leave the workspace and
+// cannot loop; a link whose own name matches is still reported if it resolves
+// inside the boundary, typed by its target the way List types it.
+//
+// Rows are sorted by path, case-insensitively, so one query answers in one order.
+func (s *Service) Search(query string) ([]Entry, bool, error) {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	if needle == "" {
+		return nil, false, fmt.Errorf("a search needs some text to look for")
+	}
+	root := s.workspace.Root()
+	matches := make([]Entry, 0, 32)
+	visited := 0
+	truncated := false
+	stop := fmt.Errorf("stop")
+
+	err := filepath.WalkDir(root, func(path string, item os.DirEntry, err error) error {
+		if err != nil {
+			// An unreadable subdirectory is skipped, not fatal: one permission error
+			// deep in a tree must not hide every match elsewhere.
+			if item != nil && item.IsDir() && path != root {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path == root {
+			return nil
+		}
+		visited++
+		if visited > SearchMaxVisited {
+			truncated = true
+			return stop
+		}
+		name := item.Name()
+		if strings.Contains(strings.ToLower(name), needle) {
+			dir := filepath.Dir(path)
+			relativeDir, relErr := s.relative(dir)
+			if relErr == nil {
+				if row, ok := s.entry(dir, relativeDir, item); ok {
+					if len(matches) >= SearchMaxResults {
+						truncated = true
+						return stop
+					}
+					matches = append(matches, row)
+				}
+			}
+		}
+		if item.IsDir() && searchSkip[name] {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	if err != nil && err != stop {
+		return nil, false, err
+	}
+
+	sort.SliceStable(matches, func(i, j int) bool {
+		left, right := strings.ToLower(matches[i].Path), strings.ToLower(matches[j].Path)
+		if left != right {
+			return left < right
+		}
+		return matches[i].Path < matches[j].Path
+	})
+	return matches, truncated, nil
+}
+
 // relative is the workspace-relative spelling of an absolute path inside it.
 //
 // Separators are converted to `/` on the way out. The wire vocabulary is the one

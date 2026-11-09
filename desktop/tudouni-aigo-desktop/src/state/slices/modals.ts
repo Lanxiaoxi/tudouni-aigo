@@ -15,7 +15,7 @@ import { pollNow } from '../polling';
 import { selectModalVisible } from '../selectors/session';
 import { activeWorkspaceOf, remoteConnectionOf } from '../appView';
 
-export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'enterContextView' | 'leaveContextView' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestHooks' | 'saveHooks' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
+export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'enterContextView' | 'leaveContextView' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'searchFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestHooks' | 'saveHooks' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
   const { set, get, patch, patchWith, markSavedSessionsPending } = ctx;
   return {
     answerPermission(decision) {
@@ -374,6 +374,22 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       // boundary — and a second check here would be a second answer that
       // eventually disagrees with it.
       sendTo(key, { v: 1, t: 'file_list', path });
+    },
+
+    searchFiles(query) {
+      const key = get().activeKey;
+      if (key === null) return;
+      const trimmed = query.trim();
+      // Results go back to `null` so the panel says "searching…" rather than
+      // showing the previous query's rows under the new query's text.
+      patch(key, {
+        filesSearchQuery: trimmed,
+        filesSearchEntries: null,
+        filesSearchTruncated: false,
+        filesProblem: null,
+      });
+      if (trimmed === '') return;
+      sendTo(key, { v: 1, t: 'file_search', query: trimmed });
     },
 
     readFile(path) {
