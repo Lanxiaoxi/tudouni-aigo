@@ -1300,37 +1300,47 @@ export function SubagentsPanel() {
         {agents.length === 0 ? (
           <EmptyState title={t('panel.subagents.empty')} />
         ) : (
-          agents.map((agent, i) => (
-            <PanelRow
-              key={agent.id}
-              index={i + 1}
-              active={active === i}
-              onHover={() => setActive(i)}
-              aside={
-                <>
-                  {agent.background ? <Badge tone="info" dot={false}>{t('panel.subagents.background')}</Badge> : null}
-                  {formatDuration(agent.seconds * 1000)}
-                </>
-              }
-            >
-              <div className="row" style={{ gap: 'var(--space-2)' }}>
-                <Bot size={12} className="muted" />
-                <span className="strong">{agent.label}</span>
-                {/* `provider` is shown next to the model because a name can exist
-                    on more than one route. */}
-                <span className="mono caption muted">
-                  {agent.provider}/{agent.model} · depth {agent.depth} · {agent.steps} steps ·{' '}
-                  {agent.toolCalls} calls
-                </span>
-                {/* The stop is offered only where it can work: a background
-                    delegation has a context of its own, so one child can end
-                    without touching the turn. A foreground one is the turn's
-                    business, and the turn's interrupt is its stop. */}
-                {agent.background ? stopButton(agent.id) : null}
-              </div>
-              <div className="caption muted">{agent.activity}</div>
-            </PanelRow>
-          ))
+          agents.map((agent, i) => {
+            // `provider` is shown next to the model because a name can exist
+            // on more than one route. The meta line is one line that
+            // ellipsis-truncates, so the label and activity get full width
+            // instead of the four competing in one squeezed row.
+            const meta = `${agent.provider}/${agent.model} · depth ${agent.depth} · ${agent.steps} steps · ${agent.toolCalls} calls`;
+            return (
+              <PanelRow
+                key={agent.id}
+                index={i + 1}
+                active={active === i}
+                onHover={() => setActive(i)}
+                aside={
+                  <>
+                    {agent.background ? <Badge tone="info" dot={false}>{t('panel.subagents.background')}</Badge> : null}
+                    {formatDuration(agent.seconds * 1000)}
+                  </>
+                }
+              >
+                <div className="panel-subagent">
+                  <div className="sa-line">
+                    <Bot size={12} className="muted" />
+                    <span className="strong sa-ellipsis" title={agent.label}>
+                      {agent.label}
+                    </span>
+                    {/* The stop is offered only where it can work: a background
+                        delegation has a context of its own, so one child can end
+                        without touching the turn. A foreground one is the turn's
+                        business, and the turn's interrupt is its stop. */}
+                    {agent.background ? stopButton(agent.id) : null}
+                  </div>
+                  <div className="sa-line sa-ellipsis" title={meta}>
+                    <span className="mono caption muted">{meta}</span>
+                  </div>
+                  <div className="caption muted sa-ellipsis" title={agent.activity}>
+                    {agent.activity}
+                  </div>
+                </div>
+              </PanelRow>
+            );
+          })
         )}
 
         {uncollected.length > 0 ? (
@@ -1352,14 +1362,20 @@ export function SubagentsPanel() {
                   </>
                 }
               >
-                <div className="row" style={{ gap: 'var(--space-2)' }}>
-                  <Bot size={12} className="muted" />
-                  <span className="strong">{row.label}</span>
-                  <span className="mono caption muted">
-                    {row.provider}/{row.model} · {row.steps} steps
-                  </span>
+                <div className="panel-subagent">
+                  <div className="sa-line">
+                    <Bot size={12} className="muted" />
+                    <span className="strong sa-ellipsis" title={row.label}>
+                      {row.label}
+                    </span>
+                  </div>
+                  <div className="sa-line sa-ellipsis" title={`${row.provider}/${row.model} · ${row.steps} steps`}>
+                    <span className="mono caption muted">
+                      {row.provider}/{row.model} · {row.steps} steps
+                    </span>
+                  </div>
+                  <div className="caption muted sa-ellipsis">{t('panel.subagents.uncollected')}</div>
                 </div>
-                <div className="caption muted">{t('panel.subagents.uncollected')}</div>
               </PanelRow>
             ))}
           </>

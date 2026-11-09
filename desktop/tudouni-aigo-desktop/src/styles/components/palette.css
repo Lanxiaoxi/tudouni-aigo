@@ -149,6 +149,33 @@
   flex: none;
 }
 
+/* A subagent row: three lines instead of one. The old layout put the label,
+   the provider/model/depth/steps/calls line and the activity into a single
+   flex row, and at the panel's width that was four strings squeezing into
+   ~400px — the label wrapped vertically and the mono meta broke mid-word.
+   One line per fact, each truncating on its own, reads as a list again. */
+.cmdk-item .panel-subagent {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cmdk-item .sa-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.cmdk-item .sa-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 /* ---------------- 加号菜单（PlusMenu） ----------------
    锚在输入框左下角 `+` 上的 popover，内部以「页」切换根菜单与子菜单。
    表面同 dialog：elevated 底 + strong 边 + modal 阴影，宽度收窄成菜单。 */
