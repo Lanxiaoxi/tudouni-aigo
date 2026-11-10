@@ -147,11 +147,22 @@
   flex: 1 1 auto;
 }
 
+/* The queue block must not shrink. Left at the default `flex-shrink: 1`, a
+   long corpus (whose content basis is far taller than the rail) made the flex
+   algorithm take height from both blocks, and the queue collapsed to a one-line
+   sliver with its own scrollbar — the proposal a person has to decide on was
+   the least readable thing on the rail. Its height is bounded by the card's
+   cap instead, and the record (which scrolls internally) absorbs the rest. */
+.wm-rail-block:not(.wm-rail-record) {
+  flex: none;
+}
+
 /* A queue longer than its card must scroll inside it; otherwise the record
    below would be pushed out of the panel by the very thing waiting for a
-   decision. Two proposals' height is enough to see that the queue exists. */
+   decision. The cap follows the viewport so a short window still leaves the
+   record visible, while a normal one shows a whole proposal and its buttons. */
 .wm-wait-card {
-  max-height: 240px;
+  max-height: min(360px, 45vh);
   overflow-y: auto;
 }
 

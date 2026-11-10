@@ -61,10 +61,13 @@ const WORKBENCH_PANELS: ReadonlySet<string> = new Set([
   'codeintel',
 ]);
 
-/** The two panels that take the wide rung. `config` covers the routes list, a
+/** The panels that take the wide rung. `config` covers the routes list, a
  *  route's page, an MCP server's page and the web-search tab: one component, one
- *  width, and a route's page is the densest form in the app. */
-const WIDE_PANELS: ReadonlySet<string> = new Set(['config', 'settings']);
+ *  width, and a route's page is the densest form in the app. `memory` is here
+ *  for its rail: at the narrow rung the rail is 232px, and a proposal (a
+ *  headline-sized title, a meta line, a Read disclosure and two buttons) plus a
+ *  memory card with path chips do not fit in that column. */
+const WIDE_PANELS: ReadonlySet<string> = new Set(['config', 'settings', 'memory']);
 
 export function PanelHost() {
   const t = useT();
