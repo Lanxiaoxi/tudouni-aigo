@@ -241,6 +241,7 @@ func (r *Runtime) RunTurn(ctx context.Context, text string) (string, error) {
 	// trigger that sees the person's own words rather than an error, and that is where a
 	// collaboration preference is found.
 	r.recallForTurn(text)
+	r.beginTicketTurn()
 	return r.Agent.RunMessages(ctx, r.turnMessages(text))
 }
 

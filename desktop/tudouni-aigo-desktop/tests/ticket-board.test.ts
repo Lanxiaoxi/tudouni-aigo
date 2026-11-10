@@ -45,6 +45,7 @@ import {
   groupTickets,
   needsYouCause,
   rememberedStartMode,
+  reviewCause,
   staysOnBoard,
   ticketActions,
   ticketAgentBusy,
@@ -346,6 +347,53 @@ test('a lost connection reads as "disconnected", a blocked report as a question,
   assert.equal(needsYouCause(exit('crashed')), 'crashed');
   assert.equal(needsYouCause(ticketAt('needs_you')), 'blocked');
   assert.equal(needsYouCause(started), null, 'only needs_you has a cause');
+});
+
+test('reviewCause tells an agent\u2019s "done" from a turn that ended without a report', () => {
+  const stopped = (t: Ticket, turnId: string): Ticket => {
+    const r = apply(t, { type: 'turnEnded', at: 4_000, turnEnd: { turnId, sessionId: 'S1', atMs: 4_000 } });
+    if (!r.ok) throw new Error(r.reason);
+    return r.ticket;
+  };
+  const sentBack = (t: Ticket): Ticket => {
+    const r = apply(t, { type: 'sendBack', at: 5_000, feedback: 'again' });
+    if (!r.ok) throw new Error(r.reason);
+    return r.ticket;
+  };
+
+  assert.equal(reviewCause(ticketAt('running')), null, 'only review has a review cause');
+  assert.equal(reviewCause(ticketAt('needs_you')), null);
+  assert.equal(reviewCause(ticketAt('review')), 'reported');
+
+  const unreported = stopped(ticketAt('running'), 't1');
+  assert.equal(unreported.status, 'review');
+  assert.equal(reviewCause(unreported), 'unreported');
+
+  // Reported, sent back, then stopped without reporting: the newest cause wins,
+  // and the stale lastReport is still on the record (the card must not show it).
+  const second = stopped(sentBack(ticketAt('review')), 't2');
+  assert.equal(reviewCause(second), 'unreported');
+  assert.equal(second.lastReport?.reportId, 'r1');
+
+  // The other way round: unreported, sent back, then a real done report.
+  const again = sentBack(unreported);
+  const r = apply(again, { type: 'reported', at: 6_000, report: REPORT({ reportId: 'r-new', atMs: 6_000 }) });
+  assert.ok(r.ok);
+  assert.equal(reviewCause(r.ticket), 'reported');
+
+  // A record with no cause event at all (written before the fact existed).
+  assert.equal(reviewCause({ ...ticketAt('review'), events: [] }), 'reported');
+});
+
+test('a card whose agent stopped without reporting hides the old summary and says why', () => {
+  const src = readFileSync(resolve(process.cwd(), 'src/components/board/TicketBoard.tsx'), 'utf8');
+  // No component test harness exists for the board (it is read as source, like
+  // the neighbouring checks): the old report must be nulled out before the card
+  // chooses what text to draw, and the sentence must come from the cause.
+  assert.match(src, /reviewCause\(ticket\) === 'unreported'/);
+  assert.match(src, /status === 'open' \|\| unreported \? null : ticket\.lastReport/);
+  assert.match(src, /t\('ticket\.cause\.unreported'\)/);
+  assert.ok(en['ticket.cause.unreported'].length > 0);
 });
 
 test('"Continue" is judged from the Assignment, not from the Ticket\u2019s workspace ref', () => {

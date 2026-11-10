@@ -89,6 +89,17 @@ export interface Report {
   atMs: number;
 }
 
+/** One turn the runtime saw end normally without a `ticket_report` call
+ *  (`ui(ticket_turn_end)`, protocol 21). A fact about the agent *stopping*; it
+ *  says nothing about whether the work is done. */
+export interface TurnEnd {
+  /** The turn's run id. The key every duplicate is recognised by. */
+  turnId: string;
+  /** The session whose turn ended. */
+  sessionId: string;
+  atMs: number;
+}
+
 /** Who did a thing. Today a Ticket has one person and some sessions; the
  *  union is the shape a team needs, with one member in use (design §9). */
 export type Actor =
@@ -140,6 +151,7 @@ export type TicketEventType =
   | 'start'
   | 'assignmentStarted'
   | 'reported'
+  | 'turnEndedUnreported'
   | 'personReplied'
   | 'assignmentExited'
   | 'assignmentRestoreFailed'
@@ -296,6 +308,7 @@ const EVENT_TYPES: ReadonlySet<string> = new Set<TicketEventType>([
   'start',
   'assignmentStarted',
   'reported',
+  'turnEndedUnreported',
   'personReplied',
   'assignmentExited',
   'assignmentRestoreFailed',

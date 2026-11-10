@@ -16,7 +16,14 @@
 import type { StoreContext } from '../storeContext';
 import type { AppStore, TicketDispatchResult } from '../storeShape';
 import { apply, type TicketInput } from '@/ticket/machine';
-import { attachmentsOf, emptyTicket, unbindableField, type Report, type Ticket } from '@/ticket/model';
+import {
+  attachmentsOf,
+  emptyTicket,
+  unbindableField,
+  type Report,
+  type Ticket,
+  type TurnEnd,
+} from '@/ticket/model';
 import { originOf, planScan, type InboxDrop } from '@/ticket/inbox';
 import { loadTickets, reconcile, saveTickets } from '@/ticket/store';
 import {
@@ -48,6 +55,7 @@ export function ticketsSlice(ctx: StoreContext): Pick<
   | 'deleteTicket'
   | 'clearFinishedTickets'
   | 'ingestTicketReport'
+  | 'ingestTicketTurnEnd'
   | 'reconcileTicket'
   | 'scanTicketInbox'
 > {
@@ -247,8 +255,15 @@ export function ticketsSlice(ctx: StoreContext): Pick<
       );
     },
 
-    reconcileTicket(ticketId: string, reports: Report[]) {
-      return update(ticketId, (ticket) => ({ ok: true, ticket: reconcile(ticket, reports) }));
+    ingestTicketTurnEnd(ticketId: string, turnEnd: TurnEnd) {
+      // The turn's own time, for the same reason as a report's.
+      return update(ticketId, (ticket) =>
+        apply(ticket, { type: 'turnEnded', at: turnEnd.atMs, turnEnd }),
+      );
+    },
+
+    reconcileTicket(ticketId: string, reports: Report[], turnEnds: TurnEnd[] = []) {
+      return update(ticketId, (ticket) => ({ ok: true, ticket: reconcile(ticket, reports, turnEnds) }));
     },
 
     async scanTicketInbox() {

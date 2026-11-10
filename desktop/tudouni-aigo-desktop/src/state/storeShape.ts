@@ -17,7 +17,7 @@ import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type La
 import type { RemoteConfigTarget } from '@/runtime/tauri';
 
 import type { TicketInputDraft, TicketPatch, TicketRefusal } from '@/ticket/machine';
-import type { Report, Ticket } from '@/ticket/model';
+import type { Report, Ticket, TurnEnd } from '@/ticket/model';
 import type { TicketStartMemory } from '@/ticket/view';
 import type { TaskWorkspaceRef } from '@/task/tasks';
 
@@ -912,9 +912,11 @@ export interface AppStore {
   /** Fold one `ui(ticket_report)` into its Ticket (a `reported` fact). Only
    *  touches Ticket data; the session wiring is the caller's. */
   ingestTicketReport(ticketId: string, report: Report): TicketDispatchResult;
-  /** Fold the reports a reopened session brought back (`init`), skipping the
-   *  ones already seen. Idempotent. */
-  reconcileTicket(ticketId: string, reports: Report[]): TicketDispatchResult;
+  /** Fold one `ui(ticket_turn_end)` into its Ticket (a `turnEnded` fact). */
+  ingestTicketTurnEnd(ticketId: string, turnEnd: TurnEnd): TicketDispatchResult;
+  /** Fold the reports and turn ends a reopened session brought back (`init`),
+   *  merged by time and skipping the ones already seen. Idempotent. */
+  reconcileTicket(ticketId: string, reports: Report[], turnEnds?: TurnEnd[]): TicketDispatchResult;
   /**
    * Drain `~/.tudouni/tickets/inbox/`: every dropped file becomes an **open**
    * Ticket and moves to `processed/`.

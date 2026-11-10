@@ -71,7 +71,7 @@ import type { RowStatus } from '@/state/store';
 import type { Translate } from '@/i18n';
 import { baseName, oneLine } from '@/utils/format';
 import { TICKET_STATUSES, ticketTitle, type Ticket, type TicketStatus } from '@/ticket/model';
-import { needsYouCause } from '@/ticket/view';
+import { needsYouCause, reviewCause } from '@/ticket/view';
 
 /* ============================================================
    The rule — pure functions, so they can be asserted without an OS
@@ -483,7 +483,12 @@ export function ticketNotifyContent(
 ): NotifyContent {
   let detail = '';
   if (reason === 'review') {
-    detail = ticket.lastReport?.summary ?? '';
+    // Not the previous round's summary when the agent stopped without
+    // reporting this time (design 5.5).
+    detail =
+      reviewCause(ticket) === 'unreported'
+        ? t('ticket.cause.unreported')
+        : (ticket.lastReport?.summary ?? '');
   } else {
     const cause = needsYouCause(ticket);
     if (cause === 'disconnected') detail = t('ticket.cause.disconnected');

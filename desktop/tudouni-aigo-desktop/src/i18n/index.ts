@@ -1192,6 +1192,7 @@ export const en = {
   'ticket.cause.disconnected': 'Connection lost. Continue reconnects the session.',
   'ticket.cause.crashed': 'The session stopped unexpectedly.',
   'ticket.cause.unreachable': 'The session never started. Start over with a fresh one.',
+  'ticket.cause.unreported': 'The agent stopped without reporting. Read its reply, then accept or send back.',
   'ticket.runtimeOld': 'Runtime too old',
   'ticket.runtimeOldHint': 'This session\u2019s runtime cannot report back. Move the Ticket by hand.',
   'ticket.btn.start': 'Start',

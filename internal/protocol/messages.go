@@ -188,7 +188,16 @@ const VERSION = 1
 // end that draws a workspace search gates it on this number: a runtime below 20
 // silently ignores the message, and a search box that never answers is a promise
 // the runtime behind it cannot keep.
-const PROTOCOL = 20
+//
+// 21 adds the unreported-turn fact for tickets: a `ticket_turn_end` kind on the
+// `ui` channel (`ticket_id`, `turn_id`, `session_id`, `at_ms`) and
+// `init.ticket.turn_ends` (always an array of `{turn_id, at_ms}`, newest 20). It is
+// sent when a bound session's turn **answered**, made no `ticket_report`, and no
+// automatic round follows; recorded before it is announced, like a report. It
+// never claims the work is done — the front end's state machine decides what a
+// stopped-without-saying turn means. Additive: a runtime below 21 never sends it,
+// and a front end that does not know it ignores it.
+const PROTOCOL = 21
 
 // Message keys used by every envelope.
 const (
@@ -416,6 +425,11 @@ const (
 	// recorded. It is sent only after the report is in the session file, so
 	// "announced" always implies "recoverable from init.ticket.reports".
 	UITicketReport = "ticket_report"
+
+	// A bound turn that answered without a report, with nothing queued after it
+	// (protocol 21). Like a report it is in the session file before it is sent,
+	// so it can be recovered from init.ticket.turn_ends.
+	UITicketTurnEnd = "ticket_turn_end"
 )
 
 // Terminal statuses. The runtime is the only source of truth for these; a front

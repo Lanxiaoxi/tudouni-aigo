@@ -40,6 +40,12 @@ const (
 	// it has long since processed.
 	MaxTicketReports = 200
 
+	// MaxTicketTurnEnds bounds the retained "turn ended without a report" list
+	// (protocol 21). It only matters while the front end's ticket is `running`, and
+	// the number of such facts a front end can miss in that window is tiny, so a
+	// short list is enough for reconciliation without taxing every `init`.
+	MaxTicketTurnEnds = 20
+
 	// Ceilings on what a bind may carry. The brief goes into the payload tail every
 	// round (see TicketText, which only quotes its head), so an accidental paste of
 	// a whole file must not become a permanent per-request cost.
@@ -198,12 +204,27 @@ type TicketReport struct {
 	AtMs     int64
 }
 
+// TicketTurnEnd is one turn that ended normally while bound, without the agent
+// having reported (protocol 21). It is a fact about the turn, never a claim that
+// the work is done; the front end's state machine decides what it means.
+type TicketTurnEnd struct {
+	TurnID string
+	AtMs   int64
+}
+
+// Wire is the turn end in the shape `init.ticket.turn_ends[]` carries.
+func (e TicketTurnEnd) Wire() map[string]any {
+	return map[string]any{"turn_id": e.TurnID, "at_ms": e.AtMs}
+}
+
 // Ticket is the binding plus the reports made under it.
 type Ticket struct {
 	ID      string
 	Title   string
 	Brief   string
 	Reports []TicketReport
+	// TurnEnds are the turns that ended without a report (protocol 21).
+	TurnEnds []TicketTurnEnd
 	// Attachments is what the front end staged into the workspace (protocol 19).
 	Attachments []TicketAttachment
 }
@@ -255,12 +276,17 @@ func (t Ticket) Block() map[string]any {
 	for _, attachment := range t.Attachments {
 		attachments = append(attachments, attachment.Wire())
 	}
+	turnEnds := make([]any, 0, len(t.TurnEnds))
+	for _, end := range t.TurnEnds {
+		turnEnds = append(turnEnds, end.Wire())
+	}
 	return map[string]any{
 		"id":          t.ID,
 		"title":       t.Title,
 		"brief":       t.Brief,
 		"reports":     reports,
 		"attachments": attachments,
+		"turn_ends":   turnEnds,
 	}
 }
 
@@ -286,6 +312,14 @@ func LoadTicket(metadata map[string]any) (Ticket, bool) {
 			}
 		}
 	}
+	// A record written before protocol 21 has no such key; that reads as none.
+	if rows, ok := raw["turn_ends"].([]any); ok {
+		for _, row := range rows {
+			if end, ok := ticketTurnEndOf(row); ok {
+				ticket.TurnEnds = append(ticket.TurnEnds, end)
+			}
+		}
+	}
 	// A record written before protocol 19 has no such key; that reads as none.
 	// A row that fails validation is dropped rather than quoted to the model,
 	// since a hand-edited session file is the only way one gets here.
@@ -297,6 +331,27 @@ func LoadTicket(metadata map[string]any) (Ticket, bool) {
 		}
 	}
 	return ticket, true
+}
+
+func ticketTurnEndOf(raw any) (TicketTurnEnd, bool) {
+	row, ok := raw.(map[string]any)
+	if !ok {
+		return TicketTurnEnd{}, false
+	}
+	id, _ := row["turn_id"].(string)
+	if id == "" {
+		return TicketTurnEnd{}, false
+	}
+	end := TicketTurnEnd{TurnID: id}
+	switch at := row["at_ms"].(type) {
+	case int64:
+		end.AtMs = at
+	case int:
+		end.AtMs = int64(at)
+	case float64:
+		end.AtMs = int64(at)
+	}
+	return end, true
 }
 
 func ticketReportOf(raw any) (TicketReport, bool) {
@@ -370,6 +425,7 @@ func BindTicket(metadata map[string]any, spec TicketSpec) (Ticket, bool, error) 
 	previous, wasBound := LoadTicket(metadata)
 	if wasBound && previous.ID == id {
 		ticket.Reports = previous.Reports
+		ticket.TurnEnds = previous.TurnEnds
 	}
 	// Compared on the fields a bind can carry, not on the whole record: the
 	// reports are carried over untouched just above, so an unchanged re-bind can
@@ -405,6 +461,22 @@ func AppendTicketReport(metadata map[string]any, report TicketReport) (Ticket, b
 	ticket.Reports = append(ticket.Reports, report)
 	if over := len(ticket.Reports) - MaxTicketReports; over > 0 {
 		ticket.Reports = append([]TicketReport(nil), ticket.Reports[over:]...)
+	}
+	metadata[TicketKey] = ticket.Block()
+	return ticket, true
+}
+
+// AppendTicketTurnEnd records one unreported turn end against the bound ticket.
+// Like AppendTicketReport it reports false when nothing is bound, under the same
+// lock, so a turn that raced an unbind leaves no record.
+func AppendTicketTurnEnd(metadata map[string]any, end TicketTurnEnd) (Ticket, bool) {
+	ticket, ok := LoadTicket(metadata)
+	if !ok {
+		return Ticket{}, false
+	}
+	ticket.TurnEnds = append(ticket.TurnEnds, end)
+	if over := len(ticket.TurnEnds) - MaxTicketTurnEnds; over > 0 {
+		ticket.TurnEnds = append([]TicketTurnEnd(nil), ticket.TurnEnds[over:]...)
 	}
 	metadata[TicketKey] = ticket.Block()
 	return ticket, true

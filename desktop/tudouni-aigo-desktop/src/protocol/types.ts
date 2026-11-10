@@ -256,6 +256,12 @@ export interface InitTicketReport {
   at_ms: number;
 }
 
+/** One `ticket_turn_end` as the session's metadata keeps it (protocol 21). */
+export interface InitTicketTurnEnd {
+  turn_id: string;
+  at_ms: number;
+}
+
 /** The binding `init` hands back, with every report the session ever made, so
  *  a reopened session can fill in what the window missed. */
 export interface InitTicket {
@@ -263,6 +269,9 @@ export interface InitTicket {
   title: string;
   brief: string;
   reports: InitTicketReport[];
+  /** Protocol 21: turns that ended normally without a report, oldest first,
+   *  at most 20. Absent before 21, which reads as `[]`. */
+  turn_ends?: InitTicketTurnEnd[];
   /** Protocol 19: the attachments the bind carried. Absent before 19. */
   attachments?: TicketBindAttachment[];
 }
@@ -1578,8 +1587,22 @@ export interface UiTicketReportMsg {
   at_ms: number;
 }
 
+/** A turn that ended normally (`answered`) with no `ticket_report` call and no
+ *  follow-up turn queued (protocol 21). Checkpointed before it is sent, like
+ *  the report. The desktop's state machine decides what it means. */
+export interface UiTicketTurnEndMsg {
+  v: number;
+  t: 'ui';
+  kind: 'ticket_turn_end';
+  ticket_id: string;
+  turn_id: string;
+  session_id: string;
+  at_ms: number;
+}
+
 export type UiMsg =
   | UiTicketReportMsg
+  | UiTicketTurnEndMsg
   | UiStateMsg
   | UiSuggestionsMsg
   | UiStatusMsg

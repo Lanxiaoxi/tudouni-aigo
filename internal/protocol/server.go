@@ -257,6 +257,14 @@ type TicketBinder interface {
 	BindTicket(ticket map[string]any) error
 }
 
+// TicketTurnObserver is told when a turn answered and nothing will continue on
+// its own (protocol 21). The runtime decides whether that is a fact worth
+// announcing: a ticket is bound and the turn made no `ticket_report`. Optional
+// like TicketBinder; `turnID` is the finished turn's run id.
+type TicketTurnObserver interface {
+	ObserveTicketTurn(turnID string)
+}
+
 // FileService is what a runtime must provide for the workspace's file
 // capability.
 //

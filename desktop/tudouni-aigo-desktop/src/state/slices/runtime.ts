@@ -23,7 +23,7 @@ import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEnded
 import { runtimeOf } from '../appView';
 import { savedSessionsKey } from '../savedSessionsKey';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
-import { landTicketExit, landTicketInit, landTicketReport } from '../ticketLanding';
+import { landTicketExit, landTicketInit, landTicketReport, landTicketTurnEnd } from '../ticketLanding';
 
 /**
  * The text a refine report has already delivered, for candidate extraction.
@@ -576,6 +576,10 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
           switch (msg.kind) {
             case 'ticket_report': {
               landTicketReport(ctx, msg);
+              break;
+            }
+            case 'ticket_turn_end': {
+              landTicketTurnEnd(ctx, msg);
               break;
             }
             case 'state': {

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
@@ -101,9 +102,56 @@ func (r *Runtime) applyTicketTool() error {
 
 // emitTicketEvent reads the hook at call time rather than capturing it, so a hook
 // installed after the tool was registered is still the one that is called.
+//
+// It is also where "this turn has reported" is noted: the tool only calls it after
+// a report was validated and recorded, so a refused call (no question on a blocked
+// report, a call after the unbind) never counts as having reported.
 func (r *Runtime) emitTicketEvent(payload map[string]any) {
+	if kind, _ := payload["kind"].(string); kind == "ticket_report" {
+		r.ticketReported.Store(true)
+	}
 	if r.onTicketEvent != nil {
 		r.onTicketEvent(payload)
+	}
+}
+
+// beginTicketTurn forgets the previous turn's report. Called where a turn really
+// starts — a person's turn in RunTurn, an automatic round once it is admitted — so
+// the question asked at the end is about this turn only.
+func (r *Runtime) beginTicketTurn() { r.ticketReported.Store(false) }
+
+// ObserveTicketTurn implements protocol.TicketTurnObserver (protocol 21).
+//
+// The protocol layer calls it only for a turn that **answered** and after which no
+// automatic round was queued — the two conditions it is the one to know. The two
+// left are checked here: a ticket is bound, and this turn made no report. Then the
+// fact is recorded and announced, in that order, for the reason reports are: an
+// announced fact must be recoverable from `init.ticket.turn_ends`.
+//
+// This never says the work is done. It says the agent stopped without saying, and
+// what that means for the ticket is the front end's state machine's call.
+func (r *Runtime) ObserveTicketTurn(turnID string) {
+	if r.SessionValue == nil || turnID == "" || r.ticketReported.Load() {
+		return
+	}
+	end := state.TicketTurnEnd{TurnID: turnID, AtMs: time.Now().UnixMilli()}
+	var ticket state.Ticket
+	var bound bool
+	r.meta().Write(func(metadata map[string]any) {
+		ticket, bound = state.AppendTicketTurnEnd(metadata, end)
+	})
+	if !bound {
+		return
+	}
+	r.Checkpoint()
+	if r.onTicketEvent != nil {
+		r.onTicketEvent(map[string]any{
+			"kind":       "ticket_turn_end",
+			"ticket_id":  ticket.ID,
+			"turn_id":    end.TurnID,
+			"session_id": r.SessionIDValue,
+			"at_ms":      end.AtMs,
+		})
 	}
 }
 

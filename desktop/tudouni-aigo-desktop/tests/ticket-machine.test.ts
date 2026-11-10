@@ -16,6 +16,7 @@ import {
   bindingIsStale,
   currentAssignment,
   hasSeenReport,
+  hasSeenTurnEnd,
   isBindable,
   type TicketInput,
 } from '@/ticket/machine';
@@ -28,6 +29,7 @@ import {
   type Report,
   type Ticket,
   type TicketStatus,
+  type TurnEnd,
 } from '@/ticket/model';
 
 /* ============================================================
@@ -719,4 +721,75 @@ test('isValidTicket accepts a record without attachments and guards one with the
   assert.equal(isValidTicket({ ...good, attachments: [att('dump.txt')] }), true);
   assert.equal(isValidTicket({ ...good, attachments: [att('../x')] }), false);
   assert.equal(isValidTicket({ ...good, attachments: 'x' }), false);
+});
+
+/* ============================================================
+   turnEnded (design 5.5): the agent stopped without reporting
+   ============================================================ */
+
+const turnEnd = (turnId: string, sessionId = 'S1'): TurnEnd => ({ turnId, sessionId, atMs: tick() });
+const ended = (te: TurnEnd): TicketInput => ({ type: 'turnEnded', at: te.atMs, turnEnd: te });
+
+test('turnEnded moves a running Ticket to review and records who and which turn', () => {
+  const te = turnEnd('run-1');
+  const out = ok(running(), ended(te));
+  assert.equal(out.status, 'review');
+  const event = out.events[out.events.length - 1];
+  assert.equal(event.type, 'turnEndedUnreported');
+  assert.deepEqual(event.actor, { kind: 'system' });
+  assert.deepEqual(event.data, { turnId: 'run-1', sessionId: 'S1' });
+  assert.equal(out.lastReport, null, 'the agent said nothing; lastReport is not touched');
+  assert.equal(currentAssignment(out)?.end, null, 'the Assignment carries on into review');
+});
+
+test('turnEnded leaves the previous round lastReport alone after a send-back', () => {
+  const sentBack = ok(inReview(), { type: 'sendBack', at: tick(), feedback: 'fix it' });
+  assert.equal(sentBack.status, 'running');
+  const out = ok(sentBack, ended(turnEnd('run-2')));
+  assert.equal(out.status, 'review');
+  assert.equal(out.lastReport?.reportId, 'r-done');
+});
+
+test('turnEnded outside running changes nothing and records nothing', () => {
+  for (const status of ['open', 'needs_you', 'review', 'done', 'dropped'] as const) {
+    const before = BY_STATUS[status]();
+    const after = ok(before, ended(turnEnd(`run-${status}`)));
+    assert.equal(after, before, `${status}: the very same object`);
+    assert.equal(after.status, status);
+    assert.ok(!eventTypes(after).includes('turnEndedUnreported'), status);
+  }
+});
+
+test('turnEnded is idempotent by turn id', () => {
+  const te = turnEnd('run-1');
+  const once = ok(running(), ended(te));
+  const twice = ok(once, ended(te));
+  assert.equal(twice, once);
+  assert.equal(eventTypes(twice).filter((t) => t === 'turnEndedUnreported').length, 1);
+  assert.equal(hasSeenTurnEnd(once, 'run-1'), true);
+  assert.equal(hasSeenTurnEnd(once, 'run-2'), false);
+});
+
+test('turnEnded from another session does not move the Ticket', () => {
+  const before = running();
+  const after = ok(before, ended(turnEnd('run-1', 'S-other')));
+  assert.equal(after, before);
+  assert.equal(after.status, 'running');
+});
+
+test('turnEnded before init has landed (empty executor id) still counts', () => {
+  const started = ok(open(), startInput(1));
+  assert.equal(currentAssignment(started)?.executor.sessionId, '');
+  assert.equal(ok(started, ended(turnEnd('run-1'))).status, 'review');
+});
+
+test('a needs_you Ticket that was answered runs again and the next unreported turn moves it', () => {
+  const replied = ok(needsYou(), { type: 'personReplied', at: tick(), sessionId: 'S1' });
+  assert.equal(replied.status, 'running');
+  assert.equal(ok(replied, ended(turnEnd('run-9'))).status, 'review');
+});
+
+test('isValidTicket keeps a record that carries a turnEndedUnreported event', () => {
+  const out = ok(running(), ended(turnEnd('run-1')));
+  assert.equal(isValidTicket(JSON.parse(JSON.stringify(out))), true);
 });

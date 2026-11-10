@@ -189,6 +189,11 @@ func (r *Runtime) StartGoalRound(ctx context.Context, round protocol.GoalRound) 
 	// Autonomous rounds assemble their own request, so they need the same
 	// workspace-permission reconciliation a person-initiated turn gets in RunTurn.
 	r.refreshCodeIntelPermission()
+	// Not reset here: a chain of automatic rounds is judged once, at its last
+	// round, and a report made anywhere in the chain (or in the person's turn that
+	// armed it) is the agent having spoken for that stretch of work. Clearing at
+	// each round would announce "stopped without reporting" after a chain whose
+	// earlier round did report.
 	answer, err := r.Agent.RunMessages(ctx, reservation.Messages())
 	return answer, true, err
 }

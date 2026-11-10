@@ -786,7 +786,7 @@ runtime 发** —— 和 shell 自己退出时是同一条路。前端**不允�
 不是冗余：快照在每次工具结果、每轮收尾都发，所以一个在 shell 建好之后才启动的前端 —— 或者
 丢过一条消息的前端 —— 会从下一份快照里知道它，而不是永远不知道。
 
-### 3.16 `ticket_bind` / `ui(ticket_report)` / `init.ticket` —— 工单回报通道（protocol 18；附件 protocol 19）
+### 3.16 `ticket_bind` / `ui(ticket_report)` / `init.ticket` —— 工单回报通道（protocol 18；附件 protocol 19；未汇报的一轮 protocol 21）
 
 runtime **不知道工单存在哪里，也不知道它的状态机**。它只做三件事：记住"我在为哪个工单
 工作"，给模型一个回报工具，把回报原样转发出去。工单本身（状态、验收）是前端的事。
@@ -846,6 +846,21 @@ runtime 以"已解绑"为准拒绝（检查和写入在同一把 metadata 锁里
 （会落盘）；附件相同则不是。`init.ticket.attachments` **永远是数组**（没有时 `[]`），元素形状与
 上面相同。protocol 18 的 runtime 会忽略未知的 `attachments` 键，agent 因而不知道有这些文件，
 所以前端据 `init.protocol >= 19` 决定要不要暂存附件。
+
+**一轮停下但没有汇报（protocol 21）。** 绑定期间，一轮结束时同时满足下面三条，runtime 就记下并发出一条事实：
+
+- `stop_reason=answered`；
+- 这一轮没有**成功**调用过 `ticket_report`，被校验拒掉的调用不算；
+- runtime 没有排下一轮自动续行。一串 goal 续行只在最后一轮结束时判断一次，链上任何一轮报过就不发。
+
+被打断（`cancelled`）、失败（`model_error` / `model_fatal` / `empty_response`）、步数用尽（`max_steps`）都不发。
+
+`{"v":1,"t":"ui","kind":"ticket_turn_end","ticket_id","turn_id","session_id","at_ms"}`
+
+- `turn_id` 是那一轮的 run id，前端按它去重。
+- 和回报一样**先落盘再发**。`init.ticket.turn_ends` **永远是数组**（protocol 21 以下没有这一格，按 `[]` 读），每条 `{turn_id, at_ms}`，按时间先后，最多保留最近 20 条。重绑同一个 id 时保留，绑定另一个 id 时清空。
+- 对账时把 `reports` 和 `turn_ends` 按 `at_ms` 合并后依次处理。
+- **它不声称工作完成**，只说 agent 停下了、没有说结果。前端状态机怎么处理它，见 `docs/design/ticket.md` 5.5。
 
 ## 4. 人机交互：两条会阻塞的消息
 

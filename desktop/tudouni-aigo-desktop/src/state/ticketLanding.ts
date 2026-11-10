@@ -20,9 +20,9 @@
  */
 import type { StoreContext } from './storeContext';
 import type { VmInit } from '@/runtime/adapt';
-import { projectTicketReport } from '@/runtime/adapt';
+import { projectTicketReport, projectTicketTurnEnd } from '@/runtime/adapt';
 import { sendTo } from '@/runtime/bus';
-import type { UiTicketReportMsg } from '@/protocol/types';
+import type { UiTicketReportMsg, UiTicketTurnEndMsg } from '@/protocol/types';
 import { bindingIsStale, currentAssignment } from '@/ticket/machine';
 import { TICKET_MIN_PROTOCOL, type Assignment } from '@/ticket/model';
 
@@ -88,7 +88,7 @@ export function landTicketInit(ctx: StoreContext, key: string, init: VmInit): vo
           sessionId: init.sessionId,
         });
       }
-      ctx.get().reconcileTicket(ticket.id, binding.reports);
+      ctx.get().reconcileTicket(ticket.id, binding.reports, binding.turnEnds);
     }
 
     // Re-read: the two calls above replaced the Ticket.
@@ -106,6 +106,17 @@ export function landTicketReport(ctx: StoreContext, msg: UiTicketReportMsg): voi
   if (projected === null) return;
   whenLoaded(ctx, () => {
     ctx.get().ingestTicketReport(projected.ticketId, projected.report);
+  });
+}
+
+/** `ui(ticket_turn_end)`: the agent stopped without reporting. The machine
+ *  decides whether that moves anything (only a running Ticket, only from its
+ *  own session). Idempotent by turn id, so a replay by `init` is harmless. */
+export function landTicketTurnEnd(ctx: StoreContext, msg: UiTicketTurnEndMsg): void {
+  const projected = projectTicketTurnEnd(msg);
+  if (projected === null) return;
+  whenLoaded(ctx, () => {
+    ctx.get().ingestTicketTurnEnd(projected.ticketId, projected.turnEnd);
   });
 }
 

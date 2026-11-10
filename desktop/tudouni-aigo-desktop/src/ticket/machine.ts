@@ -58,6 +58,7 @@ import {
   type Assignment,
   type Report,
   type Ticket,
+  type TurnEnd,
   type TicketEvent,
   type TicketEventType,
   type TicketStatus,
@@ -118,6 +119,7 @@ export type TicketCommand =
 export type TicketFact =
   | ({ type: 'assignmentStarted'; at: number } & SessionRef)
   | { type: 'reported'; at: number; report: Report }
+  | { type: 'turnEnded'; at: number; turnEnd: TurnEnd }
   | ({
       type: 'assignmentExited';
       at: number;
@@ -207,6 +209,16 @@ export function bindingIsStale(ticket: Ticket | null | undefined, sessionId: str
 export function hasSeenReport(ticket: Ticket, reportId: string): boolean {
   if (ticket.lastReport?.reportId === reportId) return true;
   return ticket.events.some((event) => reportIdOf(event) === reportId);
+}
+
+/** Whether a turn end has already been recorded. Only an *applied* one leaves
+ *  an event (see `turnEnded`), so a redelivery after the Ticket left `review`
+ *  and came back to `running` is judged again, which is the right answer: the
+ *  fact is about a turn that has already been folded in once. */
+export function hasSeenTurnEnd(ticket: Ticket, turnId: string): boolean {
+  return ticket.events.some(
+    (event) => event.type === 'turnEndedUnreported' && event.data?.turnId === turnId,
+  );
 }
 
 function reportIdOf(event: TicketEvent): string | null {
@@ -468,6 +480,33 @@ export function apply(ticket: Ticket, input: TicketInput): ApplyResult {
         'reported',
         { report, applied: moves },
         { status, lastReport: foreign ? ticket.lastReport : report },
+      );
+    }
+
+    case 'turnEnded': {
+      const { turnEnd } = input;
+      if (hasSeenTurnEnd(ticket, turnEnd.turnId)) return accept(ticket);
+      const current = currentAssignment(ticket);
+      // Only a running Ticket has anything to correct, and the fact is not
+      // recorded otherwise: in review / needs_you the person keeps chatting in
+      // the session and every turn would fire one, filling the 200-event cap
+      // (same rule as `personReplied`).
+      if (ticket.status !== 'running' || current === null) return accept(ticket);
+      // A superseded session can still finish a turn; it must not move this
+      // Ticket. An empty executor id means `init` has not landed, which cannot
+      // rule the turn out (same test as `reported`).
+      const foreign =
+        current.executor.sessionId !== '' && current.executor.sessionId !== turnEnd.sessionId;
+      if (foreign) return accept(ticket);
+      // Deliberately leaves `lastReport` alone: the agent said nothing this
+      // turn, and the card must not present the previous report as its answer.
+      return commit(
+        ticket,
+        input.at,
+        { kind: 'system' },
+        'turnEndedUnreported',
+        { turnId: turnEnd.turnId, sessionId: turnEnd.sessionId },
+        { status: 'review' },
       );
     }
 

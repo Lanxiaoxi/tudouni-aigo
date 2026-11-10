@@ -21,7 +21,7 @@ import { test } from 'node:test';
 
 import { createAppStore } from '@/state/store';
 import { apply } from '@/ticket/machine';
-import { emptyTicket, type Report, type Ticket } from '@/ticket/model';
+import { emptyTicket, type Report, type Ticket, type TurnEnd } from '@/ticket/model';
 import {
   loadTickets,
   parseTicketFile,
@@ -186,6 +186,39 @@ test('reconcile skips what live delivery already brought', () => {
   assert.ok(live.ok);
   const out = reconcile(live.ticket, [r, rep('r2', 'done')]);
   assert.equal(out.events.filter((e) => e.type === 'reported').length, 2, 'r1 once, r2 once');
+});
+
+const te = (turnId: string, atMs: number, sessionId = 'S1'): TurnEnd => ({ turnId, sessionId, atMs });
+const repAt = (id: string, status: 'done' | 'blocked', atMs: number): Report => ({ ...rep(id, status), atMs });
+
+test('reconcile merges turn ends and reports by time: a turn end, then a later report', () => {
+  const out = reconcile(runningTicket(), [repAt('r1', 'done', 2)], [te('t1', 1)]);
+  // t1@1 moved running -> review; r1@2 arrives in review: recorded, not applied.
+  assert.equal(out.status, 'review');
+  assert.equal(out.lastReport?.reportId, 'r1', 'the report is the last word');
+  assert.deepEqual(
+    out.events.filter((e) => e.type === 'turnEndedUnreported' || e.type === 'reported').map((e) => e.type),
+    ['turnEndedUnreported', 'reported'],
+  );
+});
+
+test('reconcile merges by time: a blocked report, then a later turn end', () => {
+  const out = reconcile(runningTicket(), [repAt('r1', 'blocked', 1)], [te('t1', 2)]);
+  assert.equal(out.status, 'needs_you', 'the turn end after a block changes nothing');
+  assert.ok(!out.events.some((e) => e.type === 'turnEndedUnreported'));
+});
+
+test('reconcile puts a report before a turn end at the same instant', () => {
+  const out = reconcile(runningTicket(), [repAt('r1', 'blocked', 5)], [te('t1', 5)]);
+  assert.equal(out.status, 'needs_you');
+});
+
+test('reconcile with turn ends is idempotent and skips one already seen live', () => {
+  const live = apply(runningTicket(), { type: 'turnEnded', at: 1, turnEnd: te('t1', 1) });
+  assert.ok(live.ok);
+  const out = reconcile(live.ticket, [], [te('t1', 1)]);
+  assert.equal(out, live.ticket);
+  assert.equal(reconcile(out, [], [te('t1', 1)]), out);
 });
 
 /* ============================================================

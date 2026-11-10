@@ -73,11 +73,14 @@ tudouni:     人     → 人   → Ticket（持久） → Assignment → 会话�
    └──────────── reopen ◀──────────────────────────────────────────────┘
 ```
 
+`running → review` 还有第二条路：runtime 报告 `turnEndedUnreported`，意思是这一轮正常结束了但没有汇报，见 5.5。图里没画这条。
+
 | 从 | 事件 | 到 | 说明 |
 | --- | --- | --- | --- |
 | `open` | `start`（人） | `running` | 开一个新会话，记一个 Assignment |
 | `running` | `reported(done)` | `review` | agent 声称做完，**不等于**完成 |
 | `running` | `reported(blocked)` | `needs_you` | 必须带一个具体问题 |
+| `running` | `turnEndedUnreported` | `review` | 一轮正常答完（`answered`）、这一轮没有 report、也不会自动续行。runtime 报的事实，见 5.5。卡片标明"agent 停下了，但没有汇报"，由人读回复后验收或打回 |
 | `running` | `assignmentExited(requested=false)` | `needs_you` | 子进程不是被人关掉、而是自己挂了，或远程连接断了（见 6.5）。事件带 `reason`（`crashed` / `disconnected`），Assignment **不结束** |
 | `running` | `assignmentExited(requested=true)` | `running`（不变） | 人关掉了会话或关掉了窗口。工作没有结束，只是没人在执行；卡片显示"未连接"，按"继续"会恢复**原会话**（见 6.5） |
 | `needs_you` | `personReplied` | `running` | 人在这个 Assignment 的会话里发了消息。按"继续"恢复会话本身不算，见不变量 7 |
@@ -89,7 +92,9 @@ tudouni:     人     → 人   → Ticket（持久） → Assignment → 会话�
 
 几条不变量：
 
-1. **Ticket 的状态不从 turn 推断。** turn 结束了但没有 report，Ticket 仍然是 `running`。卡片上会画出这个 Assignment 会话的状态点（直接读 `selectRowStatus`），所以"会话已空闲、但没有回报"人是看得到的。它是从会话读来的展示，不是 Ticket 的状态。这正是 session board 的 Finished 语义不清的原因，Ticket 不能重蹈覆辙。
+1. **Ticket 的状态不从会话展示推断，但 runtime 报的 turn 结束是事实。** 桌面端不看 `selectRowStatus` 或会话流去猜"它是不是做完了"：状态点只用来展示。能迁移状态的只有 runtime 发出的 `turnEndedUnreported`（5.5）。这条事实只在一种情况下发出：这一轮正常答完、没有 report、而且不会自动续行。这和 session board 的 Finished 不一样。Finished 是前端从会话样子读出来的，一轮被打断、报错、续行中间都会被当成"结束"。`turnEndedUnreported` 只有 runtime 发得出来，因为只有它同时知道三件事：结束原因、这一轮调没调过 `ticket_report`、续行会不会接着跑。
+
+   最初的规则是"turn 结束了但没有 report，Ticket 仍然是 `running`"。实际用起来出了问题：打回之后 agent 改完就停了，因为它以为上一轮已经汇报过，所以没再调用 `ticket_report`。结果卡片一直停在 Running，可那里已经没人在干活了。Running 的意思是"有人在干，你不用管"。这个承诺比"进 review 的一定是 agent 自己宣布完成的"更重要，所以改了规则。
 2. **权限弹窗不触发状态迁移。** 审批是一闪而过的东西，由会话状态点（`asking`）表达。`needs_you` 只留给持久的卡点。
 3. **被人 Esc 中断不算卡点**，和 `selectRowStatus` 的红点规则一致。
 4. **`done` 只能由人设置。** agent 的 `done` 只是一份声明，进入 `review`。这一点和现有 todo 的 "`done` is only ever set by the person" 一致。
@@ -175,6 +180,50 @@ ticket_report(
 - **旧 runtime 的处理**：远程工作区可能装着旧 runtime（远端 `~/.tudouni/runtime/current` 落后于桌面端的情况出现过）。桌面端在 `init` 看到 protocol < 18 时，Ticket 照样可以启动，但卡片上要标出"runtime 过旧，agent 无法回报"，不能假装有回报通道。
 - `PROTOCOL` 从 18 升到 19 加入附件（5.1.1），同样是纯加法：入站多一个可选键、`init.ticket` 多一个数组。protocol 18 的 runtime 会忽略 `attachments`，agent 不知道有这些文件，所以桌面端据 `init.protocol >= 19` 才暂存附件。
 - 要同步更新 `docs/spec/protocol.md` 和 `protocol/schema/*.schema.json`。
+- `PROTOCOL` 从 20 升到 21，加入 `ui(ticket_turn_end)` 和 `init.ticket.turn_ends`（5.5），也是纯加法。
+
+### 5.5 兜底：一轮正常结束但没有汇报
+
+**为什么要有它。** `ticket_report` 是 agent 的声明，模型有可能忘记调用。最常见的是打回之后：agent 按意见改完就停了，因为它以为上一轮已经报告过。如果只认 report，这张卡就会一直停在 Running，可那里已经没有人在干活。所以 runtime 补报一条事实。这条事实**不替 agent 声明做完**，它只说"agent 停下了，但没说结果"。要不要验收，由人在 review 时判断。
+
+**谁来判断。** runtime 只报事实，迁不迁移状态仍然由 `machine.ts` 决定，这和"命令 / 事实"的划分一致。之所以由 runtime 报、而不是让桌面端看会话自己推断，是因为下面的第 2–4 条只有 runtime 能同时确定。桌面端没开着的时候，runtime 还能把这条事实记进 metadata，事后对账。
+
+**什么时候发。** 一轮（turn）结束时，下面四条全部成立才发：
+
+1. 会话绑定了 Ticket；
+2. 这一轮的 `stop_reason` 是 `answered`；
+3. 这一轮里**没有成功调用过** `ticket_report`，不管 done 还是 blocked。被工具校验拒掉的调用不算；
+4. runtime 没有为这个会话排下一轮。按目前的代码，只有 goal 续行会排（`Driver.Observe` 返回 `continue`）。一串自动续行只在**最后一轮**结束时判断一次；中间那些轮结束时工作还没停。
+
+不发的情况，以及为什么不发：
+
+| 结束方式 | 为什么不发 |
+| --- | --- |
+| 这一轮调过 `ticket_report` | agent 已经说了，以它的声明为准 |
+| `cancelled`（人按了 Esc） | 人就在会话里，打断不等于交付（和不变量 3 一致） |
+| `model_error` / `model_fatal` | 这一轮失败了，没有结果可验收。会话状态点已经显示错误 |
+| `max_steps` | 是被截断，不是答完。有 goal 时续行会接着跑；没有 goal 时卡片留在 Running，会话状态点显示空闲，和以前一样 |
+| goal 续行排了下一轮 | 工作还在进行 |
+
+**"一轮"的范围。** 从这一轮的开场消息开始（人发的消息或一次自动续行），到 `run_finished` 为止。stop hook 把一轮延长出来的部分仍然算在同一轮里。子 agent 的会话没有 `ticket_report`，也不绑定 Ticket，所以不参与判断。
+
+**出站消息与记录。** 和 report 一样，先 checkpoint，再发消息（6.3）：
+
+```json
+{"v":1,"t":"ui","kind":"ticket_turn_end","ticket_id":"tk-…","turn_id":"…","session_id":"…","at_ms":0}
+```
+
+- `turn_id` 用这一轮的 run id。桌面端按它去重，作用和 `report_id` 一样。
+- 记录写在会话 metadata 的 `ticket.turn_ends` 里，只保留最近 20 条。`init.ticket.turn_ends` 永远是数组，没有时为 `[]`。对账（6.3）时把 `reports` 和 `turn_ends` **按 `at_ms` 合并之后**依次交给 `machine.ts`，这样"先停下未汇报、后来又补了 report"这类顺序，不会因为对账而颠倒。
+- 只保留 20 条就够用：只有 `running` 时这条事实才起作用，而一个 Ticket 处于 `running` 期间，桌面端漏收的条数不会接近这个数。
+
+**状态机怎么处理。** 只有在 Ticket 是 `running` 时才迁移到 `review`，事件写成 `turnEndedUnreported`，actor 是 `system`，`data` 里带 `turnId`。其他状态下收到时**不记录事件**：人在 review / needs_you 的会话里接着聊，每一轮都会触发一次，记下来只会把 events 占满（这和 `personReplied` 的规矩一样）。不在 `running` 的 Ticket 本来就不需要它。`needs_you` 的 Ticket 被人回复之后会回到 `running`，之后那一轮如果没有汇报，照样会进入 `review`，这正是想要的结果。
+
+**卡片怎么显示。** 加一个和 `needsYouCause` 同类的派生函数 `reviewCause`，取最新的那条迁移事件：`reported`（`applied`）说明是 agent 报了 done；`turnEndedUnreported` 说明是停下了但没汇报。后一种情况下，卡片**不显示 `lastReport.summary`**，因为那是上一次的汇报。打回之后它说的是旧结果，显示出来会被误认成这次的。卡片改为说明"agent 停下了，但没有汇报；看回复再决定"，按钮仍然是打开会话、验收、打回。
+
+**提示词不变。** `TicketText` 仍然要求 agent 做完时调用 `ticket_report`。report 带着 summary 和 evidence，比兜底的这条有用得多。兜底只保证卡片不会停在一个没人干活的 Running 上，不能代替 report。
+
+**旧 runtime。** protocol < 21 的 runtime 不会发这条事实，行为和以前一样：没有 report 就停在 Running。桌面端不为此显示额外提示，因为会话状态点已经能看出它空闲了。
 
 ## 六、桌面端：实体、存储、写者
 
@@ -227,8 +276,8 @@ type Actor =
 interface TicketEvent {
   at: number;
   actor: Actor;
-  type: 'created' | 'start' | 'assignmentStarted' | 'reported' | 'personReplied'
-      | 'assignmentExited' | 'accept' | 'sendBack' | 'drop' | 'reopen' | 'edited';
+  type: 'created' | 'start' | 'assignmentStarted' | 'reported' | 'turnEndedUnreported'
+      | 'personReplied' | 'assignmentExited' | 'accept' | 'sendBack' | 'drop' | 'reopen' | 'edited';
   data?: Record<string, unknown>;     // 例如 report 内容、sendBack 的意见
 }
 ```
@@ -436,8 +485,8 @@ board: null | 'sessions' | 'tickets';
   | review | Running | `sendBack`（落点直接展开卡片上的意见框） |
   | done / dropped | Open | `reopen` |
 
-  **拖不动的方向是刻意的**，三条各有理由：`running → needs_you` / `review` 是 agent 回报的
-  事实，人没有对应命令；`needs_you → running` 是两个不同意图（继续恢复原会话、重来换新会话），
+  **拖不动的方向是刻意的**，三条各有理由：`running → needs_you` / `review` 是 agent 回报或
+  runtime 报告的事实（`reported`、`turnEndedUnreported`、未经请求的退出），人没有对应命令；`needs_you → running` 是两个不同意图（继续恢复原会话、重来换新会话），
   而"继续"根本不迁移状态（不变量 7），一个手势不能有两种意思、更不能什么都不发生；**Done
   永远不是落点**——它同时装着 `done` 和 `dropped`（`columnOf`），一次拖拽说不出是哪一种。
 
@@ -531,6 +580,7 @@ board: null | 'sessions' | 'tickets';
 | 2. 桌面端模型 | `src/ticket/`（model、machine、守卫）、`slices/tickets.ts`、Rust 侧 `tickets_read` / `tickets_write`、`ExitPayload.reason`、丢弃 todo 数据 | vitest：每条迁移和每条拒绝、事实在终态下 no-op、`needs_you` / `review` 下退出不迁移、恢复不迁移、按 `report_id` 去重、对账幂等、失效绑定被解绑、加载时丢弃 todo；`cargo test` 覆盖原子写入、schema 拒写、远程断线带 `reason` |
 | 3. 桌面端 UI | `board` 联合类型重构、Ticket board、两个入口、徽标、删除 Task 里的 todo、"存为 Ticket" | `board` 互斥与 Esc 顺序的测试；session board 原有测试全部通过；`npm run version:check` |
 | 4. 收尾 | 通知、旧 runtime 提示、断线提示、"未连接 → 继续" | 远程工作区手动验证：旧 runtime 不发 bind 并显示提示；断开 SSH 后进入 `needs_you`，继续后恢复原会话并补齐 report |
+| 5. 未汇报兜底（5.5） | runtime：turn 结束时按四个条件判断、metadata `ticket.turn_ends`、`ui(ticket_turn_end)`、`init.ticket.turn_ends`、`PROTOCOL = 21`、spec 与 schema。桌面端：`machine.ts` 的 `turnEndedUnreported`、`reviewCause`、对账按 `at_ms` 合并 | Go：`answered` 且没有 report 才发；调过 report、`cancelled`、`model_error`、`max_steps`、goal 续行排了下一轮都不发；先 checkpoint 再发；只保留 20 条。动了 `internal/protocol` / `internal/runtime`，跑全量 `make test` 和 `make build`。vitest：只有 `running` 会迁移，其他状态不记事件，按 `turnId` 去重，report 和 turn_end 混合对账时顺序正确，这种情况下卡片不显示旧的 summary |
 
 版本：
 
@@ -546,3 +596,4 @@ board: null | 'sessions' | 'tickets';
 5. **会话不在线时的解绑，靠打开时比对 `init` 带回的绑定。** 不一致就当场发 `ticket_bind null`（5.1），不只靠状态机兜底。
 6. **崩溃和断线靠 Rust 侧的 `ExitPayload.reason` 区分**，不按工作区类型推断（6.5）。
 7. **恢复会话不迁移状态。** `needs_you` 要等 `personReplied` 才回 `running`，断线导致的也一样（不变量 7）。
+8. **一轮正常结束但没有汇报，由 runtime 报告事实，进入 `review`（5.5）。** 迁不迁移由桌面端状态机决定，runtime 只说发生了什么。进入的是 `review` 而不是 `needs_you`：没汇报不代表卡住了，人要做的是读回复，然后验收或打回，这正好是 review 的两个按钮。`report` 仍然是首选通道，提示词不改。版本：`VERSION` 次版本 +1（新协议字段），桌面端次版本 +1。

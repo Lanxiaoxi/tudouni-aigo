@@ -615,3 +615,86 @@ test('the toast names the Ticket and says what is being asked', () => {
   assert.ok(lost.ok);
   assert.equal(ticketNotifyContent(t, 'needs-you', lost.ticket).body, `T\n${t('ticket.cause.disconnected')}`);
 });
+
+/* ============================================================
+   ui(ticket_turn_end) and init.ticket.turn_ends (protocol 21, design 5.5)
+   ============================================================ */
+
+const wireTurnEnd = (id: string, atMs: number): Record<string, unknown> => ({ turn_id: id, at_ms: atMs });
+
+test('a live ticket_turn_end moves a running Ticket to review once, by turn id', () => {
+  reset();
+  capture(KEY);
+  install(ticketAt('running'));
+  const msg = {
+    v: 1, t: 'ui', kind: 'ticket_turn_end', ticket_id: 'tk-1', turn_id: 'run-1', session_id: 'S1', at_ms: 4_000,
+  };
+  deliver(KEY, msg);
+  assert.equal(first().status, 'review');
+  assert.equal(first().events.filter((e) => e.type === 'turnEndedUnreported').length, 1);
+  const before = first();
+  deliver(KEY, msg);
+  assert.equal(first(), before, 'a redelivery changes nothing, not even the object');
+  unregisterRuntime(KEY);
+});
+
+test('a ticket_turn_end from another session or for another Ticket does not move anything', () => {
+  reset();
+  capture(KEY);
+  install(ticketAt('running'));
+  const before = first();
+  deliver(KEY, {
+    v: 1, t: 'ui', kind: 'ticket_turn_end', ticket_id: 'tk-1', turn_id: 'run-1', session_id: 'S-other', at_ms: 4_000,
+  });
+  deliver(KEY, {
+    v: 1, t: 'ui', kind: 'ticket_turn_end', ticket_id: 'tk-404', turn_id: 'run-2', session_id: 'S1', at_ms: 4_000,
+  });
+  deliver(KEY, { v: 1, t: 'ui', kind: 'ticket_turn_end', ticket_id: 'tk-1', session_id: 'S1', at_ms: 4_000 });
+  assert.equal(first(), before);
+  unregisterRuntime(KEY);
+});
+
+test('init folds in the turn ends and reports the window missed, merged by time', () => {
+  reset();
+  capture(KEY);
+  install(ticketAt('running'));
+  // Stopped unreported at 4_000, then a blocked report at 5_000 (arrives in review: recorded only).
+  deliver(KEY, initMsg('S1', 21, {
+    id: 'tk-1', title: 'T', brief: 'b',
+    reports: [wireReport('r-b', { at_ms: 5_000 })],
+    turn_ends: [wireTurnEnd('run-1', 4_000)],
+  }));
+  assert.equal(first().status, 'review');
+  assert.equal(first().lastReport?.reportId, 'r-b');
+
+  // A blocked report first, then the turn end: needs_you stays.
+  reset();
+  capture(KEY);
+  install(ticketAt('running'));
+  deliver(KEY, initMsg('S1', 21, {
+    id: 'tk-1', title: 'T', brief: 'b',
+    reports: [wireReport('r-b', { at_ms: 4_000 })],
+    turn_ends: [wireTurnEnd('run-1', 5_000)],
+  }));
+  assert.equal(first().status, 'needs_you');
+
+  // An older runtime has no turn_ends key at all.
+  reset();
+  capture(KEY);
+  install(ticketAt('running'));
+  deliver(KEY, initMsg('S1', 20, { id: 'tk-1', title: 'T', brief: 'b', reports: [] }));
+  assert.equal(first().status, 'running');
+  unregisterRuntime(KEY);
+});
+
+test('the review toast does not read the previous round\u2019s summary after an unreported stop', () => {
+  const t = makeT();
+  const sentBack = apply(ticketAt('review'), { type: 'sendBack', at: 3_500, feedback: 'again' });
+  assert.ok(sentBack.ok);
+  const stopped = apply(sentBack.ticket, {
+    type: 'turnEnded', at: 4_000, turnEnd: { turnId: 'run-2', sessionId: 'S1', atMs: 4_000 },
+  });
+  assert.ok(stopped.ok);
+  assert.equal(stopped.ticket.status, 'review');
+  assert.equal(ticketNotifyContent(t, 'review', stopped.ticket).body, `T\n${t('ticket.cause.unreported')}`);
+});

@@ -22,8 +22,8 @@
  *     patched up.
  */
 import { isHosted, readTicketsFile, writeTicketsFile } from '@/runtime/tauri';
-import { TICKET_SCHEMA, isValidTicket, type Report, type Ticket } from './model';
-import { apply, hasSeenReport } from './machine';
+import { TICKET_SCHEMA, isValidTicket, type Report, type Ticket, type TurnEnd } from './model';
+import { apply, hasSeenReport, type TicketInput } from './machine';
 
 export interface LoadedTickets {
   tickets: Ticket[];
@@ -181,13 +181,34 @@ export function ticketWritesSettled(): Promise<void> {
  * inside the machine — so running it on every open is free. Returns the same
  * object when nothing was new, so a caller can skip the write.
  */
-export function reconcile(ticket: Ticket, reports: Report[]): Ticket {
+export function reconcile(ticket: Ticket, reports: Report[], turnEnds: TurnEnd[] = []): Ticket {
+  // Merged by time, not "reports then turn ends": "stopped without reporting,
+  // then reported" and "reported blocked, then stopped" end in different
+  // statuses, and replaying one list after the other would swap them. At the
+  // same millisecond the report goes first, because a turn that made a report
+  // never produces a turn end; the tie can only mean the report came first.
+  // `sort` is stable, so equal items keep the order the runtime gave them.
+  const facts: Array<{ at: number; rank: number; fact: TicketInput }> = [
+    ...reports.map((report) => ({
+      at: report.atMs,
+      rank: 0,
+      fact: { type: 'reported', at: report.atMs, report } as TicketInput,
+    })),
+    ...turnEnds.map((turnEnd) => ({
+      at: turnEnd.atMs,
+      rank: 1,
+      fact: { type: 'turnEnded', at: turnEnd.atMs, turnEnd } as TicketInput,
+    })),
+  ].sort((a, b) => a.at - b.at || a.rank - b.rank);
+
   let next = ticket;
-  for (const report of reports) {
-    if (hasSeenReport(next, report.reportId)) continue;
+  for (const { fact } of facts) {
+    // Redelivery is already a no-op inside the machine for both kinds; the
+    // report pre-check just skips the call.
+    if (fact.type === 'reported' && hasSeenReport(next, fact.report.reportId)) continue;
     // Facts are never refused, so `ok` is always true here; the check is for
     // the type, and for a future refusal not to be silently skipped.
-    const result = apply(next, { type: 'reported', at: report.atMs, report });
+    const result = apply(next, fact);
     if (result.ok) next = result.ticket;
   }
   return next;

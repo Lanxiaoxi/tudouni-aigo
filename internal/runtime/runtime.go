@@ -3,6 +3,7 @@ package runtime
 import (
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/agent"
@@ -256,6 +257,10 @@ type Runtime struct {
 	// onTicketEvent is where a `ticket_report` is announced, after it has been
 	// checkpointed. Nil means nobody is listening.
 	onTicketEvent func(payload map[string]any)
+	// ticketReported is whether the current turn has made a recorded
+	// `ticket_report` (protocol 21). Written by the tool's goroutine, read when the
+	// turn ends, hence atomic.
+	ticketReported atomic.Bool
 	// CodeIntel is this workspace's index handle and its panel state. Nil only in
 	// tests that build a Runtime by hand.
 	CodeIntel *codeIntelState

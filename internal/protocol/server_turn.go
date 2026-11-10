@@ -236,6 +236,7 @@ func (s *Server) finishTurn(runtime Runtime, prompt, answer string, err error) {
 	// function has not closed yet.
 	scheduler, ok := runtime.(GoalRoundScheduler)
 	if !ok {
+		s.observeTicketTurn(runtime, err)
 		s.suggestAfter(runtime, prompt, answer, err)
 		return
 	}
@@ -250,6 +251,10 @@ func (s *Server) finishTurn(runtime Runtime, prompt, answer string, err error) {
 	}
 	round := s.reservedGoalRound(scheduler, err)
 	if round == nil {
+		// Same instant as the suggestions, for the same reason: only now is it
+		// known that nothing will continue on its own, and a turn that an
+		// automatic round follows has not stopped.
+		s.observeTicketTurn(runtime, err)
 		// Only now is "nothing will continue on its own" known, which is the
 		// condition the suggestions wait for: buttons drawn under an answer that
 		// an automatic round is about to follow would be offering to speak over it.
@@ -261,6 +266,27 @@ func (s *Server) finishTurn(runtime Runtime, prompt, answer string, err error) {
 		<-done
 		s.startGoalTurn(round)
 	}()
+}
+
+// observeTicketTurn tells the runtime a bound session's turn has stopped
+// (protocol 21), when it is the kind of stop that counts.
+//
+// Only a turn that **answered** counts — a nil error is the one outcome the agent
+// returns for `stop_reason=answered`; cancelled, failed, empty and step-capped
+// turns all come back as errors. A cancelled turn is excluded even when the
+// error was swallowed somewhere, by the stop flag: an interrupt is the person
+// being present, not the work being handed over. The caller only invokes this
+// once it knows no automatic round is queued. Whether a ticket is bound and
+// whether this turn reported are the runtime's to check.
+func (s *Server) observeTicketTurn(runtime Runtime, err error) {
+	if err != nil || s.ShouldStop() {
+		return
+	}
+	observer, ok := runtime.(TicketTurnObserver)
+	if !ok {
+		return
+	}
+	observer.ObserveTicketTurn(s.lastRun())
 }
 
 // reservedGoalRound asks the runtime whether another round is allowed, and returns

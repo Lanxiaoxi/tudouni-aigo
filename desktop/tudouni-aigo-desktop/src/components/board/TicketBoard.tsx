@@ -66,6 +66,7 @@ import {
   dropVerb,
   groupTickets,
   needsYouCause,
+  reviewCause,
   rememberedStartMode,
   staysOnBoard,
   ticketActions,
@@ -1919,7 +1920,11 @@ function TicketCard({
   const status = ticket.status;
   const live = status === 'running' || status === 'needs_you' || status === 'review';
   const cause = needsYouCause(ticket);
-  const report = status === 'open' ? null : ticket.lastReport;
+  // After a send-back `lastReport` is still the previous round's report; when
+  // the agent stopped without reporting this time it must not be shown as the
+  // answer (design 5.5).
+  const unreported = reviewCause(ticket) === 'unreported';
+  const report = status === 'open' || unreported ? null : ticket.lastReport;
   const asks = report?.status === 'blocked' && (report.question ?? '') !== '';
   const runs = ticket.assignments.length;
   // Where it runs: the Assignment's own place when it has one (a Ticket made
@@ -2192,6 +2197,13 @@ function TicketCard({
                   ? t('ticket.cause.unreachable')
                   : t('ticket.cause.crashed')}
             </span>
+          </p>
+        ) : null}
+
+        {unreported ? (
+          <p className="tkb-card-note">
+            <AlertTriangle size={12} />
+            <span>{t('ticket.cause.unreported')}</span>
           </p>
         ) : null}
 

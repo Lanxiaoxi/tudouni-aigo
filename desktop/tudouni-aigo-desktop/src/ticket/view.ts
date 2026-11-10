@@ -74,6 +74,30 @@ export function needsYouCause(ticket: Ticket): TicketCause | null {
   return ticket.lastReport?.status === 'blocked' ? 'blocked' : 'crashed';
 }
 
+/** Why a Ticket is in `review`: the agent said it was done, or it stopped
+ *  without saying anything (design 5.5). */
+export type ReviewCause = 'reported' | 'unreported';
+
+/**
+ * The reason behind a `review` Ticket, read from its newest cause event.
+ *
+ * Matters because the two read differently: after a send-back, `lastReport` is
+ * still the *previous* round's report, so a card that stopped without reporting
+ * must not show it as the agent's answer. `reported` is only a cause when it
+ * `applied` (a report that arrived in review did not put the Ticket there).
+ * Records with neither event (written before this existed) read as `reported`.
+ * `null` outside `review`.
+ */
+export function reviewCause(ticket: Ticket): ReviewCause | null {
+  if (ticket.status !== 'review') return null;
+  for (let i = ticket.events.length - 1; i >= 0; i -= 1) {
+    const event = ticket.events[i];
+    if (event.type === 'turnEndedUnreported') return 'unreported';
+    if (event.type === 'reported' && event.data?.applied === true) return 'reported';
+  }
+  return 'reported';
+}
+
 /** One button a card can offer. `continue` is `open` when nothing is
  *  connected: it brings the original session back instead of switching to it. */
 export type TicketAction =

@@ -335,6 +335,122 @@ func TestTheTicketReachesThePayloadTailOnlyWhileBound(t *testing.T) {
 	}
 }
 
+// A turn that answered without reporting is recorded, then announced (protocol 21).
+func TestAnUnreportedTurnIsRecordedBeforeItIsAnnounced(t *testing.T) {
+	r, store := ticketRuntime(t)
+	var announced []map[string]any
+	var onDisk []state.TicketTurnEnd
+	r.onTicketEvent = func(payload map[string]any) {
+		if payload["kind"] != "ticket_turn_end" {
+			return
+		}
+		announced = append(announced, payload)
+		loaded, err := store.Load(r.SessionIDValue)
+		if err != nil {
+			t.Errorf("load at announce time: %v", err)
+			return
+		}
+		ticket, _ := state.LoadTicket(loaded.Metadata)
+		onDisk = ticket.TurnEnds
+	}
+
+	// Unbound: nothing at all.
+	r.beginTicketTurn()
+	r.ObserveTicketTurn("run-0")
+	if len(announced) != 0 {
+		t.Fatal("an unbound session announced a turn end")
+	}
+
+	if err := r.BindTicket(bindSpec("tk-1")); err != nil {
+		t.Fatal(err)
+	}
+	r.beginTicketTurn()
+	r.ObserveTicketTurn("run-1")
+	if len(announced) != 1 {
+		t.Fatalf("%d announcements, want 1", len(announced))
+	}
+	got := announced[0]
+	if got["ticket_id"] != "tk-1" || got["turn_id"] != "run-1" || got["session_id"] != r.SessionIDValue {
+		t.Errorf("announcement: %v", got)
+	}
+	if at, _ := got["at_ms"].(int64); at <= 0 {
+		t.Errorf("at_ms = %v", got["at_ms"])
+	}
+	if len(onDisk) != 1 || onDisk[0].TurnID != "run-1" {
+		t.Fatalf("at announce time the file held %v", onDisk)
+	}
+
+	block, _ := r.ticketInit().(map[string]any)
+	ends, _ := block["turn_ends"].([]any)
+	if len(ends) != 1 || ends[0].(map[string]any)["turn_id"] != "run-1" {
+		t.Errorf("init.ticket.turn_ends = %v", block["turn_ends"])
+	}
+}
+
+// A turn that reported has spoken for itself; a refused report has not.
+func TestAReportedTurnIsNotAnnouncedAsUnreported(t *testing.T) {
+	r, _ := ticketRuntime(t)
+	turnEnds := 0
+	r.onTicketEvent = func(payload map[string]any) {
+		if payload["kind"] == "ticket_turn_end" {
+			turnEnds++
+		}
+	}
+	if err := r.BindTicket(bindSpec("tk-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	r.beginTicketTurn()
+	if _, err := callReport(t, r, map[string]any{"status": "done", "summary": "fixed"}); err != nil {
+		t.Fatal(err)
+	}
+	r.ObserveTicketTurn("run-1")
+	if turnEnds != 0 {
+		t.Fatal("a turn that reported was announced as unreported")
+	}
+
+	// The next turn starts clean: the earlier report does not cover it.
+	r.beginTicketTurn()
+	if _, err := callReport(t, r, map[string]any{"status": "blocked", "summary": "s"}); err == nil {
+		t.Fatal("a blocked report without a question was accepted")
+	}
+	r.ObserveTicketTurn("run-2")
+	if turnEnds != 1 {
+		t.Fatalf("a turn whose only report was refused: %d announcements, want 1", turnEnds)
+	}
+}
+
+func TestTurnEndsAreCappedAndSurviveARebindOfTheSameTicket(t *testing.T) {
+	r, _ := ticketRuntime(t)
+	if err := r.BindTicket(bindSpec("tk-1")); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < state.MaxTicketTurnEnds+5; index++ {
+		r.beginTicketTurn()
+		r.ObserveTicketTurn("run-" + strings.Repeat("x", index+1))
+	}
+	ticket, _ := r.ticket()
+	if len(ticket.TurnEnds) != state.MaxTicketTurnEnds {
+		t.Fatalf("kept %d turn ends, want %d", len(ticket.TurnEnds), state.MaxTicketTurnEnds)
+	}
+	if last := ticket.TurnEnds[len(ticket.TurnEnds)-1].TurnID; last != "run-"+strings.Repeat("x", state.MaxTicketTurnEnds+5) {
+		t.Errorf("the newest was dropped: %q", last)
+	}
+
+	if err := r.BindTicket(map[string]any{"id": "tk-1", "title": "renamed", "brief": "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if ticket, _ := r.ticket(); len(ticket.TurnEnds) != state.MaxTicketTurnEnds {
+		t.Errorf("a same-id rebind lost the turn ends: %d", len(ticket.TurnEnds))
+	}
+	if err := r.BindTicket(bindSpec("tk-2")); err != nil {
+		t.Fatal(err)
+	}
+	if ticket, _ := r.ticket(); len(ticket.TurnEnds) != 0 {
+		t.Errorf("a different ticket kept the old turn ends: %d", len(ticket.TurnEnds))
+	}
+}
+
 // The assembled path: bind, close, reopen from the file the way /resume does.
 func TestTheBindingAndTheToolSurviveAResume(t *testing.T) {
 	scene := newSandbox(t)

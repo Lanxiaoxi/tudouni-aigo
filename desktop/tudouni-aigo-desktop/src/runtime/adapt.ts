@@ -46,9 +46,10 @@ import type {
   UiStateMsg,
   UiStatusMsg,
   UiTicketReportMsg,
+  UiTicketTurnEndMsg,
   UiToolsMsg,
 } from '@/protocol/types';
-import type { Report } from '@/ticket/model';
+import type { Report, TurnEnd } from '@/ticket/model';
 
 /* ============================================================
    The status bar's coarse phase
@@ -794,6 +795,8 @@ export interface VmInitTicket {
   title: string;
   brief: string;
   reports: Report[];
+  /** Always an array; `[]` from a runtime that predates protocol 21. */
+  turnEnds: TurnEnd[];
 }
 
 /** One report from `init.ticket.reports`, or `null` when it is malformed.
@@ -832,6 +835,31 @@ export function projectTicketReport(
   return report === null ? null : { ticketId, report };
 }
 
+/** One entry of `init.ticket.turn_ends`, or `null` when malformed. Like a
+ *  report it carries no session id (it is the session's own record). */
+function projectTurnEnd(raw: unknown, sessionId: string): TurnEnd | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const turnId = str(r.turn_id);
+  if (turnId === '') return null;
+  const atMs = num(r.at_ms);
+  if (atMs === null) return null;
+  return { turnId, sessionId, atMs };
+}
+
+/**
+ * `ui(ticket_turn_end)`, projected. `null` when it cannot name a Ticket and a
+ * turn: a half-formed message is dropped rather than guessed at.
+ */
+export function projectTicketTurnEnd(
+  msg: UiTicketTurnEndMsg,
+): { ticketId: string; turnEnd: TurnEnd } | null {
+  const ticketId = str(msg.ticket_id);
+  if (ticketId === '') return null;
+  const turnEnd = projectTurnEnd(msg, str(msg.session_id));
+  return turnEnd === null ? null : { ticketId, turnEnd };
+}
+
 function projectInitTicket(raw: InitMsg['ticket'], sessionId: string): VmInitTicket | null {
   if (raw === null || raw === undefined || typeof raw !== 'object') return null;
   const id = str(raw.id);
@@ -841,7 +869,13 @@ function projectInitTicket(raw: InitMsg['ticket'], sessionId: string): VmInitTic
     const report = projectReport(item, sessionId);
     if (report !== null) reports.push(report);
   }
-  return { id, title: str(raw.title), brief: str(raw.brief), reports };
+  // A runtime below protocol 21 has no key; that reads as no turn ends.
+  const turnEnds: TurnEnd[] = [];
+  for (const item of Array.isArray(raw.turn_ends) ? raw.turn_ends : []) {
+    const turnEnd = projectTurnEnd(item, sessionId);
+    if (turnEnd !== null) turnEnds.push(turnEnd);
+  }
+  return { id, title: str(raw.title), brief: str(raw.brief), reports, turnEnds };
 }
 
 export function projectInit(msg: InitMsg): VmInit {
