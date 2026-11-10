@@ -92,14 +92,15 @@ export function UsagePanel() {
           <>
             <div className="usage-facts">
               <UsageFact
-                value={formatTokens(usage.totals.tokens)}
+                value={factTokens(usage.totals.tokens)}
                 label={t('panel.usage.fact.total')}
-                hint={t('panel.usage.asOf', { when: asOf(usage.generated_at) })}
+                hint={`${formatTokens(usage.totals.tokens)} · ${t('panel.usage.asOf', { when: asOf(usage.generated_at) })}`}
               />
               <UsageFact
-                value={usage.peak ? formatTokens(usage.peak.tokens) : '—'}
+                value={usage.peak ? factTokens(usage.peak.tokens) : '—'}
                 label={t('panel.usage.fact.peak')}
                 sub={usage.peak ? dayLabel(usage.peak.day) : undefined}
+                hint={usage.peak ? formatTokens(usage.peak.tokens) : undefined}
               />
               <UsageFact
                 value={formatDuration(usage.longest_run_ms)}
@@ -239,6 +240,14 @@ export function UsagePanel() {
       </PanelBody>
     </PanelShell>
   );
+}
+
+/** A fact card's token figure. A card is a fifth of the panel's width, and
+ *  "123,456,789" in the display size overflows it into an ellipsis that hides
+ *  the very digits that matter. From a million up the card says "123M" instead;
+ *  the exact count stays in the card's tooltip, so nothing is lost. */
+function factTokens(n: number): string {
+  return n >= 1e6 ? formatTokensCompact(n) : formatTokens(n);
 }
 
 /** One stat card. The shape is the code-index panel's fact (`.ci-fact`), plus
