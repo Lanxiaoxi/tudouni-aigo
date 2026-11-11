@@ -69,9 +69,20 @@ const WORKBENCH_PANELS: ReadonlySet<string> = new Set([
  *  memory card with path chips do not fit in that column. */
 const WIDE_PANELS: ReadonlySet<string> = new Set(['config', 'settings', 'memory']);
 
+/** Panels that are forms or work surfaces: a stray click on the mask must not
+ *  throw away a half-typed route, hook or preset. They still close through Esc
+ *  and their own close button. */
+const STICKY_PANELS: ReadonlySet<string> = new Set([
+  'config',
+  'tasks',
+  'hooks',
+  'subagentPresets',
+]);
+
 export function PanelHost() {
   const t = useT();
   const panel = useApp((s) => s.panel);
+  const sticky = panel !== null && STICKY_PANELS.has(panel);
 
   return (
     <DialogPrimitive.Root
@@ -105,6 +116,14 @@ export function PanelHost() {
           }${panel === 'codeintel' ? ' dialog-memory' : ''
           }`}
           aria-label={t('topbar.commands')}
+          // The mask click and focus leaving the content both arrive as an
+          // "interact outside"; refusing both keeps sticky panels open.
+          onPointerDownOutside={(e) => {
+            if (sticky) e.preventDefault();
+          }}
+          onInteractOutside={(e) => {
+            if (sticky) e.preventDefault();
+          }}
           // Esc with a dropdown menu up closes the menu, not the panel. Radix
           // sees the key first (capture on `document`), so it has to be told.
           onEscapeKeyDown={(e) => {
