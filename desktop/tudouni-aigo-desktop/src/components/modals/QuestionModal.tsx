@@ -128,6 +128,12 @@ export function QuestionModal() {
       ? draft.selected.filter((x) => x !== option)
       : [...draft.selected, option];
     patchDraft({ selected: question.multi_select ? selected : [option] });
+    // A single-choice pick is a complete answer, so move on to the next page
+    // (the last page stays put: Submit is the person's act). Multi-choice
+    // never auto-advances — there is no signal that the selection is done.
+    if (!question.multi_select) {
+      setPage(Math.min(questions.length - 1, current + 1));
+    }
   }
 
   /** The per-question state for the navigation strip: answered, or (with
@@ -183,8 +189,7 @@ export function QuestionModal() {
               const option = question.options[Number(e.key) - 1];
               if (option === undefined) return;
               e.preventDefault();
-              if (question.multi_select) toggle(option);
-              else patchDraft({ selected: [option] });
+              toggle(option);
               return;
             }
             if (e.key === 'ArrowLeft' && !e.ctrlKey && !e.metaKey && !e.altKey) {
