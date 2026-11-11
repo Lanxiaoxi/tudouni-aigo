@@ -134,36 +134,47 @@
   min-height: 0;
 }
 
-/* The label at the column's leading edge, the count chip at its trailing one:
-   the sheet's `WAITING FOR REVIEW · 0`. `.wb-label-row` already supplies the
-   height and the gap; only the two ends need pushing apart. */
-.wm-rail-head {
-  justify-content: space-between;
-}
-
-/* The record is the tall half: it takes whatever height the queue leaves, so the
-   rail's foot is the panel's foot rather than the end of the last row. */
+/* Whichever list is open (queue or record) takes the height under the tab strip,
+   so the rail's foot is the panel's foot rather than the end of the last row. */
 .wm-rail-record {
   flex: 1 1 auto;
 }
 
-/* The queue block must not shrink. Left at the default `flex-shrink: 1`, a
-   long corpus (whose content basis is far taller than the rail) made the flex
-   algorithm take height from both blocks, and the queue collapsed to a one-line
-   sliver with its own scrollbar — the proposal a person has to decide on was
-   the least readable thing on the rail. Its height is bounded by the card's
-   cap instead, and the record (which scrolls internally) absorbs the rest. */
-.wm-rail-block:not(.wm-rail-record) {
-  flex: none;
+/* Only one list is mounted at a time now (see `.wm-tabs`), so the queue no
+   longer has to be capped to leave room for the record: it takes the same
+   height the record does and scrolls inside its card when it outgrows it. */
+.wm-wait-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-/* A queue longer than its card must scroll inside it; otherwise the record
-   below would be pushed out of the panel by the very thing waiting for a
-   decision. The cap follows the viewport so a short window still leaves the
-   record visible, while a normal one shows a whole proposal and its buttons. */
-.wm-wait-card {
-  max-height: min(360px, 45vh);
-  overflow-y: auto;
+/* The rail's two-way switch. `.tk-chips` is the task shelf's track (an
+   inline-flex pill with the active chip floating on it); here it spans the rail
+   and the two chips share it equally, so the strip reads as one control rather
+   than two buttons left of centre. The label may truncate before the count does:
+   the count is the part a person scans for. */
+.wm-tabs {
+  display: flex;
+  flex: none;
+  width: 100%;
+}
+
+.wm-tab {
+  flex: 1 1 0;
+  justify-content: center;
+  min-width: 0;
+}
+
+.wm-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-tab .tk-chip-count {
+  flex: none;
 }
 
 .wm-wait-empty {

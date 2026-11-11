@@ -85,8 +85,15 @@ export function MemoryPanel() {
   // that the queue stays readable as a queue.
   const [reading, setReading] = useState<string | null>(null);
 
+  // Which half of the rail is showing. `null` means "nobody chose yet": the queue
+  // opens first when something is waiting (that is the part that needs a
+  // decision) and the record otherwise. Once a person picks a tab it sticks, so
+  // approving the last proposal does not yank the view out from under them.
+  const [railTab, setRailTab] = useState<'review' | 'record' | null>(null);
+
   const entries = snapshot?.entries ?? [];
   const candidates = snapshot?.candidates ?? [];
+  const activeTab = railTab ?? (candidates.length > 0 ? 'review' : 'record');
   const dirty = useMemo(() => draft !== null && snapshot !== null && !sameConfig(draft, snapshot.config), [draft, snapshot]);
 
   function patchDraft(patch: Partial<MemoryConfig>) {
@@ -292,14 +299,40 @@ export function MemoryPanel() {
                 </div>
 
                 <aside className="wm-rail">
-                  {/* The label names the group and the card holds its rows: the
-                    * sheet draws no tint behind the pair, because a tinted column
-                    * would make the queue and the record one subject again. */}
-                  <div className="wm-rail-block">
-                    <div className="wb-label-row wm-rail-head">
-                      <span className="wb-label">{t('panel.memory.review')}</span>
-                      <span className="wb-label-count">{candidates.length}</span>
-                    </div>
+                  {/* **One list at a time.** The queue and the record used to be two
+                    * stacked cards, and in a narrow rail the queue's cap squeezed
+                    * the record to a sliver. A segmented strip (the same `.tk-chips`
+                    * the task shelf uses) puts the two labels and their counts on
+                    * one line and hands the whole height to whichever list is open.
+                    * They stay two lists with two vocabularies — only one of them
+                    * is on screen at a time. */}
+                  <div
+                    className="tk-chips wm-tabs"
+                    role="tablist"
+                    aria-label={t('panel.memory.title')}
+                  >
+                    {(
+                      [
+                        { key: 'review', label: t('panel.memory.review'), count: candidates.length },
+                        { key: 'record', label: t('panel.memory.recorded'), count: entries.length },
+                      ] as const
+                    ).map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === tab.key}
+                        className={`tk-chip wm-tab${activeTab === tab.key ? ' is-on' : ''}`}
+                        onClick={() => setRailTab(tab.key)}
+                      >
+                        <span className="wm-tab-label">{tab.label}</span>
+                        <span className="tk-chip-count">{tab.count}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {activeTab === 'review' ? (
+                  <div className="wm-rail-block wm-rail-record" role="tabpanel">
                     <div className="wb-card wm-wait-card">
                       {candidates.length === 0 ? (
                         <div className="wm-wait-empty">{t('panel.memory.reviewEmpty')}</div>
@@ -323,6 +356,7 @@ export function MemoryPanel() {
                       )}
                     </div>
                   </div>
+                  ) : null}
 
                   {/* **The lists scroll; the card does not.** The panel is a
                     * definite height (`.dialog-split`), so when the corpus is longer
@@ -333,11 +367,8 @@ export function MemoryPanel() {
                     * view. Putting `scroll` on the card itself (or on the panel's
                     * body, as before) gave one scrollbar for the whole surface and
                     * scrolled that fact away with the rows it was describing. */}
-                  <div className="wm-rail-block wm-rail-record">
-                    <div className="wb-label-row wm-rail-head">
-                      <span className="wb-label">{t('panel.memory.recorded')}</span>
-                      <span className="wb-label-count">{entries.length}</span>
-                    </div>
+                  {activeTab === 'record' ? (
+                  <div className="wm-rail-block wm-rail-record" role="tabpanel">
                     <div className="wb-card wm-record-card">
                       {entries.length === 0 ? (
                         <div className="wm-record-empty">
@@ -367,6 +398,7 @@ export function MemoryPanel() {
                       )}
                     </div>
                   </div>
+                  ) : null}
 
                   <IndexLine index={snapshot.index} />
                 </aside>
