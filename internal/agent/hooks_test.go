@@ -577,6 +577,47 @@ func TestHookContextSitsAtTheVeryEndOfTheTail(t *testing.T) {
 	}
 }
 
+func TestTheTailIsLabelledAsTheRuntimesAndOnlyWhenPresent(t *testing.T) {
+	// The tail goes out as the last user-role message, so without a label a model
+	// answers it as if the person had just spoken. The label must be on the tail and
+	// must not appear when there is no tail, or every plain request would carry a
+	// header introducing nothing.
+	t.Run("with a tail", func(t *testing.T) {
+		h := newHookHarness(t, &fakeModel{script: []model.ModelResponse{
+			textResponse("ok"),
+		}}, security.AlwaysAllow)
+		h.agent.Notes = func() string { return "SOME-NOTE" }
+
+		if _, err := h.agent.Run(context.Background(), "hi"); err != nil {
+			t.Fatal(err)
+		}
+		sent := h.model().seen[0]
+		last := sent[len(sent)-1]
+		text, _ := last["content"].(string)
+		if last["role"] != "user" || !strings.HasPrefix(text, noteHeader) {
+			t.Fatalf("the last message = %v, want a user message opening with %q", last, noteHeader)
+		}
+		if !strings.Contains(text, "SOME-NOTE") {
+			t.Fatalf("the tail lost its content: %q", text)
+		}
+		if got := strings.Count(flattenPayload(sent), noteHeader); got != 1 {
+			t.Fatalf("the header appears %d times, want 1", got)
+		}
+	})
+	t.Run("without a tail", func(t *testing.T) {
+		h := newHookHarness(t, &fakeModel{script: []model.ModelResponse{
+			textResponse("ok"),
+		}}, security.AlwaysAllow)
+
+		if _, err := h.agent.Run(context.Background(), "hi"); err != nil {
+			t.Fatal(err)
+		}
+		if payload := flattenPayload(h.model().seen[0]); strings.Contains(payload, noteHeader) {
+			t.Fatalf("an empty tail still got a header: %q", payload)
+		}
+	})
+}
+
 // --- the guardrail guard ---------------------------------------------------
 
 func TestAWriteToTheHooksFileIsRefused(t *testing.T) {

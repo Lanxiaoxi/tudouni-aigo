@@ -80,6 +80,14 @@ func (a *Agent) imagePolicy() func() (bool, string) {
 // words as close to the generation as anything can be. The continuation note comes
 // after even that: "a hook asked you to keep going" is a fact about *this* request,
 // and it has to be the last thing read.
+//
+// **The whole block is introduced by noteHeader, and only when it is non-empty.** The
+// tail is sent as a user-role message because that is the one shape every backend
+// accepts at the end of a request, which makes it the last user message the model
+// sees. Without a label a model reads it as the person speaking and answers it
+// ("what you just sent was the skill list"). The header is here rather than at the two
+// call sites that append the message so the token accounting (`Measure`, the parts
+// breakdown) prices exactly what is sent.
 func (a *Agent) noteText() string {
 	var parts []string
 	if a.Notes != nil {
@@ -96,8 +104,14 @@ func (a *Agent) noteText() string {
 	if a.continueNote != "" {
 		parts = append(parts, a.continueNote)
 	}
-	return strings.Join(parts, "\n\n")
+	if len(parts) == 0 {
+		return ""
+	}
+	return noteHeader + "\n\n" + strings.Join(parts, "\n\n")
 }
+
+// noteHeader labels the trailing block as the runtime's, not the person's.
+const noteHeader = "[运行时状态 · runtime 自动附加，不是用户发言]"
 
 // Payload is what actually goes out for this request.
 //
