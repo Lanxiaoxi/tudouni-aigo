@@ -9,7 +9,7 @@ import type { AppStore } from '../storeShape';
 import type { QuietMode } from '../types';
 import { nextId } from '@/state/entries';
 import { sendTo } from '@/runtime/bus';
-import { insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, referencedFiles, referencedImages, type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
+import { expandAnnotations, insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, referencedFiles, referencedImages, type Annotation, type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
 import { stashImages, attachRemoteFiles, type AttachedRemoteFile, type StashedImage } from '@/runtime/tauri';
 import { clampRailWidth, persistPrefs } from '../prefs';
 import { promptHistoryKey, rememberablePrompt } from '../promptHistory';
@@ -20,7 +20,7 @@ import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
 import { landPersonReplied } from '../ticketLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'setTicketStartMode' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'addAnnotation' | 'forgetAnnotation' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'setTicketStartMode' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
 
   /**
@@ -459,6 +459,33 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
       });
     },
 
+    addAnnotation(quote, note) {
+      const key = get().activeKey;
+      if (key === null || quote.trim() === '' || note.trim() === '') return;
+      patchWith(key, (bucket) => {
+        // Appended at the end, like "add to input": the person was reading the
+        // transcript, not editing the draft, so there is no caret to honour.
+        const placeholder = nextPlaceholder(bucket.draft, 'note');
+        const { text } = insertAtCaret(bucket.draft, bucket.draft.length, placeholder);
+        const annotation: Annotation = { placeholder, quote: quote.trim(), note: note.trim() };
+        return {
+          draft: text,
+          historyCursor: null,
+          // A token recycled after its chip was dismissed must not find the old
+          // entry still in the list.
+          annotations: [...bucket.annotations.filter((a) => a.placeholder !== placeholder), annotation],
+        };
+      });
+    },
+
+    forgetAnnotation(placeholder) {
+      patchWith(get().activeKey ?? '', (current) => ({
+        annotations: current.annotations.filter((a) => a.placeholder !== placeholder),
+        draft: removePlaceholderFromDraft(current.draft, placeholder),
+        historyCursor: null,
+      }));
+    },
+
     historyNav(dir) {
       const current = activeRuntime(get());
       if (!current) return;
@@ -513,7 +540,13 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
       // because a path in the text is the only image channel the runtime has.
       // The transcript keeps the draft — the placeholder is what the person said,
       // and the chip row above the input already told them the picture was there.
-      const sent = restorePastedPaths(current.draft, current.pastedImages, current.attachedFiles).trim();
+      // Annotations are expanded first: a quote is text, and a path-shaped word
+      // inside it must not be mistaken for an attachment's token.
+      const sent = restorePastedPaths(
+        expandAnnotations(current.draft, current.annotations),
+        current.pastedImages,
+        current.attachedFiles,
+      ).trim();
       const text = current.draft.trim();
       if (sent === '') return;
       // A **visible** modal is blocking: nothing may be sent over the top of
@@ -545,6 +578,7 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
         // *referenced* pending file refused the send above. Clearing the list is
         // also what makes a late answer for it land on nothing.
         pendingFiles: [],
+        annotations: [],
         // Whatever was said about this input has been answered by sending it.
         composerNotice: null,
         // The quick replies answered the previous turn; anything sent — typed or

@@ -28,6 +28,10 @@ import {
   refuseBeforeRead,
   removePlaceholderFromDraft,
   restorePastedPaths,
+  annotationBlock,
+  expandAnnotations,
+  referencedFiles,
+  type Annotation,
   type PastedImage,
 } from '@/runtime/paste';
 
@@ -322,6 +326,47 @@ test('a name comes from the path, and both separators are handled', () => {
   assert.equal(nameOfPath('a.png'), 'a.png');
   // A trailing separator is not part of the name.
   assert.equal(nameOfPath('docs/'), 'docs');
+});
+
+/* ============================================================
+   annotations
+   ============================================================ */
+
+const NOTE: Annotation = { placeholder: '⟦note-0⟧', quote: '第一行\n\n第三行', note: '这里不对' };
+
+test('an annotation is a blockquote of every line, then the note', () => {
+  assert.equal(annotationBlock(NOTE), '> 第一行\n>\n> 第三行\n批注：这里不对');
+});
+
+test('annotation tokens are their own family', () => {
+  assert.equal(nextPlaceholder('', 'note'), '⟦note-0⟧');
+  assert.equal(nextPlaceholder('⟦note-0⟧ ⟦file-1⟧', 'note'), '⟦note-1⟧');
+});
+
+test('the token is replaced by its block, set off by blank lines', () => {
+  assert.equal(
+    expandAnnotations('请看 ⟦note-0⟧ 然后改', [NOTE]),
+    '请看\n\n> 第一行\n>\n> 第三行\n批注：这里不对\n\n然后改',
+  );
+  // Alone in the draft: the outer blank lines are trimmed at send.
+  assert.equal(expandAnnotations('⟦note-0⟧', [NOTE]).trim(), annotationBlock(NOTE));
+});
+
+test('a deleted token ships nothing, and a draft without annotations is untouched', () => {
+  assert.equal(expandAnnotations('just words', [NOTE]), 'just words');
+  assert.equal(expandAnnotations('a ⟦note-1⟧', []), 'a ⟦note-1⟧');
+});
+
+test('expansion runs before path restore, so a quote cannot be mistaken for a token', () => {
+  const file = { path: 'docs/a.md', placeholder: '⟦file-0⟧', name: 'a.md' };
+  const sent = restorePastedPaths(expandAnnotations('⟦note-0⟧ ⟦file-0⟧', [NOTE]), [], [file]).trim();
+  assert.equal(sent, `${annotationBlock(NOTE)}\n\ndocs/a.md`);
+});
+
+test('the tray reads annotations in sentence order, and only those still in the draft', () => {
+  const second: Annotation = { placeholder: '⟦note-1⟧', quote: 'q', note: 'n' };
+  assert.deepEqual(referencedFiles('⟦note-1⟧ x ⟦note-0⟧', [NOTE, second]), [second, NOTE]);
+  assert.deepEqual(referencedFiles('x ⟦note-1⟧', [NOTE, second]), [second]);
 });
 
 test('byte counts read the way the runtime writes them', () => {

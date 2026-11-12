@@ -8,6 +8,7 @@ import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { ImageTray } from '@/components/chrome/ImageTray';
 import { FileTray } from '@/components/chrome/FileTray';
+import { AnnotationTray } from '@/components/chrome/AnnotationTray';
 import { PlusMenu } from '@/components/chrome/PlusMenu';
 import { useClipboardPaste } from '@/hooks/useClipboardPaste';
 
@@ -318,6 +319,10 @@ export function Composer() {
               path is still in the sentence and gone the moment it is not. See
               `ImageTray`. */}
           <ImageTray />
+
+          {/* Annotated passages of the transcript: a quote and a note riding
+              as one chip, expanded at send. See `AnnotationTray`. */}
+          <AnnotationTray />
         </div>
 
         {/* The input. One line when the box is empty, two when it has content;

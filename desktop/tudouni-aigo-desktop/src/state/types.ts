@@ -11,7 +11,7 @@ import { type CodeIntelSnapshot, type FileEntry, type HooksSnapshot, type Memory
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
 import type { TerminalState } from '@/runtime/terminalOutput';
 import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
-import { type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
+import { type Annotation, type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
 import { type InstallStage, type RemoteConfigStatus } from '@/runtime/tauri';
 
 
@@ -1066,6 +1066,14 @@ export interface SessionRuntime {
    * lands in *that* session's workspace.
    */
   pendingFiles: PendingFile[];
+  /**
+   * Passages of the transcript the person annotated, waiting in the draft.
+   *
+   * The attached file's mechanism carrying text: the draft holds the token and
+   * `expandAnnotations` puts the quote and the note in its place at submit.
+   * Per session because the quote is from *this* conversation's transcript.
+   */
+  annotations: Annotation[];
   /**
    * Quiet mode for this session's stream.
    *

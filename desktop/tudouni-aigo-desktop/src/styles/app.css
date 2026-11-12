@@ -1345,6 +1345,24 @@
   white-space: nowrap;
 }
 
+/* The annotation chip: two stacked lines, the quote's head over the note's,
+   in the same 32px row as a file chip so the tray does not change height. */
+.composer .cp-chip-note-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.composer .cp-chip-note-quote {
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer .cp-chip-size {
   flex: none;
   font-size: var(--text-caption);

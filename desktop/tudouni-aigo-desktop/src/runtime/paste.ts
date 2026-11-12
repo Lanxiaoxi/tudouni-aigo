@@ -101,7 +101,7 @@ export type PasteRefusal =
  * number the person deleted is recycled rather than skipped: the sentence is
  * the surface these tokens live on, and a gap (`1`, `3`) reads as a mistake.
  */
-export function nextPlaceholder(taken: string, kind: 'pimg' | 'file' = 'pimg'): string {
+export function nextPlaceholder(taken: string, kind: 'pimg' | 'file' | 'note' = 'pimg'): string {
   let number = 0;
   let candidate = `⟦${kind}-${number}⟧`;
   while (taken.includes(candidate)) {
@@ -230,6 +230,64 @@ export function referencedFiles<T extends { placeholder: string }>(draft: string
     .filter((entry) => entry.at >= 0)
     .sort((a, b) => a.at - b.at);
   return placed.map((entry) => entry.file);
+}
+
+/**
+ * A passage of the transcript the person selected and commented on.
+ *
+ * The same placeholder mechanism as a file, carrying text instead of a path:
+ * the draft holds `⟦note-0⟧`, the tray draws a chip for it while the token is
+ * in the sentence, and `expandAnnotations` swaps it for the quote and the note
+ * at submit time. A quote of several paragraphs would bury the sentence the
+ * person is writing, which is why it rides as a chip rather than as text.
+ */
+export interface Annotation {
+  placeholder: string;
+  /** The selected text, verbatim. */
+  quote: string;
+  /** What the person wrote about it. Never empty — the popover refuses that. */
+  note: string;
+}
+
+/** The label the expanded note carries. The person chose the wording, and it
+ *  is what the model reads, not interface copy — so it is not in `i18n`. */
+const NOTE_LABEL = '批注：';
+
+/** One annotation as the model reads it: the quote as a Markdown blockquote
+ *  (every line, so a multi-line selection stays one quote), then the note. */
+export function annotationBlock(annotation: Pick<Annotation, 'quote' | 'note'>): string {
+  const quote = annotation.quote
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => (line.trim() === '' ? '>' : `> ${line}`))
+    .join('\n');
+  return `${quote}\n${NOTE_LABEL}${annotation.note.trim()}`;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * The draft with every annotation's token replaced by its block.
+ *
+ * A block is set off by blank lines: a blockquote glued into the middle of a
+ * sentence would swallow the words after it into the quote. The spaces around
+ * the token go with it so the seam is the blank line, not a stray indent.
+ *
+ * **A token the person deleted ships nothing.** Unlike a file (whose path is
+ * appended), the chip is gone the moment its token is, and a quote that turned
+ * up in the message with no chip on screen would be text the person never saw
+ * leave. Runs of blank lines are collapsed only where a block was put in.
+ */
+export function expandAnnotations(draft: string, annotations: Annotation[]): string {
+  let text = draft;
+  for (const annotation of annotations) {
+    if (!text.includes(annotation.placeholder)) continue;
+    const token = new RegExp(`[ \\t]*${escapeRegExp(annotation.placeholder)}[ \\t]*`, 'g');
+    text = text.replace(token, `\n\n${annotationBlock(annotation)}\n\n`);
+  }
+  return text.replace(/\n{3,}/g, '\n\n');
 }
 
 /** One picture this front end stashed, as the composer needs to know it. */

@@ -2230,6 +2230,10 @@ export const en = {
    *  name, not a visible heading: the chips are self-explanatory. */
   'composer.files': 'Attached files',
   'composer.removeFile': 'Remove this file',
+  /** The row of annotated passages. Accessible name only, like the files'. */
+  'composer.annotations': 'Annotations',
+  'composer.annotationNote': 'Note: ',
+  'composer.removeAnnotation': 'Remove this annotation',
   'composer.hint.send': 'Enter sends · Shift+Enter newlines',
   /* The running turn's toolbar sentence: what is happening, then how to stop it.
      The stop button beside it says the same thing by shape; this is the readable
@@ -2363,6 +2367,13 @@ export const en = {
   'stream.menu.copy': 'Copy',
   'stream.menu.addToInput': 'Add to input',
   'stream.menu.addToTicket': 'Add to Ticket',
+  'stream.menu.annotate': 'Add note',
+  /** The in-place note box the menu's "Add note" opens under the selection. */
+  'stream.annotate.title': 'Add note',
+  'stream.annotate.placeholder': 'Write a note on this passage',
+  'stream.annotate.hint': 'Enter confirms · Shift+Enter newlines',
+  'stream.annotate.confirm': 'Add',
+  'stream.annotate.cancel': 'Cancel',
   /** Quick replies under the last answer. The hint names the modifier-click,
    *  because "fill the input instead of sending" is invisible otherwise. */
   'stream.suggestions.label': 'Suggested replies',

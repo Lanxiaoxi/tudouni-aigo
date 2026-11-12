@@ -98,6 +98,7 @@ export function createSessionBucket(
     pendingImages: [],
     attachedFiles: [],
     pendingFiles: [],
+    annotations: [],
     quiet: prefsQuietDefault(),
   };
 }

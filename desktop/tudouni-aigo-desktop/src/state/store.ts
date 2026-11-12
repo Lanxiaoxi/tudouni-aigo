@@ -207,6 +207,7 @@ export {
 } from './appView';
 export {
   NO_ALIASES,
+  NO_ANNOTATIONS,
   NO_ATTACHED,
   NO_ENTRIES,
   NO_FILE_ENTRIES,

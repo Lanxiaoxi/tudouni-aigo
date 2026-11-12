@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { ArrowDown, CornerDownLeft, Copy, Loader, Sparkles, Ticket } from 'lucide-react';
+import { ArrowDown, CornerDownLeft, Copy, Loader, MessageSquarePlus, Sparkles, Ticket } from 'lucide-react';
+import { AnnotatePopover } from './AnnotatePopover';
 import { NO_ENTRIES, selectModalVisible, useApp, useSessionField } from '@/state/store';
 import { insertAtCaret } from '@/runtime/paste';
 import { copyText } from '@/utils/clipboard';
@@ -106,9 +107,16 @@ export function StreamView() {
   // click's coordinates. Only opened when there is a selection — a right-click
   // on nothing has no menu here, so the default stays (the same rule the
   // board's card menu applies to cards without an id).
-  const [selectionMenu, setSelectionMenu] = useState<{ text: string; x: number; y: number } | null>(
-    null,
-  );
+  // `anchor` is the selection's own box, read at right-click time: the scrim
+  // drops the live selection, and the annotate popover opens under it.
+  const [selectionMenu, setSelectionMenu] = useState<{
+    text: string;
+    x: number;
+    y: number;
+    anchor: { left: number; bottom: number; top: number } | null;
+  } | null>(null);
+  // The annotate popover: the quote it is about, and where it opens.
+  const [annotating, setAnnotating] = useState<{ text: string; left: number; top: number } | null>(null);
 
   useEffect(() => {
     if (selectionMenu === null) return;
@@ -125,14 +133,21 @@ export function StreamView() {
   }, [selectionMenu]);
 
   const onContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const text = window.getSelection()?.toString() ?? '';
+    const selection = window.getSelection();
+    const text = selection?.toString() ?? '';
     if (text === '') return;
     e.preventDefault();
+    let anchor: { left: number; bottom: number; top: number } | null = null;
+    if (selection !== null && selection.rangeCount > 0) {
+      const box = selection.getRangeAt(0).getBoundingClientRect();
+      if (box.width > 0 || box.height > 0) anchor = { left: box.left, bottom: box.bottom, top: box.top };
+    }
     // Clamped so the menu never opens off the window edge: ~its own footprint.
     setSelectionMenu({
       text,
       x: Math.min(e.clientX, window.innerWidth - 200),
-      y: Math.min(e.clientY, window.innerHeight - 150),
+      y: Math.min(e.clientY, window.innerHeight - 190),
+      anchor,
     });
   }, []);
   // True from a programmatic stick until its scroll event has been delivered;
@@ -429,8 +444,42 @@ export function StreamView() {
               <Ticket size={13} />
               {t('stream.menu.addToTicket')}
             </button>
+            {/* Annotate: a note on the selection, written in place. The popover
+                opens under the selection's own box (the click point when the
+                box could not be read), and on confirm the quote and the note
+                ride into the draft as one chip — see `AnnotationTray`. */}
+            <button
+              type="button"
+              role="menuitem"
+              className="stream-menu-item"
+              onClick={() => {
+                const { text, x, y, anchor } = selectionMenu;
+                setAnnotating({
+                  text,
+                  left: anchor?.left ?? x,
+                  top: anchor?.bottom ?? y,
+                });
+                setSelectionMenu(null);
+              }}
+            >
+              <MessageSquarePlus size={13} />
+              {t('stream.menu.annotate')}
+            </button>
           </div>
         </div>
+      ) : null}
+
+      {annotating !== null ? (
+        <AnnotatePopover
+          quote={annotating.text}
+          left={annotating.left}
+          top={annotating.top}
+          onConfirm={(note) => {
+            useApp.getState().addAnnotation(annotating.text, note);
+            setAnnotating(null);
+          }}
+          onCancel={() => setAnnotating(null)}
+        />
       ) : null}
     </>
   );

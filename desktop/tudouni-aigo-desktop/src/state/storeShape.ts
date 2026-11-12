@@ -1142,6 +1142,15 @@ export interface AppStore {
   /** Forget one file that is still being uploaded, by its placeholder — the
    *  token is the only name it has before the host has chosen a path. */
   forgetPendingFile(placeholder: string): void;
+  /**
+   * Put an annotated passage of the transcript into the active draft: a
+   * `⟦note-N⟧` token at the draft's end and a chip above the input. The quote
+   * and the note are put in the token's place when the message is sent.
+   * Ignored when either is blank.
+   */
+  addAnnotation(quote: string, note: string): void;
+  /** Drop one annotation, and its token from the draft. */
+  forgetAnnotation(placeholder: string): void;
 
   /**
    * Open one panel.
