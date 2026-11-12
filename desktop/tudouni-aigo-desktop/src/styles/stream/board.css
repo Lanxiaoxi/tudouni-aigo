@@ -55,6 +55,32 @@
   color: var(--fg-muted);
 }
 
+/* The session board's trailing group: the workspace filter and Close stay one
+   cluster, the way `.tkb-head-actions` keeps the Ticket board's together. */
+.board-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* The workspace filter both boards share. A fixed width: a dropdown that grew
+   with the chosen label would shift everything beside it on every pick. */
+.ws-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 220px;
+  flex: none;
+  color: var(--fg-faint);
+}
+
+.ws-filter .rs-select .rs__control {
+  height: var(--control-h);
+  min-height: var(--control-h);
+}
+
 .board-loading {
   padding: var(--space-4);
   font-size: var(--text-compact);

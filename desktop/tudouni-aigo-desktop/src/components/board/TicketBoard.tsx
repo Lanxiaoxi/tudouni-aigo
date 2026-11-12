@@ -78,6 +78,13 @@ import {
   type TicketRunState,
 } from '@/ticket/view';
 import { baseName } from '@/utils/format';
+import { WorkspaceFilter } from '@/components/board/WorkspaceFilter';
+import {
+  ALL_WORKSPACES,
+  effectiveWorkspaceFilter,
+  ticketWorkspaceScope,
+  workspaceOptions,
+} from '@/utils/workspaceFilter';
 
 /**
  * The Ticket board: the work, on one screen.
@@ -320,7 +327,6 @@ export function TicketBoard() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const editing = editingId === null ? null : (tickets.find((row) => row.id === editingId) ?? null);
 
-  const groups = useMemo(() => groupTickets(tickets), [tickets]);
   const [clearArmed, setClearArmed] = useState(false);
 
   /* ---------------- dragging a card into another lane ---------------- */
@@ -447,6 +453,30 @@ export function TicketBoard() {
   const [query, setQuery] = useState('');
   const needle = query.trim().toLowerCase();
 
+  /**
+   * The workspace filter, beside the status one. It narrows which Tickets the
+   * board counts at all, so it applies before the lanes are grouped: every
+   * number on the board (segments, lane heads, the title) is then about the
+   * chosen workspace. "Clear finished" stays global on purpose — it is a store
+   * act over the whole file, and the confirm sentence says how many.
+   */
+  const [wsChoice, setWsChoice] = useState(ALL_WORKSPACES);
+  const scopeById = useMemo(
+    () =>
+      new Map(
+        tickets.map((ticket) => [ticket.id, ticketWorkspaceScope(ticket, workspace, screenRemoteId, remoteLabels)]),
+      ),
+    [tickets, workspace, screenRemoteId, remoteLabels],
+  );
+  const wsOptions = useMemo(() => workspaceOptions([...scopeById.values()]), [scopeById]);
+  const wsFilter = effectiveWorkspaceFilter(wsChoice, wsOptions);
+  const scoped = useMemo(
+    () =>
+      wsFilter === ALL_WORKSPACES ? tickets : tickets.filter((ticket) => scopeById.get(ticket.id)?.key === wsFilter),
+    [tickets, scopeById, wsFilter],
+  );
+  const groups = useMemo(() => groupTickets(scoped), [scoped]);
+
   const { drag, lanesRef, onPointerDown } = useTicketDrag(
     useCallback(
       (ticketId: string, drop: TicketDrop) => {
@@ -536,15 +566,15 @@ export function TicketBoard() {
     return cards.filter(matches);
   }
 
-  const visibleCount = tickets.filter(matches).length;
+  const visibleCount = scoped.filter(matches).length;
   const laneLabel = filter === 'all' ? '' : t(`ticket.col.${filter}` as TKey);
   const countTail =
-    filter === 'all' ? t('ticket.result.ofAll', { total: tickets.length }) : t('ticket.result.in', { lane: laneLabel });
+    filter === 'all' ? t('ticket.result.ofAll', { total: scoped.length }) : t('ticket.result.in', { lane: laneLabel });
 
   const columns: TicketColumn[] = filter === 'all' ? [...OVERVIEW_COLUMNS] : [filter];
 
   const segments: { key: 'all' | TicketColumn; label: string; n: number }[] = [
-    { key: 'all', label: t('ticket.filter.all'), n: tickets.length },
+    { key: 'all', label: t('ticket.filter.all'), n: scoped.length },
     ...OVERVIEW_COLUMNS.map((column) => ({
       key: column,
       label: t(`ticket.col.${column}` as TKey),
@@ -691,7 +721,7 @@ export function TicketBoard() {
         <div>
           <h2 className="board-title">
             {t('board.tickets.title')}
-            <span className="board-title-count">{tickets.length}</span>
+            <span className="board-title-count">{scoped.length}</span>
           </h2>
           <p className="board-sub">{t('board.tickets.subtitle')}</p>
         </div>
@@ -801,6 +831,7 @@ export function TicketBoard() {
               <X size={12} />
             </button>
           </div>
+          <WorkspaceFilter value={wsFilter} options={wsOptions} onChange={setWsChoice} />
           <div className="tkb-seg" role="group" aria-label={t('ticket.filter.label')}>
             {segments.map((segment) => (
               <button

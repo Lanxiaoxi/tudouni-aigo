@@ -1295,6 +1295,10 @@ export const en = {
   'board.openHint': 'See what every session is doing',
   'board.close': 'Close the board',
   'board.closeHint': 'Back to the conversation (Esc)',
+  /* The boards' workspace filter (session board and Ticket board share it). */
+  'board.wsFilter.label': 'Filter by workspace',
+  'board.wsFilter.all': 'All workspaces',
+  'board.wsFilter.none': 'No workspace yet',
   'board.col.needs': 'Needs you',
   'board.col.working': 'Working',
   'board.col.finished': 'Finished',

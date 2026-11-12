@@ -444,6 +444,9 @@ const SUITES = [
   // set_autopilot / the first message on the wire in the contract order, to the
   // right machine.
   'ticket-board.test.ts',
+  // The boards' workspace filter: one option per place (machine + path), a
+  // Ticket filed where it ran, and a stale choice falling back to "all".
+  'workspace-filter.test.ts',
   // The Ticket side of a session's life (docs/design/ticket.md §5.1, §5.3, §6.3,
   // §6.5, §7.3): init reconciles reports idempotently and unbinds a stale
   // binding only after that; a report or init that beats the file is held, not

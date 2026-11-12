@@ -13,6 +13,13 @@ import { EmptyState, Progress, Tip } from '@/components/ui/kit';
 import { IdleCloseConfirm, type IdleCloseTarget } from '@/components/modals/IdleCloseConfirm';
 import { formatDuration, formatPercent, formatRelative, formatTokens } from '@/utils/format';
 import { savedSessionsKey } from '@/state/savedSessionsKey';
+import { WorkspaceFilter } from '@/components/board/WorkspaceFilter';
+import {
+  ALL_WORKSPACES,
+  effectiveWorkspaceFilter,
+  workspaceOptions,
+  workspaceScopeOf,
+} from '@/utils/workspaceFilter';
 
 /**
  * The session board: what every session in this workspace is doing, on one
@@ -204,8 +211,13 @@ export function SessionBoard() {
   // no matter which workspace the person is focused on — and its preview and
   // counts are the runtime's rather than a second guess.
   const buckets = useApp((s) => s.sessions);
+  const remoteWorkspaces = useApp((s) => s.remoteWorkspaces);
+  const remoteLabels = useMemo(
+    () => new Map(remoteWorkspaces.map((entry) => [entry.id, entry.label])),
+    [remoteWorkspaces],
+  );
 
-  const cards = useMemo(
+  const allCards = useMemo(
     () =>
       order.flatMap((key) => {
         const bucket = buckets[key];
@@ -285,10 +297,28 @@ export function SessionBoard() {
             // on it ("Archive" or "Unarchive"), and the saved lists are already
             // subscribed via `rowsByIdByWorkspace` — reading it here costs nothing.
             archived: row?.archived ?? false,
+            // Which workspace the card belongs to, for the head's filter. The
+            // same path + machine pair the saved-row lookup above is keyed by.
+            scope: workspaceScopeOf(ownWorkspace, bucket.remoteWorkspaceId, remoteLabels),
           },
         ];
       }),
-    [order, buckets, rowsByIdByWorkspace, statusByKey],
+    [order, buckets, rowsByIdByWorkspace, statusByKey, remoteLabels],
+  );
+
+  /**
+   * The workspace filter. Board state rather than store state, like the
+   * Idle-close prompt: it is a way of looking at this board while it is open.
+   * A choice whose workspace has no card left falls back to "all"
+   * (`effectiveWorkspaceFilter`), so the board cannot go blank behind a filter
+   * the head no longer offers.
+   */
+  const [wsChoice, setWsChoice] = useState(ALL_WORKSPACES);
+  const wsOptions = useMemo(() => workspaceOptions(allCards.map((card) => card.scope)), [allCards]);
+  const wsFilter = effectiveWorkspaceFilter(wsChoice, wsOptions);
+  const cards = useMemo(
+    () => (wsFilter === ALL_WORKSPACES ? allCards : allCards.filter((card) => card.scope.key === wsFilter)),
+    [allCards, wsFilter],
   );
 
   const columns = useMemo(
@@ -437,23 +467,26 @@ export function SessionBoard() {
                 built from, so the count can never disagree with the board), and
                 it is already subscribed above, so this costs nothing. Same chip
                 idiom as the column heads' counts. */}
-            <span className="board-title-count">{order.length}</span>
+            <span className="board-title-count">{cards.length}</span>
           </h2>
           <p className="board-sub">{t('board.subtitle')}</p>
         </div>
         {/* Leaving is a first-class control, like `TerminalView`'s — the board
             replaced the transcript, so it must own the way back rather than
             leaving Esc as the only exit. */}
-        <Tip label={t('board.closeHint')}>
-          <button
-            type="button"
-            className="lb-icon"
-            aria-label={t('board.close')}
-            onClick={() => setBoard(null)}
-          >
-            <X size={15} />
-          </button>
-        </Tip>
+        <div className="board-head-actions">
+          <WorkspaceFilter value={wsFilter} options={wsOptions} onChange={setWsChoice} />
+          <Tip label={t('board.closeHint')}>
+            <button
+              type="button"
+              className="lb-icon"
+              aria-label={t('board.close')}
+              onClick={() => setBoard(null)}
+            >
+              <X size={15} />
+            </button>
+          </Tip>
+        </div>
       </header>
 
       {loading ? (
