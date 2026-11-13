@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   Bot,
   CheckCircle2,
@@ -654,21 +654,49 @@ function JobRow({ job }: { job: VmJob }) {
     job.exitCode !== null ? ` · ${t('jobs.exit', { n: job.exitCode })}` : ''
   }`;
 
+  // The row reads as a short line, and a press opens the whole command under
+  // it. The command is what a person matches against the transcript, so it must
+  // stay reachable — but a long one-liner (a heredoc, a pipeline of flags) would
+  // otherwise swallow the narrow rail, so the full text is opt-in, per row.
+  const [open, setOpen] = useState(false);
+
   return (
-    <div className={`sb-row${job.uncollected ? ' is-uncollected' : ''}`}>
+    <div
+      className={`sb-row is-clickable${job.uncollected ? ' is-uncollected' : ''}${
+        open ? ' is-open' : ''
+      }`}
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      onClick={() => setOpen((v) => !v)}
+      onKeyDown={(e) => {
+        // Only the row's own keys: a key pressed inside the expanded text (to
+        // select or copy it) must not fold the row.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setOpen((v) => !v);
+        }
+      }}
+    >
       <Badge tone={JOB_TONE[job.state]} dot={false}>
         {label}
       </Badge>
-      {/* The command is the material a person matches against the transcript,
-          so it is shown whole: it wraps instead of being cut, and the row
-          grows to hold it. "Uncollected" is signalled by colour *and* by
-          wording, never by colour alone. */}
-      <span className="sbr-main sbr-wrap">
-        <span className="mono">{job.command}</span>
+      {/* "Uncollected" is signalled by colour *and* by wording, never by colour
+          alone. The tooltip carries the full command for a pointer that only
+          hovers. */}
+      <span className="sbr-main" title={job.command}>
+        <span className="mono">{oneLine(job.command, 40)}</span>
       </span>
       <span className="sbr-aside" title={aside}>
         {aside}
       </span>
+      {open ? (
+        // A click inside the text is a selection gesture, not a fold.
+        <pre className="job-full mono" onClick={(e) => e.stopPropagation()}>
+          {job.command}
+        </pre>
+      ) : null}
     </div>
   );
 }

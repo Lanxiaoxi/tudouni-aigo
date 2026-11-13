@@ -1274,6 +1274,16 @@ export function SubagentsPanel() {
 
   const uncollected = done.filter((row) => row.state === 'uncollected');
 
+  // Job rows show a one-line command; a press unfolds the whole of it. Kept by
+  // job id so a snapshot refresh (new array, same jobs) does not fold them.
+  const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleJob = (id: string) =>
+    setOpenJobs((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
   const { active, setActive } = useListKeys({
     count: agents.length,
     onClose: closePanel,
@@ -1390,6 +1400,7 @@ export function SubagentsPanel() {
           jobs.map((job) => (
             <PanelRow
               key={job.id}
+              onPick={() => toggleJob(job.id)}
               aside={
                 <>
                   {job.uncollected ? (
@@ -1402,7 +1413,15 @@ export function SubagentsPanel() {
                 </>
               }
             >
-              <span className="mono">{oneLine(job.command, 72)}</span>
+              <span className="mono" title={job.command}>
+                {oneLine(job.command, 72)}
+              </span>
+              {openJobs.has(job.id) ? (
+                // A click inside the text is a selection gesture, not a fold.
+                <pre className="job-full mono" onClick={(e) => e.stopPropagation()}>
+                  {job.command}
+                </pre>
+              ) : null}
             </PanelRow>
           ))
         )}

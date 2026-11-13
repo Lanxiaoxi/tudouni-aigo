@@ -114,12 +114,27 @@
   white-space: nowrap;
 }
 
-/* 命令这类主信息有时值得完整展示（如后台任务的命令行）：
-   允许换行并自然增长，而不是截断成一行省略号。行高随之变高。
-   `overflow-wrap: anywhere` 让无空格的长 token（路径、变量名）也能断开。 */
-.sb-row .sbr-main.sbr-wrap {
+/* 后台任务的命令：行内只显示缩略版（省略号），点击行展开完整命令。
+   展开时行允许换行，完整文本独占下一整行；`pre-wrap` 保留命令里的换行，
+   `overflow-wrap: anywhere` 让无空格的长 token（路径、变量名）也能断开。
+   `.job-full` 同时被侧栏行和状态栏面板（SubagentsPanel）里的行使用。 */
+.sb-row.is-open {
+  flex-wrap: wrap;
+}
+
+.job-full {
+  flex: 0 0 100%;
+  min-width: 0;
+  margin: 2px 0 2px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--bg-muted);
+  color: var(--fg);
+  font-size: var(--text-caption);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
 }
 
 .sb-row .sbr-aside {
