@@ -261,6 +261,14 @@ func (s *Server) handleTicketBind(message map[string]any) {
 			}
 			spec["attachments"] = attachments
 		}
+		if value, present := object["notes"]; present && value != nil {
+			notes, problem := parseTicketNotes(value)
+			if problem != "" {
+				s.notice("warn", "ticket", i18n.T("channels.ticket.bad_notes", "problem", problem))
+				return
+			}
+			spec["notes"] = notes
+		}
 	}
 
 	binder, ok := runtime.(TicketBinder)
@@ -311,6 +319,74 @@ func parseTicketAttachments(raw any) ([]any, string) {
 			return nil, fmt.Sprintf("attachment %d: %v", index, err)
 		}
 		out = append(out, attachment.Wire())
+	}
+	return out, ""
+}
+
+// parseTicketNotes checks `ticket.notes` (protocol 22) and returns it in the
+// shape the runtime's BindTicket reads. The second value is a human-readable
+// problem, "" when the list is acceptable.
+//
+// Like attachments, the whole bind is refused on any bad row: the runtime's copy
+// is replaced wholesale, so keeping only the good rows would silently delete the
+// others from what the agent sees.
+func parseTicketNotes(raw any) ([]any, string) {
+	rows, ok := raw.([]any)
+	if !ok {
+		return nil, "`ticket.notes` must be an array"
+	}
+	if len(rows) > state.MaxTicketNotes {
+		return nil, fmt.Sprintf("at most %d notes are allowed, got %d", state.MaxTicketNotes, len(rows))
+	}
+	notes := make([]state.TicketNote, 0, len(rows))
+	for index, row := range rows {
+		object, ok := row.(map[string]any)
+		if !ok {
+			return nil, fmt.Sprintf("note %d must be an object", index)
+		}
+		id, ok := object["id"].(string)
+		if !ok || strings.TrimSpace(id) == "" {
+			return nil, fmt.Sprintf("note %d: `id` must be a non-empty string", index)
+		}
+		text, ok := object["text"].(string)
+		if !ok {
+			return nil, fmt.Sprintf("note %d: `text` must be a string", index)
+		}
+		author, ok := object["author"].(string)
+		if !ok || (author != state.TicketNoteAuthorPerson && author != state.TicketNoteAuthorAgent) {
+			return nil, fmt.Sprintf("note %d: `author` must be \"person\" or \"agent\"", index)
+		}
+		updated, ok := wholeNumber(object["updated_at_ms"])
+		if !ok || updated < 0 {
+			return nil, fmt.Sprintf("note %d: `updated_at_ms` must be a non-negative whole number", index)
+		}
+		note := state.TicketNote{ID: id, Text: text, Author: author, UpdatedAtMs: updated}
+		// The optional fields are carried when present so a front end that sends
+		// them (the agent's own notes come back with a session id) loses nothing.
+		if value, present := object["session_id"]; present && value != nil {
+			session, ok := value.(string)
+			if !ok {
+				return nil, fmt.Sprintf("note %d: `session_id` must be a string", index)
+			}
+			note.SessionID = session
+		}
+		if value, present := object["created_at_ms"]; present && value != nil {
+			created, ok := wholeNumber(value)
+			if !ok || created < 0 {
+				return nil, fmt.Sprintf("note %d: `created_at_ms` must be a non-negative whole number", index)
+			}
+			note.CreatedAtMs = created
+		}
+		notes = append(notes, note)
+	}
+	// The ceilings and duplicate ids are the state package's rules; asking it
+	// keeps the notice and the record's own check from drifting apart.
+	if err := state.ValidateTicketNotes(notes); err != nil {
+		return nil, err.Error()
+	}
+	out := make([]any, 0, len(notes))
+	for _, note := range notes {
+		out = append(out, note.Wire())
 	}
 	return out, ""
 }

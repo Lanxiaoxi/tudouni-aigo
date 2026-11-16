@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
+	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
 )
 
@@ -51,6 +52,7 @@ func (r *Runtime) BindTicket(spec map[string]any) error {
 			Title:       stringOf(spec["title"]),
 			Brief:       stringOf(spec["brief"]),
 			Attachments: attachmentsOf(spec["attachments"]),
+			Notes:       notesOf(spec["notes"]),
 		})
 	})
 	if err != nil {
@@ -76,8 +78,23 @@ func attachmentsOf(raw any) []state.TicketAttachment {
 	return out
 }
 
-// applyTicketTool brings the registry in line with the binding: registered while a
-// ticket is bound, absent otherwise.
+// notesOf reads the bind's notes list. The protocol layer has already refused a
+// bind with a malformed row; BindTicket validates again, so nothing unchecked
+// reaches the record.
+func notesOf(raw any) []state.TicketNote {
+	rows, _ := raw.([]any)
+	var out []state.TicketNote
+	for _, row := range rows {
+		if note, ok := state.TicketNoteOf(row); ok {
+			out = append(out, note)
+		}
+	}
+	return out
+}
+
+// applyTicketTool brings the registry in line with the binding: both ticket
+// tools (`ticket_report`, and `ticket_note` since protocol 22) are registered
+// while a ticket is bound, absent otherwise.
 //
 // Called at assembly (a resumed session comes back bound) and after every bind. A
 // tool that is only ever answering "no ticket" would cost a schema in every request
@@ -87,14 +104,25 @@ func (r *Runtime) applyTicketTool() error {
 		return nil
 	}
 	_, bound := r.ticket()
-	_, present := r.Tools.Get(builtin.TicketReportToolName)
-	switch {
-	case !bound && present:
-		r.Tools.Unregister(builtin.TicketReportToolName)
-	case bound && !present:
-		tool := builtin.NewTicketReport(r.meta(), r.SessionIDValue, r.Checkpoint, r.emitTicketEvent)
-		if err := r.Tools.Register(tool); err != nil {
-			return fmt.Errorf("could not register %s: %w", builtin.TicketReportToolName, err)
+	for _, entry := range []struct {
+		name string
+		make func() tools.Tool
+	}{
+		{builtin.TicketReportToolName, func() tools.Tool {
+			return builtin.NewTicketReport(r.meta(), r.SessionIDValue, r.Checkpoint, r.emitTicketEvent)
+		}},
+		{builtin.TicketNoteToolName, func() tools.Tool {
+			return builtin.NewTicketNote(r.meta(), r.SessionIDValue, r.Checkpoint, r.emitTicketEvent)
+		}},
+	} {
+		_, present := r.Tools.Get(entry.name)
+		switch {
+		case !bound && present:
+			r.Tools.Unregister(entry.name)
+		case bound && !present:
+			if err := r.Tools.Register(entry.make()); err != nil {
+				return fmt.Errorf("could not register %s: %w", entry.name, err)
+			}
 		}
 	}
 	return nil
@@ -105,7 +133,9 @@ func (r *Runtime) applyTicketTool() error {
 //
 // It is also where "this turn has reported" is noted: the tool only calls it after
 // a report was validated and recorded, so a refused call (no question on a blocked
-// report, a call after the unbind) never counts as having reported.
+// report, a call after the unbind) never counts as having reported. A
+// `ticket_note` goes through the same hook but is not a report: writing a note
+// says nothing about whether the work is done.
 func (r *Runtime) emitTicketEvent(payload map[string]any) {
 	if kind, _ := payload["kind"].(string); kind == "ticket_report" {
 		r.ticketReported.Store(true)

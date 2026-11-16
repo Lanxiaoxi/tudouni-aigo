@@ -197,7 +197,19 @@ const VERSION = 1
 // never claims the work is done — the front end's state machine decides what a
 // stopped-without-saying turn means. Additive: a runtime below 21 never sends it,
 // and a front end that does not know it ignores it.
-const PROTOCOL = 21
+//
+// 22 adds ticket notes: `ticket_bind.ticket.notes` (optional; absent or null means
+// none; at most 100 `{id, text, author, updated_at_ms}` rows, `author` being
+// "person" or "agent", one note at most 4000 characters, 12000 in total) which
+// **replaces** the runtime's copy wholesale and refuses the whole bind if any row
+// is bad; a `ticket_note` tool (registered with `ticket_report`, never given to
+// sub-agents, the agent may only edit notes it wrote) whose writes are forwarded
+// as a `ticket_note` kind on the `ui` channel (`ticket_id`, `op_id`, `session_id`,
+// `op`, `note_id`, `text`, `at_ms`) after they are in the session file; and
+// `init.ticket.notes` / `init.ticket.note_ops` (always arrays, the latter the
+// newest 50 writes) for reconciliation. Additive: a runtime below 22 ignores the
+// `notes` key and has no tool, so a front end gates sending notes on this number.
+const PROTOCOL = 22
 
 // Message keys used by every envelope.
 const (
@@ -430,6 +442,11 @@ const (
 	// (protocol 21). Like a report it is in the session file before it is sent,
 	// so it can be recovered from init.ticket.turn_ends.
 	UITicketTurnEnd = "ticket_turn_end"
+
+	// One write the agent made through `ticket_note` (protocol 22), forwarded
+	// after it is in the session file, so "announced" implies "recoverable from
+	// init.ticket.note_ops".
+	UITicketNote = "ticket_note"
 )
 
 // Terminal statuses. The runtime is the only source of truth for these; a front

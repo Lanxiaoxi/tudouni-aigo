@@ -505,6 +505,9 @@ var sessionScopedToolNames = []string{
 	// the parent's binding, and the parent's metadata is the map two children could
 	// write at once.
 	"ticket_report",
+	// Notes are shared by the ticket's sessions and edited through the same
+	// metadata map, so the same reasoning applies (protocol 22).
+	"ticket_note",
 	// The collect tool reads the delegating session's board, so it belongs to
 	// the parent only: a child collecting another child's answer would be
 	// acting on a session it was never handed, and the answer it would take is

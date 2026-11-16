@@ -2,7 +2,9 @@ package state
 
 import (
 	"fmt"
+	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -70,6 +72,36 @@ const (
 	MaxTicketAttachments        = 50
 	TicketAttachmentNameCeiling = 255
 	TicketAttachmentPathCeiling = 1024
+
+	// Ticket notes (protocol 22): the people-and-agent written context shared by
+	// every session on one ticket. Unlike the brief, **every note is quoted in
+	// full in the payload tail** (a truncated note may be exactly the one that
+	// mattered), so the cost is bounded here, at write time, instead.
+	//
+	// The desktop mirrors these three numbers and a test there reads this file to
+	// keep them equal: rename them and that test fails loudly, which is the point.
+	TicketNoteTextCeiling   = 4000  // runes in one note
+	MaxTicketNotes          = 100   // notes on one ticket
+	TicketNotesTotalCeiling = 12000 // runes across all notes: ~3-4k tokens per round
+
+	// MaxTicketNoteOps bounds the retained agent-note operation log, the
+	// reconciliation source for a front end that missed `ui(ticket_note)`. Same
+	// trade as MaxTicketTurnEnds: the window of facts a front end can miss is
+	// small, and the list rides every `init`.
+	MaxTicketNoteOps = 50
+
+	// Who wrote a note. The runtime only needs the distinction to refuse an agent
+	// editing what a person wrote.
+	TicketNoteAuthorPerson = "person"
+	TicketNoteAuthorAgent  = "agent"
+
+	// The three operations `ticket_note` performs.
+	TicketNoteOpAdd    = "add"
+	TicketNoteOpUpdate = "update"
+	TicketNoteOpRemove = "remove"
+
+	// ticketNoteIDCeiling keeps one id from being a way to inflate the tail.
+	ticketNoteIDCeiling = 200
 )
 
 // TicketAttachment is one file the person attached to the ticket, already copied
@@ -227,6 +259,12 @@ type Ticket struct {
 	TurnEnds []TicketTurnEnd
 	// Attachments is what the front end staged into the workspace (protocol 19).
 	Attachments []TicketAttachment
+	// Notes is the runtime's **copy** of the ticket's shared notes (protocol 22).
+	// The front end owns the original; every bind replaces this wholesale.
+	Notes []TicketNote
+	// NoteOps is the log of notes the agent wrote through `ticket_note`, kept so a
+	// front end that missed `ui(ticket_note)` can reconcile from `init`.
+	NoteOps []TicketNoteOp
 }
 
 // TicketSpec is what a bind carries.
@@ -235,6 +273,124 @@ type TicketSpec struct {
 	Title       string
 	Brief       string
 	Attachments []TicketAttachment
+	// Notes is the front end's current notes. Nil means none, which **clears** the
+	// copy: the original is the source of truth, so an absent list is a statement.
+	Notes []TicketNote
+}
+
+// TicketNote is one shared note on the ticket.
+//
+// CreatedAtMs and SessionID are optional on the wire in (the bind only has to
+// carry id, text, author and updated_at_ms); notes the agent adds here always
+// have both.
+type TicketNote struct {
+	ID          string
+	Text        string
+	Author      string // TicketNoteAuthorPerson | TicketNoteAuthorAgent
+	SessionID   string
+	CreatedAtMs int64
+	UpdatedAtMs int64
+}
+
+// Wire is the note in the shape `init.ticket.notes[]` carries and the metadata
+// record stores. Optional keys are left out rather than sent as null/0 so a
+// consumer cannot mistake "unknown" for "the epoch".
+func (n TicketNote) Wire() map[string]any {
+	wire := map[string]any{
+		"id":            n.ID,
+		"text":          n.Text,
+		"author":        n.Author,
+		"updated_at_ms": n.UpdatedAtMs,
+	}
+	if n.SessionID != "" {
+		wire["session_id"] = n.SessionID
+	}
+	if n.CreatedAtMs > 0 {
+		wire["created_at_ms"] = n.CreatedAtMs
+	}
+	return wire
+}
+
+// TicketNoteOp is one write the agent made through `ticket_note`.
+type TicketNoteOp struct {
+	OpID   string
+	Op     string // add | update | remove
+	NoteID string
+	Text   string // "" for remove; it travels as null
+	AtMs   int64
+}
+
+// Wire is the op in the shape `init.ticket.note_ops[]` carries: the same fields
+// as `ui(ticket_note)` minus `kind`, `ticket_id` and `session_id`.
+func (o TicketNoteOp) Wire() map[string]any {
+	var text any
+	if o.Op != TicketNoteOpRemove {
+		text = o.Text
+	}
+	return map[string]any{
+		"op_id":   o.OpID,
+		"op":      o.Op,
+		"note_id": o.NoteID,
+		"text":    text,
+		"at_ms":   o.AtMs,
+	}
+}
+
+// ValidateTicketNotes reports why a list of notes cannot be bound, or nil.
+//
+// The protocol layer applies the same rules to the raw message so the person
+// gets a precise notice; this copy exists because every note is quoted to the
+// model in full every round, so the record must not trust its caller.
+func ValidateTicketNotes(notes []TicketNote) error {
+	if len(notes) > MaxTicketNotes {
+		return fmt.Errorf("a ticket takes at most %d notes, got %d", MaxTicketNotes, len(notes))
+	}
+	seen := make(map[string]struct{}, len(notes))
+	total := 0
+	for index, note := range notes {
+		if strings.TrimSpace(note.ID) == "" {
+			return fmt.Errorf("note %d needs a non-empty id", index)
+		}
+		if utf8.RuneCountInString(note.ID) > ticketNoteIDCeiling {
+			return fmt.Errorf("note %d: the id is longer than %d characters", index, ticketNoteIDCeiling)
+		}
+		if _, dup := seen[note.ID]; dup {
+			return fmt.Errorf("note %d: the id %q is used twice", index, note.ID)
+		}
+		seen[note.ID] = struct{}{}
+		if note.Author != TicketNoteAuthorPerson && note.Author != TicketNoteAuthorAgent {
+			return fmt.Errorf("note %d: `author` must be %q or %q", index, TicketNoteAuthorPerson, TicketNoteAuthorAgent)
+		}
+		runes := utf8.RuneCountInString(note.Text)
+		if runes > TicketNoteTextCeiling {
+			return fmt.Errorf("note %d is %d characters; one note takes at most %d", index, runes, TicketNoteTextCeiling)
+		}
+		total += runes
+	}
+	if total > TicketNotesTotalCeiling {
+		return fmt.Errorf("the notes total %d characters; the limit is %d", total, TicketNotesTotalCeiling)
+	}
+	return nil
+}
+
+func noteRunes(notes []TicketNote) int {
+	total := 0
+	for _, note := range notes {
+		total += utf8.RuneCountInString(note.Text)
+	}
+	return total
+}
+
+func sameNotes(a, b []TicketNote) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // Wire is the report in the shape both `init.ticket.reports[]` and
@@ -280,6 +436,15 @@ func (t Ticket) Block() map[string]any {
 	for _, end := range t.TurnEnds {
 		turnEnds = append(turnEnds, end.Wire())
 	}
+	// Both note lists are arrays for the same reason as the others (protocol 22).
+	notes := make([]any, 0, len(t.Notes))
+	for _, note := range t.Notes {
+		notes = append(notes, note.Wire())
+	}
+	noteOps := make([]any, 0, len(t.NoteOps))
+	for _, op := range t.NoteOps {
+		noteOps = append(noteOps, op.Wire())
+	}
 	return map[string]any{
 		"id":          t.ID,
 		"title":       t.Title,
@@ -287,6 +452,8 @@ func (t Ticket) Block() map[string]any {
 		"reports":     reports,
 		"attachments": attachments,
 		"turn_ends":   turnEnds,
+		"notes":       notes,
+		"note_ops":    noteOps,
 	}
 }
 
@@ -330,8 +497,79 @@ func LoadTicket(metadata map[string]any) (Ticket, bool) {
 			}
 		}
 	}
+	// A record written before protocol 22 has neither key; that reads as none.
+	// Rows that are not understood are dropped, as with attachments.
+	if rows, ok := raw["notes"].([]any); ok {
+		for _, row := range rows {
+			if note, ok := ticketNoteOf(row); ok {
+				ticket.Notes = append(ticket.Notes, note)
+			}
+		}
+	}
+	if rows, ok := raw["note_ops"].([]any); ok {
+		for _, row := range rows {
+			if op, ok := ticketNoteOpOf(row); ok {
+				ticket.NoteOps = append(ticket.NoteOps, op)
+			}
+		}
+	}
 	return ticket, true
 }
+
+// wireInt reads a JSON-ish number: int64 from a live payload, float64 from a
+// value that went through a JSON round trip.
+func wireInt(raw any) int64 {
+	switch number := raw.(type) {
+	case int64:
+		return number
+	case int:
+		return int64(number)
+	case float64:
+		return int64(number)
+	}
+	return 0
+}
+
+// TicketNoteOf reads one note out of a decoded JSON object. Lenient like the
+// other loaders: it only insists on what the record cannot do without.
+func ticketNoteOf(raw any) (TicketNote, bool) {
+	row, ok := raw.(map[string]any)
+	if !ok {
+		return TicketNote{}, false
+	}
+	id, _ := row["id"].(string)
+	author, _ := row["author"].(string)
+	if id == "" || (author != TicketNoteAuthorPerson && author != TicketNoteAuthorAgent) {
+		return TicketNote{}, false
+	}
+	note := TicketNote{ID: id, Author: author}
+	note.Text, _ = row["text"].(string)
+	note.SessionID, _ = row["session_id"].(string)
+	note.CreatedAtMs = wireInt(row["created_at_ms"])
+	note.UpdatedAtMs = wireInt(row["updated_at_ms"])
+	return note, true
+}
+
+func ticketNoteOpOf(raw any) (TicketNoteOp, bool) {
+	row, ok := raw.(map[string]any)
+	if !ok {
+		return TicketNoteOp{}, false
+	}
+	id, _ := row["op_id"].(string)
+	if id == "" {
+		return TicketNoteOp{}, false
+	}
+	op := TicketNoteOp{OpID: id}
+	op.Op, _ = row["op"].(string)
+	op.NoteID, _ = row["note_id"].(string)
+	op.Text, _ = row["text"].(string)
+	op.AtMs = wireInt(row["at_ms"])
+	return op, true
+}
+
+// TicketNoteOf is the bind-side reader: it converts one already-validated wire
+// row (`{id, text, author, updated_at_ms}`) into a note.
+func TicketNoteOf(raw any) (TicketNote, bool) { return ticketNoteOf(raw) }
 
 func ticketTurnEndOf(raw any) (TicketTurnEnd, bool) {
 	row, ok := raw.(map[string]any)
@@ -418,14 +656,25 @@ func BindTicket(metadata map[string]any, spec TicketSpec) (Ticket, bool, error) 
 			return Ticket{}, false, err
 		}
 	}
+	if err := ValidateTicketNotes(spec.Notes); err != nil {
+		return Ticket{}, false, err
+	}
 	ticket := Ticket{ID: id, Title: spec.Title, Brief: spec.Brief}
 	if len(spec.Attachments) > 0 {
 		ticket.Attachments = append([]TicketAttachment(nil), spec.Attachments...)
+	}
+	// Notes are replaced wholesale: the front end's copy is the original, so a
+	// note it no longer lists is gone here too (protocol 22).
+	if len(spec.Notes) > 0 {
+		ticket.Notes = append([]TicketNote(nil), spec.Notes...)
 	}
 	previous, wasBound := LoadTicket(metadata)
 	if wasBound && previous.ID == id {
 		ticket.Reports = previous.Reports
 		ticket.TurnEnds = previous.TurnEnds
+		// The op log is what the front end reconciles against, so it outlives a
+		// re-bind exactly like the reports do.
+		ticket.NoteOps = previous.NoteOps
 	}
 	// Compared on the fields a bind can carry, not on the whole record: the
 	// reports are carried over untouched just above, so an unchanged re-bind can
@@ -435,9 +684,107 @@ func BindTicket(metadata map[string]any, spec TicketSpec) (Ticket, bool, error) 
 	// be forgotten on resume.
 	changed := !wasBound || previous.ID != ticket.ID ||
 		previous.Title != ticket.Title || previous.Brief != ticket.Brief ||
-		!sameAttachments(previous.Attachments, ticket.Attachments)
+		!sameAttachments(previous.Attachments, ticket.Attachments) ||
+		!sameNotes(previous.Notes, ticket.Notes)
 	metadata[TicketKey] = ticket.Block()
 	return ticket, changed, nil
+}
+
+// Refusal codes of ApplyTicketNote. The tool turns each into a message that
+// tells the model what to do next.
+const (
+	NoteRefusedUnbound    = "unbound"
+	NoteRefusedNotFound   = "not_found"
+	NoteRefusedPersonNote = "person_note"
+	NoteRefusedTooLong    = "too_long"
+	NoteRefusedFull       = "full"
+	NoteRefusedTotal      = "total"
+	NoteRefusedBadOp      = "bad_op"
+)
+
+// TicketNoteChange is what the agent asks for through `ticket_note`.
+type TicketNoteChange struct {
+	Op        string
+	ID        string // update / remove
+	Text      string // add / update
+	SessionID string
+	// NewNoteID and OpID are minted by the caller so this stays deterministic.
+	NewNoteID string
+	OpID      string
+	AtMs      int64
+}
+
+// ApplyTicketNote applies one agent write to the metadata copy and logs it in
+// note_ops. The returned code is "" on success; on any refusal **nothing** has
+// been written. The check and the write happen under the caller's metadata lock,
+// so a racing unbind cannot leave a note on a ticket that is gone.
+//
+// An agent may only touch notes it wrote itself: a person's note is their
+// judgement, and the quietest way to lose it is a model "tidying" it.
+func ApplyTicketNote(metadata map[string]any, change TicketNoteChange) (Ticket, TicketNoteOp, string) {
+	ticket, ok := LoadTicket(metadata)
+	if !ok {
+		return Ticket{}, TicketNoteOp{}, NoteRefusedUnbound
+	}
+	notes := append([]TicketNote(nil), ticket.Notes...)
+	op := TicketNoteOp{OpID: change.OpID, Op: change.Op, AtMs: change.AtMs}
+	index := -1
+	if change.Op != TicketNoteOpAdd {
+		for position, note := range notes {
+			if note.ID == change.ID {
+				index = position
+				break
+			}
+		}
+		if index < 0 {
+			return ticket, TicketNoteOp{}, NoteRefusedNotFound
+		}
+		if notes[index].Author != TicketNoteAuthorAgent {
+			return ticket, TicketNoteOp{}, NoteRefusedPersonNote
+		}
+	}
+
+	switch change.Op {
+	case TicketNoteOpAdd:
+		if utf8.RuneCountInString(change.Text) > TicketNoteTextCeiling {
+			return ticket, TicketNoteOp{}, NoteRefusedTooLong
+		}
+		if len(notes) >= MaxTicketNotes {
+			return ticket, TicketNoteOp{}, NoteRefusedFull
+		}
+		if noteRunes(notes)+utf8.RuneCountInString(change.Text) > TicketNotesTotalCeiling {
+			return ticket, TicketNoteOp{}, NoteRefusedTotal
+		}
+		notes = append(notes, TicketNote{
+			ID: change.NewNoteID, Text: change.Text, Author: TicketNoteAuthorAgent,
+			SessionID: change.SessionID, CreatedAtMs: change.AtMs, UpdatedAtMs: change.AtMs,
+		})
+		op.NoteID, op.Text = change.NewNoteID, change.Text
+	case TicketNoteOpUpdate:
+		if utf8.RuneCountInString(change.Text) > TicketNoteTextCeiling {
+			return ticket, TicketNoteOp{}, NoteRefusedTooLong
+		}
+		without := noteRunes(notes) - utf8.RuneCountInString(notes[index].Text)
+		if without+utf8.RuneCountInString(change.Text) > TicketNotesTotalCeiling {
+			return ticket, TicketNoteOp{}, NoteRefusedTotal
+		}
+		notes[index].Text = change.Text
+		notes[index].UpdatedAtMs = change.AtMs
+		op.NoteID, op.Text = change.ID, change.Text
+	case TicketNoteOpRemove:
+		notes = append(notes[:index], notes[index+1:]...)
+		op.NoteID = change.ID
+	default:
+		return ticket, TicketNoteOp{}, NoteRefusedBadOp
+	}
+
+	ticket.Notes = notes
+	ticket.NoteOps = append(ticket.NoteOps, op)
+	if over := len(ticket.NoteOps) - MaxTicketNoteOps; over > 0 {
+		ticket.NoteOps = append([]TicketNoteOp(nil), ticket.NoteOps[over:]...)
+	}
+	metadata[TicketKey] = ticket.Block()
+	return ticket, op, ""
 }
 
 // ClearTicket removes the binding and reports whether there was one.
@@ -517,9 +864,54 @@ func TicketText(ticket Ticket) string {
 			builder.WriteString(fmt.Sprintf("- %s: %s (%d bytes)\n", attachment.Name, attachment.Path, attachment.Bytes))
 		}
 	}
+	if len(ticket.Notes) > 0 {
+		builder.WriteString("\n")
+		builder.WriteString(ticketNotesText(ticket.Notes))
+	}
 	builder.WriteString("\n做完时调用 ticket_report(status=\"done\", summary=...)；" +
 		"卡住、需要用户回答一个具体问题才能继续时，调用 ticket_report(status=\"blocked\", summary=..., question=...)。" +
 		"调用它不会结束本轮；done 只是你的声明，是否验收由用户决定。")
+	return builder.String()
+}
+
+// ticketNotesText is the shared-notes section of the tail.
+//
+// **Nothing is truncated**: a cut note may be the one that mattered, so the cost
+// is bounded by the write-time ceilings instead. Order is by creation time when
+// every note says when it was created; a bind only has to carry updated_at_ms,
+// and sorting a list that is partly dated would produce an order that depends on
+// which rows happened to have the field, so then the slice order (the front
+// end's own) stands.
+func ticketNotesText(notes []TicketNote) string {
+	ordered := append([]TicketNote(nil), notes...)
+	dated := true
+	for _, note := range ordered {
+		if note.CreatedAtMs <= 0 {
+			dated = false
+		}
+	}
+	if dated {
+		sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].CreatedAtMs < ordered[j].CreatedAtMs })
+	}
+	var builder strings.Builder
+	builder.WriteString("## 工单笔记（跨会话共享；这张工单上的每个会话都能看到）\n\n")
+	for _, note := range ordered {
+		who := "用户"
+		if note.Author == TicketNoteAuthorAgent {
+			who = "agent"
+		}
+		label := note.ID + " · " + who
+		when := note.CreatedAtMs
+		if when <= 0 {
+			when = note.UpdatedAtMs
+		}
+		if when > 0 {
+			label += " · " + time.UnixMilli(when).Format("01-02")
+		}
+		builder.WriteString("- [" + label + "] " + note.Text + "\n")
+	}
+	builder.WriteString("\n用户写的条目代表用户的判断，优先级高于你自己的推断。" +
+		"用户要求你记录什么时，调用 ticket_note；其余时候不要写。\n")
 	return builder.String()
 }
 
@@ -534,5 +926,5 @@ func truncateRunes(text string, limit int) string {
 		return text
 	}
 	cut := []rune(text)[:limit]
-	return string(cut) + fmt.Sprintf("\n……（工单描述共 %d 字，这里只引用前 %d 字；完整内容在会话的第一条消息里）", total, limit)
+	return string(cut) + fmt.Sprintf("\n……（工单描述共 %d 字，这里只引用前 %d 字；完整内容在会话的第一条消息里，不在的话读附件 brief.md）", total, limit)
 }

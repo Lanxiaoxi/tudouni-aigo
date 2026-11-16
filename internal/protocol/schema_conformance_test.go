@@ -357,6 +357,16 @@ func TestTheTicketMessagesSatisfyTheirSchemas(t *testing.T) {
 			}},
 		},
 	})
+	// protocol 22: the optional notes list rides inside the ticket object too.
+	checkMessage(t, bindSpec, map[string]any{
+		"v": VERSION, "t": InTicketBind,
+		"ticket": map[string]any{
+			"id": "tk-1", "title": "t", "brief": "b",
+			"notes": []any{map[string]any{
+				"id": "nt-1", "text": "x", "author": "person", "updated_at_ms": float64(1770000000000),
+			}},
+		},
+	})
 	for _, key := range RequiredKeys[InTicketBind] {
 		found := false
 		for _, declared := range bindSpec.Required {
@@ -400,6 +410,34 @@ func TestTheTicketMessagesSatisfyTheirSchemas(t *testing.T) {
 	live["status"] = "done"
 	live["evidence"] = []any{}
 	checkMessage(t, outbound["ui"], live)
+
+	// protocol 22: init.ticket carries both note lists, always as arrays.
+	init["ticket"] = map[string]any{
+		"id": "tk-1", "title": "t", "brief": "b", "reports": []any{}, "attachments": []any{},
+		"turn_ends": []any{},
+		"notes": []any{map[string]any{
+			"id": "nt-1", "text": "x", "author": "agent", "session_id": "s",
+			"created_at_ms": int64(1), "updated_at_ms": int64(2),
+		}},
+		"note_ops": []any{map[string]any{
+			"op_id": "nop-1", "op": "remove", "note_id": "nt-1", "text": nil, "at_ms": int64(3),
+		}},
+	}
+	checkMessage(t, outbound["init"], init)
+
+	// And the live note write, for add (text) and remove (null text).
+	note := map[string]any{"v": VERSION, "t": OutUI, "kind": UITicketNote,
+		"ticket_id": "tk-1", "session_id": "s", "op_id": "nop-1", "op": "add",
+		"note_id": "nt-1", "text": "x", "at_ms": int64(3)}
+	checkMessage(t, outbound["ui"], note)
+	note["op"], note["text"] = "remove", nil
+	checkMessage(t, outbound["ui"], note)
+}
+
+func TestTheProtocolNumberCoversTicketNotes(t *testing.T) {
+	if PROTOCOL < 22 {
+		t.Fatalf("PROTOCOL = %d; ticket notes arrived in 22", PROTOCOL)
+	}
 }
 
 func TestTheProtocolNumberCoversTickets(t *testing.T) {

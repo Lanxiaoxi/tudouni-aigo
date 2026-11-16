@@ -736,6 +736,7 @@ var catalog = map[string]string{
 	"channels.ticket.needs_id":        "ticket_bind: `ticket.id` must be a non-empty string",
 	"channels.ticket.needs_text":      "ticket_bind: `ticket.{field}` must be a string",
 	"channels.ticket.bad_attachments": "ticket_bind: `ticket.attachments` was refused: {problem}",
+	"channels.ticket.bad_notes":       "ticket_bind: `ticket.notes` was refused: {problem}",
 	"channels.ticket.unsupported":     "this runtime does not accept ticket bindings, so the agent cannot report on the ticket",
 	"channels.ticket.refused":         "the ticket binding was refused: {problem}",
 
@@ -745,6 +746,22 @@ var catalog = map[string]string{
 	"ticket.report.bad_status":       "status must be \"done\" or \"blocked\".",
 	"ticket.report.recorded.done":    "Report recorded (id {id}): marked done. This is your claim only - the user decides whether to accept it. Give your final answer now.",
 	"ticket.report.recorded.blocked": "Report recorded (id {id}): marked blocked. Wait for the user's reply before continuing; end your turn with the question.",
+
+	// ticket_note (protocol 22): read by the model, so each refusal says what to do next.
+	"ticket.note.unbound":            "This session is no longer bound to a ticket, so the note was not recorded. Carry on without ticket_note.",
+	"ticket.note.bad_op":             "op must be \"add\", \"update\" or \"remove\".",
+	"ticket.note.needs_text":         "op=add needs `text`: the note itself, one point, in Markdown.",
+	"ticket.note.update_needs":       "op=update needs both `id` (a note you wrote, see the brackets in the ticket notes section) and the new `text`.",
+	"ticket.note.needs_id":           "op=remove needs `id`: a note you wrote, see the brackets in the ticket notes section.",
+	"ticket.note.refused.not_found":  "No note has that id. Copy the id from the brackets in the ticket notes section, or use op=add to write a new one.",
+	"ticket.note.refused.person_note": "That note was written by the user, so you cannot change or delete it. Say in your reply what you would change and let the user decide; use op=add to record something of your own.",
+	"ticket.note.refused.too_long":   "The note is too long (the limit is 4000 characters). Shorten it, or split it into several notes.",
+	"ticket.note.refused.full":       "The ticket already has the maximum number of notes (100). Merge or delete older notes you wrote (op=update / op=remove) first, then add again.",
+	"ticket.note.refused.total":      "The ticket's notes would exceed the total size limit (12000 characters). Shorten this note, or merge or delete older notes you wrote (op=update / op=remove) first.",
+	"ticket.note.refused.bad_op":     "op must be \"add\", \"update\" or \"remove\".",
+	"ticket.note.recorded.add":       "Note recorded (id {id}). Every session on this ticket will see it.",
+	"ticket.note.recorded.update":    "Note {id} updated.",
+	"ticket.note.recorded.remove":    "Note {id} removed.",
 
 	// --- the managed EricAI token (`--ericai`) -----------------------------
 	//

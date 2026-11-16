@@ -786,7 +786,7 @@ runtime 发** —— 和 shell 自己退出时是同一条路。前端**不允�
 不是冗余：快照在每次工具结果、每轮收尾都发，所以一个在 shell 建好之后才启动的前端 —— 或者
 丢过一条消息的前端 —— 会从下一份快照里知道它，而不是永远不知道。
 
-### 3.16 `ticket_bind` / `ui(ticket_report)` / `init.ticket` —— 工单回报通道（protocol 18；附件 protocol 19；未汇报的一轮 protocol 21）
+### 3.16 `ticket_bind` / `ui(ticket_report)` / `init.ticket` —— 工单回报通道（protocol 18；附件 protocol 19；未汇报的一轮 protocol 21；笔记 protocol 22）
 
 runtime **不知道工单存在哪里，也不知道它的状态机**。它只做三件事：记住"我在为哪个工单
 工作"，给模型一个回报工具，把回报原样转发出去。工单本身（状态、验收）是前端的事。
@@ -861,6 +861,42 @@ runtime 以"已解绑"为准拒绝（检查和写入在同一把 metadata 锁里
 - 和回报一样**先落盘再发**。`init.ticket.turn_ends` **永远是数组**（protocol 21 以下没有这一格，按 `[]` 读），每条 `{turn_id, at_ms}`，按时间先后，最多保留最近 20 条。重绑同一个 id 时保留，绑定另一个 id 时清空。
 - 对账时把 `reports` 和 `turn_ends` 按 `at_ms` 合并后依次处理。
 - **它不声称工作完成**，只说 agent 停下了、没有说结果。前端状态机怎么处理它，见 `docs/design/ticket.md` 5.5。
+
+**笔记（protocol 22）。** 一张工单可以有多个会话，笔记是它们共享的上下文。**正本在前端，runtime 只持副本**，
+设计见 `docs/design/ticket-notes.md` 第四节。
+
+入站：`ticket_bind.ticket` 多一个**可选**键 `notes`：缺省或 `null` = 没有笔记；给了就必须是数组，每条
+`{"id": string, "text": string, "author": "person" | "agent", "updated_at_ms": number}`，另可带 `session_id`（字符串）
+和 `created_at_ms`（非负整数）。
+
+| 规则 | 值 |
+| --- | --- |
+| `id` | 非空，不重复 |
+| `author` | 只能是 `person` 或 `agent` |
+| `updated_at_ms` | 非负整数 |
+| 单条 `text` | ≤ 4000 字符（`state.TicketNoteTextCeiling`） |
+| 条数 | ≤ 100（`state.MaxTicketNotes`） |
+| 全部 `text` 合计 | ≤ 12000 字符（`state.TicketNotesTotalCeiling`） |
+
+**任何一条不合格，整条绑定被拒**，回一条 `notice(level=warn, code=ticket)`，不保留合格的那部分。`notes` **整体替换**
+runtime 里的副本：笔记有变化算一次变更（会落盘），完全相同则不是。重绑同一个 id 保留 `note_ops`，绑定另一个 id 清空。
+所有笔记**不截断**地列在每轮 payload 尾部（按创建时间排序，条目带 id、作者和日期）。protocol < 22 的 runtime 忽略 `notes`，
+前端据 `init.protocol >= 22` 才发。
+
+工具 `ticket_note(op, id?, text?)`：`op` ∈ `add` / `update` / `remove`。`add` 需要 `text`，`update` 需要 `id` 和 `text`，
+`remove` 需要 `id`。与 `ticket_report` 一起在绑定时注册、解绑时注销，子代理拿不到。**只在用户要求记录时调用。**
+agent 只能改、删 `author=agent` 的条目；上限超出、id 不存在、动人写的条目都会被拒（错误信息说明下一步怎么做），
+被拒的调用什么都不写。`add` 的 id 由 runtime 生成（`nt-<毫秒的 base36>-<随机>`，作者为 agent）。
+
+出站 `ui(ticket_note)`：
+`{"v":1,"t":"ui","kind":"ticket_note","ticket_id","op_id","session_id","op","note_id","text","at_ms"}`。
+`text` 在 `remove` 时为 `null`。**先落盘再发**，`op_id` 是前端的去重键。写笔记不算回报：不影响 `ticket_turn_end` 的判断。
+
+`init.ticket` 多两格，**永远是数组**（protocol 22 以下没有，按 `[]` 读）：
+
+- `notes`：副本，每条 `{id, text, author, updated_at_ms}` 加可选的 `session_id`、`created_at_ms`。只用于调试，**不用来反向覆盖正本**。
+- `note_ops`：agent 的写操作日志，每条 `{op_id, op, note_id, text, at_ms}`（`remove` 时 `text` 为 `null`），按时间先后，
+  最多保留最近 50 条（`state.MaxTicketNoteOps`）。对账时按 `op_id` 去重，和 `reports`、`turn_ends` 按 `at_ms` 合并。
 
 ## 4. 人机交互：两条会阻塞的消息
 

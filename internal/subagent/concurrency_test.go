@@ -283,6 +283,20 @@ func TestTwoDelegationsInOneBatchRunAtOnce(t *testing.T) {
 	}
 }
 
+// The loop above only proves that what the list names is withheld; this pins that
+// both ticket tools are on the list, so dropping one cannot pass silently.
+func TestTicketToolsAreSessionScoped(t *testing.T) {
+	for _, want := range []string{"ticket_report", "ticket_note"} {
+		found := false
+		for _, name := range sessionScopedToolNames {
+			found = found || name == want
+		}
+		if !found {
+			t.Errorf("%s is not withheld from child agents", want)
+		}
+	}
+}
+
 // sessionScopedStubs registers the session-scoped tools in the parent's registry
 // so that withholding them is something a test can observe.
 //
