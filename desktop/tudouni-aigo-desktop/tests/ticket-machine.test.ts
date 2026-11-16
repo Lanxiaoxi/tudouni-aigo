@@ -19,6 +19,7 @@ import {
   hasSeenTurnEnd,
   isBindable,
   type TicketInput,
+  mostRecentSession,
 } from '@/ticket/machine';
 import {
   TICKET_EVENTS_MAX,
@@ -58,6 +59,13 @@ function open(): Ticket {
   return { ...emptyTicket(T0), brief: 'fix the login redirect' };
 }
 
+const restartInput = (key: string): TicketInput => ({
+  type: 'restart',
+  at: tick(),
+  sessionKey: key,
+  remoteWorkspaceId: null,
+});
+
 const startInput = (n = 1, key = `k${n}`): TicketInput => ({
   type: 'start',
   at: tick(),
@@ -69,7 +77,7 @@ const startInput = (n = 1, key = `k${n}`): TicketInput => ({
 /** Running, with session `S1` known (`init` has landed). */
 function running(): Ticket {
   const started = ok(open(), startInput(1));
-  return ok(started, { type: 'assignmentStarted', at: tick(), sessionKey: 'k1', sessionId: 'S1' });
+  return ok(started, { type: 'sessionStarted', at: tick(), sessionKey: 'k1', sessionId: 'S1' });
 }
 
 const report = (id: string, status: 'done' | 'blocked', sessionId = 'S1'): Report => ({
@@ -156,30 +164,37 @@ test('start: open -> running, with a new in-flight Assignment', () => {
   const a = currentAssignment(t);
   assert.equal(a?.id, 'as-1');
   assert.equal(a?.end, null);
-  assert.equal(a?.executor.sessionKey, 'k1');
-  assert.equal(a?.executor.sessionId, '', 'the id arrives with init');
+  assert.equal(a?.executor.kind, 'person');
+  assert.equal(a?.executor.sessions.length, 1, 'the first session joins the new worker');
+  assert.equal(mostRecentSession(t)?.sessionKey, 'k1');
+  assert.equal(mostRecentSession(t)?.sessionId, '', 'the id arrives with init');
+  assert.equal(mostRecentSession(t)?.removedAtMs, null);
   assert.deepEqual(eventTypes(t), ['created', 'start']);
 });
 
 test('start records the machine the session actually opened on', () => {
   const t = ok(open(), { ...(startInput(1) as object), remoteWorkspaceId: 'rw-9' } as TicketInput);
-  assert.equal(currentAssignment(t)?.executor.remoteWorkspaceId, 'rw-9');
+  assert.equal(mostRecentSession(t)?.remoteWorkspaceId, 'rw-9');
 });
 
-test('start: needs_you -> running, the old Assignment is superseded and a new one opens', () => {
+test('restart: needs_you -> running on the same worker, every other session is taken off', () => {
   const blocked = needsYou();
-  const t = ok(blocked, startInput(2));
+  const t = ok(blocked, restartInput('k2'));
   assert.equal(t.status, 'running');
-  assert.equal(t.assignments.length, 2);
-  assert.equal(t.assignments[0].end, 'superseded');
-  assert.notEqual(t.assignments[0].endedAtMs, null);
-  assert.equal(t.assignments[1].end, null);
+  assert.equal(t.assignments.length, 1, 'same worker: swapping a session is not a new Assignment');
+  const sessions = currentAssignment(t)?.executor.sessions ?? [];
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions[0].removed, 'restart');
+  assert.notEqual(sessions[0].removedAtMs, null);
+  assert.equal(sessions[1].removedAtMs, null);
+  assert.equal(sessions[1].sessionKey, 'k2');
   assert.equal(t.assignments.filter((a) => a.end === null).length, 1, 'never two in flight');
 });
 
-test('start with a still-live predecessor (needs_you by exit) supersedes it too', () => {
+test('restart after a crash takes the crashed session off too', () => {
   const crashed = ok(running(), {
-    type: 'assignmentExited',
+    type: 'sessionExited',
+    midTurn: true,
     at: tick(),
     requested: false,
     reason: 'crashed',
@@ -188,15 +203,19 @@ test('start with a still-live predecessor (needs_you by exit) supersedes it too'
   });
   assert.equal(crashed.status, 'needs_you');
   assert.equal(currentAssignment(crashed)?.end, null, 'a crash does not end the Assignment');
-  const t = ok(crashed, startInput(2));
-  assert.equal(t.assignments[0].end, 'superseded');
+  const t = ok(crashed, restartInput('k2'));
+  assert.equal(currentAssignment(t)?.executor.sessions[0].removed, 'restart');
 });
 
-test('start is refused outside open / needs_you, and without a brief', () => {
-  for (const status of ['running', 'review', 'done', 'dropped'] as const) {
+test('start is refused outside open, restart outside needs_you, and both without a brief', () => {
+  for (const status of ['running', 'needs_you', 'review', 'done', 'dropped'] as const) {
     assert.equal(refused(BY_STATUS[status](), startInput(9)), 'wrong_status', status);
   }
+  for (const status of ['open', 'running', 'review', 'done', 'dropped'] as const) {
+    assert.equal(refused(BY_STATUS[status](), restartInput('k9')), 'wrong_status', status);
+  }
   assert.equal(refused({ ...open(), brief: '  \n ' }, startInput(1)), 'empty_brief');
+  assert.equal(refused({ ...needsYou(), brief: ' ' }, restartInput('k9')), 'empty_brief');
 });
 
 test('reported(done): running -> review; reported(blocked): running -> needs_you', () => {
@@ -382,7 +401,7 @@ test('a report from a session that is not the current executor is recorded, not 
 
 test('a report before init has named the session is accepted for the Assignment', () => {
   const started = ok(open(), startInput(1));
-  assert.equal(currentAssignment(started)?.executor.sessionId, '');
+  assert.equal(mostRecentSession(started)?.sessionId, '');
   const t = ok(started, reported(report('r-early', 'done', 'S1')));
   assert.equal(t.status, 'review');
 });
@@ -391,10 +410,11 @@ test('a report before init has named the session is accepted for the Assignment'
    Facts: exits
    ============================================================ */
 
-test('assignmentExited(requested=false) on running -> needs_you; the Assignment stays open', () => {
+test('sessionExited(requested=false) on running -> needs_you; the Assignment stays open', () => {
   for (const reason of ['crashed', 'disconnected'] as const) {
     const t = ok(running(), {
-      type: 'assignmentExited',
+      type: 'sessionExited',
+      midTurn: true,
       at: tick(),
       requested: false,
       reason,
@@ -403,7 +423,7 @@ test('assignmentExited(requested=false) on running -> needs_you; the Assignment 
     });
     assert.equal(t.status, 'needs_you', reason);
     assert.equal(currentAssignment(t)?.end, null, `${reason}: Assignment not ended`);
-    assert.equal(t.events.at(-1)?.type, 'assignmentExited');
+    assert.equal(t.events.at(-1)?.type, 'sessionExited');
     assert.equal(t.events.at(-1)?.data?.reason, reason);
     assert.equal(t.events.at(-1)?.data?.requested, false);
   }
@@ -411,7 +431,8 @@ test('assignmentExited(requested=false) on running -> needs_you; the Assignment 
 
 test('an unrequested exit with no stated reason is a crash', () => {
   const t = ok(running(), {
-    type: 'assignmentExited',
+    type: 'sessionExited',
+    midTurn: true,
     at: tick(),
     requested: false,
     sessionKey: 'k1',
@@ -420,16 +441,17 @@ test('an unrequested exit with no stated reason is a crash', () => {
   assert.equal(t.events.at(-1)?.data?.reason, 'crashed');
 });
 
-test('assignmentExited(requested=true) on running: still running, event recorded', () => {
+test('sessionExited(requested=true) on running: still running, event recorded', () => {
   const t = ok(running(), {
-    type: 'assignmentExited',
+    type: 'sessionExited',
+    midTurn: true,
     at: tick(),
     requested: true,
     sessionKey: 'k1',
     sessionId: 'S1',
   });
   assert.equal(t.status, 'running');
-  assert.equal(t.events.at(-1)?.type, 'assignmentExited');
+  assert.equal(t.events.at(-1)?.type, 'sessionExited');
   assert.equal(t.events.at(-1)?.data?.requested, true);
   assert.equal('reason' in (t.events.at(-1)?.data ?? {}), false, 'a person closing a window has no reason');
 });
@@ -439,7 +461,8 @@ test('invariant 6: an exit under needs_you or review is recorded but does not mi
     for (const requested of [true, false]) {
       const before = BY_STATUS[status]();
       const t = ok(before, {
-        type: 'assignmentExited',
+        type: 'sessionExited',
+        midTurn: true,
         at: tick(),
         requested,
         reason: 'disconnected',
@@ -457,7 +480,8 @@ test('an exit in a terminal state, or of a session that is not the executor, is 
   for (const status of ['open', 'done', 'dropped'] as const) {
     const t = BY_STATUS[status]();
     const result = apply(t, {
-      type: 'assignmentExited',
+      type: 'sessionExited',
+      midTurn: true,
       at: tick(),
       requested: false,
       sessionKey: 'k1',
@@ -467,7 +491,8 @@ test('an exit in a terminal state, or of a session that is not the executor, is 
   }
   const t = running();
   const old = apply(t, {
-    type: 'assignmentExited',
+    type: 'sessionExited',
+    midTurn: true,
     at: tick(),
     requested: false,
     sessionKey: 'k1',
@@ -480,7 +505,8 @@ test('a stale sessionKey cannot claim an exit once the session id is known', () 
   // Keys are a per-run counter: last week's `k1` can name another session today.
   const t = running();
   const result = apply(t, {
-    type: 'assignmentExited',
+    type: 'sessionExited',
+    midTurn: true,
     at: tick(),
     requested: false,
     sessionKey: 'k1',
@@ -490,58 +516,58 @@ test('a stale sessionKey cannot claim an exit once the session id is known', () 
 });
 
 /* ============================================================
-   Facts: assignmentStarted, resume, restore
+   Facts: sessionStarted, resume, restore
    ============================================================ */
 
-test('assignmentStarted back-fills the session id once, and a repeat is a no-op', () => {
+test('sessionStarted back-fills the session id once, and a repeat is a no-op', () => {
   const started = ok(open(), startInput(1));
-  const t = ok(started, { type: 'assignmentStarted', at: tick(), sessionKey: 'k1', sessionId: 'S1' });
-  assert.equal(currentAssignment(t)?.executor.sessionId, 'S1');
-  const again = apply(t, { type: 'assignmentStarted', at: tick(), sessionKey: 'k1', sessionId: 'S1' });
+  const t = ok(started, { type: 'sessionStarted', at: tick(), sessionKey: 'k1', sessionId: 'S1' });
+  assert.equal(mostRecentSession(t)?.sessionId, 'S1');
+  const again = apply(t, { type: 'sessionStarted', at: tick(), sessionKey: 'k1', sessionId: 'S1' });
   assert.equal(again.ok && again.ticket, t);
 });
 
 test('invariant 7: resuming the session (a new key, same id) does not migrate needs_you', () => {
   const blocked = needsYou();
-  const t = ok(blocked, { type: 'assignmentStarted', at: tick(), sessionKey: 'k7', sessionId: 'S1' });
+  const t = ok(blocked, { type: 'sessionStarted', at: tick(), sessionKey: 'k7', sessionId: 'S1' });
   assert.equal(t.status, 'needs_you', 'no event, no transition');
-  assert.equal(currentAssignment(t)?.executor.sessionKey, 'k7', 'the new key is written back');
+  assert.equal(mostRecentSession(t)?.sessionKey, 'k7', 'the new key is written back');
   assert.equal(currentAssignment(t)?.id, currentAssignment(blocked)?.id, 'same Assignment');
   // Only the person speaking moves it.
   const spoken = ok(t, { type: 'personReplied', at: tick(), sessionId: 'S1' });
   assert.equal(spoken.status, 'running');
 });
 
-test('assignmentStarted for another session changes nothing', () => {
+test('sessionStarted for another session changes nothing', () => {
   const t = running();
-  const result = apply(t, { type: 'assignmentStarted', at: tick(), sessionKey: 'k1', sessionId: 'S-other' });
+  const result = apply(t, { type: 'sessionStarted', at: tick(), sessionKey: 'k1', sessionId: 'S-other' });
   assert.equal(result.ok && result.ticket, t);
 });
 
-test('assignmentRestoreFailed: the old Assignment ends as restore_failed and a new one takes over', () => {
+test('sessionRestoreFailed: the unreachable session is removed and a replacement joins the worker', () => {
   // sendBack found the original session gone.
   const sentBack = ok(inReview(), { type: 'sendBack', at: tick(), feedback: 'again' });
   const t = ok(sentBack, {
-    type: 'assignmentRestoreFailed',
+    type: 'sessionRestoreFailed',
     at: tick(),
-    assignmentId: 'as-2',
+    failed: { sessionKey: 'k1', sessionId: 'S1' },
     sessionKey: 'k2',
     remoteWorkspaceId: null,
   });
   assert.equal(t.status, 'running', 'the reason it was running is still true');
-  assert.equal(t.assignments.length, 2);
-  assert.equal(t.assignments[0].end, 'restore_failed');
-  assert.equal(t.assignments[1].end, null);
-  assert.equal(t.assignments[1].id, 'as-2');
-  assert.equal(t.assignments.filter((a) => a.end === null).length, 1);
-  assert.equal(t.events.at(-1)?.type, 'assignmentRestoreFailed');
+  assert.equal(t.assignments.length, 1, 'same worker');
+  const sessions = currentAssignment(t)?.executor.sessions ?? [];
+  assert.equal(sessions[0].removed, 'restore_failed');
+  assert.equal(sessions[1].removedAtMs, null);
+  assert.equal(sessions[1].sessionKey, 'k2');
+  assert.equal(t.events.at(-1)?.type, 'sessionRestoreFailed');
 });
 
-test('assignmentRestoreFailed without an executor is recorded and opens nothing', () => {
+test('sessionRestoreFailed without a worker is recorded and opens nothing', () => {
   const t = ok(open(), {
-    type: 'assignmentRestoreFailed',
+    type: 'sessionRestoreFailed',
     at: tick(),
-    assignmentId: 'as-x',
+    failed: { sessionKey: 'kx', sessionId: '' },
     sessionKey: 'kx',
     remoteWorkspaceId: null,
   });
@@ -624,8 +650,8 @@ test('bindingIsStale: a session that is no longer the current Assignment is stal
   assert.equal(bindingIsStale(running(), 'S-other'), true);
   // After "start over", the previous session is stale and the new one is not.
   let t = needsYou();
-  t = ok(t, startInput(2, 'k2'));
-  t = ok(t, { type: 'assignmentStarted', at: tick(), sessionKey: 'k2', sessionId: 'S2' });
+  t = ok(t, restartInput('k2'));
+  t = ok(t, { type: 'sessionStarted', at: tick(), sessionKey: 'k2', sessionId: 'S2' });
   assert.equal(bindingIsStale(t, 'S1'), true);
   assert.equal(bindingIsStale(t, 'S2'), false);
 });
@@ -654,7 +680,11 @@ test('isValidTicket drops a malformed record whole', () => {
     ['null', null],
     ['an array', []],
     ['no id', { ...good, id: '' }],
-    ['a future schema', { ...good, schema: 2 }],
+    ['a future schema', { ...good, schema: 3 }],
+    ['a schema-1 record (migrated on load, never accepted as is)', { ...good, schema: 1 }],
+    ['notes missing', { ...good, notes: undefined }],
+    ['a note of the wrong shape', { ...good, notes: [{ id: 'nt-1' }] }],
+    ['a session with an unknown removal reason', { ...good, assignments: [{ ...good.assignments[0], executor: { kind: 'person', sessions: [{ ...good.assignments[0].executor.sessions[0], removedAtMs: 1, removed: 'because' }] } }] }],
     ['an unknown status', { ...good, status: 'paused' }],
     ['a bad workspace', { ...good, workspace: { kind: 'local', path: '' } }],
     ['an unknown workspace kind', { ...good, workspace: { kind: 'cloud' } }],
@@ -779,7 +809,7 @@ test('turnEnded from another session does not move the Ticket', () => {
 
 test('turnEnded before init has landed (empty executor id) still counts', () => {
   const started = ok(open(), startInput(1));
-  assert.equal(currentAssignment(started)?.executor.sessionId, '');
+  assert.equal(mostRecentSession(started)?.sessionId, '');
   assert.equal(ok(started, ended(turnEnd('run-1'))).status, 'review');
 });
 

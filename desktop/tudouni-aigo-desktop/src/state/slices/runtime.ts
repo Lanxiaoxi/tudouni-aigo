@@ -7,7 +7,7 @@
 import type { StoreContext } from '../storeContext';
 import type { AppStore } from '../storeShape';
 import { type CodeIntelSnapshot, type HooksSnapshot, type MemorySnapshot, type ProbeEffortSnapshot } from '@/protocol/types';
-import { appendBlock, applyDelta, applyFinalAnswer, clearStream, lastStopReason, lastTurnHead, newTurnStartsFolded, nextId, pushBlock, reduceEvent, settleAbandonedTurn, type Entry, type LooseEvent, type NoteEntry } from '@/state/entries';
+import { appendBlock, applyDelta, applyFinalAnswer, clearStream, hasRunningTurn, lastStopReason, lastTurnHead, newTurnStartsFolded, nextId, pushBlock, reduceEvent, settleAbandonedTurn, type Entry, type LooseEvent, type NoteEntry } from '@/state/entries';
 import { mergeSkills, projectCompacted, projectContext, projectHistory, projectInit, projectMcpMsg, projectSessionList, projectSkillsMsg, projectState, projectStatus, projectToolsMsg } from '@/runtime/adapt';
 import { extractRefinePrompts } from '@/learn/refineTemplate';
 import { outcomeOfChildExit, outcomeOfTurnStatus } from '@/task/tasks';
@@ -23,7 +23,7 @@ import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEnded
 import { runtimeOf } from '../appView';
 import { savedSessionsKey } from '../savedSessionsKey';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
-import { landTicketExit, landTicketInit, landTicketReport, landTicketTurnEnd } from '../ticketLanding';
+import { landTicketExit, landTicketInit, landTicketNote, landTicketReport, landTicketTurnEnd } from '../ticketLanding';
 
 /**
  * The text a refine report has already delivered, for candidate extraction.
@@ -580,6 +580,10 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
             }
             case 'ticket_turn_end': {
               landTicketTurnEnd(ctx, msg);
+              break;
+            }
+            case 'ticket_note': {
+              landTicketNote(ctx, msg);
               break;
             }
             case 'state': {
@@ -1264,7 +1268,14 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
           // machine moves only a running Ticket, and only for an exit nobody
           // asked for (invariant 6); a requested one is a person closing a
           // window, which the Ticket survives as "not connected".
-          landTicketExit(ctx, key, bucket.sessionId, { requested: msg.requested, reason: msg.reason });
+          // `midTurn` is read off `bucket` - the transcript as it was before
+          // `settleAbandonedTurn` closed the turn above, which is the only moment
+          // the question has an answer.
+          landTicketExit(ctx, key, bucket.sessionId, {
+            requested: msg.requested,
+            reason: msg.reason,
+            midTurn: hasRunningTurn(bucket.entries),
+          });
           break;
         }
 

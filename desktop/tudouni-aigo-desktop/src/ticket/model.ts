@@ -14,7 +14,7 @@ import type { TaskWorkspaceRef } from '@/task/tasks';
 
 /** The file's schema number. Only ever grows; a file with a larger one was
  *  written by a newer build and is read-only here (`store.ts`). */
-export const TICKET_SCHEMA = 1;
+export const TICKET_SCHEMA = 2;
 
 /** The first protocol that understands `ticket_bind` and `ui(ticket_report)`.
  *  A session whose `init.protocol` is lower is never sent a bind (design 5.4):
@@ -26,6 +26,12 @@ export const TICKET_MIN_PROTOCOL = 18;
  *  runtime would ignore the key, so the paths travel in the first message
  *  instead (see `ticketRuns.ts`). */
 export const TICKET_ATTACHMENTS_MIN_PROTOCOL = 19;
+
+/** The first protocol whose `ticket_bind` carries `notes` and that has the
+ *  `ticket_note` tool and `ui(ticket_note)`. An older runtime ignores the key, so
+ *  it is never sent one; its sessions are marked on the card instead
+ *  (`ticket-notes.md` 7). */
+export const TICKET_NOTES_MIN_PROTOCOL = 22;
 
 /** How many files one Ticket may carry. Mirrors the runtime's ceiling on
  *  `ticket_bind.ticket.attachments` and `MAX_ATTACHMENTS_PER_TICKET` in
@@ -39,6 +45,37 @@ export interface TicketAttachment {
   name: string;
   bytes: number;
   addedAtMs: number;
+}
+
+/**
+ * The name the full brief is staged under when it is too long for the runtime's
+ * payload tail (`ticket-notes.md` 3.6). **Reserved**: a person's attachment
+ * cannot take it, or the staged brief would overwrite their file. Mirrored by
+ * `BRIEF_FILE` in `src-tauri/src/ticket_attachments.rs`.
+ */
+export const BRIEF_ATTACHMENT_NAME = 'brief.md';
+
+/** Whether a name is the staged brief's. Case-insensitive, because the staging
+ *  directory lives on file systems (Windows, macOS) where `Brief.md` and
+ *  `brief.md` are one file. */
+export function isReservedAttachmentName(name: string): boolean {
+  return name.toLowerCase() === BRIEF_ATTACHMENT_NAME;
+}
+
+/** How much of the brief the runtime quotes in its payload tail, in characters.
+ *  Mirrors `TicketTailBriefRunes` in `internal/state/ticket.go` (a test reads
+ *  the Go source). A longer brief is cut there, so the desktop stages the whole
+ *  of it as `brief.md`. Counted in code points, like the runtime's runes. */
+export const TICKET_TAIL_BRIEF_RUNES = 2000;
+
+/** Whether a brief is longer than the runtime's tail keeps. */
+export function briefExceedsTail(brief: string): boolean {
+  let n = 0;
+  for (const _ of brief) {
+    n += 1;
+    if (n > TICKET_TAIL_BRIEF_RUNES) return true;
+  }
+  return false;
 }
 
 /** How many events a Ticket keeps. The oldest go first, `created` never does. */
@@ -61,6 +98,20 @@ export const TICKET_EVENTS_MAX = 200;
  */
 export const TICKET_TITLE_CEILING = 500;
 export const TICKET_BRIEF_CEILING = 20000;
+
+/**
+ * The same rule for notes, mirrored from `internal/state/ticket.go`
+ * (`TicketNoteTextCeiling` / `MaxTicketNotes` / `TicketNotesTotalCeiling`).
+ *
+ * Every note is quoted in full in the payload tail on every round, so the cost
+ * is bounded at write time. A list over any of these makes the runtime refuse
+ * the whole `ticket_bind` - the report tool included - which is why the machine
+ * refuses the write that would cross one instead of storing it. Counted in code
+ * points (the runtime counts runes). A test reads the Go source.
+ */
+export const TICKET_NOTE_TEXT_CEILING = 4000;
+export const TICKET_NOTES_MAX = 100;
+export const TICKET_NOTES_TOTAL_CEILING = 12000;
 
 export const TICKET_STATUSES = [
   'open',
@@ -110,34 +161,138 @@ export type Actor =
 /** The only requester today. Not a hard-coded check anywhere — a value. */
 export const LOCAL_PERSON: Actor = { kind: 'person', id: 'local' };
 
-/** Why an Assignment ended. Only these four: a report or an exit is an event,
- *  because the same Assignment carries on after either. */
-export type AssignmentEnd = 'superseded' | 'accepted' | 'dropped' | 'restore_failed';
+/** Why an Assignment (a worker) ended. `superseded` is kept for "another worker
+ *  took over", which no command produces today (only migrated schema-1 records
+ *  carry it): swapping a *session* is the worker's own business now. A report or
+ *  an exit is an event, because the same worker carries on after either. */
+export type AssignmentEnd = 'superseded' | 'accepted' | 'dropped';
+
+/** Why a session left its worker (`WorkerSession.removed`). */
+export type SessionRemoval = 'restart' | 'person' | 'restore_failed' | 'unreachable';
+
+/**
+ * One conversation of a worker (`docs/design/ticket-notes.md` 3.1).
+ *
+ * Sessions are only ever appended; a removed one stays in the list so it can be
+ * opened and read back, but it is unbound and the facts it sends no longer count.
+ */
+export interface WorkerSession {
+  /** The bridge's child key. Only meaningful within one app run: a resumed
+   *  session gets a new key, which `sessionStarted` writes back. */
+  sessionKey: string;
+  /** The runtime's session id, back-filled from `init`. Empty until then. */
+  sessionId: string;
+  /** Which saved remote workspace the session actually opened in, or `null`
+   *  for a local one. Read off the opened bucket, never off the Ticket's ref
+   *  (which may say `active`). */
+  remoteWorkspaceId: string | null;
+  /** Where the session ran: the local directory, or the path on the remote
+   *  host. A later "continue" resumes a **local** session in this directory. */
+  workspace?: string;
+  /** The conversation's title, when the desktop knew it. For the list only. */
+  title?: string;
+  joinedAtMs: number;
+  /** Decides which session "open" and "send back" default to (3.3). */
+  lastActiveAtMs: number;
+  /** `null` = on the Ticket. */
+  removedAtMs: number | null;
+  removed?: SessionRemoval;
+}
 
 export interface Assignment {
   id: string;
   executor: {
-    kind: 'session';
-    /** The bridge's child key. Only meaningful within one app run: a resumed
-     *  session gets a new key, which `assignmentStarted` writes back. */
-    sessionKey: string;
-    /** The runtime's session id, back-filled from `init`. Empty until then. */
-    sessionId: string;
-    /** Which saved remote workspace the session actually opened in, or `null`
-     *  for a local one. Read off the opened bucket, never off the Ticket's ref
-     *  (which may say `active`). */
-    remoteWorkspaceId: string | null;
-    /** Where the session ran: the local directory, or the path on the remote
-     *  host. Optional (records written before it existed lack it). A later
-     *  "continue" resumes a **local** session in this directory: the Ticket's
-     *  own ref may say `active`, and the screen it started from is long gone. */
-    workspace?: string;
+    /** Who drives the sessions. Only a person today; an agent worker would be
+     *  a second member issuing the same commands. */
+    kind: 'person';
+    /** Append-only, in the order they joined. */
+    sessions: WorkerSession[];
   };
   startedAtMs: number;
   endedAtMs: number | null;
-  /** `null` = still the Ticket's executor (live, closed, disconnected, or
-   *  blocked — all of which are events, not endings). */
+  /** `null` = still the Ticket's worker (live, closed, disconnected, or
+   *  blocked - all of which are events, not endings). */
   end: AssignmentEnd | null;
+}
+
+/** A person's or an agent's note on the Ticket (`ticket-notes.md` 4.1). */
+export interface TicketNote {
+  /** `nt-<time36>-<rand>`. */
+  id: string;
+  text: string;
+  author: 'person' | 'agent';
+  /** For `author: 'agent'`: which session wrote it. */
+  sessionId?: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+/** What a note write does. The agent's `ticket_note` and the person's card use
+ *  the same three verbs. */
+export type NoteOp = 'add' | 'update' | 'remove';
+
+/** One `ticket_note` call, as the runtime forwarded it (`ui(ticket_note)`, or an
+ *  entry of `init.ticket.note_ops`). A fact about what an agent *asked for*; the
+ *  machine decides whether it changed anything. */
+export interface NoteOpFact {
+  /** Minted by the runtime. The key every duplicate is recognised by. */
+  opId: string;
+  op: NoteOp;
+  noteId: string;
+  /** `null` for `remove`. */
+  text: string | null;
+  /** The session that made the call. */
+  sessionId: string;
+  atMs: number;
+}
+
+/** A note's length the way the runtime counts it: code points, not UTF-16
+ *  units, so an emoji is one and a note that fits there fits here. */
+export function noteRunes(text: string): number {
+  let n = 0;
+  for (const _ of text) n += 1;
+  return n;
+}
+
+/** A new note id. Minted by the caller and carried on the command, so the
+ *  machine stays a pure function. Same shape the runtime mints for the agent's. */
+export function newNoteId(nowMs: number = Date.now()): string {
+  return `nt-${nowMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Why a note's text cannot be stored. */
+export type NoteProblem = 'empty_note' | 'note_too_long' | 'notes_full' | 'notes_total';
+
+/**
+ * Whether `text` can be written into `notes` - as a new note, or (with
+ * `replacingId`) in place of that one - or the ceiling it would cross.
+ *
+ * One function for the machine (which refuses the write), the agent's fact
+ * (which records that it did not fit) and the card (which says so while the
+ * person types), for `unbindableField`'s reason: three callers that disagree
+ * would let a note be typed that the machine then refuses. The text is judged
+ * **trimmed**, because that is what is stored.
+ */
+export function noteWriteProblem(
+  notes: readonly TicketNote[],
+  text: string,
+  replacingId?: string,
+): NoteProblem | null {
+  const trimmed = text.trim();
+  if (trimmed === '') return 'empty_note';
+  const runes = noteRunes(trimmed);
+  if (runes > TICKET_NOTE_TEXT_CEILING) return 'note_too_long';
+  if (replacingId === undefined && notes.length >= TICKET_NOTES_MAX) return 'notes_full';
+  let total = runes;
+  for (const note of notes) {
+    if (note.id !== replacingId) total += noteRunes(note.text);
+  }
+  return total > TICKET_NOTES_TOTAL_CEILING ? 'notes_total' : null;
+}
+
+/** The notes in the order the card (and the runtime's tail) lists them: oldest
+ *  first. A stable sort, so notes written in one millisecond keep their order. */
+export function notesByTime(notes: readonly TicketNote[]): TicketNote[] {
+  return [...notes].sort((a, b) => a.createdAtMs - b.createdAtMs);
 }
 
 /**
@@ -147,19 +302,32 @@ export interface Assignment {
  * (see `machine.ts`).
  */
 export type TicketEventType =
+  // The schema-1 names (`assignmentStarted`, `assignmentExited`,
+  // `assignmentRestoreFailed`) stay readable: old events are history, never
+  // replayed, and a migrated record still carries them.
   | 'created'
   | 'start'
   | 'assignmentStarted'
+  | 'sessionStarted'
+  | 'newSession'
+  | 'restart'
+  | 'removeSession'
   | 'reported'
   | 'turnEndedUnreported'
   | 'personReplied'
   | 'assignmentExited'
+  | 'sessionExited'
   | 'assignmentRestoreFailed'
+  | 'sessionRestoreFailed'
   | 'accept'
   | 'sendBack'
   | 'drop'
   | 'reopen'
-  | 'edited';
+  | 'edited'
+  // A person's note command / an agent's note fact. Only `{noteId, op}` (and the
+  // fact's `opId`) are recorded, never the text: the history is capped by count.
+  | 'note'
+  | 'noted';
 
 export interface TicketEvent {
   at: number;
@@ -169,7 +337,7 @@ export interface TicketEvent {
 }
 
 export interface Ticket {
-  schema: 1;
+  schema: 2;
   /** `tk-<time36>-<rand>`. Embeds nothing about this machine. */
   id: string;
   /** May be empty; `ticketTitle` falls back to the brief's first line. */
@@ -190,6 +358,9 @@ export interface Ticket {
    *  not move the status is still what the agent last said), but never from
    *  a session that is not the current executor. */
   lastReport: Report | null;
+  /** Shared judgements and decisions; they outlive any worker. Empty until the
+   *  Notes feature lands (docs/design/ticket-notes.md 4). */
+  notes: TicketNote[];
   /**
    * Files the person attached (a log, a dump, a spec). **Optional, not a schema
    * bump**: a record from before the field existed has none, and an older build
@@ -270,6 +441,7 @@ export function emptyTicket(nowMs: number): Ticket {
     assignments: [],
     events: [{ at: nowMs, actor: LOCAL_PERSON, type: 'created' }],
     lastReport: null,
+    notes: [],
     createdAtMs: nowMs,
     updatedAtMs: nowMs,
     origin: { kind: 'manual' },
@@ -307,23 +479,33 @@ const EVENT_TYPES: ReadonlySet<string> = new Set<TicketEventType>([
   'created',
   'start',
   'assignmentStarted',
+  'sessionStarted',
+  'newSession',
+  'restart',
+  'removeSession',
   'reported',
   'turnEndedUnreported',
   'personReplied',
   'assignmentExited',
+  'sessionExited',
   'assignmentRestoreFailed',
+  'sessionRestoreFailed',
   'accept',
   'sendBack',
   'drop',
   'reopen',
   'edited',
+  'note',
+  'noted',
 ]);
 
-const ASSIGNMENT_ENDS: ReadonlySet<string> = new Set<AssignmentEnd>([
-  'superseded',
-  'accepted',
-  'dropped',
+const ASSIGNMENT_ENDS: ReadonlySet<string> = new Set<AssignmentEnd>(['superseded', 'accepted', 'dropped']);
+
+const SESSION_REMOVALS: ReadonlySet<string> = new Set<SessionRemoval>([
+  'restart',
+  'person',
   'restore_failed',
+  'unreachable',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -387,6 +569,9 @@ export function attachmentsOf(ticket: Pick<Ticket, 'attachments'>): TicketAttach
 export function isAttachmentName(name: string): boolean {
   return (
     name !== '' &&
+    // Reserved for the staged brief (`BRIEF_ATTACHMENT_NAME`). Not part of the
+    // guard (`isValidAttachment` accepts it so a record is never dropped for it);
+    // the picker and the machine's `edit` refuse a new one.
     name.length <= 255 &&
     !/[/\\\0]/.test(name) &&
     !name.startsWith('.')
@@ -405,14 +590,39 @@ export function isValidAttachment(value: unknown): value is TicketAttachment {
   );
 }
 
+export function isValidWorkerSession(value: unknown): value is WorkerSession {
+  if (!isRecord(value)) return false;
+  if (typeof value.sessionKey !== 'string' || typeof value.sessionId !== 'string') return false;
+  if (value.remoteWorkspaceId !== null && typeof value.remoteWorkspaceId !== 'string') return false;
+  if (value.workspace !== undefined && typeof value.workspace !== 'string') return false;
+  if (value.title !== undefined && typeof value.title !== 'string') return false;
+  if (typeof value.joinedAtMs !== 'number' || typeof value.lastActiveAtMs !== 'number') return false;
+  if (value.removedAtMs !== null && typeof value.removedAtMs !== 'number') return false;
+  // A removed session says why; an unknown reason is a newer build's record.
+  if (value.removed !== undefined && !(typeof value.removed === 'string' && SESSION_REMOVALS.has(value.removed))) {
+    return false;
+  }
+  return true;
+}
+
+function isValidNote(value: unknown): value is TicketNote {
+  if (!isRecord(value)) return false;
+  return (
+    isNonEmptyString(value.id) &&
+    typeof value.text === 'string' &&
+    (value.author === 'person' || value.author === 'agent') &&
+    (value.sessionId === undefined || typeof value.sessionId === 'string') &&
+    typeof value.createdAtMs === 'number' &&
+    typeof value.updatedAtMs === 'number'
+  );
+}
+
 function isValidAssignment(value: unknown): value is Assignment {
   if (!isRecord(value)) return false;
   if (!isNonEmptyString(value.id)) return false;
   const ex = value.executor;
-  if (!isRecord(ex) || ex.kind !== 'session') return false;
-  if (typeof ex.sessionKey !== 'string' || typeof ex.sessionId !== 'string') return false;
-  if (ex.remoteWorkspaceId !== null && typeof ex.remoteWorkspaceId !== 'string') return false;
-  if (ex.workspace !== undefined && typeof ex.workspace !== 'string') return false;
+  if (!isRecord(ex) || ex.kind !== 'person') return false;
+  if (!Array.isArray(ex.sessions) || !ex.sessions.every(isValidWorkerSession)) return false;
   if (typeof value.startedAtMs !== 'number') return false;
   if (value.endedAtMs !== null && typeof value.endedAtMs !== 'number') return false;
   return value.end === null || (typeof value.end === 'string' && ASSIGNMENT_ENDS.has(value.end));
@@ -448,6 +658,7 @@ export function isValidTicket(value: unknown): value is Ticket {
   if (value.assignments.filter((a: Assignment) => a.end === null).length > 1) return false;
   if (!Array.isArray(value.events) || !value.events.every(isValidEvent)) return false;
   if (value.lastReport !== null && !isValidReport(value.lastReport)) return false;
+  if (!Array.isArray(value.notes) || !value.notes.every(isValidNote)) return false;
   if (
     value.attachments !== undefined &&
     !(

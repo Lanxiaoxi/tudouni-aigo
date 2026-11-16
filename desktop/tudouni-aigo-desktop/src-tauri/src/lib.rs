@@ -211,6 +211,7 @@ pub fn run() {
             crate::desktop_data::desktop_data_write,
             crate::tickets_data::tickets_read,
             crate::tickets_data::tickets_write,
+            crate::tickets_data::tickets_backup_v1,
             // The ticket inbox: the one-way door an outside program drops work
             // through. Listed and drained here so `tickets.json` keeps exactly
             // one writer — nothing outside this app ever touches the record.

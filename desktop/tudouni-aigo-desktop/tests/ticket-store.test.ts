@@ -83,7 +83,7 @@ function runningTicket(): Ticket {
   });
   assert.ok(r1.ok);
   t = r1.ticket;
-  const r2 = apply(t, { type: 'assignmentStarted', at: tick(), sessionKey: 'k1', sessionId: 'S1' });
+  const r2 = apply(t, { type: 'sessionStarted', at: tick(), sessionKey: 'k1', sessionId: 'S1' });
   assert.ok(r2.ok);
   return r2.ticket;
 }
@@ -103,13 +103,13 @@ const rep = (id: string, status: 'done' | 'blocked' = 'done', sessionId = 'S1'):
    ============================================================ */
 
 test('no file is an empty, writable list', () => {
-  assert.deepEqual(parseTicketFile(null), { tickets: [], readOnly: false, problem: null, dropped: 0 });
+  assert.deepEqual(parseTicketFile(null), { tickets: [], readOnly: false, problem: null, dropped: 0, migratedFrom: null });
 });
 
 test('a round trip through the file keeps every Ticket and the schema', () => {
   const tickets = [runningTicket(), { ...emptyTicket(T0 + 1), brief: 'b' }];
   const text = serializeTickets(tickets);
-  assert.equal(JSON.parse(text).schema, 1);
+  assert.equal(JSON.parse(text).schema, 2);
   const loaded = parseTicketFile(text);
   assert.equal(loaded.readOnly, false);
   assert.deepEqual(loaded.tickets, tickets);
@@ -118,7 +118,7 @@ test('a round trip through the file keeps every Ticket and the schema', () => {
 test('a malformed record is dropped whole; the good ones load', () => {
   const good = runningTicket();
   const text = JSON.stringify({
-    schema: 1,
+    schema: 2,
     tickets: [good, { id: 'tk-bad', status: 'running' }, null, 'x', { ...good, status: 'paused', id: 'tk-2' }],
   });
   const loaded = parseTicketFile(text);
@@ -130,7 +130,7 @@ test('a malformed record is dropped whole; the good ones load', () => {
 test('a duplicated id keeps the first', () => {
   const a = runningTicket();
   const b = { ...a, title: 'second' };
-  const loaded = parseTicketFile(JSON.stringify({ schema: 1, tickets: [a, b] }));
+  const loaded = parseTicketFile(JSON.stringify({ schema: 2, tickets: [a, b] }));
   assert.equal(loaded.tickets.length, 1);
   assert.equal(loaded.tickets[0].title, '');
   assert.equal(loaded.dropped, 1);
@@ -138,7 +138,7 @@ test('a duplicated id keeps the first', () => {
 
 test('a newer schema loads what it can and is read-only', () => {
   const good = runningTicket();
-  const loaded = parseTicketFile(JSON.stringify({ schema: 2, tickets: [good], extra: true }));
+  const loaded = parseTicketFile(JSON.stringify({ schema: 3, tickets: [good], extra: true }));
   assert.equal(loaded.readOnly, true);
   assert.match(loaded.problem ?? '', /newer version/);
   assert.equal(loaded.tickets.length, 1, 'still shown, never written');
@@ -237,12 +237,12 @@ test('loadTickets reads through the host and saveTickets writes the whole list',
 
 test('a read-only file is never written', async () => {
   reset();
-  fileText = JSON.stringify({ schema: 2, tickets: [] });
+  fileText = JSON.stringify({ schema: 3, tickets: [] });
   const loaded = await loadTickets();
   assert.equal(loaded.readOnly, true);
   assert.equal(await saveTickets([]), false);
   assert.equal(writes.length, 0);
-  assert.equal(fileText, JSON.stringify({ schema: 2, tickets: [] }), 'the file is exactly as it was');
+  assert.equal(fileText, JSON.stringify({ schema: 3, tickets: [] }), 'the file is exactly as it was');
 });
 
 test('a failed read is read-only too: an unreadable file is not an empty one', async () => {
@@ -372,7 +372,7 @@ test('a fact with nothing to record writes nothing', async () => {
   const store = await loadedStore();
   const id = store.getState().createTicket({ brief: 'go' }) as string;
   store.getState().dispatchTicket(id, { type: 'start', assignmentId: 'as-1', sessionKey: 'k1', remoteWorkspaceId: null });
-  store.getState().dispatchTicket(id, { type: 'assignmentStarted', sessionKey: 'k1', sessionId: 'S1' });
+  store.getState().dispatchTicket(id, { type: 'sessionStarted', sessionKey: 'k1', sessionId: 'S1' });
   await ticketWritesSettled();
   writes = [];
   // The person speaks in a session whose Ticket is not waiting.
@@ -437,7 +437,7 @@ test('deleteTicket removes one; clearFinishedTickets removes done and dropped on
   s().dispatchTicket(b, { type: 'drop' });
   // c: running -> review -> done.
   s().dispatchTicket(c, { type: 'start', assignmentId: 'as-c', sessionKey: 'kc', remoteWorkspaceId: null });
-  s().dispatchTicket(c, { type: 'assignmentStarted', sessionKey: 'kc', sessionId: 'SC' });
+  s().dispatchTicket(c, { type: 'sessionStarted', sessionKey: 'kc', sessionId: 'SC' });
   s().ingestTicketReport(c, { ...rep('rc', 'done', 'SC') });
   s().dispatchTicket(c, { type: 'accept' });
   assert.deepEqual(s().tickets.map((t) => t.status), ['open', 'dropped', 'done', 'open']);

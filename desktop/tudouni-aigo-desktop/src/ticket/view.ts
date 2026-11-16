@@ -6,7 +6,8 @@
  * all facts of the record (plus one boolean the caller reads off the session -
  * "is the child there"), so they can be asserted without a window.
  */
-import { unbindableField, type Assignment, type Ticket, type TicketStatus } from './model';
+import { unbindableField, type Assignment, type Ticket, type TicketStatus, type WorkerSession } from './model';
+import { mostRecentSessionOf, presentSessions } from './machine';
 
 export const TICKET_COLUMNS = ['open', 'running', 'needs_you', 'review', 'done'] as const;
 export type TicketColumn = (typeof TICKET_COLUMNS)[number];
@@ -63,7 +64,13 @@ export function needsYouCause(ticket: Ticket): TicketCause | null {
       if (applied === true) return 'blocked';
       continue;
     }
-    if (event.type === 'assignmentExited' && event.data?.requested === false) {
+    // `sessionExited` (schema 2) says whether it moved the Ticket (`applied`): an
+    // idle session dropping off is an event, not the reason the Ticket waits. The
+    // schema-1 `assignmentExited` has no such flag and every unrequested one counted.
+    const exitedUnrequested =
+      (event.type === 'assignmentExited' || (event.type === 'sessionExited' && event.data?.applied === true)) &&
+      event.data?.requested === false;
+    if (exitedUnrequested && event.data !== undefined) {
       if (event.data.reason === 'disconnected') return 'disconnected';
       if (event.data.reason === 'unreachable') return 'unreachable';
       return 'crashed';
@@ -134,26 +141,87 @@ export function ticketActions(status: TicketStatus, connected: boolean): TicketA
 }
 
 /**
- * Whether "Continue" can reach the Assignment's session at all.
+ * Whether "Continue" can reach one worker session at all.
  *
- * Asked of the **Assignment**, not of the Ticket's workspace ref: a Ticket made
+ * Asked of the **session**, not of the Ticket's workspace ref: a Ticket made
  * against `active` has a ref that means nothing once the screen it was made on
  * is gone (after a restart there may be no workspace on screen at all), yet its
- * session is perfectly resumable from what the Assignment recorded. A remote
- * one needs its saved workspace entry; a local one needs a directory to resume
- * in (the one recorded, or the Ticket's own local path).
+ * session is perfectly resumable from what was recorded. A remote one needs its
+ * saved workspace entry; a local one needs a directory to resume in (the one
+ * recorded, or the Ticket's own local path).
  */
+export function canResumeSession(
+  ticket: Ticket,
+  session: WorkerSession | null,
+  remoteIds: ReadonlySet<string>,
+): boolean {
+  if (session === null || session.sessionId === '') return false;
+  const { remoteWorkspaceId, workspace } = session;
+  if (remoteWorkspaceId !== null) return remoteIds.has(remoteWorkspaceId);
+  return (workspace ?? '') !== '' || ticket.workspace.kind === 'local';
+}
+
+/** `canResumeSession` for the session the card's "open" goes to: the most
+ *  recently active present one of the worker. */
 export function canResumeAssignment(
   ticket: Ticket,
   assignment: Assignment | null,
   remoteIds: ReadonlySet<string>,
 ): boolean {
-  if (assignment === null || assignment.executor.sessionId === '') return false;
-  const { remoteWorkspaceId, workspace } = assignment.executor;
-  if (remoteWorkspaceId !== null) return remoteIds.has(remoteWorkspaceId);
-  return (workspace ?? '') !== '' || ticket.workspace.kind === 'local';
+  return canResumeSession(ticket, mostRecentSessionOf(assignment), remoteIds);
 }
 
+/**
+ * Whether "New session" is offered: any state with a worker on it. From
+ * `review` it moves the Ticket back to `running` (the person is carrying on).
+ * Separate from `ticketActions` because it is a secondary verb on those cards,
+ * not one of their state-specific primaries.
+ */
+export function canNewSession(status: TicketStatus): boolean {
+  return status === 'running' || status === 'needs_you' || status === 'review';
+}
+
+/** How a listed session reads on the card. */
+export type SessionLabel =
+  /** On the Ticket. */
+  | 'present'
+  /** Moved off it, and why. */
+  | 'removed';
+
+/** The sessions the card lists: all of the current worker's (present and
+ *  removed), in the order they joined. A finished Ticket has no current worker,
+ *  so its card lists none. */
+export function listedSessions(assignment: Assignment | null): WorkerSession[] {
+  return assignment === null ? [] : assignment.executor.sessions;
+}
+
+/**
+ * Whether the card's sessions section is drawn: more than one session on the
+ * Ticket, or any that was removed (so a single present session next to a
+ * removed one still says where the others went). A Ticket with one session and
+ * no history shows nothing, like before.
+ */
+export function showsSessionList(assignment: Assignment | null): boolean {
+  const list = listedSessions(assignment);
+  return list.length > 1;
+}
+
+/** Whether the per-row "remove" is offered: never for the last present session
+ *  (the machine refuses it, `last_session`), never for one already removed. */
+export function canRemoveSession(assignment: Assignment | null, session: WorkerSession): boolean {
+  return session.removedAtMs === null && presentSessions(assignment).length > 1;
+}
+
+/** Whether the send-back box asks which session gets the opinion: only when
+ *  there is a choice. */
+export function asksSendBackTarget(assignment: Assignment | null): boolean {
+  return presentSessions(assignment).length > 1;
+}
+
+/** "N sessions": the present ones. */
+export function presentSessionCount(assignment: Assignment | null): number {
+  return presentSessions(assignment).length;
+}
 /** Whether a status can still be given up. */
 export function canDrop(status: TicketStatus): boolean {
   return status !== 'done' && status !== 'dropped';

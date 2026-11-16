@@ -23,6 +23,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  StickyNote,
   Trash2,
   Undo2,
   User,
@@ -30,7 +31,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { activeRuntime, activeWorkspaceOf, selectRowStatus, useApp } from '@/state/store';
-import { selectTicketLiveKey, selectTicketTurnRunning } from '@/state/selectors/tickets';
+import { liveKeyOfSession, selectTicketAnyTurnRunning, selectTicketLiveKey } from '@/state/selectors/tickets';
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { EmptyState, Tip } from '@/components/ui/kit';
@@ -40,28 +41,45 @@ import { SourcesPanel } from '@/components/board/SourcesPanel';
 import { scanSources } from '@/runtime/tauri';
 import { describeScan, scanHadProblem } from '@/ticket/sources';
 import { workspaceRefLabel, type TaskWorkspaceRef } from '@/task/tasks';
-import { currentAssignment } from '@/ticket/machine';
+import { currentAssignment, mostRecentSessionOf, presentSessions } from '@/ticket/machine';
 import {
   TICKET_ATTACHMENTS_MAX,
   TICKET_BRIEF_CEILING,
   TICKET_MIN_PROTOCOL,
+  TICKET_NOTES_MAX,
+  TICKET_NOTES_MIN_PROTOCOL,
+  TICKET_NOTES_TOTAL_CEILING,
+  TICKET_NOTE_TEXT_CEILING,
   TICKET_TITLE_CEILING,
   attachmentsOf,
+  newNoteId,
+  noteRunes,
+  noteWriteProblem,
+  notesByTime,
   ticketTitle,
   unbindableField,
   type Ticket,
   type TicketAttachment,
+  type TicketNote,
   type TicketStatus,
+  type WorkerSession,
 } from '@/ticket/model';
 import { formatBytes } from '@/ticket/attachments';
 import { chooseAttachmentFiles, openTicketAttachment } from '@/runtime/tauri';
 import { setDropOverride } from '@/hooks/useFileDrop';
 import {
   acceptsDrop,
+  asksSendBackTarget,
   canBindBrief,
   canDrop,
+  canNewSession,
+  canRemoveSession,
   canResumeAssignment,
+  canResumeSession,
   columnOf,
+  listedSessions,
+  presentSessionCount,
+  showsSessionList,
   dropTargets,
   dropVerb,
   groupTickets,
@@ -1821,6 +1839,499 @@ function StartDialog({
 }
 
 /* ============================================================
+   One session of a card's worker.
+   ============================================================ */
+
+/** What a session is called on the card: its title when the desktop knew it,
+ *  "Session N" (by join order) otherwise. */
+function sessionName(session: WorkerSession, index: number, t: ReturnType<typeof useT>): string {
+  const title = (session.title ?? '').trim();
+  return title !== '' ? title : t('ticket.sessions.untitled', { n: index + 1 });
+}
+
+/** Why a session left the Ticket, as the key that says it. A map rather than a
+ *  built key: `t` of an unknown key is a visible `⟪key⟫`, and a record from a
+ *  newer build must read as plain "taken off", not as that. */
+const REMOVED_LABEL: Record<NonNullable<WorkerSession['removed']> | 'unknown', TKey> = {
+  restart: 'ticket.sessions.removed.restart',
+  person: 'ticket.sessions.removed.person',
+  restore_failed: 'ticket.sessions.removed.restore_failed',
+  unreachable: 'ticket.sessions.removed.unreachable',
+  unknown: 'ticket.sessions.removed.unknown',
+};
+
+function SessionRow({
+  session,
+  index,
+  ticket,
+  assignmentRef,
+  remoteIds,
+  latest,
+  disabled,
+  armed,
+  onArm,
+  onOpen,
+  onRemove,
+}: {
+  session: WorkerSession;
+  index: number;
+  ticket: Ticket;
+  assignmentRef: ReturnType<typeof currentAssignment>;
+  remoteIds: ReadonlySet<string>;
+  /** The one "open" goes to by default. */
+  latest: boolean;
+  disabled: boolean;
+  armed: boolean;
+  onArm: (on: boolean) => void;
+  onOpen: () => void;
+  onRemove: () => void;
+}) {
+  const t = useT();
+  const present = session.removedAtMs === null;
+  // A primitive, so the row repaints when the child starts or stops and not on
+  // every token.
+  const live = useApp((s) => liveKeyOfSession(s, session) !== null);
+  // A live child on a runtime that predates notes (protocol 22): it can neither
+  // read them nor write them, which the person should not have to guess.
+  const noNotes = useApp((s) => {
+    const key = liveKeyOfSession(s, session);
+    const protocol = key === null ? 0 : (s.sessions[key]?.session?.protocol ?? 0);
+    return present && protocol > 0 && protocol < TICKET_NOTES_MIN_PROTOCOL;
+  });
+  // "Session no longer exists": nothing is running and nothing can be reopened
+  // (no saved id, or the workspace it ran in is gone). Not a claim about the
+  // file on disk, which only a resume can find out.
+  const gone = !live && !canResumeSession(ticket, session, remoteIds);
+  const name = sessionName(session, index, t);
+  const removedLabel = present
+    ? null
+    : t(REMOVED_LABEL[session.removed ?? 'unknown']);
+  const joined = new Date(session.joinedAtMs).toLocaleDateString();
+  return (
+    <li className={`tkb-session${present ? '' : ' is-removed'}${gone ? ' is-gone' : ''}`}>
+      <button
+        type="button"
+        className="tkb-session-open"
+        disabled={disabled || gone}
+        aria-label={t('ticket.sessions.open', { name })}
+        title={gone ? t('ticket.sessions.missing') : t('ticket.sessions.openHint')}
+        onClick={onOpen}
+      >
+        {live ? <span className="tkb-session-dot" aria-hidden="true" /> : null}
+        <span className="tkb-session-name">{name}</span>
+        <span className="tkb-session-meta">
+          {t('ticket.sessions.joined', { when: joined })}
+          {latest && present ? ` · ${t('ticket.sessions.latest')}` : ''}
+          {removedLabel !== null ? ` · ${removedLabel}` : ''}
+          {gone ? ` · ${t('ticket.sessions.missing')}` : ''}
+        </span>
+      </button>
+      {noNotes ? (
+        <span className="tkb-session-oldmark" title={t('ticket.notes.runtimeOldHint')}>
+          {t('ticket.notes.runtimeOld')}
+        </span>
+      ) : null}
+      {/* Never for the last session on the Ticket (the machine refuses it
+          too), and never for one already taken off. Two presses, the card
+          menu's delete rule. */}
+      {canRemoveSession(assignmentRef, session) ? (
+        <button
+          type="button"
+          className={`tkb-session-remove${armed ? ' is-armed' : ''}`}
+          disabled={disabled}
+          aria-label={armed ? t('ticket.sessions.removeConfirm') : t('ticket.sessions.remove', { name })}
+          title={armed ? t('ticket.sessions.removeConfirm') : t('ticket.sessions.removeHint')}
+          onBlur={() => onArm(false)}
+          onClick={() => (armed ? onRemove() : onArm(true))}
+        >
+          {armed ? <X size={12} /> : <Trash2 size={12} />}
+          {armed ? <span>{t('ticket.sessions.removeConfirm')}</span> : null}
+        </button>
+      ) : null}
+    </li>
+  );
+}
+
+/* ============================================================
+   A card's notes (docs/design/ticket-notes.md 4.5).
+   ============================================================ */
+
+/** The sentence for a refusal of a note write. The four ceilings are the
+ *  machine's own reasons (`noteWriteProblem`), so the box that says them while
+ *  the person types and the refusal that follows a press use one wording. */
+function noteRefusalText(t: ReturnType<typeof useT>, reason: string): string {
+  switch (reason) {
+    case 'empty_note':
+      return t('ticket.notes.problem.empty');
+    case 'note_too_long':
+      return t('ticket.notes.problem.tooLong', { n: TICKET_NOTE_TEXT_CEILING });
+    case 'notes_full':
+      return t('ticket.notes.problem.full', { n: TICKET_NOTES_MAX });
+    case 'notes_total':
+      return t('ticket.notes.problem.total', { n: TICKET_NOTES_TOTAL_CEILING });
+    default:
+      return t('ticket.notes.problem.refused');
+  }
+}
+
+/** The counter's class: the brief box's thresholds, so the two read alike. */
+function noteCounterClass(n: number, max: number): string {
+  if (n > max) return 'tkb-counter is-over';
+  return n > max * 0.9 ? 'tkb-counter is-near' : 'tkb-counter';
+}
+
+/** The session that wrote an agent note, found in any worker of the Ticket (a
+ *  note outlives the worker that was on it), with the name the card calls it. */
+function noteSource(
+  ticket: Ticket,
+  sessionId: string | undefined,
+  t: ReturnType<typeof useT>,
+): { session: WorkerSession; name: string } | null {
+  if (sessionId === undefined || sessionId === '') return null;
+  for (const assignment of ticket.assignments) {
+    const sessions = assignment.executor.sessions;
+    const index = sessions.findIndex((s) => s.sessionId === sessionId);
+    if (index >= 0) return { session: sessions[index], name: sessionName(sessions[index], index, t) };
+  }
+  return null;
+}
+
+function NoteRow({
+  note,
+  ticket,
+  disabled,
+  sourceName,
+  onOpenSource,
+}: {
+  note: TicketNote;
+  ticket: Ticket;
+  disabled: boolean;
+  /** The name of the session that wrote it, when the Ticket still knows it. */
+  sourceName: string | null;
+  onOpenSource: (() => void) | null;
+}) {
+  const t = useT();
+  const dispatchTicket = useApp((s) => s.dispatchTicket);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note.text);
+  const [armed, setArmed] = useState(false);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing) areaRef.current?.focus();
+  }, [editing]);
+
+  // The same function the machine refuses with, asked while the text is typed.
+  const problem = editing ? noteWriteProblem(ticket.notes, draft, note.id) : null;
+  const runes = noteRunes(draft.trim());
+
+  function save(): void {
+    if (problem !== null) return;
+    const result = dispatchTicket(ticket.id, { type: 'note', op: 'update', noteId: note.id, text: draft });
+    // A refusal leaves the box open with the text in it.
+    if (result.ok) {
+      setEditing(false);
+      setRefusal(null);
+    } else {
+      setRefusal(noteRefusalText(t, result.reason));
+    }
+  }
+
+  const author =
+    note.author === 'person'
+      ? t('ticket.notes.byPerson')
+      : sourceName !== null
+        ? null
+        : t('ticket.notes.byAgent');
+
+  return (
+    <li className={`tkb-note is-${note.author}`}>
+      <div className="tkb-note-head">
+        <span className="tkb-note-author">
+          {author !== null ? (
+            author
+          ) : onOpenSource !== null ? (
+            <button
+              type="button"
+              className="tkb-note-source"
+              disabled={disabled}
+              aria-label={t('ticket.notes.openSource', { name: sourceName ?? '' })}
+              onClick={onOpenSource}
+            >
+              {t('ticket.notes.byAgentIn', { name: sourceName ?? '' })}
+            </button>
+          ) : (
+            t('ticket.notes.byAgentIn', { name: sourceName ?? '' })
+          )}
+        </span>
+        <span className="tkb-note-when">
+          {new Date(note.createdAtMs).toLocaleDateString()}
+          {note.updatedAtMs > note.createdAtMs ? ` · ${t('ticket.notes.edited')}` : ''}
+        </span>
+        {!editing ? (
+          <span className="tkb-note-tools">
+            <button
+              type="button"
+              className="tkb-note-tool"
+              disabled={disabled}
+              aria-label={t('ticket.notes.edit')}
+              title={t('ticket.notes.edit')}
+              onClick={() => {
+                setDraft(note.text);
+                setRefusal(null);
+                setEditing(true);
+              }}
+            >
+              <Pencil size={12} />
+            </button>
+            {/* Two presses, the card menu's delete rule: the first arms, a blur
+                disarms. */}
+            <button
+              type="button"
+              className={`tkb-note-tool${armed ? ' is-armed' : ''}`}
+              disabled={disabled}
+              aria-label={armed ? t('ticket.notes.deleteConfirm') : t('ticket.notes.delete')}
+              title={armed ? t('ticket.notes.deleteConfirm') : t('ticket.notes.delete')}
+              onBlur={() => setArmed(false)}
+              onClick={() => {
+                if (!armed) {
+                  setArmed(true);
+                  return;
+                }
+                setArmed(false);
+                const result = dispatchTicket(ticket.id, { type: 'note', op: 'remove', noteId: note.id });
+                if (!result.ok) setRefusal(noteRefusalText(t, result.reason));
+              }}
+            >
+              {armed ? <X size={12} /> : <Trash2 size={12} />}
+              {armed ? <span>{t('ticket.notes.deleteConfirm')}</span> : null}
+            </button>
+          </span>
+        ) : null}
+      </div>
+      {editing ? (
+        <div className="tkb-note-edit">
+          <textarea
+            ref={areaRef}
+            className="cfg-textarea tkb-note-input"
+            rows={3}
+            value={draft}
+            spellCheck={false}
+            aria-label={t('ticket.notes.editLabel')}
+            aria-invalid={problem !== null && problem !== 'empty_note'}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setRefusal(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                // The window's own Esc closes the board; this box is nearer.
+                e.preventDefault();
+                e.stopPropagation();
+                setEditing(false);
+                setRefusal(null);
+              } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                save();
+              }
+            }}
+          />
+          <div className="tkb-note-foot">
+            <span className={noteCounterClass(runes, TICKET_NOTE_TEXT_CEILING)}>
+              {t('ticket.notes.chars', { n: runes, max: TICKET_NOTE_TEXT_CEILING })}
+            </span>
+            <button
+              type="button"
+              className="btn btn-outline btn-compact"
+              onClick={() => {
+                setEditing(false);
+                setRefusal(null);
+              }}
+            >
+              {t('ticket.notes.cancel')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary btn-compact"
+              disabled={disabled || problem !== null}
+              onClick={save}
+            >
+              {t('ticket.notes.save')}
+            </button>
+          </div>
+          {problem !== null && problem !== 'empty_note' ? (
+            <p className="tkb-form-rule" role="alert">
+              {noteRefusalText(t, problem)}
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <p className="tkb-note-text">{note.text}</p>
+      )}
+      {refusal !== null ? (
+        <p className="tkb-form-rule" role="alert">
+          {refusal}
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * The expanded card's Notes section: the list (oldest first), an edit-in-place
+ * for each note, and the box to add one.
+ *
+ * Every write is the machine's `note` command; this component holds only the
+ * text being typed. A refusal is said next to the box it came from and the box
+ * stays open, so a note that was too long for the budget is shortened rather
+ * than retyped.
+ */
+function NotesSection({
+  ticket,
+  disabled,
+  onOpenSession,
+}: {
+  ticket: Ticket;
+  disabled: boolean;
+  onOpenSession: (ref: { sessionKey: string; sessionId: string }) => void;
+}) {
+  const t = useT();
+  const dispatchTicket = useApp((s) => s.dispatchTicket);
+  const [draft, setDraft] = useState('');
+  const [refusal, setRefusal] = useState<string | null>(null);
+  // How many sessions on the Ticket run a runtime that cannot read notes. A
+  // number, so the card repaints when one starts or stops and not per token.
+  const oldRuntimes = useApp((s) => {
+    let n = 0;
+    for (const session of presentSessions(currentAssignment(ticket))) {
+      const key = liveKeyOfSession(s, session);
+      const protocol = key === null ? 0 : (s.sessions[key]?.session?.protocol ?? 0);
+      if (protocol > 0 && protocol < TICKET_NOTES_MIN_PROTOCOL) n += 1;
+    }
+    return n;
+  });
+
+  const ordered = useMemo(() => notesByTime(ticket.notes), [ticket.notes]);
+  const problem = noteWriteProblem(ticket.notes, draft);
+  const runes = noteRunes(draft.trim());
+  const used = ticket.notes.reduce((sum, note) => sum + noteRunes(note.text), 0);
+
+  function add(): void {
+    if (problem !== null) return;
+    const result = dispatchTicket(ticket.id, {
+      type: 'note',
+      op: 'add',
+      text: draft,
+      noteIdMinted: newNoteId(),
+    });
+    if (result.ok) {
+      setDraft('');
+      setRefusal(null);
+    } else {
+      // Beside the box, which keeps its text.
+      setRefusal(noteRefusalText(t, result.reason));
+    }
+  }
+
+  return (
+    <section className="tkb-notes" id={`tkb-notes-${ticket.id}`} aria-label={t('ticket.notes.title')}>
+      <h4 className="tkb-notes-title">{t('ticket.notes.title')}</h4>
+      <p className="tkb-notes-hint">{t('ticket.notes.hint')}</p>
+      {oldRuntimes > 0 ? (
+        <p className="tkb-notes-old" title={t('ticket.notes.runtimeOldHint')}>
+          <AlertTriangle size={12} />
+          <span>{t('ticket.notes.runtimeOld')}</span>
+        </p>
+      ) : null}
+      {ordered.length === 0 ? (
+        <p className="tkb-notes-empty">{t('ticket.notes.empty')}</p>
+      ) : (
+        <ul className="tkb-notes-list">
+          {ordered.map((note) => {
+            const source = note.author === 'agent' ? noteSource(ticket, note.sessionId, t) : null;
+            return (
+              <NoteRow
+                key={note.id}
+                note={note}
+                ticket={ticket}
+                disabled={disabled}
+                sourceName={source?.name ?? null}
+                onOpenSource={
+                  source === null
+                    ? null
+                    : () =>
+                        onOpenSession({
+                          sessionKey: source.session.sessionKey,
+                          sessionId: source.session.sessionId,
+                        })
+                }
+              />
+            );
+          })}
+        </ul>
+      )}
+      <div className="tkb-note-add">
+        <textarea
+          className="cfg-textarea tkb-note-input"
+          rows={2}
+          value={draft}
+          spellCheck={false}
+          disabled={disabled}
+          aria-label={t('ticket.notes.addLabel')}
+          aria-invalid={problem !== null && problem !== 'empty_note' && draft.trim() !== ''}
+          placeholder={t('ticket.notes.placeholder')}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setRefusal(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              // Leave the box without losing the text, and without the
+              // window's own Esc closing the board.
+              e.preventDefault();
+              e.stopPropagation();
+              e.currentTarget.blur();
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <div className="tkb-note-foot">
+          <span className={noteCounterClass(runes, TICKET_NOTE_TEXT_CEILING)}>
+            {t('ticket.notes.chars', { n: runes, max: TICKET_NOTE_TEXT_CEILING })}
+          </span>
+          <span className={noteCounterClass(used + runes, TICKET_NOTES_TOTAL_CEILING)}>
+            {t('ticket.notes.total', { n: used + runes, max: TICKET_NOTES_TOTAL_CEILING })}
+          </span>
+          <span className="tkb-note-keys">{t('ticket.notes.addHint')}</span>
+          <button
+            type="button"
+            className="btn btn-primary btn-compact"
+            disabled={disabled || problem !== null}
+            onClick={add}
+          >
+            <Plus size={12} />
+            {t('ticket.notes.add')}
+          </button>
+        </div>
+        {problem !== null && problem !== 'empty_note' ? (
+          <p className="tkb-form-rule" role="alert">
+            {noteRefusalText(t, problem)}
+          </p>
+        ) : null}
+        {refusal !== null && refusal !== (problem === null ? null : noteRefusalText(t, problem)) ? (
+          <p className="tkb-form-rule" role="alert">
+            {refusal}
+          </p>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+/* ============================================================
    One card.
    ============================================================ */
 
@@ -1880,6 +2391,18 @@ function TicketCard({
   const [armed, setArmed] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
+  // Which present session the send-back goes to; '' = the most recently active
+  // (the machine's own default), so the box needs no state until the person
+  // chooses.
+  const [sendTarget, setSendTarget] = useState('');
+  // "Include the brief" on a new session: a per-press choice, never remembered.
+  const [newWithBrief, setNewWithBrief] = useState(false);
+  // The two-press confirmation of removing a session, by the row it armed.
+  const [removeArmed, setRemoveArmed] = useState<string | null>(null);
+  // Notes are drawn only when asked for: the collapsed card shows their count.
+  const [notesOpen, setNotesOpen] = useState(false);
+  const newTicketSession = useApp((s) => s.newTicketSession);
+  const removeTicketSession = useApp((s) => s.removeTicketSession);
 
   // A drop into Running came here to have something typed: open the box, and
   // tell the board it may forget the request so a later re-render does not
@@ -1957,16 +2480,20 @@ function TicketCard({
   const unreported = reviewCause(ticket) === 'unreported';
   const report = status === 'open' || unreported ? null : ticket.lastReport;
   const asks = report?.status === 'blocked' && (report.question ?? '') !== '';
-  const runs = ticket.assignments.length;
-  // Where it runs: the Assignment's own place when it has one (a Ticket made
-  // against "the workspace on screen" has no other fixed answer), the ref's
-  // otherwise.
+  const runs = presentSessionCount(assignment);
+  // The send-back box asks for a target only when there is a choice.
+  const askTarget = asksSendBackTarget(assignment);
+  const sessionRows = listedSessions(assignment);
+  const latest = mostRecentSessionOf(assignment);
+  // Where it runs: the newest session's own place when it has one (a Ticket
+  // made against "the workspace on screen" has no other fixed answer), the
+  // ref's otherwise.
   const where =
-    assignment === null
+    latest === null
       ? label
-      : assignment.executor.remoteWorkspaceId !== null
-        ? (remoteLabels.get(assignment.executor.remoteWorkspaceId) ?? assignment.executor.workspace ?? null)
-        : (assignment.executor.workspace ?? label);
+      : latest.remoteWorkspaceId !== null
+        ? (remoteLabels.get(latest.remoteWorkspaceId) ?? latest.workspace ?? null)
+        : (latest.workspace ?? label);
   const startBlocked = label === null;
   const placeMissing = status === 'open' ? startBlocked : live && !connected && !resumable && startBlocked;
   const oldRuntime = live && protocol !== null && protocol > 0 && protocol < TICKET_MIN_PROTOCOL;
@@ -1996,7 +2523,8 @@ function TicketCard({
         // and the card moves to Running by itself. A **drag** never leaves the
         // board either way, which is why that rule lives in `staysOnBoard`
         // rather than here (see `applyDrop`).
-        if (key !== null && !staysOnBoard('card', runNow)) closeBoard();        return key !== null;
+        if (key !== null && !staysOnBoard('card', runNow)) closeBoard();
+        return key !== null;
       }, 'ticket.problem.start'),
     restart: () =>
       run(async () => {
@@ -2004,15 +2532,28 @@ function TicketCard({
         if (key !== null) closeBoard();
         return key !== null;
       }, 'ticket.problem.start'),
-    open: () =>
+    open: (ref?: { sessionKey: string; sessionId: string }) =>
       run(async () => {
-        const key = await openTicketSession(ticket.id);
+        const key = await openTicketSession(ticket.id, ref);
         if (key !== null) closeBoard();
         return key !== null;
       }, 'ticket.problem.open'),
+    newSession: () =>
+      run(async () => {
+        const key = await newTicketSession(ticket.id, { withBrief: newWithBrief });
+        // The new conversation is where the person is going: with the brief
+        // parked in its box it is waiting to be read, and without it they asked
+        // for an empty conversation to talk in.
+        if (key !== null) closeBoard();
+        return key !== null;
+      }, 'ticket.problem.newSession'),
     sendBack: () =>
       run(async () => {
-        const result = await sendBackTicket(ticket.id, feedback);
+        const result = await sendBackTicket(
+          ticket.id,
+          feedback,
+          askTarget && sendTarget !== '' ? sendTarget : undefined,
+        );
         if (result.ok) {
           setFeedback('');
           setFeedbackOpen(false);
@@ -2053,8 +2594,9 @@ function TicketCard({
     brief: ticket.brief,
   });
   // A boolean, so the card repaints when a turn starts or ends and not per token.
-  const turnRunning = useApp((s) => selectTicketTurnRunning(s, liveKey));
-  const agentBusy = ticketAgentBusy({ status, live: connected, turnRunning });
+  // Any session on the Ticket counts: Accept waits for all of them.
+  const turnRunning = useApp((s) => selectTicketAnyTurnRunning(s, ticket));
+  const agentBusy = ticketAgentBusy({ status, live: connected || turnRunning, turnRunning });
 
   return (
     <>
@@ -2121,7 +2663,7 @@ function TicketCard({
           {runs > 0 ? (
             <span className="tkb-chip">
               <RotateCcw size={11} />
-              <span className="txt">{t('ticket.runCount', { n: runs })}</span>
+              <span className="txt">{runs === 1 ? t('ticket.runCountOne') : t('ticket.runCount', { n: runs })}</span>
             </span>
           ) : null}
           {ticket.model !== '' ? (
@@ -2141,6 +2683,25 @@ function TicketCard({
               <span className="txt">{t('ticket.attach.count', { n: attachmentsOf(ticket).length })}</span>
             </span>
           ) : null}
+          {/* The notes' count, and the way into them. A button, so it is reached
+              by keyboard; a press on a control never starts a drag. */}
+          <button
+            type="button"
+            className={`tkb-chip is-link tkb-notes-chip${notesOpen ? ' is-open' : ''}`}
+            aria-expanded={notesOpen}
+            aria-controls={`tkb-notes-${ticket.id}`}
+            title={t('ticket.notes.toggleHint')}
+            onClick={() => setNotesOpen(!notesOpen)}
+          >
+            <StickyNote size={11} />
+            <span className="txt">
+              {ticket.notes.length === 0
+                ? t('ticket.notes.countNone')
+                : ticket.notes.length === 1
+                  ? t('ticket.notes.countOne')
+                  : t('ticket.notes.count', { n: ticket.notes.length })}
+            </span>
+          </button>
           {ticket.origin.kind === 'source' ? (
             <span className="tkb-chip is-origin" title={t('ticket.inbox.originHint', { file: ticket.origin.file })}>
               <Inbox size={11} />
@@ -2255,8 +2816,82 @@ function TicketCard({
           </p>
         ) : null}
 
+        {/* The worker's conversations (design 3.7). Hidden while there is only
+            one and nothing was ever taken off: a card with a single session
+            reads exactly as it did before there were several. */}
+        {showsSessionList(assignment) ? (
+          <section className="tkb-sessions" aria-label={t('ticket.sessions.title')}>
+            <h4 className="tkb-sessions-title">{t('ticket.sessions.title')}</h4>
+            <ul className="tkb-sessions-list">
+              {sessionRows.map((session, index) => (
+                <SessionRow
+                  key={`${session.joinedAtMs}-${session.sessionKey}-${index}`}
+                  session={session}
+                  index={index}
+                  ticket={ticket}
+                  assignmentRef={assignment}
+                  remoteIds={remoteIds}
+                  latest={latest === session}
+                  disabled={cannotSessions}
+                  armed={removeArmed === `${session.joinedAtMs}:${session.sessionKey}`}
+                  onArm={(on) =>
+                    setRemoveArmed(on ? `${session.joinedAtMs}:${session.sessionKey}` : null)
+                  }
+                  onOpen={() => void act.open({ sessionKey: session.sessionKey, sessionId: session.sessionId })}
+                  onRemove={() => {
+                    setRemoveArmed(null);
+                    setProblem(null);
+                    const result = removeTicketSession(ticket.id, {
+                      sessionKey: session.sessionKey,
+                      sessionId: session.sessionId,
+                    });
+                    if (!result.ok) {
+                      setProblem(
+                        t(result.reason === 'last_session' ? 'ticket.problem.lastSession' : 'ticket.problem.refused'),
+                      );
+                    }
+                  }}
+                />
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {notesOpen ? (
+          <NotesSection
+            ticket={ticket}
+            disabled={locked}
+            onOpenSession={(ref) => void act.open(ref)}
+          />
+        ) : null}
+
         {feedbackOpen ? (
           <div className="tkb-sendback">
+            {/* Only when there is a choice: with one session on the Ticket the
+                box is what it always was. */}
+            {askTarget ? (
+              <label className="tkb-sendback-target">
+                <span>{t('ticket.sessions.sendBackTarget')}</span>
+                <select
+                  className="cfg-input"
+                  value={sendTarget}
+                  title={t('ticket.sessions.sendBackTargetHint')}
+                  onChange={(e) => setSendTarget(e.target.value)}
+                >
+                  <option value="">
+                    {t('ticket.sessions.latest')}
+                  </option>
+                  {sessionRows
+                    .map((session, index) => ({ session, index }))
+                    .filter(({ session }) => session.removedAtMs === null && session.sessionId !== '')
+                    .map(({ session, index }) => (
+                      <option key={session.sessionId} value={session.sessionId}>
+                        {sessionName(session, index, t)}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            ) : null}
             <textarea
               className="cfg-textarea tkb-sendback-text"
               rows={3}
@@ -2429,6 +3064,35 @@ function TicketCard({
               }
             })}
           </div>
+          {/* Another conversation on work already under way. A second verb on
+              the card rather than one of the state's primaries: it is there in
+              running, needs_you and review alike. "Include the brief" is a
+              per-press choice, so nothing is remembered. */}
+          {canNewSession(status) ? (
+            <div className="tkb-card-actions tkb-newsession">
+              <Tip label={t('ticket.sessions.newHint')}>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-compact"
+                  disabled={
+                    cannotSessions || !canBindBrief(ticket) || (newWithBrief && ticket.brief.trim() === '')
+                  }
+                  onClick={() => void act.newSession()}
+                >
+                  <Plus size={12} />
+                  {t('ticket.sessions.new')}
+                </button>
+              </Tip>
+              <label className="cfg-check tkb-newsession-brief" title={t('ticket.sessions.newWithBriefHint')}>
+                <input
+                  type="checkbox"
+                  checked={newWithBrief}
+                  onChange={(e) => setNewWithBrief(e.target.checked)}
+                />
+                <span>{t('ticket.sessions.newWithBrief')}</span>
+              </label>
+            </div>
+          ) : null}
         </div>
       </article>
 

@@ -113,6 +113,53 @@ fn write_at(path: &Path, text: &str) -> Result<(), String> {
     })
 }
 
+/// The name the schema-1 file is kept under before it is migrated to schema 2.
+const BACKUP_V1_NAME: &str = "tickets.json.v1.bak";
+
+/// Copy the record to `tickets.json.v1.bak`, atomically (temp file, then rename).
+///
+/// Called by the front end **before** it writes a migrated list, and the write
+/// only follows a successful return: the migration drops a record it cannot
+/// carry across, and without the original that record would be gone for good.
+///
+/// Only a schema-1 file is backed up. Any other schema is not what this backup
+/// is for (a schema-2 file needs no migration, and a newer one must not be
+/// touched), so it is refused rather than silently copied. An existing backup is
+/// replaced: it protects the file about to be overwritten, which is newer than
+/// whatever an earlier backup held. A missing file has nothing to protect.
+fn backup_v1_at(path: &Path) -> Result<(), String> {
+    let text = match read_at(path)? {
+        Some(text) => text,
+        None => return Ok(()),
+    };
+    match schema_of(&text) {
+        Some(1) => {}
+        other => {
+            return Err(format!(
+                "{} is not a schema 1 file (schema {:?}); it was not backed up",
+                path.display(),
+                other
+            ))
+        }
+    }
+    let dir = path
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
+    let target = dir.join(BACKUP_V1_NAME);
+    let tmp = dir.join(format!(".{BACKUP_V1_NAME}.{}.tmp", std::process::id()));
+    fs::write(&tmp, &text).map_err(|err| format!("{} could not be written: {err}", tmp.display()))?;
+    fs::rename(&tmp, &target).map_err(|err| {
+        let _ = fs::remove_file(&tmp);
+        format!("{} could not be replaced: {err}", target.display())
+    })
+}
+
+/// Back the schema-1 record up as `tickets.json.v1.bak`; see `backup_v1_at`.
+#[tauri::command]
+pub(crate) fn tickets_backup_v1() -> Result<(), String> {
+    backup_v1_at(&data_path()?)
+}
+
 /// Read the record as plain text; `None` when the file does not exist yet.
 #[tauri::command]
 pub(crate) fn tickets_read() -> Result<Option<String>, String> {
@@ -315,6 +362,63 @@ mod tests {
         let err = write_at(&s.file(), "{\"schema\":1,\"tickets\":[]}").unwrap_err();
         assert!(err.contains("newer version"), "{err}");
         assert_eq!(read_at(&s.file()).unwrap().as_deref(), Some(newer));
+    }
+
+    #[test]
+    fn schema_one_is_backed_up_byte_for_byte_before_it_is_replaced() {
+        let s = Scratch::new("backup");
+        let v1 = "{\"schema\":1,\"tickets\":[{\"id\":\"tk-1\"}]}";
+        write_at(&s.file(), v1).unwrap();
+        backup_v1_at(&s.file()).unwrap();
+        let bak = s.file().parent().unwrap().join(BACKUP_V1_NAME);
+        assert_eq!(fs::read_to_string(&bak).unwrap(), v1);
+        // The migrated file may now replace it, and the backup stays the original.
+        write_at(&s.file(), "{\"schema\":2,\"tickets\":[]}").unwrap();
+        assert_eq!(fs::read_to_string(&bak).unwrap(), v1);
+        // No temp file is left behind.
+        let leftovers: Vec<String> = fs::read_dir(bak.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn only_a_schema_one_file_is_backed_up_and_a_missing_one_is_a_no_op() {
+        let s = Scratch::new("backup-guard");
+        // Nothing to protect.
+        backup_v1_at(&s.file()).unwrap();
+        // A schema-2 file is not what the backup is for, and must not overwrite one.
+        write_at(&s.file(), "{\"schema\":2,\"tickets\":[]}").unwrap();
+        let err = backup_v1_at(&s.file()).unwrap_err();
+        assert!(err.contains("not a schema 1 file"), "{err}");
+        assert!(!s.file().parent().unwrap().join(BACKUP_V1_NAME).exists());
+    }
+
+    #[test]
+    fn a_second_backup_replaces_the_first_with_the_file_about_to_be_overwritten() {
+        let s = Scratch::new("backup-twice");
+        write_at(&s.file(), "{\"schema\":1,\"tickets\":[]}").unwrap();
+        backup_v1_at(&s.file()).unwrap();
+        write_at(&s.file(), "{\"schema\":1,\"tickets\":[{\"id\":\"tk-2\"}]}").unwrap();
+        backup_v1_at(&s.file()).unwrap();
+        let bak = s.file().parent().unwrap().join(BACKUP_V1_NAME);
+        assert!(fs::read_to_string(bak).unwrap().contains("tk-2"));
+    }
+
+    #[test]
+    fn an_older_build_cannot_write_a_filtered_list_over_a_schema_two_file() {
+        // What a schema-1 build would do on seeing schema 2: its store goes
+        // read-only (the front end's check), and even a stray write that got
+        // past that would be refused here, because it serialises `schema: 1`.
+        let s = Scratch::new("old-build");
+        let v2 = "{\"schema\":2,\"tickets\":[{\"schema\":2,\"id\":\"tk-1\"}]}";
+        write_at(&s.file(), v2).unwrap();
+        // The list an old build would hold after its guard dropped every record.
+        let err = write_at(&s.file(), "{\"schema\":1,\"tickets\":[]}").unwrap_err();
+        assert!(err.contains("newer version"), "{err}");
+        assert_eq!(read_at(&s.file()).unwrap().as_deref(), Some(v2));
     }
 
     #[test]

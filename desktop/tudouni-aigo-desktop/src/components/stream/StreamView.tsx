@@ -1,12 +1,13 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { ArrowDown, CornerDownLeft, Copy, Loader, MessageSquarePlus, Sparkles, Ticket } from 'lucide-react';
+import { AlertTriangle, ArrowDown, CornerDownLeft, Copy, Loader, MessageSquarePlus, Sparkles, Ticket } from 'lucide-react';
 import { AnnotatePopover } from './AnnotatePopover';
 import { NO_ENTRIES, selectModalVisible, useApp, useSessionField } from '@/state/store';
 import { insertAtCaret } from '@/runtime/paste';
 import { copyText } from '@/utils/clipboard';
 import { DeliverableCards } from './DeliverableCards';
 import { useT } from '@/i18n/useT';
+import { selectRemovedFromTicket } from '@/state/selectors/tickets';
 import { useFindInStream } from '@/find/useFindInStream';
 import { EntryView } from './EntryView';
 import { FindBar } from './FindBar';
@@ -99,6 +100,9 @@ export function StreamView() {
   // drawn, so switching conversations switching it is the point.
   const entries = useSessionField((rt) => rt.entries, NO_ENTRIES);
   const quiet = useSessionField((rt) => rt.quiet, 'off');
+  // A conversation that was taken off its Ticket: continuing here moves nothing
+  // on the Ticket (a primitive, so the stream does not repaint per token).
+  const removedFromTicket = useApp((s) => selectRemovedFromTicket(s, s.activeKey));
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -310,6 +314,13 @@ export function StreamView() {
           inside it would either take a lane of its own or overlap the text. One
           row of the column above it costs the transcript 32px and covers
           nothing. */}
+      {removedFromTicket ? (
+        <p className="stream-removed-banner" role="status">
+          <AlertTriangle size={12} aria-hidden="true" />
+          <span>{t('ticket.sessions.removedBanner')}</span>
+        </p>
+      ) : null}
+
       {find.open ? (
         <FindBar
           query={find.query}

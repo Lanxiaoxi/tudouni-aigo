@@ -21,8 +21,9 @@
  *   - **A record that fails `isValidTicket` is dropped whole** on load, never
  *     patched up.
  */
-import { isHosted, readTicketsFile, writeTicketsFile } from '@/runtime/tauri';
-import { TICKET_SCHEMA, isValidTicket, type Report, type Ticket, type TurnEnd } from './model';
+import { backupTicketsFileV1, isHosted, readTicketsFile, writeTicketsFile } from '@/runtime/tauri';
+import { TICKET_SCHEMA, isValidTicket, type NoteOpFact, type Report, type Ticket, type TurnEnd } from './model';
+import { migrateTicketV1 } from './migrate';
 import { apply, hasSeenReport, type TicketInput } from './machine';
 
 export interface LoadedTickets {
@@ -33,11 +34,14 @@ export interface LoadedTickets {
   problem: string | null;
   /** How many records failed the guard and were dropped. */
   dropped: number;
+  /** The schema the file was in when it had to be migrated up, else `null`.
+   *  The caller must back the original up and write the result back (`loadTickets`). */
+  migratedFrom: number | null;
 }
 
 /** What the file's text means, without touching the disk. */
 export function parseTicketFile(text: string | null): LoadedTickets {
-  if (text === null) return { tickets: [], readOnly: false, problem: null, dropped: 0 };
+  if (text === null) return { tickets: [], readOnly: false, problem: null, dropped: 0, migratedFrom: null };
 
   let parsed: unknown;
   try {
@@ -48,6 +52,7 @@ export function parseTicketFile(text: string | null): LoadedTickets {
       readOnly: true,
       problem: 'tickets.json is not valid JSON; it was left untouched',
       dropped: 0,
+      migratedFrom: null,
     };
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
@@ -56,6 +61,7 @@ export function parseTicketFile(text: string | null): LoadedTickets {
       readOnly: true,
       problem: 'tickets.json is not a Ticket file; it was left untouched',
       dropped: 0,
+      migratedFrom: null,
     };
   }
   const file = parsed as Record<string, unknown>;
@@ -66,14 +72,34 @@ export function parseTicketFile(text: string | null): LoadedTickets {
       readOnly: true,
       problem: 'tickets.json has no usable schema; it was left untouched',
       dropped: 0,
+      migratedFrom: null,
     };
   }
-  const newer = schema > TICKET_SCHEMA;
   const records = Array.isArray(file.tickets) ? file.tickets : [];
+  // **Newer than this build, at either level, is read-only.** The file-level
+  // number is the one a build older than the file checks first. The record-level
+  // check is the second half: a record whose own `schema` is newer than this
+  // build understands would fail `isValidTicket` and be dropped, and a writable
+  // store would then write the list back **without it** - exactly the loss the
+  // file-level number exists to prevent, reached through a file whose header
+  // lagged behind its records.
+  const newerRecord = records.some(
+    (record) =>
+      typeof record === 'object' &&
+      record !== null &&
+      typeof (record as { schema?: unknown }).schema === 'number' &&
+      (record as { schema: number }).schema > TICKET_SCHEMA,
+  );
+  const newer = schema > TICKET_SCHEMA || newerRecord;
+  // A schema-1 file is read by migrating each record up (design 5). A record
+  // that cannot be migrated is dropped whole and counted, like any other bad
+  // record; the original file is backed up before the result is ever written.
+  const migrating = schema < TICKET_SCHEMA;
   const tickets: Ticket[] = [];
   const seen = new Set<string>();
   let dropped = 0;
-  for (const record of records) {
+  for (const raw of records) {
+    const record = migrating ? migrateTicketV1(raw) : raw;
     // A duplicate id is a damaged file; keeping the first is as arbitrary as
     // any rule, and two Tickets answering to one id is worse.
     if (isValidTicket(record) && !seen.has(record.id)) {
@@ -90,6 +116,7 @@ export function parseTicketFile(text: string | null): LoadedTickets {
       ? `tickets.json was written by a newer version (schema ${schema}); it is read-only here`
       : null,
     dropped,
+    migratedFrom: migrating ? schema : null,
   };
 }
 
@@ -115,6 +142,35 @@ export function resetTicketStoreForTests(): void {
 }
 
 /**
+ * Make the migrated list the file, **after** the original is safe.
+ *
+ * Order is the whole point: the original is copied to `tickets.json.v1.bak`
+ * first, and only a successful copy lets the migrated list be written. If the
+ * copy fails the list stays in memory and the store goes read-only with the
+ * reason - a migration that cannot keep the original must not replace it, because
+ * a record the migration dropped would then be gone for good.
+ */
+async function persistMigration(loaded: LoadedTickets): Promise<LoadedTickets> {
+  try {
+    await backupTicketsFileV1();
+  } catch (err) {
+    return {
+      ...loaded,
+      readOnly: true,
+      problem: `tickets.json could not be backed up before its migration, so it was left untouched: ${String(err)}`,
+    };
+  }
+  try {
+    await writeTicketsFile(serializeTickets(loaded.tickets));
+  } catch (err) {
+    // The backup is there and the file is still the original; the list is
+    // usable in memory and the next change writes it again.
+    console.error('the migrated tickets could not be written:', err);
+  }
+  return loaded;
+}
+
+/**
  * Read the file once. Never rejects: an unreadable file comes back read-only
  * with the reason, so the caller has one shape to handle.
  */
@@ -129,9 +185,11 @@ export async function loadTickets(): Promise<LoadedTickets> {
       readOnly: true,
       problem: `tickets.json could not be read: ${String(err)}`,
       dropped: 0,
+      migratedFrom: null,
     };
   }
-  const loaded = parseTicketFile(text);
+  let loaded = parseTicketFile(text);
+  if (loaded.migratedFrom !== null && !loaded.readOnly) loaded = await persistMigration(loaded);
   fileReadOnly = loaded.readOnly;
   return loaded;
 }
@@ -181,12 +239,20 @@ export function ticketWritesSettled(): Promise<void> {
  * inside the machine — so running it on every open is free. Returns the same
  * object when nothing was new, so a caller can skip the write.
  */
-export function reconcile(ticket: Ticket, reports: Report[], turnEnds: TurnEnd[] = []): Ticket {
+export function reconcile(
+  ticket: Ticket,
+  reports: Report[],
+  turnEnds: TurnEnd[] = [],
+  noteOps: NoteOpFact[] = [],
+): Ticket {
   // Merged by time, not "reports then turn ends": "stopped without reporting,
   // then reported" and "reported blocked, then stopped" end in different
   // statuses, and replaying one list after the other would swap them. At the
   // same millisecond the report goes first, because a turn that made a report
   // never produces a turn end; the tie can only mean the report came first.
+  // Note writes join the same merge (protocol 22): they do not move a status,
+  // but ordering them by time keeps an add before its later update. At a tie
+  // they go last, so a report's session is judged before its notes.
   // `sort` is stable, so equal items keep the order the runtime gave them.
   const facts: Array<{ at: number; rank: number; fact: TicketInput }> = [
     ...reports.map((report) => ({
@@ -198,6 +264,11 @@ export function reconcile(ticket: Ticket, reports: Report[], turnEnds: TurnEnd[]
       at: turnEnd.atMs,
       rank: 1,
       fact: { type: 'turnEnded', at: turnEnd.atMs, turnEnd } as TicketInput,
+    })),
+    ...noteOps.map((op) => ({
+      at: op.atMs,
+      rank: 2,
+      fact: noteFact(op),
     })),
   ].sort((a, b) => a.at - b.at || a.rank - b.rank);
 
@@ -212,4 +283,18 @@ export function reconcile(ticket: Ticket, reports: Report[], turnEnds: TurnEnd[]
     if (result.ok) next = result.ticket;
   }
   return next;
+}
+
+/** A note write as the fact the machine takes. Shared by the live message and
+ *  reconcile, so the two cannot disagree about its shape. */
+export function noteFact(op: NoteOpFact): TicketInput {
+  return {
+    type: 'noted',
+    at: op.atMs,
+    opId: op.opId,
+    op: op.op,
+    noteId: op.noteId,
+    text: op.text,
+    sessionId: op.sessionId,
+  };
 }

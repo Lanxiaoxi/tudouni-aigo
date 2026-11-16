@@ -19,13 +19,18 @@ import { apply, type TicketInput } from '@/ticket/machine';
 import {
   attachmentsOf,
   emptyTicket,
+  isReservedAttachmentName,
   unbindableField,
+  type NoteOpFact,
   type Report,
   type Ticket,
   type TurnEnd,
 } from '@/ticket/model';
+import { rebindTicketNotes } from '../ticketBind';
 import { originOf, planScan, type InboxDrop } from '@/ticket/inbox';
-import { loadTickets, reconcile, saveTickets } from '@/ticket/store';
+import { makeT } from '@/i18n';
+import { baseName } from '@/utils/format';
+import { loadTickets, noteFact, reconcile, saveTickets } from '@/ticket/store';
 import {
   archiveInboxFile,
   importTicketAttachments,
@@ -56,6 +61,7 @@ export function ticketsSlice(ctx: StoreContext): Pick<
   | 'clearFinishedTickets'
   | 'ingestTicketReport'
   | 'ingestTicketTurnEnd'
+  | 'ingestTicketNote'
   | 'reconcileTicket'
   | 'scanTicketInbox'
 > {
@@ -96,6 +102,11 @@ export function ticketsSlice(ctx: StoreContext): Pick<
     const result = produce(current);
     if (!result.ok || result.ticket === current) return result;
     commitList(get().tickets.map((row) => (row.id === id ? result.ticket : row)));
+    // The canonical notes moved (a person's command, an agent's accepted fact,
+    // a reconcile): every live session on the Ticket holds a copy that is now
+    // behind. Compared by identity - the machine keeps the array when nothing
+    // changed - so an ordinary status change sends nothing.
+    if (result.ticket.notes !== current.notes) rebindTicketNotes(ctx, result.ticket);
     return result;
   }
 
@@ -158,12 +169,25 @@ export function ticketsSlice(ctx: StoreContext): Pick<
       });
     },
 
-    async addTicketAttachments(id, localPaths) {
+    async addTicketAttachments(id, pickedPaths) {
       const failed: { path: string; error: string }[] = [];
       const current = get().tickets.find((row) => row.id === id);
-      if (current === undefined || blocked() !== null || localPaths.length === 0) {
-        return { added: [], failed: localPaths.map((path) => ({ path, error: 'the Ticket cannot be changed now' })) };
+      if (current === undefined || blocked() !== null || pickedPaths.length === 0) {
+        return { added: [], failed: pickedPaths.map((path) => ({ path, error: 'the Ticket cannot be changed now' })) };
       }
+      // rief.md is the name the full brief is staged under (design 3.6). A file
+      // called that is refused here, before any bytes are copied, with a sentence
+      // that says what to do; the Rust door and the machine refuse it too.
+      const localPaths: string[] = [];
+      for (const path of pickedPaths) {
+        const name = baseName(path) || path;
+        if (isReservedAttachmentName(name)) {
+          failed.push({ path, error: makeT()('ticket.attach.reserved', { name }) });
+        } else {
+          localPaths.push(path);
+        }
+      }
+      if (localPaths.length === 0) return { added: [], failed };
       // **Bytes first, record second.** The record names only what landed, so a
       // refused file never shows up as an attachment the agent will be promised.
       let outcomes;
@@ -262,8 +286,24 @@ export function ticketsSlice(ctx: StoreContext): Pick<
       );
     },
 
-    reconcileTicket(ticketId: string, reports: Report[], turnEnds: TurnEnd[] = []) {
-      return update(ticketId, (ticket) => ({ ok: true, ticket: reconcile(ticket, reports, turnEnds) }));
+    ingestTicketNote(ticketId: string, op: NoteOpFact) {
+      // The call's own time, for the same reason as a report's.
+      const result = update(ticketId, (ticket) => apply(ticket, noteFact(op)));
+      // An op the machine could not apply because the list could not take it
+      // (a person wrote at the same moment) leaves the runtime's copy ahead of
+      // the canonical one, and `update` saw no change to repair. Send the list
+      // anyway: the runtime's copy is replaced wholesale.
+      if (result.ok) {
+        const last = result.ticket.events[result.ticket.events.length - 1];
+        if (last?.type === 'noted' && last.data?.opId === op.opId && last.data?.skipped === 'limit') {
+          rebindTicketNotes(ctx, result.ticket);
+        }
+      }
+      return result;
+    },
+
+    reconcileTicket(ticketId: string, reports: Report[], turnEnds: TurnEnd[] = [], noteOps: NoteOpFact[] = []) {
+      return update(ticketId, (ticket) => ({ ok: true, ticket: reconcile(ticket, reports, turnEnds, noteOps) }));
     },
 
     async scanTicketInbox() {

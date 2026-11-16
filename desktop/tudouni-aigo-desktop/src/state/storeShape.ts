@@ -17,7 +17,7 @@ import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type La
 import type { RemoteConfigTarget } from '@/runtime/tauri';
 
 import type { TicketInputDraft, TicketPatch, TicketRefusal } from '@/ticket/machine';
-import type { Report, Ticket, TurnEnd } from '@/ticket/model';
+import type { NoteOpFact, Report, Ticket, TurnEnd } from '@/ticket/model';
 import type { TicketStartMemory } from '@/ticket/view';
 import type { TaskWorkspaceRef } from '@/task/tasks';
 
@@ -914,9 +914,19 @@ export interface AppStore {
   ingestTicketReport(ticketId: string, report: Report): TicketDispatchResult;
   /** Fold one `ui(ticket_turn_end)` into its Ticket (a `turnEnded` fact). */
   ingestTicketTurnEnd(ticketId: string, turnEnd: TurnEnd): TicketDispatchResult;
-  /** Fold the reports and turn ends a reopened session brought back (`init`),
-   *  merged by time and skipping the ones already seen. Idempotent. */
-  reconcileTicket(ticketId: string, reports: Report[], turnEnds?: TurnEnd[]): TicketDispatchResult;
+  /** Fold one `ui(ticket_note)` into its Ticket (a `noted` fact). When the
+   *  canonical notes change, every live session on the Ticket is re-bound with
+   *  them. */
+  ingestTicketNote(ticketId: string, op: NoteOpFact): TicketDispatchResult;
+  /** Fold the reports, turn ends and note writes a reopened session brought
+   *  back (`init`), merged by time and skipping the ones already seen.
+   *  Idempotent. */
+  reconcileTicket(
+    ticketId: string,
+    reports: Report[],
+    turnEnds?: TurnEnd[],
+    noteOps?: NoteOpFact[],
+  ): TicketDispatchResult;
   /**
    * Drain `~/.tudouni/tickets/inbox/`: every dropped file becomes an **open**
    * Ticket and moves to `processed/`.
@@ -942,19 +952,35 @@ export interface AppStore {
    * session layer cannot tell the two apart, so it does not try.
    */
   startTicket(id: string, opts?: { runNow?: boolean }): Promise<string | null>;
-  /** "Open session" / "Continue": focus the Assignment's session when it is
-   *  alive, otherwise resume it from its saved id **on the machine it ran on**.
-   *  Resolves to the key now showing it, or `null`. Resuming moves no status. */
-  openTicketSession(id: string): Promise<string | null>;
+  /**
+   * A new conversation on a Ticket that is already under way (running,
+   * needs_you, review): opens a session beside the existing ones, adds it to the
+   * worker and binds it. From `review` the Ticket goes back to `running`.
+   * `withBrief` parks the brief in the new session's input; by default nothing
+   * is pre-filled. Resolves to the session key, or `null` when nothing was
+   * opened.
+   */
+  newTicketSession(id: string, opts?: { withBrief?: boolean }): Promise<string | null>;
+  /** Take one session off a Ticket (the last one is refused, `last_session`),
+   *  and unbind it when its child is alive. */
+  removeTicketSession(id: string, ref: { sessionKey: string; sessionId: string }): TicketDispatchResult;
+  /** "Open session" / "Continue": focus a session of the Ticket when it is
+   *  alive (default: the most recently active one on it), otherwise resume it
+   *  from its saved id **on the machine it ran on**. Any session of the Ticket's
+   *  history may be named, removed ones included, to read them back. Resolves to
+   *  the key now showing it, or `null`. Resuming moves no status. */
+  openTicketSession(id: string, ref?: { sessionKey: string; sessionId: string }): Promise<string | null>;
   /** Accept a Ticket in review (`done`), and unbind a session still attached. */
   acceptTicket(id: string): TicketDispatchResult;
   /** Drop a non-terminal Ticket, and unbind a session still attached. */
   dropTicket(id: string): TicketDispatchResult;
-  /** Send a reviewed Ticket back with feedback: the feedback goes to the
-   *  original session (resumed first if closed); a session that cannot be
-   *  resumed is replaced by a new one that gets the feedback and the brief. */
-  sendBackTicket(id: string, feedback: string): Promise<TicketDispatchResult>;
-  /** `needs_you` → "start over": same as `startTicket`, a fresh session. */
+  /** Send a reviewed Ticket back with feedback: the feedback goes to one
+   *  session on it (`sessionId`, default the most recently active; resumed first
+   *  if closed); a session that cannot be resumed is replaced by a new one that
+   *  gets the feedback and the brief. */
+  sendBackTicket(id: string, feedback: string, sessionId?: string): Promise<TicketDispatchResult>;
+  /** `needs_you` → "start over": a fresh session with the brief, and every other
+   *  session taken off the Ticket. */
   restartTicket(id: string): Promise<string | null>;
   /** Delete a Ticket's record, and unbind a session still attached to it
    *  (`deleteTicket` leaves that to the caller). */

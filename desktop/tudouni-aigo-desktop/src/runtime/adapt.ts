@@ -46,10 +46,12 @@ import type {
   UiStateMsg,
   UiStatusMsg,
   UiTicketReportMsg,
+  TicketBindAttachment,
+  UiTicketNoteMsg,
   UiTicketTurnEndMsg,
   UiToolsMsg,
 } from '@/protocol/types';
-import type { Report, TurnEnd } from '@/ticket/model';
+import type { NoteOpFact, Report, TurnEnd } from '@/ticket/model';
 
 /* ============================================================
    The status bar's coarse phase
@@ -797,6 +799,11 @@ export interface VmInitTicket {
   reports: Report[];
   /** Always an array; `[]` from a runtime that predates protocol 21. */
   turnEnds: TurnEnd[];
+  /** Always an array; `[]` from a runtime that predates protocol 22. */
+  noteOps: NoteOpFact[];
+  /** The attachments the runtime holds for the binding (protocol 19); `[]`
+   *  before that. A re-bind replays them (`ticketBind.ts`). */
+  attachments: TicketBindAttachment[];
 }
 
 /** One report from `init.ticket.reports`, or `null` when it is malformed.
@@ -860,6 +867,36 @@ export function projectTicketTurnEnd(
   return turnEnd === null ? null : { ticketId, turnEnd };
 }
 
+/** One note write, from `ui(ticket_note)` or `init.ticket.note_ops` (which
+ *  carries no session id: it is the session's own record), or `null` when
+ *  malformed. A half-formed one is dropped rather than guessed at. */
+function projectNoteOp(raw: unknown, sessionId: string): NoteOpFact | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const opId = str(r.op_id);
+  const noteId = str(r.note_id);
+  if (opId === '' || noteId === '') return null;
+  if (r.op !== 'add' && r.op !== 'update' && r.op !== 'remove') return null;
+  const atMs = num(r.at_ms);
+  if (atMs === null) return null;
+  return {
+    opId,
+    op: r.op,
+    noteId,
+    text: typeof r.text === 'string' ? r.text : null,
+    sessionId,
+    atMs,
+  };
+}
+
+/** `ui(ticket_note)`, projected. `null` when it cannot name a Ticket and an op. */
+export function projectTicketNote(msg: UiTicketNoteMsg): { ticketId: string; op: NoteOpFact } | null {
+  const ticketId = str(msg.ticket_id);
+  if (ticketId === '') return null;
+  const op = projectNoteOp(msg, str(msg.session_id));
+  return op === null ? null : { ticketId, op };
+}
+
 function projectInitTicket(raw: InitMsg['ticket'], sessionId: string): VmInitTicket | null {
   if (raw === null || raw === undefined || typeof raw !== 'object') return null;
   const id = str(raw.id);
@@ -875,7 +912,20 @@ function projectInitTicket(raw: InitMsg['ticket'], sessionId: string): VmInitTic
     const turnEnd = projectTurnEnd(item, sessionId);
     if (turnEnd !== null) turnEnds.push(turnEnd);
   }
-  return { id, title: str(raw.title), brief: str(raw.brief), reports, turnEnds };
+  // Likewise below protocol 22: no key reads as no note writes.
+  const noteOps: NoteOpFact[] = [];
+  for (const item of Array.isArray(raw.note_ops) ? raw.note_ops : []) {
+    const op = projectNoteOp(item, sessionId);
+    if (op !== null) noteOps.push(op);
+  }
+  const attachments: TicketBindAttachment[] = [];
+  for (const item of Array.isArray(raw.attachments) ? raw.attachments : []) {
+    const name = str(item?.name);
+    const path = str(item?.path);
+    const bytes = num(item?.bytes);
+    if (name !== '' && path !== '' && bytes !== null) attachments.push({ name, path, bytes });
+  }
+  return { id, title: str(raw.title), brief: str(raw.brief), reports, turnEnds, noteOps, attachments };
 }
 
 export function projectInit(msg: InitMsg): VmInit {

@@ -16,7 +16,7 @@ import {
 } from '@/runtime/notify';
 import { selectTicketNotifyKey } from '@/state/selectors/tickets';
 import type { TicketStatus } from '@/ticket/model';
-import { currentAssignment } from '@/ticket/machine';
+import { mostRecentSession } from '@/ticket/machine';
 import { makeT } from '@/i18n';
 import type { RowStatus } from '@/state/store';
 
@@ -227,9 +227,8 @@ async function deliverTicket(reason: TicketNotifyReason, row: TicketNotifyRow): 
   const ticket = s.tickets.find((item) => item.id === row.ticketId);
   if (ticket === undefined) return;
   const bucket = row.key !== '' ? s.sessions[row.key] : undefined;
-  const assignment = currentAssignment(ticket);
-  const workspace =
-    bucket?.session?.workspace ?? bucket?.workspace ?? assignment?.executor.workspace ?? '';
+  const session = mostRecentSession(ticket);
+  const workspace = bucket?.session?.workspace ?? bucket?.workspace ?? session?.workspace ?? '';
   await sendNotification(ticketNotifyContent(makeT(), reason, ticket), {
     key: row.key,
     sessionId: row.sessionId,

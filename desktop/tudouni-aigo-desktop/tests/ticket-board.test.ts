@@ -25,7 +25,7 @@ import { conversationView, showsComposer, type ConversationViewInput } from '@/c
 import { createSessionBucket, useApp, type SessionRuntime } from '@/state/store';
 import { registerRuntime, unregisterRuntime } from '@/runtime/bus';
 import { landTicketUnreachable } from '@/state/ticketLanding';
-import { apply, currentAssignment, type TicketInput } from '@/ticket/machine';
+import { apply, currentAssignment, type TicketInput, mostRecentSession } from '@/ticket/machine';
 import {
   TICKET_BRIEF_CEILING,
   TICKET_TITLE_CEILING,
@@ -212,7 +212,7 @@ function ticketAt(
     workspace: executor.remoteWorkspaceId ? ENTRY.remotePath : 'C:/work',
   });
   const sid = executor.sessionId ?? 'S1';
-  if (sid !== '') run({ type: 'assignmentStarted', at: 2_001, sessionKey: executor.sessionKey ?? 'k-active', sessionId: sid });
+  if (sid !== '') run({ type: 'sessionStarted', at: 2_001, sessionKey: executor.sessionKey ?? 'k-active', sessionId: sid });
   if (status === 'review') run({ type: 'reported', at: 3_000, report: REPORT({ sessionId: sid }) });
   if (status === 'needs_you') {
     run({
@@ -339,7 +339,7 @@ test('the buttons follow the status, and "Continue" is only the wording of "Open
 test('a lost connection reads as "disconnected", a blocked report as a question, a crash as a crash', () => {
   const started = ticketAt('running');
   const exit = (reason: 'disconnected' | 'crashed'): Ticket => {
-    const r = apply(started, { type: 'assignmentExited', at: 4_000, sessionKey: 'k-active', sessionId: 'S1', requested: false, reason });
+    const r = apply(started, { type: 'sessionExited', midTurn: true, at: 4_000, sessionKey: 'k-active', sessionId: 'S1', requested: false, reason });
     if (!r.ok) throw new Error(r.reason);
     return r.ticket;
   };
@@ -445,9 +445,9 @@ test('a default start opens a new session, binds it before the model, and only p
 
   let ticket = useApp.getState().tickets[0];
   assert.equal(ticket.status, 'running');
-  assert.equal(currentAssignment(ticket)?.executor.sessionKey, key);
-  assert.equal(currentAssignment(ticket)?.executor.workspace, 'C:/work', 'where it ran is recorded for Continue');
-  assert.equal(currentAssignment(ticket)?.executor.remoteWorkspaceId, null);
+  assert.equal(mostRecentSession(ticket)?.sessionKey, key);
+  assert.equal(mostRecentSession(ticket)?.workspace, 'C:/work', 'where it ran is recorded for Continue');
+  assert.equal(mostRecentSession(ticket)?.remoteWorkspaceId, null);
 
   const out = capture(key);
   handshake(key, 18, 'S-new');
@@ -463,7 +463,7 @@ test('a default start opens a new session, binds it before the model, and only p
   assert.equal(useApp.getState().sessions[key]?.hasSpoken, false);
 
   ticket = useApp.getState().tickets[0];
-  assert.equal(currentAssignment(ticket)?.executor.sessionId, 'S-new', 'init\u2019s id is written back');
+  assert.equal(mostRecentSession(ticket)?.sessionId, 'S-new', 'init\u2019s id is written back');
   unregisterRuntime(key);
 });
 
@@ -533,7 +533,7 @@ test('a double press opens one session, not two', async () => {
   assert.equal(localCalls.length, 1);
 });
 
-test('starting over a blocked Ticket supersedes the old Assignment and unbinds its live session', async () => {
+test('starting over a blocked Ticket takes the old session off the worker and unbinds it', async () => {
   screen(18, 'S1');
   const old = capture('k-active');
   const t = ticketAt('needs_you');
@@ -543,8 +543,11 @@ test('starting over a blocked Ticket supersedes the old Assignment and unbinds i
   assert.ok(key);
   const ticket = useApp.getState().tickets[0];
   assert.equal(ticket.status, 'running');
-  assert.equal(ticket.assignments.length, 2);
-  assert.equal(ticket.assignments[0].end, 'superseded');
+  assert.equal(ticket.assignments.length, 1, 'the same worker: swapping a session is not a new Assignment');
+  const sessions = currentAssignment(ticket)?.executor.sessions ?? [];
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions[0].removed, 'restart');
+  assert.equal(sessions[1].removedAtMs, null);
   assert.deepEqual(old.map((m) => m.t), ['ticket_bind']);
   assert.equal(old[0].ticket, null, 'the old session no longer reports to this Ticket');
   unregisterRuntime('k-active');
@@ -653,9 +656,10 @@ test('send back whose session cannot be resumed starts a replacement and pre-fil
   assert.equal(result.ok, true);
   const ticket = useApp.getState().tickets[0];
   assert.equal(ticket.status, 'running');
-  assert.equal(ticket.assignments.length, 2);
-  assert.equal(ticket.assignments[0].end, 'restore_failed');
-  assert.equal(ticket.assignments[1].end, null);
+  assert.equal(ticket.assignments.length, 1, 'the worker stays; only its session was replaced');
+  const sessions = currentAssignment(ticket)?.executor.sessions ?? [];
+  assert.equal(sessions[0].removed, 'restore_failed');
+  assert.equal(sessions[1].removedAtMs, null);
 
   const key = useApp.getState().activeKey as string;
   const out = capture(key);
@@ -747,7 +751,12 @@ test('a start whose session never handshakes moves the Ticket to needs_you with 
 
   await until('the Ticket to move', () => useApp.getState().tickets[0].status === 'needs_you');
   const after = useApp.getState().tickets[0];
-  assert.equal(currentAssignment(after)?.executor.sessionId, '', 'nothing taught it an id');
+  // The session that never answered is taken off the Ticket (and nothing else
+  // on it ever had an id), which is what makes the Ticket need the person.
+  const never = currentAssignment(after)?.executor.sessions[0];
+  assert.equal(never?.sessionId, '', 'nothing taught it an id');
+  assert.equal(never?.removed, 'unreachable');
+  assert.equal(mostRecentSession(after), null, 'nobody is on it any more');
   assert.deepEqual(ticketActions(after.status, false), ['continue', 'restart'], 'Start over is offered');
   assert.equal(needsYouCause(after), 'unreachable', 'and the card says why, not "crashed"');
   assert.equal(after.assignments.length, 1, 'the Assignment is not ended: a report or a close is an event');

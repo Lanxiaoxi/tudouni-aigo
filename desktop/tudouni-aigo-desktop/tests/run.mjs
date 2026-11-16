@@ -425,7 +425,17 @@ const SUITES = [
   // — read-only on a newer schema, ordered writes, idempotent reconcile, and no
   // mutation before the file has been read. Every failure is silent in a window.
   'ticket-machine.test.ts',
+  // Behaviour the Worker redesign (schema 2) must keep: written against `apply`
+  // plus a small helper layer, so the model change touches the helpers only.
+  'ticket-baseline.test.ts',
+  'ticket-worker.test.ts',
   'ticket-store.test.ts',
+  // Ticket notes, the desktop half (docs/design/ticket-notes.md §4, §7): the person's
+  // `note` command and the agent's `noted` fact (ceilings, who may touch whose
+  // note, idempotence by op id), ui(ticket_note) and the mixed reconcile, and the
+  // bind on the wire: snake_case, notes only from protocol 22, and a re-bind to
+  // every live present session whenever the canonical list changes.
+  'ticket-notes.test.ts',
   // The ticket inbox (docs/design/ticket.md §6.7): front matter, the idempotence
   // key, and the guard accepting what a drop writes. The drain half — that a
   // drop lands as OPEN, that a redelivered thread yields one Ticket, and that a

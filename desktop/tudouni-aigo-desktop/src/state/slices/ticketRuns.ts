@@ -7,6 +7,12 @@
  * opens or finds a session first and only then hands the machine the fact
  * (`start` once a bucket exists, so a failed open leaves the Ticket untouched).
  *
+ * A Ticket's worker owns several sessions (`docs/design/ticket-notes.md` 3):
+ * `newTicketSession` adds one, `restartTicket` adds one and takes the others
+ * off, `removeTicketSession` takes one off. Every session on the Ticket is bound
+ * to it; one taken off is unbound (`ticket_bind null`) when its child is alive,
+ * and when it is not, `landTicketInit` clears the binding the next time it opens.
+ *
  * The open itself is `openNewSession` (`sessionRun.ts`), the same code a
  * template's Run uses, so the "only a bucket this open created counts" rule is
  * one rule.
@@ -17,22 +23,34 @@
  */
 import type { StoreContext } from '../storeContext';
 import type { AppStore, TicketDispatchResult } from '../storeShape';
-import { currentAssignment } from '@/ticket/machine';
+import {
+  currentAssignment,
+  isBindable,
+  mostRecentSession,
+  presentSessions,
+  sessionOwns,
+  type SessionRef,
+} from '@/ticket/machine';
 import {
   attachmentsOf,
+  briefExceedsTail,
+  isReservedAttachmentName,
   newAssignmentId,
+  TICKET_ATTACHMENTS_MAX,
   TICKET_ATTACHMENTS_MIN_PROTOCOL,
-  TICKET_MIN_PROTOCOL,
   ticketTitle,
   type Assignment,
   type Ticket,
+  type WorkerSession,
 } from '@/ticket/model';
+import type { TaskWorkspaceRef } from '@/task/tasks';
 import { attachmentLines } from '@/ticket/attachments';
 import { sendTo } from '@/runtime/bus';
 import { stageTicketAttachments, type StagedTicketAttachment } from '@/runtime/tauri';
 import { nextId } from '@/state/entries';
-import { liveKeyOfAssignment, selectTicketTurnRunning } from '../selectors/tickets';
+import { liveKeyOfSession, selectTicketAnyTurnRunning } from '../selectors/tickets';
 import { landTicketUnreachable } from '../ticketLanding';
+import { bindTicket } from '../ticketBind';
 import {
   claimNewSession,
   openNewSession,
@@ -41,9 +59,20 @@ import {
   waitForReady,
 } from '../sessionRun';
 
+/** What a freshly opened session is given once it is ready and bound. */
+type OpenMode =
+  /** The brief is sent now, with autopilot on ("run now"). */
+  | 'run_now'
+  /** The brief waits in the composer for the person to read and add to. */
+  | 'brief'
+  /** Nothing: a new conversation on work already under way. */
+  | 'none';
+
 export function ticketRunsSlice(ctx: StoreContext): Pick<
   AppStore,
   | 'startTicket'
+  | 'newTicketSession'
+  | 'removeTicketSession'
   | 'openTicketSession'
   | 'acceptTicket'
   | 'dropTicket'
@@ -55,7 +84,7 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
 
   /** Tickets with a session action in flight. A double press on Start would
    *  otherwise open two sessions for one Ticket, and the second `start` would
-   *  supersede the first for nothing. */
+   *  be refused after its session was already open. */
   const inFlight = new Set<string>();
 
   const find = (id: string): Ticket | undefined => get().tickets.find((row) => row.id === id);
@@ -76,23 +105,9 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
    *  the key, so for it the paths go into the first message instead
    *  (`briefWith`). */
   function bind(key: string, ticket: Ticket | null, staged: StagedTicketAttachment[] = []): void {
-    const protocol = get().sessions[key]?.session?.protocol ?? 0;
-    if (protocol < TICKET_MIN_PROTOCOL) return;
-    sendTo(key, {
-      v: 1,
-      t: 'ticket_bind',
-      ticket:
-        ticket === null
-          ? null
-          : {
-              id: ticket.id,
-              title: ticketTitle(ticket),
-              brief: ticket.brief,
-              ...(protocol >= TICKET_ATTACHMENTS_MIN_PROTOCOL && staged.length > 0
-                ? { attachments: staged.map(({ name, path, bytes }) => ({ name, path, bytes })) }
-                : {}),
-            },
-    });
+    // One builder for every bind (`ticketBind.ts`), so a later re-bind for
+    // changed notes replays exactly what this one sent.
+    bindTicket(ctx, key, ticket, staged);
   }
 
   /**
@@ -100,12 +115,23 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
    * bind (which names their paths). A failure is said in that session's
    * transcript and the session is bound without them: starting the work with
    * the person told is better than refusing a Start over a missing log.
+   *
+   * **A brief the runtime's tail would cut is staged whole as `brief.md`, every
+   * time a session is opened** (design 3.6): a session that is not handed the
+   * brief as its first message (a plain "new session") has nowhere else to read
+   * the rest. It is skipped when the Ticket already carries as many files as one
+   * bind may name, because one more would make the runtime refuse the whole bind.
    */
   async function stage(key: string, ticket: Ticket): Promise<StagedTicketAttachment[]> {
-    const names = attachmentsOf(ticket).map((item) => item.name);
-    if (names.length === 0) return [];
+    // A record from before the name was reserved may carry a person's file under
+    // it; it must not be staged on top of the brief (the Rust door refuses too).
+    const names = attachmentsOf(ticket)
+      .map((item) => item.name)
+      .filter((name) => !isReservedAttachmentName(name));
+    const wholeBrief = briefExceedsTail(ticket.brief) && names.length < TICKET_ATTACHMENTS_MAX;
+    if (names.length === 0 && !wholeBrief) return [];
     try {
-      return await stageTicketAttachments(key, ticket.id, names);
+      return await stageTicketAttachments(key, ticket.id, names, wholeBrief ? ticket.brief : null);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       patchWith(key, (bucket) => ({
@@ -133,30 +159,32 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
     return `${ticket.brief}\n\n${attachmentLines(staged)}`;
   }
 
-  /** Unbind the session an Assignment ran in, when that child is still alive.
-   *  A closed session cannot hear it; the next open reconciles instead. */
+  /** Unbind every session of a worker that is still on the Ticket and whose
+   *  child is alive. A closed session cannot hear it; the next open reconciles
+   *  instead (`landTicketInit`). */
   function unbindLive(assignment: Assignment | null): void {
-    const key = liveKeyOfAssignment(get(), assignment);
-    if (key !== null) bind(key, null);
+    for (const session of presentSessions(assignment)) {
+      const key = liveKeyOfSession(get(), session);
+      if (key !== null) bind(key, null);
+    }
   }
 
-  /** Give the Assignment its session id (and, after a resume, its new key) once
-   *  `init` has named it. Idempotent in the machine. */
+  /** Give the worker's session its session id (and, after a resume, its new key)
+   *  once `init` has named it. Idempotent in the machine. */
   function backfill(key: string, ticketId: string): void {
     const sessionId = get().sessions[key]?.sessionId ?? '';
     if (sessionId === '') return;
-    get().dispatchTicket(ticketId, { type: 'assignmentStarted', sessionKey: key, sessionId });
+    get().dispatchTicket(ticketId, { type: 'sessionStarted', sessionKey: key, sessionId });
   }
 
   /**
-   * Resume an Assignment's own session **where it ran**, not where the screen
-   * is: a remote Assignment goes to its remote workspace, a local one to the
-   * directory recorded on the Assignment. Resolves to the new bucket's key, or
-   * `null` when it could not be reopened (no saved id, the workspace is gone,
-   * the open was refused).
+   * Resume a worker session **where it ran**, not where the screen is: a remote
+   * one goes to its remote workspace, a local one to the directory recorded on
+   * it. Resolves to the new bucket's key, or `null` when it could not be
+   * reopened (no saved id, the workspace is gone, the open was refused).
    */
-  async function resume(assignment: Assignment, ticket: Ticket): Promise<string | null> {
-    const { sessionId, remoteWorkspaceId } = assignment.executor;
+  async function resume(session: WorkerSession, ticket: Ticket): Promise<string | null> {
+    const { sessionId, remoteWorkspaceId } = session;
     if (sessionId === '') return null;
     const s = get();
 
@@ -175,31 +203,31 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
       opened = get().connectRemoteWorkspace(remoteWorkspaceId, { forceNew: true, sessionId });
     } else {
       const workspace =
-        assignment.executor.workspace ??
-        (ticket.workspace.kind === 'local' ? ticket.workspace.path : '');
+        session.workspace ?? (ticket.workspace.kind === 'local' ? ticket.workspace.path : '');
       if (workspace === '') return null;
       opened = get().attachSession({ workspace, sessionId });
     }
     const key = await claimNewSession(ctx, previous, opened);
     if (key === null) return null;
-    // Resuming moves no status (invariant 7); it only teaches the Assignment
-    // its new key once the child is up.
+    // Resuming moves no status (invariant 7); it only teaches the worker its
+    // session's new key once the child is up.
     void (async () => {
       if ((await waitForReady(ctx, key)) === 'ready') backfill(key, ticket.id);
     })();
     return key;
   }
 
-  /** The tail of a start: everything that needs the child to be ready. */
-  async function deliverStart(key: string, ticket: Ticket, runNow: boolean): Promise<void> {
+  /** The tail of opening a session for a Ticket: everything that needs the
+   *  child to be ready. */
+  async function deliverOpen(key: string, ticket: Ticket, mode: OpenMode): Promise<void> {
     const wait = await waitForReady(ctx, key);
-    // **The handshake is what makes `running` true.** A `start` has already
-    // written the status and the Assignment by the time this runs, so a child
-    // that never answered would leave a Ticket with no session id — and the
-    // only button a `running` Ticket offers is "Continue", which cannot resolve
-    // an id to reopen. Nothing else would ever move it out of that state, so
-    // the failure is turned into the fact it is: an executor that went away
-    // without being asked (`landTicketUnreachable`).
+    // **The handshake is what makes the session real.** The command has already
+    // written the status and the session by the time this runs, so a child that
+    // never answered would leave a session with no id - and a Ticket whose only
+    // button ("Continue") cannot resolve an id to reopen. The failure is turned
+    // into the fact it is: an executor that went away without being asked
+    // (`landTicketUnreachable`), which takes that session off the Ticket and, if
+    // it was the only one that could work, asks for the person.
     if (wait !== 'ready') {
       if (wait === 'timeout') sayHandshakeTimedOut(ctx, key, ticketTitle(ticket));
       landTicketUnreachable(ctx, key, ticket.id);
@@ -216,8 +244,9 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
     bind(key, ticket, staged);
     const model = ticket.model.trim();
     if (model !== '') sendTo(key, { v: 1, t: 'set_model', model });
+    if (mode === 'none') return;
     const brief = briefWith(key, ticket, staged);
-    if (runNow) {
+    if (mode === 'run_now') {
       // Before the message, for the reason `runTask` gives: a run that is
       // already working is one the switch may not reach.
       sendTo(key, { v: 1, t: 'set_autopilot', on: true });
@@ -258,7 +287,7 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
     patchWith(key, () => ({ draft: `${briefWith(key, ticket, staged)}\n\n${feedback}`, historyCursor: null }));
   }
 
-  /** Run a command that ends the executor, then unbind the session it had. */
+  /** Run a command that ends the worker, then unbind every session it had. */
   function ending(id: string, type: 'accept' | 'drop'): TicketDispatchResult {
     const before = find(id);
     const assignment = before === undefined ? null : currentAssignment(before);
@@ -267,12 +296,27 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
     return result;
   }
 
-  async function start(id: string, runNow: boolean): Promise<string | null> {
+  /** Where a conversation added to a running worker is opened: where that
+   *  worker last ran, because the Ticket's own ref may say `active` (whatever
+   *  the screen shows now) and the new session belongs beside the others. */
+  function workspaceRefFor(ticket: Ticket): TaskWorkspaceRef {
+    const last = mostRecentSession(ticket);
+    if (last !== null) {
+      if (last.remoteWorkspaceId !== null) return { kind: 'remote', id: last.remoteWorkspaceId };
+      if (last.workspace !== undefined && last.workspace !== '') {
+        return { kind: 'local', path: last.workspace };
+      }
+    }
+    return ticket.workspace;
+  }
+
+  /** `start` (open) and `restart` (needs_you): a fresh session with the brief. */
+  async function start(id: string, runNow: boolean, restarting: boolean): Promise<string | null> {
     const ticket = find(id);
     if (ticket === undefined || unavailable() !== null || inFlight.has(id)) return null;
     // The machine would refuse these too, but only *after* a session was
     // opened; asking first keeps a refused Start from leaving one behind.
-    if (ticket.status !== 'open' && ticket.status !== 'needs_you') return null;
+    if (ticket.status !== (restarting ? 'needs_you' : 'open')) return null;
     if (ticket.brief.trim() === '') return null;
 
     inFlight.add(id);
@@ -283,39 +327,95 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
       const fresh = find(id);
       if (fresh === undefined) return null;
       const previous = currentAssignment(fresh);
-      const result = get().dispatchTicket(id, {
-        type: 'start',
-        assignmentId: newAssignmentId(),
+      const fields = {
         sessionKey: opened.key,
         remoteWorkspaceId: opened.remoteWorkspaceId,
         workspace: opened.workspaceLabel,
-      });
+      };
+      const result = restarting
+        ? get().dispatchTicket(id, { type: 'restart', ...fields })
+        : get().dispatchTicket(id, { type: 'start', assignmentId: newAssignmentId(), ...fields });
       if (!result.ok) return null;
-      // The superseded session, if it is still talking: it must not keep a
-      // report channel to a Ticket that has moved on.
-      unbindLive(previous);
-      void deliverStart(opened.key, result.ticket, runNow);
+      // The sessions a restart took off, if they are still talking: they must
+      // not keep a report channel to a Ticket that has moved on. (A `start` has
+      // no previous worker, so there is nothing to unbind.)
+      if (restarting) unbindLive(previous);
+      void deliverOpen(opened.key, result.ticket, runNow ? 'run_now' : 'brief');
       return opened.key;
     } finally {
       inFlight.delete(id);
     }
   }
 
+  /** The session a "go to the session" press means: the one asked for, else the
+   *  most recently active one on the Ticket. */
+  function sessionToOpen(ticket: Ticket, ref: SessionRef | undefined): WorkerSession | null {
+    if (ref === undefined) return mostRecentSession(ticket);
+    // Every session of every worker can be opened for reading, removed or not;
+    // only a present one is a session of the Ticket.
+    return ticket.assignments.flatMap((a) => a.executor.sessions).find((s) => sessionOwns(s, ref)) ?? null;
+  }
+
   return {
     startTicket(id, opts) {
-      return start(id, opts?.runNow === true);
+      return start(id, opts?.runNow === true, false);
     },
 
     restartTicket(id) {
-      return start(id, false);
+      return start(id, false, true);
     },
 
-    async openTicketSession(id) {
+    async newTicketSession(id, opts) {
+      const ticket = find(id);
+      if (ticket === undefined || unavailable() !== null || inFlight.has(id)) return null;
+      // A conversation on work under way. The machine refuses the same states,
+      // but only after a session was opened.
+      if (!isBindable(ticket) || currentAssignment(ticket) === null) return null;
+      const withBrief = opts?.withBrief === true;
+      if (withBrief && ticket.brief.trim() === '') return null;
+
+      inFlight.add(id);
+      try {
+        const opened = await openNewSession(ctx, workspaceRefFor(ticket));
+        if (opened === null) return null;
+        const result = get().dispatchTicket(id, {
+          type: 'newSession',
+          sessionKey: opened.key,
+          remoteWorkspaceId: opened.remoteWorkspaceId,
+          workspace: opened.workspaceLabel,
+          withBrief,
+        });
+        // Nothing to unbind: every session already on the Ticket stays on it.
+        if (!result.ok) return null;
+        void deliverOpen(opened.key, result.ticket, withBrief ? 'brief' : 'none');
+        return opened.key;
+      } finally {
+        inFlight.delete(id);
+      }
+    },
+
+    removeTicketSession(id, ref) {
+      const ticket = find(id);
+      if (ticket === undefined) return { ok: false, reason: 'not_found' };
+      const target = presentSessions(currentAssignment(ticket)).find((s) => sessionOwns(s, ref));
+      // Read before the command: afterwards the session is no longer present.
+      const live = target === undefined ? null : liveKeyOfSession(get(), target);
+      const result = get().dispatchTicket(id, {
+        type: 'removeSession',
+        sessionKey: ref.sessionKey,
+        sessionId: ref.sessionId,
+      });
+      // A closed session cannot hear it; the next open clears the binding.
+      if (result.ok && live !== null) bind(live, null);
+      return result;
+    },
+
+    async openTicketSession(id, ref) {
       const ticket = find(id);
       if (ticket === undefined) return null;
-      const assignment = currentAssignment(ticket);
-      if (assignment === null) return null;
-      const live = liveKeyOfAssignment(get(), assignment);
+      const session = sessionToOpen(ticket, ref);
+      if (session === null) return null;
+      const live = liveKeyOfSession(get(), session);
       if (live !== null) {
         get().focusSession(live);
         return live;
@@ -323,7 +423,7 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
       if (inFlight.has(id)) return null;
       inFlight.add(id);
       try {
-        return await resume(assignment, ticket);
+        return await resume(session, ticket);
       } finally {
         inFlight.delete(id);
       }
@@ -332,11 +432,12 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
     acceptTicket(id) {
       // The card disables Accept while the agent works, but a drop into Done
       // reaches here too: the store is the one place both entrances share, so
-      // the rule is kept here and not only on the button.
+      // the rule is kept here and not only on the button. Any session on the
+      // Ticket counts: signing off while a second conversation is still changing
+      // files would be signing off a half-finished change.
       const ticket = find(id);
       if (ticket !== undefined && ticket.status === 'review') {
-        const key = liveKeyOfAssignment(get(), currentAssignment(ticket));
-        if (selectTicketTurnRunning(get(), key)) return { ok: false, reason: 'agent_busy' };
+        if (selectTicketAnyTurnRunning(get(), ticket)) return { ok: false, reason: 'agent_busy' };
       }
       return ending(id, 'accept');
     },
@@ -345,7 +446,7 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
       return ending(id, 'drop');
     },
 
-    async sendBackTicket(id, feedback) {
+    async sendBackTicket(id, feedback, sessionId) {
       const ticket = find(id);
       if (ticket === undefined) return { ok: false, reason: 'not_found' };
       const why = unavailable();
@@ -361,20 +462,30 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
         // send-back that cannot reach anyone leaves the Ticket in review with
         // the person's words still in the box, instead of "running" with
         // nobody listening.
-        const assignment = currentAssignment(ticket);
-        let target = liveKeyOfAssignment(get(), assignment);
+        const worker = currentAssignment(ticket);
+        const chosen =
+          sessionId !== undefined && sessionId !== ''
+            ? (presentSessions(worker).find((s) => s.sessionId === sessionId) ?? null)
+            : mostRecentSession(ticket);
+        if (sessionId !== undefined && sessionId !== '' && chosen === null) {
+          return { ok: false, reason: 'unknown_session' };
+        }
+        let target = liveKeyOfSession(get(), chosen);
         let mode: 'live' | 'resumed' | 'replaced' = 'live';
         if (target === null) {
           mode = 'resumed';
-          target = assignment === null ? null : await resume(assignment, ticket);
+          target = chosen === null ? null : await resume(chosen, ticket);
           if (target === null) {
-            // The original cannot be reopened: a new executor takes over, and
-            // the old Assignment is recorded as having failed to restore.
+            // The chosen session cannot be reopened: a replacement joins the
+            // worker, and the old one leaves it as having failed to restore.
             const opened = await openNewSession(ctx, ticket.workspace);
             if (opened === null) return { ok: false, reason: 'session_unavailable' };
             const restored = get().dispatchTicket(id, {
-              type: 'assignmentRestoreFailed',
-              assignmentId: newAssignmentId(),
+              type: 'sessionRestoreFailed',
+              failed: {
+                sessionKey: chosen?.sessionKey ?? '',
+                sessionId: chosen?.sessionId ?? '',
+              },
               sessionKey: opened.key,
               remoteWorkspaceId: opened.remoteWorkspaceId,
               workspace: opened.workspaceLabel,
@@ -385,7 +496,15 @@ export function ticketRunsSlice(ctx: StoreContext): Pick<
           }
         }
 
-        const sent = get().dispatchTicket(id, { type: 'sendBack', feedback: text });
+        // For a replacement the machine's default (the most recently active
+        // present session) is the new session itself.
+        const sent = get().dispatchTicket(id, {
+          type: 'sendBack',
+          feedback: text,
+          ...(mode !== 'replaced' && chosen !== null && chosen.sessionId !== ''
+            ? { sessionId: chosen.sessionId }
+            : {}),
+        });
         if (!sent.ok) return sent;
         if (mode === 'live') speak(ctx, target, text);
         else void deliverFeedback(target, mode, sent.ticket, text);

@@ -47,6 +47,12 @@ const ATTACHMENTS_DIR: &str = "attachments";
 /// `TICKET_STAGE_DIR` in `src/ticket/attachments.ts`.
 const STAGE_DIR: &str = ".tudouni/ticket-attachments";
 
+/// The name the full brief is staged under when it is too long for the runtime's
+/// payload tail (`docs/design/ticket-notes.md` 3.6). Reserved: a person's
+/// attachment cannot take it, or the staged brief would overwrite their file.
+/// Mirrored by `BRIEF_ATTACHMENT_NAME` in `src/ticket/model.ts`.
+pub(crate) const BRIEF_FILE: &str = "brief.md";
+
 /// How many files one Ticket may carry. Mirrors the runtime's ceiling on
 /// `ticket_bind.ticket.attachments` (a bind with more is refused whole).
 pub(crate) const MAX_ATTACHMENTS_PER_TICKET: usize = 50;
@@ -167,6 +173,12 @@ fn import_one(dir: &Path, local_path: &str) -> Result<StoredAttachment, String> 
         ));
     }
     let name = storable_name(source)?;
+    // Case-insensitive: on Windows and macOS `Brief.md` is the same file.
+    if name.eq_ignore_ascii_case(BRIEF_FILE) {
+        return Err(format!(
+            "{BRIEF_FILE} is the name the Ticket's full brief is staged under; rename the file and attach it again"
+        ));
+    }
     fs::create_dir_all(dir).map_err(|e| format!("{} could not be created: {e}", dir.display()))?;
 
     let mut counter = 1;
@@ -297,6 +309,7 @@ fn stage_remote(
     target: &crate::ssh_backend::SshTarget,
     ticket_id: &str,
     names: &[String],
+    brief: Option<&str>,
 ) -> Result<Vec<StagedAttachment>, String> {
     let relative_dir = format!("{STAGE_DIR}/{ticket_id}");
     let session = crate::ssh_backend::dial_session(target)?;
@@ -318,7 +331,33 @@ fn stage_remote(
             .map_err(|e| format!("could not write {relative} to the remote host: {e}"))?;
         staged.push(StagedAttachment { name: name.clone(), path: relative, bytes: bytes.len() as u64 });
     }
+    if let Some(text) = brief {
+        let relative = format!("{relative_dir}/{BRIEF_FILE}");
+        let remote = crate::remote_files::resolve_remote_path(workspace, &relative)?;
+        let mut file = sftp
+            .create(Path::new(&remote))
+            .map_err(|e| format!("could not create {relative} on the remote host: {e}"))?;
+        file.write_all(text.as_bytes())
+            .map_err(|e| format!("could not write {relative} to the remote host: {e}"))?;
+        staged.push(StagedAttachment { name: BRIEF_FILE.to_string(), path: relative, bytes: text.len() as u64 });
+    }
     Ok(staged)
+}
+
+/// Write the full brief next to the staged attachments, answering the entry the
+/// bind will carry. Overwritten every time: the brief may have been edited since
+/// the last session was opened.
+fn stage_brief_local(workspace: &Path, ticket_id: &str, text: &str) -> Result<StagedAttachment, String> {
+    let relative_dir = format!("{STAGE_DIR}/{ticket_id}");
+    let dest = workspace.join(&relative_dir);
+    fs::create_dir_all(&dest).map_err(|e| format!("{} could not be created: {e}", dest.display()))?;
+    fs::write(dest.join(BRIEF_FILE), text)
+        .map_err(|e| format!("{BRIEF_FILE} could not be written into the workspace: {e}"))?;
+    Ok(StagedAttachment {
+        name: BRIEF_FILE.to_string(),
+        path: format!("{relative_dir}/{BRIEF_FILE}"),
+        bytes: text.len() as u64,
+    })
 }
 
 /// Copy a Ticket's attachments into the workspace of session `key`, and answer
@@ -331,12 +370,18 @@ pub(crate) async fn ticket_attachments_stage(
     key: ChildKey,
     ticket_id: String,
     names: Vec<String>,
+    brief: Option<String>,
 ) -> Result<Vec<StagedAttachment>, String> {
     let authority = ticket_dir(&ticket_id)?;
     for name in &names {
         check_name(name)?;
+        // The brief travels in `brief`, never as a stored file: a stored one
+        // would be a person's attachment under the reserved name.
+        if name.eq_ignore_ascii_case(BRIEF_FILE) {
+            return Err(format!("{BRIEF_FILE} is reserved for the staged brief"));
+        }
     }
-    if names.is_empty() {
+    if names.is_empty() && brief.is_none() {
         return Ok(Vec::new());
     }
     enum Dest {
@@ -357,8 +402,20 @@ pub(crate) async fn ticket_attachments_stage(
         }
     };
     tauri::async_runtime::spawn_blocking(move || match dest {
-        Dest::Local(workspace) => stage_local(&authority, &workspace, &ticket_id, &names),
-        Dest::Remote(workspace, target) => stage_remote(&authority, &workspace, &target, &ticket_id, &names),
+        Dest::Local(workspace) => {
+            let mut staged = if names.is_empty() {
+                Vec::new()
+            } else {
+                stage_local(&authority, &workspace, &ticket_id, &names)?
+            };
+            if let Some(text) = brief.as_deref() {
+                staged.push(stage_brief_local(&workspace, &ticket_id, text)?);
+            }
+            Ok(staged)
+        }
+        Dest::Remote(workspace, target) => {
+            stage_remote(&authority, &workspace, &target, &ticket_id, &names, brief.as_deref())
+        }
     })
     .await
     .map_err(|e| format!("the attachment staging failed: {e}"))?
@@ -470,6 +527,32 @@ mod tests {
         assert_eq!(fs::read(workspace.join(&staged[0].path)).unwrap(), b"boom");
         // Staging again overwrites rather than failing.
         assert!(stage_local(&authority, &workspace, "tk-1-a", &["server.log".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn the_brief_is_staged_as_brief_md_and_overwritten_each_time() {
+        let s = Scratch::new("stage-brief");
+        let workspace = s.0.join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let first = stage_brief_local(&workspace, "tk-1-a", "the long brief").unwrap();
+        assert_eq!(first.name, "brief.md");
+        assert_eq!(first.path, ".tudouni/ticket-attachments/tk-1-a/brief.md");
+        assert_eq!(fs::read_to_string(workspace.join(&first.path)).unwrap(), "the long brief");
+        stage_brief_local(&workspace, "tk-1-a", "edited").unwrap();
+        assert_eq!(fs::read_to_string(workspace.join(&first.path)).unwrap(), "edited");
+    }
+
+    #[test]
+    fn a_person_cannot_attach_a_file_under_the_staged_briefs_name() {
+        let s = Scratch::new("reserved");
+        let dir = s.0.join("auth");
+        for name in ["brief.md", "Brief.MD"] {
+            let src = s.0.join(name);
+            fs::write(&src, b"mine").unwrap();
+            let err = import_one(&dir, &src.to_string_lossy()).unwrap_err();
+            assert!(err.contains("staged under"), "{err}");
+        }
+        assert!(!dir.join("brief.md").exists());
     }
 
     #[test]

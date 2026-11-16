@@ -58,8 +58,11 @@ export function ticketWorkspaceScope(
   remoteLabels: ReadonlyMap<string, string>,
 ): WorkspaceScope {
   const last = ticket.assignments[ticket.assignments.length - 1];
-  if (last !== undefined) {
-    const { remoteWorkspaceId, workspace } = last.executor;
+  // The newest session of the newest worker, present or not: where the work last
+  // ran is where it is filed.
+  const lastSession = last?.executor.sessions[last.executor.sessions.length - 1];
+  if (lastSession !== undefined) {
+    const { remoteWorkspaceId, workspace } = lastSession;
     if (remoteWorkspaceId !== null) return workspaceScopeOf(workspace ?? '', remoteWorkspaceId, remoteLabels);
     if (workspace !== undefined && workspace.trim() !== '') return workspaceScopeOf(workspace, null, remoteLabels);
   }

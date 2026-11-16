@@ -55,7 +55,8 @@
   「一条新的 `run_started`」处理（§16 问题的建议做法），而不是续答。
   **给写 hook 的人看的是根下的 [hooks.md](../hooks.md)，不是这一份**——这里是决策记录。
 
-- [ticket.md](design/ticket.md) — Ticket：把 todo 从 Task 拆出来，做成任务级工作单元（状态机、`ticket_bind` / `ticket_report` 回报通道、Ticket board 与两个入口、为团队能力预留的扩展口、外部程序投递工单的 inbox）。**状态：已实现**（runtime：`internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`，协议 18；桌面端：`desktop/tudouni-aigo-desktop/src/ticket/`（含 `inbox.ts`）、`src/state/slices/tickets.ts` / `ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`）。数据在 `~/.tudouni/tickets/`：`tickets.json` 是记录，`inbox/` 是投递口，`processed/` 是已处理的投递（§6.3、§6.7）。
+- [ticket.md](design/ticket.md) — Ticket：把 todo 从 Task 拆出来，做成任务级工作单元（状态机、`ticket_bind` / `ticket_report` 回报通道、Ticket board 与两个入口、为团队能力预留的扩展口、外部程序投递工单的 inbox）。**状态：已实现**（runtime：`internal/runtime/ticket.go`、`internal/state/ticket.go`、`internal/tools/builtin/ticket.go`，协议 18；桌面端：`desktop/tudouni-aigo-desktop/src/ticket/`（含 `inbox.ts`）、`src/state/slices/tickets.ts` / `ticketRuns.ts`、`src/state/ticketLanding.ts`、`src/components/board/TicketBoard.tsx`，Rust 侧 `src-tauri/src/tickets_data.rs`）。数据在 `~/.tudouni/tickets/`：`tickets.json` 是记录，`inbox/` 是投递口，`processed/` 是已处理的投递（§6.3、§6.7）。**执行者与多会话部分已被 ticket-notes.md 取代**（见下一条）。
+- [ticket-notes.md](design/ticket-notes.md) — Ticket Worker 与 Notes：把 Assignment 还原成 worker 层（Ticket → worker → 多个平等会话，`tickets.json` schema 2），以及随工单生灭、每轮注入所有在场会话的笔记（人在卡片上写、agent 经 `ticket_note` 工具写，正本在桌面端，协议 22）。**状态：已实现**（runtime：`internal/state/ticket.go`、`internal/tools/builtin/ticket_note.go`，`VERSION` 7.7.0；桌面端 8.0.0：`src/ticket/migrate.ts`、`machine.ts`、`src/state/ticketBind.ts`、`TicketBoard.tsx`）。ticket.md 的第三节、第四节状态机表、6.1 实体与这份冲突时，以这份为准。
 
 **还没做的方案，别当成现状读：**
 

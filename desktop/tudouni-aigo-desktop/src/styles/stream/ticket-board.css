@@ -1522,3 +1522,336 @@ button.tkb-attach-name {
 .tkb-src-open {
   display: inline-flex;
 }
+
+/* The worker's conversations (design 3.7). A quiet list under the report: it is
+   there to open a session or take one off, not to compete with the buttons. */
+.tkb-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+
+.tkb-sessions-title {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.tkb-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tkb-session {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.tkb-session.is-removed .tkb-session-name,
+.tkb-session.is-gone .tkb-session-name {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-faint);
+}
+
+.tkb-session-open {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: var(--text-caption);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tkb-session-open:hover:not(:disabled) {
+  background: var(--bg-muted);
+}
+
+.tkb-session-open:focus-visible,
+.tkb-session-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tkb-session-open:disabled {
+  cursor: default;
+}
+
+.tkb-session-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  align-self: center;
+  border-radius: 50%;
+  background: var(--success, var(--accent));
+}
+
+.tkb-session-name {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.tkb-session-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-faint);
+}
+
+.tkb-session-remove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-faint);
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.tkb-session-remove:hover:not(:disabled),
+.tkb-session-remove.is-armed {
+  color: var(--danger-text, var(--warning-text));
+  background: var(--bg-muted);
+}
+
+.tkb-sendback-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.tkb-sendback-target select {
+  flex: 1;
+  min-width: 0;
+}
+
+/* "New session" sits on its own line under the state's verbs, with its one
+   per-press option beside it. */
+.tkb-newsession {
+  flex-basis: 100%;
+  gap: var(--space-2);
+}
+
+.tkb-newsession-brief {
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+/* The banner over a conversation that was taken off its Ticket. */
+.stream-removed-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--warning-subtle);
+  color: var(--warning-text);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
+.stream-removed-banner svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* The card's notes (design 4.5). Same quiet register as the sessions list: a
+   shared scratch-pad under the report, not a rival to the buttons. */
+.tkb-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.tkb-notes-title {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.tkb-notes-hint,
+.tkb-notes-empty {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.tkb-notes-old {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--warning-text);
+}
+
+.tkb-notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tkb-note {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  border-left: 2px solid var(--border);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  background: var(--bg-muted);
+}
+
+.tkb-note.is-agent {
+  border-left-color: var(--accent);
+}
+
+.tkb-note-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.tkb-note-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+.tkb-note-source {
+  max-width: 100%;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tkb-note-source:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.tkb-note-tools {
+  display: inline-flex;
+  margin-left: auto;
+  gap: 2px;
+}
+
+.tkb-note-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-faint);
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.tkb-note-tool:hover:not(:disabled),
+.tkb-note-tool.is-armed {
+  background: var(--bg-muted);
+  color: var(--fg);
+}
+
+.tkb-note-tool.is-armed {
+  color: var(--danger-text, var(--warning-text));
+}
+
+.tkb-note-source:focus-visible,
+.tkb-note-tool:focus-visible,
+.tkb-notes-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tkb-note-text {
+  margin: 0;
+  font-size: var(--text-compact);
+  line-height: var(--leading-body);
+  color: var(--fg-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tkb-note-edit,
+.tkb-note-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tkb-note-input {
+  resize: vertical;
+}
+
+.tkb-note-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.tkb-note-foot .btn:last-child {
+  margin-left: auto;
+}
+
+.tkb-note-keys {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
+}
+
+.tkb-notes-chip.is-open {
+  background: var(--bg-muted);
+}
+
+.tkb-session-oldmark {
+  flex: none;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
+  background: var(--warning-subtle);
+  color: var(--warning-text);
+  font-size: 10.5px;
+  white-space: nowrap;
+}

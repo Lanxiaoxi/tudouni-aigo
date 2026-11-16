@@ -274,6 +274,34 @@ export interface InitTicket {
   turn_ends?: InitTicketTurnEnd[];
   /** Protocol 19: the attachments the bind carried. Absent before 19. */
   attachments?: TicketBindAttachment[];
+  /** Protocol 22: the runtime's copy of the notes. For debugging only: it is
+   *  never used to overwrite the Ticket's own list. Absent before 22. */
+  notes?: TicketBindNote[];
+  /** Protocol 22: the agent's recent note writes (newest 50), oldest first, so a
+   *  reopened session can fill in what the window missed. Absent before 22. */
+  note_ops?: InitTicketNoteOp[];
+}
+
+/** One `ticket_note` call as `init.ticket.note_ops` keeps it: the fields of
+ *  `ui(ticket_note)` minus `kind`, `ticket_id` and `session_id`. */
+export interface InitTicketNoteOp {
+  op_id: string;
+  op: 'add' | 'update' | 'remove';
+  note_id: string;
+  /** `null` for `remove`. */
+  text: string | null;
+  at_ms: number;
+}
+
+/** One note as `ticket_bind` carries it and `init.ticket.notes` echoes it
+ *  (protocol 22). The optional keys are left out, not sent as null. */
+export interface TicketBindNote {
+  id: string;
+  text: string;
+  author: 'person' | 'agent';
+  updated_at_ms: number;
+  session_id?: string;
+  created_at_ms?: number;
 }
 
 /** One attachment `ticket_bind` names (protocol 19): already staged into the
@@ -1600,9 +1628,28 @@ export interface UiTicketTurnEndMsg {
   at_ms: number;
 }
 
+/** An agent's `ticket_note` call, forwarded as it happened (protocol 22). The
+ *  runtime applied it to its own copy and checkpointed it **before** sending
+ *  this. The desktop's state machine decides whether it changes the Ticket's
+ *  notes (only a present session, only an agent-written note). */
+export interface UiTicketNoteMsg {
+  v: number;
+  t: 'ui';
+  kind: 'ticket_note';
+  ticket_id: string;
+  op_id: string;
+  session_id: string;
+  op: 'add' | 'update' | 'remove';
+  note_id: string;
+  /** `null` for `remove`. */
+  text: string | null;
+  at_ms: number;
+}
+
 export type UiMsg =
   | UiTicketReportMsg
   | UiTicketTurnEndMsg
+  | UiTicketNoteMsg
   | UiStateMsg
   | UiSuggestionsMsg
   | UiStatusMsg
@@ -1851,7 +1898,15 @@ export type FrontendMsg =
   | {
       v: number;
       t: 'ticket_bind';
-      ticket: { id: string; title: string; brief: string; attachments?: TicketBindAttachment[] } | null;
+      ticket: {
+        id: string;
+        title: string;
+        brief: string;
+        attachments?: TicketBindAttachment[];
+        /** Protocol 22. The whole canonical list; it replaces the runtime's
+         *  copy, and a bind without it clears the copy. */
+        notes?: TicketBindNote[];
+      } | null;
     }
   | { v: number; t: 'status' }
   | { v: number; t: 'tools' }

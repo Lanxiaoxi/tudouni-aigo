@@ -561,7 +561,7 @@ board: null | 'sessions' | 'tickets';
 | 谁提的 | `requester: {kind:'person', id:'local'}` | 真实的用户 id；`{kind:'bot', …}` | 一个字段 |
 | 凭什么做 | `mandate: {basis:'manual'}` | `addressed` / `followup` / `rule`，以及恢复执行时的重新校验（revalidation） | 一个字段 |
 | 结果交到哪 | `delivery: {kind:'local'}` | `{kind:'channel', address}`，经 Outbox 回复到原对话 | 一个字段 |
-| 谁在执行 | `executor: {kind:'session', …}` | 远端 worker、无人值守的 autopilot 会话 | 一层包装 |
+| 谁在执行 | `executor: {kind:'session', …}`（**已改为** `{kind:'person', sessions: [...]}`，Assignment 即 worker 层，见 [ticket-notes.md](ticket-notes.md)） | `kind: 'agent'`（编排会话、autopilot）、`kind: 'member'`（同事），发出与人相同的 worker 命令 | 一层包装 |
 | 谁做了什么 | `events[].actor` | 审计、多人协作的时间线 | 每个事件多一个字段 |
 | 存在哪里 | `src/ticket/` 模块后面的 `~/.tudouni/tickets/tickets.json` | runtime 侧的 SQLite，或服务端 | 所有读写都经过一个模块 |
 | 状态由谁推进 | `machine.ts` 纯函数 | 搬到服务端照样能用：纯函数，不依赖 UI | 不在别处写 `status` |

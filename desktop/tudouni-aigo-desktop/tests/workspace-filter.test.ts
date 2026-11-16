@@ -52,7 +52,20 @@ test('a Ticket that has run is filed where it ran, not under its ref', () => {
     assignments: [
       {
         id: 'a1',
-        executor: { kind: 'session', sessionKey: 'k', sessionId: 's', remoteWorkspaceId: null, workspace: 'C:/other' },
+        executor: {
+          kind: 'person',
+          sessions: [
+            {
+              sessionKey: 'k',
+              sessionId: 's',
+              remoteWorkspaceId: null,
+              workspace: 'C:/other',
+              joinedAtMs: 1,
+              lastActiveAtMs: 1,
+              removedAtMs: null,
+            },
+          ],
+        },
         startedAtMs: 1,
         endedAtMs: null,
         end: null,

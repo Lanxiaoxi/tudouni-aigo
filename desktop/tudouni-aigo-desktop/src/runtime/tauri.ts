@@ -990,6 +990,14 @@ export async function writeTicketsFile(text: string): Promise<void> {
   await tauriInvoke<null>('tickets_write', { text });
 }
 
+/** Copy the schema-1 record to `tickets.json.v1.bak` before it is migrated.
+ *  Rejects when the copy could not be made, in which case the migrated list must
+ *  not be written. Resolves outside Tauri (there is no file to protect). */
+export async function backupTicketsFileV1(): Promise<void> {
+  if (!isHosted()) return;
+  await tauriInvoke<null>('tickets_backup_v1');
+}
+
 /* ---------------- Ticket attachments (`ticket_attachments.rs`) ---------------- */
 
 /** What happened to one picked path. Exactly one of `attachment` / `error`. */
@@ -1049,12 +1057,16 @@ export async function stageTicketAttachments(
   key: string,
   ticketId: string,
   names: string[],
+  /** The whole brief, to stage as the reserved `brief.md` (design 3.6): only
+   *  when the runtime's payload tail would cut it. */
+  brief: string | null = null,
 ): Promise<StagedTicketAttachment[]> {
-  if (!isHosted() || names.length === 0) return [];
+  if (!isHosted() || (names.length === 0 && brief === null)) return [];
   return await tauriInvoke<StagedTicketAttachment[]>('ticket_attachments_stage', {
     key: Number(key),
     ticketId,
     names,
+    brief,
   });
 }
 

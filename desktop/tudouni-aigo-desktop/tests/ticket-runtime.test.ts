@@ -14,7 +14,7 @@ import { test } from 'node:test';
 
 import { createSessionBucket, useApp } from '@/state/store';
 import { registerRuntime, unregisterRuntime } from '@/runtime/bus';
-import { apply, currentAssignment, type TicketInput } from '@/ticket/machine';
+import { apply, currentAssignment, type TicketInput, mostRecentSession } from '@/ticket/machine';
 import { emptyTicket, type Report, type Ticket } from '@/ticket/model';
 import { serializeTickets, resetTicketStoreForTests } from '@/ticket/store';
 import { selectTicketNotifyKey } from '@/state/selectors/tickets';
@@ -158,7 +158,7 @@ function ticketAt(
   const sessionKey = executor.sessionKey ?? KEY;
   const sessionId = executor.sessionId ?? 'S1';
   run({ type: 'start', at: 2_000, assignmentId: 'as-1', sessionKey, remoteWorkspaceId: null, workspace: 'C:/work' });
-  if (sessionId !== '') run({ type: 'assignmentStarted', at: 2_001, sessionKey, sessionId });
+  if (sessionId !== '') run({ type: 'sessionStarted', at: 2_001, sessionKey, sessionId });
   if (status === 'review') run({ type: 'reported', at: 3_000, report: REPORT({ sessionId }) });
   if (status === 'needs_you') {
     run({ type: 'reported', at: 3_000, report: REPORT({ sessionId, status: 'blocked', question: 'q?' }) });
@@ -175,6 +175,23 @@ const install = (...tickets: Ticket[]): void => useApp.setState({ tickets });
 function named(key: string, sessionId: string): void {
   useApp.setState((s) => ({
     sessions: { ...s.sessions, [key]: { ...s.sessions[key], sessionId } },
+  }));
+}
+/** A turn is in flight in the session under `key`. Since schema 2 an unrequested
+ *  exit only moves a running Ticket when it cut a turn short (design 3.4), and
+ *  the front end reads that off the transcript at the moment of the exit. */
+function midTurn(key: string): void {
+  useApp.setState((s) => ({
+    sessions: {
+      ...s.sessions,
+      [key]: {
+        ...s.sessions[key],
+        entries: [
+          ...s.sessions[key].entries,
+          { kind: 'turn', id: 'turn-x', runId: 'run-x', ordinal: 1, step: 0, maxSteps: 150, status: 'running', startedAt: 1, durationMs: null } as never,
+        ],
+      },
+    },
   }));
 }
 const first = (): Ticket => useApp.getState().tickets[0];
@@ -287,8 +304,8 @@ test('a hand-resumed session teaches the Assignment its new key; a fresh one its
   capture('k-new');
   install(ticketAt('review', { sessionKey: 'k-gone', sessionId: 'S1' }));
   deliver('k-new', initMsg('S1', 18, { id: 'tk-1', title: 'T', brief: 'b', reports: [] }));
-  assert.equal(currentAssignment(first())?.executor.sessionKey, 'k-new');
-  assert.equal(currentAssignment(first())?.executor.sessionId, 'S1');
+  assert.equal(mostRecentSession(first())?.sessionKey, 'k-new');
+  assert.equal(mostRecentSession(first())?.sessionId, 'S1');
 
   const settled = first();
   deliver('k-new', initMsg('S1', 18, { id: 'tk-1', title: 'T', brief: 'b', reports: [] }));
@@ -298,7 +315,7 @@ test('a hand-resumed session teaches the Assignment its new key; a fresh one its
   install(ticketAt('running', { sessionId: '', sessionKey: KEY }));
   capture(KEY);
   deliver(KEY, initMsg('S-fresh', 18, { id: 'tk-1', title: 'T', brief: 'b', reports: [] }));
-  assert.equal(currentAssignment(first())?.executor.sessionId, 'S-fresh');
+  assert.equal(mostRecentSession(first())?.sessionId, 'S-fresh');
   unregisterRuntime(KEY);
   unregisterRuntime('k-new');
 });
@@ -369,10 +386,11 @@ test('an unrequested exit from a dropped SSH link is needs_you, reason disconnec
   reset();
   capture(KEY);
   named(KEY, 'S1');
+  midTurn(KEY);
   install(ticketAt('running'));
   useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'runtime_exited', code: 1, requested: false, reason: 'ssh_closed' } as never);
   assert.equal(first().status, 'needs_you');
-  const exit = first().events.filter((e) => e.type === 'assignmentExited').at(-1);
+  const exit = first().events.filter((e) => e.type === 'sessionExited').at(-1);
   assert.equal(exit?.data?.reason, 'disconnected');
   assert.equal(currentAssignment(first())?.end, null, 'the Assignment carries on');
   unregisterRuntime(KEY);
@@ -389,10 +407,11 @@ test('an unrequested exit without a reason is a crash; a requested one moves not
   reset();
   capture(KEY);
   named(KEY, 'S1');
+  midTurn(KEY);
   install(ticketAt('running'));
   useApp.getState().applyRuntimeMessage(KEY, { v: 1, t: 'runtime_exited', code: 137, requested: false } as never);
   assert.equal(first().status, 'needs_you');
-  assert.equal(first().events.filter((e) => e.type === 'assignmentExited').at(-1)?.data?.reason, 'crashed');
+  assert.equal(first().events.filter((e) => e.type === 'sessionExited').at(-1)?.data?.reason, 'crashed');
   unregisterRuntime(KEY);
 });
 
@@ -443,6 +462,7 @@ test('an exit only ever reaches the Ticket whose session identity matches', () =
   // S1 must not touch the other, and the caller is the one that knows which
   // session ended — the machine's `owns` still runs, but walking every open
   // Ticket to have all but one refuse is work that can be skipped.
+  midTurn(KEY);
   const mine = ticketAt('running', { sessionId: 'S1' });
   const other = ticketAt('running', { sessionId: 'S2', sessionKey: 'k-other' }, 'tk-other');
   install(mine, other);
@@ -451,7 +471,7 @@ test('an exit only ever reaches the Ticket whose session identity matches', () =
   assert.equal(useApp.getState().tickets[0].status, 'needs_you', 'S1\u2019s Ticket moved');
   assert.equal(useApp.getState().tickets[1].status, 'running', 'S2\u2019s Ticket did not');
   assert.equal(
-    useApp.getState().tickets[1].events.filter((e) => e.type === 'assignmentExited').length,
+    useApp.getState().tickets[1].events.filter((e) => e.type === 'sessionExited').length,
     0,
     'and no event was recorded for it either',
   );
@@ -469,7 +489,7 @@ test('the person\u2019s reply is not lost when it beats the Ticket file', async 
   // fact has to wait for the read rather than be dropped for it — the same rule
   // the other three landings follow.
   const blocked = ticketAt('needs_you');
-  ticketFile = JSON.stringify({ schema: 1, tickets: [blocked] });
+  ticketFile = JSON.stringify({ schema: 2, tickets: [blocked] });
   useApp.setState({ tickets: [], ticketsLoaded: false });
 
   useApp.getState().setDraft('use postgres');
@@ -610,7 +630,8 @@ test('the toast names the Ticket and says what is being asked', () => {
   assert.equal(review.body, 'T\ndid it');
 
   const lost = apply(ticketAt('running'), {
-    type: 'assignmentExited', at: 4_000, sessionKey: KEY, sessionId: 'S1', requested: false, reason: 'disconnected',
+    type: 'sessionExited',
+    midTurn: true, at: 4_000, sessionKey: KEY, sessionId: 'S1', requested: false, reason: 'disconnected',
   });
   assert.ok(lost.ok);
   assert.equal(ticketNotifyContent(t, 'needs-you', lost.ticket).body, `T\n${t('ticket.cause.disconnected')}`);

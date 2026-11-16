@@ -20,11 +20,12 @@
  */
 import type { StoreContext } from './storeContext';
 import type { VmInit } from '@/runtime/adapt';
-import { projectTicketReport, projectTicketTurnEnd } from '@/runtime/adapt';
+import { projectTicketNote, projectTicketReport, projectTicketTurnEnd } from '@/runtime/adapt';
 import { sendTo } from '@/runtime/bus';
-import type { UiTicketReportMsg, UiTicketTurnEndMsg } from '@/protocol/types';
-import { bindingIsStale, currentAssignment } from '@/ticket/machine';
-import { TICKET_MIN_PROTOCOL, type Assignment } from '@/ticket/model';
+import type { UiTicketNoteMsg, UiTicketReportMsg, UiTicketTurnEndMsg } from '@/protocol/types';
+import { bindingIsStale, currentAssignment, isPresentSession, presentSessions, sessionOwns } from '@/ticket/machine';
+import { TICKET_MIN_PROTOCOL, TICKET_NOTES_MIN_PROTOCOL, type Ticket, type WorkerSession } from '@/ticket/model';
+import { rebindSession } from './ticketBind';
 
 /** Run `run` now if the Tickets are in memory, otherwise once they are. */
 function whenLoaded(ctx: StoreContext, run: () => void): void {
@@ -39,21 +40,27 @@ function whenLoaded(ctx: StoreContext, run: () => void): void {
     .catch((err: unknown) => console.warn('a Ticket fact could not be landed:', err));
 }
 
+/** The present session of `ticket`'s worker that a (key, id) pair names, by the
+ *  same identity rule the machine uses (`sessionOwns`), or `null`. */
+function presentSessionOf(ticket: Ticket, key: string, sessionId: string): WorkerSession | null {
+  const ref = { sessionKey: key, sessionId };
+  return presentSessions(currentAssignment(ticket)).find((s) => sessionOwns(s, ref)) ?? null;
+}
+
 /**
- * Whether `init` should write the new key or id into the Assignment.
+ * Whether `init` should write the new key or id into the worker's session.
  *
  * Two cases, both "the same session, newly seen": a session resumed by hand
  * (`/resume`, the saved list) comes back with a **new key** and the id the
- * Assignment already holds; and a fresh start whose `init` has not been written
+ * record already holds; and a fresh start whose `init` has not been written
  * back yet has the key but no id. The machine treats a repeat of either as a
  * no-op, so asking twice (this, and the Ticket's own start) is free.
  */
-function needsBackfill(current: Assignment, key: string, sessionId: string): boolean {
-  const { sessionKey, sessionId: known } = current.executor;
+function needsBackfill(session: WorkerSession, key: string, sessionId: string): boolean {
+  const { sessionKey, sessionId: known } = session;
   if (known === sessionId && sessionKey !== key) return true;
   return sessionKey === key && known === '';
 }
-
 /**
  * `init` arrived: teach the Assignment this session's key and id, fold in the
  * reports the window missed, and clear a binding that no longer holds
@@ -80,21 +87,41 @@ export function landTicketInit(ctx: StoreContext, key: string, init: VmInit): vo
 
     const ticket = s.tickets.find((row) => row.id === binding.id);
     if (ticket !== undefined) {
-      const current = currentAssignment(ticket);
-      if (current !== null && needsBackfill(current, key, init.sessionId)) {
+      const session = presentSessionOf(ticket, key, init.sessionId);
+      if (session !== null && needsBackfill(session, key, init.sessionId)) {
         s.dispatchTicket(ticket.id, {
-          type: 'assignmentStarted',
+          type: 'sessionStarted',
           sessionKey: key,
           sessionId: init.sessionId,
         });
       }
-      ctx.get().reconcileTicket(ticket.id, binding.reports, binding.turnEnds);
+      // Reports, turn ends and note writes are folded in **together, by time**:
+      // a note op is a fact like the other two, and replaying the three lists one
+      // after the other would reorder what the session did.
+      ctx.get().reconcileTicket(ticket.id, binding.reports, binding.turnEnds, binding.noteOps);
     }
 
     // Re-read: the two calls above replaced the Ticket.
     const after = ctx.get().tickets.find((row) => row.id === binding.id);
     if (bindingIsStale(after, init.sessionId)) {
       sendTo(key, { v: 1, t: 'ticket_bind', ticket: null });
+      return;
+    }
+    // The binding holds. Remember what the runtime says it holds (a re-bind
+    // replays it), then tell it the canonical notes: the runtime's copy is only
+    // a copy, and this window may have changed the list while the session was
+    // closed. Only from protocol 22, and only when the sentence differs would
+    // the runtime write anything (state.BindTicket compares).
+    if (after !== undefined) {
+      ctx.patch(key, {
+        ticketSpec: {
+          ticketId: binding.id,
+          title: binding.title,
+          brief: binding.brief,
+          attachments: binding.attachments,
+        },
+      });
+      if (init.protocol >= TICKET_NOTES_MIN_PROTOCOL) rebindSession(ctx, key, after);
     }
   });
 }
@@ -106,6 +133,18 @@ export function landTicketReport(ctx: StoreContext, msg: UiTicketReportMsg): voi
   if (projected === null) return;
   whenLoaded(ctx, () => {
     ctx.get().ingestTicketReport(projected.ticketId, projected.report);
+  });
+}
+
+/** `ui(ticket_note)`: the agent wrote, changed or removed a note. The machine
+ *  decides whether it counts (a present session, an agent-written note) and the
+ *  slice re-binds every live session with the canonical list afterwards.
+ *  Idempotent by op id, so a replay by `init` is harmless. */
+export function landTicketNote(ctx: StoreContext, msg: UiTicketNoteMsg): void {
+  const projected = projectTicketNote(msg);
+  if (projected === null) return;
+  whenLoaded(ctx, () => {
+    ctx.get().ingestTicketNote(projected.ticketId, projected.op);
   });
 }
 
@@ -121,43 +160,46 @@ export function landTicketTurnEnd(ctx: StoreContext, msg: UiTicketTurnEndMsg): v
 }
 
 /**
- * A child ended. Every Ticket whose current Assignment is this session hears
- * it; the machine moves only a `running` one, and only for an exit nobody asked
- * for. `ssh_closed` is the bridge's own statement that a connection dropped
+ * A child ended. Every Ticket that has this session **on it** hears it; the
+ * machine decides what it means (`sessionExited`, `docs/design/ticket-notes.md`
+ * 3.4). `ssh_closed` is the bridge's own statement that a connection dropped
  * (design 6.5) - the workspace type is never consulted.
  *
+ * **`midTurn` is read here, at the moment of the exit, from the session's own
+ * transcript** (`hasRunningTurn`, the source `selectPhase` reads) - the caller
+ * passes it in because the transcript is settled a few lines after the exit is
+ * recorded, and by then no turn is running any more. It only *narrows* an
+ * existing transition (a running Ticket needs the person when a session that was
+ * working dies); it never creates one. That is the tension with "status is not
+ * inferred from what a session displays" (invariant 1), accepted for that reason.
+ *
+ * This is the worker-level summary rule of 3.4, and it lives in the fact's
+ * translation on purpose: `machine.ts` sees only the translated fact.
+ *
  * **The session is identified here, not left to the machine.** The machine's
- * `owns` is the last word and still runs (it is what turns a stale `sessionKey`
- * into a no-op), but walking every open Ticket on every child exit just to have
- * all but one of them refuse the fact is work the caller can skip: it knows which
- * session ended, and it knows the same identity rule the machine uses - the
- * runtime's session id once it is known, the bridge's key only before that.
+ * `sessionOwns` is the last word and still runs (it is what turns a stale
+ * `sessionKey` into a no-op), but walking every open Ticket on every child exit
+ * just to have all but one of them refuse the fact is work the caller can skip.
  */
 export function landTicketExit(
   ctx: StoreContext,
   key: string,
   sessionId: string | null,
-  exit: { requested: boolean; reason?: string },
+  exit: { requested: boolean; reason?: string; midTurn: boolean },
 ): void {
   whenLoaded(ctx, () => {
     const id = sessionId ?? '';
     for (const ticket of ctx.get().tickets) {
-      const assignment = currentAssignment(ticket);
-      if (assignment === null) continue;
-      // The same two halves of identity the machine compares (see `owns`). An
-      // id is the only identity once `init` has landed; before that the key is
-      // all there is, and an exit from a child that never named itself cannot
-      // be matched to an Assignment that already knows its id.
-      const owned =
-        assignment.executor.sessionId !== ''
-          ? assignment.executor.sessionId === id
-          : id === '' && assignment.executor.sessionKey === key;
-      if (!owned) continue;
+      // An exit from a child that never named itself cannot be matched to a
+      // session that already knows its id (`sessionOwns`): only the key counts
+      // before `init`.
+      if (presentSessionOf(ticket, key, id) === null) continue;
       ctx.get().dispatchTicket(ticket.id, {
-        type: 'assignmentExited',
+        type: 'sessionExited',
         sessionKey: key,
         sessionId: id,
         requested: exit.requested,
+        midTurn: exit.midTurn,
         ...(exit.requested
           ? {}
           : { reason: exit.reason === 'ssh_closed' ? ('disconnected' as const) : ('crashed' as const) }),
@@ -165,7 +207,6 @@ export function landTicketExit(
     }
   });
 }
-
 /**
  * The person sent a message in a session. For a Ticket that is waiting on them
  * in exactly this session, that is the answer (`personReplied`); in any other
@@ -184,7 +225,7 @@ export function landPersonReplied(ctx: StoreContext, key: string): void {
     if (sessionId === '') return;
     for (const ticket of s.tickets) {
       if (ticket.status !== 'needs_you') continue;
-      if (currentAssignment(ticket)?.executor.sessionId !== sessionId) continue;
+      if (!isPresentSession(ticket, sessionId)) continue;
       s.dispatchTicket(ticket.id, { type: 'personReplied', sessionId });
     }
   });
@@ -218,10 +259,13 @@ export function landTicketUnreachable(ctx: StoreContext, key: string, ticketId: 
     // be a second definition of "which session is this", and the machine's is
     // the one that decides.
     s.dispatchTicket(ticketId, {
-      type: 'assignmentExited',
+      type: 'sessionExited',
       sessionKey: key,
       sessionId: '',
       requested: false,
+      // Nothing ran, so nothing was cut short; the machine's unreachable branch
+      // does not read it.
+      midTurn: false,
       reason: 'unreachable',
     });
   });

@@ -7,7 +7,7 @@
  * re-exported by `store.ts`, so every `import ... from '@/state/store'` keeps
  * working.
  */
-import { type CodeIntelSnapshot, type FileEntry, type HooksSnapshot, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type ProbeEffortSnapshot, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
+import { type CodeIntelSnapshot, type FileEntry, type HooksSnapshot, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type ProbeEffortSnapshot, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type TicketBindAttachment, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
 import type { TerminalState } from '@/runtime/terminalOutput';
 import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
@@ -609,6 +609,25 @@ export interface SessionRuntime {
    * later by this window are not echoed back here.
    */
   ticketBinding: { id: string; title: string; brief: string } | null;
+  /**
+   * What this child was **last bound with**, as this window knows it: the
+   * title, the brief and the attachment list the runtime holds (`ticketBind.ts`).
+   * Written when a `ticket_bind` is sent and when `init` reports the child's own
+   * copy; cleared on unbind.
+   *
+   * It exists because a re-bind (notes changed, protocol 22) is a **whole**
+   * replacement: a bind without `attachments` clears the runtime's list, and the
+   * staged paths are only known at the moment they were copied. So a re-bind
+   * replays this and changes only the notes, which also keeps "a change to the
+   * brief does not reach a session that is already working" true. Absent = not
+   * known, and then nothing is re-sent to that child.
+   */
+  ticketSpec?: {
+    ticketId: string;
+    title: string;
+    brief: string;
+    attachments: TicketBindAttachment[];
+  };
 
   session: SessionInfo | null;
   /**
