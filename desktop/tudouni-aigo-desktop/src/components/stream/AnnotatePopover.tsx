@@ -7,7 +7,8 @@ import { useT } from '@/i18n/useT';
  * Opened by the selection menu's "Annotate" under the selected passage. Enter
  * (or the confirm button) hands the note back; Shift+Enter is a newline, the
  * composer's own rule, so the two inputs do not teach opposite keys. Escape or
- * a click outside cancels. An empty note cannot be confirmed: a chip that
+ * the cancel button cancels; a click outside does not, so a draft survives a
+ * stray click. An empty note cannot be confirmed: a chip that
  * carries a quote and nothing else is "add to input", which already exists.
  */
 export function AnnotatePopover(props: {
@@ -59,24 +60,17 @@ export function AnnotatePopover(props: {
     if (!blank) onConfirm(note);
   };
 
+  // No scrim and no outside-click cancel: a half-written note must survive a
+  // stray click elsewhere (scrolling, re-reading the passage, copying text).
+  // Only the cancel button or Escape inside the box throws the draft away.
   return (
     <div
-      className="stream-menu-scrim"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        onCancel();
-      }}
+      ref={boxRef}
+      className="annotate-pop"
+      role="dialog"
+      aria-label={t('stream.annotate.title')}
+      style={{ left: place.left, top: place.top }}
     >
-      <div
-        ref={boxRef}
-        className="annotate-pop"
-        role="dialog"
-        aria-label={t('stream.annotate.title')}
-        style={{ left: place.left, top: place.top }}
-      >
         <blockquote className="annotate-pop-quote" title={quote}>
           {quote}
         </blockquote>
@@ -110,7 +104,6 @@ export function AnnotatePopover(props: {
             {t('stream.annotate.confirm')}
           </button>
         </div>
-      </div>
     </div>
   );
 }

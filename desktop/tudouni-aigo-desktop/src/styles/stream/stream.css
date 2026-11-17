@@ -189,6 +189,9 @@
    selected passage. Same layer and surface as the menu it came from. */
 .annotate-pop {
   position: fixed;
+  /* No scrim under it any more (an outside click must not drop the draft),
+     so the box carries the popover layer itself. */
+  z-index: var(--z-popover);
   width: 340px;
   max-width: calc(100vw - 16px);
   padding: var(--space-2);
