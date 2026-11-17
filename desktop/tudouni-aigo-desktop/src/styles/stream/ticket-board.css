@@ -731,6 +731,18 @@
   color: var(--fg);
 }
 
+/* A trailing count on an item (how many notes): pushed to the row's end so
+   the labels above and below stay aligned. */
+.tkb-menu-count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Unavailable here and now (a read-only file, a press in flight): muted rather
    than hidden, so the verb does not seem to come and go with the state. */
 .tkb-menu-item:disabled {
@@ -1651,11 +1663,14 @@ button.tkb-attach-name {
   min-width: 0;
 }
 
-/* "New session" sits on its own line under the state's verbs, with its one
-   per-press option beside it. */
+/* "New session" shares the row with the state's verbs, set off by a hairline
+   so its per-press option reads as belonging to it alone. It still wraps to
+   its own line when the card is too narrow. */
 .tkb-newsession {
-  flex-basis: 100%;
   gap: var(--space-2);
+  margin-left: var(--space-1);
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--border-subtle);
 }
 
 .tkb-newsession-brief {
@@ -1800,8 +1815,7 @@ button.tkb-attach-name {
 }
 
 .tkb-note-source:focus-visible,
-.tkb-note-tool:focus-visible,
-.tkb-notes-chip:focus-visible {
+.tkb-note-tool:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1833,17 +1847,28 @@ button.tkb-attach-name {
   gap: var(--space-2);
 }
 
-.tkb-note-foot .btn:last-child {
-  margin-left: auto;
-}
-
 .tkb-note-keys {
   font-size: var(--text-caption);
   color: var(--fg-faint);
 }
 
-.tkb-notes-chip.is-open {
-  background: var(--bg-muted);
+/* The two counters travel together, right-aligned against the button they
+   gate. `.tkb-counter` pushes itself right (it was written for a label row);
+   inside the group that would split them apart again, so it is reset. */
+.tkb-note-counters {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.tkb-note-counters .tkb-counter {
+  margin-left: 0;
+}
+
+.tkb-note-sep {
+  font-size: var(--text-caption);
+  color: var(--fg-faint);
 }
 
 .tkb-session-oldmark {

@@ -1216,9 +1216,8 @@ export const en = {
   // Ticket notes (docs/design/ticket-notes.md 4.5). Shared judgements and
   // decisions, one list per Ticket, visible to every session on it.
   'ticket.notes.title': 'Notes',
-  'ticket.notes.count': '{n} notes',
-  'ticket.notes.countOne': '1 note',
-  'ticket.notes.countNone': 'Notes',
+  'ticket.menu.notesShow': 'Notes',
+  'ticket.menu.notesHide': 'Hide notes',
   'ticket.notes.toggleHint': 'Notes every session on this Ticket can read',
   'ticket.notes.hint':
     'Shared with every session on this Ticket. Write what should survive the conversation: a decision, a constraint, a finding.',

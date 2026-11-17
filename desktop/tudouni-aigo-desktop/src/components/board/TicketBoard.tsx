@@ -2298,14 +2298,21 @@ function NotesSection({
             }
           }}
         />
+        {/* Hint on the left, the two counters grouped beside the button they
+            gate: one cluster on the right instead of three loose islands. */}
         <div className="tkb-note-foot">
-          <span className={noteCounterClass(runes, TICKET_NOTE_TEXT_CEILING)}>
-            {t('ticket.notes.chars', { n: runes, max: TICKET_NOTE_TEXT_CEILING })}
-          </span>
-          <span className={noteCounterClass(used + runes, TICKET_NOTES_TOTAL_CEILING)}>
-            {t('ticket.notes.total', { n: used + runes, max: TICKET_NOTES_TOTAL_CEILING })}
-          </span>
           <span className="tkb-note-keys">{t('ticket.notes.addHint')}</span>
+          <span className="tkb-note-counters">
+            <span className={noteCounterClass(runes, TICKET_NOTE_TEXT_CEILING)}>
+              {t('ticket.notes.chars', { n: runes, max: TICKET_NOTE_TEXT_CEILING })}
+            </span>
+            <span className="tkb-note-sep" aria-hidden="true">
+              ·
+            </span>
+            <span className={noteCounterClass(used + runes, TICKET_NOTES_TOTAL_CEILING)}>
+              {t('ticket.notes.total', { n: used + runes, max: TICKET_NOTES_TOTAL_CEILING })}
+            </span>
+          </span>
           <button
             type="button"
             className="btn btn-primary btn-compact"
@@ -2683,25 +2690,6 @@ function TicketCard({
               <span className="txt">{t('ticket.attach.count', { n: attachmentsOf(ticket).length })}</span>
             </span>
           ) : null}
-          {/* The notes' count, and the way into them. A button, so it is reached
-              by keyboard; a press on a control never starts a drag. */}
-          <button
-            type="button"
-            className={`tkb-chip is-link tkb-notes-chip${notesOpen ? ' is-open' : ''}`}
-            aria-expanded={notesOpen}
-            aria-controls={`tkb-notes-${ticket.id}`}
-            title={t('ticket.notes.toggleHint')}
-            onClick={() => setNotesOpen(!notesOpen)}
-          >
-            <StickyNote size={11} />
-            <span className="txt">
-              {ticket.notes.length === 0
-                ? t('ticket.notes.countNone')
-                : ticket.notes.length === 1
-                  ? t('ticket.notes.countOne')
-                  : t('ticket.notes.count', { n: ticket.notes.length })}
-            </span>
-          </button>
           {ticket.origin.kind === 'source' ? (
             <span className="tkb-chip is-origin" title={t('ticket.inbox.originHint', { file: ticket.origin.file })}>
               <Inbox size={11} />
@@ -3128,6 +3116,26 @@ function TicketCard({
             >
               <Pencil size={13} />
               {t('ticket.menu.edit')}
+            </button>
+            {/* Notes are a tool on the Ticket, not a fact about its state, so
+                the way into them lives here rather than among the meta chips.
+                The count rides along so a full list is still visible from the
+                menu; the item toggles, matching the panel it opens. */}
+            <button
+              type="button"
+              role="menuitem"
+              className="tkb-menu-item"
+              aria-expanded={notesOpen}
+              aria-controls={`tkb-notes-${ticket.id}`}
+              title={t('ticket.notes.toggleHint')}
+              onClick={() => {
+                closeMenu();
+                setNotesOpen(!notesOpen);
+              }}
+            >
+              <StickyNote size={13} />
+              {notesOpen ? t('ticket.menu.notesHide') : t('ticket.menu.notesShow')}
+              {ticket.notes.length > 0 ? <span className="tkb-menu-count">{ticket.notes.length}</span> : null}
             </button>
             {/* **The way back from a remembered answer.** Ticking "do this from
                 now on" suppresses this dialog, so without an entry that always
