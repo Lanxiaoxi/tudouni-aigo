@@ -259,12 +259,12 @@
   display: none;
 }
 
-/* Each group is a **small card**. The four parts — session, model, thinking,
-   step cap — are four separate facts, and on one bare row they read as a single
-   sentence; a card per group is what separates them. The `<span className="sep" />`
-   rules that used to sit between them are gone with the change: a 1px line
-   separates flat text, and between two cards it is a second edge drawn where the
-   cards already have one. */
+/* Each group is a **small card**. The parts — session, model, thinking — are
+   separate facts, and on one bare row they read as a single sentence; a card
+   per group is what separates them. The `<span className="sep" />` rules that
+   used to sit between them are gone with the change: a 1px line separates flat
+   text, and between two cards it is a second edge drawn where the cards already
+   have one. */
 .sessionbar .sb-group {
   display: flex;
   align-items: center;
@@ -293,13 +293,12 @@
   background: none;
 }
 
-/* The id and the step cap match the mono values inside the two buttons (model,
-   effort): one colour, size and weight is what makes the four *values* read as
-   a set. Bare `.fact` would render them 11px/400 `--fg-muted`, while those
-   buttons sit in `.btn` — 12.5px/500 `--fg-secondary` — a visibly lighter pair.
-   The qualifiers (`new`, `on`) keep the lighter fact look. */
-.sessionbar .sb-id,
-.sessionbar .sb-cap {
+/* The id matches the mono values inside the two buttons (model, effort): one
+   colour, size and weight is what makes the values read as a set. Bare `.fact`
+   would render them 11px/400 `--fg-muted`, while those buttons sit in `.btn` —
+   12.5px/500 `--fg-secondary` — a visibly lighter pair. The qualifiers
+   (`new`, `on`) keep the lighter fact look. */
+.sessionbar .sb-id {
   color: var(--fg-secondary);
   font-size: var(--text-code);
   font-weight: 500;
@@ -364,14 +363,14 @@
 /* ---------------- 会话栏的响应式降级 ----------------
    The bar is a size container (`container: sessionbar / inline-size`
    on `.sessionbar`), so these tiers fire on **the bar's own width** —
-   the width the rails actually leave it, not the window's. All four
+   the width the rails actually leave it, not the window's. All three
    groups stay on the row at every width; two tiers, and each group
    degrades inside itself:
      tier 1  the pure qualifiers go — group labels, resumed/fresh,
              @provider, and the on/off fact. What is left per group:
              the id, the model name, the **effort level** (the button
-             stays — degraded, it is the thinking group's value), the
-             step cap. The threshold is the measured width of the full
+             stays — degraded, it is the thinking group's value).
+             The threshold is the measured width of the full
              row (~890px) plus headroom, not a guess: below it the
              full row genuinely cannot fit.
      tier 2  only when even that cannot fit, the two values that can

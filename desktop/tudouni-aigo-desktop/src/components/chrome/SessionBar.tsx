@@ -285,11 +285,6 @@ export function SessionBar({ canFind }: { canFind: boolean }) {
           </button>
         </Tip>
       </div>
-
-      <div className="sb-group">
-        <span className="sb-label">{t('session.maxSteps')}</span>
-        <Fact mono className="sb-cap">{session.maxSteps}</Fact>
-      </div>
     </div>
   ) : (
     // Before the handshake lands there are no facts to show. The controls are

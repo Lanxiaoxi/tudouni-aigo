@@ -98,7 +98,6 @@ export const en = {
   'session.thinkingOn': 'on',
   'session.thinkingOff': 'off',
   'session.effort': 'effort',
-  'session.maxSteps': 'step cap',
   'session.permScope': 'asks on',
   'session.permAuto': 'all auto',
   'session.permNone': 'nothing',
@@ -138,9 +137,8 @@ export const en = {
    *  shape. The word "steps" carries the absence of a limit; a bare `step 497`
    *  would still read as "497 of something unknown".
    *
-   *  The cap is not a secret — it lives in the session bar's `step cap` and in
-   *  the settings panel's `--max-steps`. The status bar does not need a third
-   *  place to restate it. */
+   *  The cap is not a secret — it lives in the settings panel's `--max-steps`.
+   *  The status bar does not need a second place to restate it. */
   'status.steps': '{n} steps',
   'status.autopilot': 'autopilot',
   'status.quiet': 'quiet',
