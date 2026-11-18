@@ -1746,6 +1746,7 @@ export const en = {
   'panel.help.commands': 'Commands',
   'panel.help.keys': 'Keybindings',
   'panel.subagents.title': 'Subagents & jobs',
+  'panel.subagents.titleAgents': 'Subagents',
   'panel.subagents.empty': 'No subagent in flight',
   'panel.subagents.background': 'bg',
   'panel.subagents.done': 'Finished, waiting to be collected',

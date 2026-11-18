@@ -1258,8 +1258,14 @@ export function HelpPanel() {
    Subagents and background jobs.
    The status bar carries the badge; this is where the detail lives.
    ============================================================ */
-export function SubagentsPanel() {
+export function SubagentsPanel({ section = 'all' }: { section?: 'all' | 'subagents' | 'jobs' } = {}) {
   const t = useT();
+  // The status bar has one chip per half, and each chip opens only its own
+  // half; the `/subagents` dialog keeps both. Section labels are drawn only
+  // when both halves share the panel — alone, the title already says it.
+  const showAgents = section !== 'jobs';
+  const showJobs = section !== 'subagents';
+  const both = showAgents && showJobs;
   // Delegations and background jobs belong to one session's turn.
   const agents = useSessionField((rt) => rt.uiState?.subagents ?? NO_SUBAGENTS, NO_SUBAGENTS);
   // Background delegations, newest first. Only the **uncollected** half is drawn
@@ -1304,9 +1310,20 @@ export function SubagentsPanel() {
   );
 
   return (
-    <PanelShell title={t('panel.subagents.title')} count={`${agents.length} / ${jobs.length}`}>
+    <PanelShell
+      title={
+        both
+          ? t('panel.subagents.title')
+          : showAgents
+            ? t('panel.subagents.titleAgents')
+            : t('block.jobs')
+      }
+      count={both ? `${agents.length} / ${jobs.length}` : String(showAgents ? agents.length : jobs.length)}
+    >
       <PanelBody>
-        <div className="etb-label">{t('status.subagents')}</div>
+        {showAgents ? (
+          <>
+        {both ? <div className="etb-label">{t('status.subagents')}</div> : null}
         {agents.length === 0 ? (
           <EmptyState title={t('panel.subagents.empty')} />
         ) : (
@@ -1390,10 +1407,16 @@ export function SubagentsPanel() {
             ))}
           </>
         ) : null}
+          </>
+        ) : null}
 
-        <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
-          {t('block.jobs')}
-        </div>
+        {showJobs ? (
+          <>
+        {both ? (
+          <div className="etb-label" style={{ marginTop: 'var(--space-3)' }}>
+            {t('block.jobs')}
+          </div>
+        ) : null}
         {jobs.length === 0 ? (
           <EmptyState title={t('empty.jobs.title')} hint={t('empty.jobs.hint')} />
         ) : (
@@ -1425,6 +1448,8 @@ export function SubagentsPanel() {
             </PanelRow>
           ))
         )}
+          </>
+        ) : null}
       </PanelBody>
     </PanelShell>
   );

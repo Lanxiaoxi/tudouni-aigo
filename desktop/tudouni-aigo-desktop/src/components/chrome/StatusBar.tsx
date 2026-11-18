@@ -367,7 +367,7 @@ export function StatusBar() {
         {/* Jobs: emphasised when a result is still uncollected. */}
         <StatusPopover
           label={`${t('block.jobs')} · ${t('status.jobsUncollected')} ${uncollected}`}
-          content={<SubagentsPanel />}
+          content={<SubagentsPanel section="jobs" />}
         >
           <button
             type="button"
@@ -388,7 +388,7 @@ export function StatusBar() {
             answer nobody has read yet. */}
         <StatusPopover
           label={`${t('status.subagents')} · ${t('status.jobsUncollected')} ${subagentUncollected}`}
-          content={<SubagentsPanel />}
+          content={<SubagentsPanel section="subagents" />}
         >
           <button
             type="button"
