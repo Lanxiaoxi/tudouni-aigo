@@ -232,7 +232,11 @@
 
 .tkb-lane-head {
   position: sticky;
-  top: 0;
+  /* The lane is the scroll container and has `padding: var(--space-2)`.
+     Sticky `top: 0` pins the head below that padding, leaving a strip
+     through which scrolled cards show above the head. Pulling the stick
+     line up by the same amount makes the head flush with the lane's top. */
+  top: calc(var(--space-2) * -1);
   z-index: 2;
   display: flex;
   align-items: center;
