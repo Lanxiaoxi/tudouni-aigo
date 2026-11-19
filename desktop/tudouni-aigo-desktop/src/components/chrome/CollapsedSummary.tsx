@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import {
   NO_ENTRIES,
+  NO_SUBAGENTS_DONE,
   useApp,
   useSessionField,
   type SidebarBlockKey,
@@ -65,6 +66,13 @@ export function CollapsedSummary() {
   const entries = useSessionField((rt) => rt.entries, NO_ENTRIES);
   const presented = useMemo(() => presentedFiles(entries), [entries]);
   const openSidebarBlock = useApp((s) => s.openSidebarBlock);
+  // Background delegations, counted the same way the rail's jobs block does:
+  // a background subagent outlives its turn exactly like a background command,
+  // so it belongs in the same cell — not only in the status bar's subagents chip.
+  const subagentsDone = useSessionField(
+    (rt) => rt.uiState?.subagentsDone ?? NO_SUBAGENTS_DONE,
+    NO_SUBAGENTS_DONE,
+  );
 
   // Before the handshake there is nothing to report. The row is still drawn —
   // it is the fold the session bar's toggle animates — but it carries no
@@ -72,8 +80,13 @@ export function CollapsedSummary() {
   // sentence about the chrome rather than about the session.
   if (!snap) return <div className="collapsed-summary" />;
 
-  const jobTotal = snap.jobs.length;
-  const jobUncollected = snap.jobs.filter((job) => job.uncollected).length;
+  // Same figures as the rail's jobs block (`Sidebar.tsx`): commands and
+  // background delegations are one subject, so the folded cell must not read
+  // lower than the block it stands in for.
+  const jobTotal = snap.jobs.length + subagentsDone.length;
+  const jobUncollected =
+    snap.jobs.filter((job) => job.uncollected).length +
+    subagentsDone.filter((agent) => agent.state === 'uncollected').length;
   const mcpLoaded = snap.mcp.filter((server) => server.state === 'loaded').length;
   const taskDone = snap.todos.filter((todo) => todo.status === 'completed').length;
   // The same figure the rail's Goal block badges: the round count once the
