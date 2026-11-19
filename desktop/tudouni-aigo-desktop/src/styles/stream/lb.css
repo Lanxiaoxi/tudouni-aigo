@@ -223,6 +223,39 @@
   gap: 2px;
 }
 
+/* The sliding "you are here" capsule (`useSlidingHighlight`).
+   One per list, absolutely placed behind the rows: `isolation` gives the
+   container its own stacking context so `z-index: -1` lands *above* the rail's
+   plane but *under* the rows' text, and the rows need no `position` of their
+   own. The hook writes transform/width/height inline; this rule owns only how
+   they animate. It is invisible until the hook has measured a current row, so a
+   list with none (a search, an empty workspace) shows no stray block.
+   Reduced motion needs no rule here: global.css zeroes every transition. */
+.lb-slide {
+  position: relative;
+  isolation: isolate;
+}
+
+.lb-slide-hl {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  width: 0;
+  height: 0;
+  border-radius: 9px;
+  background: var(--lb-selected);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform;
+  transition:
+    transform var(--motion-base) var(--ease-out),
+    width var(--motion-base) var(--ease-out),
+    height var(--motion-base) var(--ease-out),
+    border-radius var(--motion-base) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
 /* The group of conversations that are open but have no file yet, above the saved
    list. It needs its own rule for one thing the shared row styles cannot know:
    it has to read as a **separate group** from the saved list below it, or the two
@@ -278,9 +311,16 @@
   background: var(--lb-hover);
 }
 
+/* The capsule behind it is `.lb-slide-hl`, not this row's own background, so
+   it can slide between rows. The hover wash is cancelled here for the same
+   reason: it would otherwise paint over the capsule on the one row that is
+   already selected. */
 .lb-row.is-current {
-  background: var(--lb-selected);
   color: var(--fg);
+}
+
+.lb-row.is-current:hover {
+  background: transparent;
 }
 
 .lb-row .lb-row-icon {
@@ -569,7 +609,6 @@
    same fact, and in the rail's flat layer they made the current row look like a
    small panel floating above the list rather than the row you are in. */
 .lb-session.is-current {
-  background: var(--lb-selected);
   color: var(--fg);
 }
 

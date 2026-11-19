@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useSlidingHighlight } from '@/hooks/useSlidingHighlight';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { Activity, Archive, ArchiveRestore, Bot, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Ticket as TicketIcon, Trash2, Webhook, Wrench, X } from 'lucide-react';
 import { selectTicketAttention } from '@/state/selectors/tickets';
@@ -417,6 +418,13 @@ export function WorkspaceSidebar() {
   // half, read from the session's own `remoteWorkspaceId` rather than
   // compared by path (a remote path is not unique across hosts).
   const currentRemoteWorkspaceId = rt?.remoteWorkspaceId ?? null;
+
+  // The green "you are here" capsule is one element per list that slides to the
+  // current row, not a background each row owns. The session list's scope is
+  // the workspace it belongs to: a different workspace is a different set of
+  // rows, and the capsule should snap there rather than slide across them.
+  const workspaceSlide = useSlidingHighlight('workspaces');
+  const sessionSlide = useSlidingHighlight(`${currentWorkspace}\u0000${currentRemoteWorkspaceId ?? ''}`);
 
   /**
    * The sessions that were started as workspace-learning or task-refine runs.
@@ -870,7 +878,8 @@ export function WorkspaceSidebar() {
               </button>
             </>
           ) : (
-            <div className="lb-rows">
+            <div className="lb-rows lb-slide" ref={workspaceSlide.containerRef}>
+              <div className="lb-slide-hl" ref={workspaceSlide.highlightRef} aria-hidden />
               {rows.map((path) => {
                 const isCurrent = currentWorkspace !== '' && samePath(currentWorkspace, path);
                 const bookmarked = workspaces.some((p) => samePath(p, path));
@@ -1154,7 +1163,11 @@ export function WorkspaceSidebar() {
             className={`collapse${sessionsCollapsed ? ' is-collapsed' : ''}`}
             inert={sessionsCollapsed}
           >
-            <div className="lb-fold-inner">
+            <div className="lb-fold-inner lb-slide" ref={sessionSlide.containerRef}>
+              {/* One capsule for the open group and the saved list together, so
+                  switching between a live row and a saved one slides instead of
+                  fading out in one list and in again in the other. */}
+              <div className="lb-slide-hl" ref={sessionSlide.highlightRef} aria-hidden />
               {/* **The group that made "New session" look dead.**
                   A conversation that has been opened but has not run a turn has
                   no file on disk, and the runtime's `sessions.items` is built by

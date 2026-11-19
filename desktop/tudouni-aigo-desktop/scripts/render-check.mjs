@@ -2821,6 +2821,15 @@ async function main() {
     const q = (s) => document.querySelector(s);
     const bg = (el) => (el ? getComputedStyle(el).backgroundColor : null);
     const cs = (el) => (el ? getComputedStyle(el) : null);
+    // The capsule behind a current row: the list's one sliding highlight. A
+    // highlight that is not shown (opacity 0) counts as no capsule at all.
+    const hl = (el) => {
+      if (!el) return null;
+      const h = el.closest('.lb-slide')?.querySelector('.lb-slide-hl');
+      if (!h) return 'rgba(0, 0, 0, 0)';
+      const style = getComputedStyle(h);
+      return Number(style.opacity) > 0.5 ? style.backgroundColor : 'rgba(0, 0, 0, 0)';
+    };
     // ---- seed what this probe measures ----
     //
     // Two of the things asserted below are properties of state the script's own
@@ -2904,9 +2913,12 @@ async function main() {
       },
       rail: bg(railEl),
       idle: bg(idleEl),
-      current: bg(currentEl),
+      // The capsule is no longer the row's own background: it is one sliding
+      // element per list (\`.lb-slide-hl\`), so "the current row has a capsule"
+      // now means the list's highlight is painted green **and** visible.
+      current: hl(currentEl),
       row: bg(rowEl),
-      workspaceCurrent: bg(workspaceCurrentEl),
+      workspaceCurrent: hl(workspaceCurrentEl),
       idleBorder: cs(idleEl)?.borderTopColor ?? null,
       currentBorder: cs(currentEl)?.borderTopColor ?? null,
       idleShadow: cs(idleEl)?.boxShadow ?? null,
