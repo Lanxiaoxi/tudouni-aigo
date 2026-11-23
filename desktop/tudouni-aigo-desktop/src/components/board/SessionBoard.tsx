@@ -256,7 +256,8 @@ export function SessionBoard() {
         // disagreeing. Null is "no measurement", never 0.
         const liveCall = bucket.liveCall;
         const ctxUsed = liveCall ? liveCall.promptTokens : (bucket.status?.lastPromptTokens ?? null);
-        const ctxWindow = bucket.status?.window ?? bucket.uiState?.modelWindow ?? null;
+        // Snapshot window first: it is the one refreshed on a model switch.
+        const ctxWindow = bucket.uiState?.modelWindow ?? bucket.status?.window ?? null;
         const ctxPercent =
           ctxUsed !== null && ctxWindow !== null && ctxWindow > 0 ? ctxUsed / ctxWindow : null;
         // For a running card, the in-flight turn's own start stamp, so the card's

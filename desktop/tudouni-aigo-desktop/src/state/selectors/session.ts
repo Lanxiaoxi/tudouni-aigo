@@ -189,9 +189,12 @@ export function selectUsage(s: AppStore, key: string | null): UsageView {
   // under this step's name would be the mixture the record exists to prevent.
   const used = live ? live.promptTokens : (status?.lastPromptTokens ?? null);
   const estimated = context?.used ?? null;
-  // The window travels with the status screen; the snapshot's `model_window` is
-  // the same fact from the other message, and either will do.
-  const window = status?.window ?? snap?.modelWindow ?? null;
+  // The snapshot's `model_window` first, the status screen's copy second. They
+  // are the same fact, but only the snapshot is re-sent when the model changes
+  // (`set_model` answers with `ui(state)`); `status` is fetched when a turn ends,
+  // so after a switch it keeps the previous model's window until then and the
+  // percentage is computed against a ceiling the session no longer has.
+  const window = snap?.modelWindow ?? status?.window ?? null;
   const percent = used !== null && window !== null && window > 0 ? used / window : null;
   const estimatedPercent =
     estimated !== null && window !== null && window > 0 ? estimated / window : null;
