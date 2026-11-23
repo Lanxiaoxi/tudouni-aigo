@@ -173,8 +173,11 @@ export interface VmSubagentDone {
   steps: number;
   toolCalls: number;
   activity: string;
-  /** `uncollected` = the answer is waiting for the parent's collect tool. */
-  state: 'running' | 'uncollected';
+  /**
+   * `uncollected` = the answer is waiting for the parent's collect tool;
+   * `collected` = it was read, and the row stays as history like a done job.
+   */
+  state: 'running' | 'uncollected' | 'collected';
   /** How the child ended; empty while still running. */
   stopReason: string;
 }
@@ -525,7 +528,9 @@ export function projectSubagentsDone(rows: SubagentDoneRow[] | undefined): VmSub
     steps: num(row.steps) ?? 0,
     toolCalls: num(row.tool_calls) ?? 0,
     activity: str(row.activity),
-    state: row.state === 'uncollected' ? 'uncollected' : 'running',
+    // An unknown state reads as `running`: an older runtime only ever sent the
+    // two, and a row that claims "still going" is the safe misreading.
+    state: row.state === 'uncollected' || row.state === 'collected' ? row.state : 'running',
     stopReason: str(row.stop_reason),
   }));
 }

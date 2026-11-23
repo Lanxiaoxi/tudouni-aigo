@@ -90,7 +90,11 @@ export function Sidebar() {
   const subagentUncollected = subagentsDone.filter(
     (agent) => agent.state === 'uncollected',
   ).length;
-  const subagentOutstanding = subagentsDone.length;
+  // A collected row is history, like a `done` job: it is counted in the total,
+  // never in what is outstanding.
+  const subagentOutstanding = subagentsDone.filter(
+    (agent) => agent.state !== 'collected',
+  ).length;
   const uncollected =
     snap.jobs.filter((job) => job.uncollected).length + subagentUncollected;
   const outstanding =
@@ -710,6 +714,14 @@ function JobRow({ job }: { job: VmJob }) {
  * A foreground delegation never appears here — it ends with its turn, so it
  * is the turn's business, not the rail's.
  */
+// The same tones `JOB_TONE` gives the matching job states: a collected
+// delegation reads like a `done` command.
+const SUBAGENT_TONE: Record<VmSubagentDone['state'], 'success' | 'warning' | 'neutral'> = {
+  running: 'success',
+  uncollected: 'warning',
+  collected: 'neutral',
+};
+
 function SubagentRow({ agent }: { agent: VmSubagentDone }) {
   const t = useT();
   const label =
@@ -733,7 +745,7 @@ function SubagentRow({ agent }: { agent: VmSubagentDone }) {
           title it already sits under and the slash made the pair read as a ratio.
           The bot is what says "delegation" instead of "command"; the block heading
           says the rest, so the icon is decoration and stays out of the a11y tree. */}
-      <Badge tone={agent.state === 'running' ? 'success' : 'warning'} dot={false}>
+      <Badge tone={SUBAGENT_TONE[agent.state]} dot={false}>
         {label}
       </Badge>
       <Bot size={11} className="muted" aria-hidden />

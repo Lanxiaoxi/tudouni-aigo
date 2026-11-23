@@ -1192,7 +1192,8 @@ export interface SubagentRow {
  * `ui(state).subagents_done[]` — `internal/subagent/board.go` `Board.DonePanel()`.
  * Background delegations, newer first. A row is `running` until its child
  * settles; `uncollected` means the answer is in memory waiting for the parent's
- * collect tool, and `stop_reason` names how it ended once it has.
+ * collect tool, and `stop_reason` names how it ended once it has. `collected`
+ * rows are history: the answer was already read, and nothing is left to do.
  */
 export interface SubagentDoneRow {
   id: string;
@@ -1205,7 +1206,7 @@ export interface SubagentDoneRow {
   steps: number;
   tool_calls: number;
   activity: string;
-  state: 'running' | 'uncollected';
+  state: 'running' | 'uncollected' | 'collected';
   /** Empty while still running. */
   stop_reason: string;
 }

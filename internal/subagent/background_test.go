@@ -184,13 +184,14 @@ func TestTheCollectedAnswerIsTheWholeResult(t *testing.T) {
 		t.Fatalf("collection left %d settlements behind", bg.board.Uncollected())
 	}
 
-	// Collecting again is "nothing there", not the same answer twice.
+	// Collecting again is "already collected", not the same answer twice — and
+	// not "no such id" either, because the board still remembers the row.
 	again, err := collect.Execute(context.Background(), map[string]any{"id": firstChildID()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(again.Text, "waiting to be collected") {
-		t.Fatalf("a second collection did not say the result is gone: %q", again.Text)
+	if !strings.Contains(again.Text, "already collected") || strings.Contains(again.Text, "the answer") {
+		t.Fatalf("a second collection did not say the result was already handed over: %q", again.Text)
 	}
 }
 

@@ -126,6 +126,10 @@ func collectExecute(ctx context.Context, board *Board, id string, wait bool, sec
 func collectFinished(board *Board, id string) string {
 	settlement, ok := board.Collect(id)
 	if !ok {
+		if board.WasCollected(id) {
+			return fmt.Sprintf(
+				"subagent %s was already collected: each result is handed over once, and its answer is in an earlier subagent_output result.", id)
+		}
 		return fmt.Sprintf(
 			"no subagent waiting to be collected is called %s: the id may be wrong, or its result has already been collected (each result is handed over once). "+
 				"Call without an id to list what is still waiting.", id)

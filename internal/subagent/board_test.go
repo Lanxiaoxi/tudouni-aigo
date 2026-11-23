@@ -109,8 +109,17 @@ func TestCollectingABackgroundDelegationTakesItsRowWithIt(t *testing.T) {
 	if rows := board.Panel(); len(rows) != 0 {
 		t.Errorf("the running panel still lists %d row(s) after collecting: %v", len(rows), rows)
 	}
-	if rows := board.DonePanel(); len(rows) != 0 {
-		t.Errorf("the done panel still lists %d row(s) after collecting: %v", len(rows), rows)
+	// The done panel keeps the row as history, marked `collected`, with the run's
+	// frozen duration: a person can still see it ran, like a collected command.
+	if rows := board.DonePanel(); len(rows) != 1 || rows[0]["state"] != "collected" ||
+		rows[0]["seconds"] != 30 || rows[0]["stop_reason"] != "answered" {
+		t.Errorf("done panel after collecting = %v, want one `collected` row of 30s", rows)
+	}
+	if !board.WasCollected("sub-bg-1") {
+		t.Error("WasCollected forgot a delegation that was just collected")
+	}
+	if _, ok := board.Collect("sub-bg-1"); ok {
+		t.Error("a result was handed over twice")
 	}
 	if got := board.BackgroundRunning(); got != 0 {
 		t.Errorf("background running = %d after collecting, want 0 — the cap would never free up", got)

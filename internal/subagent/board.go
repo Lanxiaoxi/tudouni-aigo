@@ -27,15 +27,35 @@ import (
 // foreground path never had: finished, with its answer in hand, but
 // **uncollected** — the parent's turn has moved on and the answer is still
 // sitting in memory. Those rows move to the done table, listed by DonePanel and
-// named by Note, until Collect removes them. A process restart loses them; the
-// child's own session file is the durable copy, which is what Note already
-// points at.
+// named by Note, until Collect hands the answer over. A process restart loses
+// them; the child's own session file is the durable copy, which is what Note
+// already points at.
+//
+// A collected row moves on to the collected list, which only DonePanel reads,
+// so a delegation stays visible after its answer has been read, the same way a
+// collected background command stays on the jobs board. It is a list of its own
+// rather than a flag on the running row because everything that reads `running`
+// treats it as work still going (the badge, the background cap, IsRunning).
 type Board struct {
-	mu      sync.Mutex
-	running map[string]*Delegation
-	done    map[string]*Settlement
-	clock   func() float64
+	mu        sync.Mutex
+	running   map[string]*Delegation
+	done      map[string]*Settlement
+	collected []collectedRow
+	clock     func() float64
 }
+
+// collectedRow is a background delegation whose answer has been handed over.
+// It keeps the stop reason because that is what the done panel colours the row by.
+type collectedRow struct {
+	entry      Delegation
+	stopReason string
+}
+
+// MaxCollected bounds how many collected rows the board keeps. They are history
+// for a person glancing at the panel, not state anything acts on, so the oldest
+// go first. It matches the jobs board's MaxJobs, so the two kinds of background
+// work keep about the same amount of history.
+const MaxCollected = 12
 
 // Settlement is a finished background delegation waiting to be collected.
 type Settlement struct {
@@ -202,9 +222,32 @@ func (b *Board) Collect(id string) (Settlement, bool) {
 	if !ok {
 		return Settlement{}, false
 	}
+	if entry, ok := b.running[id]; ok {
+		b.collected = append(b.collected, collectedRow{entry: *entry, stopReason: settlement.StopReason})
+		if over := len(b.collected) - MaxCollected; over > 0 {
+			b.collected = append([]collectedRow(nil), b.collected[over:]...)
+		}
+	}
 	delete(b.done, id)
 	delete(b.running, id)
 	return *settlement, true
+}
+
+// WasCollected reports whether the id names a background delegation whose answer
+// was already handed over and is still remembered, so the collect tool can say
+// "already collected" instead of "no such id".
+func (b *Board) WasCollected(id string) bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, row := range b.collected {
+		if row.entry.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // Uncollected is how many finished background delegations nobody has read yet.
@@ -421,9 +464,9 @@ func (b *Board) Panel() []map[string]any {
 // place. Newer first, because the row a person wants to act on is the one that
 // just finished; the running panel is oldest first for order stability.
 //
-// Collected rows are gone by the time this is read (Collect deletes them), so
-// `state` is only ever `running` or `uncollected` — the two answers to "does
-// somebody still have to act".
+// `state` is `running` or `uncollected` for the rows somebody still has to act
+// on, and `collected` for the ones already read. Collected rows stay as history,
+// the way a collected background command stays on the jobs board.
 func (b *Board) DonePanel() []map[string]any {
 	if b == nil {
 		return nil
@@ -437,13 +480,18 @@ func (b *Board) DonePanel() []map[string]any {
 	type rowPair struct {
 		entry      Delegation
 		settlement *Settlement
+		collected  bool
+		stopReason string
 	}
-	pairs := make([]rowPair, 0, len(b.running))
+	pairs := make([]rowPair, 0, len(b.running)+len(b.collected))
 	for _, entry := range b.running {
 		if !entry.Background {
 			continue
 		}
 		pairs = append(pairs, rowPair{entry: *entry, settlement: b.done[entry.ID]})
+	}
+	for _, row := range b.collected {
+		pairs = append(pairs, rowPair{entry: row.entry, collected: true, stopReason: row.stopReason})
 	}
 	b.mu.Unlock()
 
@@ -457,7 +505,11 @@ func (b *Board) DonePanel() []map[string]any {
 		// must not go on climbing (see `Delegation.Elapsed`).
 		elapsed := entry.Elapsed(now)
 		stopReason := ""
-		if settlement != nil {
+		switch {
+		case pair.collected:
+			state = "collected"
+			stopReason = pair.stopReason
+		case settlement != nil:
 			state = "uncollected"
 			stopReason = settlement.StopReason
 		}
