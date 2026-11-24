@@ -35,6 +35,7 @@ import (
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/state"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/tools/builtin"
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/version"
+	wshost "github.com/Lanxiaoxi/tudouni-aigo/internal/workspace/host"
 
 	"golang.org/x/term"
 )
@@ -71,6 +72,41 @@ type options struct {
 	// it; a session with a stored selection keeps its own.
 	fallbackModel  string
 	fallbackEffort string
+	// The workspace host (docs/spec/workspace-host-protocol.md).
+	workspaceHost bool
+	workspaceID   string
+	root          string
+}
+
+// runWorkspaceHost is `--workspace-host`.
+//
+// The root is held to the same rule as a runtime's workspace (not the home
+// directory, not a filesystem root, not above home): a host serves file reads
+// without asking anybody, so the reason for the rule is the same.
+func runWorkspaceHost(opts options) int {
+	if opts.workspaceID == "" {
+		fmt.Fprintln(os.Stderr, "--workspace-host needs --workspace-id <id>")
+		return 2
+	}
+	root := opts.root
+	if root == "" {
+		root = paths.WorkspaceDir()
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		fmt.Fprintf(os.Stderr, "--root %s is not an existing directory\n", root)
+		return 2
+	}
+	if kind := paths.UnsafeWorkspace(root); kind != paths.WorkspaceOK {
+		fmt.Fprintf(os.Stderr, "refusing to serve %s as a workspace (%s)\n", root, kind)
+		return 2
+	}
+	return wshost.Run(wshost.Options{
+		WorkspaceID: opts.workspaceID,
+		Root:        root,
+		In:          os.Stdin,
+		Out:         os.Stdout,
+		Err:         os.Stderr,
+	})
 }
 
 func run(argv []string) int {
@@ -90,6 +126,13 @@ func run(argv []string) int {
 	if opts.showVer {
 		fmt.Println(version.Describe())
 		return 0
+	}
+	// The workspace host is a different kind of process from every mode below: no
+	// model, no session, no agent. It is dispatched before anything that would load
+	// them (and before `runtime.Boot`), so it can never be slowed or broken by a
+	// model catalogue it does not use.
+	if opts.workspaceHost {
+		return runWorkspaceHost(opts)
 	}
 	if opts.showSkills {
 		return showSkills()
@@ -301,6 +344,9 @@ func parse(argv []string) (options, error) {
 	flags.BoolVar(&opts.tui, "tui", false, "force the full-screen interface (it is the default on a terminal)")
 	flags.BoolVar(&opts.cli, "cli", false, "use the line-oriented REPL instead of the full-screen interface")
 	flags.BoolVar(&opts.stdio, "runtime-stdio", false, "speak the JSONL protocol on stdin/stdout")
+	flags.BoolVar(&opts.workspaceHost, "workspace-host", false, "serve a workspace's files, git state and terminals as JSONL on stdin/stdout")
+	flags.StringVar(&opts.workspaceID, "workspace-id", "", "the workspace's stable id (required with --workspace-host)")
+	flags.StringVar(&opts.root, "root", "", "the workspace directory for --workspace-host (default: the current directory)")
 	flags.StringVar(&opts.session, "session", "", "session id (a new one is created when it does not exist)")
 	flags.BoolVar(&opts.showList, "list", false, "list saved sessions and exit")
 	flags.BoolVar(&opts.showSkills, "skills", false, "list the skills this workspace offers and exit")
@@ -357,7 +403,11 @@ func usageText() string {
 		fmt.Sprintf("  %-30s %s", version.Name, "the full-screen interface (the default on a terminal)"),
 		fmt.Sprintf("  %-30s %s", version.Name+" --cli", "the line-oriented REPL (what a pipe gets)"),
 		fmt.Sprintf("  %-30s %s", version.Name+" --runtime-stdio", "speak the JSONL protocol on stdin/stdout"),
+		fmt.Sprintf("  %-30s %s", version.Name+" --workspace-host", "serve a workspace's files, git and terminals (needs --workspace-id)"),
 		"",
+		"  --workspace-host  run the workspace host (no model, no session); see docs/spec/workspace-host-protocol.md",
+		"  --workspace-id <id>  the workspace's stable id, required with --workspace-host",
+		"  --root <dir>      the workspace directory for --workspace-host (default: the current directory)",
 		"  --cli             the line-oriented REPL, not the full-screen interface",
 		"  --tui             force the full-screen interface",
 		"  --session <id>    use (or create) a session with this id",

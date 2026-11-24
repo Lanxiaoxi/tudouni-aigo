@@ -17,13 +17,18 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/Lanxiaoxi/tudouni-aigo/internal/release"
 )
@@ -372,11 +377,98 @@ func verifyRuns(layout release.Layout) error {
 		}
 	}
 	fmt.Printf("      · %s: --help, --version and --runtime-stdio all ran; ripgrep registered\n", layout.Target.Triple)
+	if err := verifyWorkspaceHost(layout, scratch, env); err != nil {
+		return err
+	}
+	fmt.Printf("      · %s: --workspace-host handshook and shut down cleanly\n", layout.Target.Triple)
 	if layout.AnymdBinary != "" {
 		if err := verifyDocumentExtractor(layout, scratch); err != nil {
 			return err
 		}
 		fmt.Printf("      · %s: the staged document extractor converted a generated docx\n", layout.Target.Triple)
+	}
+	return nil
+}
+
+// verifyWorkspaceHost starts the staged binary as a workspace host and checks the
+// two things the desktop depends on: the first line is a `host_init` for the id it
+// was given, and a `shutdown` ends the process with exit code 0.
+//
+// It is a separate check from `--runtime-stdio` because the host is a different
+// entry point (no model, no session) that the desktop spawns per workspace; a
+// package where it starts but never answers would leave the Dock hanging on
+// "connecting" with nothing in the log.
+func verifyWorkspaceHost(layout release.Layout, scratch string, env []string) error {
+	root := filepath.Join(scratch, "host-root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	command := exec.Command(layout.Binary, "--workspace-host", "--workspace-id", "verify-ws", "--root", root)
+	command.Dir = scratch
+	command.Env = env
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		return err
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("cannot start --workspace-host: %w", err)
+	}
+	finished := false
+	defer func() {
+		if !finished {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	}()
+
+	type firstLine struct {
+		text string
+		err  error
+	}
+	lines := make(chan firstLine, 1)
+	go func() {
+		text, err := bufio.NewReader(stdout).ReadString('\n')
+		lines <- firstLine{text, err}
+	}()
+	var line firstLine
+	select {
+	case line = <-lines:
+	case <-time.After(20 * time.Second):
+		return fmt.Errorf("`--workspace-host` printed nothing within 20s\n  stderr: %s", tail(stderr.String(), 800))
+	}
+	if line.err != nil && line.text == "" {
+		return fmt.Errorf("`--workspace-host` closed its output before host_init: %v\n  stderr: %s", line.err, tail(stderr.String(), 800))
+	}
+	var init struct {
+		T            string `json:"t"`
+		V            int    `json:"v"`
+		WorkspaceID  string `json:"workspace_id"`
+		HostProtocol int    `json:"host_protocol"`
+	}
+	if err := json.Unmarshal([]byte(line.text), &init); err != nil || init.T != "host_init" ||
+		init.V != 1 || init.WorkspaceID != "verify-ws" || init.HostProtocol < 1 {
+		return fmt.Errorf("`--workspace-host` first line is not the expected host_init: %q", strings.TrimSpace(line.text))
+	}
+
+	if _, err := io.WriteString(stdin, "{\"v\":1,\"t\":\"shutdown\"}\n"); err != nil {
+		return fmt.Errorf("cannot send shutdown to the workspace host: %w", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	select {
+	case err := <-done:
+		finished = true
+		if err != nil {
+			return fmt.Errorf("`--workspace-host` did not exit cleanly after shutdown: %v\n  stderr: %s", err, tail(stderr.String(), 800))
+		}
+	case <-time.After(15 * time.Second):
+		return fmt.Errorf("`--workspace-host` did not exit within 15s of shutdown")
 	}
 	return nil
 }
