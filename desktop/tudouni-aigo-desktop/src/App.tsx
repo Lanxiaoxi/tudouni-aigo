@@ -27,6 +27,7 @@ import { Sidebar } from '@/components/sidebar/Sidebar';
 import { WorkspaceSidebar } from '@/components/sidebar/WorkspaceSidebar';
 import { Welcome } from '@/components/Welcome';
 import { NoticeCenter } from '@/components/NoticeCenter';
+import { WorkbenchDock } from '@/components/chrome/WorkbenchDock';
 import { Booting } from '@/components/Booting';
 import { StartupProblem } from '@/components/StartupProblem';
 import { SessionProblem } from '@/components/SessionProblem';
@@ -345,6 +346,18 @@ export function App() {
                   for them on the way back. It renders nothing at all while the
                   session holds no notes, so a clean session has no capsule. */}
               {view === 'welcome' || view === 'stream' ? <NoticeCenter /> : null}
+              {/* The workbench's second door. It is the rail's foot standing in
+                  for itself, so it exists only while the rail is away
+                  (`!showLeftbar`) — the two doors are never on screen at once,
+                  which is what keeps them from looking like one feature
+                  drawn twice. Same overlay rule as the notice center: the
+                  boards own the whole floor while they are up, so the trigger
+                  stands down there. **Docked to the bottom left of the
+                  stream** (see `.wb-dock` in lb-sessions.css), the mirror of
+                  the notice capsule at the bottom right. */}
+              {!showLeftbar && (view === 'welcome' || view === 'stream') ? (
+                <WorkbenchDock />
+              ) : null}
             </main>
 
             {/* The composer is the conversation's, and it is not drawn while a

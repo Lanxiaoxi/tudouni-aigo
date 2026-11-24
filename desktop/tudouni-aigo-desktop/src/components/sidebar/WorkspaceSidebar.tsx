@@ -1,19 +1,15 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSlidingHighlight } from '@/hooks/useSlidingHighlight';
-import { useActiveWorkspaceKey } from '@/state/workspaceDock/selectors';
-import { terminalHosts } from '@/components/dock/terminal/hostManager';
 import { closeWorkspaceResources, runningTerminalCount } from '@/components/dock/closeWorkspace';
 import { CloseWorkspaceConfirm, type PendingWorkspaceClose } from '@/components/dock/CloseWorkspaceConfirm';
 import { workspaceIdOf } from '@/workspaceHost';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Activity, Archive, ArchiveRestore, Bot, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Ticket as TicketIcon, Trash2, Webhook, Wrench, X } from 'lucide-react';
-import { selectTicketAttention } from '@/state/selectors/tickets';
+import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Download, FolderPlus, Folder, MessageSquare, Network, Plus, Search, Server, RefreshCw, Trash2, Wrench, X } from 'lucide-react';
 import {
   activeRuntime,
   activeWorkspaceOf,
   railBlocked,
   screenIsRemote,
-  selectBoardAvailable,
   selectLiveOnlyKey,
   selectLiveSessionIdsKey,
   selectRowStatusKey,
@@ -28,6 +24,10 @@ import { SessionDot } from '@/components/sidebar/SessionDot';
 import { useT } from '@/i18n/useT';
 import { checkWorkspace, chooseWorkspaceDirectory, searchSessions, type SessionSearchHit } from '@/runtime/tauri';
 import { Count, EmptyState, Tip } from '@/components/ui/kit';
+// The drawer's destinations and its body come from the shared source: the
+// rail's foot and the floating dock (`WorkbenchDock`, drawn when the rail is
+// folded away) read one list rather than two copies of it.
+import { useWorkbenchNav, WorkbenchDrawerBody } from '@/components/sidebar/workbenchNav';
 import { baseName, formatRelative, samePath } from '@/utils/format';
 import { AddRemoteWorkspaceModal } from '@/components/modals/AddRemoteWorkspaceModal';
 import { ManageHostsModal } from '@/components/modals/ManageHostsModal';
@@ -79,12 +79,6 @@ export function WorkspaceSidebar() {
   // The selector returns either the stored entry or the shared empty constant,
   // so its identity only changes when the list actually does.
   const savedSessions = useApp((s) => selectSavedSessionsOf(s, s.activeKey));
-  // Whether there is a child to talk to at all. Both workspace capabilities
-  // need one: a terminal belongs to a workspace the runtime is *in*, and a file
-  // listing is answered by that child against that child's boundary. With no
-  // session there is nothing to ask, so the two affordances are disabled rather
-  // than offered and then refused.
-  const hasSession = rt !== null && rt.ready;
   /**
    * The workspace the active session is actually in — but **only when it is a
    * local one**.
@@ -108,16 +102,6 @@ export function WorkspaceSidebar() {
       ? ''
       : rt?.session?.workspace ?? rt?.workspace ?? '';
   const currentSessionId = rt?.session?.id ?? null;
-  /**
-   * Whether any session in this workspace has a live child — the board's gate,
-   * and **the same value the session bar's board button reads**
-   * (`selectBoardAvailable`, which carries the reasoning). Two doors to one
-   * view, so the question is asked in one place: a gate written twice here
-   * would eventually be written twice *differently*, leaving one door open and
-   * the other dead on the same screen.
-   */
-  const hasLiveChild = useApp(selectBoardAvailable);
-
   const enterWorkspace = useApp((s) => s.enterWorkspace);
   const addWorkspace = useApp((s) => s.addWorkspace);
   const removeWorkspace = useApp((s) => s.removeWorkspace);
@@ -163,12 +147,6 @@ export function WorkspaceSidebar() {
   // The settings panel. It lives at the foot of this rail because what it holds
   // is the same kind of decision as the workspace above it — what the runtime
   // process *is* — rather than a per-turn control like the status bar's.
-  const openPanel = useApp((s) => s.openPanel);
-  // The boards are **views**, not panels (`store.board`), so they are reached
-  // through their own action rather than `openPanel`.
-  const toggleBoard = useApp((s) => s.toggleBoard);
-  // A number, so the selector is stable without memoising a filtered list.
-  const ticketAttention = useApp(selectTicketAttention);
 
   /**
    * The status of every live session, keyed by the runtime's own session id.
@@ -561,262 +539,9 @@ export function WorkspaceSidebar() {
     ? [currentWorkspace, ...workspaces]
     : workspaces;
 
-  /**
-   * How many of this workspace's terminals are still alive, and how many memory
-   * candidates are waiting for a review. These are the two things a folded
-   * workbench can usefully count: a running shell is work in progress the person
-   * may want to get back to, and a pending candidate is a decision the runtime
-   * is holding for them. Their sum is what the folded head shows — a figure that
-   * means "things in this workspace want your attention" rather than the old
-   * `navItems.length`, which was always the same number and said nothing.
-   */
-  // The workspace's terminals are the Dock's now (the window-level terminal
-  // manager), so the count comes from there, not from this session's bucket.
-  const dockWorkspaceId = useActiveWorkspaceKey()?.workspaceId ?? '';
-  const dockTerminals = useSyncExternalStore(
-    terminalHosts.subscribe,
-    () => terminalHosts.terminals(dockWorkspaceId),
-    () => terminalHosts.terminals(dockWorkspaceId),
-  );
-  const terminalsRunning = dockTerminals.filter((term) => term.state === 'running').length;
-  // The badge's number comes from the state snapshot's `memory_pending`, not
-  // from the panel snapshot: the model's `memory_propose` is a tool, and the
-  // only snapshot a tool result re-states is `ui(state)`. The panel snapshot
-  // (`rt.memory`) arrives only when the panel is open or an action is taken —
-  // which is why the badge used to stay empty until a person opened the panel.
-  // `null` (a runtime below protocol 8) falls back to the panel snapshot,
-  // never to zero: "the runtime did not say" is not "the queue is empty".
-  const memoryPending =
-    rt?.uiState?.memoryPending ?? rt?.memory?.candidates.length ?? 0;
-  const workbenchAttention = terminalsRunning + memoryPending;
-
-  /**
-   * The workbench's seven destinations, in two groups.
-   *
-   * The order is the drawer's reading order — the workspace's own surfaces
-   * first, then the process's settings — rather than the flat list the old foot
-   * drew. Grouping is what answers "where am I" inside a menu of destinations:
-   * seven equal rows with equal gaps read as seven unrelated buttons.
-   *
-   * Session board is drawn in the lower group, directly under Tasks, and that
-   * placement is the one thing here that is not a gate: the board is a view
-   * over the set of sessions rather than one of the workspace's surfaces —
-   * Files, Terminal, Learn and Memory are each about *this directory and the
-   * child running in it*, while the board is about the conversations at large.
-   * Keeping it in the upper group made that block read as five things of one
-   * kind; next to Tasks the two "what is happening" views sit together and the
-   * workspace rows stay one unbroken block.
-   *
-   * The gates are unchanged from the row each one replaces (each is the same
-   * `openPanel`/`toggleBoard` call; the disabled reasons are the same ones the
-   * old rows carried). What changed is only how they are arranged.
-   *
-   * **Per-item badges.** Terminal wears the count of running shells in the
-   * `active` tone (accent — "something is alive here"), and Memory wears the
-   * count of pending candidates in the `attention` tone (warning — "a decision
-   * is waiting"). Both are omitted when their count is zero: a badge that is
-   * always present says nothing, which is the problem the old head count had.
-   */
-  const navItems: {
-    key: string;
-    group: 'workspace' | 'settings';
-    label: string;
-    hint: string;
-    icon: ReactNode;
-    disabled: boolean;
-    active?: boolean;
-    badge?: { value: number; tone: 'active' | 'attention' };
-    run: () => void;
-  }[] = [
-    {
-      key: 'files',
-      group: 'workspace',
-      label: t('panel.files.title'),
-      hint: t('cmd.files.desc'),
-      icon: <FileText size={14} />,
-      disabled: blocked || !hasSession,
-      // The Explorer in the Workspace Dock (the old modal browser is gone).
-      run: () => useApp.getState().setDockMode('explorer'),
-    },
-    {
-      key: 'terminal',
-      group: 'workspace',
-      label: t('panel.term.title'),
-      hint: t('cmd.terminal.desc'),
-      icon: <SquareTerminal size={14} />,
-      disabled: blocked || !hasSession,
-      badge: terminalsRunning > 0 ? { value: terminalsRunning, tone: 'active' } : undefined,
-      run: () => {
-        const s = useApp.getState();
-        s.setDockOpen(true);
-        s.setDockTermVisible(true);
-      },
-    },
-    {
-      key: 'learn',
-      group: 'workspace',
-      label: t('lb.learn'),
-      hint: t('lb.learnHint'),
-      icon: <GraduationCap size={14} />,
-      disabled: blocked || !hasLiveChild,
-      run: () => openPanel('learn'),
-    },
-    {
-      key: 'memory',
-      group: 'workspace',
-      // The workspace's own surface, next to the browser and the shells — not a
-      // setting. Its subject is what *this* workspace has learned, the way the
-      // Learn panel's subject is what it can be taught; the settings it also
-      // carries are a section **inside** the panel, not the reason it exists.
-      label: t('lb.memory'),
-      hint: t('lb.memoryHint'),
-      icon: <Brain size={14} />,
-      // A live session, not merely a workspace: the corpus lives under
-      // `<workspace>/.tudouni/memory`, but the code that reads and writes it is the
-      // runtime, and there is one of those per open conversation. Same gate as
-      // Files and Terminal, and for the same reason.
-      disabled: blocked || !hasSession,
-      badge: memoryPending > 0 ? { value: memoryPending, tone: 'attention' } : undefined,
-      run: () => openPanel('memory'),
-    },
-    {
-      key: 'codeintel',
-      group: 'workspace',
-      // The workspace's own surface, next to Memory: its subject is *this directory's*
-      // code index, and what it configures outlives every conversation — the same
-      // reasoning as Memory one row above.
-      label: t('lb.codeintel'),
-      hint: t('lb.codeintelHint'),
-      icon: <Network size={14} />,
-      // A live session, like Files / Terminal / Memory: the index is per workspace but
-      // the code that builds it is the runtime, and there is one of those per open
-      // conversation. Opening it with no session would draw a panel that cannot ask
-      // anybody anything.
-      disabled: blocked || !hasSession,
-      // **No badge, deliberately.** The obvious one is "stale", and staleness is a stat
-      // walk over every indexed file — cheap once, wasteful on every state snapshot,
-      // which is what a badge needs. The panel answers that question when it is opened,
-      // and `building` is only worth a spinner where the progress is drawn.
-      run: () => openPanel('codeintel'),
-    },
-    {
-      key: 'tasks',
-      group: 'settings',
-      label: t('lb.task'),
-      hint: t('lb.taskHint'),
-      icon: <ListChecks size={14} />,
-      disabled: blocked,
-      run: () => openPanel('tasks'),
-    },
-    {
-      key: 'subagentPresets',
-      group: 'settings',
-      label: t('lb.subagentPresets'),
-      hint: t('lb.subagentPresetsHint'),
-      icon: <Bot size={14} />,
-      // `blocked` alone, like Config: the presets are read when a session
-      // starts, so the person setting them up may have no session yet.
-      disabled: blocked,
-      run: () => openPanel('subagentPresets'),
-    },
-    {
-      key: 'hooks',
-      group: 'settings',
-      label: t('lb.hooks'),
-      hint: t('lb.hooksHint'),
-      icon: <Webhook size={14} />,
-      // A live session, unlike Config: the panel's subject includes which hooks the
-      // session loaded and how their scripts have done, and only the runtime knows.
-      disabled: blocked || !hasSession,
-      run: () => openPanel('hooks'),
-    },
-    {
-      key: 'board',
-      // The lower group, next to Tasks — see the note above `navItems` for why
-      // this row left the workspace's own four. Only the grouping moved; the
-      // gate below is the one it always had.
-      group: 'settings',
-      label: t('board.title'),
-      hint: t('board.openHint'),
-      icon: <LayoutGrid size={14} />,
-      // The board's gate is the workspace's, not the session's — the same
-      // selector the session bar's second door reads (see `SessionBar`).
-      disabled: blocked || (!hasLiveChild && !boardOpen),
-      active: boardOpen,
-      run: () => toggleBoard('sessions'),
-    },
-    {
-      key: 'tickets',
-      // Beside the session board: the same "what is happening" pair, and the
-      // same action and labels as the session bar's ticket door.
-      group: 'settings',
-      label: t('board.tickets.title'),
-      hint: t('board.tickets.openHint'),
-      icon: <TicketIcon size={14} />,
-      // `blocked` alone, like Tasks: tickets outlive every session, so the
-      // board must open with no child running at all.
-      disabled: blocked,
-      active: board === 'tickets',
-      // needs_you + review: the two states that are waiting on the person.
-      badge: ticketAttention > 0 ? { value: ticketAttention, tone: 'attention' } : undefined,
-      run: () => toggleBoard('tickets'),
-    },
-    {
-      key: 'usage',
-      group: 'settings',
-      // The one row whose subject is the **user**, not this workspace or any
-      // conversation: the ledger lives beside config.json in the home directory
-      // and counts every workspace's spend. It sits with the lower group rather
-      // than the workspace's own four for the reason Tasks and Board do.
-      label: t('lb.usage'),
-      hint: t('lb.usageHint'),
-      icon: <Activity size={14} />,
-      // A live session, like Memory and Code intelligence: the ledger is read
-      // by the runtime (it is the ledger's only writer and reader), and opening
-      // the panel with no session would draw a view that cannot ask anybody
-      // anything.
-      disabled: blocked || !hasSession,
-      run: () => openPanel('usage'),
-    },
-    {
-      key: 'config',
-      group: 'settings',
-      label: t('lb.config'),
-      hint: t('lb.configHint'),
-      icon: <FileJson size={14} />,
-      // `blocked` alone, never `hasSession`: configuration is what a child
-      // reads at open, so the person who needs it most has no session yet.
-      disabled: blocked,
-      run: () => openPanel('config'),
-    },
-    {
-      key: 'settings',
-      group: 'settings',
-      label: t('lb.settings'),
-      hint: t('lb.settings'),
-      icon: <Settings size={14} />,
-      disabled: blocked,
-      run: () => openPanel('settings'),
-    },
-  ];
-  const navOrder = new Map(navItems.map((item, index) => [item.key, index]));
-  const navFilter = navQuery.trim().toLowerCase();
-  const navVisible =
-    navFilter === ''
-      ? navItems
-      : navItems.filter((item) => item.label.toLowerCase().includes(navFilter));
-  const navGroups = [
-    {
-      key: 'workspace' as const,
-      label: t('lb.workbench.groupWorkspace'),
-      items: navVisible.filter((item) => item.group === 'workspace'),
-    },
-    {
-      key: 'settings' as const,
-      label: t('lb.workbench.groupRuntime'),
-      items: navVisible.filter((item) => item.group === 'settings'),
-    },
-  ].filter((group) => group.items.length > 0);
+  // The destinations and the folded head's attention count, from the shared
+  // source — see `workbenchNav` for why the two drawers read one list.
+  const { items: navItems, attention: workbenchAttention } = useWorkbenchNav();
 
   return (
     <aside className="app-leftbar" aria-label={t('lb.workspaces')}>
@@ -1530,78 +1255,7 @@ export function WorkspaceSidebar() {
                 taller than its own head. */}
             <div className="lb-workbench-fold">
               <div className="lb-workbench-body">
-              <div className="lb-workbench-search">
-                <Search size={13} className="lb-workbench-search-icon" aria-hidden />
-                <input
-                  className="lb-workbench-input"
-                  value={navQuery}
-                  onChange={(e) => setNavQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setNavQuery('');
-                  }}
-                  placeholder={t('lb.workbench.search')}
-                  aria-label={t('lb.workbench.search')}
-                  spellCheck={false}
-                />
-                {navQuery !== '' ? (
-                  <button
-                    type="button"
-                    className="lb-icon"
-                    aria-label={t('lb.workbench.clear')}
-                    onClick={() => setNavQuery('')}
-                  >
-                    <X size={12} />
-                  </button>
-                ) : (
-                  /* A legend, not a control: the shortcut is handled globally by
-                     `useGlobalKeys` and opens the command palette, which is the
-                     surface that can jump anywhere in the window. */
-                  <kbd className="lb-workbench-kbd">Ctrl K</kbd>
-                )}
-              </div>
-
-              {navGroups.length === 0 ? (
-                <div className="lb-workbench-empty">{t('lb.workbench.none')}</div>
-              ) : (
-                navGroups.map((group) => (
-                  <div key={group.key} className="lb-workbench-group">
-                    <div className="lb-workbench-group-label">{group.label}</div>
-                    <div className="lb-workbench-items">
-                      {group.items.map((item) => (
-                          <button
-                            key={item.key}
-                            type="button"
-                            className={`lb-workbench-item${item.active ? ' is-active' : ''}`}
-                            // The stagger is the row's own index in the whole
-                            // drawer, not in its group: the two groups open as
-                            // one sweep. `--i` is read by the transition-delay
-                            // in stream.css.
-                            style={{ '--i': navOrder.get(item.key) ?? 0 } as CSSProperties}
-                            disabled={item.disabled}
-                            aria-pressed={item.active === undefined ? undefined : item.active}
-                            aria-label={item.hint}
-                            onClick={item.run}
-                          >
-                            <span className="lb-workbench-item-icon">{item.icon}</span>
-                            <span className="lb-workbench-item-label">{item.label}</span>
-                            {item.badge ? (
-                              <span
-                                className={`lb-workbench-item-badge${item.badge.tone === 'attention' ? ' is-attention' : ''}`}
-                                aria-label={
-                                  item.badge.tone === 'attention'
-                                    ? t('lb.attention', { n: item.badge.value })
-                                    : undefined
-                                }
-                              >
-                                {item.badge.value}
-                              </span>
-                            ) : null}
-                          </button>
-                      ))}
-                    </div>
-                  </div>
-                ))
-              )}
+                <WorkbenchDrawerBody items={navItems} query={navQuery} onQuery={setNavQuery} />
               </div>
             </div>
           </div>

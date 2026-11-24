@@ -631,6 +631,9 @@ export const en = {
   'lb.workbench': 'Workbench',
   'lb.foldFoot': 'Fold the workbench',
   'lb.unfoldFoot': 'Unfold the workbench',
+  /** The floating dock's tooltip, shown only while the left rail is folded —
+   *  the drawer's second door standing in for the one inside the rail. */
+  'lb.workbench.floatHint': 'Workbench (the sidebar is folded)',
   /* The drawer's two group names. They are the same nouns the rail already
      uses — a workspace's own surfaces, then the runtime's own settings — so
      the groups read as parts of this rail rather than as a second menu. */

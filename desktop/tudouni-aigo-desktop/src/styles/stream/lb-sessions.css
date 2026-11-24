@@ -599,3 +599,156 @@ html[data-input-mode='keyboard'] .lb-workbench-input:focus-visible {
 .lb-workbench-head:hover .lb-workbench-caret {
   background: var(--lb-selected);
 }
+
+/* ---------------- the workbench's floating door (the rail's foot, away) ----------------
+ *
+ * `WorkbenchDock` is the workbench drawer's second entrance, drawn **only
+ * while the left rail is folded** (`App` gates it on `!showLeftbar`), so the
+ * rail's foot and this one are never on screen at once. It stands in for the
+ * foot the way the session bar's board doors stand in for the foot's rows: a
+ * control inside the thing it opens goes away with it, and the drawer is the
+ * thing that must survive the folding.
+ *
+ * Placement is the **mirror of the notice center's capsule** — bottom *left*
+ * of `.app-stream` (the same absolutely-positioned floor), the same 32px
+ * circle, the same floating treatment. A circle at the bottom-right is
+ * already "the notices stand in for the folded right rail"; this one at the
+ * bottom-left is "the workbench stands in for the folded left rail". The two
+ * corners then answer the same question about both rails at once. */
+.wb-dock {
+  position: absolute;
+  bottom: var(--space-3);
+  left: var(--space-3);
+  z-index: var(--z-sticky);
+  /* A hover shield, not a click target: the stream scrolls under the dock's
+     empty half, and only the trigger itself takes the pointer. Same rule the
+     notice capsule's `.nc-dock` follows. */
+  pointer-events: none;
+}
+
+.wb-dock-trigger {
+  pointer-events: auto;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  /* The trigger is the rail's own identification tile — `--lb-mark-*` in both
+     themes — so the two doors read as one object in two places. The tile is
+     dark in the light theme too, deliberately (see `.lb-workbench-mark`). */
+  background: var(--lb-mark-bg);
+  color: var(--lb-mark-fg);
+  box-shadow: var(--shadow-overlay);
+  cursor: pointer;
+  transition:
+    box-shadow var(--motion-fast) var(--ease-out),
+    filter var(--motion-fast) var(--ease-out);
+}
+
+.wb-dock-trigger:hover {
+  box-shadow: var(--shadow-overlay), 0 0 0 3px var(--lb-selected);
+}
+
+/* The drawer is open: Radix composes `data-state` onto this trigger (the
+   `.nc-capsule`'s open treatment is the same "on" state, one step quieter —
+   the pill fills, this tile rings, because a 32px circle has no room for a
+   fill that does not cover the wrench). */
+.wb-dock-trigger[data-state='open'] {
+  box-shadow: var(--shadow-overlay), 0 0 0 3px var(--lb-selected-line);
+}
+
+/* The attention figure (running shells + pending memory candidates) rides on
+   the rim, exactly as the notice capsule's badge rides on its rim: the circle
+   has no room for it in the flow, and a figure that only existed inside the
+   drawer would hide the fact the closed state exists to tell. */
+.wb-dock-trigger .count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  border: 2px solid var(--bg-card);
+}
+
+/* ---------------- the drawer itself ----------------
+ *
+ * A portal (the transcript's `overflow: hidden` would otherwise clip it),
+ * opening **upward** from the tile like the foot's own drawer opens upward
+ * from the rail. It is the rail card's shape one size up: the head is the
+ * tile's face (mark + name + figure) and the body is `WorkbenchDrawerBody` —
+ * the filter and the rows, which the rail's own stylesheet already knows
+ * (`.lb-workbench-*`), so the drawer wears that card's padding and the rows
+ * draw themselves as they always have. */
+.wb-drawer {
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  width: 236px;
+  border: 1px solid var(--lb-line);
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: var(--lb-float);
+  animation: nc-rise var(--motion-base) var(--ease-out) 1;
+}
+
+.wb-drawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 10px;
+}
+
+/* The drawer's own mark, the tile's face one step smaller. */
+.wb-drawer-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--lb-mark-bg);
+  color: var(--lb-mark-fg);
+}
+
+.wb-drawer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+
+.wb-drawer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 8px 10px;
+  border-top: 1px solid var(--lb-line);
+  /* The rows' entrance is the rail drawer's own: `--i`-keyed opacity and
+     transform (`.lb-workbench-item`), which run from their declared
+     off-state the moment they mount — a popover body mounts open, so the
+     stagger plays without a second switch to flip. */
+}
+
+/* The rows' *on* state is scoped in the rail to `.lb-workbench:not(.is-collapsed)`
+   (the card itself is the switch), and this body has no such shell. The two
+   rules below say the drawer's body **is** open, in the same words: rows
+   revealed and staggered, disabled rows dimmed. The transition delays stay the
+   rail's — they are declared on the rows themselves, keyed by `--i`. */
+.wb-drawer-body .lb-workbench-item {
+  opacity: 1;
+  transform: none;
+  transition-delay: 0ms, 0ms, calc(var(--i, 0) * 40ms), calc(var(--i, 0) * 40ms);
+}
+
+.wb-drawer-body .lb-workbench-item:disabled {
+  opacity: 0.4;
+}
