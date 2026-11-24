@@ -476,6 +476,13 @@ const SUITES = [
   // The dock opens outward: the window grows past its right edge and shrinks
   // back, sliding left at a screen edge and staying put when maximized.
   'dock-window-growth.test.ts',
+  // Where the dock sits in the window's frame. It used to be the fourth item in
+  // the rails' row, so the top bar and the status bar spanned the whole window
+  // and ran underneath it — the help/palette pair disappeared behind the dock's
+  // head. The fix is structural, so what is pinned is the tree's shape, the
+  // containing block a floating dock is measured against, and the fact that the
+  // three bar heights are one token each rather than a number in two places.
+  'dock-frame.test.ts',
   // The splitter's drag and arrow-key signs, for the three edges it serves.
   'dock-splitter.test.ts',
   // Workspace identity, the per-workspace UI state (never on a session), the

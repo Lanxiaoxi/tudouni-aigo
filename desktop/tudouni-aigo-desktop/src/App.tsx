@@ -240,157 +240,179 @@ export function App() {
       <ErrorBoundary>
       <div className={`app${dragging ? ' is-dragging' : ''}`}>
         <TitleBar />
-        <TopBar />
 
-        <div className="app-main">
-          {/* Each rail sits inside a clipping wrapper that owns the width, so
-              collapsing is a transition rather than an unmount.
-              **A conditionally rendered element has nothing to transition** — it
-              appears and disappears between frames — which is why the rails are
-              now always mounted and only their wrapper's width changes. The inner
-              element keeps its full width so its text does not reflow on the way
-              out; the wrapper's `overflow: hidden` is what slides it out of view.
+        {/* Everything below the title bar, and it is **two siblings**: the app
+            itself on the left, the Workspace Dock on the right. The dock used
+            to be the fourth flex item inside `.app-main`, i.e. inside the row
+            the rails sit in — which made the top bar and the status bar span
+            the whole window, so the help/palette pair landed under the dock's
+            head and the status bar ran on beneath its terminal area. Lifting
+            the dock to this level is what keeps the window's two horizontal
+            bars out of its width: they stop at the dock's left edge.
 
-              `inert` when collapsed is not decoration: the controls are still in
-              the DOM, so without it Tab would walk into a rail nobody can see. */}
-          <div
-            className={`app-rail app-rail-left${showLeftbar ? '' : ' is-collapsed'}${resizing === 'left' ? ' is-resizing' : ''}`}
-            inert={!showLeftbar}
-            // The same custom property the right rail reads, written on **this**
-            // element: each rail resolves it on itself, so one name shared by
-            // two rails is not a collision. The cast is React's usual bridge for
-            // a custom property, and the name is asserted by the stylesheet it
-            // feeds (`--rail-w-dragged` in global.css).
-            style={
-              leftbarWidth !== null
-                ? ({ '--rail-w-dragged': `${leftbarWidth}px` } as CSSProperties)
-                : undefined
-            }
-          >
-            {showLeftbar ? <RailDragHandle rail="left" /> : null}
-            <WorkspaceSidebar />
-          </div>
+            The title bar stays above this wrapper and so still spans the window:
+            those are the OS window's own controls, and a dock covering the close
+            button would cover the only way out. */}
+        <div className="app-body">
+          <div className="app-shell">
+            <TopBar />
 
-          {/* The conversation column: the transcript **and the composer**. They
-              are one region, not two. A composer is where you speak into the
-              conversation, so it belongs to it — and putting it outside meant
-              the input box was as wide as the window while the text it was
-              continuing was 980px in the middle of it.
+            <div className="app-main">
+              {/* Each rail sits inside a clipping wrapper that owns the width, so
+                  collapsing is a transition rather than an unmount.
+                  **A conditionally rendered element has nothing to transition** — it
+                  appears and disappears between frames — which is why the rails are
+                  now always mounted and only their wrapper's width changes. The inner
+                  element keeps its full width so its text does not reflow on the way
+                  out; the wrapper's `overflow: hidden` is what slides it out of view.
 
-              The status bar is deliberately *not* in here: it reports on the
-              whole application (phase, autopilot, usage, the audit log), not on
-              this column, so it stays a sibling and spans the window. */}
-          {/* The session bar is **the conversation column's** header, not the
-              window's. Every fact on it names the conversation on screen — with
-              several sessions open the rail heads next to it name theirs, and a
-              window-wide bar read all four columns as one session's. Its width
-              follows `.app-conversation`, so the two sidebars reach the top of
-              this row; the facts they would have shown are theirs to draw. */}
-          <div
-            className={`app-conversation${streamLift ? ' is-lifting' : ''}`}
-            // The rise is one play, so the class must come off when the
-            // animation ends or a later return from the board would find no
-            // animation left to run (a class that is already applied does not
-            // restart). The event is the animation's own, not a timer — and
-            // `animationend` **bubbles**, so the name check is what keeps a
-            // one-shot animation playing somewhere in the transcript (a step
-            // sliding in, the fold row revealing) from clearing the class
-            // mid-rise and popping the column back to its final frame.
-            onAnimationEnd={(e) => {
-              if (streamLift && e.animationName === 'stream-rise') setStreamLift(false);
-            }}
-          >
-            <SessionBar canFind={showsTranscript(view)} />
-            {/* The summary row stands in for the right rail once it is folded,
-                so it is drawn **under the session bar and inside the
-                conversation column** — the same width as the row above it,
-                rather than a window-wide strip. It used to be a sibling of
-                `.app-main`, which made it span under both rails: it read as a
-                third chrome bar belonging to the window while everything on it
-                (jobs, MCP, tasks) is a fact about the conversation beside it.
-
-                Folded rather than conditionally rendered, like the rails: the
-                row replaces the right rail, so having the rail slide away while
-                this snapped into existence read as two unrelated events.
-                `inert` while folded rather than `aria-hidden`, because the row
-                is full of buttons. */}
-            <div className={`collapse${showSummary ? '' : ' is-collapsed'}`} inert={!showSummary}>
-              <div>
-                <CollapsedSummary />
+                  `inert` when collapsed is not decoration: the controls are still in
+                  the DOM, so without it Tab would walk into a rail nobody can see. */}
+              <div
+                className={`app-rail app-rail-left${showLeftbar ? '' : ' is-collapsed'}${resizing === 'left' ? ' is-resizing' : ''}`}
+                inert={!showLeftbar}
+                // The same custom property the right rail reads, written on **this**
+                // element: each rail resolves it on itself, so one name shared by
+                // two rails is not a collision. The cast is React's usual bridge for
+                // a custom property, and the name is asserted by the stylesheet it
+                // feeds (`--rail-w-dragged` in global.css).
+                style={
+                  leftbarWidth !== null
+                    ? ({ '--rail-w-dragged': `${leftbarWidth}px` } as CSSProperties)
+                    : undefined
+                }
+              >
+                {showLeftbar ? <RailDragHandle rail="left" /> : null}
+                <WorkspaceSidebar />
               </div>
+
+              {/* The conversation column: the transcript **and the composer**. They
+                  are one region, not two. A composer is where you speak into the
+                  conversation, so it belongs to it — and putting it outside meant
+                  the input box was as wide as the window while the text it was
+                  continuing was 980px in the middle of it.
+
+                  The status bar is deliberately *not* in here: it reports on the
+                  whole application (phase, autopilot, usage, the audit log), not on
+                  this column, so it stays a sibling and spans the window. */}
+              {/* The session bar is **the conversation column's** header, not the
+                  window's. Every fact on it names the conversation on screen — with
+                  several sessions open the rail heads next to it name theirs, and a
+                  window-wide bar read all four columns as one session's. Its width
+                  follows `.app-conversation`, so the two sidebars reach the top of
+                  this row; the facts they would have shown are theirs to draw. */}
+              <div
+                className={`app-conversation${streamLift ? ' is-lifting' : ''}`}
+                // The rise is one play, so the class must come off when the
+                // animation ends or a later return from the board would find no
+                // animation left to run (a class that is already applied does not
+                // restart). The event is the animation's own, not a timer — and
+                // `animationend` **bubbles**, so the name check is what keeps a
+                // one-shot animation playing somewhere in the transcript (a step
+                // sliding in, the fold row revealing) from clearing the class
+                // mid-rise and popping the column back to its final frame.
+                onAnimationEnd={(e) => {
+                  if (streamLift && e.animationName === 'stream-rise') setStreamLift(false);
+                }}
+              >
+                <SessionBar canFind={showsTranscript(view)} />
+                {/* The summary row stands in for the right rail once it is folded,
+                    so it is drawn **under the session bar and inside the
+                    conversation column** — the same width as the row above it,
+                    rather than a window-wide strip. It used to be a sibling of
+                    `.app-main`, which made it span under both rails: it read as a
+                    third chrome bar belonging to the window while everything on it
+                    (jobs, MCP, tasks) is a fact about the conversation beside it.
+
+                    Folded rather than conditionally rendered, like the rails: the
+                    row replaces the right rail, so having the rail slide away while
+                    this snapped into existence read as two unrelated events.
+                    `inert` while folded rather than `aria-hidden`, because the row
+                    is full of buttons. */}
+                <div className={`collapse${showSummary ? '' : ' is-collapsed'}`} inert={!showSummary}>
+                  <div>
+                    <CollapsedSummary />
+                  </div>
+                </div>
+                <main className="app-stream">
+                  {/* Six occupants, one order, and **the order is the decision**:
+                      see `conversationView.ts`, where it is written down and
+                      asserted. */}
+                  {view === 'startup-problem' ? (
+                    <StartupProblem />
+                  ) : view === 'session-problem' ? (
+                    <SessionProblem />
+                  ) : view === 'board' ? (
+                    <SessionBoard />
+                  ) : view === 'tickets' ? (
+                    <TicketBoard />
+                  ) : view === 'welcome' ? (
+                    <Welcome />
+                  ) : view === 'booting' ? (
+                    <Booting />
+                  ) : (
+                    <StreamView />
+                  )}
+                  {/* The notice center — **a seventh occupant, and the only one that
+                      overlays rather than replaces**. It belongs to the two
+                      conversation-shaped views: the boards own the
+                      whole floor while they are up, so the capsule stands down there,
+                      and notes keep landing in the bucket, where the badge answers
+                      for them on the way back. It renders nothing at all while the
+                      session holds no notes, so a clean session has no capsule. */}
+                  {view === 'welcome' || view === 'stream' ? <NoticeCenter /> : null}
+                  {/* The workbench's second door. It is the rail's foot standing in
+                      for itself, so it exists only while the rail is away
+                      (`!showLeftbar`) — the two doors are never on screen at once,
+                      which is what keeps them from looking like one feature
+                      drawn twice. Same overlay rule as the notice center: the
+                      boards own the whole floor while they are up, so the trigger
+                      stands down there. **Docked to the bottom left of the
+                      stream** (see `.wb-dock` in lb-sessions.css), the mirror of
+                      the notice capsule at the bottom right. */}
+                  {!showLeftbar && (view === 'welcome' || view === 'stream') ? (
+                    <WorkbenchDock />
+                  ) : null}
+                </main>
+
+                {/* The composer is the conversation's, and it is not drawn while a
+                    board has the column: a message typed there would have no
+                    addressee. **Asked of the same decision as the view above**, so
+                    the two cannot disagree. */}
+                {showsComposer(view) ? <Composer /> : null}
+              </div>
+
+              <div
+                className={`app-rail app-rail-right${showSidebar ? '' : ' is-collapsed'}${resizing === 'right' ? ' is-resizing' : ''}`}
+                inert={!showSidebar}
+                // React's CSSProperties does not declare custom properties; the
+                // cast is the usual bridge, and the variable name is asserted by
+                // the stylesheet it feeds (`--rail-w-dragged` in global.css).
+                style={
+                  sidebarWidth !== null
+                    ? ({ '--rail-w-dragged': `${sidebarWidth}px` } as CSSProperties)
+                    : undefined
+                }
+              >
+                {showSidebar ? <RailDragHandle rail="right" /> : null}
+                <Sidebar />
+              </div>
+
             </div>
-            <main className="app-stream">
-              {/* Six occupants, one order, and **the order is the decision**:
-                  see `conversationView.ts`, where it is written down and
-                  asserted. */}
-              {view === 'startup-problem' ? (
-                <StartupProblem />
-              ) : view === 'session-problem' ? (
-                <SessionProblem />
-              ) : view === 'board' ? (
-                <SessionBoard />
-              ) : view === 'tickets' ? (
-                <TicketBoard />
-              ) : view === 'welcome' ? (
-                <Welcome />
-              ) : view === 'booting' ? (
-                <Booting />
-              ) : (
-                <StreamView />
-              )}
-              {/* The notice center — **a seventh occupant, and the only one that
-                  overlays rather than replaces**. It belongs to the two
-                  conversation-shaped views: the boards own the
-                  whole floor while they are up, so the capsule stands down there,
-                  and notes keep landing in the bucket, where the badge answers
-                  for them on the way back. It renders nothing at all while the
-                  session holds no notes, so a clean session has no capsule. */}
-              {view === 'welcome' || view === 'stream' ? <NoticeCenter /> : null}
-              {/* The workbench's second door. It is the rail's foot standing in
-                  for itself, so it exists only while the rail is away
-                  (`!showLeftbar`) — the two doors are never on screen at once,
-                  which is what keeps them from looking like one feature
-                  drawn twice. Same overlay rule as the notice center: the
-                  boards own the whole floor while they are up, so the trigger
-                  stands down there. **Docked to the bottom left of the
-                  stream** (see `.wb-dock` in lb-sessions.css), the mirror of
-                  the notice capsule at the bottom right. */}
-              {!showLeftbar && (view === 'welcome' || view === 'stream') ? (
-                <WorkbenchDock />
-              ) : null}
-            </main>
 
-            {/* The composer is the conversation's, and it is not drawn while a
-                board has the column: a message typed there would have no
-                addressee. **Asked of the same decision as the view above**, so
-                the two cannot disagree. */}
-            {showsComposer(view) ? <Composer /> : null}
+            <StatusBar />
           </div>
 
-          <div
-            className={`app-rail app-rail-right${showSidebar ? '' : ' is-collapsed'}${resizing === 'right' ? ' is-resizing' : ''}`}
-            inert={!showSidebar}
-            // React's CSSProperties does not declare custom properties; the
-            // cast is the usual bridge, and the variable name is asserted by
-            // the stylesheet it feeds (`--rail-w-dragged` in global.css).
-            style={
-              sidebarWidth !== null
-                ? ({ '--rail-w-dragged': `${sidebarWidth}px` } as CSSProperties)
-                : undefined
-            }
-          >
-            {showSidebar ? <RailDragHandle rail="right" /> : null}
-            <Sidebar />
-          </div>
+          {/* The Workspace Dock. Mounted only while open (its content is the
+              modules', whose own resources outlive it — see §9.4), a flex item
+              beside the app when it fits and floating over it when it does not.
+              `data-placement` is what the stylesheet keys on.
 
-          {/* The fourth column. Mounted only while open (its content is the
-              modules', whose own resources outlive it — see §9.4), docked as a
-              flex item when it fits and floating over the conversation when it
-              does not. `data-placement` is what the stylesheet keys on. */}
+              **A sibling of the app, not a fourth item in the rails' row.** See
+              the comment on `.app-body`: this placement is what stops the top
+              bar and the status bar from running on underneath the dock. */}
           {dockOpen ? <DockColumn layout={dockLayout} capabilities={dockCapabilities} /> : null}
         </div>
-
-        <StatusBar />
       </div>
 
       <PanelHost />

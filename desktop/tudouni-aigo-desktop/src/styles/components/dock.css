@@ -1,5 +1,6 @@
 /* ============================================================
-   Workspace Dock: the fourth column (docs/design/workspace-dock.md §2).
+   Workspace Dock: the column beside the whole app body
+   (docs/design/workspace-dock.md §2).
 
    Layout only, and only tokens: the modules (Explorer, Git, Terminal) bring
    their own rules under their own prefixes. Widths and heights come from
@@ -7,12 +8,13 @@
    window, so a stylesheet constant would be a second, disagreeing copy.
    ============================================================ */
 
-/* The overlay placement is positioned against the row the rails sit in. */
-.app-main {
-  position: relative;
-}
-
+/* The dock is a **sibling of the whole app body**, not a fourth item inside the
+   rails' row (`.app-body` in `global.css`). That is what keeps the window's two
+   horizontal bars out of its width: the top bar — and its help/palette pair —
+   and the status bar both stop at the dock's left edge, so the dock owns its own
+   top and bottom instead of having the chrome run underneath it. */
 .app-dock {
+  flex: none;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -21,21 +23,23 @@
   overflow: hidden;
 }
 
-/* Docked: a real flex item, so the conversation gives up exactly its width and
-   `planDockLayout` has already made sure that leaves it 560px. */
+/* Docked: a real flex item of `.app-body`, so the body gives up exactly the
+   dock's width and `planDockLayout` has already made sure that leaves the
+   conversation 560px. */
 .app-dock[data-placement='docked'] {
-  flex: none;
   position: relative;
 }
 
-/* Overlay: the window cannot hold the conversation's minimum *and* the dock, so
-   the dock floats over the conversation instead of squeezing it (§2.2). The
-   shadow is what says "this is above the page, not beside it". */
+/* The pane a floating dock occupies: the band between the two window bars,
+   exactly where the docked one sits. It must not reach past them — a floating
+   dock over the top bar would cover the master switch that closes it, and the
+   status bar it covered would be reporting on a conversation nobody can see.
+   The two insets are the bars' own heights, which is why those are tokens. */
 .app-dock[data-placement='overlay'] {
   position: absolute;
-  top: 0;
+  top: var(--topbar-h);
+  bottom: var(--statusbar-h);
   right: 0;
-  bottom: 0;
   max-width: 100%;
   z-index: var(--z-sticky);
   box-shadow: var(--shadow-overlay);

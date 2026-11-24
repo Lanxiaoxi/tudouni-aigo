@@ -144,6 +144,17 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
 }
 
 /* ---------- 应用骨架 ---------- */
+/* 标题栏以下是**左右两块**：左边是应用本体（顶栏 / 会话 / 底栏竖排），右边是
+   Workspace Dock 那一列。
+
+   这条分界就是 Dock 改动想要的东西。Dock 原本是 `.app-main` 里的第四个 flex
+   子项，也就是「侧栏所在那一行」里的第四项 —— 于是顶栏和底栏都横跨整个窗口
+   宽度，右上角的帮助 / 命令面板对子被挤到 Dock 头部底下，底栏的读数也一路伸到
+   它的终端区下面。把 Dock 提到这一层之后，顶栏和底栏都停在 Dock 的左沿：Dock
+   自己拥有它的顶部和底部，窗口的横栏不再从它身下穿过。
+
+   `TitleBar` 留在这一层之上，横跨整窗：那是操作系统窗口自己的那一条，Dock 若
+   盖住关闭按钮就等于盖住了唯一的出口。 */
 .app {
   display: flex;
   flex-direction: column;
@@ -172,6 +183,29 @@ html[data-input-mode='keyboard'] .composer textarea:focus-visible {
     radial-gradient(500px 350px at 54% 9%, var(--halo-green), transparent),
     radial-gradient(400px 300px at 13% 81%, var(--halo-warm), transparent),
     var(--bg);
+}
+
+/* 标题栏以下的那一行：应用本体 + Dock 列。 */
+.app-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  /* Dock 的 overlay 形态是绝对定位的，锚的就是这一块 —— 它从顶栏一直伸到底栏，
+     所以浮起来的 Dock 也占满这一段高度，而不是只盖住会话那一行。 */
+  position: relative;
+}
+
+/* 应用本体：顶栏 / 会话 / 底栏，竖排。`min-width: 0` 让它能被压缩，否则内容
+   的 min-content 会把 Dock 挤出窗口。 */
+.app-shell {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .app-main {

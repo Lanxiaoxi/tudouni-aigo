@@ -30,8 +30,12 @@
    approval. The modal is not dismissed by it: `PermissionModal` prevents
    outside-pointer events. */
 .titlebar {
+  /* The one bar above `.app-body`, so it still spans the whole window: these are
+     the OS window's own controls (drag, minimize, maximize, close), and a dock
+     covering them would cover the way out of the window. Everything below stops
+     at the dock's left edge — see `.app-body` in global.css. */
   flex: none;
-  height: 36px;
+  height: var(--titlebar-h);
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -83,11 +87,15 @@
 
 /* ---------------- §1·1 顶部栏 ---------------- */
 .topbar {
+  /* Ends at the Dock's left edge, not at the window's: the dock is a column
+     beside the whole app body and owns its own head, so the help/palette pair
+     must not extend over it. Being inside `.app-shell` is what does that — see
+     `.app-body` in global.css. */
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  height: 42px;
+  height: var(--topbar-h);
   padding: 0 var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
   /* The title bar's own shade, so the two read as one chrome strip: the
@@ -217,12 +225,12 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  /* 42px, the window topbar's and both rail heads' height: the four
+  /* `--topbar-h`, the window topbar's and both rail heads' height: the four
      border-bottoms then land on one line across the window. At 34px this bar
      was the only top edge that broke the alignment, and the 8px it gains go
      to the chips' air (24px cards, 9px either side), which is also what keeps
      their -1px hover lift clear of the bar's own clip. */
-  height: 42px;
+  height: var(--topbar-h);
   padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
   /* The chrome bars' own shade (`--bg-bar`, #FBFDFA in the light theme) — the
@@ -767,7 +775,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 26px;
+  /* A token, because a floating dock insets itself by exactly this much — see
+     `.app-dock[data-placement='overlay']` in components/dock.css. */
+  height: var(--statusbar-h);
   padding: 0 var(--space-4);
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-bar);

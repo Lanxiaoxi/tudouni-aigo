@@ -48,6 +48,14 @@
   --control-h: 28px;         /* 常规控件高度 */
   --control-h-compact: 24px; /* 表格内嵌控件 / 紧凑行 */
   --row-h: 28px;             /* 列表 / 表格行高 */
+
+  /* 窗口四条横栏的高度。**它们不只是排版数字**：Dock 的 overlay 形态要内缩在
+     顶栏和底栏之间（浮起来的 Dock 盖住顶栏就等于盖住它自己的开关），所以
+     `components/dock.css` 拿这两个变量当 inset 用。一个数字两处读的地方，必须
+     只有一处写。 */
+  --titlebar-h:  36px;
+  --topbar-h:    42px;
+  --statusbar-h: 26px;
   --row-h-compact: 24px;     /* 终端、log 行 */
   --panel-pad: 12px;         /* 卡片 / 面板内边距 */
 
