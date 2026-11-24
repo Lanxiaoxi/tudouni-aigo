@@ -86,10 +86,6 @@ const SUITES = [
   // something if the bucket is installed before anything is subscribed. It is
   // the "I opened a new session and it never came up" report.
   'attach-race.test.ts',
-  // The workspace's capabilities: the keystroke encoder, the terminal output
-  // buffer, and the file browser's path arithmetic. All three are pure, which is
-  // why they can be asserted without a window or a shell.
-  'terminal.test.ts',
   // The stylesheet rule that keeps a long conversation's stream flat. It reads
   // `app.css` as text, because the declaration has no behaviour to observe in
   // Node and what is being protected is its presence 鈥?see the file for why a
@@ -464,6 +460,39 @@ const SUITES = [
   // notifier speaks once per entry into needs_you / review, never to someone
   // already reading that session.
   'ticket-runtime.test.ts',
+  // The Workspace Host channel (docs/design/workspace-dock.md §8, docs/spec/
+  // workspace-host-protocol.md). The protocol test compares the TS tables with
+  // the spec and the Go package — a name that exists on one side only is a
+  // panel that silently stops updating. The client test drives the real client
+  // through a fake transport: req correlation, timeouts, base64, unknown input
+  // ignored, and what a host that went away does to a connection.
+  'workspace-host-protocol.test.ts',
+  'workspace-host-client.test.ts',
+  // The Workspace Dock's space budget (docs/design/workspace-dock.md 2.2): the
+  // conversation never drops under 560px, the dock under 320px becomes an
+  // overlay, and the preference survives a window that is too small for it.
+  // Asserted at the sizes that matter because it is only visible at them.
+  'dock-budget.test.ts',
+  // The dock opens outward: the window grows past its right edge and shrinks
+  // back, sliding left at a screen edge and staying put when maximized.
+  'dock-window-growth.test.ts',
+  // The splitter's drag and arrow-key signs, for the three edges it serves.
+  'dock-splitter.test.ts',
+  // Workspace identity, the per-workspace UI state (never on a session), the
+  // shortcut matching and routing, and the capability gate.
+  'dock-state.test.ts',
+  // The Explorer's file-choosing state and the deliverable-card path conversion.
+  'dock-pick.test.ts',
+  // Terminal recovery (docs/design/workspace-dock.md 7.4-7.6): the byte-offset
+  // dedupe and gap rules, and the manager's bookkeeping against a fake host and
+  // a fake emulator — a tab switch disposes nothing, a reconnect attaches from
+  // lastSeq and never creates, an exit keeps its tab. xterm is never imported.
+  'terminal-host.test.ts',
+  // The Explorer and Git modules' rules (docs/design/workspace-dock.md 4.5, 5, 6):
+  // what a workspace_event invalidates (affected dirs, git stale, reset, revision
+  // gap, workspace isolation), staged+unstaged grouping, the unified-diff parser,
+  // the preview's range/"load more" arithmetic and the tree's keys. All pure.
+  'dock-explorer-git.test.ts',
 ];
 
 rmSync(outDir, { recursive: true, force: true });

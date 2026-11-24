@@ -208,16 +208,17 @@ export function runCommand(id: string, arg?: string): void {
     }
 
     case 'files':
-      // No argument form. The panel is a browser whose path is a **state** it
-      // walks, not a parameter: `/files src/main.go` would have to decide
-      // whether it names a directory to list or a file to open, and the runtime
-      // answers that question better than a guess here (a path that is a file
-      // produces a visible refusal from `file_list`).
-      s.openPanel('files');
+      // The names outlived the old modal panels and now open the Workspace Dock
+      // (docs/design/workspace-dock.md §12 stage 7). No argument form: the tree
+      // keeps its own position per workspace, so a path argument would be a
+      // second way to say what a click already says.
+      s.setDockMode('explorer');
       break;
 
     case 'terminal':
-      s.openPanel('terminal');
+      // Shows the dock and its terminal area, whatever the upper half is on.
+      s.setDockOpen(true);
+      s.setDockTermVisible(true);
       break;
 
     default:

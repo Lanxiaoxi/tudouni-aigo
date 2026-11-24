@@ -22,6 +22,8 @@
  * with it.
  */
 import { syncFromStore } from './desktopData';
+import { clampDockNavWidth, clampDockTermHeight, clampDockWidth } from './workspaceDock/budget';
+import type { DockMode } from './workspaceDock/uiState';
 import type { AppStore, QuietMode, SidebarBlockKey } from './store';
 
 /**
@@ -100,6 +102,17 @@ type Prefs = {
    * "always run unattended" switch over with it. Losing it costs one dialog.
    */
   ticketStartMode: 'ask' | 'start' | 'run_now';
+  /* The Workspace Dock's window-level state (docs/design/workspace-dock.md
+     §9.1). The widths are the *preferences*: what is drawn is derived from them
+     and from the window (`workspaceDock/budget.ts`) and never written back. */
+  dockOpen: boolean;
+  dockMode: DockMode;
+  /** `null` = the budget module's default. */
+  dockWidth: number | null;
+  dockNavWidth: number | null;
+  dockTermHeight: number | null;
+  dockTermVisible: boolean;
+  dockTermMaximized: boolean;
 };
 
 function loadPrefs(): Prefs {
@@ -115,6 +128,13 @@ function loadPrefs(): Prefs {
     workspacesCollapsed: false,
     footCollapsed: true,
     ticketStartMode: 'ask',
+    dockOpen: false,
+    dockMode: 'explorer',
+    dockWidth: null,
+    dockNavWidth: null,
+    dockTermHeight: null,
+    dockTermVisible: true,
+    dockTermMaximized: false,
   };
   try {
     const raw = localStorage.getItem('aigo.prefs');
@@ -170,6 +190,27 @@ function loadPrefs(): Prefs {
         parsed.ticketStartMode === 'start' || parsed.ticketStartMode === 'run_now'
           ? parsed.ticketStartMode
           : 'ask',
+      // The dock's fields are read under the same boundary as the rails': a
+      // boolean or a finite number, or the fallback. A record from before the
+      // dock existed has none of them, which is the fallback branch.
+      dockOpen: typeof parsed.dockOpen === 'boolean' ? parsed.dockOpen : fallback.dockOpen,
+      dockMode: parsed.dockMode === 'git' || parsed.dockMode === 'explorer' ? parsed.dockMode : fallback.dockMode,
+      dockWidth:
+        typeof parsed.dockWidth === 'number' && Number.isFinite(parsed.dockWidth)
+          ? clampDockWidth(parsed.dockWidth)
+          : fallback.dockWidth,
+      dockNavWidth:
+        typeof parsed.dockNavWidth === 'number' && Number.isFinite(parsed.dockNavWidth)
+          ? clampDockNavWidth(parsed.dockNavWidth)
+          : fallback.dockNavWidth,
+      dockTermHeight:
+        typeof parsed.dockTermHeight === 'number' && Number.isFinite(parsed.dockTermHeight)
+          ? clampDockTermHeight(parsed.dockTermHeight)
+          : fallback.dockTermHeight,
+      dockTermVisible:
+        typeof parsed.dockTermVisible === 'boolean' ? parsed.dockTermVisible : fallback.dockTermVisible,
+      dockTermMaximized:
+        typeof parsed.dockTermMaximized === 'boolean' ? parsed.dockTermMaximized : fallback.dockTermMaximized,
     };
   } catch {
     return fallback;
@@ -203,6 +244,13 @@ export function persistPrefs(s: AppStore, quiet?: { key: string; value: QuietMod
         workspacesCollapsed: s.workspacesCollapsed,
         footCollapsed: s.footCollapsed,
         ticketStartMode: s.ticketStartMode,
+        dockOpen: s.dockOpen,
+        dockMode: s.dockMode,
+        dockWidth: s.dockWidth,
+        dockNavWidth: s.dockNavWidth,
+        dockTermHeight: s.dockTermHeight,
+        dockTermVisible: s.dockTermVisible,
+        dockTermMaximized: s.dockTermMaximized,
       }),
     );
   } catch {

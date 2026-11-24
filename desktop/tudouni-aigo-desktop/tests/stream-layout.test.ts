@@ -145,43 +145,6 @@ test('the skip is on the rows and not on the scroll container', () => {
 });
 
 /* ============================================================
-   The terminal pane's rows
-   ============================================================ */
-
-test('a blank line in a terminal occupies a line', () => {
-  // `min-height: var(--leading-code)` reads as "one line" and is not: the token
-  // is `1.5`, a **unitless** number, which `line-height` accepts and `min-height`
-  // drops as invalid. Measured in a browser, an empty `.term-line` came out 0.0px
-  // tall against 18.8px for a non-empty one — so a blank line was invisible and
-  // every row after it moved up by a full line. A `git status` or a columnar `ls`
-  // then showed something the shell never printed.
-  //
-  // Asserted as text because that is the only place the mistake is visible: the
-  // declaration has no behaviour to observe in Node, and nothing about the pane
-  // *looks* broken — it just quietly disagrees with the terminal.
-  const body = streamRuleBody('.term-line');
-  assert.ok(body !== null, 'the `.term-line` rule is gone from stream.css');
-
-  const declared = body.match(/min-height:\s*([^;]+);/);
-  assert.ok(declared !== null, '`.term-line` must declare a `min-height` at all');
-  const value = declared[1].trim();
-
-  assert.notEqual(
-    value,
-    'var(--leading-code)',
-    '`min-height: var(--leading-code)` is a unitless multiplier and is dropped as ' +
-      'invalid, so a blank line collapses to zero height',
-  );
-  // Either form is fine; what matters is that the value is a length.
-  assert.match(
-    value,
-    /^(calc\(|1em$)/,
-    `\`min-height: ${value}\` is not a length this pane can rely on — use ` +
-      '`calc(var(--text-code) * var(--leading-code))` or `1em`',
-  );
-});
-
-/* ============================================================
    The streaming reasoning block
    ============================================================ */
 
@@ -253,65 +216,6 @@ test('the reasoning body is never hidden from layout', () => {
     'the collapsed state must not skip its content: `is-collapsed` is removed to ' +
       'start the unfold, so the content pops in at full height with nothing to ' +
       'transition',
-  );
-});
-
-test('the terminal pane skips the rows nobody is looking at', () => {
-  // The same defect, in the same shape, at a larger size: this pane holds up to
-  // `TERMINAL_SCROLLBACK` rows and re-renders all of them on every output batch.
-  // `app.css` measured 14.0ms → 1.2ms on a 322-row transcript with 93% of the
-  // cost in laying out rows that were off screen; a build log is longer than a
-  // transcript, and the fix is one declaration.
-  const body = streamRuleBody('.term-line');
-  assert.ok(body !== null, 'the `.term-line` rule is gone from stream.css');
-
-  assert.match(
-    body,
-    /content-visibility:\s*auto/,
-    'terminal rows no longer skip layout, so a long build log re-renders every ' +
-      'line it ever printed on each batch',
-  );
-  // `auto <length>` for the same reason as the transcript: without `auto` the
-  // estimate is used for ever instead of each row's real height.
-  assert.match(
-    body,
-    /contain-intrinsic-size:\s*auto\s+\d+(?:\.\d+)?(px|rem|em)/,
-    '`contain-intrinsic-size` must be `auto <length>` on the terminal rows too',
-  );
-});
-
-test('a long terminal line is reachable by the pane\'s horizontal scrollbar', () => {
-  // The two declarations that keep `content-visibility: auto` from swallowing
-  // horizontal overflow, and the failure is silent in the worst way: the output
-  // is simply cut off at the pane's right edge, with no scrollbar to say there is
-  // more. `content-visibility` paints through a containment box, and a
-  // block-level row's box is the pane's width — so the row clipped the tail of
-  // any line longer than the pane *and* contributed nothing to `scrollWidth`.
-  // Measured in Chromium on one 120-character line: the pane's `scrollWidth`
-  // equalled its `clientWidth` (285px) with the row as a plain block, and was
-  // 840px with `width: max-content`.
-  //
-  // Read as text, like the rule above: what is being pinned is that the width
-  // declaration stays beside the skip, because either one alone looks correct and
-  // the combination is what breaks.
-  const body = streamRuleBody('.term-line');
-  assert.ok(body !== null, 'the `.term-line` rule is gone from stream.css');
-
-  assert.match(
-    body,
-    /width:\s*max-content/,
-    'a `.term-line` box is the pane\'s width again, so `content-visibility` clips ' +
-      'the tail of a long line and the pane gets no horizontal scrollbar to ' +
-      'reach it — see the comment in stream/terminal.css for the measurement',
-  );
-  // Full-width for short rows: the caret and a selection at the end of a short
-  // line live in that width, and a row that hugged its text would make them look
-  // like they belong to a narrower block.
-  assert.match(
-    body,
-    /min-width:\s*100%/,
-    'short terminal rows must still span the pane, or the caret and selection at ' +
-      'the end of a line sit in a box that ends at the last glyph',
   );
 });
 

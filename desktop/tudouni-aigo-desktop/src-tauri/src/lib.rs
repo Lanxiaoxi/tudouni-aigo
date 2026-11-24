@@ -120,6 +120,11 @@ mod window_close;
 mod window_theme;
 mod workspace_staging;
 
+/// Per-workspace `--workspace-host` processes (files, git, terminals for the
+/// Workspace Dock), keyed by workspace id rather than by session so they
+/// outlive any conversation. See its module doc.
+mod workspace_host;
+
 use tauri::Manager;
 
 use crate::bridge::Bridge;
@@ -193,6 +198,7 @@ pub fn run() {
         // URLs anyway (CSP is `default-src 'self'`).
         .plugin(tauri_plugin_opener::init())
         .manage(Bridge::default())
+        .manage(crate::workspace_host::WorkspaceHostRegistry::default())
         .invoke_handler(tauri::generate_handler![
             crate::runtime_commands::runtime_attach,
             crate::runtime_commands::runtime_pref_mirror,
@@ -275,6 +281,12 @@ pub fn run() {
             // front end sends cannot be delivered to nobody. See `splash`'s
             // module doc for the launch that lost it.
             crate::splash::splash_ready,
+            // The Workspace Dock's host processes: one per workspace, not per
+            // session. The front end owns the protocol; these move lines.
+            crate::workspace_host::host_attach,
+            crate::workspace_host::host_send,
+            crate::workspace_host::host_shutdown,
+            crate::workspace_host::host_list,
         ])
         // The tray is built in `setup` rather than in a builder callback so it
         // can use the app handle the same way the commands do; it must exist
@@ -311,6 +323,16 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(window_close::on_close_requested)
-        .run(tauri::generate_context!())
-        .expect("the Tauri application failed to start");
+        .build(tauri::generate_context!())
+        .expect("the Tauri application failed to start")
+        .run(|app, event| {
+            // Backstop for every way out that does not pass through
+            // `runtime_commands::shutdown_blocking(None)` (which already ends
+            // the hosts): a host left behind would be a shell and a file
+            // watcher nobody can reach. Idempotent — with nothing running it
+            // returns at once.
+            if let tauri::RunEvent::Exit = event {
+                crate::workspace_host::shutdown_all_blocking(app);
+            }
+        });
 }

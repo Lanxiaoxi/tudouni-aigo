@@ -18,8 +18,9 @@ import { chooseAttachmentFile } from '@/runtime/tauri';
  * closes) is identical either way.
  *
  * What each entry does:
- *  - **文件 · 工作区文件** — the files panel, opened *as a picker*: picking a
- *    row attaches the file instead of reading it (`store.filePick`).
+ *  - **文件 · 工作区文件** — the Workspace Dock's Explorer, opened in its
+ *    file-choosing state: the next file picked is attached instead of just
+ *    selected (`store.dockPick`).
  *  - **文件 · 浏览** — the OS file dialog; the picked path is attached like a
  *    pasted picture's, as a placeholder in the draft (`⟦file-0⟧`) with the
  *    real path restored at submit.
@@ -205,7 +206,7 @@ function FilePage({ t, onBack, onDone }: { t: T; onBack: () => void; onDone: () 
           className="plus-item"
           onClick={() => {
             if (noWorkspace) return;
-            useApp.getState().openFilePicker();
+            useApp.getState().startDockPick('attach');
             onDone();
           }}
           disabled={noWorkspace}

@@ -20,6 +20,8 @@ import type { TicketInputDraft, TicketPatch, TicketRefusal } from '@/ticket/mach
 import type { NoteOpFact, Report, Ticket, TurnEnd } from '@/ticket/model';
 import type { TicketStartMemory } from '@/ticket/view';
 import type { TaskWorkspaceRef } from '@/task/tasks';
+import type { DockMode, DockPane, DockPick, GitSelection, WorkspaceUiState } from './workspaceDock/uiState';
+import type { DockShortcut } from './workspaceDock/shortcuts';
 
 /** What one inbox drain did, for the sentence the board shows afterwards. */
 export interface InboxScanResult {
@@ -197,29 +199,6 @@ export interface AppStore {
    * panel refreshed.
    */
   contextBlockWanted: boolean;
-  /**
-   * Whether the files panel is open **as a picker** (the plus menu's
-   * "workspace file" entry) rather than as the plain browser.
-   *
-   * Window-level, like `panel`: the question is about why the panel is open,
-   * not about any conversation. `openPanel`/`closePanel` keep it in step, so a
-   * panel opened any other way can never inherit a stale pick mode.
-   */
-  filePick: boolean;
-  /**
-   * Whether the files panel is open **to show one file** rather than to browse.
-   *
-   * Set by a deliverable card, which is a direct request for one file: the person
-   * pressed a card that named it, so drawing the workspace's directory listing
-   * above it answers a question nobody asked and pushes the picture they wanted
-   * off the bottom of the panel. In this mode the browser is not drawn at all and
-   * the viewer takes the panel.
-   *
-   * Window-level like `filePick`, and cleared the same way, so browsing can never
-   * inherit it: an entry that shows one file and forgets to say so would be a
-   * panel that silently refuses to list anything.
-   */
-  fileFocus: boolean;
   /**
    * Whether the minimize-or-close prompt is up.
    *
@@ -451,6 +430,40 @@ export interface AppStore {
    * compared by hand, so the rule lives in one place.
    */
   ticketStartMode: TicketStartMemory;
+
+  /* ---------------- Workspace Dock: window-level (docs/design/workspace-dock.md §9.1) ----------------
+   *
+   * The fourth column. Everything in this block is the **window's** and is
+   * persisted with the other presentation prefs; none of it hangs off a session
+   * bucket, so switching sessions cannot move the dock. The widths are the
+   * *preferences* (`null` = the budget module's default): what is drawn is
+   * derived in `workspaceDock/budget.ts` from them and from the window, and is
+   * never written back. */
+  dockOpen: boolean;
+  dockMode: DockMode;
+  dockWidth: number | null;
+  dockNavWidth: number | null;
+  dockTermHeight: number | null;
+  /** `false` folds the Terminal Dock to its title bar; the terminals keep running. */
+  dockTermVisible: boolean;
+  dockTermMaximized: boolean;
+  /** Single-column layout only: which half is on screen. Not persisted — a
+   *  relaunch starts at the navigator. */
+  dockPane: DockPane;
+  /**
+   * Whether the Explorer is open as a **file chooser** (the composer's "attach
+   * file" entry, design 5.4) rather than the plain browser. Window-level and not
+   * persisted: it describes a choice somebody is in the middle of, and is
+   * cleared when the dock closes or leaves the Explorer.
+   */
+  dockPick: DockPick;
+  /**
+   * The per-workspace UI state, keyed by `workspaceIdFor(root, remoteWorkspaceId)`
+   * (§9.2). Persisted in its own record (`workspaceDock/persist.ts`). Read it
+   * through `useWorkspaceUi`, which hands back a stable fallback for a workspace
+   * that has none yet.
+   */
+  workspaceUi: Record<string, WorkspaceUiState>;
   /**
    * Bookmarked workspaces.
    *
@@ -1178,23 +1191,8 @@ export interface AppStore {
   /** Drop one annotation, and its token from the draft. */
   forgetAnnotation(placeholder: string): void;
 
-  /**
-   * Open one panel.
-   *
-   * `focus` is **asked for, never inherited**: it opens the files panel onto a
-   * single file instead of the browser, and only the deliverable-card preview
-   * passes it (the picture door via `previewImage`, the text door right before
-   * its `file_read`). Every other caller gets the browser, including a second
-   * `openPanel('files')` — inheriting the flag made the directory listing
-   * silently unavailable for the rest of the window's life.
-   */
-  openPanel(p: PanelKind | null, focus?: boolean): void;
-  /**
-   * Open the files panel **as a picker**: picking a row attaches the file to
-   * the draft instead of reading it. The plain `/files` command goes through
-   * `openPanel`, which clears this — the two entries never leak into each other.
-   */
-  openFilePicker(): void;
+  /** Open one panel. */
+  openPanel(p: PanelKind | null): void;
   /**
    * Close whatever panel is open, restoring the steady session filter.
    *
@@ -1263,6 +1261,40 @@ export interface AppStore {
   setLeftbarWidth(px: number | null): void;
   toggleLeftbar(): void;
   setLeftbarVisible(v: boolean): void;
+
+  /* ---- Workspace Dock: window-level ---- */
+  setDockOpen(open: boolean): void;
+  toggleDock(): void;
+  /** Show this mode: opens the dock if it is shut. Does not touch the terminal. */
+  setDockMode(mode: DockMode): void;
+  /** Open the Explorer as a file chooser: the next file picked is acted on
+   *  (`'attach'` adds it to the composer) instead of just being selected. */
+  startDockPick(pick: Exclude<DockPick, null>): void;
+  /** Take the pending choice: returns what was being picked for and clears it,
+   *  so the caller acts exactly once. `null` when nothing was pending. */
+  finishDockPick(): DockPick;
+  /** Abandon the pending choice (Esc, the banner's Cancel). */
+  cancelDockPick(): void;
+  /** Dock shortcut semantics (see `applyDockShortcut`): closes the dock when
+   *  this mode is already the one showing. */
+  runDockShortcut(action: DockShortcut): void;
+  /** The outer width *preference* (clamped), or `null` for the default. */
+  setDockWidth(px: number | null): void;
+  setDockNavWidth(px: number | null): void;
+  setDockTermHeight(px: number | null): void;
+  setDockTermVisible(visible: boolean): void;
+  setDockTermMaximized(maximized: boolean): void;
+  setDockPane(pane: DockPane): void;
+
+  /* ---- Workspace Dock: per workspace (all take the id from `workspaceIdFor`) ---- */
+  /** Open (`true`), close (`false`) or toggle (omitted) one directory. */
+  toggleWorkspaceDir(workspaceId: string, path: string, open?: boolean): void;
+  setWorkspaceSelectedFile(workspaceId: string, path: string | null): void;
+  setWorkspaceGitSelection(workspaceId: string, selection: GitSelection | null): void;
+  setWorkspaceActiveTerminal(workspaceId: string, terminalId: string | null): void;
+  setWorkspaceSearch(workspaceId: string, query: string): void;
+  /** Forget everything remembered about one workspace. */
+  forgetWorkspaceUi(workspaceId: string): void;
   toggleBlock(k: SidebarBlockKey): void;
   /**
    * Bring the right rail back and unfold one of its blocks — the entry point
@@ -1380,35 +1412,6 @@ export interface AppStore {
   goalAction(action?: 'pause' | 'resume' | 'clear'): void;
   refreshState(): void;
 
-  /* ---------------- the workspace: files ---------------- */
-
-  /**
-   * List one directory level of the active session's workspace.
-   *
-   * An empty path is the workspace root. The answer replaces the browser's
-   * entries and — importantly — its **path**: the runtime normalises what it was
-   * given, and the reply's spelling is what makes "where am I" answerable after
-   * a `/./src/../src`.
-   */
-  listFiles(path: string): void;
-  /**
-   * Search the active session's whole workspace by name (`file_search`). An
-   * empty (or blank) query sends nothing and clears the results: the runtime
-   * would refuse it, and "search for nothing" means "go back to browsing".
-   */
-  searchFiles(query: string): void;
-  /** Read one file. The reply's head goes in the viewer and its `artifact_id`
-   *  names the body on disk; the whole file is never sent. */
-  readFile(path: string): void;
-  /**
-   * Show one **picture** in the viewer.
-   *
-   * Separate from {@link readFile} because the two cannot share a path: that one
-   * speaks `file_read`, which refuses anything that is not UTF-8. A picture is
-   * read by the desktop's own command and arrives as a `data:` URL.
-   */
-  previewImage(path: string): void;
-
   /* ---------------- workspace memory ---------------- */
 
   /**
@@ -1495,74 +1498,16 @@ export interface AppStore {
    */
   requestProbeEffort(): void;
 
-  /* ---------------- the workspace: terminals ---------------- */
-
-  /** Ask for the workspace's terminal list. */
-  listTerminals(): void;
-  /**
-   * Open a shell.
-   *
-   * `cwd` is workspace-relative and optional; so is the size, which the runtime
-   * turns into the conventional 80x24. A refusal produces a notice and an
-   * **unchanged list**, never a `terminal_created` — a front end given a row
-   * would remember an id for a shell that does not exist.
-   */
-  createTerminal(options?: { cwd?: string; cols?: number; rows?: number }): void;
-  /**
-   * Write raw bytes to a shell.
-   *
-   * **No reply.** The output arrives asynchronously, which is the whole shape of
-   * a terminal: `command → PTY → stream`. Nothing is buffered or interpreted
-   * here — `Ctrl+C`, arrows and Tab are just bytes.
-   */
-  terminalInput(id: string, data: string): void;
-  /** Tell the runtime the shell's new window size. Required for `vim`, `top`,
-   *  `htop` and `less`, which lay themselves out from it. */
-  resizeTerminal(id: string, cols: number, rows: number): void;
-  /** End a terminal and everything it started. The transcript's line comes from
-   *  the runtime's exit event, never from this request. */
-  killTerminal(id: string): void;
   /**
    * Stop one running **background** subagent.
    *
-   * Like `killTerminal` there is no reply payload: the child settles with the
+   * There is no reply payload: the child settles with the
    * ordinary `cancelled` reason, the board moves the row to the done panel, and
    * the next `ui(state)` re-draws everything — the runtime stays the only source
    * of truth for what is running. A refused stop arrives as a notice naming why
    * (unknown id, already finished), which the transcript shows.
    */
   stopSubagent(id: string): void;
-  /**
-   * Forget a terminal that has **already ended**, so its tab goes away.
-   *
-   * Not a synonym for `killTerminal`, and the runtime enforces the difference: a
-   * record whose process is still alive would be a shell nobody can see and
-   * nobody can end. So this refuses a running terminal, and the caller's job is
-   * to end it first and close it once the `terminal_exit` has arrived.
-   *
-   * The reply is a fresh full list, so a tab dropped too eagerly is restored from
-   * the same message that carries the reason.
-   */
-  closeTerminal(id: string): void;
-  /** Point this front end's terminal view at one terminal. A **local** act:
-   *  nothing is sent, and the shell is unaffected either way. `null` goes back to
-   *  the conversation. */
-  attachTerminal(id: string | null): void;
-  /**
-   * The status bar's terminals badge: into the terminal view, or back out of it.
-   *
-   * A **toggle**, and the second half is what makes it worth having: before it,
-   * leaving the terminal view was three controls that all live *inside* it (the
-   * tab strip's button, the pane's footer, and `Ctrl+Shift+\` when the pane has
-   * the focus), so once somebody's attention had moved to the bottom of the
-   * window there was no way back to the conversation without going in first.
-   * That is the same shape as the tab strip's own `onPick`, which also treats
-   * "press the thing you are already on" as "go back".
-   *
-   * It picks its target with `nextTerminalId` rather than remembering one,
-   * because the id it would remember is exactly the one that gets closed.
-   */
-  toggleTerminalView(): void;
   /** Ask the OS for a directory, then open a session in it. A different
    *  workspace is a different process, so this cannot be done to an existing
    *  one. */

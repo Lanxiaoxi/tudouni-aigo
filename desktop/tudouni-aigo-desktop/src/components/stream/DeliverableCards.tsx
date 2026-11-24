@@ -9,12 +9,12 @@ import {
   Presentation,
   X,
 } from 'lucide-react';
-import { useApp, useSessionField } from '@/state/store';
+import { useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { baseName } from '@/utils/format';
 import { useDeliverableOpen } from '@/hooks/useDeliverableOpen';
-import { isPicturePath } from '@/components/panels/panels';
+import { revealWorkspaceFile } from '@/components/dock/dockActions';
 import type { Deliverable } from '@/state/entries';
 
 /**
@@ -79,7 +79,7 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
               // "which one is this" is the question a hover is asking.
               title={file.path}
               aria-label={t('deliverable.preview', { name })}
-              onClick={() => previewFile(file.path)}
+              onClick={() => previewFile(file, open)}
             >
               <span className="dl-icon" aria-hidden>
                 <FileGlyph path={file.path} />
@@ -140,45 +140,23 @@ export function DeliverableCards({ files }: { files: Deliverable[] }) {
 }
 
 /**
- * Send one declared file to the files panel and open it there, **in focus
- * mode** either way the file is drawn.
+ * Show one declared file in the Workspace Dock's Explorer (the old modal files
+ * panel is gone): the Dock opens in Explorer mode with the file selected and
+ * its parent directories expanded, and the Explorer's own viewer draws it, text
+ * and pictures alike.
  *
- * The card is a request for one file, so the panel must not answer with a
- * browser: a card for a `.html` or a `.md` used to open onto the workspace's
- * directory listing above the file, the text twin of the picture regression
- * the focus flag exists to suppress. Both doors therefore ask for the flag;
- * the panel is opened by the callee, not here, because `openPanel` clears
- * `fileFocus` for any route that is not the one setting it — opening the panel
- * first and setting the flag afterwards left the flag false and drew the
- * directory listing anyway.
+ * The card holds whatever path the model wrote, absolute or workspace-relative;
+ * `revealWorkspaceFile` converts it against the active workspace root. A file
+ * **outside** the workspace has no row to select, so the card keeps the
+ * behaviour it has for files that are not the workspace's to browse: the same
+ * "open" door the button beside it uses (the OS default application, after a
+ * download for a remote session).
  *
- * **The doors differ in what they read, not in how they open.** `readFile`
- * speaks the runtime's `file_read`, which refuses anything that is not UTF-8 —
- * a PNG sent down it opens the panel onto "not UTF-8 text, so it cannot be
- * shown here", a true sentence about the wrong question: the runtime was never
- * able to draw it. `previewImage` reads the bytes through the desktop's own
- * command and hands the panel a `data:` URL instead.
- *
- * The path is sent **verbatim**, as the runtime spelled it. This window never
- * rewrites a path on its way to a `file_read`: the boundary and the normalisation
- * both belong to the process that holds them.
- *
- * The panel is a modal layer drawn over the transcript, so pressing this hides
- * the card until the panel is closed. That is the same trade the Files panel
- * already makes for every file it opens, and the read also lands in the stream as
- * a block — so the answer is still there afterwards, not only while the panel is
- * up.
- *
- * Exported for the test that pins the focus flag on the text door.
+ * Exported so the routing can be asserted without a renderer.
  */
-export function previewFile(path: string) {
-  const store = useApp.getState();
-  if (isPicturePath(path)) {
-    store.previewImage(path);
-    return;
-  }
-  store.openPanel('files', true);
-  store.readFile(path);
+export function previewFile(file: Deliverable, openExternally: (file: Deliverable) => void) {
+  if (revealWorkspaceFile(file.path)) return;
+  openExternally(file);
 }
 
 /** The face of a card, chosen by extension. Exported because the rail's file

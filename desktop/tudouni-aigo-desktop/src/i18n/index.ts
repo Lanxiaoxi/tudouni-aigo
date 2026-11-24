@@ -1596,97 +1596,41 @@ export const en = {
 
   /* ---- workspace: files ---- */
   'panel.files.title': 'Files',
-  'panel.files.empty': 'This directory is empty',
-  'panel.files.loading': 'Reading the directory…',
   'panel.files.root': 'workspace root',
   /** Picker mode (the plus menu's "workspace file"): the note that says what
    *  picking a row does, in place of the path note the browser shows. */
-  'panel.files.pick': 'pick a file to attach it to the message',
-  'panel.files.parent': 'Up one level',
   /** The search box. From protocol 20 it searches the whole workspace by name;
    *  against an older runtime it filters the current directory only. */
-  'panel.files.search': 'Search files in the workspace…',
-  'panel.files.searchLocal': 'Filter this directory…',
-  'panel.files.clearSearch': 'Clear the search',
-  'panel.files.noMatch': 'No file in this directory matches',
-  'panel.files.noMatchWorkspace': 'No file in the workspace matches',
-  'panel.files.searching': 'Searching the workspace…',
   /* `panel.files.dir` ('directory') was never read: the panel marks a directory
      with a trailing `/` and an icon, which is the runtime's own `type` shown as
      itself rather than a word repeating it. */
   'panel.files.lines': '{n} lines',
   'panel.files.truncated':
     'Showing the first {chars} characters. The whole body is stored as {id}.',
-  'panel.files.failed': 'Could not read it',
-  'panel.files.reading': 'reading…',
   /** Focus mode with no view: the panel was opened for a file but no session is
    *  live, so there is no workspace to resolve the path against. */
-  'panel.files.noSession': 'No session is running, so there is no workspace to read it from.',
   /* ---- workspace: terminals ---- */
   'panel.term.title': 'Terminals',
-  'panel.term.empty': 'No terminal open in this workspace',
-  'panel.term.new': 'New terminal',
-  'panel.term.kill': 'End this terminal',
-  'panel.term.killConfirm': 'Press again to end it',
   /* Closing a tab: two different acts behind one button, and the label says
      which will happen. An ended shell is only forgotten — nothing is lost but
      the record — while a running one has to be **ended first**, because the
      runtime will not forget a terminal whose process is alive. */
-  'panel.term.close': 'Close this tab',
-  'panel.term.closeRunning': 'End this terminal and close its tab',
-  'panel.term.closeRunningConfirm': 'Press again to end it and close the tab',
-  'panel.term.detach': 'Back to the conversation (the shell keeps running)',
-  'panel.term.leave': 'Back to the conversation',
   /* `panel.term.attach` ('Type into it') and `panel.term.detached` were here with
      no reference anywhere: the first described a state the pane does not draw,
      and the second duplicated the sentence that now lives at `note.term.detached`
      — where the store's own note actually reads it. A key nobody reads is a
      sentence somebody believes is on screen. */
-  'panel.term.leaveHint': 'Ctrl+Shift+\\ also goes back; the shell keeps running.',
-  'panel.term.running': 'running',
-  'panel.term.exited': 'exited ({code})',
-  'panel.term.exitedNoCode': 'exited',
-  'panel.term.killed': 'killed',
-  'panel.term.cwdRoot': 'workspace root',
-  'panel.term.hint':
-    'Keys go to the shell byte for byte: Ctrl+C interrupts its command, arrows move in it, Ctrl+V pastes into it, Ctrl+Shift+C copies a selection. Nothing is interpreted by this window.',
-  'panel.term.dropped': 'Earlier output scrolled out of this buffer.',
-  'panel.term.outline': 'The runtime keeps no output — this buffer is this window’s own.',
   /* The status chips on the panel's list. `running` already exists above as a
      row badge; the chips are their own keys because a filter label is a
      sentence's subject ("Running · 2"), not the badge's verdict word. */
-  'panel.term.filter.all': 'All',
-  'panel.term.filter.running': 'Running',
-  'panel.term.filter.ended': 'Ended',
-  'panel.term.filterEmpty': 'No terminals in this view',
-  'panel.term.filterEmptyHint': 'Another filter may hold the one you are looking for.',
-  'panel.term.emptyHint':
-    'Open one to run commands beside the conversation — while you are in it, its view replaces the transcript.',
-  'panel.term.attach': 'Attach',
-  'panel.term.show': 'Show',
-  'panel.term.attached': 'attached',
-  'panel.term.opened': 'opened {when}',
   /* The one-press removal of an ended terminal: forgetting a record destroys
      nothing but the record, so it needs no arm — the running shell's kill,
      which takes down a process tree, keeps the two-press rule above. */
-  'panel.term.remove': 'Remove this record',
-  'panel.term.removeHint': 'The shell has ended — this forgets the record only.',
 
-  /* ---- what this window itself says about a terminal ----
-   *
-   * Distinct from a runtime `notice`, whose text is displayed verbatim. These
-   * are this front end's own sentences, so they are built from a code plus
-   * parameters (`FrontMessage`) rather than assembled in the store. The three
-   * endings stay three sentences: a killed shell did not choose an exit status,
-   * so printing a number for it would invent one. */
-  'note.term.endedKilled': 'Terminal {id} was killed.',
-  'note.term.ended': 'Terminal {id} exited.',
-  'note.term.endedCode': 'Terminal {id} exited with code {code}.',
-  'note.term.detached': 'Terminal {id} is still running.',
 
   /* ---- context, goal rounds and pictures ----
    *
-   * The same rule as the terminal notes above: these rows are this window's
+   * The same rule as every other note this window composes: these rows are this window's
    * own account of what the runtime reported, so the store keeps only the
    * facts (`FrontMessage`) and the sentence is built here. The fragment keys
    * exist because every figure is optional — a missing `items` or a missing
@@ -2373,8 +2317,8 @@ export const en = {
   'cmd.effort.desc': 'Options change with the current model',
   'cmd.mcp.desc': 'Three states, and load / unload a server',
   'cmd.goal.desc': 'Inspect and control the long-term goal',
-  'cmd.files.desc': 'Browse the workspace files',
-  'cmd.terminal.desc': 'Terminals in this workspace',
+  'cmd.files.desc': 'Open the workspace dock on the file explorer',
+  'cmd.terminal.desc': 'Show the workspace dock terminals',
 
   /* ---------------- keys ---------------- */
   'key.send': 'Send',
@@ -2771,6 +2715,166 @@ export const en = {
   'panel.hooks.ws.why.off': 'Not running: switched off in the file.',
   'panel.hooks.ws.why.untrusted': 'Not running: the file is not approved.',
   'panel.hooks.ws.why.afterStart': 'Not running yet: approved after this session started.',
+
+  /* ---------------- workspace dock (the fourth column) ----------------
+   *
+   * Framework copy only: the three modules (Explorer, Git, Terminal) add their
+   * own keys under `dock.explorer.*`, `dock.git.*` and `dock.term.*` when they
+   * are built. */
+  'dock.title': 'Workspace dock',
+  'dock.toggle.open': 'Show the workspace dock',
+  'dock.toggle.close': 'Hide the workspace dock',
+  'dock.mode.label': 'Dock view',
+  'dock.mode.explorer': 'Explorer',
+  'dock.mode.git': 'Git',
+  'dock.nav.label': 'Navigator',
+  'dock.viewer.label': 'Viewer',
+  'dock.back': 'Back to the list',
+  'dock.splitter.width': 'Resize the workspace dock',
+  'dock.splitter.nav': 'Resize the navigator',
+  'dock.splitter.term': 'Resize the terminal area',
+  'dock.term.title': 'Terminal',
+  'dock.term.fold': 'Fold the terminal area',
+  'dock.term.unfold': 'Show the terminal area',
+  'dock.term.maximize': 'Maximize the terminal area',
+  'dock.term.restore': 'Restore the terminal area',
+  'dock.term.tabs': 'Terminals',
+  'dock.term.new': 'New terminal',
+  'dock.term.empty.title': 'No terminals',
+  'dock.term.empty.hint': 'A terminal keeps running in this workspace until you close it.',
+  'dock.term.tab.running': 'running',
+  'dock.term.tab.exited': 'exited ({code})',
+  'dock.term.tab.exitedNoCode': 'exited',
+  'dock.term.tab.hostLost': 'ended with the host',
+  'dock.term.tab.rename': 'Rename (double-click or F2)',
+  'dock.term.tab.renameField': 'Terminal name',
+  'dock.term.close': 'Close this terminal',
+  'dock.term.closeRunning': 'End this terminal and close its tab',
+  'dock.term.kill': 'End the process (keep the tab)',
+  'dock.term.surface': 'Terminal {name}',
+  'dock.term.confirm.closeTitle': 'Close this terminal?',
+  'dock.term.confirm.closeBody': '"{name}" is still running. Closing it ends the shell and everything started from it. This cannot be undone.',
+  'dock.term.confirm.closeAction': 'End and close',
+  'dock.term.confirm.killTitle': 'End the process?',
+  'dock.term.confirm.killBody': '"{name}" is still running. Its process tree is ended; the tab and its output stay until you close it.',
+  'dock.term.confirm.killAction': 'End process',
+  'dock.closeWorkspace.title': 'Remove this workspace?',
+  'dock.closeWorkspace.body': '"{name}" has {n} running terminal(s). Removing it ends them and everything started from them. This cannot be undone.',
+  'dock.closeWorkspace.action': 'End terminals and remove',
+  'dock.term.error.create': 'Could not open a terminal: {message}',
+  'dock.term.error.act': 'The terminal did not respond: {message}',
+  'dock.term.note.gap': 'output before this point is no longer available',
+  'dock.term.note.exited': 'process exited (code {code})',
+  'dock.term.note.exitedNoCode': 'process exited',
+  'dock.term.note.hostLost': 'the workspace host ended, and this terminal with it',
+  'dock.empty.noWorkspace.title': 'No workspace',
+  'dock.empty.noWorkspace.hint': 'Open a session to browse its files and changes and to use its terminals.',
+  'dock.empty.notConnected.title': 'Not connected',
+  'dock.empty.notConnected.hint': 'The workspace host has not answered. This fills in once it is connected.',
+  'dock.empty.notConnected.retry': 'Reconnect',
+  'dock.empty.unsupported.files': 'File browsing is not available here',
+  'dock.empty.unsupported.git': 'Git is not available here',
+  'dock.empty.unsupported.terminal': 'Terminals are not available here',
+  'dock.empty.unsupported.hint': 'The workspace host reports that it cannot do this for this workspace.',
+  'dock.placeholder.viewer.explorer': 'Select a file to preview it.',
+  'dock.placeholder.viewer.git': 'Select a change to see its diff.',
+  /* ---- Explorer (docs/design/workspace-dock.md 5) ---- */
+  'dock.explorer.tree': 'Workspace files',
+  'dock.explorer.pick.attach': 'Select a file to attach. Esc to cancel.',
+  'dock.explorer.search.placeholder': 'Search file names',
+  'dock.explorer.search.label': 'Search file names in this workspace',
+  'dock.explorer.search.clear': 'Clear the search',
+  'dock.explorer.search.searching': 'Searching…',
+  'dock.explorer.search.count': '{n} matches',
+  'dock.explorer.search.countMore': '{n} matches, more not shown',
+  'dock.explorer.search.none': 'Nothing named "{q}"',
+  'dock.explorer.search.error': 'Search failed: {message}',
+  'dock.explorer.hidden.show': 'Show hidden files',
+  'dock.explorer.hidden.hide': 'Hide hidden files',
+  'dock.explorer.refresh': 'Refresh the file tree',
+  'dock.explorer.loading': 'Loading…',
+  'dock.explorer.empty': 'Empty folder',
+  'dock.explorer.truncated': 'The list was cut off here: this folder has more entries than are shown.',
+  'dock.explorer.error': 'Could not list this folder: {message}',
+  'dock.explorer.retry': 'Retry',
+  'dock.explorer.hasChanges': 'Contains changes',
+  'dock.explorer.menu.label': 'File actions',
+  'dock.explorer.menu.copyPath': 'Copy relative path',
+  'dock.explorer.menu.insertPath': 'Insert path into the message',
+  'dock.explorer.menu.attach': 'Attach as context file',
+  'dock.explorer.menu.terminal': 'Open a terminal here',
+  'dock.explorer.menu.diff': 'View Git diff',
+  'dock.explorer.menu.open': 'Open with the system',
+  'dock.explorer.view.reload': 'Reload the file',
+  'dock.explorer.view.loading': 'Loading…',
+  'dock.explorer.view.failed': 'Could not read this file',
+  'dock.explorer.view.imageAlt': 'Preview of {name}',
+  'dock.explorer.view.size': 'Size',
+  'dock.explorer.view.type': 'Type',
+  'dock.explorer.view.modified': 'Modified',
+  'dock.explorer.view.noText': 'No text preview',
+  'dock.explorer.view.binary': 'This looks like a binary file.',
+  'dock.explorer.view.nonUtf8': 'This file is not valid UTF-8 text.',
+  'dock.explorer.view.mdMode': 'Markdown view',
+  'dock.explorer.view.rendered': 'Rendered',
+  'dock.explorer.view.source': 'Source',
+  'dock.explorer.view.empty': 'Empty file',
+  'dock.explorer.view.lines': '{n} lines',
+  'dock.explorer.view.linesFirst': 'first {n} lines',
+  'dock.explorer.view.codeLabel': 'Contents of {name}',
+  'dock.explorer.view.truncated': 'Showing the first {read} of {size}.',
+  'dock.explorer.view.more': 'Load more',
+  /* ---- Git (docs/design/workspace-dock.md 6) ---- */
+  'dock.git.status.modified': 'Modified',
+  'dock.git.status.added': 'Added',
+  'dock.git.status.deleted': 'Deleted',
+  'dock.git.status.renamed': 'Renamed',
+  'dock.git.status.copied': 'Copied',
+  'dock.git.status.typeChanged': 'Type changed',
+  'dock.git.status.untracked': 'Untracked',
+  'dock.git.status.conflict': 'Conflict',
+  'dock.git.group.staged': 'Staged',
+  'dock.git.group.unstaged': 'Unstaged',
+  'dock.git.group.conflicts': 'Conflicts',
+  'dock.git.source.worktree': 'Working tree against the index',
+  'dock.git.source.index': 'Index against HEAD',
+  'dock.git.source.untracked': 'Untracked file',
+  'dock.git.list': 'Changed files',
+  'dock.git.clean': 'No changes',
+  'dock.git.refresh': 'Refresh Git status',
+  'dock.git.loading': 'Reading Git status…',
+  'dock.git.noGit.title': 'Git is not installed',
+  'dock.git.noGit.hint': 'The workspace host could not find git on its PATH.',
+  'dock.git.error.title': 'Could not read Git status',
+  'dock.git.error.stale': 'Could not refresh Git status: {message}',
+  'dock.git.notRepo.title': 'Not a Git repository',
+  'dock.git.notRepo.hint': 'This workspace is not inside a repository, so there are no changes to show.',
+  'dock.git.detached': 'Detached HEAD',
+  'dock.git.noBranch': 'No branch',
+  'dock.git.detachedBadge': 'detached',
+  'dock.git.unborn': 'no commits yet',
+  'dock.git.upstream': 'Upstream: {name}',
+  'dock.git.ahead': '{n} commits ahead of upstream',
+  'dock.git.behind': '{n} commits behind upstream',
+  'dock.git.operation': 'in progress: {name}',
+  'dock.git.truncated': 'The list was cut off: more files changed than are shown.',
+  'dock.git.diff.label': 'Diff of {name}',
+  'dock.git.diff.layout': 'Diff layout',
+  'dock.git.diff.unified': 'Unified',
+  'dock.git.diff.split': 'Split',
+  'dock.git.diff.refresh': 'Reload the diff',
+  'dock.git.diff.openInExplorer': 'Open in Explorer',
+  'dock.git.diff.truncated': 'This diff is too large and was cut off.',
+  'dock.git.diff.failed': 'Could not read this diff',
+  'dock.git.diff.loading': 'Loading…',
+  'dock.git.diff.binary': 'Binary file: no text diff',
+  'dock.git.diff.renameOnly': 'Renamed without content changes',
+  'dock.git.diff.empty': 'No differences to show',
+  'dock.git.diff.noNewline': 'No newline at end of file',
+  'key.dock': 'Show or hide the workspace dock',
+  'key.dockExplorer': 'Workspace dock: Explorer',
+  'key.dockGit': 'Workspace dock: Git',
+  'key.dockTerminal': 'Workspace dock: show or fold the terminal area',
 } as const;
 
 export type TKey = keyof typeof en;

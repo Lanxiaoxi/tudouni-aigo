@@ -145,9 +145,6 @@ export function isUntouchedSession(s: AppStore, key: string): boolean {
   ) {
     return false;
   }
-  // A shell is running, made by this session's child — closing the session ends
-  // it, and the scrollback this end holds goes with it.
-  if (rt.terminals.length > 0 || rt.activeTerminalId !== null) return false;
   // Something to read rather than nothing to lose: a child that would not start,
   // one that died, an input the composer refused and explained.
   if (rt.problem !== null || rt.runtimeExit !== null || rt.composerNotice !== null) return false;

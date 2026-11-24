@@ -10,7 +10,7 @@
 import type { Entry } from '@/state/entries';
 import type { VmInitTool, VmMcp, VmModel, VmSkill } from '@/runtime/adapt';
 import type { Annotation, AttachedFile, PastedImage, PendingFile, PendingImage } from '@/runtime/paste';
-import type { FileEntry, ModelAlias, TerminalRow } from '@/protocol/types';
+import type { ModelAlias } from '@/protocol/types';
 import type { SavedSessions } from './store';
 
 
@@ -35,11 +35,6 @@ export const NO_SAVED_SESSIONS: SavedSessions = {
   active: [],
   listed: false,
 };
-/** The empty terminal list, for the same reason: a selector's fallback must be
- *  a stable reference or every render of an empty workspace is a new frame. */
-export const NO_TERMINALS: TerminalRow[] = [];
-/** No file listing yet. Same rule as above. */
-export const NO_FILE_ENTRIES: FileEntry[] = [];
 /** No terminal output yet. Same rule as above. */
 export const NO_OUTPUT: string[] = [];
 export const NO_SKILLS: VmSkill[] = [];

@@ -20,7 +20,7 @@ import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
 import { landPersonReplied } from '../ticketLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'addAnnotation' | 'forgetAnnotation' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'openFilePicker' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'setTicketStartMode' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'addAnnotation' | 'forgetAnnotation' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'setTicketStartMode' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
 
   /**
@@ -615,21 +615,8 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
     /* ==========================================================
        Panels and preferences
        ========================================================== */
-    openPanel(p, focus) {
-      // A pick mode is never inherited: only `openFilePicker` turns it on, and
-      // any other way into a panel is the plain browser's. ('files' keeps
-      // whatever `openFilePicker` just set; everything else clears it.)
-      //
-      // `fileFocus` is **asked for, never inherited**: only `previewImage` passes
-      // `focus`, so a second `openPanel('files')` — the palette, a re-open,
-      // anything — is a browser. Inheriting it made the directory listing
-      // silently unavailable for the rest of the window's life, which is a worse
-      // failure than the layout it fixes.
-      set({
-        panel: p,
-        filePick: p === 'files' ? get().filePick : false,
-        fileFocus: p === 'files' && focus === true,
-      });
+    openPanel(p) {
+      set({ panel: p });
       const key = get().activeKey;
       // **The library borrows the connection's filter.** Its Archived tab draws
       // rows the rail is not supposed to show, and the runtime's list is one
@@ -654,19 +641,6 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
         // never sends it on its own initiative — that would make "the config
         // widens itself" possible.
         sendTo(key, { v: 1, t: 'mcp', action: 'list', servers: [] });
-      }
-      if (p === 'files') {
-        // Opens at the workspace root and asks for it in the same breath. The
-        // panel draws its loading state immediately, so this never looks like a
-        // dead keypress while the runtime reads the directory.
-        patch(key, { filesLoading: true });
-        sendTo(key, { v: 1, t: 'file_list', path: '' });
-      }
-      if (p === 'terminal') {
-        // The list is already carried on every `ui(state)`, so this is a
-        // refresh rather than the only source of it — a front end that never
-        // sent this would still show terminals, one snapshot later.
-        sendTo(key, { v: 1, t: 'terminal_list' });
       }
       if (p === 'memory') {
         // The snapshot is asked for on open because it is the only source: unlike the
@@ -697,19 +671,11 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
 
     closePanel() {
       const wasLibrary = get().panel === 'resume';
-      set({ panel: null, filePick: false, fileFocus: false });
+      set({ panel: null });
       // Only when the library was the one open: every other panel leaves the
       // filter alone, and asking for a list nobody wants would be a message per
       // panel close.
       if (wasLibrary) get().setSessionFilter('active');
-    },
-
-    openFilePicker() {
-      // The flag goes down first: `openPanel` reads it (`filePick` survives a
-      // transition into 'files' only when it is already raised) so the picker
-      // opens with the workspace root listing that `openPanel('files')` sends.
-      set({ filePick: true });
-      get().openPanel('files');
     },
 
     setSessionFilter(filter) {
@@ -737,16 +703,6 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
         set({ board: null });
         return;
       }
-      // **An attached shell loses the screen to the board, explicitly.** The
-      // view's priority order keeps the terminal above the board — `TerminalView`
-      // is the only way out of a shell, so nothing may cover it — which is why
-      // merely setting `board` here was invisible whenever a shell was on
-      // screen: the flag flipped, the terminal kept drawing, and the press read
-      // as dead until the shell was left by hand. Opening the board is an
-      // explicit act, exactly like pressing the detach control, so it detaches
-      // the same way — through `attachTerminal(null)`, so the "still running"
-      // note is written by the one place that writes it.
-      get().attachTerminal(null);
       set({ board: next, panel: null });
     },
 

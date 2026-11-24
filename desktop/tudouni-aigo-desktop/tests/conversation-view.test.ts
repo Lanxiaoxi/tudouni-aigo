@@ -1,33 +1,15 @@
 /**
  * What the conversation column shows, and the order that decides it.
  *
- * This is the regression suite for one press: **"New terminal" on the first
- * screen**. Measured on `cfd5836`, it produced a screen with no terminal and no
- * input box at all — the greeting was drawn over a running shell, and the
- * composer had withdrawn because a shell owned the keyboard. The only control
- * that could have left that state lives inside the view that was not drawn, so
- * it was a deadlock with a plausible-looking screen.
+ * "Which of the six things is on screen" is a *priority order*, and a wrong
+ * order reads as ordinary code and draws a plausible-looking screen. So the
+ * order is one pure function and these tests drive it directly.
  *
- * Every layer was individually right, which is why this survived a green suite:
- *
- *   - `TerminalView` withdraws the composer and every keystroke goes to the
- *     shell — correct, and asserted in `terminal.test.ts`;
- *   - the first screen is shown whenever `ready && !hasConversation` — correct
- *     for a conversation nobody has spoken into;
- *   - and the two conditions were answered by **two separate expressions** in
- *     `App`, one for the view and one for the composer.
- *
- * That last point is the defect, and it is not visible in a rendered string:
- * "which of the six things is on screen" is a *priority order*, and it was
- * written as a chain of ternaries where an ordering mistake reads as ordinary
- * code. So the order is now one pure function and these tests drive it
- * directly — the same reason `listKeyAction`, `focusIsInTerminal`,
- * `contentBoxOf` and `resolveAttachWorkspace` are pure.
- *
- * The bug is *pairwise*: no single branch is wrong, so the assertions below come
- * in pairs — "the terminal wins over X" **and** "the composer is still drawn
- * when X wins". A test that only checked one of the two would have passed on the
- * broken code.
+ * The suite used to be the regression test for an attached terminal that took
+ * the column and the keyboard (`TerminalView`). Terminals now live in the
+ * Workspace Dock, so that occupant and its priority rules are gone; what is
+ * left is the order of the rest, in pairs: "X wins over Y" **and** "the
+ * composer is still drawn when Y wins".
  */
 
 import assert from 'node:assert/strict';
@@ -45,7 +27,6 @@ function healthy(overrides: Partial<ConversationViewInput> = {}): ConversationVi
   return {
     startupProblem: false,
     sessionProblem: false,
-    attachedTerminalId: null,
     board: null,
     hasSession: true,
     ready: true,
@@ -54,56 +35,10 @@ function healthy(overrides: Partial<ConversationViewInput> = {}): ConversationVi
   };
 }
 
-/* ============================================================
-   The reported defect
-   ============================================================ */
-
-test('a terminal attached on the first screen draws the terminal, not the greeting', () => {
-  // The exact state the report came from: a workspace with a live shell and a
-  // conversation nobody has spoken into yet. Clicking "New terminal" in the
-  // terminal panel attaches — and `ready && !hasConversation` was still true, so
-  // the greeting won and the shell was invisible.
-  const input = healthy({ hasConversation: false, attachedTerminalId: 'term-01' });
-
-  assert.equal(
-    conversationView(input),
-    'terminal',
-    'the first screen must not be drawn over a shell somebody just opened',
-  );
-});
-
-test('and the composer comes back with it, because that is the way out', () => {
-  // The other half, and the half that made it a deadlock rather than an
-  // inconvenience. The composer withdrew on the *attach* alone, so this screen
-  // had neither the terminal nor the input box. Drawing the terminal restores
-  // the tab strip, which carries the named "back to the conversation" button —
-  // so "the terminal wins" is what makes the state escapable at all.
-  const input = healthy({ hasConversation: false, attachedTerminalId: 'term-01' });
-  const view = conversationView(input);
-
-  assert.equal(
-    showsComposer(view),
-    false,
-    'the shell owns the keyboard, so a text box under it would accept nothing',
-  );
-  // And the thing that replaced the composer is the terminal itself.
-  assert.equal(view, 'terminal');
-});
-
-test('an attached terminal outranks "starting the runtime…" too', () => {
-  // The same ordering, reached from the other side: a fresh session's shell can
-  // be attached in the window before `init` lands. `Booting` used to be tested
-  // before the attach as well, so the shell was hidden behind a sentence about a
-  // process that was in fact answering.
-  const input = healthy({ ready: false, hasConversation: false, attachedTerminalId: 'term-01' });
-  assert.equal(conversationView(input), 'terminal');
-});
-
-test('the composer is drawn for every view except the terminal and the board', () => {
-  // The contract in one assertion, so an eighth view added later cannot be
-  // forgotten here: only the shell and the board take the keyboard away — the
-  // shell because it owns every keystroke, the board because there is no
-  // single conversation to speak into while it is up.
+test('the composer is drawn for every view except the boards', () => {
+  // The contract in one assertion, so a view added later cannot be forgotten
+  // here: only the boards withdraw it, because there is no single conversation
+  // to speak into while one is up.
   const others: ConversationViewInput[] = [
     healthy({ startupProblem: true }),
     healthy({ sessionProblem: true }),
@@ -114,12 +49,12 @@ test('the composer is drawn for every view except the terminal and the board', (
   ];
   for (const input of others) {
     const view = conversationView(input);
-    assert.notEqual(view, 'terminal');
     assert.notEqual(view, 'board');
+    assert.notEqual(view, 'tickets');
     assert.equal(showsComposer(view), true, `${view} must leave the composer in place`);
   }
   assert.equal(showsComposer('board'), false, 'the board has no addressee, so no composer');
-  assert.equal(showsComposer('terminal'), false, 'the shell owns the keyboard');
+  assert.equal(showsComposer('tickets'), false, 'nor does the ticket board');
 });
 
 test('find is offered only while the transcript is the column', () => {
@@ -134,14 +69,13 @@ test('find is offered only while the transcript is the column', () => {
   const inputs: ConversationViewInput[] = [
     healthy({ startupProblem: true }),
     healthy({ sessionProblem: true }),
-    healthy({ attachedTerminalId: 'term-1' }),
     healthy({ board: 'sessions' }),
     healthy({ hasConversation: false }),
     healthy({ ready: false }),
     healthy(),
   ];
   const views = inputs.map(conversationView);
-  // Seven inputs, seven occupants: if two of them ever collapse onto one view,
+  // Six inputs, six occupants: if two of them ever collapse onto one view,
   // the priority order has lost a branch, and the loop below would silently stop
   // covering one of them.
   assert.equal(new Set(views).size, inputs.length, `views: ${views.join(', ')}`);
@@ -163,29 +97,20 @@ test('find is offered only while the transcript is the column', () => {
    The order, pair by pair
    ============================================================ */
 
-test('a start-up failure outranks everything, shells included', () => {
-  // Without a runtime there are no shells either, so the reason and the two ways
-  // out are the only useful thing on screen — an attach cannot outrank it.
-  assert.equal(
-    conversationView(healthy({ startupProblem: true, attachedTerminalId: 'term-01' })),
-    'startup-problem',
-  );
+test('a start-up failure outranks everything', () => {
+  // Without a runtime there is no session either, so the reason and the two
+  // ways out are the only useful thing on screen.
+  assert.equal(conversationView(healthy({ startupProblem: true, board: 'sessions' })), 'startup-problem');
   assert.equal(
     conversationView(healthy({ startupProblem: true, sessionProblem: true })),
     'startup-problem',
   );
 });
 
-test('one session\'s own failure outranks a terminal, but not the window\'s', () => {
+test('one session\'s own failure outranks the board, but not the window\'s', () => {
   // A child that refused to start belongs to the conversation somebody asked
-  // for, and the window may be running others happily. It is checked before the
-  // attach for the same reason it is checked before `Booting`: it never becomes
-  // ready, so anything else drawn here would be a sentence over a process that
-  // gave up.
-  assert.equal(
-    conversationView(healthy({ sessionProblem: true, attachedTerminalId: 'term-01' })),
-    'session-problem',
-  );
+  // for, and the window may be running others happily.
+  assert.equal(conversationView(healthy({ sessionProblem: true, board: 'sessions' })), 'session-problem');
 });
 
 test('a session\'s failure outranks "not ready", which is the point of it', () => {
@@ -217,7 +142,7 @@ test('a conversation on screen is the transcript', () => {
 });
 
 /* ============================================================
-   The board: above the first screen, below the terminal
+   The board: above the first screen
    ============================================================ */
 
 test('the board covers the first screen — the case it is built for', () => {
@@ -227,18 +152,6 @@ test('the board covers the first screen — the case it is built for', () => {
   // it would be covered in the one case it was made for.
   assert.equal(conversationView(healthy({ board: 'sessions', hasConversation: false })), 'board');
   assert.equal(conversationView(healthy({ board: 'sessions' })), 'board');
-});
-
-test('an attached terminal outranks the board, for the reason the terminal outranks everything', () => {
-  // The other half of the pairing. `TerminalView` is the only place the way out
-  // of a shell lives, so nothing may cover it — including the board. Without
-  // this, "open the board" would strand the person over a running shell they
-  // cannot see and cannot leave, the same deadlock the first screen used to
-  // produce.
-  assert.equal(conversationView(healthy({ board: 'sessions', attachedTerminalId: 'term-01' })), 'terminal');
-  // And the composer stays withdrawn while either of them is on screen.
-  assert.equal(showsComposer('board'), false);
-  assert.equal(showsComposer('terminal'), false);
 });
 
 test('the board is reachable from a booting and a no-session workspace', () => {

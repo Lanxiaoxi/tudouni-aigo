@@ -4,6 +4,7 @@ import { remoteConnectionOf, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
 import { Logo } from '@/components/ui/Logo';
+import { DockToggle } from '@/components/dock/DockToggle';
 
 /**
  * §1·1 Top bar: program name + workspace path + help + the command palette entry.
@@ -116,6 +117,10 @@ export function TopBar() {
         <span className="pt-label">{t('topbar.palettePlaceholder')}</span>
         <kbd className="kbd">Ctrl K</kbd>
       </button>
+
+      {/* The Workspace Dock's master switch: here, outside the dock, so a dock
+          that is shut can be opened again (docs/design/workspace-dock.md §2.3). */}
+      <DockToggle />
     </header>
   );
 }

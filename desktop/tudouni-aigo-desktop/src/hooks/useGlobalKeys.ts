@@ -6,26 +6,7 @@ import {
   selectSavedSessionsOf,
   useApp,
 } from '@/state/store';
-
-/** The class the terminal pane carries. Named here so the guard below and the
- *  pane itself cannot disagree about what "the terminal" is. */
-export const TERMINAL_PANE_CLASS = 'term-pane';
-
-/**
- * Is the keyboard inside the terminal pane?
- *
- * A pure two-argument function rather than a `document` read, because this
- * decision is the one that used to be made wrongly and there is no way to see it
- * in a rendered string — "typing at a shell does something" is a fact about
- * focus, not about markup.
- *
- * `contains` covers the pane's own children, which matters the moment anything
- * inside it becomes focusable.
- */
-export function focusIsInTerminal(active: Element | null, pane: Element | null): boolean {
-  if (active === null || pane === null) return false;
-  return active === pane || pane.contains(active);
-}
+import { focusIsInDockTerminal, matchDockShortcut } from '@/state/workspaceDock/shortcuts';
 
 /**
  * Does this key make the WebView reload the document?
@@ -51,18 +32,8 @@ export function isReloadKey(e: {
   return e.key === 'F5' || (mod && ['r', 'p'].includes(e.key.toLowerCase()));
 }
 
-/** The live answer, for the window handler. */
-function keyboardIsAtAShell(): boolean {
-  if (typeof document === 'undefined') return false;
-  return focusIsInTerminal(
-    document.activeElement,
-    document.querySelector(`.${TERMINAL_PANE_CLASS}`),
-  );
-}
-
-/** The class the transcript's scroll region carries. Named here for the same
- *  reason `TERMINAL_PANE_CLASS` is: the guard below and the region itself must
- *  not be able to disagree about what "the transcript" is. */
+/** The class the transcript's scroll region carries. Named here so the guard
+ *  below and the region itself cannot disagree about what "the transcript" is. */
 export const TRANSCRIPT_CLASS = 'stream-scroll';
 
 /**
@@ -71,14 +42,13 @@ export const TRANSCRIPT_CLASS = 'stream-scroll';
  * The find bar is drawn **by the transcript** — `StreamView` renders it, and its
  * scan walks the rows that component owns — so this is the condition, measured
  * directly rather than inferred from "a session is open". The column also shows
- * the session board, a shell and the first screen, all states with a session and
- * none of them with conversation text on screen; `Ctrl+F` there would set a flag
+ * the session board and the first screen, both states with a session and
+ * neither with conversation text on screen; `Ctrl+F` there would set a flag
  * that draws nothing now and produces a bar out of nowhere later, which is the
  * "a key that appears to do nothing" failure this file keeps being about.
  *
- * A DOM read inside an event handler, for the same reason `keyboardIsAtAShell`
- * is one: by the time a key arrives the tree that decides it is already
- * committed.
+ * A DOM read inside an event handler: by the time a key arrives the tree that
+ * decides it is already committed.
  */
 function transcriptIsOnScreen(): boolean {
   if (typeof document === 'undefined') return false;
@@ -118,19 +88,18 @@ export function useGlobalKeys(): void {
        * `Ctrl+S` already relies on. A developer who wants a reload can use the
        * devtools' own button, which is not a key the app can swallow.
        *
-       * **It comes before the terminal guard below, and that order is the whole
-       * point.** `encodeKey({key:'F5'})` is `\x1b[15~` and `Ctrl+R` is `\x12`, so
-       * both looked like keys "the pane would handle" and the guard returned
-       * before this ever ran — reopening the exact hole this block exists to
-       * close. A reload key has no meaning to a shell, so there is nothing to
-       * concede.
+       * **It comes before the Dock terminal guard below, and that order is the
+       * whole point.** `F5` and `Ctrl+R` both encode to bytes a shell could
+       * take, so a guard that returned first would reopen the exact hole this
+       * block exists to close. A reload key has no meaning to a shell, so there
+       * is nothing to concede.
        *
        * `Ctrl+F` used to be in this list, on the grounds that it is a WebView
        * key. It is not a reload key and it never destroyed anything — a webview
        * with no menu has no find-in-page to open, so the key did nothing at all.
        * It is now the transcript's own find (`case 'f'` below), which is why it
-       * is deliberately **not** in this list: the terminal guard has to be
-       * allowed to see it.
+       * is deliberately **not** in this list: the Dock terminal guard has to
+       * be allowed to see it.
        *
        * **Shift is not an exception.** The list used to be guarded by
        * `!e.shiftKey`, which let `Ctrl+Shift+R` through — WebView2's *hard*
@@ -141,28 +110,23 @@ export function useGlobalKeys(): void {
         return;
       }
 
-      /* ---- An attached terminal owns the keyboard, while it has focus ----
+      /* ---- A Workspace Dock terminal owns the keyboard, except for the Dock's own keys ----
        *
-       * While a shell has the keyboard, every key that has a terminal meaning
-       * belongs to it — including `Ctrl+K`, `Ctrl+B`, `Ctrl+C` and Escape. The
-       * pane itself handles this (it `preventDefault`s and stops propagation),
-       * but that only covers the case where the pane has focus. Clicking the tab
-       * strip or the status bar moves focus away, and the window handler would
-       * then fold a rail or interrupt a turn **while somebody was
-       * typing at a shell** — the one state where the interface must look like a
-       * terminal and behave like one.
+       * The same rule as the guard above, with one difference the design asks
+       * for (§2.3): the Dock's four shortcuts stay live while a Dock terminal
+       * has focus — a person who is typing at a shell must still be able to fold
+       * the terminal area or close the Dock — and **everything else is left to
+       * the terminal**, `Ctrl+K`, `Esc` and `Ctrl+B` included. The surface says
+       * so by carrying `data-terminal-focus`; focus, not "does the key encode",
+       * is the test, for the reason written above.
        *
-       * **The test is focus, not "does this key encode to something".** That was
-       * the old rule, and it was wrong in the direction that hurts: `encodeKey`
-       * answers `''` for very few keys, so a plain letter, `Ctrl+C`, F5 and
-       * everything else hit the guard and `return`ed — leaving the key to a pane
-       * that had not been focused, and never calling `preventDefault`. The result
-       * was a keyboard that did nothing at all until the black area was clicked
-       * with a mouse. Asking where the focus actually is says what the guard
-       * means: "the terminal is the thing receiving keys right now." */
-      if (activeRuntime(s)?.activeTerminalId != null && keyboardIsAtAShell()) {
-        // Not `preventDefault`: the pane is about to handle it, and cancelling
-        // here would swallow the key before it gets there.
+       * A blocking prompt still wins: the Dock keys do not run behind it. */
+      const dockKey = matchDockShortcut(e);
+      if (typeof document !== 'undefined' && focusIsInDockTerminal(document.activeElement)) {
+        if (dockKey !== null && !selectModalVisible(s)) {
+          e.preventDefault();
+          s.runDockShortcut(dockKey);
+        }
         return;
       }
 
@@ -232,6 +196,19 @@ export function useGlobalKeys(): void {
        * it, so these keys stay live too. The held request itself is untouched
        * by all of them: nothing here answers anything. */
       if (selectModalVisible(s)) return;
+
+      /* ---- Workspace Dock: Ctrl+Shift+D / E / G and Ctrl+` ----
+       *
+       * Before the Ctrl-letter block below, whose `!e.shiftKey` guard would
+       * otherwise never let the three shifted ones through, and which has no
+       * case for the backtick. None of the four collides with an existing
+       * binding (see `workspaceDock/shortcuts.ts`). `Ctrl+B` is deliberately
+       * unchanged: it folds the right rail, not the Dock. */
+      if (dockKey !== null) {
+        e.preventDefault();
+        s.runDockShortcut(dockKey);
+        return;
+      }
 
       /* ---- Ctrl/Cmd combinations ---- */
       if (mod && !e.shiftKey) {

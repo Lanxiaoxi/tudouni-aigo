@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import {
   Boxes,
@@ -16,7 +16,6 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   NO_JOBS,
   NO_SUBAGENTS,
-  NO_TERMINALS,
   selectPhase,
   selectTurnMs,
   selectUsage,
@@ -26,6 +25,8 @@ import {
   type UsageView,
 } from '@/state/store';
 import { useTurnClock } from '@/hooks/useTurnClock';
+import { useActiveWorkspaceKey } from '@/state/workspaceDock/selectors';
+import { terminalHosts } from '@/components/dock/terminal/hostManager';
 import { useResourceUsage } from '@/hooks/useResourceUsage';
 import { useListKeys } from '@/hooks/useListKeys';
 import { useT } from '@/i18n/useT';
@@ -146,17 +147,22 @@ export function StatusBar() {
   const snap = useSessionField((rt) => rt.uiState, null);
   const autopilot = useSessionField((rt) => rt.uiState?.autopilot ?? false, false);
   const quiet = useSessionField((rt) => rt.quiet, 'off');
-  // The workspace's shells, and which one this session's view is attached to.
-  // Both come from the session on screen for the reason stated above: with two
-  // conversations open, a count that kept the first one's shells would be a
-  // number about a process this row is not describing.
-  const terminals = useSessionField((rt) => rt.terminals, NO_TERMINALS);
-  const attachedTerminalId = useSessionField((rt) => rt.activeTerminalId, null);
+  // The workspace's terminals live in the Dock's terminal area, owned by the
+  // window-level terminal manager rather than by this session's bucket: the
+  // count is the workspace's, so two conversations in one directory agree.
+  const dockWorkspace = useActiveWorkspaceKey();
+  const dockWorkspaceId = dockWorkspace?.workspaceId ?? '';
+  const terminals = useSyncExternalStore(
+    terminalHosts.subscribe,
+    () => terminalHosts.terminals(dockWorkspaceId),
+    () => terminalHosts.terminals(dockWorkspaceId),
+  );
+  const dockTermShown = useApp((s) => s.dockOpen && s.dockTermVisible);
   const hasSpoken = useSessionField((rt) => rt.hasSpoken, false);
   const runtimeExit = useSessionField((rt) => rt.runtimeExit, null);
   const setAutopilot = useApp((s) => s.setAutopilot);
   const setQuiet = useApp((s) => s.setQuiet);
-  const toggleTerminalView = useApp((s) => s.toggleTerminalView);
+  const toggleDockTerminal = () => useApp.getState().runDockShortcut('terminal');
 
   // The turn's elapsed time. The runtime sends no duration until a turn ends, so
   // a running turn is timed against a local clock — which is why this reads the
@@ -325,39 +331,29 @@ export function StatusBar() {
           </button>
         </StatusPopover>
 
-        {/* **The terminals badge**, and it is where it is because that is where
-            it was asked for: directly to the right of `quiet`. It answers the
-            question the tab strip answers only from *inside* the terminal view —
-            "how many shells have I got" — and pressing it is the way in.
+        {/* **The terminals badge**, directly to the right of `quiet`. It answers
+            "how many terminals have I got" and pressing it shows or folds the
+            Dock's terminal area (the same toggle as `Ctrl+\``).
 
-            **The count is the number of terminals, not the number running**, and
-            that is the same rule the panel and the tab strip follow: a row that
-            has ended stays in the list, because it is what answers "what was I
-            running", and its exit code would go with it. Counting only the live
-            ones would make a killed shell's row quietly uncounted here and
-            counted everywhere else.
+            **The count is the number of terminals, not the number running**: an
+            ended terminal stays in the list because it answers "what was I
+            running", and the tab strip counts it too.
 
-            **Disabled when there is nothing to attach to.** A press has no
-            nothing-state to fall into: `toggleTerminalView` cannot invent a
-            shell, and an enabled control whose press does nothing is the thing
-            this build keeps refusing to draw. `is-on` marks the attached state
-            rather than the count, because "this page is the terminal" is the
-            fact the button toggles. */}
+            **Never disabled**: with none, the terminal area is where one is
+            created, so the press always has somewhere to go. `is-on` marks the
+            terminal area being visible. */}
         <Tip
           label={
             terminals.length === 0
               ? t('status.terminalsNone')
-              : `${t('status.terminals')} ${terminals.length}${
-                  attachedTerminalId !== null ? ` · ${t('panel.term.leave')}` : ''
-                }`
+              : `${t('status.terminals')} ${terminals.length}`
           }
         >
           <button
             type="button"
-            className={`st-toggle hide-b880${attachedTerminalId !== null ? ' is-on' : ''}`}
-            onClick={toggleTerminalView}
-            disabled={terminals.length === 0}
-            aria-pressed={attachedTerminalId !== null}
+            className={`st-toggle hide-b880${dockTermShown ? ' is-on' : ''}`}
+            onClick={toggleDockTerminal}
+            aria-pressed={dockTermShown}
           >
             <SquareTerminal size={11} />
             <span className="st-metric">{terminals.length}</span>

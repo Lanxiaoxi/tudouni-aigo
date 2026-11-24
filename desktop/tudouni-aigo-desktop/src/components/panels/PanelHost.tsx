@@ -7,14 +7,12 @@ import {
   AuditPanel,
   ContextPanel,
   EffortPanel,
-  FilesPanel,
   HelpPanel,
   McpPanel,
   ModelPanel,
   ResumePanel,
   SkillsPanel,
   SubagentsPanel,
-  TerminalPanel,
   TimingPanel,
 } from './panels';
 import { LearnPanel } from './LearnPanel';
@@ -105,13 +103,12 @@ export function PanelHost() {
             panel === 'hooks' ||
             panel === 'learn' ||
             panel === 'usage' ||
-            panel === 'terminal' ||
             panel === 'settings'
               ? ' dialog-wide'
               : ''
           }${panel !== null && WORKBENCH_PANELS.has(panel) ? ' wb-panel' : ''}${
             panel !== null && WIDE_PANELS.has(panel) ? ' wb-wide' : ''
-          }${panel === 'files' ? ' dialog-files' : ''}${
+          }${
             panel === 'memory' ? ' dialog-memory dialog-split' : ''
           }${panel === 'codeintel' ? ' dialog-memory' : ''
           }`}
@@ -143,8 +140,6 @@ export function PanelHost() {
           {panel === 'timing' ? <TimingPanel /> : null}
           {panel === 'settings' ? <SettingsPanel /> : null}
           {panel === 'config' ? <ConfigPanel /> : null}
-          {panel === 'files' ? <FilesPanel /> : null}
-          {panel === 'terminal' ? <TerminalPanel /> : null}
           {panel === 'learn' ? <LearnPanel /> : null}
           {panel === 'tasks' ? <TaskPanel /> : null}
           {panel === 'memory' ? <MemoryPanel /> : null}

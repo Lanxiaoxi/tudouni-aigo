@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react';
 import { useSlidingHighlight } from '@/hooks/useSlidingHighlight';
+import { useActiveWorkspaceKey } from '@/state/workspaceDock/selectors';
+import { terminalHosts } from '@/components/dock/terminal/hostManager';
+import { closeWorkspaceResources, runningTerminalCount } from '@/components/dock/closeWorkspace';
+import { CloseWorkspaceConfirm, type PendingWorkspaceClose } from '@/components/dock/CloseWorkspaceConfirm';
+import { workspaceIdOf } from '@/workspaceHost';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { Activity, Archive, ArchiveRestore, Bot, Brain, ChevronDown, ChevronRight, Download, FileJson, FileText, FolderPlus, Folder, GraduationCap, LayoutGrid, ListChecks, MessageSquare, Network, Plus, Search, Server, RefreshCw, Settings, SquareTerminal, Ticket as TicketIcon, Trash2, Webhook, Wrench, X } from 'lucide-react';
 import { selectTicketAttention } from '@/state/selectors/tickets';
@@ -260,6 +265,22 @@ export function WorkspaceSidebar() {
    *  two-press rule. The id is the path for a local row, `${id}` prefixed for
    *  a remote one, so the two kinds never arm each other. */
   const [armedForget, setArmedForget] = useState<string | null>(null);
+  /**
+   * Removing a workspace from the list also lets go of its Dock resources: the
+   * terminal manager's views, the data cache, the remembered UI state and the
+   * workspace host. A host's terminals die with it, so when any is still running
+   * the person is asked first (design 9.4); otherwise it is silent.
+   */
+  const [pendingClose, setPendingClose] = useState<(PendingWorkspaceClose & { go: () => void }) | null>(null);
+  function removeWithResources(name: string, workspaceId: string, remove: () => void) {
+    const go = () => {
+      remove();
+      void closeWorkspaceResources(workspaceId);
+    };
+    const running = runningTerminalCount(workspaceId);
+    if (running > 0) setPendingClose({ name, running, go });
+    else go();
+  }
 
   // ---- remote workspaces (Workspace Manager, Phase 2) ----
   const remoteWorkspaces = useApp((s) => s.remoteWorkspaces);
@@ -549,7 +570,15 @@ export function WorkspaceSidebar() {
    * means "things in this workspace want your attention" rather than the old
    * `navItems.length`, which was always the same number and said nothing.
    */
-  const terminalsRunning = rt?.terminals.filter((t) => t.status === 'running').length ?? 0;
+  // The workspace's terminals are the Dock's now (the window-level terminal
+  // manager), so the count comes from there, not from this session's bucket.
+  const dockWorkspaceId = useActiveWorkspaceKey()?.workspaceId ?? '';
+  const dockTerminals = useSyncExternalStore(
+    terminalHosts.subscribe,
+    () => terminalHosts.terminals(dockWorkspaceId),
+    () => terminalHosts.terminals(dockWorkspaceId),
+  );
+  const terminalsRunning = dockTerminals.filter((term) => term.state === 'running').length;
   // The badge's number comes from the state snapshot's `memory_pending`, not
   // from the panel snapshot: the model's `memory_propose` is a tool, and the
   // only snapshot a tool result re-states is `ui(state)`. The panel snapshot
@@ -606,7 +635,8 @@ export function WorkspaceSidebar() {
       hint: t('cmd.files.desc'),
       icon: <FileText size={14} />,
       disabled: blocked || !hasSession,
-      run: () => openPanel('files'),
+      // The Explorer in the Workspace Dock (the old modal browser is gone).
+      run: () => useApp.getState().setDockMode('explorer'),
     },
     {
       key: 'terminal',
@@ -616,7 +646,11 @@ export function WorkspaceSidebar() {
       icon: <SquareTerminal size={14} />,
       disabled: blocked || !hasSession,
       badge: terminalsRunning > 0 ? { value: terminalsRunning, tone: 'active' } : undefined,
-      run: () => openPanel('terminal'),
+      run: () => {
+        const s = useApp.getState();
+        s.setDockOpen(true);
+        s.setDockTermVisible(true);
+      },
     },
     {
       key: 'learn',
@@ -935,7 +969,7 @@ export function WorkspaceSidebar() {
                           onClick={() => {
                             if (forgetArmed) {
                               setArmedForget(null);
-                              removeWorkspace(path);
+                              removeWithResources(baseName(path), workspaceIdOf(path, null), () => removeWorkspace(path));
                             } else {
                               setArmedForget(path);
                             }
@@ -1054,7 +1088,7 @@ export function WorkspaceSidebar() {
                           onClick={() => {
                             if (remoteForgetArmed) {
                               setArmedForget(null);
-                              removeRemoteWorkspace(entry.id);
+                              removeWithResources(entry.label, entry.id, () => removeRemoteWorkspace(entry.id));
                             } else {
                               setArmedForget(`remote:${entry.id}`);
                             }
@@ -1080,6 +1114,15 @@ export function WorkspaceSidebar() {
             folded region would be unmounted while it is open. */}
         <AddRemoteWorkspaceModal open={addRemoteOpen} onOpenChange={setAddRemoteOpen} />
         <ManageHostsModal open={hostsOpen} onOpenChange={setHostsOpen} />
+        <CloseWorkspaceConfirm
+          pending={pendingClose}
+          onCancel={() => setPendingClose(null)}
+          onConfirm={() => {
+            const p = pendingClose;
+            setPendingClose(null);
+            p?.go();
+          }}
+        />
 
         {/* ---------------- sessions ---------------- */}
         <section className="lb-section">

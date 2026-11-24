@@ -29,6 +29,9 @@
 @import './components/usage.css';
 @import './components/notice-center.css';
 @import './components/workbench.css';
+@import './components/dock.css';
+@import './components/dock-modules.css';
+@import './components/dock-terminal.css';
 
 @import './app.css';
 

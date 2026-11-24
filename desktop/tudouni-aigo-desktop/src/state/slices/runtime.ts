@@ -7,7 +7,7 @@
 import type { StoreContext } from '../storeContext';
 import type { AppStore } from '../storeShape';
 import { type CodeIntelSnapshot, type HooksSnapshot, type MemorySnapshot, type ProbeEffortSnapshot } from '@/protocol/types';
-import { appendBlock, applyDelta, applyFinalAnswer, clearStream, hasRunningTurn, lastStopReason, lastTurnHead, newTurnStartsFolded, nextId, pushBlock, reduceEvent, settleAbandonedTurn, type Entry, type LooseEvent, type NoteEntry } from '@/state/entries';
+import { applyDelta, applyFinalAnswer, clearStream, hasRunningTurn, lastStopReason, lastTurnHead, newTurnStartsFolded, nextId, pushBlock, reduceEvent, settleAbandonedTurn, type Entry, type LooseEvent, type NoteEntry } from '@/state/entries';
 import { mergeSkills, projectCompacted, projectContext, projectHistory, projectInit, projectMcpMsg, projectSessionList, projectSkillsMsg, projectState, projectStatus, projectToolsMsg } from '@/runtime/adapt';
 import { extractRefinePrompts } from '@/learn/refineTemplate';
 import { outcomeOfChildExit, outcomeOfTurnStatus } from '@/task/tasks';
@@ -19,7 +19,6 @@ import { STDERR_TAIL } from '../types';
 import { persistPrefs } from '../prefs';
 import { enqueueModal, questionBatchOf, releaseModalsOf } from '../modalQueue';
 import { pollNow, wakePolling } from '../polling';
-import { appendTerminalOutput, applyTerminalList, replaceTerminal, terminalEndedNote } from '../terminal';
 import { runtimeOf } from '../appView';
 import { savedSessionsKey } from '../savedSessionsKey';
 import { applyStateSnapshot, lookupToolFacts } from '../runtimeLanding';
@@ -692,23 +691,6 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
               });
               break;
             }
-            case 'files': {
-              // The **runtime's** path, not the one that was asked for: the two
-              // differ after a `/./src/../src`, and the reply's spelling is what
-              // makes "where am I" answerable and the parent-directory step
-              // correct.
-              //
-              // `filesProblem` is cleared here because this *is* the answer: the
-              // refusal that set it belongs to a request that has now been
-              // superseded.
-              patch(key, {
-                filesPath: typeof msg.path === 'string' ? msg.path : '',
-                filesEntries: Array.isArray(msg.entries) ? msg.entries : [],
-                filesLoading: false,
-                filesProblem: null,
-              });
-              break;
-            }
             case 'memory': {
               // **The snapshot replaces, never merges.** It is the runtime's whole
               // answer about what memories and proposals exist, and a front end that
@@ -848,140 +830,6 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
               });
               break;
             }
-            case 'file_search': {
-              // Only the answer to the query still in the box is kept: typing
-              // fires one request per pause, and answers can arrive after the
-              // person has moved on. A late answer drawn under newer text would
-              // list files that do not match what is written.
-              patchWith(key, (current) =>
-                typeof msg.query === 'string' && msg.query === current.filesSearchQuery
-                  ? {
-                      filesSearchEntries: Array.isArray(msg.entries) ? msg.entries : [],
-                      filesSearchTruncated: msg.truncated === true,
-                    }
-                  : {},
-              );
-              break;
-            }
-            case 'file_read': {
-              // **Two destinations, one answer.** The body goes into the
-              // transcript as a block — that is where a file read belongs in
-              // arrival order — *and* into the browser's own viewer, because the
-              // browser is a modal layer drawn over the transcript. Without the
-              // second one, pressing Enter on a file in the panel changed nothing
-              // anybody could see.
-              //
-              // `filesLoading` is not cleared here: a read is not a listing, and
-              // releasing the listing's spinner on a read's answer would say "the
-              // directory came back" when it did not.
-              patchWith(key, (current) => ({
-                fileView: {
-                  // The path the answer is about, taken **from the payload**: the
-                  // runtime may have normalised it, and a viewer labelled with
-                  // the request's spelling would name a path it did not read.
-                  path: typeof msg.path === 'string' ? msg.path : '',
-                  answer: msg,
-                  problem: null,
-                },
-                // `appendBlock`, not `pushBlock`: a file read is one of a
-                // sequence, not the newest state of one thing. Replacing meant
-                // opening a second file deleted the first from the transcript.
-                entries: appendBlock(current.entries, 'file', msg),
-              }));
-              break;
-            }
-            case 'terminals': {
-              // The list is **replaced**, never merged: it is the runtime's whole
-              // answer, and a front end that unioned it with what it already had
-              // would keep a closed terminal's tab alive for ever.
-              //
-              // So this is also where a closed terminal's leftovers go, and there
-              // are exactly two of them. Its output tail can never receive
-              // another byte once the runtime has forgotten the id, and the
-              // attach can no longer resolve to a row — leaving either in place
-              // would draw a terminal view for a shell that does not exist, with
-              // no tab to switch away from it.
-              //
-              // **A refused create also answers with this list** (see the
-              // runtime's `handleTerminalCreate`), which is why `'new'` is
-              // released here as well as on success: otherwise one refusal would
-              // leave the "New terminal" button disabled for the rest of the
-              // session, with nothing on screen to explain why.
-              const rows = Array.isArray(msg.terminals) ? msg.terminals : [];
-              patchWith(key, (current) => applyTerminalList(current, rows));
-              break;
-            }
-            case 'terminal_created': {
-              // The new row goes into the list straight away so the panel can
-              // show it without waiting for a snapshot, and the answer also
-              // **attaches** to it: the reply to "open a terminal" is a shell to
-              // type into, not a list to read.
-              const row = msg.terminal;
-              patchWith(key, (current) => ({
-                terminals: row ? [...current.terminals, row] : current.terminals,
-                activeTerminalId: row && row.id ? row.id : current.activeTerminalId,
-                terminalPending: current.terminalPending.filter((id) => id !== 'new'),
-              }));
-              break;
-            }
-            case 'terminal_output': {
-              // The one high-frequency message. It carries no row, no snapshot
-              // and no status — only which terminal and which bytes — so this
-              // handler does one thing: append to that terminal's bounded tail.
-              const id = msg.terminal_id;
-              const data = typeof msg.data === 'string' ? msg.data : '';
-              if (id === '' || data === '') break;
-              patchWith(key, (current) => ({
-                terminalTails: appendTerminalOutput(current.terminalTails, id, data),
-              }));
-              break;
-            }
-            case 'terminal_exit': {
-              const exited = msg.terminal;
-              // **The second half of a close.** Somebody clicking the tab of a
-              // running shell asked to be rid of it, and the runtime's rule is
-              // that a running terminal can be ended but not forgotten — so the
-              // ending had to come first, and this is where it has arrived. The
-              // row is now an ended one, which the close will accept.
-              //
-              // Read before the patch, because the patch is what clears it.
-              const pendingClose = bucket.terminalClosing.includes(msg.terminal_id);
-              patchWith(key, (current) => ({
-                // The row is **replaced whole** rather than patched: it carries
-                // the status and the exit code the runtime decided, and merging
-                // two fields by hand is how the row and the runtime end up
-                // describing different terminals.
-                terminals: exited
-                  ? replaceTerminal(current.terminals, exited)
-                  : current.terminals,
-                terminalPending: current.terminalPending.filter(
-                  (id) => id !== msg.terminal_id,
-                ),
-                terminalClosing: current.terminalClosing.filter(
-                  (id) => id !== msg.terminal_id,
-                ),
-                entries: [
-                  ...current.entries,
-                  {
-                    kind: 'note' as const,
-                    id: nextId('note'),
-                    tone: msg.reason === 'killed' ? ('warn' as const) : ('info' as const),
-                    code: 'terminal',
-                    // **No sentence here.** The store holds the fact; `i18n`
-                    // holds the words (see `FrontMessage`). This used to build
-                    // `Terminal term-01 exited with code 0.` inside the reducer,
-                    // which put English in the store and made the one sentence a
-                    // person reads about a dead shell unreachable by translation.
-                    text: '',
-                    message: terminalEndedNote(msg.terminal_id, msg.reason, msg.exit_code ?? null),
-                  },
-                ],
-              }));
-              if (pendingClose) {
-                sendTo(key, { v: 1, t: 'terminal_close', terminal_id: msg.terminal_id });
-              }
-              break;
-            }
             case 'suggestions': {
               // Kept only for the run that is still the last one and only while
               // nothing is running: a late answer for an earlier turn, or one
@@ -1103,30 +951,10 @@ export function runtimeSlice(ctx: StoreContext): Pick<AppStore, 'send' | 'markNo
         }
 
         case 'notice': {
-          // **A refusal is an answer too.** A `notice` with `code: 'files'` is
-          // what the runtime sends instead of `ui(files)` when it will not list
-          // or read a path, so it is also the only thing that can release the
-          // listing's spinner — and the sentence that explains it belongs to the
-          // panel the person is looking at, not only to the transcript that panel
-          // is covering.
-          //
-          // Other notices are untouched by this and still go to the stream,
-          // verbatim.
+          // Notices go to the stream verbatim. (A `files` notice used to also
+          // release the old Files panel's spinner; that panel is gone, and the
+          // Workspace Dock asks the host directly.)
           patchWith(key, (current) => ({
-            ...(msg.code === 'files'
-              ? {
-                  filesLoading: false,
-                  filesProblem: msg.text,
-                  // A refused search is answered too: without this the panel
-                  // would sit on "searching…" for ever.
-                  ...(current.filesSearchQuery !== '' && current.filesSearchEntries === null
-                    ? { filesSearchEntries: [] }
-                    : {}),
-                  ...(current.fileView && current.fileView.answer === null
-                    ? { fileView: { ...current.fileView, problem: msg.text } }
-                    : {}),
-                }
-              : {}),
             entries: [
               ...current.entries,
               {

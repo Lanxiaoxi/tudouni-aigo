@@ -282,16 +282,11 @@ function healthy(overrides: Partial<ConversationViewInput> = {}): ConversationVi
   };
 }
 
-test('the ticket board is a column occupant: above the first screen, below a terminal, no composer', () => {
+test('the ticket board is a column occupant: above the first screen, no composer', () => {
   assert.equal(conversationView(healthy({ board: 'tickets' })), 'tickets');
   assert.equal(conversationView(healthy({ board: 'tickets', hasConversation: false })), 'tickets', 'covers the greeting');
   assert.equal(conversationView(healthy({ board: 'tickets', hasSession: false })), 'tickets', 'reachable with no session at all');
   assert.equal(conversationView(healthy({ board: 'tickets', ready: false })), 'tickets');
-  assert.equal(
-    conversationView(healthy({ board: 'tickets', attachedTerminalId: 'term-01' })),
-    'terminal',
-    'nothing may cover the shell\u2019s way out',
-  );
   assert.equal(conversationView(healthy({ board: 'tickets', sessionProblem: true })), 'session-problem');
   assert.equal(showsComposer('tickets'), false, 'a message typed there would have no addressee');
   assert.equal(conversationView(healthy({ board: 'sessions' })), 'board', 'the session board is unchanged');

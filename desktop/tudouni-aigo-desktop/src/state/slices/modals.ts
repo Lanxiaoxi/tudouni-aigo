@@ -9,13 +9,13 @@ import type { AppStore } from '../storeShape';
 import { nextId } from '@/state/entries';
 import { refineSelectedNumbers } from '@/learn/refineTemplate';
 import { sendTo } from '@/runtime/bus';
-import { inlineImage, inlineImageRemote, readRemoteRuntimeVersion } from '@/runtime/tauri';
+import { readRemoteRuntimeVersion } from '@/runtime/tauri';
 import { drainModal } from '../modalQueue';
 import { pollNow } from '../polling';
 import { selectModalVisible } from '../selectors/session';
-import { activeWorkspaceOf, remoteConnectionOf } from '../appView';
+import { activeWorkspaceOf } from '../appView';
 
-export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'enterContextView' | 'leaveContextView' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'listFiles' | 'searchFiles' | 'readFile' | 'previewImage' | 'requestMemory' | 'memoryAction' | 'requestHooks' | 'saveHooks' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
+export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission' | 'answerQuestion' | 'minimizeQuestion' | 'restoreQuestion' | 'requestSessionList' | 'resolveRuntimeBuild' | 'deleteSession' | 'archiveSession' | 'forkSession' | 'setAutopilot' | 'chooseModel' | 'chooseEffort' | 'setThinking' | 'requestBlock' | 'refreshContext' | 'enterContextView' | 'leaveContextView' | 'refreshStatus' | 'requestMcp' | 'requestSkills' | 'goalAction' | 'refreshState' | 'stopSubagent' | 'requestMemory' | 'memoryAction' | 'requestHooks' | 'saveHooks' | 'requestCodeIntel' | 'codeIntelAction' | 'requestUsage' | 'requestProbeEffort'> {
   const { set, get, patch, patchWith, markSavedSessionsPending } = ctx;
   return {
     answerPermission(decision) {
@@ -358,108 +358,13 @@ export function modalsSlice(ctx: StoreContext): Pick<AppStore, 'answerPermission
       pollNow(key, () => sendTo(key, { v: 1, t: 'refresh_state' }));
     },
 
-    /* ==========================================================
-       The workspace: files
-       ========================================================== */
-
-    listFiles(path) {
+    stopSubagent(id) {
       const key = get().activeKey;
       if (key === null) return;
-      // The previous refusal is cleared here rather than on the answer: a new
-      // listing supersedes it the moment it is asked for, and leaving it up would
-      // show a stale reason over a directory that may now list fine.
-      patch(key, { filesLoading: true, filesProblem: null });
-      // The path is sent verbatim. Whether it exists, is a directory, or stays
-      // inside the workspace is the **runtime's** judgement — it holds the
-      // boundary — and a second check here would be a second answer that
-      // eventually disagrees with it.
-      sendTo(key, { v: 1, t: 'file_list', path });
-    },
-
-    searchFiles(query) {
-      const key = get().activeKey;
-      if (key === null) return;
-      const trimmed = query.trim();
-      // Results go back to `null` so the panel says "searching…" rather than
-      // showing the previous query's rows under the new query's text.
-      patch(key, {
-        filesSearchQuery: trimmed,
-        filesSearchEntries: null,
-        filesSearchTruncated: false,
-        filesProblem: null,
-      });
-      if (trimmed === '') return;
-      sendTo(key, { v: 1, t: 'file_search', query: trimmed });
-    },
-
-    readFile(path) {
-      const key = get().activeKey;
-      if (key === null) return;
-      // The viewer's own state, so the panel can say "reading…" in place. The
-      // transcript block is still the runtime's answer and still arrives on its
-      // own; this is the panel's copy of the same fact, not a second one.
-      patch(key, { fileView: { path, answer: null, problem: null } });
-      sendTo(key, { v: 1, t: 'file_read', path });
-    },
-
-    previewImage(path) {
-      // **Open the panel first, before any session check.**
-      //
-      // The bytes need a session (the workspace they are relative to is that
-      // child's), but *opening a window* does not — and returning early on a null
-      // key made the card do nothing at all in a window that had no live session,
-      // which is a dead button rather than a refusal. Nothing is read in that
-      // case; the viewer says so.
-      // `true` is the focus flag, so `openPanel` sets it in the same update that
-      // opens the panel — one place, not two that could disagree.
-      get().openPanel('files', true);
-      const key = get().activeKey;
-      if (key === null) {
-        // No child to ask, and `fileView` lives on a session bucket — so there is
-        // nowhere to record why. The panel draws its own "nothing to show" state
-        // in focus mode when the view is missing, which is the honest answer: the
-        // window has no workspace, so this path cannot be resolved.
-        return;
-      }
-      const workspace = get().sessions[key]?.session?.workspace ?? get().sessions[key]?.workspace ?? '';
-      // `image: null` is "a picture, being read" — distinct from the `undefined`
-      // that means "this is not a picture at all", which is what keeps the panel
-      // from drawing an empty picture frame for a text file.
-      patch(key, { fileView: { path, answer: null, problem: null, image: null } });
-
-      // A remote session's picture lives on the far host, so the local door
-      // (`inlineImage`, whose boundary is a local `canonicalize`) cannot reach
-      // it: the same split the deliverable card makes for its "open" button.
-      // The remote door is keyed by the child, never by a destination the UI
-      // assembled, for the same reason. A session whose saved entry or host
-      // was deleted since it started has no dial to give — the local door's
-      // refusal ("not there") is the honest answer for that one.
-      const remote = remoteConnectionOf(get(), key);
-      const read = remote !== null ? inlineImageRemote(key, path) : inlineImage(workspace, path);
-
-      // The command answers with a refusal written for a person when the file is
-      // gone, outside the workspace, or not an image it can draw — so the failure
-      // is shown where the picture would have been, not only in the transcript.
-      void read.then(
-        (image) => {
-          // Re-check: the person may have closed the panel, or opened another
-          // file, while the bytes were being read. Writing the answer into a view
-          // that has moved on would draw one file's picture under another's name.
-          const current = get().sessions[key]?.fileView;
-          if (!current || current.path !== path) return;
-          patch(key, { fileView: { ...current, image: image.url } });
-        },
-        (error: unknown) => {
-          const current = get().sessions[key]?.fileView;
-          if (!current || current.path !== path) return;
-          patch(key, {
-            fileView: {
-              ...current,
-              problem: error instanceof Error && error.message !== '' ? error.message : null,
-            },
-          });
-        },
-      );
+      // No optimistic removal: the row stays whatever the last snapshot said
+      // until the settlement comes back through the board and the next
+      // `ui(state)` carries it.
+      sendTo(key, { v: 1, t: 'subagent_stop', subagent_id: id });
     },
 
     /* ==========================================================

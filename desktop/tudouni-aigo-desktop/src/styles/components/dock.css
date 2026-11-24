@@ -1,0 +1,306 @@
+/* ============================================================
+   Workspace Dock: the fourth column (docs/design/workspace-dock.md §2).
+
+   Layout only, and only tokens: the modules (Explorer, Git, Terminal) bring
+   their own rules under their own prefixes. Widths and heights come from
+   `workspaceDock/budget.ts` as inline styles — they are derived from the
+   window, so a stylesheet constant would be a second, disagreeing copy.
+   ============================================================ */
+
+/* The overlay placement is positioned against the row the rails sit in. */
+.app-main {
+  position: relative;
+}
+
+.app-dock {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--lb-surface);
+  border-left: 1px solid var(--lb-line);
+  overflow: hidden;
+}
+
+/* Docked: a real flex item, so the conversation gives up exactly its width and
+   `planDockLayout` has already made sure that leaves it 560px. */
+.app-dock[data-placement='docked'] {
+  flex: none;
+  position: relative;
+}
+
+/* Overlay: the window cannot hold the conversation's minimum *and* the dock, so
+   the dock floats over the conversation instead of squeezing it (§2.2). The
+   shadow is what says "this is above the page, not beside it". */
+.app-dock[data-placement='overlay'] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  max-width: 100%;
+  z-index: var(--z-sticky);
+  box-shadow: var(--shadow-overlay);
+}
+
+.dock {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------- the mode switch row ---------------- */
+.dock-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--lb-line);
+}
+
+.dock-modes {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.dock-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-compact);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.dock-mode:hover {
+  background: var(--lb-hover);
+  color: var(--fg);
+}
+
+/* The pale green capsule the left rail uses for "the one you are in". */
+.dock-mode.is-active {
+  background: var(--lb-selected);
+  border-color: var(--lb-selected-line);
+  color: var(--accent-text);
+}
+
+/* The close button keeps its square and never shrinks under a long mode label. */
+.dock-close {
+  flex: none;
+}
+
+/* The master switch sits in the top bar, outside the dock. */
+.dock-toggle {
+  flex: none;
+}
+
+.dock-toggle.is-active {
+  color: var(--accent-text);
+}
+
+/* ---------------- navigator + viewer ---------------- */
+.dock-upper {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Maximized terminal: the upper half steps aside but stays mounted, so the
+   navigator's scroll position and the viewer's state survive the round trip. */
+.dock-upper.is-hidden {
+  display: none;
+}
+
+.dock-split {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.dock-nav {
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.dock-nav.is-full,
+.dock-viewer.is-full {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.dock-viewer {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Single-column only: the way back from the viewer to the list. */
+.dock-viewer-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--lb-line);
+}
+
+.dock-viewer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.dock-empty,
+.dock-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--space-4);
+  color: var(--fg-muted);
+  font-size: var(--text-compact);
+  text-align: center;
+}
+
+/* ---------------- terminal area ---------------- */
+.dock-term {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--lb-line);
+}
+
+/* Maximized fills the dock; folded is the title bar and nothing else. */
+.dock-term.is-maximized {
+  flex: 1 1 auto;
+  border-top: 0;
+}
+
+/* Folded: no inline height is set (the owner omits it), so the section is
+   exactly its title bar. The body is not rendered, and the terminals behind it
+   keep running — folding is presentation only (§2.4). */
+.dock-term.is-folded {
+  height: auto;
+}
+
+.dock-term-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+}
+
+.dock-term-title {
+  color: var(--fg-secondary);
+  font-size: var(--text-compact);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+}
+
+.dock-term-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.dock-term-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---------------- splitter ---------------- */
+/* A 1px divider with a wider invisible hit area, so the line stays a line and
+   the target is still something a pointer can find. The same element serves the
+   dock's edge, the navigator and the terminal. */
+.splitter {
+  position: relative;
+  flex: none;
+  background: var(--lb-line);
+  touch-action: none;
+  outline: none;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.splitter::after {
+  content: '';
+  position: absolute;
+}
+
+.splitter-v {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.splitter-v::after {
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.splitter-h {
+  height: 1px;
+  cursor: row-resize;
+}
+
+.splitter-h::after {
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+}
+
+.splitter:hover,
+.splitter:focus-visible,
+.splitter.is-dragging {
+  background: var(--accent-border);
+}
+
+/* The dock's own edge: a 6px strip over its inner (left) edge, like the rails'
+   handle, drawn without a line of its own — the dock's border is the line. */
+.splitter.splitter-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  background: transparent;
+  z-index: 5;
+}
+
+.splitter.splitter-edge::after {
+  display: none;
+}
+
+.splitter.splitter-edge:hover,
+.splitter.splitter-edge:focus-visible,
+.splitter.splitter-edge.is-dragging {
+  background: var(--accent-subtle);
+}
+
+/* The drag must not rubber-band behind a width transition, and the page must
+   not select text while the pointer sweeps across it. */
+body.is-resizing-row {
+  cursor: row-resize;
+  user-select: none;
+}

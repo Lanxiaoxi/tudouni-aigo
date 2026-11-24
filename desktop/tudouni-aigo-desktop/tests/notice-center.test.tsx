@@ -185,10 +185,10 @@ test('rows keep the two-source rule: a window-composed message beats the verbati
   const composed = note({
     id: 'n1',
     text: 'a stale runtime sentence',
-    message: { code: 'terminalEnded', id: 'term-1', reason: 'exited', exitCode: 0 },
+    message: { code: 'refineApplied', taskId: 't-1', applied: 1 },
   });
   const html = renderToStaticMarkup(createElement(NoticeRow, { entry: composed }));
-  assert.match(html, /Terminal term-1 exited with code 0\./);
+  assert.match(html, /Refine applied: 1 candidate prompt written to the task\./);
   assert.doesNotMatch(html, /a stale runtime sentence/);
 
   const verbatim = renderToStaticMarkup(

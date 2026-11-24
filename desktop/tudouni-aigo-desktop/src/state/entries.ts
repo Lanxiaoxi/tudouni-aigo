@@ -124,14 +124,6 @@ export type NoteTone = 'info' | 'warn' | 'degraded' | 'compacted' | 'image' | 'e
  * by a handler in this file.
  */
 export type FrontMessage =
-  /** A terminal has ended — killed, exited with a code, or exited without one. */
-  | { code: 'terminalEnded'; id: string; reason: 'exited' | 'killed'; exitCode: number | null }
-  /** The person went back to the conversation while the shell kept running.
-   *
-   *  Said **only for a running shell**, because that is the case where "it is
-   *  still running" is news. Leaving an ended one needs no sentence: the row in
-   *  the panel still reports how it ended. */
-  | { code: 'terminalDetached'; id: string }
   /** A refine candidate was applied to its task.
    *
    *  `applied` is the number of candidates written; the sentence is this

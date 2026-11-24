@@ -7,15 +7,12 @@
  * re-exported by `store.ts`, so every `import ... from '@/state/store'` keeps
  * working.
  */
-import { type CodeIntelSnapshot, type FileEntry, type HooksSnapshot, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type ProbeEffortSnapshot, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TerminalRow, type TicketBindAttachment, type UiContextMsg, type UiFileReadMsg } from '@/protocol/types';
+import { type CodeIntelSnapshot, type HooksSnapshot, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type ProbeEffortSnapshot, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TicketBindAttachment, type UiContextMsg } from '@/protocol/types';
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
-import type { TerminalState } from '@/runtime/terminalOutput';
 import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
 import { type Annotation, type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
 import { type InstallStage, type RemoteConfigStatus } from '@/runtime/tauri';
 
-
-export type TerminalTail = TerminalState;
 
 /* ============================================================
    Constants that belong to the presentation layer
@@ -59,8 +56,6 @@ export type PanelKind =
   /* The workspace's two capabilities. They are panels rather than windows
    * because they share the app's one interaction model (§5), and because
    * neither is a destination: a person opens one, looks, and goes back. */
-  | 'files'
-  | 'terminal'
   /* The workspace-learning configuration. It is a form whose submit becomes
    * a new session's first message — the panel holds no runtime state of its
    * own, and nothing is sent until the person presses Start. */
@@ -225,43 +220,6 @@ export type StartupNotice =
    *  `attachSession`), so it has to be visible: a button that does nothing at
    *  all is the failure mode this whole change exists to remove. */
   | { code: 'no-workspace' };
-
-/**
- * One file, as the browser's own viewer draws it.
- *
- * It is the `ui(file_read)` payload plus which file was asked for, held **per
- * session** because that is what answered — the child holds the workspace
- * boundary the path is relative to.
- *
- * The payload itself is kept rather than copied field by field on purpose: it is
- * the runtime's answer, and a struct built here would be a second description of
- * it that drifts the first time a field is added. `UiFileReadMsg` is the shape
- * `FileBlock` already knows how to draw, so the panel and the transcript draw the
- * same answer through the same component instead of two that agree today.
- */
-export interface FileView {
-  /** The path that was asked for. Not read back off the payload: the runtime's
-   *  reply is the authority on what it read, and this is what the panel names
-   *  while the answer is still in flight. */
-  path: string;
-  /** `null` while the read is in flight. */
-  answer: UiFileReadMsg | null;
-  /** Why it failed, verbatim from the runtime. `null` when it did not. */
-  problem: string | null;
-  /**
-   * A `data:` URL, when the file is a picture rather than text.
-   *
-   * **A second channel beside `answer`, not a variant of it.** `file_read` is the
-   * runtime's text protocol and it refuses anything that is not UTF-8 — a PNG sent
-   * down it comes back as "not UTF-8 text, so it cannot be shown here", which is a
-   * true sentence about a question that should never have been asked. Pictures
-   * come from the desktop's own `inline_image` command instead (the same one
-   * `MarkdownImage` uses), so the runtime is not asked to decode what it never
-   * offered to.
-   *
-   * `undefined` is "not a picture"; `null` is "a picture, still being read". */
-  image?: string | null;
-}
 
 /**
  * What a child was actually started with.
@@ -812,20 +770,6 @@ export interface SessionRuntime {
   modelAliases: ModelAlias[];
 
   /**
-   * The workspace's terminals, from `ui(terminals)` **and** every `ui(state)`.
-   *
-   * Two sources for one fact on purpose (see the runtime's `terminalsPanel`):
-   * the snapshot is sent on every tool result and at the end of every turn, so a
-   * front end that started after a shell was created — or that lost a message —
-   * learns about it from the next snapshot rather than never.
-   *
-   * Per **session** bucket although terminals belong to the workspace, and the
-   * distinction matters: this is "what this child told me", which is the only
-   * thing a bucket can hold. Two sessions in one workspace each hear the same
-   * list from their own child, and neither is wrong.
-   */
-  terminals: TerminalRow[];
-  /**
    * The workspace's SSH remote sessions, from every `ui(state)` (`snap.ssh` —
    * the full list, replaced rather than merged, exactly like `terminals`).
    *
@@ -836,113 +780,6 @@ export interface SessionRuntime {
    * same list from their own child, neither wrong.
    */
   ssh: SshRow[];
-  /**
-   * Which terminal this session's terminal view is attached to.
-   *
-   * A **front-end** preference, like `draft`: the design says a client may keep
-   * `active_terminal_id` and nothing else about a terminal. The process, the cwd
-   * and the status all remain the runtime's, and this never guesses at any of
-   * them.
-   */
-  activeTerminalId: string | null;
-  /**
-   * What this session's front end has seen of each attached terminal's output.
-   *
-   * A **bounded** tail, newest last. The runtime keeps no scrollback — the design
-   * is explicit that a terminal's output must not become a second terminal — so
-   * showing more than the last screenful is necessarily this end's job.
-   *
-   * Keyed by terminal id rather than held for one: switching between two shells
-   * and back should not lose the first one's screen.
-   */
-  /**
-   * What this session's front end has seen of each attached terminal's output.
-   *
-   * A **bounded** tail, newest last. The runtime keeps no scrollback — the design
-   * is explicit that a terminal's output must not become a second terminal — so
-   * showing more than the last screenful is necessarily this end's job.
-   *
-   * Keyed by terminal id rather than held for one: switching between two shells
-   * and back should not lose the first one's screen.
-   *
-   * Each value is both halves of one tail — the lines **and** an escape sequence
-   * the batch boundary cut in half — because they are two parts of one parsing
-   * state. Held as two records keyed by the same id they could drift, and the
-   * symptom would be one shell's pending sequence appearing in another's output.
-   */
-  terminalTails: Record<string, TerminalTail>;
-  /**
-   * Terminals with a create or kill request in flight.
-   *
-   * Not an optimistic update: it claims nothing about a terminal's state — the
-   * badge still comes only from the runtime. It states one fact this front end
-   * really has, which is that it just sent the request.
-   */
-  terminalPending: string[];
-  /**
-   * Terminals the person asked to dismiss, whose shell was still running.
-   *
-   * Closing is a **two-part act** for a running shell — end it, then forget it —
-   * and the two parts happen at different times because the runtime refuses to
-   * forget something that is alive. So the intention has to survive the gap
-   * between the click and the exit, which is what this list is.
-   *
-   * It is a front-end fact and nothing more, the same category as
-   * `activeTerminalId`: it records what somebody asked for, never what a terminal
-   * is doing. The `terminal_exit` it is waiting for comes from the runtime.
-   */
-  terminalClosing: string[];
-
-  /**
-   * The browser's listing, and whether its answer has arrived.
-   *
-   * `filesLoading` is separate from an empty `filesEntries` on purpose: "this
-   * directory is empty" and "the answer has not come back yet" are different
-   * statements, and a panel that drew the first while the second was true would
-   * send somebody looking for files that are there.
-   */
-  filesPath: string;
-  filesEntries: FileEntry[];
-  filesLoading: boolean;
-  /**
-   * Why the last `file_list` did **not** answer, verbatim from the runtime.
-   *
-   * A third state, and it had no representation at all. A refusal arrives as a
-   * `notice`, not as a `ui(files)`, so the only thing that could clear
-   * `filesLoading` was a success — and a refused listing therefore left the panel
-   * reading "Reading the directory…" for ever. Worse, the sentence that explained
-   * it went into the transcript, which is exactly what the panel was covering.
-   *
-   * The runtime's own words, unaltered: it is the authority on why it refused a
-   * path, and rewording it here would be a second copy of that rule.
-   */
-  filesProblem: string | null;
-  /**
-   * The workspace-wide name search (`file_search`, protocol 20).
-   *
-   * `filesSearchQuery` is the query the **last request** asked; an answer whose
-   * echoed `query` differs is stale (the person kept typing) and is dropped. The
-   * results are `null` until the first answer for that query arrives, which is
-   * how "searching…" and "no match" stay two different statements.
-   */
-  filesSearchQuery: string;
-  filesSearchEntries: FileEntry[] | null;
-  filesSearchTruncated: boolean;
-  /**
-   * The file most recently read from the browser, and whether it is still in
-   * flight.
-   *
-   * The panel draws this in its own lower half. That is not decoration: a
-   * `file_read` answer lands in the **transcript**, and the files panel is a
-   * modal layer on top of it, so "press Enter on a file" used to change nothing
-   * on screen. A person could not tell a slow read from a broken button.
-   *
-   * `null` means nothing has been opened yet — which is why it is not just an
-   * empty payload: "no file opened" and "a file opened and it was empty" are
-   * different statements, exactly like the three listing states above.
-   */
-  fileView: FileView | null;
-
   /* ---------------- workspace memory ----------------
    *
    * The panel's whole subject, in one snapshot. It is **per session** because the

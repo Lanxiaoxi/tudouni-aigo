@@ -202,6 +202,13 @@ pub(crate) async fn runtime_shutdown(
 /// task. Everything that goes through the Tauri command uses the async
 /// wrapper above instead.
 pub(crate) fn shutdown_blocking(app: AppHandle, key: Option<ChildKey>) -> Result<(), String> {
+    // "Every session" is the app leaving, and the workspace hosts (shells, file
+    // watchers) leave with it. A single session's shutdown must not touch them:
+    // hosts outlive conversations by design. Hosts end in well under a second
+    // and have their own short deadline, so this does not delay the sessions.
+    if key.is_none() {
+        crate::workspace_host::shutdown_all_blocking(&app);
+    }
     let state: State<Bridge> = app.state();
 
     // Take a handle to each target under the bridge lock, mark it as requested,

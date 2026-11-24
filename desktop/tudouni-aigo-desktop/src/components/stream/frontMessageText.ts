@@ -16,15 +16,6 @@ import type { Translate } from '@/i18n';
  */
 export function frontMessageText(t: Translate, message: FrontMessage): string {
   switch (message.code) {
-    case 'terminalEnded':
-      // The three endings stay three sentences. `killed` is not "exited with
-      // code null": a killed shell did not choose an exit status, so printing a
-      // number for it would invent one.
-      if (message.reason === 'killed') return t('note.term.endedKilled', { id: message.id });
-      if (message.exitCode === null) return t('note.term.ended', { id: message.id });
-      return t('note.term.endedCode', { id: message.id, code: message.exitCode });
-    case 'terminalDetached':
-      return t('note.term.detached', { id: message.id });
     case 'refineApplied':
       // Zero is the honest outcome of an answer that named nothing
       // recognisable, and it gets its own sentence: "1 applied" with zero

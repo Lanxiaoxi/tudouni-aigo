@@ -32,7 +32,6 @@ import { StartupProblem } from '@/components/StartupProblem';
 import { SessionProblem } from '@/components/SessionProblem';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { StreamView } from '@/components/stream/StreamView';
-import { TerminalView } from '@/components/terminal/TerminalView';
 import { SessionBoard } from '@/components/board/SessionBoard';
 import { TicketBoard } from '@/components/board/TicketBoard';
 import { PanelHost } from '@/components/panels/PanelHost';
@@ -42,6 +41,19 @@ import { QuestionMinimizedPill } from '@/components/modals/QuestionMinimizedPill
 import { CloseConfirm } from '@/components/modals/CloseConfirm';
 import { ConfigSyncPromptModal } from '@/components/modals/ConfigSyncPromptModal';
 import { ConnectingToast } from '@/components/ConnectingToast';
+import { WorkspaceDock } from '@/components/dock/WorkspaceDock';
+import { useDockCapabilities } from '@/components/dock/useDockCapabilities';
+import { useWindowWidth } from '@/components/dock/useDockMeasure';
+import { useDockWindowGrowth } from '@/components/dock/useDockWindowGrowth';
+import { Splitter } from '@/components/ui/Splitter';
+import {
+  DOCK_DEFAULT,
+  clampDockWidth,
+  nominalRailWidth,
+  planDockLayout,
+  type DockLayout,
+} from '@/state/workspaceDock/budget';
+import type { DockCapabilities } from '@/state/workspaceDock/capabilities';
 
 export function App() {
   useRuntimeBridge();
@@ -94,12 +106,6 @@ export function App() {
   const resizing = useApp((s) => s.resizing);
   const startupProblem = useApp((s) => s.startupProblem);
   const dragging = useApp((s) => s.dragging);
-  // Which terminal this session's view is attached to, if any. It is read from
-  // the **session on screen** rather than from the window, because it is a
-  // per-session choice: attaching in one conversation must not take the
-  // keyboard away from another one's composer.
-  const attachedTerminalId = rt?.activeTerminalId ?? null;
-
   // One theme source: the system. Nothing to select, nothing to persist.
   useEffect(() => {
     applySystemTheme();
@@ -131,15 +137,11 @@ export function App() {
 
   // **Which of the six things the column is showing, decided in one place.**
   // The priority order is a real ordering rather than a set of independent
-  // conditions, and that distinction is the whole reason this is a function:
-  // the terminal and the composer used to be answered by two separate
-  // expressions, which let them disagree — a shell with no composer and no
-  // terminal, and no control on screen that could detach. See
-  // `conversationView.ts` for the order and for the defect.
+  // conditions, and that is the whole reason this is a function. See
+  // `conversationView.ts` for the order.
   const view = conversationView({
     startupProblem: startupProblem !== null,
     sessionProblem: problem !== null,
-    attachedTerminalId,
     board,
     // No session open means nothing to boot: `ready` can never become true, so
     // "starting the runtime…" would be a sentence about a process nobody
@@ -189,7 +191,34 @@ export function App() {
   // not come back when the board closed, and that the change survived a restart
   // they never asked for. Nothing is stored, so there is nothing to restore.
   const hiddenByCss = useSidebarHiddenByCss();
-  const showSidebar = sidebarVisible && !hiddenByCss && !boardOpen;
+  const showLeftbar = leftbarVisible && !hiddenByCss;
+  const wantSidebar = sidebarVisible && !hiddenByCss && !boardOpen;
+
+  // **The Workspace Dock's budget** (docs/design/workspace-dock.md §2.2). The
+  // dock is the fourth column and the conversation is never squeezed for it:
+  // the plan says whether it fits beside the rails, whether the session-info
+  // rail has to give way first, or whether it floats over the conversation
+  // instead. Like the board rule above, giving way is *derived* — the person's
+  // `sidebarVisible` is not written, so the rail returns when the room does.
+  const windowWidth = useWindowWidth();
+  const dockOpen = useApp((s) => s.dockOpen);
+  const dockWidthPref = useApp((s) => s.dockWidth);
+  const dockLayout = planDockLayout({
+    windowWidth,
+    leftRail: showLeftbar ? nominalRailWidth('left', leftbarWidth, windowWidth) : 0,
+    // The workspace rail has no narrow icon form yet; when it gets one, this is
+    // where its width goes and step 3 of the degradation order starts to apply.
+    leftRailNarrow: null,
+    rightRail: wantSidebar ? nominalRailWidth('right', sidebarWidth, windowWidth) : 0,
+    preferredWidth: dockWidthPref ?? DOCK_DEFAULT,
+  });
+  // The dock opens **outward**: the window grows past its right edge by the
+  // dock's preferred width, so the rails and the conversation keep their room.
+  // When the window cannot grow (maximized, screen too small) the budget above
+  // fits the dock inside instead, which is the inward fallback.
+  useDockWindowGrowth(dockOpen, clampDockWidth(dockWidthPref ?? DOCK_DEFAULT));
+  const showSidebar = wantSidebar && !(dockOpen && dockLayout.dropRightRail);
+  const dockCapabilities = useDockCapabilities();
   // The summary row says "the conversation on screen is in this phase, with this
   // much usage" — so it must not take the rail's place while the board is up: it
   // would be talking about a conversation nobody is looking at. `|| boardOpen`
@@ -202,8 +231,6 @@ export function App() {
   // rail either abandons the pending request or restarts the process under it.
   // The controls are disabled rather than the rail removed, so the workspace and
   // the session stay readable while the prompt is up.
-  const showLeftbar = leftbarVisible && !hiddenByCss;
-
   return (
     <TooltipPrimitive.Provider delayDuration={400} skipDelayDuration={240}>
       {/* Around everything: a throw anywhere below would otherwise unmount the
@@ -292,19 +319,13 @@ export function App() {
               </div>
             </div>
             <main className="app-stream">
-              {/* Six occupants, one order, and **the order is the decision** —
+              {/* Six occupants, one order, and **the order is the decision**:
                   see `conversationView.ts`, where it is written down and
-                  asserted. It used to be a chain of ternaries here, and the two
-                  that mattered most were the two that were swapped: an attached
-                  terminal was tested *after* the first screen, so opening a
-                  shell in a workspace with no conversation drew the greeting
-                  over it and hid the only control that could leave. */}
+                  asserted. */}
               {view === 'startup-problem' ? (
                 <StartupProblem />
               ) : view === 'session-problem' ? (
                 <SessionProblem />
-              ) : view === 'terminal' ? (
-                <TerminalView />
               ) : view === 'board' ? (
                 <SessionBoard />
               ) : view === 'tickets' ? (
@@ -318,7 +339,7 @@ export function App() {
               )}
               {/* The notice center — **a seventh occupant, and the only one that
                   overlays rather than replaces**. It belongs to the two
-                  conversation-shaped views: the board and the terminal own the
+                  conversation-shaped views: the boards own the
                   whole floor while they are up, so the capsule stands down there,
                   and notes keep landing in the bucket, where the badge answers
                   for them on the way back. It renders nothing at all while the
@@ -326,16 +347,10 @@ export function App() {
               {view === 'welcome' || view === 'stream' ? <NoticeCenter /> : null}
             </main>
 
-            {/* The composer is the conversation's, and it is **not drawn while a
-                terminal has the screen**: every keystroke in that state belongs
-                to the shell (see `TerminalView`), so a text box sitting under
-                the output would be a control that cannot accept input. Its `+`
-                and its send button would each be a gesture that does nothing.
-
-                **Asked of the same decision as the view above, not of the
-                attach.** Two expressions answered one question, so they could
-                disagree — and when they did, the bug was invisible in the worst
-                way: the composer was gone *and* nothing had replaced it. */}
+            {/* The composer is the conversation's, and it is not drawn while a
+                board has the column: a message typed there would have no
+                addressee. **Asked of the same decision as the view above**, so
+                the two cannot disagree. */}
             {showsComposer(view) ? <Composer /> : null}
           </div>
 
@@ -354,6 +369,12 @@ export function App() {
             {showSidebar ? <RailDragHandle rail="right" /> : null}
             <Sidebar />
           </div>
+
+          {/* The fourth column. Mounted only while open (its content is the
+              modules', whose own resources outlive it — see §9.4), docked as a
+              flex item when it fits and floating over the conversation when it
+              does not. `data-placement` is what the stylesheet keys on. */}
+          {dockOpen ? <DockColumn layout={dockLayout} capabilities={dockCapabilities} /> : null}
         </div>
 
         <StatusBar />
@@ -381,6 +402,48 @@ export function App() {
       <ConfigSyncPromptModal />
       </ErrorBoundary>
     </TooltipPrimitive.Provider>
+  );
+}
+
+/**
+ * The Workspace Dock's outer column: its width, its edge handle, and whether it
+ * is docked or floating. What is inside is `WorkspaceDock`'s.
+ *
+ * The handle resizes the **preference** (`setDockWidth`); the width drawn is the
+ * derived one, so a window too small for the preference neither overwrites it nor
+ * makes the handle lie — its range is the derived layout's.
+ */
+function DockColumn({
+  layout,
+  capabilities,
+}: {
+  layout: DockLayout;
+  capabilities: DockCapabilities | null;
+}) {
+  const t = useT();
+  const setDockWidth = useApp((s) => s.setDockWidth);
+  const [resizing, setResizing] = useState(false);
+  return (
+    <aside
+      className={`app-dock${resizing ? ' is-resizing' : ''}`}
+      data-placement={layout.placement}
+      style={{ width: layout.width }}
+      aria-label={t('dock.title')}
+    >
+      <Splitter
+        orientation="vertical"
+        grow="start"
+        className="splitter-edge"
+        value={layout.width}
+        min={layout.minWidth}
+        max={layout.maxWidth}
+        label={t('dock.splitter.width')}
+        onChange={setDockWidth}
+        onReset={() => setDockWidth(null)}
+        onDragChange={setResizing}
+      />
+      <WorkspaceDock layout={layout} capabilities={capabilities} />
+    </aside>
   );
 }
 

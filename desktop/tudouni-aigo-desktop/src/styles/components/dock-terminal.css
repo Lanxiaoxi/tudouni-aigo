@@ -1,0 +1,204 @@
+/* ============================================================
+   Terminal Dock body (docs/design/workspace-dock.md 2.4, 7.4).
+
+   Tokens only. The terminal's own colours come from `--terminal-*` and
+   `--term-ansi-*` through `xtermView.ts`; this file draws the tab strip and
+   the slot a view's container is mounted into.
+   ============================================================ */
+
+.dterm {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.dterm-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  color: var(--fg-muted);
+}
+
+/* ---------------- tab strip ---------------- */
+.dterm-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--lb-line);
+}
+
+.dterm-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  overflow-x: auto;
+  padding: var(--space-1) 0;
+}
+
+.dterm-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h-compact);
+  max-width: 240px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+  font-size: var(--text-compact);
+}
+
+.dterm-tab:hover {
+  background: var(--lb-hover);
+  color: var(--fg);
+}
+
+.dterm-tab.is-active {
+  background: var(--lb-selected);
+  border-color: var(--lb-selected-line);
+  color: var(--accent-text);
+}
+
+.dterm-tab-main {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 100%;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dterm-tab-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dterm-tab-state {
+  flex: none;
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+}
+
+/* The state dot: running is the accent, ended is the quiet grey. The words
+   beside it carry the same fact, so colour is never the only signal. */
+.dterm-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.dterm-tab[data-state='exited'] .dterm-dot {
+  background: var(--fg-faint);
+}
+
+.dterm-tab[data-state='exited'] .dterm-tab-name {
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-faint);
+}
+
+.dterm-tab-close,
+.dterm-add {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: var(--space-1);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.dterm-add {
+  width: var(--control-h-compact);
+  height: var(--control-h-compact);
+  margin-right: 0;
+}
+
+.dterm-tab-close:hover,
+.dterm-add:hover:not(:disabled) {
+  background: var(--lb-hover);
+  color: var(--fg);
+}
+
+.dterm-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dterm-tab-main:focus-visible,
+.dterm-tab-close:focus-visible,
+.dterm-add:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.dterm-rename {
+  width: 140px;
+  height: 100%;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--fg);
+  font: inherit;
+}
+
+.dterm-rename:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.dterm-error {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--destructive-subtle);
+  color: var(--destructive-text);
+  font-size: var(--text-compact);
+}
+
+/* ---------------- the surface ---------------- */
+.dterm-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--terminal-bg);
+}
+
+.dterm-slot {
+  height: 100%;
+  min-height: 0;
+  padding: var(--space-1) 0 0 var(--space-2);
+  box-sizing: border-box;
+}
+
+/* The view's own container: the thing that moves between slots. xterm sizes
+   itself to it, and the fit addon measures it. */
+.dterm-view {
+  width: 100%;
+  height: 100%;
+}

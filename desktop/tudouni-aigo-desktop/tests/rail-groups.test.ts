@@ -474,12 +474,6 @@ test('a session with something in it is left exactly where it is', () => {
       },
     },
     {
-      what: 'a shell was opened from it',
-      mutate: (rt) => {
-        rt.activeTerminalId = 'term-1';
-      },
-    },
-    {
       what: 'its child died',
       mutate: (rt) => {
         rt.runtimeExit = { code: 1, requested: false };
@@ -755,34 +749,6 @@ test('a request arriving while the board is up is held, not rendered', () => {
   // And the same request becomes visible the moment the board closes — the
   // click, or Esc.
   useApp.setState({ board: null });
-  assert.equal(selectModalVisible(useApp.getState()), true);
-});
-
-test('a held request becomes visible when the terminal outranks the board', () => {
-  // The deadlock guard. With a shell attached, the conversation column shows
-  // the terminal, not the board — so nothing would be carrying the "click to
-  // reply" nudge, and holding the prompt there is holding it with no way to
-  // reach it. Holding happens **only** in the exact state where the board
-  // holds the column.
-  const bucket = handshaken('k1', 'C:/work', '20261002-183456');
-  bucket.activeTerminalId = 'term-01';
-  install({ k1: bucket }, ['k1'], 'k1', {
-    board: 'sessions',
-    modal: {
-      kind: 'permission',
-      key: 'k1',
-      req: {
-        id: 'p1',
-        tool: 'shell',
-        risk: 'high',
-        arguments: {},
-        remember: null,
-        remember_hint: null,
-        allow_trust_all: false,
-        trust_all_hint: null,
-      },
-    } as AppStore['modal'],
-  });
   assert.equal(selectModalVisible(useApp.getState()), true);
 });
 

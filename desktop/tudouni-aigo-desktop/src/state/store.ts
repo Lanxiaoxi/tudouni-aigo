@@ -36,10 +36,11 @@ import { sessionsSlice } from './slices/sessions';
 import { runtimeSlice } from './slices/runtime';
 import { composerSlice } from './slices/composer';
 import { modalsSlice } from './slices/modals';
-import { terminalsSlice } from './slices/terminals';
 import { workspacesSlice } from './slices/workspaces';
 import { ticketsSlice } from './slices/tickets';
 import { ticketRunsSlice } from './slices/ticketRuns';
+import { workspaceDockSlice } from './slices/workspaceDock';
+import { loadWorkspaceUi } from './workspaceDock/persist';
 
 
 /* ============================================================
@@ -104,8 +105,6 @@ export function createAppStore() {
     panel: null,
     contextPanels: 0,
     contextBlockWanted: false,
-    filePick: false,
-    fileFocus: false,
     closePrompt: false,
     questionMinimizedId: null,
     board: null,
@@ -135,6 +134,16 @@ export function createAppStore() {
     workspacesCollapsed: prefs.workspacesCollapsed,
     footCollapsed: prefs.footCollapsed,
     ticketStartMode: prefs.ticketStartMode,
+    dockOpen: prefs.dockOpen,
+    dockMode: prefs.dockMode,
+    dockWidth: prefs.dockWidth,
+    dockNavWidth: prefs.dockNavWidth,
+    dockTermHeight: prefs.dockTermHeight,
+    dockTermVisible: prefs.dockTermVisible,
+    dockTermMaximized: prefs.dockTermMaximized,
+    dockPane: 'navigator',
+    dockPick: null,
+    workspaceUi: loadWorkspaceUi(),
     // The user data starts from the in-memory copy, which at module load is
     // the empty shelf: the file that holds it is read asynchronously by
     // `hydrateDesktopData`, and the start-up applies the result to the store
@@ -165,10 +174,10 @@ export function createAppStore() {
       ...runtimeSlice(ctx),
       ...composerSlice(ctx),
       ...modalsSlice(ctx),
-      ...terminalsSlice(ctx),
       ...workspacesSlice(ctx),
       ...ticketsSlice(ctx),
       ...ticketRunsSlice(ctx),
+      ...workspaceDockSlice(ctx),
     };
   });
 }
@@ -210,7 +219,6 @@ export {
   NO_ANNOTATIONS,
   NO_ATTACHED,
   NO_ENTRIES,
-  NO_FILE_ENTRIES,
   NO_INIT_TOOLS,
   NO_MCP_ROWS,
   NO_MODEL_ROWS,
@@ -221,7 +229,6 @@ export {
   NO_SAVED_SESSIONS,
   NO_SKILLS,
   NO_STRINGS,
-  NO_TERMINALS,
 } from './empty';
 
 export { RAIL_MAX, RAIL_MIN, clampRailWidth } from './prefs';
@@ -243,5 +250,4 @@ export { looksLikeMissingBinary } from './runtimeLanding';
    ============================================================ */
 export * from './types';
 export * from './sessionBucket';
-export * from './terminal';
 export type { AppStore } from './storeShape';

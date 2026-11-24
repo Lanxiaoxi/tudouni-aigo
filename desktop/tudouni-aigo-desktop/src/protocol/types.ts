@@ -102,8 +102,15 @@ export const ENVELOPE_VERSION = 1;
  * run ended. Additive like 6 was. A front end that draws the panel gates it on
  * this number: a runtime below 16 would answer with nothing, and a button that
  * answers with nothing is a promise the runtime cannot keep.
+ *
+ * **17–22** were added on the runtime side without this constant following
+ * (see `internal/protocol/messages.go`): 17 suggested replies, 18 the ticket
+ * reporting channel, 19 ticket attachments, 20 `file_search`, 21 the
+ * unreported-turn fact, 22 ticket notes. The front end already gated on the
+ * higher numbers; only this number lagged. The Workspace Host channel has its
+ * own, independent version (`workspaceHost/protocol.ts`, `HOST_PROTOCOL`).
  */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 22;
 
 /* ============================================================
    Shared vocabulary
@@ -519,7 +526,10 @@ export interface FileEntry {
 
 /** `ui(files)`. `path` is the **runtime's normalised** spelling, not the
  *  request's: after `/./src/../src` the two differ, and the reply's is the one
- *  that makes "where am I" answerable. */
+ *  that makes "where am I" answerable.
+ *
+ * @deprecated No longer handled by the desktop. Files and terminals are served by the Workspace Host now (`src/workspaceHost/`, docs/design/workspace-dock.md §12 stage 7). The Go side still answers this message; deleting it is a separate major-version decision, so the type stays.
+ */
 export interface UiFilesMsg {
   v: number;
   t: 'ui';
@@ -532,7 +542,10 @@ export interface UiFilesMsg {
  *  **name** contains `query`. `query` is the request's own text, echoed so an
  *  answer to a query the box no longer shows can be dropped. `truncated` means
  *  the runtime stopped early (result cap or walk cap): "no more matches" is then
- *  not a statement the panel may make. */
+ *  not a statement the panel may make.
+ *
+ * @deprecated No longer handled by the desktop. Files and terminals are served by the Workspace Host now (`src/workspaceHost/`, docs/design/workspace-dock.md §12 stage 7). The Go side still answers this message; deleting it is a separate major-version decision, so the type stays.
+ */
 export interface UiFileSearchMsg {
   v: number;
   t: 'ui';
@@ -549,6 +562,8 @@ export interface UiFileSearchMsg {
  * the whole body: the body is an Artifact on disk under `artifact_id`, for the
  * same reason a tool result's is — a session file is appended to, so a body
  * written into it costs its own size again every round.
+ *
+ * @deprecated The desktop no longer sends `file_read` or files the answer. Files and terminals are served by the Workspace Host now (`src/workspaceHost/`, docs/design/workspace-dock.md §12 stage 7). The Go side still answers this message; deleting it is a separate major-version decision, so the type stays.
  */
 export interface UiFileReadMsg {
   v: number;
@@ -1059,7 +1074,11 @@ export interface TerminalRow {
   rows: number;
 }
 
-/** `ui(terminals)` — the full list, never a delta. */
+/**
+ * `ui(terminals)` — the full list, never a delta.
+ *
+ * @deprecated No longer handled by the desktop. Files and terminals are served by the Workspace Host now (`src/workspaceHost/`, docs/design/workspace-dock.md §12 stage 7). The Go side still answers this message; deleting it is a separate major-version decision, so the type stays.
+ */
 export interface UiTerminalsMsg {
   v: number;
   t: 'ui';
@@ -1094,7 +1113,11 @@ export interface SshRow {
   created_at: number;
 }
 
-/** `ui(terminal_created)` — the answer to a successful `terminal_create`. */
+/**
+ * `ui(terminal_created)` — the answer to a successful `terminal_create`.
+ *
+ * @deprecated No longer handled by the desktop. Files and terminals are served by the Workspace Host now (`src/workspaceHost/`, docs/design/workspace-dock.md §12 stage 7). The Go side still answers this message; deleting it is a separate major-version decision, so the type stays.
+ */
 export interface UiTerminalCreatedMsg {
   v: number;
   t: 'ui';
@@ -1113,6 +1136,8 @@ export interface UiTerminalCreatedMsg {
  * `data` is an **increment**, not the accumulated output — accumulating is the
  * client's job. Batches are cut on rune boundaries by the runtime, so a
  * multi-byte character is never split across two of them.
+ *
+ * @deprecated No longer handled by the desktop. Files and terminals are served by the Workspace Host now (`src/workspaceHost/`, docs/design/workspace-dock.md §12 stage 7). The Go side still answers this message; deleting it is a separate major-version decision, so the type stays.
  */
 export interface UiTerminalOutputMsg {
   v: number;
@@ -1128,6 +1153,8 @@ export interface UiTerminalOutputMsg {
  * This is the **only** report of an ending. A kill answered from the request
  * that asked for it would be a second truth, and the two would disagree the
  * first time a process refused to die.
+ *
+ * @deprecated No longer handled by the desktop. Files and terminals are served by the Workspace Host now (`src/workspaceHost/`, docs/design/workspace-dock.md §12 stage 7). The Go side still answers this message; deleting it is a separate major-version decision, so the type stays.
  */
 export interface UiTerminalExitMsg {
   v: number;
@@ -1983,6 +2010,7 @@ export type FrontendMsg =
   /** List one directory level. An **empty** path is the workspace root — the
    *  same value the runtime uses for "the workspace itself", so there is no
    *  second spelling to keep in step. */
+  /** @deprecated Session-protocol file and terminal requests (`file_*`, `terminal_*`): the desktop sends none of them any more, the Workspace Host replaced them. The Go handlers stay until a major version. */
   | { v: number; t: 'file_list'; path: string }
   /** Read one file. The reply carries a preview plus an `artifact_id`; the whole
    *  body stays on disk. */
@@ -1990,6 +2018,7 @@ export type FrontendMsg =
   /** Search the whole workspace by name (protocol 20). `query` must be non-empty;
    *  the runtime refuses an empty one with a `files` notice. */
   | { v: number; t: 'file_search'; query: string }
+  /** @deprecated See `file_list`. */
   | { v: number; t: 'terminal_list' }
   /** Open a shell. `cwd` is workspace-relative and **may be omitted** (the
    *  runtime then uses the workspace root); so may the size, which then becomes

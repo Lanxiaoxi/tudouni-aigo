@@ -24,9 +24,8 @@ import assert from 'node:assert/strict';
 import { renderToStaticMarkup } from 'react-dom/server.browser';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { QuietGroup } from '@/components/stream/QuietGroup';
-import { isPicturePath } from '@/components/panels/panels';
 import { previewFile } from '@/components/stream/DeliverableCards';
-import { useApp } from '@/state/store';
+import { createSessionBucket, useApp } from '@/state/store';
 import type { Entry } from '@/state/entries';
 
 /**
@@ -137,96 +136,70 @@ test('quiet mode still compresses an ordinary call to one line', () => {
   assert.doesNotMatch(html, /dl-card/);
 });
 
-/* ---------------- a picture is a picture, not text ---------------- */
+/* ---------------- a card opens the Dock's Explorer ---------------- */
 
-test('the extensions the card draws are the ones the panel draws', () => {
-  // One predicate, imported by both. A file the card refuses to draw but the
-  // browser tries to read as text is a card that opens onto "not UTF-8 text".
-  for (const name of ['a.png', 'a.jpg', 'a.jpeg', 'a.gif', 'dir/a.webp', 'dir\\a.bmp']) {
-    assert.equal(isPicturePath(name), true, `${name} should be drawn`);
+const LAUNCH = { ericai: false, maxSteps: null };
+
+/** Make `root` the active session's workspace, the way the Dock reads it. */
+function activateWorkspace(root: string | null): void {
+  if (root === null) {
+    useApp.setState({ activeKey: null, sessions: {} });
+    return;
   }
-  for (const name of ['a.md', 'a.go', 'a', '.hidden', 'a.', 'dir/a.txt']) {
-    assert.equal(isPicturePath(name), false, `${name} should be read as text`);
-  }
-});
-
-test('a dotted directory does not make its files pictures', () => {
-  // The first dot is in the directory, not the name. Deriving the extension from
-  // the whole path would call this a `.png` directory entry.
-  assert.equal(isPicturePath('v1.2/README'), false);
-});
-
-/* ---------------- focus mode: one file, not the browser ---------------- */
-
-/**
- * The store is a module singleton, so these read and restore the two flags
- * directly. `openPanel`/`closePanel` are the real transitions under test — a
- * hand-set `fileFocus` would prove only that a boolean can be assigned.
- */
-function withStore(): typeof useApp.getState {
-  return useApp.getState();
+  useApp.setState({
+    activeKey: 'k1',
+    sessions: { k1: createSessionBucket('k1', root, LAUNCH) },
+  });
 }
 
-test('previewing a picture opens the panel in focus mode', () => {
-  const store = withStore();
-  store.closePanel();
-  // No session is active in this harness, so `previewImage` returns early after
-  // the flags — which is exactly the part under test.
-  store.previewImage('out/chart.png');
-  assert.equal(useApp.getState().panel, 'files');
-  assert.equal(
-    useApp.getState().fileFocus,
-    true,
-    'a card press asks for one file, so the browser must not be drawn above it',
-  );
-  store.closePanel();
+function reset(): void {
+  useApp.setState({ dockOpen: false, dockMode: 'git', dockPane: 'navigator', workspaceUi: {} });
+}
+
+test('a card for a workspace file opens the Explorer with that file selected', () => {
+  reset();
+  activateWorkspace('C:\\work\\app');
+  let external = 0;
+  previewFile({ path: 'docs/guide/readme.md', description: '' }, () => {
+    external += 1;
+  });
+  const s = useApp.getState();
+  assert.equal(s.dockOpen, true);
+  assert.equal(s.dockMode, 'explorer');
+  assert.equal(external, 0, 'a workspace file is shown in the Dock, not handed to the OS');
+  const ui = Object.values(s.workspaceUi)[0];
+  assert.equal(ui?.selectedFile, 'docs/guide/readme.md');
+  assert.deepEqual(ui?.expandedDirs, ['docs', 'docs/guide'], 'its parent directories are opened');
+  activateWorkspace(null);
 });
 
-test('a text card opens the panel in focus mode too', () => {
-  // The picture door asked for focus and the text door did not: a card for a
-  // `.html` opened onto the workspace's directory listing above the file, the
-  // same failure the picture fix suppressed for PNGs. `previewFile` is the
-  // shared entry for both doors, so it is what gets asserted — the flag is the
-  // one thing a screenshot of the panel cannot check afterwards.
-  const store = withStore();
-  store.closePanel();
-  previewFile('docs/architecture.html');
-  assert.equal(useApp.getState().panel, 'files');
-  assert.equal(
-    useApp.getState().fileFocus,
-    true,
-    'a text card asks for one file as much as a picture does',
-  );
-  store.closePanel();
+test('an absolute path inside the workspace is converted, whichever separator it uses', () => {
+  reset();
+  activateWorkspace('C:\\work\\app');
+  previewFile({ path: 'C:\\Work\\App\\out\\report.html', description: '' }, () => {
+    assert.fail('inside the workspace');
+  });
+  assert.equal(Object.values(useApp.getState().workspaceUi)[0]?.selectedFile, 'out/report.html');
+  activateWorkspace(null);
 });
 
-test('browsing afterwards is a browser again, not a stale focus', () => {
-  const store = withStore();
-  store.previewImage('out/chart.png');
-  // Any other route into the panel has to clear it, or the directory listing is
-  // silently unavailable for the rest of the window's life.
-  store.openPanel('files');
-  assert.equal(useApp.getState().fileFocus, false, 'a plain open must browse');
-
-  store.previewImage('out/chart.png');
-  store.openPanel('model');
-  assert.equal(useApp.getState().fileFocus, false, 'leaving the panel must clear it too');
-  store.closePanel();
+test('a file outside the workspace keeps the old fallback: the open door', () => {
+  reset();
+  activateWorkspace('C:\\work\\app');
+  const opened: string[] = [];
+  previewFile({ path: 'C:\\elsewhere\\x.docx', description: '' }, (file) => opened.push(file.path));
+  previewFile({ path: '../escape.md', description: '' }, (file) => opened.push(file.path));
+  assert.deepEqual(opened, ['C:\\elsewhere\\x.docx', '../escape.md']);
+  assert.equal(useApp.getState().dockOpen, false, 'nothing opened in the Dock');
+  activateWorkspace(null);
 });
 
-test('closing the panel clears focus', () => {
-  const store = withStore();
-  store.previewImage('out/chart.png');
-  store.closePanel();
-  assert.equal(useApp.getState().fileFocus, false);
+test('with no workspace at all the card falls back too', () => {
+  reset();
+  activateWorkspace(null);
+  let opened = 0;
+  previewFile({ path: 'a.md', description: '' }, () => {
+    opened += 1;
+  });
+  assert.equal(opened, 1);
 });
-
-test('the picker is still a browser, not a focus view', () => {
-  const store = withStore();
-  store.previewImage('out/chart.png');
-  store.openFilePicker();
-  assert.equal(useApp.getState().filePick, true);
-  assert.equal(useApp.getState().fileFocus, false, 'a picker has to list files to pick from');
-  store.closePanel();
-});
-

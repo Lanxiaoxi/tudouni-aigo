@@ -1,0 +1,680 @@
+/* ============================================================
+   Workspace Dock: Explorer and Git modules (docs/design/workspace-dock.md 5, 6).
+
+   Tokens only. The tree rows, the Git rows and the two viewers share one
+   vocabulary (`dock-tree-*`, `dock-view-*`) so a row looks the same whichever
+   page it is on.
+   ============================================================ */
+
+/* ---------------- file-choosing banner (attach file) ---------------- */
+.dock-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-subtle);
+  color: var(--fg);
+  font-size: var(--text-compact);
+}
+
+.dock-pick-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------------- navigator column ---------------- */
+.dock-explorer,
+.dock-git {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.dock-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--lb-line);
+}
+
+.dock-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  font-size: var(--text-compact);
+}
+
+.dock-search input {
+  font-size: var(--text-compact);
+}
+
+.dock-tools .btn.is-on {
+  color: var(--accent-text);
+}
+
+.dock-tree-status {
+  flex: none;
+  padding: var(--space-1) var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+}
+
+/* ---------------- rows ---------------- */
+.dock-tree,
+.dock-git-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-1) 0;
+}
+
+.dock-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 24px;
+  padding-right: var(--space-2);
+  color: var(--fg-secondary);
+  font-size: var(--text-compact);
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  margin: 0 var(--space-1);
+}
+
+.dock-tree-row:hover {
+  background: var(--lb-hover);
+  color: var(--fg);
+}
+
+.dock-tree-row:focus-visible {
+  border-color: var(--accent-border);
+}
+
+.dock-tree-row.is-selected {
+  background: var(--lb-selected);
+  border-color: var(--lb-selected-line);
+  color: var(--accent-text);
+}
+
+.dock-tree-row.is-hidden-file .dock-tree-name {
+  opacity: 0.7;
+}
+
+.dock-tree-twist,
+.dock-tree-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--fg-muted);
+}
+
+.dock-tree-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Where a search hit lives, or a Git row's directory: secondary, and the first
+   thing to be cut when the row is narrow. */
+.dock-tree-parent {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-faint);
+  font-size: var(--text-caption);
+}
+
+.dock-tree-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+}
+
+.dock-tree-note.is-error {
+  color: var(--destructive-text);
+}
+
+/* Git letters: one column wide, coloured by what happened. */
+.dock-letter {
+  flex: none;
+  margin-left: auto;
+  min-width: 14px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--warning-text);
+}
+
+.dock-git-row .dock-letter {
+  margin-left: 0;
+  margin-right: var(--space-1);
+  order: -1;
+}
+
+.dock-letter.is-add,
+.dock-letter.is-untracked {
+  color: var(--success-text);
+}
+
+.dock-letter.is-del,
+.dock-letter.is-conflict {
+  color: var(--destructive-text);
+}
+
+.dock-letter.is-rename {
+  color: var(--accent-text);
+}
+
+/* A directory that contains a change. */
+.dock-dot {
+  flex: none;
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+
+/* ---------------- Git navigator ---------------- */
+.dock-git-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-1) var(--space-3);
+}
+
+.dock-git-id {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.dock-git-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--fg);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.dock-git-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dock-git-head-hash {
+  flex: none;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.dock-git-meta {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  border-bottom: 1px solid var(--lb-line);
+}
+
+.dock-git-meta:empty {
+  display: none;
+}
+
+.dock-git-upstream {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.dock-git-sync {
+  font-family: var(--font-mono);
+}
+
+.dock-git-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.dock-git-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.dock-git-count {
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background: var(--lb-tag);
+  font-weight: 400;
+}
+
+.dock-git-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.dock-git-old {
+  color: var(--fg-muted);
+  text-decoration: line-through;
+}
+
+/* ---------------- viewers ---------------- */
+.dock-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+
+.dock-view-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  min-height: 34px;
+  border-bottom: 1px solid var(--lb-line);
+}
+
+.dock-view-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--fg);
+  font-size: var(--text-body);
+  font-weight: 600;
+}
+
+.dock-view-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-faint);
+  font-size: var(--text-caption);
+  font-weight: 400;
+}
+
+.dock-view-actions {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.dock-view-meta {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  border-bottom: 1px solid var(--lb-line);
+}
+
+.dock-view-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.dock-view-note {
+  padding: var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-compact);
+}
+
+.dock-view-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--warning-subtle);
+  color: var(--warning-text);
+  font-size: var(--text-caption);
+  border-bottom: 1px solid var(--warning-border);
+}
+
+.dock-view-body > .dock-view-banner {
+  position: sticky;
+  bottom: 0;
+  border-top: 1px solid var(--warning-border);
+  border-bottom: 0;
+}
+
+.dock-view-banner.is-error {
+  background: var(--destructive-subtle);
+  color: var(--destructive-text);
+  border-bottom-color: var(--destructive-text);
+}
+
+.dock-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+}
+
+.dock-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background: var(--bg-muted);
+  border-radius: var(--radius-sm);
+}
+
+.dock-fileinfo {
+  margin: var(--space-3) auto;
+  max-width: 320px;
+  font-size: var(--text-compact);
+}
+
+.dock-fileinfo-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--lb-line);
+}
+
+.dock-fileinfo dt {
+  color: var(--fg-muted);
+}
+
+.dock-fileinfo dd {
+  margin: 0;
+  color: var(--fg);
+}
+
+.dock-markdown {
+  padding: var(--space-3);
+  font-size: var(--text-body);
+}
+
+/* A two-button segmented switch: Markdown rendered/source, Unified/Split. */
+.dock-seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.dock-seg-btn {
+  height: var(--control-h-compact);
+  padding: 0 var(--space-2);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.dock-seg-btn:hover {
+  background: var(--lb-hover);
+  color: var(--fg);
+}
+
+.dock-seg-btn.is-active {
+  background: var(--lb-selected);
+  color: var(--accent-text);
+}
+
+/* ---------------- code with line numbers ---------------- */
+.dock-code {
+  display: flex;
+  min-width: min-content;
+  background: var(--terminal-bg);
+  color: var(--terminal-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: 1.55;
+}
+
+.dock-code pre {
+  margin: 0;
+  font: inherit;
+}
+
+.dock-code-gutter {
+  flex: none;
+  position: sticky;
+  left: 0;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  text-align: right;
+  color: var(--code-comment);
+  background: var(--terminal-bg);
+  user-select: none;
+}
+
+.dock-code-body {
+  flex: 1 0 auto;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+  outline: none;
+  tab-size: 4;
+}
+
+.dock-code-body code.hljs {
+  padding: 0;
+  background: none;
+  font: inherit;
+}
+
+/* ---------------- diff ---------------- */
+.dock-diff {
+  min-width: min-content;
+  font-family: var(--font-mono);
+  font-size: var(--text-code);
+  line-height: 1.5;
+}
+
+/* One hunk: the header sticks to the top of the scroller while its lines pass. */
+.dock-diff-hunk {
+  min-width: min-content;
+}
+
+.dock-diff-hunkhead {
+  position: sticky;
+  top: 0;
+  padding: 2px var(--space-3);
+  background: var(--bg-muted);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  white-space: pre;
+}
+
+.dock-diff-row,
+.dock-diff-cell {
+  display: flex;
+  min-width: min-content;
+  white-space: pre;
+}
+
+.dock-diff-no {
+  flex: none;
+  width: 44px;
+  padding-right: var(--space-2);
+  text-align: right;
+  color: var(--fg-faint);
+  user-select: none;
+}
+
+.dock-diff-sign {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--fg-muted);
+  user-select: none;
+}
+
+.dock-diff-text {
+  flex: 1 0 auto;
+  padding-right: var(--space-3);
+}
+
+.dock-diff-row.is-add,
+.dock-diff-cell.is-add {
+  background: var(--success-subtle);
+}
+
+.dock-diff-row.is-add .dock-diff-sign,
+.dock-diff-cell.is-add .dock-diff-sign {
+  color: var(--success-text);
+}
+
+.dock-diff-row.is-del,
+.dock-diff-cell.is-del {
+  background: var(--destructive-subtle);
+}
+
+.dock-diff-row.is-del .dock-diff-sign,
+.dock-diff-cell.is-del .dock-diff-sign {
+  color: var(--destructive-text);
+}
+
+.dock-diff-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.dock-diff-split > .dock-diff-cell {
+  overflow: hidden;
+}
+
+.dock-diff-split > .dock-diff-cell + .dock-diff-cell {
+  border-left: 1px solid var(--lb-line);
+}
+
+.dock-diff-cell.is-empty {
+  background: var(--bg-muted);
+}
+
+.dock-diff-nonl {
+  padding-left: 62px;
+  color: var(--fg-faint);
+  font-size: var(--text-caption);
+  font-style: italic;
+}
+
+.dock-diff-add-count {
+  color: var(--success-text);
+}
+
+.dock-diff-del-count {
+  color: var(--destructive-text);
+}
+
+.dock-diff-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ---------------- context menu (portalled to body) ---------------- */
+.dock-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-popover);
+}
+
+.dock-menu {
+  position: fixed;
+  min-width: 220px;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-overlay);
+  display: flex;
+  flex-direction: column;
+}
+
+.dock-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  font-size: var(--text-compact);
+  color: var(--fg-secondary);
+  cursor: pointer;
+}
+
+.dock-menu-item:hover:not(:disabled),
+.dock-menu-item:focus-visible {
+  background: var(--bg-muted);
+  color: var(--fg);
+  outline: none;
+}
+
+.dock-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ---------------- dragging a file toward the composer ---------------- */
+.dock-drag-ghost {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  max-width: 240px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-size: var(--text-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: var(--shadow-overlay);
+}
+
+body.is-dock-dragging {
+  cursor: grabbing;
+  user-select: none;
+}

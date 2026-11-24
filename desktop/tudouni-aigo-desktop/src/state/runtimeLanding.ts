@@ -12,7 +12,7 @@ import { type AppStore } from './storeShape';
 import { SIDEBAR_BLOCKS, type SessionRuntime, type SidebarBlockKey } from './types';
 import { persistPrefs } from './prefs';
 import { noteOutstanding } from './polling';
-import { applyTerminalList, recomputeModelCurrent } from './terminal';
+import { recomputeModelCurrent } from './modelCurrent';
 
 
 /** Release the preview URLs of a set of pictures — stashed, or still being
@@ -187,16 +187,8 @@ export function applyStateSnapshot(
           skillCatalog: catalog,
           skills: merged.loaded,
           skillAvailable: merged.available,
-          // **The snapshot's terminal list is the workspace's whole truth**, so
-          // it is applied rather than ignored. It is the one path that lets a
-          // front end which started after a shell existed — or which lost a
-          // message — learn about it instead of never; `terminal_created` and
-          // `terminal_exit` remain the immediate patch for the moments between
-          // two snapshots.
-          ...applyTerminalList(live, snap.terminals),
-          // Same rule as the terminal list: the snapshot's list is replaced,
-          // never merged — an ended session leaving the runtime's list must
-          // stop being shown here too.
+          // The snapshot's list is replaced, never merged: an ended session
+          // leaving the runtime's list must stop being shown here too.
           ssh: snap.ssh,
           // The catalogue's `current` flag is stamped once, at `init`. The
           // snapshot carries the live `model`/`modelProvider` on every send, so a
