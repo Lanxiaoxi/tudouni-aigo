@@ -217,8 +217,16 @@ export function App() {
   // dock's preferred width, so the rails and the conversation keep their room.
   // When the window cannot grow (maximized, screen too small) the budget above
   // fits the dock inside instead, which is the inward fallback.
-  useDockWindowGrowth(dockOpen, clampDockWidth(dockWidthPref ?? DOCK_DEFAULT));
-  const showSidebar = wantSidebar && !(dockOpen && dockLayout.dropRightRail);
+  //
+  // **`dockShown` is `dockOpen` after the window has made up its mind.** The dock
+  // is mounted, and the right rail is asked to give way, only from that moment:
+  // `dockLayout` above is planned against the window's width, and until the
+  // window has grown that is the *old* width — a dock drawn then squeezes the
+  // conversation, folds the rail, and a beat later the room appears and
+  // everything jumps back out. Gating both on the same flag is what keeps the
+  // two from disagreeing.
+  const dockShown = useDockWindowGrowth(dockOpen, clampDockWidth(dockWidthPref ?? DOCK_DEFAULT));
+  const showSidebar = wantSidebar && !(dockShown && dockLayout.dropRightRail);
   const dockCapabilities = useDockCapabilities();
   // The summary row says "the conversation on screen is in this phase, with this
   // much usage" — so it must not take the rail's place while the board is up: it
@@ -411,7 +419,7 @@ export function App() {
               **A sibling of the app, not a fourth item in the rails' row.** See
               the comment on `.app-body`: this placement is what stops the top
               bar and the status bar from running on underneath the dock. */}
-          {dockOpen ? <DockColumn layout={dockLayout} capabilities={dockCapabilities} /> : null}
+          {dockShown ? <DockColumn layout={dockLayout} capabilities={dockCapabilities} /> : null}
         </div>
       </div>
 
@@ -462,7 +470,9 @@ function DockColumn({
     <aside
       className={`app-dock${resizing ? ' is-resizing' : ''}`}
       data-placement={layout.placement}
-      style={{ width: layout.width }}
+      // `--dock-w` is what the inner `.dock` holds its width to while this
+      // element's own width is animating in (see `.app-dock` in dock.css).
+      style={{ width: layout.width, '--dock-w': `${layout.width}px` } as CSSProperties}
       aria-label={t('dock.title')}
     >
       <Splitter

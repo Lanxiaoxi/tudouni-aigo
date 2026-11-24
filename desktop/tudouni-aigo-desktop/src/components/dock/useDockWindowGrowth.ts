@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { isHosted } from '@/runtime/tauri';
 import { planGrowth, planShrink, type Growth, type Rect } from '@/state/workspaceDock/windowGrowth';
 
@@ -18,10 +18,23 @@ const WINDOW_MIN_WIDTH = 960;
  *
  * Window calls are serialised: a quick open-close-open must not interleave two
  * reads and two writes and leave the window at a size neither asked for.
+ *
+ * **Returns `settled`: the window has finished deciding its size for this
+ * opening**, and the dock may now be drawn. The window calls are a chain of
+ * awaits, so a dock mounted the instant `open` flips is laid out inside the old
+ * window (squeezing the conversation and, through `planDockLayout`, folding the
+ * session-info rail), and then the window grows under it and everything jumps
+ * back out. Waiting here is what turns that into two ordered steps: the window
+ * grows, then the dock slides in. It is `true` whether or not the window could
+ * grow (maximized, no room): the dock then slides in *inward*, which is the
+ * fallback and is still better as a motion than as a one-frame appearance.
+ * Closing resets it at once, so the dock leaves the tree the moment `open`
+ * goes false, exactly as before.
  */
-export function useDockWindowGrowth(open: boolean, extraWidth: number): void {
+export function useDockWindowGrowth(open: boolean, extraWidth: number): boolean {
   const growth = useRef<Growth | null>(null);
   const queue = useRef<Promise<void>>(Promise.resolve());
+  const [settled, setSettled] = useState(false);
   // The width is read when the dock opens, not tracked: dragging the dock's
   // edge afterwards resizes the dock inside the window, it does not move the
   // window under the pointer.
@@ -29,14 +42,73 @@ export function useDockWindowGrowth(open: boolean, extraWidth: number): void {
   widthRef.current = extraWidth;
 
   useEffect(() => {
-    if (!isHosted()) return;
-    queue.current = queue.current.then(() =>
-      (open ? grow(growth, widthRef.current) : shrink(growth)).catch(() => {
-        // A window call that failed leaves the window as it was; the dock then
-        // fits inside it, which is the fallback anyway.
+    // An effect that was superseded (close, or a quick close-open) must not
+    // report on behalf of the opening that replaced it.
+    let live = true;
+    if (!open) setSettled(false);
+    queue.current = queue.current.then(async () => {
+      let resized = false;
+      const widthBefore = window.innerWidth;
+      if (isHosted()) {
+        try {
+          if (open) resized = await grow(growth, widthRef.current);
+          else await shrink(growth);
+        } catch {
+          // A window call that failed leaves the window as it was; the dock then
+          // fits inside it, which is the fallback anyway.
+        }
+      }
+      if (!open) return;
+      // `setSize` resolving is the OS's word; the page learns the new width from
+      // its own `resize` event, a beat later. Settling before it would lay the
+      // dock out against the old width once more.
+      if (resized) await innerWidthChanged(widthBefore, WINDOW_RESIZE_WAIT_MS);
+      // Two frames, so the tree is painted *without* the dock first: the
+      // slide-in is a mount animation and needs a before to start from.
+      await twoFrames();
+      if (live) setSettled(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open]);
+
+  return open && settled;
+}
+
+/** How long to wait for the page to notice a resize the OS already made. */
+const WINDOW_RESIZE_WAIT_MS = 250;
+
+/** Resolves once `window.innerWidth` is no longer `from`, or after `timeoutMs`
+ *  — a resize that never arrives must not leave the dock unmounted forever. */
+function innerWidthChanged(from: number, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (window.innerWidth !== from) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      window.removeEventListener('resize', done);
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(done, timeoutMs);
+    window.addEventListener('resize', done);
+  });
+}
+
+function twoFrames(): Promise<void> {
+  return new Promise((resolve) => {
+    // A hidden renderer does not run animation frames; the timeout keeps the
+    // dock from waiting on a frame that is not coming.
+    const timer = window.setTimeout(resolve, 100);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        window.clearTimeout(timer);
+        resolve();
       }),
     );
-  }, [open]);
+  });
 }
 
 async function windowApi() {
@@ -49,12 +121,13 @@ async function readRect(win: Awaited<ReturnType<typeof windowApi>>['win']): Prom
   return { x: pos.x, width: size.width };
 }
 
-async function grow(growth: { current: Growth | null }, extraCss: number): Promise<void> {
-  if (growth.current !== null) return;
+/** Whether the window was actually resized (false: it stays, dock goes inward). */
+async function grow(growth: { current: Growth | null }, extraCss: number): Promise<boolean> {
+  if (growth.current !== null) return false;
   const { mod, win } = await windowApi();
-  if ((await win.isMaximized()) || (await win.isFullscreen())) return;
+  if ((await win.isMaximized()) || (await win.isFullscreen())) return false;
   const monitor = await mod.currentMonitor();
-  if (monitor === null) return;
+  if (monitor === null) return false;
   const scale = await win.scaleFactor();
   const before = await readRect(win);
   const plan = planGrowth({
@@ -63,9 +136,10 @@ async function grow(growth: { current: Growth | null }, extraCss: number): Promi
     extra: Math.round(extraCss * scale),
     maximized: false,
   });
-  if (plan === null) return;
+  if (plan === null) return false;
   await apply(mod, win, before, plan);
   growth.current = { before, after: await readRect(win) };
+  return true;
 }
 
 async function shrink(growth: { current: Growth | null }): Promise<void> {

@@ -21,6 +21,29 @@
   background: var(--lb-surface);
   border-left: 1px solid var(--lb-line);
   overflow: hidden;
+  /* Slides in from nothing. `App.tsx` mounts the dock only after the window has
+     finished growing, so this is the one thing the eye sees: the room exists,
+     then the dock fills it. The keyframe names no `to` — an animation with only
+     a `from` ends at the element's own computed width, which is what keeps the
+     dragged / budgeted width the single source of truth. Mount-only: later width
+     changes (a drag, a window resize) are not animated. Reduced motion zeroes it
+     globally (global.css). */
+  animation: dock-in var(--motion-base) var(--ease-standard) 1;
+}
+
+@keyframes dock-in {
+  from {
+    width: 0;
+  }
+}
+
+/* The content keeps its full width while the column grows around it, the way the
+   rails' inner elements do, so text and the terminal do not reflow on every frame
+   of the slide. `--dock-w` includes the 1px border, hence the subtraction. A
+   *minimum*, so a column that is later clipped (an overlay at `max-width:
+   100%`) still shrinks the content as before. */
+.app-dock > .dock {
+  min-width: calc(var(--dock-w, 0px) - 1px);
 }
 
 /* Docked: a real flex item of `.app-body`, so the body gives up exactly the

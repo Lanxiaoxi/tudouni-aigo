@@ -122,6 +122,38 @@ test('a floating dock sits between the two bars, never over them', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Opening: the window grows first, then the dock slides in            */
+/* ------------------------------------------------------------------ */
+
+test('the dock is mounted only after the window has settled, and the rail yields on the same flag', () => {
+  // Mounting on `dockOpen` lays the dock out inside the *old* window width: it
+  // squeezes the conversation, folds the right rail, and a beat later the window
+  // grows and everything jumps outward. Both the mount and the rail's giving way
+  // must read the hook's `settled` result, or one of them reintroduces the jump.
+  assert.match(app, /const dockShown = useDockWindowGrowth\(/, '`dockShown` is no longer the hook\'s result');
+  assert.match(app, /\{dockShown \? <DockColumn/, 'the dock is mounted on something other than `dockShown`');
+  assert.match(app, /dockShown && dockLayout\.dropRightRail/, 'the rail yields on a different flag than the mount');
+  assert.doesNotMatch(app, /\{dockOpen \? <DockColumn/, 'the dock mounts on the raw `dockOpen` again');
+});
+
+test('the dock slides in on mount without owning a second copy of its width', () => {
+  const dock = ruleBody(dockCss, '.app-dock');
+  assert.ok(dock !== null, 'the `.app-dock` rule is gone from dock.css');
+  assert.match(dock, /animation:\s*dock-in\s+var\(--motion-base\)/, 'the dock lost its entrance animation');
+
+  // A `from`-only keyframe ends at the element's own width, so the inline style
+  // stays the single source of truth. A `to { width: ... }` would be a second one.
+  const frames = dockCss.slice(dockCss.indexOf('@keyframes dock-in'));
+  const framesBody = frames.slice(0, frames.indexOf('\n}\n') + 3);
+  assert.match(framesBody, /from\s*\{\s*width:\s*0;?\s*\}/, '`dock-in` no longer starts from zero width');
+  assert.doesNotMatch(framesBody, /\bto\b/, '`dock-in` names an end width, which is a second copy of the dock\'s width');
+
+  // The content holds its width while the column grows, as the rails do.
+  assert.ok(ruleBody(dockCss, '.app-dock > .dock') !== null, 'the inner dock no longer holds its width during the slide');
+  assert.match(app, /'--dock-w':/, 'the column no longer publishes `--dock-w` for the inner dock to hold');
+});
+
+/* ------------------------------------------------------------------ */
 /* One height, one place                                               */
 /* ------------------------------------------------------------------ */
 
