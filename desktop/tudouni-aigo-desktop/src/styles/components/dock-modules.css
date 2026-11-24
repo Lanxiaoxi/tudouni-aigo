@@ -260,6 +260,26 @@
   font-family: var(--font-mono);
 }
 
+/* The tracked/untracked filter: one row of the same segmented buttons the
+   viewer's layout and Markdown switches use (`.dock-seg-btn`), wrapped in a
+   bordered strip that stretches the navigator's width so the three stops share
+   it equally. It is drawn only while there are changes to filter. */
+.dock-git-filter {
+  flex: none;
+  display: flex;
+  gap: 1px;
+  margin: var(--space-2) var(--space-3) 0;
+  padding: 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--lb-hover);
+}
+
+.dock-git-filter .dock-seg-btn {
+  flex: 1 1 0;
+  height: calc(var(--control-h-compact) - 8px);
+}
+
 .dock-git-group {
   display: flex;
   flex-direction: column;

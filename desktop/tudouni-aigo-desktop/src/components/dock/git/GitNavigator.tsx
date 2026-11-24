@@ -6,14 +6,18 @@ import { Badge, EmptyState, Tip } from '@/components/ui/kit';
 import { useWorkspaceUi } from '@/state/workspaceDock/selectors';
 import {
   GIT_GROUP_ORDER,
+  applyGitFilter,
   flattenGroups,
   groupGitStatus,
+  isGitFilter,
   letterTone,
+  type GitFilter,
   type GitGroupName,
   type GitRowItem,
 } from '@/state/workspaceDock/gitModel';
 import type { DockModuleProps } from '../modules';
 import { useDataState, useGitCalibration, useGitWhenStale, useWorkspaceCache } from '../data';
+import { usePersistedPref } from '../dockPrefs';
 import { gitLetterLabel } from './letters';
 
 const GROUP_LABEL = {
@@ -21,6 +25,15 @@ const GROUP_LABEL = {
   unstaged: 'dock.git.group.unstaged',
   conflicts: 'dock.git.group.conflicts',
 } as const satisfies Record<GitGroupName, string>;
+
+/** The filter's three stops, in the order the segmented control draws them. */
+const FILTERS: readonly GitFilter[] = ['all', 'tracked', 'untracked'];
+
+const GROUP_FILTER_LABEL = {
+  all: 'dock.git.filter.all',
+  tracked: 'dock.git.filter.tracked',
+  untracked: 'dock.git.filter.untracked',
+} as const satisfies Record<GitFilter, string>;
 
 /**
  * The Git page's left half: the header and the grouped change list
@@ -36,6 +49,11 @@ export function GitNav({ workspace, columns }: DockModuleProps) {
   const setDockPane = useApp((s) => s.setDockPane);
   const [focused, setFocused] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // Tracked / untracked filter on the change list. Persisted like the diff
+  // layout: it is how this person likes to read, not where they were. Only the
+  // unstaged group mixes the two kinds, so `applyGitFilter` leaves staged and
+  // conflicts untouched.
+  const [filter, setFilter] = usePersistedPref<GitFilter>('git.listFilter', 'all', isGitFilter);
 
   // This component is only mounted while the Git page is up, so being mounted
   // is "the page is visible": poll, and re-ask on focus.
@@ -44,7 +62,12 @@ export function GitNav({ workspace, columns }: DockModuleProps) {
 
   const { status, loading, error, errorCode } = data.git;
   const groups = useMemo(() => (status?.repo ? groupGitStatus(status.entries) : null), [status]);
-  const flat = useMemo(() => (groups === null ? [] : flattenGroups(groups)), [groups]);
+  const visibleGroups = useMemo(() => (groups === null ? null : applyGitFilter(groups, filter)), [groups, filter]);
+  const flat = useMemo(() => (visibleGroups === null ? [] : flattenGroups(visibleGroups)), [visibleGroups]);
+  // The unfiltered list, behind the "clean" empty state: a repo with changes
+  // that the filter happens to hide must say "none match" rather than the
+  // outright lie "no changes".
+  const flatAll = useMemo(() => (groups === null ? [] : flattenGroups(groups)), [groups]);
 
   const selectedKey =
     selection === null
@@ -194,12 +217,31 @@ export function GitNav({ workspace, columns }: DockModuleProps) {
         </div>
       ) : null}
 
+      {/* Tracked / untracked filter. It only ever narrows the unstaged group,
+          so it is drawn whenever there are changes, and hidden for a clean
+          repo (nothing to filter) and while loading. */}
+      {flatAll.length > 0 ? (
+        <div className="dock-git-filter" role="group" aria-label={t('dock.git.filter.label')}>
+          {FILTERS.map((f) => (
+            <button
+              key={f}
+              type="button"
+              className={`dock-seg-btn${filter === f ? ' is-active' : ''}`}
+              aria-pressed={filter === f}
+              onClick={() => setFilter(f)}
+            >
+              {t(GROUP_FILTER_LABEL[f])}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div ref={listRef} className="dock-git-list" role="listbox" aria-label={t('dock.git.list')} onKeyDown={onKeyDown}>
         {flat.length === 0 ? (
-          <EmptyState compact title={t('dock.git.clean')} />
+          <EmptyState compact title={flatAll.length === 0 ? t('dock.git.clean') : t('dock.git.filter.empty')} />
         ) : (
           GIT_GROUP_ORDER.map((group) => {
-            const rows = groups![group];
+            const rows = visibleGroups![group];
             if (rows.length === 0) return null;
             return (
               <div key={group} role="group" aria-label={t(GROUP_LABEL[group])} className="dock-git-group">

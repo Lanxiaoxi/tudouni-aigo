@@ -21,6 +21,7 @@ import {
   type CacheClient,
 } from '@/state/workspaceDock/dataCache';
 import {
+  applyGitFilter,
   decorFromStatus,
   flattenGroups,
   groupGitStatus,
@@ -408,6 +409,24 @@ test('a staged rename carries its old name; the worktree side of the same file d
   const groups = groupGitStatus([g('new.go', 'R', 'M', { orig_path: 'old.go' })]);
   assert.equal(groups.staged[0]!.origPath, 'old.go');
   assert.equal(groups.unstaged[0]!.origPath, '');
+});
+
+test('the filter narrows only the unstaged group, by tracked vs untracked', () => {
+  const groups = groupGitStatus([
+    g('s', 'A', '.'), // staged: tracked by construction
+    g('m', '.', 'M'), // unstaged: tracked worktree change
+    g('t.txt', '?', '?', { untracked: true }), // unstaged: untracked
+    g('c.go', 'U', 'U', { conflict: true }),
+  ]);
+  assert.equal(applyGitFilter(groups, 'all'), groups, 'all is a no-op with stable identity');
+  const tracked = applyGitFilter(groups, 'tracked');
+  assert.deepEqual(tracked.unstaged.map((r) => r.path), ['m']);
+  assert.deepEqual(tracked.staged.map((r) => r.path), ['s'], 'staged is never filtered');
+  assert.deepEqual(tracked.conflicts.map((r) => r.path), ['c.go'], 'conflicts are never filtered');
+  const untracked = applyGitFilter(groups, 'untracked');
+  assert.deepEqual(untracked.unstaged.map((r) => r.path), ['t.txt']);
+  assert.equal(untracked.staged.length, 1);
+  assert.equal(untracked.conflicts.length, 1);
 });
 
 test('display order is staged, unstaged, conflicts', () => {

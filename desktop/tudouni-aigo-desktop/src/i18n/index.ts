@@ -2840,6 +2840,14 @@ export const en = {
   'dock.git.group.staged': 'Staged',
   'dock.git.group.unstaged': 'Unstaged',
   'dock.git.group.conflicts': 'Conflicts',
+  /** The tracked/untracked filter on the change list: unstaged mixes a tracked
+   *  worktree change with an untracked file, so one of the three stops can
+   *  narrow the list. It never touches staged or conflicts. */
+  'dock.git.filter.label': 'Filter changes',
+  'dock.git.filter.all': 'All',
+  'dock.git.filter.tracked': 'Tracked',
+  'dock.git.filter.untracked': 'Untracked',
+  'dock.git.filter.empty': 'No changes of this kind',
   'dock.git.source.worktree': 'Working tree against the index',
   'dock.git.source.index': 'Index against HEAD',
   'dock.git.source.untracked': 'Untracked file',

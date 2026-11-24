@@ -102,6 +102,25 @@ export function groupGitStatus(entries: readonly GitStatusEntry[]): GitGroups {
 /** The three groups in display order (design 6.2), empty ones kept so a caller can decide. */
 export const GIT_GROUP_ORDER: readonly GitGroupName[] = ['staged', 'unstaged', 'conflicts'];
 
+/** The navigator's tracked/untracked filter. Only the unstaged group mixes the
+ *  two kinds (a tracked worktree change and an untracked file); staged and
+ *  conflict rows are tracked by construction, so the filter never touches them. */
+export type GitFilter = 'all' | 'tracked' | 'untracked';
+
+export const isGitFilter = (v: unknown): v is GitFilter => v === 'all' || v === 'tracked' || v === 'untracked';
+
+/**
+ * Apply the filter to the groups: keep every staged and conflict row, and from
+ * unstaged only the rows whose kind matches — `untracked` rows are exactly
+ * `source === 'untracked'` (the `?` letter is the same fact, read differently).
+ * A no-op for `'all'`, returning the input unchanged so nothing re-renders.
+ */
+export function applyGitFilter(groups: GitGroups, filter: GitFilter): GitGroups {
+  if (filter === 'all') return groups;
+  const keep = (r: GitRowItem) => (r.source === 'untracked') === (filter === 'untracked');
+  return { ...groups, unstaged: groups.unstaged.filter(keep) };
+}
+
 /** All rows in display order (Staged, Unstaged, Conflicts): the keyboard order. */
 export function flattenGroups(groups: GitGroups): GitRowItem[] {
   return GIT_GROUP_ORDER.flatMap((g) => groups[g]);
