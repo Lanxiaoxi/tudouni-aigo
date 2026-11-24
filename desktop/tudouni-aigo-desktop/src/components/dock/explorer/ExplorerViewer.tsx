@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { FileQuestion, FileText, RefreshCw } from 'lucide-react';
+import { FileQuestion, FileText, RefreshCw, X } from 'lucide-react';
+import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { EmptyState, Tip } from '@/components/ui/kit';
 import { Markdown } from '@/components/ui/Markdown';
@@ -49,12 +50,14 @@ interface ImageView {
  * (the old text stays up until the new arrives), which is what keeps the scroll
  * position.
  */
-export function ExplorerViewer({ workspace }: DockModuleProps) {
+export function ExplorerViewer({ workspace, columns }: DockModuleProps) {
   const t = useT();
   const id = workspace.workspaceId;
   const path = useWorkspaceUi(id).selectedFile;
   const client = useHostClient(id);
   const cache = useWorkspaceCache(id);
+  const setSelectedFile = useApp((s) => s.setWorkspaceSelectedFile);
+  const setDockPane = useApp((s) => s.setDockPane);
 
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [image, setImage] = useState<ImageView | null>(null);
@@ -235,6 +238,13 @@ export function ExplorerViewer({ workspace }: DockModuleProps) {
   }
 
   const name = path.slice(path.lastIndexOf('/') + 1);
+  // The way back from a preview to the placeholder: the file preview, like the
+  // diff, had no other way to clear its selection, so a person who opened one
+  // file was stuck on it (the single-column "Back" only returns to the list).
+  const closePreview = () => {
+    setSelectedFile(id, null);
+    if (columns === 'single') setDockPane('navigator');
+  };
   const header = (extra?: ReactNode) => (
     <div className="dock-view-head">
       <span className="dock-view-title" title={path}>
@@ -251,6 +261,16 @@ export function ExplorerViewer({ workspace }: DockModuleProps) {
             onClick={() => void load(path, Math.min(RELOAD_MAX, Math.max(PREVIEW_CHUNK, readRef.current)))}
           >
             <RefreshCw size={13} />
+          </button>
+        </Tip>
+        <Tip label={t('dock.explorer.view.close')}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon btn-compact"
+            aria-label={t('dock.explorer.view.close')}
+            onClick={closePreview}
+          >
+            <X size={13} />
           </button>
         </Tip>
       </span>

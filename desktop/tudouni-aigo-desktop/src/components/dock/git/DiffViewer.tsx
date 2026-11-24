@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, FileDiff, FolderTree, RefreshCw } from 'lucide-react';
+import { ArrowRight, FileDiff, FolderTree, RefreshCw, X } from 'lucide-react';
 import { useApp } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { EmptyState, Tip } from '@/components/ui/kit';
@@ -54,6 +54,7 @@ export function GitDiffViewer({ workspace, columns }: DockModuleProps) {
   const client = useHostClient(id);
   const cache = useWorkspaceCache(id);
   const setSelectedFile = useApp((s) => s.setWorkspaceSelectedFile);
+  const setGitSelection = useApp((s) => s.setWorkspaceGitSelection);
   const setDockMode = useApp((s) => s.setDockMode);
   const setDockPane = useApp((s) => s.setDockPane);
 
@@ -134,6 +135,15 @@ export function GitDiffViewer({ workspace, columns }: DockModuleProps) {
     if (columns === 'single') setDockPane('viewer');
   };
 
+  // The way back from a diff to the placeholder: nothing else clears the
+  // selection, so without this a person who opens one file is stuck on it —
+  // in single-column mode the "Back" button only returns to the list, and in
+  // dual mode there is no back button at all.
+  const closeDiff = () => {
+    setGitSelection(id, null);
+    if (columns === 'single') setDockPane('navigator');
+  };
+
   return (
     <div className="dock-view" ref={rootRef}>
       <div className="dock-view-head">
@@ -181,6 +191,16 @@ export function GitDiffViewer({ workspace, columns }: DockModuleProps) {
             >
               <FolderTree size={13} />
               {t('dock.git.diff.openInExplorer')}
+            </button>
+          </Tip>
+          <Tip label={t('dock.git.diff.close')}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon btn-compact"
+              aria-label={t('dock.git.diff.close')}
+              onClick={closeDiff}
+            >
+              <X size={13} />
             </button>
           </Tip>
         </span>

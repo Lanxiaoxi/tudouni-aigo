@@ -2825,6 +2825,7 @@ export const en = {
   'dock.explorer.view.lines': '{n} lines',
   'dock.explorer.view.linesFirst': 'first {n} lines',
   'dock.explorer.view.codeLabel': 'Contents of {name}',
+  'dock.explorer.view.close': 'Close the preview',
   'dock.explorer.view.truncated': 'Showing the first {read} of {size}.',
   'dock.explorer.view.more': 'Load more',
   /* ---- Git (docs/design/workspace-dock.md 6) ---- */
@@ -2867,6 +2868,7 @@ export const en = {
   'dock.git.diff.split': 'Split',
   'dock.git.diff.refresh': 'Reload the diff',
   'dock.git.diff.openInExplorer': 'Open in Explorer',
+  'dock.git.diff.close': 'Close the diff',
   'dock.git.diff.truncated': 'This diff is too large and was cut off.',
   'dock.git.diff.failed': 'Could not read this diff',
   'dock.git.diff.loading': 'Loading…',
