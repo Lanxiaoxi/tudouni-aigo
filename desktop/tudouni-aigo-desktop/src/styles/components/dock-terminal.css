@@ -183,10 +183,14 @@
 }
 
 /* ---------------- the surface ---------------- */
+/* The slot's padding is a deliberate gap between the dock's frame and the
+   terminal, but it must read as the dock's own surface — not a strip of the
+   deeper `--terminal-bg`. The xterm view paints its own background, so the
+   surface here is only for the gap and the fit addon's row-remainder. */
 .dterm-surface {
   flex: 1 1 auto;
   min-height: 0;
-  background: var(--terminal-bg);
+  background: var(--lb-surface);
 }
 
 .dterm-slot {
