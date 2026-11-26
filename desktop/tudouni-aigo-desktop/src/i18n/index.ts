@@ -15,11 +15,14 @@
  * would both invent a second source for the same fact and break the rule that
  * those hints are not altered by one character.
  *
- * **A second language is a stub by design.** `zh` exists with no entries yet:
- * `makeT('zh')` falls back to `en` key by key, so an unfilled catalogue is
- * safe to ship. The fallback rule is one-way — a key missing in the active
- * language shows the English sentence, never a blank, and never a *half*
- * translation, because the entries arrive one by one and each one stands alone.
+ * **`zh` is filled, per fragment.** The catalogue lives in `zh-part-N.ts`
+ * (one per region of `en`) and is merged into `zh` below. `makeT('zh')`
+ * still falls back to `en` key by key, and the one-way fallback rule is
+ * unchanged: a key missing in the active language shows the English
+ * sentence, never a blank, and never a *half* translation — each entry
+ * stands alone. In dev builds a consistency check throws if `zh` and `en`
+ * disagree on key coverage, so a new English key cannot silently stay
+ * English.
  *
  * The load-bearing point above (runtime text is displayed verbatim) is exactly
  * what the fallback enforces: a notice, an approval hint, a `remember_hint` —
@@ -2919,15 +2922,55 @@ export const en = {
 
 export type TKey = keyof typeof en;
 
+import { zhPart1 } from './zh-part-1';
+import { zhPart2 } from './zh-part-2';
+import { zhPart3 } from './zh-part-3';
+import { zhPart4 } from './zh-part-4';
+import { zhPart5 } from './zh-part-5';
+
 /**
- * The Chinese catalogue. **Deliberately empty**: this build ships the
- * mechanism, not the translation. `Partial<Record<TKey, string>>` is the
- * contract — a key may be missing (the fallback below supplies English) but a
- * key that *is* there must be a complete sentence for that key, never half of
- * one. Fill it key by key; a build whose catalogue is three keys deep is a
- * build that is three keys into the work, and the type says so.
+ * The Chinese catalogue. `Partial<Record<TKey, string>>` remains the contract:
+ * a key may be missing (the fallback below supplies English), but a key that
+ * is present must be a complete sentence for that key, never half of one.
+ *
+ * The five fragments hold the translation by region (the same split as the
+ * `en` groups). At dev time they are checked to cover `en` exactly — see the
+ * assertions below — so a new English key fails loudly instead of rendering
+ * as English forever.
  */
-export const zh: Partial<Record<TKey, string>> = {};
+export const zh: Partial<Record<TKey, string>> = {
+  ...zhPart1,
+  ...zhPart2,
+  ...zhPart3,
+  ...zhPart4,
+  ...zhPart5,
+};
+
+// Always-run consistency check. It is < 1 ms (two 2000-key Sets) and guards
+// the real failure mode: a new `en` key that was never translated, or a
+// fragment that defines a key `en` doesn't have. `import.meta.env` is not
+// available in the Node test runner, so a `DEV` guard here crashes all tests.
+{
+  const zhKeys = new Set(Object.keys(zh));
+  const enKeys = new Set(Object.keys(en));
+  {
+    // Check fragments *before* the spread: Object.keys on the merged object
+    // can never show a key that two fragments both defined.
+    const all = [zhPart1, zhPart2, zhPart3, zhPart4, zhPart5].flatMap((p) => Object.keys(p));
+    const dupes = all.filter((k, i) => all.indexOf(k) !== i);
+    if (dupes.length > 0) {
+      throw new Error(`i18n zh: duplicate key across fragments: ${dupes.join(', ')}`);
+    }
+  }
+  const missing = [...enKeys].filter((k) => !zhKeys.has(k));
+  if (missing.length > 0) {
+    throw new Error(`i18n zh: ${missing.length} en key(s) have no Chinese entry: ${missing.slice(0, 5).join(', ')}…`);
+  }
+  const extra = [...zhKeys].filter((k) => !enKeys.has(k));
+  if (extra.length > 0) {
+    throw new Error(`i18n zh: ${extra.length} key(s) not in en: ${extra.slice(0, 5).join(', ')}…`);
+  }
+}
 
 export type Translate = (key: TKey, params?: Record<string, string | number>) => string;
 
