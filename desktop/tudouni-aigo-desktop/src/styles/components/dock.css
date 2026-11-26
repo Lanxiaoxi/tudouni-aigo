@@ -233,7 +233,9 @@
   align-items: center;
   justify-content: space-between;
   height: 32px;
-  padding: 0 var(--space-2) 0 var(--space-3);
+  /* The row pad plus the mode buttons' own 8px, so the title starts where
+     the mode icons do — the two header rows share one left edge. */
+  padding: 0 var(--space-2) 0 calc(var(--space-3) + var(--space-2));
 }
 
 .dock-term-title {
