@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
 import { ChevronLeft, ChevronRight, FileText, FolderOpen, Paperclip, Plus, SquareSlash, Ticket, WandSparkles } from 'lucide-react';
 import { NO_SKILLS, useApp, useSessionField } from '@/state/store';
 import { useT } from '@/i18n/useT';
 import { insertAtCaret } from '@/runtime/paste';
 import { chooseAttachmentFile } from '@/runtime/tauri';
+import { composerCaret, placeComposerCaret } from '@/components/chrome/composerBridge';
 
 /**
  * The plus button's menu: three entries, two of them with a second page.
@@ -33,13 +34,7 @@ import { chooseAttachmentFile } from '@/runtime/tauri';
 type Page = 'root' | 'file' | 'skills';
 type T = ReturnType<typeof useT>;
 
-export function PlusMenu({
-  taRef,
-  disabled,
-}: {
-  taRef: RefObject<HTMLTextAreaElement | null>;
-  disabled: boolean;
-}) {
+export function PlusMenu({ disabled }: { disabled: boolean }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<Page>('root');
@@ -53,21 +48,13 @@ export function PlusMenu({
     if (open) setPage('root');
   }, [open]);
 
-  /** Insert a token into the draft at the textarea's caret. */
+  /** Insert a token into the draft at the composer's caret. */
   function insertToken(token: string): void {
     const s = useApp.getState();
-    const el = taRef.current;
     const draft = s.sessions[s.activeKey ?? '']?.draft ?? '';
-    const at = el?.selectionStart ?? draft.length;
-    const moved = insertAtCaret(draft, at, token);
+    const moved = insertAtCaret(draft, composerCaret(draft.length), token);
     s.setDraft(moved.text);
-    requestAnimationFrame(() => {
-      const element = taRef.current;
-      if (!element) return;
-      element.selectionStart = moved.caret;
-      element.selectionEnd = moved.caret;
-      element.focus();
-    });
+    placeComposerCaret(moved.caret);
   }
 
   function close(): void {
@@ -227,11 +214,10 @@ function FilePage({ t, onBack, onDone }: { t: T; onBack: () => void; onDone: () 
               const path = await chooseAttachmentFile();
               if (path === null) return;
               // Re-read the caret at insert time, not at click time — the
-              // popover's close gave the textarea back before the dialog
+              // popover's close gave the composer back before the dialog
               // opened, so this is where the person left it.
-              const el = document.querySelector<HTMLTextAreaElement>('.composer textarea');
               const draft = s.sessions[s.activeKey ?? '']?.draft ?? '';
-              const at = el?.selectionStart ?? draft.length;
+              const at = composerCaret(draft.length);
               // **`attachFiles`, not `attachFilePath`.** They are not the same
               // act: this path is on *this* machine, so a remote session has to
               // upload it into its workspace and insert the relative path. Both

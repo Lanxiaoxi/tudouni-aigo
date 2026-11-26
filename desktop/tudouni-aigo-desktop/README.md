@@ -336,10 +336,11 @@ Six things worth knowing before changing any of it:
   content-addressed artifact store.
 - **The bytes decide the format**, never the clipboard's declared type — a `.png`
   that is really a JPEG is common, and the runtime sniffs the same way.
-- **The chips are derived from the draft text** (`ImageTray` +
-  `referencedImages`). The text is the only thing that gets sent, so deleting a
-  path drops its chip, and a chip can never claim a picture that is not going
-  anywhere. Dismissing a chip edits the **sentence**, not a list of attachments.
+- **The chips are the draft's tokens, drawn inline** (`TokenChip` in a Tiptap
+  editor; `composerDoc.ts` translates string ↔ document). The draft string is
+  still the only source of truth, so deleting a chip deletes its token, and a
+  deleted token ships nothing. Long pastes (over 3000 chars) fold into a
+  `⟦text-N⟧` chip; the transcript shows each token as a readable label.
 - **A picture has two lists, and only one of them can be sent.** `pendingImages`
   is a picture being written — a chip, a token, a thumbnail, no path;
   `pastedImages` is one that is written. `restorePastedPaths` is handed only the

@@ -10,7 +10,7 @@
 import { type CodeIntelSnapshot, type HooksSnapshot, type MemoryConfig, type MemorySnapshot, type ModelAlias, type PermissionRequestMsg, type PermissionScope, type ProbeEffortSnapshot, type QuestionRequestMsg, type SkillCatalogRow, type SshRow, type TicketBindAttachment, type UiContextMsg } from '@/protocol/types';
 import { type CallUsage, type Entry, type NoteEntry } from '@/state/entries';
 import { type VmCompaction, type VmContext, type VmInitTool, type VmMcp, type VmModel, type VmSessionListItem, type VmSkill, type VmState, type VmStatus, type VmTool } from '@/runtime/adapt';
-import { type Annotation, type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
+import { type Annotation, type AttachedFile, type LongPaste, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
 import { type InstallStage, type RemoteConfigStatus } from '@/runtime/tauri';
 
 
@@ -930,6 +930,12 @@ export interface SessionRuntime {
    * Per session because the quote is from *this* conversation's transcript.
    */
   annotations: Annotation[];
+  /**
+   * Long pasted texts folded into a chip (`⟦text-N⟧`), expanded at submit.
+   * Per session for the same reason the annotations are: the text belongs to
+   * the sentence being written here.
+   */
+  longPastes: LongPaste[];
   /**
    * Quiet mode for this session's stream.
    *

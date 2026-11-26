@@ -9,7 +9,8 @@ import type { AppStore } from '../storeShape';
 import type { QuietMode } from '../types';
 import { nextId } from '@/state/entries';
 import { sendTo } from '@/runtime/bus';
-import { expandAnnotations, insertAtCaret, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, referencedFiles, referencedImages, type Annotation, type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
+import { expandAnnotations, expandLongPastes, insertAtCaret, labelDraft, nameOfPath, nextPlaceholder, removePlaceholderFromDraft, restorePastedPaths, referencedFiles, referencedImages, type Annotation, type AttachedFile, type PastedImage, type PendingFile, type PendingImage } from '@/runtime/paste';
+import { makeT } from '@/i18n';
 import { stashImages, attachRemoteFiles, type AttachedRemoteFile, type StashedImage } from '@/runtime/tauri';
 import { clampRailWidth, persistPrefs } from '../prefs';
 import { promptHistoryKey, rememberablePrompt } from '../promptHistory';
@@ -20,7 +21,7 @@ import { FIND_IDLE } from '../find';
 import { releaseImages } from '../runtimeLanding';
 import { landPersonReplied } from '../ticketLanding';
 
-export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'addAnnotation' | 'forgetAnnotation' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'setTicketStartMode' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
+export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'applySuggestion' | 'setDragging' | 'setComposerNotice' | 'pasteImages' | 'forgetImage' | 'clearPastedImages' | 'attachFilePath' | 'attachFiles' | 'forgetAttachedFile' | 'forgetPendingFile' | 'addAnnotation' | 'forgetAnnotation' | 'pasteLongText' | 'forgetLongPaste' | 'historyNav' | 'submitDraft' | 'interrupt' | 'openPanel' | 'closePanel' | 'setSessionFilter' | 'setBoard' | 'toggleBoard' | 'setClosePrompt' | 'setQuiet' | 'toggleQuiet' | 'openFind' | 'closeFind' | 'setFindQuery' | 'setFindIndex' | 'toggleSidebar' | 'setSidebarVisible' | 'setSidebarWidth' | 'setLeftbarWidth' | 'toggleLeftbar' | 'setLeftbarVisible' | 'toggleBlock' | 'openSidebarBlock' | 'toggleSessionsCollapsed' | 'toggleWorkspacesCollapsed' | 'toggleFootCollapsed' | 'setTicketStartMode' | 'toggleReasoning' | 'toggleTool' | 'toggleTurnFold' | 'removeBlock'> {
   const { set, get, patch, patchWith, patchActive, markSavedSessionsPending } = ctx;
 
   /**
@@ -486,6 +487,30 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
       }));
     },
 
+    pasteLongText(text, at) {
+      const key = get().activeKey;
+      if (key === null || text === '') return null;
+      const fresh = get().sessions[key]?.draft ?? '';
+      const placeholder = nextPlaceholder(fresh, 'text');
+      const placed = insertAtCaret(fresh, at, placeholder);
+      patchWith(key, (bucket) => ({
+        draft: placed.text,
+        historyCursor: null,
+        // A token recycled after its chip was deleted must not find the old
+        // entry still in the list.
+        longPastes: [...bucket.longPastes.filter((p) => p.placeholder !== placeholder), { placeholder, text }],
+      }));
+      return placed.caret;
+    },
+
+    forgetLongPaste(placeholder) {
+      patchWith(get().activeKey ?? '', (current) => ({
+        longPastes: current.longPastes.filter((p) => p.placeholder !== placeholder),
+        draft: removePlaceholderFromDraft(current.draft, placeholder),
+        historyCursor: null,
+      }));
+    },
+
     historyNav(dir) {
       const current = activeRuntime(get());
       if (!current) return;
@@ -542,12 +567,28 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
       // and the chip row above the input already told them the picture was there.
       // Annotations are expanded first: a quote is text, and a path-shaped word
       // inside it must not be mistaken for an attachment's token.
+      // Long pastes are expanded first of all, for the same reason annotations
+      // are expanded before the paths: pasted text is prose, and a word inside it
+      // that looks like a token must not be swapped for a path.
       const sent = restorePastedPaths(
-        expandAnnotations(current.draft, current.annotations),
+        expandAnnotations(expandLongPastes(current.draft, current.longPastes), current.annotations),
         current.pastedImages,
         current.attachedFiles,
       ).trim();
-      const text = current.draft.trim();
+      // The transcript shows the draft with each token as a readable label
+      // ("[image: paste-1.png]") — the plain-text reading of the chips the
+      // person saw in the input.
+      const tr = makeT(s.uiLang);
+      const text = labelDraft(
+        current.draft,
+        current,
+        {
+          image: (name) => tr('composer.label.image', { name }),
+          file: (name) => tr('composer.label.file', { name }),
+          note: (note) => tr('composer.label.note', { note: clip(note, 40) }),
+          text: (chars) => tr('composer.label.text', { chars }),
+        },
+      ).trim();
       if (sent === '') return;
       // A **visible** modal is blocking: nothing may be sent over the top of
       // one. Asked of visibility rather than of the slot: a request held by a
@@ -579,6 +620,7 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
         // also what makes a late answer for it land on nothing.
         pendingFiles: [],
         annotations: [],
+        longPastes: [],
         // Whatever was said about this input has been answered by sending it.
         composerNotice: null,
         // The quick replies answered the previous turn; anything sent — typed or
@@ -873,4 +915,10 @@ export function composerSlice(ctx: StoreContext): Pick<AppStore, 'setDraft' | 'a
        The two blocking modals
        ========================================================== */
   };
+}
+
+/** One line of at most `limit` characters, marking the clip. */
+function clip(text: string, limit: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`;
 }

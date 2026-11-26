@@ -84,6 +84,7 @@ export function createSessionBucket(
     attachedFiles: [],
     pendingFiles: [],
     annotations: [],
+    longPastes: [],
     quiet: prefsQuietDefault(),
   };
 }

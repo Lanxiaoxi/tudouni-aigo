@@ -69,6 +69,10 @@ const SUITES = [
   'polling.test.ts',
   'contract.test.ts',
   'paste.test.ts',
+  // The composer's string ↔ document translation: the draft keeps placeholder
+  // tokens, the editor draws them as chips, and the caret has to land in the
+  // same place on both sides.
+  'composer-doc.test.ts',
   // The paste gesture's two lives: the chip drawn before the bridge answers, and
   // the path it becomes. The failure modes are all silent — a chip that never
   // ships, a send that carries a placeholder, a removed chip coming back — so

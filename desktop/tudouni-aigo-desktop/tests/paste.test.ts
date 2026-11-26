@@ -252,25 +252,15 @@ test('a draft with no pictures is sent byte-for-byte as it is', () => {
   assert.equal(restorePastedPaths('just words', []), 'just words');
   // A token the person typed that is not one of the minted ones is prose: it
   // stays, because a restore that rewrites foreign text is an edit no one asked
-  // for. (The stashed picture’s marker is missing, so it still ships — as its
-  // own trailing word, which is the orphan rule asserted below.)
-  assert.equal(
-    restorePastedPaths('see ⟦pimg-9⟧', [A]),
-    'see ⟦pimg-9⟧ .tudouni/paste/s-1/a.png',
-  );
+  // for.
+  assert.equal(restorePastedPaths('see ⟦pimg-9⟧', [A]), 'see ⟦pimg-9⟧');
 });
 
-test('a picture whose marker the person deleted still ships, as its own trailing word', () => {
-  // The chip was still on screen, so the promise is that the picture arrives.
-  // Appending the path at the end is the failure with the least surprise: the
-  // sentence is untouched where the person edited it, and the extra word is one
-  // they can see and delete.
-  assert.equal(
-    restorePastedPaths('看看这个', [A]),
-    '看看这个 .tudouni/paste/s-1/a.png',
-  );
-  // An empty draft with one orphan: the path alone, still a whole sentence.
-  assert.equal(restorePastedPaths('', [A]), '.tudouni/paste/s-1/a.png');
+test('a picture whose marker the person deleted ships nothing', () => {
+  // The chip is drawn inline *as* the marker, so deleting the marker deleted
+  // the chip: nothing on screen is still promising the picture.
+  assert.equal(restorePastedPaths('看看这个', [A]), '看看这个');
+  assert.equal(restorePastedPaths('', [A]), '');
 });
 
 test('the restored path lands as its own word, so the scanner resolves it', () => {

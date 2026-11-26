@@ -17,6 +17,7 @@
  */
 import { useApp } from '@/state/store';
 import { insertAtCaret } from '@/runtime/paste';
+import { composerCaret, placeComposerCaret } from '@/components/chrome/composerBridge';
 import { ancestorsOf } from '@/state/workspaceDock/dataCache';
 import { workspaceRelativePath } from '@/state/workspaceDock/relPath';
 import { selectActiveWorkspaceKey } from '@/state/workspaceDock/selectors';
@@ -52,18 +53,15 @@ export function onTerminalRequest(cb: TerminalRequestHandler): () => void {
 
 /* ---------------- composer ---------------- */
 
-function composerCaret(draft: string): number {
-  const el = document.querySelector<HTMLTextAreaElement>('.composer textarea');
-  return el?.selectionStart ?? draft.length;
-}
-
 /** Put `path` into the draft as its own word, at the caret. */
 export function insertPathIntoComposer(path: string): void {
   const s = useApp.getState();
   const key = s.activeKey;
   if (key === null) return;
   const draft = s.sessions[key]?.draft ?? '';
-  s.setDraft(insertAtCaret(draft, composerCaret(draft), path).text);
+  const moved = insertAtCaret(draft, composerCaret(draft.length), path);
+  s.setDraft(moved.text);
+  placeComposerCaret(moved.caret);
 }
 
 /**
@@ -77,7 +75,8 @@ export function attachWorkspaceFile(path: string): void {
   const key = s.activeKey;
   if (key === null) return;
   const draft = s.sessions[key]?.draft ?? '';
-  s.attachFilePath(path, composerCaret(draft));
+  const caret = s.attachFilePath(path, composerCaret(draft.length));
+  if (caret !== null) placeComposerCaret(caret);
 }
 
 /* ---------------- showing a file in the Explorer ---------------- */

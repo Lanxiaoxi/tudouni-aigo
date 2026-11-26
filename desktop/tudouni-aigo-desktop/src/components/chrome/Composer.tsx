@@ -1,93 +1,72 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
+import { EditorContent, ReactNodeViewRenderer, useEditor, type Editor } from '@tiptap/react';
+import Document from '@tiptap/extension-document';
+import Paragraph from '@tiptap/extension-paragraph';
+import Text from '@tiptap/extension-text';
+import { Placeholder, UndoRedo } from '@tiptap/extensions';
 import { selectModalVisible, selectPhase, useApp, useSessionField, type ComposerNotice } from '@/state/store';
 import { activeWorkspaceOf } from '@/state/appView';
 import { promptHistoryKey, suggestPrompt } from '@/state/promptHistory';
 import { usePromptHistory } from '@/hooks/usePromptHistory';
 import { useT } from '@/i18n/useT';
 import { Tip } from '@/components/ui/kit';
-import { ImageTray } from '@/components/chrome/ImageTray';
-import { FileTray } from '@/components/chrome/FileTray';
-import { AnnotationTray } from '@/components/chrome/AnnotationTray';
 import { PlusMenu } from '@/components/chrome/PlusMenu';
-import { useClipboardPaste } from '@/hooks/useClipboardPaste';
+import { TokenChip } from '@/components/chrome/TokenChip';
+import { TokenNode, docToDraft, draftToContent, fragmentToDraft, offsetToPos, posToOffset } from '@/components/chrome/composerDoc';
+import { registerComposer } from '@/components/chrome/composerBridge';
+import { handleComposerPaste } from '@/hooks/useClipboardPaste';
 
 /**
- * §1·7 The composer: a multi-line editor with a caret and history.
+ * §1·7 The composer: a multi-line editor with a caret, history, and chips.
+ *
+ * **The draft is a string; the box is a document.** The store keeps the draft as
+ * plain text in which every attachment is a placeholder token (`⟦pimg-0⟧`,
+ * `⟦file-0⟧`, `⟦note-0⟧`, `⟦text-0⟧`), and everything downstream — the uploads,
+ * the restore at submit, the history — reads that string. The box is a Tiptap
+ * editor that draws each token as an inline chip (`TokenChip`), so the person
+ * sees a thumbnail or a file name where the token sits, and deletes it as one
+ * unit. `composerDoc.ts` is the only translation between the two readings.
+ *
+ * **Who writes what.** While the person types, the editor owns the content and
+ * pushes the string to the store (`onUpdate`). Anything else that changes the
+ * draft — history, a suggestion, a paste's chips, the plus menu, the send that
+ * empties it — writes the store, and the effect below loads that string into the
+ * editor. The two are told apart by `emitted`: the last string the editor
+ * produced. Re-loading on every keystroke would break an IME composition and
+ * throw the caret around.
  *
  * **Three fixed heights, and one row of controls at a time.** Empty, the box is
  * 48px and is a single row: the `+`, the placeholder, the action. Once there is
- * something to say it becomes 96px — two lines of text with a toolbar under
- * them, holding the `+`, the key hint, and the action. When the draft outgrows
- * those two lines (`isLargeDraft` below decides) it becomes 192px, the filled
- * height doubled, so a pasted block is read rather than scrolled. That split is
- * the redesign's, and the reason it is worth having is that the empty box stops
- * reserving a toolbar nobody is using, while no state grows with the sentence:
- * what changes is the tier, and a tier is one class on one element.
- *
- * The height is CSS's (`height: 48px` / `96px` / `192px` on `.cp-box`), never a
- * measured `scrollHeight` written back by this component. That measurement is
- * what made the old box grow without a bound.
- *
- * Only two controls, on purpose. The reference has four (attach, permission,
- * model, send); this build's plus opens the **plus menu** (`PlusMenu`): files
- * (workspace picker or OS dialog), this session's skills, and the command
- * palette — the same panel `Ctrl+K` opens, which was what the plus did before
- * the menu gave it company.
- *
- * There is **no hint line below the box**. The key hint and the transient
- * statements share the filled box's toolbar: a drop heads-up, a blocked
- * runtime, a drag in progress, the sentence a running turn's stop button
- * deserves. Those are statements, not standing hints, so they are still said —
- * a drop heads-up especially, since a path the file tools cannot resolve sits
- * in the sentence looking exactly like one that would be read.
+ * something to say it becomes 96px — two lines with a toolbar under them. When
+ * the draft outgrows those two lines (`isLargeDraft`) it becomes 192px. The
+ * height is CSS's, never a measured `scrollHeight`.
  *
  * Keys follow the capability list. This layer is the only place allowed to carry
  * emacs-style bindings:
  *   Enter send · Shift+Enter / Ctrl+J newline · Esc interrupt · Tab complete
  *   ↑/↓ history · Ctrl+W delete word · Ctrl+U delete to line start
- *   Ctrl+A line start · Ctrl+E line end · Delete forward · Ctrl+←/→ word move
- *   (the last one is native browser behaviour)
+ *   Ctrl+A line start · Ctrl+E line end · Ctrl+Z / Ctrl+Y undo / redo
  *
- * **Tab is claimed only while a suggestion is showing.** The suggestion is one
- * sentence this workspace has sent before, matched by what is in the box; the
- * toolbar row that carries the key hint says what Tab would insert, and the box
- * itself is never drawn into. That is deliberate: a completion painted into a
- * `<textarea>` after the caret needs a mirrored copy of its metrics, and the
- * moment a font, a scroll position or a zoom differs the paint is on the wrong
- * line — a defect that reads as a broken editor rather than a missed hint. See
- * `state/promptHistory.ts` for what is remembered and how it is ranked.
+ * **Tab is claimed only while a suggestion is showing**; the toolbar says what
+ * it would insert, and the box itself is never drawn into.
  *
- * While a modal is up the composer does not compete: it neither sends nor
- * intercepts.
- *
- * Images are attached by **writing their path into the sentence** — that is the
- * only channel that exists. The runtime recognises a path in the text itself;
- * there is no upload command and no markup. So a drop inserts the path — always,
- * even outside the workspace, where the file tools will not read it directly —
- * rather than trying to ship bytes down a channel that is not there. The drop
- * handler itself lives in `hooks/useFileDrop.ts`, at the window level, because
- * a drop can land anywhere in the window and not only on this box.
+ * While a modal is up the composer does not compete: it is not editable, and it
+ * neither sends nor intercepts.
  */
 export function Composer() {
   const t = useT();
-  const taRef = useRef<HTMLTextAreaElement>(null);
 
-  // **The draft belongs to the conversation, not to the window.** With two
-  // sessions open a person types into one, switches to answer something in the
-  // other, and comes back — and a shared draft would have interleaved the two
-  // sentences. The same goes for the notice about this input and for the
-  // history: all three are about "what I am saying here".
+  // The draft, the notice and the history belong to the conversation, not to
+  // the window: two open sessions must not interleave their sentences.
   const key = useApp((s) => s.activeKey);
   const draft = useSessionField((rt) => rt.draft, '');
   const setDraft = useApp((s) => s.setDraft);
   const submitDraft = useApp((s) => s.submitDraft);
   const historyNav = useApp((s) => s.historyNav);
   const interrupt = useApp((s) => s.interrupt);
-  // **Asked of visibility, not of the slot.** A request held because its
-  // session is not the one on screen has drawn nothing here, so the composer of
-  // the conversation being typed into stays live — the same rule the rail's
-  // inertness follows, and the reason switching to the asker is allowed at all.
+  // Asked of visibility, not of the slot: a request held by a background
+  // session has drawn nothing here.
   const blocked = useApp(selectModalVisible);
   const panel = useApp((s) => s.panel);
   const ready = useSessionField((rt) => rt.ready, false);
@@ -95,210 +74,266 @@ export function Composer() {
   const dragging = useApp((s) => s.dragging);
   const composerNotice = useSessionField((rt) => rt.composerNotice, null);
   const setComposerNotice = useApp((s) => s.setComposerNotice);
-  const onPaste = useClipboardPaste(taRef);
   const running = phase === 'running' && !blocked;
 
-  // **The suggestion belongs to the workspace, not to this conversation.**
-  // "请 pull 一下" is a habit of the directory; a new session in the same
-  // directory should offer it back. The history is loaded once per workspace
-  // (an append-only sidecar, seeded from the sessions that predate it) and the
-  // matcher below only reads the cached list — no file is opened while typing.
+  // The suggestion belongs to the workspace: a habit of the directory.
   const workspace = useApp(activeWorkspaceOf);
   const remoteWorkspaceId = useSessionField((rt) => rt.remoteWorkspaceId, null);
   const promptKey = workspace === '' ? null : promptHistoryKey(workspace, remoteWorkspaceId);
   const prompts = usePromptHistory(promptKey, workspace, remoteWorkspaceId);
   // The completion replaces the whole draft, so it is only offered while the
-  // caret is at the end of it: mid-sentence, Tab would overwrite what follows.
+  // caret is at the end of it.
   const [caretAtEnd, setCaretAtEnd] = useState(true);
   const suggestion = useMemo(() => {
     if (blocked || running || composerNotice !== null || dragging || !caretAtEnd) return null;
     return suggestPrompt(draft, prompts);
   }, [blocked, running, composerNotice, dragging, caretAtEnd, draft, prompts]);
 
-  /**
-   * Put the caret back in the box whenever nothing is covering it.
-   *
-   * React's `autoFocus` only fires on mount, and this component never unmounts —
-   * so before this, closing a panel or answering a prompt left focus on
-   * `<body>`, where typing did nothing at all and the only way back was to click
-   * the box. Radix restores focus to whatever opened a dialog, and nothing in
-   * this app triggers one from a focusable element (the palette, the modals and
-   * the panels are all opened from keys or from elements that are gone by then),
-   * so the restore target was always the body.
-   */
-  useEffect(() => {
-    if (!ready || blocked || panel !== null) return;
-    // Not while a person is typing somewhere else deliberately.
-    const active = document.activeElement;
-    if (active instanceof HTMLElement && active !== document.body) return;
-    taRef.current?.focus();
-  }, [ready, blocked, panel]);
+  /** The last string the editor itself produced — see the header. */
+  const emitted = useRef<string>(draft);
+  /** A caret asked for before the draft it belongs to has reached the editor. */
+  const pendingCaret = useRef<number | null>(null);
 
-  function setValueAndCaret(el: HTMLTextAreaElement, value: string, caret: number) {
-    setDraft(value);
+  // The editor's handlers are created once; they read the latest values here.
+  const live = useRef({ blocked, running, suggestion, submitDraft, historyNav, interrupt, setDraft });
+  live.current = { blocked, running, suggestion, submitDraft, historyNav, interrupt, setDraft };
+
+  const editor = useEditor({
+    extensions: [
+      Document,
+      Paragraph,
+      Text,
+      TokenNode.extend({
+        addNodeView() {
+          return ReactNodeViewRenderer(TokenChip, { as: 'span' });
+        },
+      }),
+      Placeholder.configure({ placeholder: () => placeholderRef.current }),
+      UndoRedo,
+    ],
+    content: draftToContent(draft),
+    editorProps: {
+      attributes: {
+        class: 'cp-editor',
+        role: 'textbox',
+        'aria-multiline': 'true',
+        spellcheck: 'false',
+      },
+      handleKeyDown: (_view, event) => onKey(event),
+      handlePaste: (_view, event) => {
+        const ed = editorRef.current;
+        if (ed === null) return false;
+        const taken = handleComposerPaste(event.clipboardData, caretOf(ed));
+        if (taken) event.preventDefault();
+        return taken;
+      },
+      // A copy out of the box carries the tokens as text, so a paste back into
+      // it (or into another session) keeps the chips' tokens.
+      clipboardTextSerializer: (slice) => fragmentToDraft(slice.content),
+    },
+    onUpdate: ({ editor: ed }) => {
+      const next = docToDraft(ed.state.doc);
+      if (next === emitted.current) return;
+      emitted.current = next;
+      live.current.setDraft(next);
+      noteCaret(ed);
+    },
+    onSelectionUpdate: ({ editor: ed }) => noteCaret(ed),
+  });
+
+  const editorRef = useRef<Editor | null>(null);
+  editorRef.current = editor;
+  const placeholderRef = useRef('');
+  placeholderRef.current = blocked ? t('composer.blocked') : t('composer.placeholder');
+
+  /** The caret (selection head) as a draft offset. */
+  function caretOf(ed: Editor): number {
+    return posToOffset(ed.state.doc, ed.state.selection.head);
+  }
+
+  function selectionOf(ed: Editor): { from: number; to: number } {
+    const { from, to } = ed.state.selection;
+    return { from: posToOffset(ed.state.doc, from), to: posToOffset(ed.state.doc, to) };
+  }
+
+  function noteCaret(ed: Editor) {
+    const { from, to } = selectionOf(ed);
+    const length = docToDraft(ed.state.doc).length;
+    setCaretAtEnd(from === length && to === length);
+  }
+
+  /** Apply a pending caret once the editor holds the draft it was meant for. */
+  function applyPendingCaret(ed: Editor) {
+    const offset = pendingCaret.current;
+    if (offset === null) return;
+    if (docToDraft(ed.state.doc) !== emitted.current) return;
+    pendingCaret.current = null;
+    ed.chain().focus().setTextSelection(offsetToPos(ed.state.doc, offset)).run();
+  }
+
+  /** Write the draft and put the caret at `caret` once it has landed. */
+  function setValueAndCaret(value: string, caret: number) {
+    pendingCaret.current = caret;
+    live.current.setDraft(value);
     requestAnimationFrame(() => {
-      el.selectionStart = caret;
-      el.selectionEnd = caret;
+      const ed = editorRef.current;
+      if (ed) applyPendingCaret(ed);
     });
   }
 
   /**
-   * Accept one clause of the suggestion (Tab), or the whole thing (click).
-   *
-   * Tab inserts up to `suggestion.acceptTo` — the next clause boundary — so a
-   * person can stop after `pull代码，` and type their own tail. The draft then
-   * changes, `useMemo` re-runs `suggestPrompt`, and a fresh suggestion for the
-   * new prefix appears on the next render. That recompute is the zsh
-   * "partial accept → re-fetch" pattern, except React's reactivity replaces the
-   * explicit fetch.
-   *
-   * Click accepts the full `suggestion.text` — from the match start to the
-   * sentence end — as a convenience for the person who wants the whole thing.
-   *
-   * Both share the focus call (a click moves focus to the button; Tab is
-   * already focused) and the caret guard (a click that moved the caret into
-   * the sentence between the frame and the press must not overwrite the tail).
+   * Load a draft written by someone other than the editor. Without the
+   * `emitted` check this would re-load on every keystroke, which is what breaks
+   * an IME composition.
    */
-  function acceptClause() {
-    const el = taRef.current;
-    if (el === null || suggestion === null) return;
-    if (el.selectionStart !== el.value.length || el.selectionEnd !== el.value.length) return;
-    el.focus();
-    const accepted = suggestion.text.slice(0, suggestion.acceptTo);
-    setValueAndCaret(el, accepted, accepted.length);
+  useEffect(() => {
+    if (!editor || draft === emitted.current) return;
+    emitted.current = draft;
+    editor.commands.setContent(draftToContent(draft), { emitUpdate: false });
+    if (pendingCaret.current !== null) {
+      applyPendingCaret(editor);
+    } else {
+      editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    }
+    noteCaret(editor);
+    // `noteCaret`/`applyPendingCaret` read refs only.
+  }, [editor, draft]);
+
+  // The rest of the window inserts at the caret through this handle.
+  useEffect(() => {
+    if (!editor) return;
+    return registerComposer({
+      caret: () => caretOf(editor),
+      placeCaret: (offset) => {
+        pendingCaret.current = offset;
+        applyPendingCaret(editor);
+        requestAnimationFrame(() => applyPendingCaret(editor));
+      },
+    });
+  }, [editor]);
+
+  // A modal covers the box: it stops being editable rather than refusing keys
+  // one by one.
+  useEffect(() => {
+    editor?.setEditable(!blocked, false);
+  }, [editor, blocked]);
+
+  /**
+   * Put the caret back in the box whenever nothing is covering it. `autoFocus`
+   * only fires on mount, and this component never unmounts — so closing a panel
+   * used to leave focus on `<body>`, where typing did nothing.
+   */
+  useEffect(() => {
+    if (!editor || !ready || blocked || panel !== null) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) return;
+    editor.commands.focus();
+  }, [editor, ready, blocked, panel]);
+
+  /**
+   * Accept one clause of the suggestion (Tab), or the whole thing (click).
+   * Only at the end of the draft: mid-sentence it would overwrite the tail.
+   */
+  function accept(full: boolean) {
+    const ed = editorRef.current;
+    const current = live.current.suggestion;
+    if (ed === null || current === null) return;
+    const length = docToDraft(ed.state.doc).length;
+    const { from, to } = selectionOf(ed);
+    if (from !== length || to !== length) return;
+    const accepted = full ? current.text : current.text.slice(0, current.acceptTo);
+    setValueAndCaret(accepted, accepted.length);
     setCaretAtEnd(true);
   }
 
-  function acceptFull() {
-    const el = taRef.current;
-    if (el === null || suggestion === null) return;
-    if (el.selectionStart !== el.value.length || el.selectionEnd !== el.value.length) return;
-    el.focus();
-    setValueAndCaret(el, suggestion.text, suggestion.text.length);
-    setCaretAtEnd(true);
-  }
+  /** The composer's keys. `true` means the key was handled here. */
+  function onKey(e: KeyboardEvent): boolean {
+    const ed = editorRef.current;
+    const now = live.current;
+    if (ed === null || now.blocked) return false;
 
-  /** Whether the suggestion may be offered: only at the end of the draft. */
-  function noteCaret(el: HTMLTextAreaElement) {
-    setCaretAtEnd(el.selectionStart === el.value.length && el.selectionEnd === el.value.length);
-  }
+    // An IME is mid-composition: Enter commits the candidate, it does not send.
+    // `keyCode === 229` is the legacy signal some IMEs still only deliver.
+    if (e.isComposing || e.keyCode === 229) return false;
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (blocked) return;
-
-    // An IME is mid-composition. Enter there means "commit the candidate", not
-    // "send": for a Chinese or Japanese user that is the key they press to put
-    // the characters on the screen, and treating it as a send posts half a
-    // sentence. `keyCode === 229` is the legacy signal that some IMEs still
-    // only deliver through.
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-
-    const el = e.currentTarget;
-    const v = el.value;
-    const s = el.selectionStart;
-    const en = el.selectionEnd;
     const mod = e.ctrlKey || e.metaKey;
+    const v = docToDraft(ed.state.doc);
+    const { from: s, to: en } = selectionOf(ed);
 
-    // **Tab is the suggestion's, and only while there is one.** Without a
-    // suggestion the key falls through to the browser's focus move — the
-    // behaviour every other control in this window still depends on. Tab
-    // accepts one clause (up to the next punctuation boundary); the full
-    // sentence is accepted by clicking the suggestion text.
-    if (e.key === 'Tab' && !e.shiftKey && !mod && !e.altKey && suggestion !== null) {
+    if (e.key === 'Tab' && !e.shiftKey && !mod && !e.altKey && now.suggestion !== null) {
       e.preventDefault();
-      acceptClause();
-      return;
+      accept(false);
+      return true;
     }
 
     if (e.key === 'Enter' && !e.shiftKey && !mod) {
       e.preventDefault();
-      submitDraft();
-      return;
+      now.submitDraft();
+      return true;
     }
 
-    if (e.key === 'Enter' && e.shiftKey) return; // The browser's own newline.
-
-    if (mod && e.key.toLowerCase() === 'j') {
+    if ((e.key === 'Enter' && e.shiftKey) || (mod && e.key.toLowerCase() === 'j')) {
       e.preventDefault();
-      const next = `${v.slice(0, s)}\n${v.slice(en)}`;
-      setValueAndCaret(el, next, s + 1);
-      return;
+      ed.commands.splitBlock();
+      return true;
     }
 
     if (e.key === 'Escape') {
-      if (running) {
+      if (now.running) {
+        // The window-level handler would otherwise send a second `interrupt`.
         e.preventDefault();
-        // The window-level handler would otherwise send a second `interrupt`
-        // for the same press: it sees the bubbled event and the phase still
-        // reads "running".
         e.stopPropagation();
-        interrupt();
+        now.interrupt();
+        return true;
       }
-      return;
+      return false;
     }
 
     if (e.key === 'ArrowUp' && (mod || (s === 0 && en === 0))) {
       e.preventDefault();
-      historyNav(-1);
-      return;
+      now.historyNav(-1);
+      return true;
     }
     if (e.key === 'ArrowDown' && (mod || (s === v.length && en === v.length))) {
       e.preventDefault();
-      historyNav(1);
-      return;
+      now.historyNav(1);
+      return true;
     }
 
-    if (!mod) return;
+    if (!mod || e.shiftKey || e.altKey) return false;
+    const letter = e.key.toLowerCase();
 
-    if (e.key.toLowerCase() === 'a') {
+    if (letter === 'a') {
       e.preventDefault();
-      setValueAndCaret(el, v, v.lastIndexOf('\n', s - 1) + 1);
-      return;
+      const start = v.lastIndexOf('\n', s - 1) + 1;
+      ed.commands.setTextSelection(offsetToPos(ed.state.doc, start));
+      return true;
     }
-    if (e.key.toLowerCase() === 'e') {
+    if (letter === 'e') {
       e.preventDefault();
       const nl = v.indexOf('\n', s);
-      setValueAndCaret(el, v, nl === -1 ? v.length : nl);
-      return;
+      ed.commands.setTextSelection(offsetToPos(ed.state.doc, nl === -1 ? v.length : nl));
+      return true;
     }
-    if (e.key.toLowerCase() === 'w') {
+    if (letter === 'w') {
       e.preventDefault();
       const before = v.slice(0, s);
       const trimmed = before.replace(/\s*\S*$/, '');
-      setValueAndCaret(el, trimmed + v.slice(en), trimmed.length);
-      return;
+      setValueAndCaret(trimmed + v.slice(en), trimmed.length);
+      return true;
     }
-    if (e.key.toLowerCase() === 'u') {
+    if (letter === 'u') {
       e.preventDefault();
       const lineStart = v.lastIndexOf('\n', s - 1) + 1;
-      setValueAndCaret(el, v.slice(0, lineStart) + v.slice(en), lineStart);
-      return;
+      setValueAndCaret(v.slice(0, lineStart) + v.slice(en), lineStart);
+      return true;
     }
+    return false;
   }
 
-  /**
-   * The composer has **three fixed heights**, not a growing box.
-   *
-   * Empty it is one 48px row: `+`, the placeholder, the send button. Once there
-   * is something to send it is 96px: two lines of text above, and a toolbar
-   * under them holding `+`, the key hint and the action. When the draft has
-   * outgrown those two lines — several lines of it, or one long enough to wrap
-   * past both — it is 192px, and the sentence gets every added pixel. The quote
-   * "two fixed heights" was the design's, and it is still the reason the box
-   * never measures the textarea: a tier is a class, so the longest paste in the
-   * world moves the composer between three numbers instead of growing it toward
-   * the transcript.
-   *
-   * The toolbar is drawn for anything that has something to say in it, not only
-   * for text: a running turn (the stop button and its sentence), a drop notice,
-   * a refused file. An empty box has no toolbar to reserve.
-   */
   const empty = draft.trim() === '';
   const showTools = !empty || running || composerNotice !== null || dragging;
-  // A height state on top of `is-filled`, never instead of it: the toolbar row,
-  // the grid areas and the filled input rules are all shared, and only the two
-  // height numbers differ. An empty draft never earns it, so the 48px row stays
-  // a single row however long the draft's cleared tail was.
+  // A height state on top of `is-filled`, never instead of it.
   const large = !empty && isLargeDraft(draft);
 
   return (
@@ -306,71 +341,14 @@ export function Composer() {
       <div
         className={`cp-box${blocked ? ' is-blocked' : ''}${showTools ? ' is-filled' : ''}${large ? ' is-large' : ''}`}
       >
-        {/* The two attachment trays share one grid area, above both states.
-            Wrapped rather than passed through because they are two components
-            with one job, and an empty wrapper must not leave a gap. */}
-        <div className="cp-trays">
-          {/* The files attached from the plus menu, beside the pasted pictures.
-              Same tray shape, same derive-from-the-draft rule; see `FileTray`. */}
-          <FileTray />
+        {/* The input. Attachments are chips inside it, at the place in the
+            sentence they were put; there is no tray above the box. */}
+        <EditorContent editor={editor} className="cp-input" aria-label={t('composer.placeholder')} />
 
-          {/* The pasted pictures, above the input. They are a *reading* of the
-              draft, not a second list of attachments: a chip is drawn while its
-              path is still in the sentence and gone the moment it is not. See
-              `ImageTray`. */}
-          <ImageTray />
+        {/* The plus menu: files, skills, commands. The grid area decides where
+            it sits, so there is one button, not two copies. */}
+        <PlusMenu disabled={blocked} />
 
-          {/* Annotated passages of the transcript: a quote and a note riding
-              as one chip, expanded at send. See `AnnotationTray`. */}
-          <AnnotationTray />
-        </div>
-
-        {/* The input. One line when the box is empty, two when it has content;
-            the height is CSS's (see `.cp-box.is-filled`), not a measured
-            `scrollHeight`, so typing cannot make the composer grow without a
-            bound. */}
-        <textarea
-          ref={taRef}
-          className="cp-input"
-          rows={1}
-          value={draft}
-          onChange={(e) => {
-            const el = e.currentTarget;
-            setDraft(el.value);
-            // The suggestion is only offered at the end of the draft; a caret
-            // moved back into the sentence must take it away in the same frame
-            // the draft changed, or Tab would overwrite the tail.
-            noteCaret(el);
-          }}
-          onSelect={(e) => noteCaret(e.currentTarget)}
-          // `select` is the event for a caret move, but not every WebView spells
-          // an arrow-key move with one; the two gestures below are the cheap
-          // belt and braces, and `setCaretAtEnd` is a no-op when the value did
-          // not change.
-          onKeyUp={(e) => {
-            if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') noteCaret(e.currentTarget);
-          }}
-          onClick={(e) => noteCaret(e.currentTarget)}
-          onKeyDown={onKeyDown}
-          // A paste of text is left entirely alone: the handler returns before
-          // `preventDefault` unless the clipboard really holds a picture. See
-          // `hooks/useClipboardPaste.ts`.
-          onPaste={onPaste}
-          placeholder={blocked ? t('composer.blocked') : t('composer.placeholder')}
-          disabled={blocked}
-          aria-label={t('composer.placeholder')}
-        />
-
-        {/* The plus menu: files, skills, commands. In the empty row it sits at
-            the leading edge beside the placeholder; once the box is filled it
-            drops to the toolbar's leading edge. The grid area decides that, so
-            there is one button, not two copies that could disagree. */}
-        <PlusMenu taRef={taRef} disabled={blocked} />
-
-        {/* The toolbar's middle: the transient statement if there is one, the
-            key hint otherwise, and the stop sentence while a turn runs. Only
-            rendered when there is a toolbar at all — an empty box reserves no
-            second row. */}
         {showTools ? (
           <div className="cp-note">
             {blocked ? (
@@ -391,17 +369,12 @@ export function Composer() {
             ) : running ? (
               <span>{t('composer.hint.streaming')}</span>
             ) : suggestion !== null ? (
-              // The suggestion line shows the full segment (`suggestion.text`)
-              // — from the match start to the sentence end — so the person can
-              // see what Tab would progressively insert. Tab accepts one clause
-              // at a time (up to the next punctuation boundary); a click
-              // accepts the whole segment at once.
               <span className="cp-suggest">
                 <Tip label={t('composer.suggestAccept', { text: suggestion.text })}>
                   <button
                     type="button"
                     className="cp-suggest-text"
-                    onClick={acceptFull}
+                    onClick={() => accept(true)}
                     aria-label={t('composer.suggestAccept', { text: suggestion.text })}
                   >
                     {suggestion.text}
@@ -436,10 +409,7 @@ export function Composer() {
                 className="cp-send"
                 onClick={submitDraft}
                 // While the child is still starting there is no process for a
-                // message to reach — the send stays available-looking is a
-                // lie, so it is disabled with everything else the store
-                // refuses (`submitDraft` guards the same condition for the
-                // Enter key).
+                // message to reach; `submitDraft` guards the same for Enter.
                 disabled={blocked || !ready || draft.trim() === ''}
                 aria-label={t('composer.send')}
               >
@@ -455,25 +425,16 @@ export function Composer() {
 
 /**
  * Whether the draft has outgrown the filled box's two 20px lines and earns the
- * 192px tier. Two readings of "a large block", because both arrive in practice:
- * several lines (three or more `newline`s), and the pasted paragraph that
- * carries no newlines at all — long enough to wrap past both lines on any
- * window the app opens at. Both are counts on the string, never a measurement
- * of the rendered box: the tiers are classes, and a measurement here is the
- * grow-with-every-keystroke behaviour the fixed heights exist to prevent.
+ * 192px tier: several lines, or one long enough to wrap past both. Counts on the
+ * string, never a measurement of the rendered box.
  */
 function isLargeDraft(draft: string): boolean {
   return draft.split('\n').length >= 3 || draft.length > 200;
 }
 
 /**
- * One notice, as the sentence it says.
- *
- * A function rather than a field on the notice, because the store has no business
- * holding English and the parameters are punctuation the translation owns (a list
- * of file names, a byte count). `switch` over the code with no `default`: a new
- * code has to be given a sentence, and TypeScript's exhaustiveness check is what
- * enforces that rather than a fallback that would print nothing.
+ * One notice, as the sentence it says. `switch` with no `default`: a new code
+ * has to be given a sentence, and the exhaustiveness check enforces that.
  */
 function noticeText(t: ReturnType<typeof useT>, notice: ComposerNotice): string {
   switch (notice.code) {

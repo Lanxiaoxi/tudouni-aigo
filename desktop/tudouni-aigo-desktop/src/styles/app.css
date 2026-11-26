@@ -1091,9 +1091,7 @@
   margin: 0 auto;
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) 28px;
-  grid-template-areas:
-    "trays trays trays"
-    "add input send";
+  grid-template-areas: "add input send";
   align-items: center;
   column-gap: 8px;
   row-gap: 0;
@@ -1115,7 +1113,6 @@
    The green edge is the design's "there is something to send" state. */
 .composer .cp-box.is-filled {
   grid-template-areas:
-    "trays trays trays"
     "input input input"
     "add note send";
   height: 96px;
@@ -1132,26 +1129,6 @@
   height: 192px;
 }
 
-/* Attachments are the one thing the fixed heights cannot predict. A tray
-   adds a row and the box takes its natural height; the 48/96/192 values become
-   minimums. This is why the height transition is skipped in that case — an
-   `auto` endpoint cannot interpolate, and a jump between two states that are
-   already taller than both fixed heights is the honest behaviour. */
-.composer .cp-box:has(.cp-trays > *) {
-  height: auto;
-  min-height: 48px;
-}
-
-.composer .cp-box.is-filled:has(.cp-trays > *) {
-  height: auto;
-  min-height: 96px;
-}
-
-.composer .cp-box.is-large:has(.cp-trays > *) {
-  height: auto;
-  min-height: 192px;
-}
-
 /* The composer box draws **no** focus ring of its own — neither for a pointer
    nor for the keyboard. The box is the largest control on screen, so a ring
    around it frames a third of the window; the caret itself is the keyboard's
@@ -1160,22 +1137,6 @@
 
 .composer .cp-box.is-blocked {
   opacity: 0.55;
-}
-
-/* The two attachment trays share the grid's top row. `display: none` when empty
-   is what keeps an unused row from reserving the 6px the trays would need; the
-   margin (rather than a row-gap) only exists when there is something in it. */
-.composer .cp-trays {
-  grid-area: trays;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  margin-bottom: 6px;
-}
-
-.composer .cp-trays:empty {
-  display: none;
 }
 
 /* The input: one line high while the box is empty, two lines when it is filled,
@@ -1255,150 +1216,176 @@
   background: transparent;
 }
 
-.composer textarea::placeholder {
-  color: var(--fg-faint);
+/* The editor itself: Tiptap renders a `contenteditable` inside `.cp-input`,
+   and that element is what scrolls inside the tier heights above. */
+.composer .cp-input .cp-editor {
+  min-height: 100%;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
-/* The pasted pictures, above the input.
-   `flex-wrap` rather than a scroller: the tray grows by a row when the chips do
-   not fit, which keeps every chip reachable without a second scroll region
-   inside a box that already has one. The space below the tray comes from
-   `.cp-trays`'s own `margin-bottom`; the tray itself is only a wrapping row. */
-.composer .cp-images {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  list-style: none;
+.composer .cp-input .cp-editor p {
   margin: 0;
-  padding: 0;
 }
 
-/* One chip: thumbnail, name, size, dismiss.
-   `max-width` is what keeps a long generated name from pushing the dismiss
-   button out of reach — the name itself is ellipsised below. */
-.composer .cp-chip {
+/* The placeholder: Tiptap's extension marks the empty first paragraph with
+   `is-editor-empty` and the text in `data-placeholder`. */
+.composer .cp-input .cp-editor p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--fg-faint);
+  pointer-events: none;
+}
+
+/* One token chip, inline in the sentence. `inline-flex` with a fixed 18px
+   height inside the 20px line, so a chip never changes the line's height and
+   the tiers stay exact. `inline-block`-like display is also what keeps
+   Chromium's caret from being drawn inside the atom. */
+.composer .cp-tok {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  max-width: 260px;
-  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+  gap: 2px;
+  height: 18px;
+  max-width: 240px;
+  margin: 0 2px;
+  padding: 0 2px 0 4px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--bg-muted);
+  color: var(--fg);
+  font-size: var(--text-caption);
+  line-height: 16px;
+  vertical-align: -3px;
+  user-select: none;
+  cursor: default;
 }
 
-/* A chip whose picture is still being written. The token is already in the
-   sentence and the thumbnail is already here, so the chip is honest — what it
-   cannot say yet is the file's name, and that slot reads "Uploading…". A dashed
-   edge rather than a spinner: the row must not change shape or height when the
-   write lands, and a border style does not. */
-.composer .cp-chip.is-pending {
+.composer .cp-tok.is-selected {
+  border-color: var(--accent-border);
+}
+
+/* A chip whose picture or file is still being written: dashed edge rather than
+   a spinner, so the chip does not change shape when the write lands. */
+.composer .cp-tok.is-pending {
   border-style: dashed;
 }
 
-.composer .cp-chip.is-pending .cp-chip-thumb {
-  opacity: 0.55;
-}
-
-/* The one animated thing here, and it is guarded: a pulse is information (this
-   is moving) for people who want it, and noise for people who asked not to. */
 @media (prefers-reduced-motion: no-preference) {
-  .composer .cp-chip.is-pending {
-    animation: cp-chip-writing 1.6s var(--ease-out) infinite;
+  .composer .cp-tok.is-pending {
+    animation: cp-tok-writing 1.6s var(--ease-out) infinite;
   }
 }
 
-@keyframes cp-chip-writing {
+@keyframes cp-tok-writing {
   0%,
   100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.65;
+    opacity: 0.6;
   }
 }
 
-/* A fixed box with `object-fit: cover`, so a very wide screenshot and a very tall
-   one take the same room. Without it the row's height would depend on which
-   picture was pasted, and the input would jump around as chips come and go. */
-.composer .cp-chip-thumb {
-  width: 32px;
-  height: 32px;
+.composer .cp-tok-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.composer .cp-tok-body.is-openable {
+  cursor: pointer;
+}
+
+.composer .cp-tok-thumb {
+  width: 14px;
+  height: 14px;
   flex: none;
   object-fit: cover;
-  border-radius: var(--radius-xs);
+  border-radius: 2px;
   background: var(--bg);
 }
 
-/* The attached-file chip's icon box: the picture chip's 32px thumbnail's
-   counterpart. The same fixed box, so a tray of files and a tray of pictures
-   take the same room and the input does not jump between the two. */
-.composer .cp-chip-file {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
+.composer .cp-tok-icon {
   flex: none;
-  border-radius: var(--radius-xs);
-  background: var(--bg);
   color: var(--fg-muted);
 }
 
-.composer .cp-chip-name {
+.composer .cp-tok-name {
   min-width: 0;
-  font-size: var(--text-caption);
-  color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The annotation chip: two stacked lines, the quote's head over the note's,
-   in the same 32px row as a file chip so the tray does not change height. */
-.composer .cp-chip-note-body {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.25;
-}
-
-.composer .cp-chip-note-quote {
-  min-width: 0;
-  font-size: var(--text-caption);
-  color: var(--fg-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer .cp-chip-size {
+.composer .cp-tok-meta {
   flex: none;
-  font-size: var(--text-caption);
   color: var(--fg-muted);
-  font-family: var(--font-mono);
 }
 
-.composer .cp-chip-drop {
+.composer .cp-tok-drop {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   flex: none;
+  padding: 0;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: 2px;
   background: transparent;
   color: var(--fg-muted);
   cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
 }
 
-.composer .cp-chip-drop:hover {
+.composer .cp-tok-drop:hover {
   background: var(--bg);
   color: var(--fg);
+}
+
+/* A token nothing stands for is prose, shown as the text it is. */
+.composer .cp-tok-raw {
+  color: var(--fg-muted);
+}
+
+/* The hover preview. It lives in the tooltip's portal, outside `.composer`. */
+.cp-tok-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 260px;
+}
+
+.cp-tok-preview-img {
+  max-width: 260px;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: var(--radius-xs);
+}
+
+.cp-tok-preview-meta {
+  word-break: break-all;
+  opacity: 0.8;
+}
+
+.cp-tok-preview-quote {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  opacity: 0.8;
+}
+
+.cp-tok-preview-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 10;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
 }
 
 /* The `+`: the grid's leading cell. In the empty state that is the input's own

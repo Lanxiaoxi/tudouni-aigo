@@ -1212,6 +1212,13 @@ export interface AppStore {
   addAnnotation(quote: string, note: string): void;
   /** Drop one annotation, and its token from the draft. */
   forgetAnnotation(placeholder: string): void;
+  /**
+   * Fold a long pasted text into a `⟦text-N⟧` chip at `at`, expanded at submit.
+   * Returns where the caret should go, or `null` when nothing was inserted.
+   */
+  pasteLongText(text: string, at: number): number | null;
+  /** Drop one long paste, and its token from the draft. */
+  forgetLongPaste(placeholder: string): void;
 
   /** Open one panel. */
   openPanel(p: PanelKind | null): void;

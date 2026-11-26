@@ -199,7 +199,7 @@ test('a send while the write is in flight is held back, and says why', async () 
 
   assert.deepEqual(sent, ['.tudouni/paste/a.png'], 'the sentence on the wire carries the path');
   const after = session(store);
-  assert.equal(after.entries[0].text, '⟦pimg-0⟧', 'the transcript keeps what the person wrote');
+  assert.equal(after.entries[0].text, '[image: paste-1.png]', 'the transcript reads the chip as a label');
   assert.equal(after.draft, '');
   assert.deepEqual(after.pastedImages, []);
 });

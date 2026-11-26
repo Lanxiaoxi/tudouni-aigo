@@ -83,6 +83,112 @@ export type PasteRefusal =
  */
 
 /**
+ * The token families the draft can carry: a pasted picture, an attached file, an
+ * annotation, and a long pasted text folded into a chip.
+ */
+export type TokenKind = 'pimg' | 'file' | 'note' | 'text';
+
+/** Every minted token, as one pattern. Global: callers use it with `split`,
+ *  `replace` and `matchAll`, which reset `lastIndex` themselves. */
+export const TOKEN_PATTERN = /⟦(pimg|file|note|text)-\d+⟧/g;
+
+/** The family of one token, or `null` when the string is not one. */
+export function tokenKind(token: string): TokenKind | null {
+  const match = /^⟦(pimg|file|note|text)-\d+⟧$/.exec(token);
+  return match ? (match[1] as TokenKind) : null;
+}
+
+/**
+ * Replace every token the `label` function knows with what it returns; a token
+ * it answers `null` for stays as written. This is how the transcript shows
+ * `[image: paste-1.png]` where the draft held `⟦pimg-0⟧`.
+ */
+export function labelTokens(text: string, label: (token: string, kind: TokenKind) => string | null): string {
+  return text.replace(TOKEN_PATTERN, (token, kind: TokenKind) => label(token, kind) ?? token);
+}
+
+/**
+ * Pasted text past this many characters is folded into a chip instead of being
+ * written into the box: a wall of text would bury the sentence being typed
+ * around it. The same threshold WorkBuddy uses.
+ */
+export const LONG_PASTE_CHARS = 3000;
+
+/** One long paste waiting in the draft as `⟦text-N⟧`, expanded at submit. */
+export interface LongPaste {
+  placeholder: string;
+  text: string;
+}
+
+/**
+ * The draft with every long paste's token replaced by its text. A token with no
+ * entry stays as written: it is prose the person typed, not a paste.
+ *
+ * The text is set off by line breaks where the chip sat flush against other
+ * words: a log or a file pasted mid-sentence would otherwise fuse its first and
+ * last lines with the words around it.
+ */
+export function expandLongPastes(draft: string, pastes: LongPaste[]): string {
+  if (pastes.length === 0) return draft;
+  const byToken = new Map(pastes.map((paste) => [paste.placeholder, paste.text]));
+  return draft.replace(TOKEN_PATTERN, (token, _kind: string, at: number, whole: string) => {
+    const text = byToken.get(token);
+    if (text === undefined) return token;
+    const before = whole.slice(at - 1, at);
+    const after = whole.slice(at + token.length, at + token.length + 1);
+    const lead = before === '' || before === '\n' ? '' : '\n';
+    const trail = after === '' || after === '\n' ? '' : '\n';
+    return `${lead}${text}${trail}`;
+  });
+}
+
+/** Every list a token in the draft can stand for. */
+export interface TokenSources {
+  pastedImages: readonly PastedImage[];
+  attachedFiles: readonly AttachedFile[];
+  annotations: readonly Annotation[];
+  longPastes: readonly LongPaste[];
+}
+
+/** The words each family is shown as in the transcript. Passed in, because the
+ *  wording is interface copy and belongs to `i18n`, not to this module. */
+export interface TokenLabels {
+  image(name: string): string;
+  file(name: string): string;
+  note(note: string): string;
+  text(chars: number): string;
+}
+
+/**
+ * The draft as the transcript shows it: each token as a short readable label
+ * (`[image: paste-1.png]`) instead of `⟦pimg-0⟧`. The chips in the input are
+ * the same facts drawn as pictures; this is their plain-text reading, which is
+ * what a transcript row (and the copy button under it) can carry.
+ */
+export function labelDraft(draft: string, sources: TokenSources, labels: TokenLabels): string {
+  return labelTokens(draft, (token, kind) => {
+    switch (kind) {
+      case 'pimg': {
+        const image = sources.pastedImages.find((entry) => entry.placeholder === token);
+        return image ? labels.image(image.name) : null;
+      }
+      case 'file': {
+        const file = sources.attachedFiles.find((entry) => entry.placeholder === token);
+        return file ? labels.file(file.name) : null;
+      }
+      case 'note': {
+        const annotation = sources.annotations.find((entry) => entry.placeholder === token);
+        return annotation ? labels.note(annotation.note) : null;
+      }
+      case 'text': {
+        const paste = sources.longPastes.find((entry) => entry.placeholder === token);
+        return paste ? labels.text(paste.text.length) : null;
+      }
+    }
+  });
+}
+
+/**
  * Build the next placeholder.
  *
  * `kind` picks the token's family: `pimg` for pasted pictures, `file` for files
@@ -101,7 +207,7 @@ export type PasteRefusal =
  * number the person deleted is recycled rather than skipped: the sentence is
  * the surface these tokens live on, and a gap (`1`, `3`) reads as a mistake.
  */
-export function nextPlaceholder(taken: string, kind: 'pimg' | 'file' | 'note' = 'pimg'): string {
+export function nextPlaceholder(taken: string, kind: TokenKind = 'pimg'): string {
   let number = 0;
   let candidate = `⟦${kind}-${number}⟧`;
   while (taken.includes(candidate)) {
@@ -118,43 +224,48 @@ export function nextPlaceholder(taken: string, kind: 'pimg' | 'file' | 'note' = 
  * will resolve, and the one the runtime's notices quote, so what arrives is
  * exactly the sentence it always arrived as.
  *
- * **A placeholder the person deleted is not a lost picture.** The picture is
- * stashed and the chip is still on screen; what is gone is the *marker*.
- * Appending the path at the end keeps the promise that a visible chip always
- * ships a picture, in the failure mode that costs the least surprise: the
- * sentence is untouched where the person edited it, and the extra word at the
- * end is one they can see and delete — unlike a picture that silently never
- * arrived.
+ * **A placeholder the person deleted ships nothing.** The chip is drawn inline,
+ * *as* the placeholder, so deleting the marker is deleting the chip: there is no
+ * second surface left on screen still promising the file.
  *
- * The path is appended as its own trailing word: the scanner splits on
- * whitespace, so a path glued to the last word is one token it will not
- * resolve, and a silently unattached picture is the one failure this layer
- * exists to prevent.
+ * Each path lands as its own word (`replaceAsWord`): the scanner splits on
+ * whitespace, and a path glued to a neighbouring word is one token it will not
+ * resolve — a silently unattached picture, the one failure this layer exists to
+ * prevent.
  */
 export function restorePastedPaths(draft: string, images: PastedImage[], files: AttachedFile[] = []): string {
   if (images.length === 0 && files.length === 0) return draft;
   let text = draft;
-  const orphans: string[] = [];
-  for (const image of images) {
-    if (text.includes(image.placeholder)) {
-      text = text.replaceAll(image.placeholder, image.path);
-    } else {
-      orphans.push(image.path);
-    }
+  // A marker the person deleted ships nothing. The chip *is* the marker now —
+  // it sits inline in the sentence, with no tray above the box to keep promising
+  // the file — so a deleted chip is a file the person decided not to send.
+  for (const image of images) text = replaceAsWord(text, image.placeholder, image.path);
+  for (const file of files) text = replaceAsWord(text, file.placeholder, file.path);
+  return text;
+}
+
+/**
+ * Swap every `token` for `value`, keeping `value` a separate word.
+ *
+ * The runtime's scanner splits on whitespace, so a path glued to the word next
+ * to it is one token it will not resolve. In the editor a chip can sit flush
+ * against text ("看看⟦pimg-0⟧"), so the spacing is guaranteed here, at the one
+ * place the path enters the sentence, rather than trusted from the draft.
+ */
+function replaceAsWord(text: string, token: string, value: string): string {
+  if (!text.includes(token)) return text;
+  let out = '';
+  let from = 0;
+  for (let at = text.indexOf(token); at !== -1; at = text.indexOf(token, from)) {
+    out += text.slice(from, at);
+    const before = out.slice(-1);
+    const after = text.slice(at + token.length, at + token.length + 1);
+    const lead = before === '' || /\s/.test(before) ? '' : ' ';
+    const trail = after === '' || /\s/.test(after) ? '' : ' ';
+    out += `${lead}${value}${trail}`;
+    from = at + token.length;
   }
-  // The files ride the same sentence and the same rule: a marker the person
-  // deleted means the file is not going, and the path is appended rather than
-  // silently dropped — visible, removable, never a chip that ships nothing.
-  for (const file of files) {
-    if (text.includes(file.placeholder)) {
-      text = text.replaceAll(file.placeholder, file.path);
-    } else {
-      orphans.push(file.path);
-    }
-  }
-  if (orphans.length === 0) return text;
-  const trail = text === '' || /\s$/.test(text) ? '' : ' ';
-  return `${text}${trail}${orphans.join(' ')}`;
+  return out + text.slice(from);
 }
 
 /** Remove one placeholder from the draft — what a chip's dismiss button does.

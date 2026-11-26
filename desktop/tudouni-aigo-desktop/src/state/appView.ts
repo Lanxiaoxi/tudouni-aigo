@@ -141,7 +141,8 @@ export function isUntouchedSession(s: AppStore, key: string): boolean {
     rt.pendingImages.length > 0 ||
     rt.attachedFiles.length > 0 ||
     rt.pendingFiles.length > 0 ||
-    rt.annotations.length > 0
+    rt.annotations.length > 0 ||
+    rt.longPastes.length > 0
   ) {
     return false;
   }

@@ -346,7 +346,7 @@ test('a send while the upload is in flight is held back, and says why', async ()
   useApp.getState().submitDraft();
 
   assert.deepEqual(sent, ['read attach/7/notes.md'], 'the sentence on the wire carries the path');
-  assert.equal(bucket().entries[0].text, 'read ⟦file-0⟧', 'the transcript keeps what the person wrote');
+  assert.equal(bucket().entries[0].text, 'read [file: notes.md]', 'the transcript reads the chip as a label');
   assert.equal(bucket().draft, '');
   assert.deepEqual(bucket().attachedFiles, []);
   assert.deepEqual(bucket().pendingFiles, []);

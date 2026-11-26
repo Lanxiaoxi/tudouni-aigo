@@ -2274,6 +2274,14 @@ export const en = {
   'composer.annotations': 'Annotations',
   'composer.annotationNote': 'Note: ',
   'composer.removeAnnotation': 'Remove this annotation',
+  /** A long paste folded into a chip: its label, and the dismiss button. */
+  'composer.longPaste': 'Pasted text · {chars} chars',
+  'composer.removeLongPaste': 'Remove this pasted text',
+  /** How each chip reads in the transcript, where a row can only carry text. */
+  'composer.label.image': '[image: {name}]',
+  'composer.label.file': '[file: {name}]',
+  'composer.label.note': '[note: {note}]',
+  'composer.label.text': '[pasted text · {chars} chars]',
   'composer.hint.send': 'Enter sends · Shift+Enter newlines',
   /* The running turn's toolbar sentence: what is happening, then how to stop it.
      The stop button beside it says the same thing by shape; this is the readable
