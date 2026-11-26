@@ -170,7 +170,7 @@ export function TerminalDock({ workspace }: DockModuleProps) {
       {terminals.length === 0 ? (
         <div className="dterm-empty">
           <EmptyState title={t('dock.term.empty.title')} hint={t('dock.term.empty.hint')} />
-          <button type="button" className="btn" disabled={creating} onClick={() => void create()}>
+          <button type="button" className="btn btn-outline btn-compact" disabled={creating} onClick={() => void create()}>
             <Plus size={13} />
             {t('dock.term.new')}
           </button>
