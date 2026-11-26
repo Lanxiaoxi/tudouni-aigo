@@ -5,6 +5,7 @@ import { selectModalVisible, selectPhase, useApp, useSessionField } from '@/stat
 import { useT } from '@/i18n/useT';
 import type { TKey } from '@/i18n';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
+import { LANGUAGES, type Lang } from '@/i18n';
 import { CLOSE_POLICIES, type ClosePolicy } from '@/runtime/windowClose';
 import {
   clampBaseCps,
@@ -125,6 +126,8 @@ export function SettingsPanel() {
   }
   const closePolicy = useApp((s) => s.closePolicy);
   const setClosePolicy = useApp((s) => s.setClosePolicy);
+  const uiLang = useApp((s) => s.uiLang);
+  const setUiLang = useApp((s) => s.setUiLang);
   // The OS's answer, shown beside the switch rather than acted on silently: when
   // it is on, the switch below does nothing, and a control that appears on while
   // nothing changes is the one thing this panel must not do. See rule 1 in the
@@ -443,6 +446,29 @@ export function SettingsPanel() {
 
         <div className="wb-card wb-card-flush">
           {row(
+            t('panel.settings.language'),
+            t('panel.settings.languageDesc'),
+            <div className="set-choice" role="radiogroup" aria-label={t('panel.settings.language')}>
+              {UI_LANGUAGES.map((lang) => (
+                <label
+                  key={lang}
+                  className="set-choice-item"
+                  role="radio"
+                  aria-checked={uiLang === lang}
+                  data-state={uiLang === lang ? 'checked' : 'unchecked'}
+                >
+                  <input
+                    type="radio"
+                    name="ui-lang"
+                    checked={uiLang === lang}
+                    onChange={() => setUiLang(lang)}
+                  />
+                  <span className="set-choice-text">{t(LANGUAGE_LABEL[lang])}</span>
+                </label>
+              ))}
+            </div>,
+          )}
+          {row(
             t('panel.settings.notify'),
             t('panel.settings.notifyDesc'),
             <button
@@ -626,6 +652,16 @@ const CLOSE_POLICY_SUMMARY: Record<ClosePolicy, TKey> = {
   ask: 'close.policy.summaryAsk',
   minimize: 'close.policy.summaryMinimize',
   close: 'close.policy.summaryClose',
+};
+
+/** The languages the row offers, and the sentence each one carries. The
+ *  sentences are autonyms (`i18n` says so for the same reason): a label drawn
+ *  through the fallback would be the second copy of a name that already has an
+ *  authoritative one. `TKey`-typed, so a renamed key is a compile error. */
+const UI_LANGUAGES: readonly Lang[] = LANGUAGES;
+const LANGUAGE_LABEL: Record<Lang, TKey> = {
+  en: 'panel.settings.language.en',
+  zh: 'panel.settings.language.zh',
 };
 
 /**

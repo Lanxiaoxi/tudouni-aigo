@@ -15,8 +15,24 @@
  * would both invent a second source for the same fact and break the rule that
  * those hints are not altered by one character.
  *
+ * **A second language is a stub by design.** `zh` exists with no entries yet:
+ * `makeT('zh')` falls back to `en` key by key, so an unfilled catalogue is
+ * safe to ship. The fallback rule is one-way — a key missing in the active
+ * language shows the English sentence, never a blank, and never a *half*
+ * translation, because the entries arrive one by one and each one stands alone.
+ *
+ * The load-bearing point above (runtime text is displayed verbatim) is exactly
+ * what the fallback enforces: a notice, an approval hint, a `remember_hint` —
+ * nothing the runtime wrote has a key here at all, so it cannot be translated
+ * by accident. When `zh` fills in, the screen stays intentionally mixed.
+ *
  * Keys are grouped by the region that reads them.
  */
+
+export type Lang = 'en' | 'zh';
+
+/** Every language this build can render. `en` is the fallback source. */
+export const LANGUAGES: readonly Lang[] = ['en', 'zh'];
 
 export const en = {
   /* ---------------- application ---------------- */
@@ -1738,6 +1754,8 @@ export const en = {
 
   /* ---------------- settings ---------------- */
   'panel.settings.title': 'Settings',
+  /* The `?` beside the title. A definition of the panel, not of a field — it is
+     the sentence somebody wants before they start reading the rest. */
   'panel.settings.note':
     'Runtime start-up arguments, and preferences that apply to this window.',
   'panel.settings.launch': 'Runtime',
@@ -1791,6 +1809,15 @@ export const en = {
   'panel.settings.window': 'This window',
   'panel.settings.windowHint':
     'Saved for the whole application and shared by every session.',
+  /** The interface language. The two options are named in **their own**
+   *  language (autonyms): a catalogue that translates "English" into "英文"
+   *  while it is still being read in English is a second source for the same
+   *  word, and the one the fallback below would keep in English forever. */
+  'panel.settings.language': 'Language',
+  'panel.settings.languageDesc':
+    'The words of the interface itself. Applies to every panel at once; what the runtime writes (notices, approvals, tool errors) stays in its own language.',
+  'panel.settings.language.en': 'English',
+  'panel.settings.language.zh': '中文（简体）',
   'panel.settings.notify': 'Session notifications',
   'panel.settings.notifyDesc':
     'A system notification when a session asks for an answer, fails, or finishes while you are looking at something else.',
@@ -2892,6 +2919,16 @@ export const en = {
 
 export type TKey = keyof typeof en;
 
+/**
+ * The Chinese catalogue. **Deliberately empty**: this build ships the
+ * mechanism, not the translation. `Partial<Record<TKey, string>>` is the
+ * contract — a key may be missing (the fallback below supplies English) but a
+ * key that *is* there must be a complete sentence for that key, never half of
+ * one. Fill it key by key; a build whose catalogue is three keys deep is a
+ * build that is three keys into the work, and the type says so.
+ */
+export const zh: Partial<Record<TKey, string>> = {};
+
 export type Translate = (key: TKey, params?: Record<string, string | number>) => string;
 
 /** Minimal interpolation: `{name}` only. No plurals, no genders — predictable
@@ -2907,8 +2944,12 @@ export function interpolate(
   });
 }
 
-export function makeT(): Translate {
-  return (key, params) => interpolate(en[key] ?? key, params);
+export function makeT(lang: Lang = 'en'): Translate {
+  // The lookup is one-way: the active catalogue first, then `en`. A key the
+  // active language has not filled in shows the English sentence — never a
+  // blank, never `⟪key⟫` — so the empty `zh` stub is safe on day one.
+  const source = lang === 'zh' ? zh : en;
+  return (key, params) => interpolate(source[key] ?? en[key] ?? key, params);
 }
 
 /** Today's line from the rotating list — the same maxim the TUI's welcome shows.

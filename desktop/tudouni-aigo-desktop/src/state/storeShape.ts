@@ -10,6 +10,7 @@ import { type BlockKind, type ToolFacts } from '@/state/entries';
 import { type Deliverable, type LearnScope } from '@/learn/template';
 import { type RunScope, type Task, type TaskRunLink, type TaskRunOutcome } from '@/task/tasks';
 import { type ClosePolicy } from '@/runtime/windowClose';
+import type { Lang } from '@/i18n';
 import { type BridgeOptions } from '@/runtime/tauri';
 import { type PastedPicture } from '@/runtime/paste';
 import { type ConfigSyncChoice } from '@/state/configSync';
@@ -641,6 +642,18 @@ export interface AppStore {
    * settings row), and both write this one field.
    */
   closePolicy: ClosePolicy;
+  /**
+   * Which catalogue the interface copy renders from (`i18n`).
+   *
+   * Persisted with the person's data rather than the window: a language is a
+   * taste, the same answer in every window and after an update — the reason
+   * `streamSmoothing` uses. It reads **immediately**, with no restart and
+   * nothing sent to the runtime: the catalogue is the front end's own, and the
+   * keys every component already goes through are the switch. A key the active
+   * catalogue has not filled in falls back to English (`i18n.makeT`), so the
+   * value is safe at any point in the translation's progress.
+   */
+  uiLang: Lang;
 
   /* ---------------- tasks (the desktop's own templates) ---------------- */
   /**
@@ -1054,6 +1067,15 @@ export interface AppStore {
    * able to say so, and there is no separate "unset".
    */
   setClosePolicy(policy: ClosePolicy): void;
+  /**
+   * Set which catalogue the interface copy renders from, and remember it.
+   *
+   * An ordinary preference write: nothing reaches the runtime and no session
+   * is touched. It takes effect on the next render — every `useT` reader
+   * subscribes to this field — so the whole window, including a panel that is
+   * open, switches in one frame.
+   */
+  setUiLang(lang: Lang): void;
 
   /** Record why the runtime could not be started at all, or clear it. */
   setStartupProblem(problem: string | null): void;

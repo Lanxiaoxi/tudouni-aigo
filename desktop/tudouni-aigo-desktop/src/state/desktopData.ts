@@ -37,6 +37,7 @@
  */
 import { isHosted, readDesktopData, writeDesktopData } from '@/runtime/tauri';
 import { readClosePolicy, type ClosePolicy } from '@/runtime/windowClose';
+import type { Lang } from '@/i18n';
 import { readNotifyEnabled } from '@/runtime/notify';
 import {
   clampBaseCps,
@@ -114,6 +115,17 @@ export interface DesktopData {
   streamMaxCps: number;
   closePolicy: ClosePolicy;
   /**
+   * Which catalogue the interface copy renders from (`i18n`).
+   *
+   * A taste, not a window fact — it follows the person like `streamSmoothing`,
+   * so it lives in the file rather than the window's localStorage record.
+   * `en` is the default: the record predates the field, and a catalogue that
+   * does not exist yet (the shipped `zh` is an empty stub) falls back to
+   * English key by key anyway, so the value is safe at any point in the
+   * translation's progress.
+   */
+  uiLang: Lang;
+  /**
    * Task templates and their run links. The runtime has no Task entity and
    * the protocol gains nothing; these are front-end facts, now in a place
    * that can be read, diffed and backed up instead of an opaque leveldb.
@@ -160,6 +172,8 @@ export function emptyDesktopData(): DesktopData {
     streamMaxCps: REVEAL_MAX_CPS,
     // Ask. Neither of the other two is safe to apply without being asked for.
     closePolicy: 'ask',
+    // English, the only catalogue with content today — see the field's doc.
+    uiLang: 'en',
     tasks: [],
     taskRuns: [],
     modelMemory: {},
@@ -283,6 +297,7 @@ function extract(s: AppStore): DesktopData {
     streamBaseCps: s.streamBaseCps,
     streamMaxCps: s.streamMaxCps,
     closePolicy: s.closePolicy,
+    uiLang: s.uiLang,
     // Without the retired `kind` / `status` (todos became Tickets): an
     // older record that still carries them is rewritten without.
     tasks: s.tasks.map(forDisk),
@@ -427,6 +442,10 @@ function validate(raw: Record<string, unknown> | null | undefined): DesktopData 
     streamBaseCps: clampBaseCps(raw.streamBaseCps),
     streamMaxCps: clampMaxCps(raw.streamMaxCps, clampBaseCps(raw.streamBaseCps)),
     closePolicy: readClosePolicy(raw.closePolicy),
+    // A string that is one of the languages this build knows, or `en`: the
+    // record predates the field (or a hand edit produced a value the build
+    // cannot render), and English is the one catalogue that always exists.
+    uiLang: raw.uiLang === 'zh' || raw.uiLang === 'en' ? raw.uiLang : 'en',
     tasks: Array.isArray(raw.tasks)
       ? raw.tasks.filter(isValidTask).filter((task) => !isLegacyTodo(task)).map(forDisk)
       : empty.tasks,
