@@ -277,8 +277,8 @@ func (t *Tool) spawn(ctx context.Context, task, label, presetName string, backgr
 		}
 		return tools.Result{
 			Text: fmt.Sprintf(
-				"subagent %s is running in the background. It works on its own while you carry on with this turn; when it finishes its result appears in the payload's \"finished, waiting to be collected\" section — fetch it with the collect tool and its id. Do not guess at its answer before then.",
-				named),
+				"subagent %s is running in the background. It works on its own while you carry on with this turn; when it finishes its result appears in the payload's \"finished, waiting to be collected\" section. To wait for results, call %s without an id: it returns as soon as any background subagent finishes, so do not pick one to wait for. Do not guess at its answer before then.",
+				named, DefaultCollectName),
 			Audit: map[string]any{"subagent_id": childID},
 		}, nil
 	}

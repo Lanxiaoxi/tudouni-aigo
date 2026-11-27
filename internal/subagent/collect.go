@@ -16,11 +16,9 @@ import (
 // delegating tool's business.
 const DefaultCollectName = "subagent_output"
 
-// The wait parameters mirror job_output on purpose: the two tools answer the
-// same question ("is my background work done, and if so what did it say") for
-// two different kinds of background work, and two tools that wait differently
-// would teach the model two habits for one situation. The documented default
-// is what the default must be, for the reason the jobs board states.
+// The wait bounds mirror job_output's numbers so the two kinds of background
+// work time out on the same scale. The **shape** of the wait differs on purpose:
+// a job is waited for by id, a delegation is not (see collectAny).
 const (
 	DocumentedCollectWaitSeconds = 30
 	MaxCollectWaitSeconds        = 300
@@ -30,8 +28,8 @@ const (
 // variable rather than a constant only so a test can shorten it.
 var collectPollInterval = 100 * time.Millisecond
 
-// BuildCollect returns the tool that hands a finished background delegation's
-// result to the parent. It is registered beside the delegating tool whenever
+// BuildCollect returns the tool that hands finished background delegations'
+// results to the parent. It is registered beside the delegating tool whenever
 // that tool exists; there is nothing to collect without delegation, and a tool
 // that can never answer is a round trip wasted every time it is tried.
 //
@@ -45,12 +43,13 @@ func BuildCollect(board *Board) (tools.Tool, bool) {
 	return tools.Tool{
 		Name: DefaultCollectName,
 		Description: fmt.Sprintf(
-			"收取后台子 agent 的结果，参照 job_output 的等待语义：它**结束了才叫结果**，"+
-				"还没结束时返回的是进度快照（跑了多久、几步、正在做什么），那不是结果。\n"+
-				"带上启动时返回的 id；不带 id 则列出所有还在等收取的子 agent。收取会把结果从待收取列表里移除，"+
-				"所以每个结果只取一次。\n"+
-				"默认等最多 %d 秒，到点它还没结束就返回进度快照；知道它要跑更久就自己给 wait_seconds（上限 %d）。\n"+
-				"中途只想看它跑到哪儿了、不想占着：wait=false，立刻返回进度快照。",
+			"收取后台子 agent 的结果。**不要指定等哪一个**：不带 id 调用，就等到**任意一个**子 agent 结束，"+
+				"并把那一刻所有已结束的结果一起交给你（按结束先后排）；拿到后先处理，还有在跑的就再调一次。"+
+				"你不知道谁先完成，按 id 去等只会让先完成的干等着。\n"+
+				"它**结束了才叫结果**：到点还没有任何一个结束时，返回的是所有在跑的子 agent 的进度快照（跑了多久、几步、正在做什么），那不是结果。"+
+				"没有在跑、也没有待收取的子 agent 时立刻返回。每个结果只交付一次。\n"+
+				"默认最多等 %d 秒，知道它们要跑更久就自己给 wait_seconds（上限 %d）；wait=false 表示不等，立刻交出已结束的、报告在跑的。\n"+
+				"带 id 只用来**看一眼**某一个：结束了就交出它的结果，没结束就返回它的进度快照，**不会等**。",
 			DocumentedCollectWaitSeconds, MaxCollectWaitSeconds),
 		// Read on the runtime's own state, not a workspace or process operation:
 		// the answer exists only in memory, and handing it over changes nothing
@@ -60,12 +59,12 @@ func BuildCollect(board *Board) (tools.Tool, bool) {
 		Risk: security.RiskLow,
 		Schema: tools.ObjectSchema(map[string]any{
 			"id": tools.StringSchema(
-				"要收取的子 agent 的 id，来自后台委派启动时返回的那一条。不填则只列出待收取的。"),
+				"可选。只在想看某一个子 agent 时填：结束了就交出它的结果，没结束就返回它的进度快照，不会等。要等结果就不要填。"),
 			"wait": tools.BoolSchema(
-				"true（默认）表示它还没结束就等一会儿；false 表示立刻返回**到目前为止**的进度快照",
+				"不带 id 时有效：true（默认）表示还没有任何一个结束就等一会儿；false 表示立刻返回",
 				tools.Default(true)),
 			"wait_seconds": tools.IntSchema(
-				fmt.Sprintf("wait=true 时最多等多少秒（上限 %d）。到点它还没结束，返回的就是进度快照 —— 那不是结果", MaxCollectWaitSeconds),
+				fmt.Sprintf("wait=true 时最多等多少秒（上限 %d）。到点还没有任何一个结束，返回的就是进度快照 —— 那不是结果", MaxCollectWaitSeconds),
 				tools.Default(DocumentedCollectWaitSeconds), tools.Minimum(1), tools.Maximum(MaxCollectWaitSeconds)),
 		}),
 		ParallelSafe: true,
@@ -80,46 +79,98 @@ func BuildCollect(board *Board) (tools.Tool, bool) {
 
 // collectExecute is the handler body, split out so the board is the only
 // dependency and tests can drive it without a whole registry.
+//
+// An id is a look, never a wait. The schema fills `wait` with its default, so a
+// call with an id cannot be told apart from one that asked to wait; ignoring
+// `wait` there is what keeps "block on one chosen child" out of the tool
+// entirely, rather than merely discouraged by its description.
 func collectExecute(ctx context.Context, board *Board, id string, wait bool, seconds int) tools.Result {
-	if id == "" {
-		return tools.TextResult(listUncollected(board))
+	if id != "" {
+		return collectOne(board, id)
 	}
 	if seconds <= 0 {
 		seconds = DocumentedCollectWaitSeconds
 	}
+	if seconds > MaxCollectWaitSeconds {
+		seconds = MaxCollectWaitSeconds
+	}
+	return collectAny(ctx, board, wait, time.Duration(seconds)*time.Second)
+}
 
-	// A delegation that is not running has a definite answer, and the wait
-	// cannot change it: settle it or report that the id names nothing.
-	if !board.IsRunning(id) {
+// collectOne is the look at one named delegation.
+func collectOne(board *Board, id string) tools.Result {
+	if board.IsRunning(id) {
 		return tools.Result{
-			Text:  collectFinished(board, id),
-			Audit: map[string]any{"subagent_id": id, "subagent_status": "collected"},
-		}
-	}
-
-	if !wait {
-		return runningResult(board, id, false)
-	}
-
-	// The wait: poll the board until the delegation stops running, the
-	// deadline passes, or the context is cancelled. A delegation that
-	// settles **during** the wait is collected here, which is the whole
-	// point of the parameter — the parent asks once and gets the answer,
-	// instead of polling every few seconds and paying a model round trip
-	// per poll.
-	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
-	for board.IsRunning(id) {
-		if !sleepOrDone(ctx, collectPollInterval) {
-			return runningResult(board, id, true)
-		}
-		if time.Now().After(deadline) {
-			return runningResult(board, id, false)
+			Text: fmt.Sprintf("**not finished yet**: %s.\nThis is not a result. To wait, call %s without an id: it returns as soon as any subagent finishes.",
+				board.Snapshot(id), DefaultCollectName),
+			Audit: map[string]any{"subagent_id": id, "subagent_status": "running"},
 		}
 	}
 	return tools.Result{
 		Text:  collectFinished(board, id),
 		Audit: map[string]any{"subagent_id": id, "subagent_status": "collected"},
 	}
+}
+
+// collectAny is the wait-any: it returns as soon as **any** background
+// delegation has settled, and hands over every one that has by then.
+//
+// The parent cannot know which child finishes first, so a wait pinned to one id
+// is a guess, and a wrong guess leaves every earlier finisher unread until the
+// chosen one ends. Waiting on the board as a whole removes the guess. Taking all
+// settled results at once means a burst of finishes costs one round trip, not
+// one per child.
+func collectAny(ctx context.Context, board *Board, wait bool, limit time.Duration) tools.Result {
+	deadline := time.Now().Add(limit)
+	for {
+		ready, running := board.TakeReady()
+		if len(ready) > 0 {
+			return readyResult(ready, running)
+		}
+		if running == 0 {
+			// Waiting here could only ever end at the deadline: nothing is in
+			// flight that could settle.
+			return tools.Result{
+				Text:  "no background subagent is running or waiting to be collected; there is nothing to wait for.",
+				Audit: map[string]any{"subagent_status": "none"},
+			}
+		}
+		if !wait {
+			return runningAll(board, false, false)
+		}
+		if !sleepOrDone(ctx, collectPollInterval) {
+			return runningAll(board, true, false)
+		}
+		if time.Now().After(deadline) {
+			return runningAll(board, false, true)
+		}
+	}
+}
+
+// readyResult renders the handed-over results, followed by what is still going
+// so the parent knows whether to wait again.
+func readyResult(ready []Ready, running int) tools.Result {
+	var out strings.Builder
+	ids := make([]string, 0, len(ready))
+	for index, item := range ready {
+		if index > 0 {
+			out.WriteString("\n\n")
+		}
+		out.WriteString(item.Settlement.Text)
+		ids = append(ids, item.ID)
+	}
+	out.WriteString("\n\n")
+	if running > 0 {
+		out.WriteString(fmt.Sprintf("%d background subagent(s) still running; call %s again without an id to wait for the next one.",
+			running, DefaultCollectName))
+	} else {
+		out.WriteString("no background subagent is still running.")
+	}
+	audit := map[string]any{"subagent_status": "collected", "subagent_ids": ids}
+	if len(ids) == 1 {
+		audit["subagent_id"] = ids[0]
+	}
+	return tools.Result{Text: out.String(), Audit: audit}
 }
 
 // collectFinished settles a delegation that is no longer running.
@@ -132,23 +183,27 @@ func collectFinished(board *Board, id string) string {
 		}
 		return fmt.Sprintf(
 			"no subagent waiting to be collected is called %s: the id may be wrong, or its result has already been collected (each result is handed over once). "+
-				"Call without an id to list what is still waiting.", id)
+				"Call without an id to wait for whatever is still running.", id)
 	}
 	return settlement.Text
 }
 
-// runningResult is the answer for a delegation that is still doing work.
-// interrupted marks a wait that was cut short by a stop rather than by its own
-// deadline, and that is a different fact from "it is still running": the model
-// has to know its wait did not run to completion, for the reason the jobs
-// board states for the same case.
-func runningResult(board *Board, id string, interrupted bool) tools.Result {
-	text := fmt.Sprintf("**not finished yet**: %s.\nThis is not a result; collect it once it ends (or pass wait=true and wait).",
-		board.Snapshot(id))
-	if interrupted {
-		text = "**this wait was interrupted** (the child did not end, and the deadline was not reached) — " + text
+// runningAll is the answer for a wait that produced no result: every child
+// still doing work, as progress lines. interrupted marks a wait cut short by a
+// stop rather than by its own deadline, and that is a different fact from "they
+// are still running": the model has to know its wait did not run to completion,
+// for the reason the jobs board states for the same case.
+func runningAll(board *Board, interrupted, timedOut bool) tools.Result {
+	lines := board.RunningSnapshots()
+	text := fmt.Sprintf("**none finished yet**: %d background subagent(s) still running.\n- %s\nThis is not a result.",
+		len(lines), strings.Join(lines, "\n- "))
+	switch {
+	case interrupted:
+		text = "**this wait was interrupted** (no subagent ended, and the deadline was not reached) — " + text
+	case timedOut:
+		text += " The wait reached its deadline; call again (with a larger wait_seconds if they need longer)."
 	}
-	audit := map[string]any{"subagent_id": id, "subagent_status": "running"}
+	audit := map[string]any{"subagent_status": "running"}
 	if interrupted {
 		audit[tools.InterruptedAuditKey] = true
 	}
@@ -167,32 +222,4 @@ func sleepOrDone(ctx context.Context, d time.Duration) bool {
 	case <-ctx.Done():
 		return false
 	}
-}
-
-// listUncollected renders the waiting list. Sorted by the board's own order
-// (newest first, the done panel's), because the freshest result is the one the
-// turn most likely came back for.
-func listUncollected(board *Board) string {
-	rows := board.DonePanel()
-	var waiting []map[string]any
-	for _, row := range rows {
-		if state, _ := row["state"].(string); state == "uncollected" {
-			waiting = append(waiting, row)
-		}
-	}
-	if len(waiting) == 0 {
-		return "no background subagent is waiting to be collected."
-	}
-	parts := make([]string, 0, len(waiting))
-	for _, row := range waiting {
-		entry, _ := row["id"].(string)
-		if label, _ := row["label"].(string); label != "" {
-			entry += " (" + label + ")"
-		}
-		if reason, _ := row["stop_reason"].(string); reason != "" && reason != "answered" {
-			entry += " [" + reason + "]"
-		}
-		parts = append(parts, entry)
-	}
-	return strings.Join(parts, ", ")
 }

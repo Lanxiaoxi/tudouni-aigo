@@ -340,10 +340,107 @@ func (b *Board) Snapshot(id string) string {
 	if !ok {
 		return ""
 	}
+	return snapshotLine(entry, now)
+}
+
+// Ready is one settled background delegation handed over by TakeReady.
+type Ready struct {
+	ID         string
+	Settlement Settlement
+}
+
+// TakeReady hands over **every** settled background delegation at once and
+// reports how many background delegations are still working.
+//
+// This is the wait-any primitive. The parent does not get to pick which child to
+// wait for, because it cannot know which one finishes first: a wait pinned to one
+// id leaves every child that finished earlier sitting unread until that one
+// ends. Taking all of them in one lock is what keeps "each result is handed over
+// once" true when two collect calls run in parallel, and counting the running
+// ones under the same lock is what lets the caller tell "nothing yet" from
+// "nothing to wait for" without a settle slipping in between the two reads.
+//
+// The results come oldest-ending first, so the parent reads them in the order
+// they happened.
+func (b *Board) TakeReady() (ready []Ready, running int) {
+	if b == nil {
+		return nil, 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	type pending struct {
+		entry      Delegation
+		settlement Settlement
+	}
+	var taken []pending
+	for id, entry := range b.running {
+		if !entry.Background {
+			continue
+		}
+		settlement, settled := b.done[id]
+		if !settled {
+			if entry.Ended == 0 {
+				running++
+			}
+			continue
+		}
+		taken = append(taken, pending{entry: *entry, settlement: *settlement})
+	}
+	sort.SliceStable(taken, func(i, j int) bool {
+		if taken[i].entry.Ended != taken[j].entry.Ended {
+			return taken[i].entry.Ended < taken[j].entry.Ended
+		}
+		return taken[i].entry.ID < taken[j].entry.ID
+	})
+	for _, item := range taken {
+		b.collected = append(b.collected, collectedRow{entry: item.entry, stopReason: item.settlement.StopReason})
+		delete(b.done, item.entry.ID)
+		delete(b.running, item.entry.ID)
+		ready = append(ready, Ready{ID: item.entry.ID, Settlement: item.settlement})
+	}
+	if over := len(b.collected) - MaxCollected; over > 0 {
+		b.collected = append([]collectedRow(nil), b.collected[over:]...)
+	}
+	return ready, running
+}
+
+// RunningSnapshots renders every background delegation still doing work, oldest
+// first, for the wait-any answer that has no result to give: the parent learns
+// how each one is getting on without having to ask about them one id at a time.
+func (b *Board) RunningSnapshots() []string {
+	if b == nil {
+		return nil
+	}
+	now := b.clock()
+	b.mu.Lock()
+	entries := make([]*Delegation, 0, len(b.running))
+	for id, entry := range b.running {
+		if _, settled := b.done[id]; settled || !entry.Background || entry.Ended != 0 {
+			continue
+		}
+		copied := *entry
+		entries = append(entries, &copied)
+	}
+	b.mu.Unlock()
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].Started != entries[j].Started {
+			return entries[i].Started < entries[j].Started
+		}
+		return entries[i].ID < entries[j].ID
+	})
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lines = append(lines, snapshotLine(entry, now))
+	}
+	return lines
+}
+
+// snapshotLine is one running delegation's progress line.
+func snapshotLine(entry *Delegation, now float64) string {
 	// English, because this line is not only the model's "still running" answer: it
 	// is the first 200 characters of a tool result, so a person reads it in the
 	// desktop client's OUTPUT row. See `renderResult` for the same rule.
-	line := "subagent " + id
+	line := "subagent " + entry.ID
 	if entry.Label != "" {
 		line += " (" + entry.Label + ")"
 	}
@@ -589,9 +686,9 @@ func (b *Board) Note() string {
 	if len(parts) > 0 {
 		out.WriteString("## 子 agent\n")
 		out.WriteString(strings.Join(parts, "；") + "。\n")
-		out.WriteString("不要频繁轮询它：需要它结果时调一次 subagent_output(id=...)，" +
-			"默认会等到它完成（wait_seconds 可调大，中途看进度用 wait=false）；" +
-			"等待期间先做不依赖这个结果的事。不要凭猜测替它下结论。")
+		out.WriteString("不要频繁轮询，也不要指定等哪一个：需要结果时调一次不带 id 的 subagent_output()，" +
+			"它会等到任意一个结束就把已结束的全部交给你（wait_seconds 可调大）；" +
+			"等待之前先做不依赖这些结果的事。不要凭猜测替它下结论。")
 	}
 	if len(uncollectedRows) > 0 {
 		if len(parts) > 0 {
@@ -603,7 +700,7 @@ func (b *Board) Note() string {
 			list = append(list, noteEntry(row))
 		}
 		out.WriteString(strings.Join(list, "；") + "。\n")
-		out.WriteString("它们的结果还在等收取：用 subagent_output 带上 id 逐个收取，再决定是否影响你接下来的回答。")
+		out.WriteString("它们的结果还在等收取：调一次不带 id 的 subagent_output()，会把它们一起交给你，再决定是否影响你接下来的回答。")
 	}
 	return out.String()
 }

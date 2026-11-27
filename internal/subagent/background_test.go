@@ -195,9 +195,9 @@ func TestTheCollectedAnswerIsTheWholeResult(t *testing.T) {
 	}
 }
 
-// TestCollectWithoutAnIDListsWhatIsWaiting covers the no-argument form: it
-// lists the waiting ids and never removes anything.
-func TestCollectWithoutAnIDListsWhatIsWaiting(t *testing.T) {
+// TestCollectWithoutAnIDHandsOverWhatIsWaiting covers the no-argument form: a
+// settled delegation is handed over at once, and handed over only once.
+func TestCollectWithoutAnIDHandsOverWhatIsWaiting(t *testing.T) {
 	bg := newBgHarness(t, 1)
 
 	if _, err := bg.tool.Execute(context.Background(), map[string]any{
@@ -215,11 +215,18 @@ func TestCollectWithoutAnIDListsWhatIsWaiting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, firstChildID()) {
-		t.Fatalf("the listing lost the id: %q", result.Text)
+	if !strings.Contains(result.Text, "background answer") {
+		t.Fatalf("the no-id collect did not hand over the answer: %q", result.Text)
 	}
-	if bg.board.Uncollected() != 1 {
-		t.Fatal("listing collected the result instead of naming it")
+	if bg.board.Uncollected() != 0 {
+		t.Fatal("the no-id collect left the settlement behind")
+	}
+	again, err := collect.Execute(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(again.Text, "nothing to wait for") {
+		t.Fatalf("a second no-id collect did not say there is nothing left: %q", again.Text)
 	}
 }
 
@@ -278,7 +285,7 @@ func TestCollectWaitsForTheChildToFinish(t *testing.T) {
 	collect, _ := BuildCollect(bg.board)
 	done := make(chan toolsResult, 1)
 	go func() {
-		result, err := collect.Execute(context.Background(), map[string]any{"id": firstChildID()})
+		result, err := collect.Execute(context.Background(), map[string]any{})
 		if err != nil {
 			t.Errorf("the collect call returned an error: %v", err)
 			return
@@ -324,12 +331,12 @@ func TestCollectWaitDeadlineReportsProgress(t *testing.T) {
 
 	collect, _ := BuildCollect(bg.board)
 	result, err := collect.Execute(context.Background(), map[string]any{
-		"id": firstChildID(), "wait": true, "wait_seconds": 1,
+		"wait": true, "wait_seconds": 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Text, "not finished yet") {
+	if !strings.Contains(result.Text, "none finished yet") || !strings.Contains(result.Text, firstChildID()) {
 		t.Fatalf("a deadline-shaped collect did not report progress: %q", result.Text)
 	}
 	if strings.Contains(result.Text, "background answer") {
@@ -364,9 +371,7 @@ func TestCollectWaitHonoursAStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan toolsResult, 1)
 	go func() {
-		result, err := collect.Execute(ctx, map[string]any{
-			"id": firstChildID(), "wait": true,
-		})
+		result, err := collect.Execute(ctx, map[string]any{"wait": true})
 		if err != nil {
 			t.Errorf("the collect call returned an error: %v", err)
 			return
