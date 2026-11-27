@@ -40,6 +40,7 @@ import { workspacesSlice } from './slices/workspaces';
 import { ticketsSlice } from './slices/tickets';
 import { ticketRunsSlice } from './slices/ticketRuns';
 import { workspaceDockSlice } from './slices/workspaceDock';
+import { onboardingSlice } from './slices/onboarding';
 import { loadWorkspaceUi } from './workspaceDock/persist';
 
 
@@ -150,6 +151,7 @@ export function createAppStore() {
     // before the first session. Until then these fields hold the empty shelf,
     // and nothing draws or runs that reads them before the first session.
     ...desktopDataSnapshot(),
+    onboarding: null,
     ticketSeed: null,
     // Tickets are read from their own file by `loadTickets`, not hydrated with
     // the user data above; until then mutations are refused.
@@ -178,6 +180,7 @@ export function createAppStore() {
       ...ticketsSlice(ctx),
       ...ticketRunsSlice(ctx),
       ...workspaceDockSlice(ctx),
+      ...onboardingSlice(ctx),
     };
   });
 }

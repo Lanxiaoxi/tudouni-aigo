@@ -100,6 +100,10 @@ const SUITES = [
   // ordinary code while being wrong 鈥?this one hid an attached terminal behind
   // the first screen, which took the composer away with it.
   'conversation-view.test.ts',
+  // The first-run guide: which launch opens it and on which step, how the new
+  // route enters `providers` without dropping any other, and when "say hi"
+  // counts as answered.
+  'onboarding.test.ts',
   // The welcome motto, which exists twice on purpose (the desktop's catalogue
   // and the runtime's) and therefore has to be compared: a line edited in only
   // one of the two still renders, and the two front ends quietly stop agreeing.

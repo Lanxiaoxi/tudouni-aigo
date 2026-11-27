@@ -1203,6 +1203,18 @@ export function HelpPanel() {
       note={`${t('panel.help.commands')} · ${t('panel.help.keys')}`}
     >
       <PanelBody>
+        <div className="row" style={{ justifyContent: 'flex-end', marginBottom: 'var(--space-2)' }}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-compact"
+            onClick={() => {
+              closePanel();
+              useApp.getState().setOnboardingStep('provider');
+            }}
+          >
+            {t('onboarding.restart')}
+          </button>
+        </div>
         <div className="etb-label">{t('panel.help.commands')}</div>
         <table className="table">
           <thead>

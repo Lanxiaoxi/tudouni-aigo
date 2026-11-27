@@ -14,7 +14,7 @@ import type { Lang } from '@/i18n';
 import { type BridgeOptions } from '@/runtime/tauri';
 import { type PastedPicture } from '@/runtime/paste';
 import { type ConfigSyncChoice } from '@/state/configSync';
-import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModelMemoryEntry, type ModalState, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
+import { type ComposerNotice, type ConfigSyncPrompt, type InstallStatus, type LaunchArgs, type MemoryActionArgs, type ModalEntry, type ModelMemoryEntry, type ModalState, type OnboardingStep, type PanelKind, type QuietMode, type RemoteWorkspaceEntry, type SavedSessions, type SessionRuntime, type SidebarBlockKey, type SshHostConfig, type StartupNotice } from './types';
 import type { RemoteConfigTarget } from '@/runtime/tauri';
 
 import type { TicketInputDraft, TicketPatch, TicketRefusal } from '@/ticket/machine';
@@ -708,6 +708,17 @@ export interface AppStore {
    * model in force), never from a path this front end assembled.
    */
   modelMemory: Record<string, ModelMemoryEntry>;
+  /** `desktop.json`'s record of the first-run guide being finished or skipped
+   *  (epoch ms), or null. See `DesktopData.onboardingDoneAt`. */
+  onboardingDoneAt: number | null;
+  /**
+   * The first-run guide's current step, or null when it is not running.
+   *
+   * Window-level and not persisted: the guide is started by the launch itself
+   * (`openFirstSession` decides from the config file), so a restart halfway
+   * through asks the same question again and lands on the same step.
+   */
+  onboarding: OnboardingStep | null;
 
   /* ---------------- composer ---------------- */
   /** An OS drag is currently over the window. Purely local, purely visual. */
@@ -1219,6 +1230,11 @@ export interface AppStore {
   pasteLongText(text: string, at: number): number | null;
   /** Drop one long paste, and its token from the draft. */
   forgetLongPaste(placeholder: string): void;
+
+  /** Move the first-run guide to `step` (starting it when it is not running). */
+  setOnboardingStep(step: OnboardingStep): void;
+  /** End the guide — finished or skipped — and remember that in `desktop.json`. */
+  finishOnboarding(): void;
 
   /** Open one panel. */
   openPanel(p: PanelKind | null): void;

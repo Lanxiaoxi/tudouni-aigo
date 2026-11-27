@@ -222,6 +222,17 @@ export type StartupNotice =
   | { code: 'no-workspace' };
 
 /**
+ * Where the first-run guide is (`components/onboarding/Onboarding.tsx`).
+ *
+ * `provider` and `workspace` take the conversation column, because nothing can
+ * run until both exist. `hello` does not: by then a real session is open, and
+ * the reply has to be read in the real transcript — so that step is a banner
+ * over the composer, and the column is the ordinary one. `done` is the same
+ * banner saying the reply arrived, until it is dismissed.
+ */
+export type OnboardingStep = 'provider' | 'workspace' | 'hello' | 'done';
+
+/**
  * What a child was actually started with.
  *
  * **A record of this front end's own act, not a claim about the runtime.** It says

@@ -3,7 +3,7 @@ import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 
 import { activeRuntime, NO_ENTRIES, useApp } from '@/state/store';
 import { draggedRailWidth, type RailSide } from '@/railWidth';
-import { conversationView, showsComposer, showsTranscript } from '@/conversationView';
+import { conversationView, onboardingTakesColumn, showsComposer, showsTranscript } from '@/conversationView';
 import { useRuntimeBridge } from '@/runtime/useRuntime';
 import { useGlobalKeys } from '@/hooks/useGlobalKeys';
 import { useKeepAwake } from '@/hooks/useKeepAwake';
@@ -26,6 +26,7 @@ import { Composer } from '@/components/chrome/Composer';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { WorkspaceSidebar } from '@/components/sidebar/WorkspaceSidebar';
 import { Welcome } from '@/components/Welcome';
+import { Onboarding, OnboardingHello } from '@/components/onboarding/Onboarding';
 import { NoticeCenter } from '@/components/NoticeCenter';
 import { WorkbenchDock } from '@/components/chrome/WorkbenchDock';
 import { Booting } from '@/components/Booting';
@@ -106,6 +107,7 @@ export function App() {
   // easing behind it) and only its handle paints the drag colour.
   const resizing = useApp((s) => s.resizing);
   const startupProblem = useApp((s) => s.startupProblem);
+  const onboardingStep = useApp((s) => s.onboarding);
   const dragging = useApp((s) => s.dragging);
   // One theme source: the system. Nothing to select, nothing to persist.
   useEffect(() => {
@@ -150,6 +152,7 @@ export function App() {
     hasSession: activeKey !== null,
     ready,
     hasConversation,
+    onboarding: onboardingTakesColumn(onboardingStep),
   });
 
   // The launch splash's hand-over is **not** decided here: it runs from a store
@@ -354,6 +357,8 @@ export function App() {
                     <SessionBoard />
                   ) : view === 'tickets' ? (
                     <TicketBoard />
+                  ) : view === 'onboarding' ? (
+                    <Onboarding />
                   ) : view === 'welcome' ? (
                     <Welcome />
                   ) : view === 'booting' ? (
@@ -387,6 +392,9 @@ export function App() {
                     board has the column: a message typed there would have no
                     addressee. **Asked of the same decision as the view above**, so
                     the two cannot disagree. */}
+                {/* The guide's last step rides above the real composer: the
+                    reply it waits for is read in the real transcript. */}
+                {showsComposer(view) ? <OnboardingHello /> : null}
                 {showsComposer(view) ? <Composer /> : null}
               </div>
 

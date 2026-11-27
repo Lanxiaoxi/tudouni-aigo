@@ -45,6 +45,8 @@ export type ConversationView =
   | 'board'
   // The ticket board: same slot and same reasons as the session board (4).
   | 'tickets'
+  // The first-run guide's provider and workspace steps (`Onboarding.tsx`).
+  | 'onboarding'
   | 'welcome'
   | 'booting'
   | 'stream';
@@ -69,10 +71,20 @@ export interface ConversationViewInput {
   ready: boolean;
   /** Anything in the stream that is not a runtime notice. */
   hasConversation: boolean;
+  /**
+   * The first-run guide is on a step that takes the column (`provider` or
+   * `workspace`). Optional so a caller that predates the guide reads "no".
+   *
+   * Second only to a start-up failure: the guide is how a session that could
+   * not start for want of a route gets one, so a session's refusal must not
+   * cover it — and nothing on a board can run before it is done.
+   */
+  onboarding?: boolean;
 }
 
 export function conversationView(input: ConversationViewInput): ConversationView {
   if (input.startupProblem) return 'startup-problem';
+  if (input.onboarding) return 'onboarding';
   if (input.sessionProblem) return 'session-problem';
   // Above the first screen — see the header. It has no `hasSession`/`ready` condition on purpose: those describe the session
   // on screen, and the board is about all of them. A workspace whose session
@@ -99,6 +111,7 @@ export function conversationViewOf(s: {
   startupProblem: string | null;
   activeKey: string | null;
   board: BoardKind | null;
+  onboarding?: string | null;
   sessions: Record<string, { problem: string | null; ready: boolean; entries: { kind: string }[] } | undefined>;
 }): ConversationView {
   const rt = s.activeKey === null ? undefined : s.sessions[s.activeKey];
@@ -109,7 +122,13 @@ export function conversationViewOf(s: {
     hasSession: s.activeKey !== null,
     ready: rt?.ready ?? false,
     hasConversation: (rt?.entries ?? []).some((entry) => entry.kind !== 'note'),
+    onboarding: onboardingTakesColumn(s.onboarding ?? null),
   });
+}
+
+/** Whether a guide step is drawn in the column rather than over the composer. */
+export function onboardingTakesColumn(step: string | null): boolean {
+  return step === 'provider' || step === 'workspace';
 }
 
 /**
@@ -124,7 +143,8 @@ export function conversationViewOf(s: {
  * and clicking a card is the gesture that gives it one again.
  */
 export function showsComposer(view: ConversationView): boolean {
-  return view !== 'board' && view !== 'tickets';
+  // The guide's column steps come before any session exists to speak into.
+  return view !== 'board' && view !== 'tickets' && view !== 'onboarding';
 }
 
 /**

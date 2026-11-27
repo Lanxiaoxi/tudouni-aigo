@@ -143,6 +143,13 @@ export interface DesktopData {
    * the same rule the remembered workspace follows for a deleted directory.
    */
   modelMemory: Record<string, ModelMemoryEntry>;
+  /**
+   * When the first-run guide was finished or skipped (epoch ms), or null when
+   * it never was. It only decides whether a launch with a usable route but no
+   * remembered workspace offers the guide's workspace step: a missing route
+   * brings the guide back regardless, because nothing can run without one.
+   */
+  onboardingDoneAt: number | null;
 }
 
 export function emptyDesktopData(): DesktopData {
@@ -177,6 +184,7 @@ export function emptyDesktopData(): DesktopData {
     tasks: [],
     taskRuns: [],
     modelMemory: {},
+    onboardingDoneAt: null,
   };
 }
 
@@ -303,6 +311,7 @@ function extract(s: AppStore): DesktopData {
     tasks: s.tasks.map(forDisk),
     taskRuns: s.taskRuns,
     modelMemory: s.modelMemory,
+    onboardingDoneAt: s.onboardingDoneAt,
   };
 }
 
@@ -463,6 +472,10 @@ function validate(raw: Record<string, unknown> | null | undefined): DesktopData 
             ),
           )
         : empty.modelMemory,
+    onboardingDoneAt:
+      typeof raw.onboardingDoneAt === 'number' && Number.isFinite(raw.onboardingDoneAt)
+        ? raw.onboardingDoneAt
+        : null,
   };
 }
 

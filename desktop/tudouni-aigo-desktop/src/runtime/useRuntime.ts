@@ -8,8 +8,10 @@ import {
   initBridge,
   isHosted,
   readRuntimeVersion,
+  readUserConfig,
   readUserName,
 } from './tauri';
+import { firstRunStep } from '@/onboarding/presets';
 
 /**
  * Wire the bridge to the store.
@@ -169,6 +171,20 @@ export function useRuntimeBridge(): void {
 async function openFirstSession(isCancelled: () => boolean): Promise<void> {
   const store = useApp.getState();
   const remembered = store.lastWorkspace;
+
+  // **The first-run guide comes before any child.** With no usable route the
+  // runtime refuses to assemble (`NoModelError`) and the child exits with code
+  // 2, so starting one would only put a dead session on screen. An unreadable
+  // file is *not* a reason to start the guide: its provider step will not write
+  // over a file it cannot parse, and the config panel is where that is fixed.
+  const config = await readUserConfig();
+  if (isCancelled()) return;
+  const step = firstRunStep(config, remembered, store.onboardingDoneAt);
+  if (step !== null) {
+    useApp.getState().setOnboardingStep(step);
+    markBootSettled();
+    return;
+  }
 
   // Nothing to go back to. The first screen is the answer, and it is where
   // somebody picks the place they will be working in.
