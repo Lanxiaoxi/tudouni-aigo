@@ -98,6 +98,13 @@ export function Composer() {
   const live = useRef({ blocked, running, suggestion, submitDraft, historyNav, interrupt, setDraft });
   live.current = { blocked, running, suggestion, submitDraft, historyNav, interrupt, setDraft };
 
+  // Must be declared before `useEditor`: the editor is created synchronously on
+  // the first render and the Placeholder extension calls its callback right
+  // away, so a later `const` would still be in its temporal dead zone
+  // ("Cannot access 'V' before initialization" in the minified bundle).
+  const placeholderRef = useRef('');
+  placeholderRef.current = blocked ? t('composer.blocked') : t('composer.placeholder');
+
   const editor = useEditor({
     extensions: [
       Document,
@@ -143,8 +150,6 @@ export function Composer() {
 
   const editorRef = useRef<Editor | null>(null);
   editorRef.current = editor;
-  const placeholderRef = useRef('');
-  placeholderRef.current = blocked ? t('composer.blocked') : t('composer.placeholder');
 
   /** The caret (selection head) as a draft offset. */
   function caretOf(ed: Editor): number {
